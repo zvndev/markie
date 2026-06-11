@@ -1,0 +1,40 @@
+services:
+  markie-api:
+    build: ../server
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_PATH: /data/markie.db
+    volumes:
+      - markie-data:/data
+    expose:
+      - "8787"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - markie-api
+
+  litestream:
+    image: litestream/litestream:latest
+    restart: unless-stopped
+    command: replicate -config /etc/litestream.yml
+    env_file: .env
+    volumes:
+      - ./litestream.yml:/etc/litestream.yml:ro
+      - markie-data:/data
+    depends_on:
+      - markie-api
+
+volumes:
+  markie-data:
+  caddy-data:
+  caddy-config:

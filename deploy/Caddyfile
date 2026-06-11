@@ -1,0 +1,4 @@
+# Replace with your API hostname before deploying.
+api.markie.example.com {
+	reverse_proxy markie-api:8787
+}

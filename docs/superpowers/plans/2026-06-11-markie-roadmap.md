@@ -167,7 +167,16 @@ Spec items: **12, 13 (local half)**.
   highlight theme) as JSON presets; settings UI to create/edit/apply; presets
   stored locally (cloud sync comes in Phase 8). Light theme ships here.
 
-### Phase 4 — Cloud foundation: server + accounts
+### Phase 4 — Cloud foundation: server + accounts ✅ *(completed 2026-06-11, locally verified)*
+
+> Revision to D1: SQLite + Litestream→B2 instead of Postgres (one process,
+> one file, backups included in flat cost). server/ = Hono + better-auth:
+> email+password, email OTP (Resend/console), Google env-gated. Desktop
+> Settings (⌘,) with full auth flows; sessions via bearer tokens (app://
+> cross-origin cookies are unreliable). Deploy assets in deploy/ with
+> DEPLOY.md checklist. Verified locally end-to-end in the packaged app;
+> production go-live awaits Kirby's provisions (VPS, DNS, B2, Resend,
+> Google OAuth keys). Google flow untestable until then.
 Spec items: **1, 5**.
 - Provision VPS (Docker Compose: API + Postgres + Caddy), domain, B2 bucket,
   Resend. Hono API server, better-auth with Google OAuth + email OTP +

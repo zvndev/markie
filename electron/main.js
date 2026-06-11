@@ -6,6 +6,7 @@ const {
   Menu,
   protocol,
   net,
+  shell,
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -239,6 +240,11 @@ ipcMain.handle("export-html", async (_event, { defaultName, html }) => {
   }
 });
 
+// IPC: open an https URL in the system browser (OAuth flows)
+ipcMain.handle("open-external", (_event, url) => {
+  if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+});
+
 // IPC: renderer signals it has mounted and asks for any queued file
 ipcMain.handle("get-initial-file", () => {
   rendererReady = true;
@@ -265,6 +271,12 @@ const template = [
     label: app.name,
     submenu: [
       { role: "about" },
+      { type: "separator" },
+      {
+        label: "Settings…",
+        accelerator: "CmdOrCtrl+,",
+        click: () => mainWindow?.webContents.send("menu-settings"),
+      },
       { type: "separator" },
       { role: "hide" },
       { role: "hideOthers" },
@@ -392,6 +404,15 @@ const template = [
     ],
   },
 ];
+
+// Deep links (markie://…) — used by the Google OAuth callback
+app.setAsDefaultProtocolClient("markie");
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  if (url.startsWith("markie://")) {
+    mainWindow?.webContents.send("deep-link", url);
+  }
+});
 
 app.whenReady().then(() => {
   registerProtocol();

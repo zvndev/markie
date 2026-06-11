@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
   openFile: () => ipcRenderer.invoke("open-file"),
   openFilePath: (path) => ipcRenderer.invoke("open-file-path", path),
+  getInitialFile: () => ipcRenderer.invoke("get-initial-file"),
   exportPDF: (html) => ipcRenderer.invoke("export-pdf", html),
   onMenuOpenFile: (callback) =>
     ipcRenderer.on("menu-open-file", () => callback()),

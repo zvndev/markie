@@ -208,6 +208,17 @@ export default function Home() {
     handlersRef.current.exportPDF = handleExportPDF;
   }, [handleOpenFile, handleExportPDF]);
 
+  // Cold start: pull any file the OS asked us to open before React mounted
+  useEffect(() => {
+    const api = getElectronAPI();
+    api?.getInitialFile?.().then((file) => {
+      if (file) {
+        setContent(file.content);
+        setFileName(file.name);
+      }
+    });
+  }, []);
+
   // Listen for Electron IPC events — registered exactly once
   useEffect(() => {
     const api = getElectronAPI();

@@ -14,6 +14,28 @@ const url = require("url");
 const isDev = process.env.NODE_ENV === "development";
 
 let mainWindow;
+let rendererReady = false;
+let pendingFilePath = null;
+
+const OPENABLE = /\.(md|markdown|mdx|txt)$/i;
+
+function readFilePayload(filePath) {
+  try {
+    return {
+      name: path.basename(filePath),
+      content: fs.readFileSync(filePath, "utf-8"),
+      path: filePath,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// File passed as a CLI argument (dev runs, Windows/Linux double-click)
+const argFile = process.argv
+  .slice(1)
+  .find((a) => OPENABLE.test(a) && fs.existsSync(a));
+if (argFile) pendingFilePath = path.resolve(argFile);
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -29,6 +51,11 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+    rendererReady = false;
   });
 
   if (isDev) {
@@ -129,6 +156,15 @@ ipcMain.handle("export-pdf", async (_event, html) => {
   pdfWindow.close();
 
   return { success: true, path: result.filePath };
+});
+
+// IPC: renderer signals it has mounted and asks for any queued file
+ipcMain.handle("get-initial-file", () => {
+  rendererReady = true;
+  if (!pendingFilePath) return null;
+  const payload = readFilePayload(pendingFilePath);
+  pendingFilePath = null;
+  return payload;
 });
 
 // IPC: Open file from path (for "open with" and drag-drop from Finder)
@@ -243,16 +279,19 @@ app.on("window-all-closed", () => {
   }
 });
 
-// Handle file open via command line args or "open with"
+// Handle file open via Finder "open with" / double-click.
+// Before the renderer is ready, queue the path; it is delivered via
+// the get-initial-file handshake when the renderer mounts.
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
-  if (mainWindow) {
-    const content = fs.readFileSync(filePath, "utf-8");
-    const name = path.basename(filePath);
-    mainWindow.webContents.send("file-opened", {
-      name,
-      content,
-      path: filePath,
-    });
+  if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
+    const payload = readFilePayload(filePath);
+    if (payload) mainWindow.webContents.send("file-opened", payload);
+  } else {
+    pendingFilePath = filePath;
+    if (!mainWindow && app.isReady()) {
+      // Re-opened from Finder while dock-alive with all windows closed
+      createWindow();
+    }
   }
 });

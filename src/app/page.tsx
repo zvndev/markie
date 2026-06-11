@@ -61,9 +61,13 @@ export default function Home() {
   const [booted, setBooted] = useState(false);
   const [mode, setMode] = useState<ViewMode>("preview");
   const [fileName, setFileName] = useState<string | null>(null);
+  const [filePath, setFilePath] = useState<string | null>(null);
+  const [savedContent, setSavedContent] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const previewRef = useRef<HTMLElement>(null);
+
+  const isDirty = content !== savedContent;
 
   const handleOpenFile = useCallback(() => {
     const api = getElectronAPI();
@@ -72,6 +76,8 @@ export default function Home() {
         if (result) {
           setContent(result.content);
           setFileName(result.name);
+          setFilePath(result.path);
+          setSavedContent(result.content);
         }
       });
       return;
@@ -86,6 +92,8 @@ export default function Home() {
       const text = await file.text();
       setContent(text);
       setFileName(file.name);
+      setFilePath(null);
+      setSavedContent(text);
     };
     input.click();
   }, []);
@@ -119,6 +127,67 @@ export default function Home() {
     };
   }, [getPreviewHTML]);
 
+  const handleSaveAs = useCallback(async (defaultName?: string) => {
+    const api = getElectronAPI();
+    if (!api) return;
+    const res = await api.saveFileAs({
+      defaultName: defaultName ?? fileName ?? "untitled.md",
+      content,
+    });
+    if (res.success && res.path && res.name) {
+      setFilePath(res.path);
+      setFileName(res.name);
+      setSavedContent(content);
+    }
+  }, [fileName, content]);
+
+  const handleSave = useCallback(async () => {
+    const api = getElectronAPI();
+    if (!api) return;
+    if (!filePath) {
+      await handleSaveAs();
+      return;
+    }
+    const res = await api.saveFile({ filePath, content });
+    if (res.success) setSavedContent(content);
+  }, [filePath, content, handleSaveAs]);
+
+  const handleFork = useCallback(async () => {
+    const base = fileName ?? "untitled.md";
+    const forkName = base.includes(".")
+      ? base.replace(/(\.[^.]+)$/, " copy$1")
+      : `${base} copy`;
+    await handleSaveAs(forkName);
+  }, [fileName, handleSaveAs]);
+
+  const handleExportHTML = useCallback(async () => {
+    const api = getElectronAPI();
+    if (!api) return;
+    const html = buildPDFHTML(getPreviewHTML(), "light");
+    const base = (fileName ?? "document").replace(/\.[^.]+$/, "");
+    await api.exportHTML({ defaultName: `${base}.html`, html });
+  }, [fileName, getPreviewHTML]);
+
+  const handleRename = useCallback(async (newName: string) => {
+    const api = getElectronAPI();
+    if (!api || !filePath || !newName.trim()) return;
+    const res = await api.renameFile({
+      oldPath: filePath,
+      newName: newName.trim(),
+    });
+    if (res.success && res.path && res.name) {
+      setFilePath(res.path);
+      setFileName(res.name);
+    }
+  }, [filePath]);
+
+  // Window title tracks the open file and dirty state
+  useEffect(() => {
+    document.title = fileName
+      ? `${isDirty ? "• " : ""}${fileName} — Markie`
+      : "Markie";
+  }, [fileName, isDirty]);
+
   // Drag and drop
   useEffect(() => {
     const handleDragOver = (e: DragEvent) => {
@@ -146,6 +215,8 @@ export default function Home() {
       const text = await file.text();
       setContent(text);
       setFileName(file.name);
+      setFilePath(null);
+      setSavedContent(text);
     };
 
     window.addEventListener("dragover", handleDragOver);
@@ -180,6 +251,14 @@ export default function Home() {
             e.preventDefault();
             setMode("split");
             break;
+          case "s":
+            e.preventDefault();
+            if (e.shiftKey) {
+              handleSaveAs();
+            } else {
+              handleSave();
+            }
+            break;
         }
         if (e.shiftKey && (e.key === "e" || e.key === "E")) {
           e.preventDefault();
@@ -190,21 +269,38 @@ export default function Home() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleOpenFile, handleExportPDF]);
+  }, [handleOpenFile, handleExportPDF, handleSave, handleSaveAs]);
 
   // Latest handlers, readable from once-registered IPC listeners
   const handlersRef = useRef({
     openFile: handleOpenFile,
     exportPDF: handleExportPDF,
+    save: handleSave,
+    saveAs: handleSaveAs,
+    fork: handleFork,
+    exportHTML: handleExportHTML,
     fileOpened: (data: FilePayload) => {
       setContent(data.content);
       setFileName(data.name);
+      setFilePath(data.path);
+      setSavedContent(data.content);
     },
   });
   useEffect(() => {
     handlersRef.current.openFile = handleOpenFile;
     handlersRef.current.exportPDF = handleExportPDF;
-  }, [handleOpenFile, handleExportPDF]);
+    handlersRef.current.save = handleSave;
+    handlersRef.current.saveAs = handleSaveAs;
+    handlersRef.current.fork = handleFork;
+    handlersRef.current.exportHTML = handleExportHTML;
+  }, [
+    handleOpenFile,
+    handleExportPDF,
+    handleSave,
+    handleSaveAs,
+    handleFork,
+    handleExportHTML,
+  ]);
 
   // Boot: decide the first painted document — the OS-opened file or the
   // welcome sample — before rendering anything, so the wrong doc never flashes
@@ -215,8 +311,11 @@ export default function Home() {
       if (file) {
         setContent(file.content);
         setFileName(file.name);
+        setFilePath(file.path);
+        setSavedContent(file.content);
       } else {
         setContent(SAMPLE);
+        setSavedContent(SAMPLE);
       }
       setBooted(true);
     });
@@ -230,6 +329,10 @@ export default function Home() {
     api.onMenuExportPDF?.((theme) => handlersRef.current.exportPDF(theme ?? "dark"));
     api.onSetMode?.((m) => setMode(m));
     api.onToggleStats?.(() => setShowStats((s) => !s));
+    api.onMenuSave?.(() => handlersRef.current.save());
+    api.onMenuSaveAs?.(() => handlersRef.current.saveAs());
+    api.onMenuFork?.(() => handlersRef.current.fork());
+    api.onMenuExportHTML?.(() => handlersRef.current.exportHTML());
     api.onFileOpened?.((data) => handlersRef.current.fileOpened(data));
   }, []);
 
@@ -245,6 +348,9 @@ export default function Home() {
         onOpenFile={handleOpenFile}
         onExportPDF={handleExportPDF}
         fileName={fileName}
+        isDirty={isDirty}
+        canRename={filePath !== null}
+        onRename={handleRename}
       />
 
       <div className="flex-1 flex overflow-hidden">

@@ -12,6 +12,9 @@ interface ToolbarProps {
   onOpenFile: () => void;
   onExportPDF: (theme: PDFTheme) => void;
   fileName: string | null;
+  isDirty: boolean;
+  canRename: boolean;
+  onRename: (newName: string) => void;
 }
 
 export function Toolbar({
@@ -20,8 +23,13 @@ export function Toolbar({
   onOpenFile,
   onExportPDF,
   fileName,
+  isDirty,
+  canRename,
+  onRename,
 }: ToolbarProps) {
   const [showPDFMenu, setShowPDFMenu] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draftName, setDraftName] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Clear the macOS window buttons (hiddenInset traffic lights at x:14).
@@ -64,8 +72,39 @@ export function Toolbar({
             <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
             <polyline points="13 2 13 9 20 9" />
           </svg>
-          {fileName || "Open file…"}
+          {fileName ? "Open" : "Open file…"}
         </button>
+        {fileName &&
+          (renaming ? (
+            <input
+              autoFocus
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onBlur={() => setRenaming(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  onRename(draftName);
+                  setRenaming(false);
+                } else if (e.key === "Escape") {
+                  setRenaming(false);
+                }
+              }}
+              className="text-[12px] bg-background border border-border rounded px-1.5 py-0.5 w-44 text-foreground outline-none"
+            />
+          ) : (
+            <button
+              onClick={() => {
+                if (!canRename) return;
+                setDraftName(fileName);
+                setRenaming(true);
+              }}
+              title={canRename ? "Click to rename" : undefined}
+              className="text-[12px] text-foreground/80 hover:text-foreground transition-colors"
+            >
+              {fileName}
+              {isDirty && <span className="text-muted ml-1.5">•</span>}
+            </button>
+          ))}
         <div className="w-px h-4 bg-border" />
         <div className="relative" ref={menuRef}>
           <button

@@ -163,6 +163,71 @@ ipcMain.handle("export-pdf", async (_event, html) => {
   return { success: true, path: result.filePath };
 });
 
+// IPC: write content to a known path
+ipcMain.handle("save-file", async (_event, { filePath, content }) => {
+  try {
+    fs.writeFileSync(filePath, content, "utf-8");
+    return { success: true, path: filePath };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+// IPC: write content to a user-chosen path (Save As / Fork)
+ipcMain.handle("save-file-as", async (_event, { defaultName, content }) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: defaultName || "untitled.md",
+    filters: [
+      { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
+      { name: "Text", extensions: ["txt"] },
+    ],
+  });
+  if (result.canceled || !result.filePath) {
+    return { success: false, canceled: true };
+  }
+  try {
+    fs.writeFileSync(result.filePath, content, "utf-8");
+    return {
+      success: true,
+      path: result.filePath,
+      name: path.basename(result.filePath),
+    };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+// IPC: rename the file on disk, same directory
+ipcMain.handle("rename-file", async (_event, { oldPath, newName }) => {
+  try {
+    const newPath = path.join(path.dirname(oldPath), newName);
+    if (fs.existsSync(newPath)) {
+      return { success: false, error: "A file with that name already exists" };
+    }
+    fs.renameSync(oldPath, newPath);
+    return { success: true, path: newPath, name: newName };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+// IPC: export rendered HTML to a file
+ipcMain.handle("export-html", async (_event, { defaultName, html }) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: defaultName || "document.html",
+    filters: [{ name: "HTML", extensions: ["html"] }],
+  });
+  if (result.canceled || !result.filePath) {
+    return { success: false, canceled: true };
+  }
+  try {
+    fs.writeFileSync(result.filePath, html, "utf-8");
+    return { success: true, path: result.filePath };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
 // IPC: renderer signals it has mounted and asks for any queued file
 ipcMain.handle("get-initial-file", () => {
   rendererReady = true;
@@ -203,17 +268,42 @@ const template = [
       {
         label: "Open…",
         accelerator: "CmdOrCtrl+O",
-        click: () => {
-          mainWindow?.webContents.send("menu-open-file");
-        },
+        click: () => mainWindow?.webContents.send("menu-open-file"),
       },
       { type: "separator" },
       {
-        label: "Export PDF…",
-        accelerator: "CmdOrCtrl+Shift+E",
-        click: () => {
-          mainWindow?.webContents.send("menu-export-pdf");
-        },
+        label: "Save",
+        accelerator: "CmdOrCtrl+S",
+        click: () => mainWindow?.webContents.send("menu-save"),
+      },
+      {
+        label: "Save As…",
+        accelerator: "CmdOrCtrl+Shift+S",
+        click: () => mainWindow?.webContents.send("menu-save-as"),
+      },
+      {
+        label: "Duplicate (Fork)",
+        accelerator: "CmdOrCtrl+Shift+D",
+        click: () => mainWindow?.webContents.send("menu-fork"),
+      },
+      { type: "separator" },
+      {
+        label: "Export",
+        submenu: [
+          {
+            label: "PDF (Dark)…",
+            accelerator: "CmdOrCtrl+Shift+E",
+            click: () => mainWindow?.webContents.send("menu-export-pdf", "dark"),
+          },
+          {
+            label: "PDF (Light)…",
+            click: () => mainWindow?.webContents.send("menu-export-pdf", "light"),
+          },
+          {
+            label: "HTML…",
+            click: () => mainWindow?.webContents.send("menu-export-html"),
+          },
+        ],
       },
       { type: "separator" },
       { role: "close" },

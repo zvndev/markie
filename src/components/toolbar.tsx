@@ -21,6 +21,8 @@ interface ToolbarProps {
   live?: boolean;
   liveStatus?: "connecting" | "connected" | "disconnected";
   peers?: PeerUser[];
+  // The doc owner pinned their theme; the local theme choice is paused
+  themeLocked?: boolean;
 }
 
 export function Toolbar({
@@ -36,6 +38,7 @@ export function Toolbar({
   live = false,
   liveStatus = "disconnected",
   peers = [],
+  themeLocked = false,
 }: ToolbarProps) {
   const [showPDFMenu, setShowPDFMenu] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -208,6 +211,18 @@ export function Toolbar({
         className="w-44 flex items-center justify-end gap-2.5"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
+        {themeLocked && (
+          <div
+            className="flex items-center gap-1 text-muted"
+            title="The owner pinned their theme to this doc"
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+            <span className="text-[10px] uppercase tracking-wide">Owner theme</span>
+          </div>
+        )}
         {live && (
           <div className="flex items-center gap-1.5" title={`Live session: ${liveStatus}`}>
             <span

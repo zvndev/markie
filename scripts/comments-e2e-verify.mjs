@@ -9,7 +9,7 @@ const WebSocket = require("ws");
 
 const SERVER = "http://localhost:8787";
 const ORIGIN = { Origin: "http://localhost:3000" };
-const [aliceToken, bobToken, docId] = process.argv.slice(2);
+const [, bobToken, docId] = process.argv.slice(2);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const api = async (token, method, path, body) => {

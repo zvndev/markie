@@ -10,6 +10,7 @@ import {
   type ThemePreset,
   type ThemeTokens,
 } from "@/lib/theme";
+import { pushCloudThemes } from "@/lib/theme-sync";
 
 interface ThemeSettingsProps {
   onClose: () => void;
@@ -43,6 +44,7 @@ export function ThemeSettings({ onClose }: ThemeSettingsProps) {
     setStore(next);
     saveThemeStore(next);
     applyTheme(findTheme(next, next.activeId).tokens);
+    pushCloudThemes(); // no-op when signed out
   };
 
   const selectTheme = (id: string) => commit({ ...store, activeId: id });

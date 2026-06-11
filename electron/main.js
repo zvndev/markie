@@ -13,6 +13,15 @@ const url = require("url");
 
 const isDev = process.env.NODE_ENV === "development";
 
+// Must run before app ready: gives app:// a real (standard, secure) origin
+// so the renderer gets persistent localStorage/IndexedDB in production.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "app",
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
+]);
+
 let mainWindow;
 let rendererReady = false;
 let pendingFilePath = null;
@@ -348,6 +357,20 @@ const template = [
         click: () => mainWindow?.webContents.send("set-mode", "split"),
       },
       { type: "separator" },
+      {
+        label: "Command Palette…",
+        accelerator: "CmdOrCtrl+K",
+        click: () => mainWindow?.webContents.send("menu-command-palette"),
+      },
+      {
+        label: "Theme…",
+        click: () => mainWindow?.webContents.send("menu-theme"),
+      },
+      {
+        label: "Keyboard Shortcuts",
+        accelerator: "CmdOrCtrl+/",
+        click: () => mainWindow?.webContents.send("menu-shortcuts"),
+      },
       {
         label: "Statistics",
         accelerator: "CmdOrCtrl+Shift+I",

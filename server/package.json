@@ -1,0 +1,20 @@
+{
+  "name": "markie-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node --watch --experimental-strip-types src/index.ts",
+    "start": "node --experimental-strip-types src/index.ts",
+    "migrate": "npx @better-auth/cli@latest migrate --config src/auth.ts -y"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.4",
+    "better-auth": "^1.6.16",
+    "better-sqlite3": "^12.10.0",
+    "hono": "^4.12.25"
+  }
+}

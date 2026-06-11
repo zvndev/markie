@@ -1,7 +1,7 @@
 export interface AppCommand {
   id: string;
   title: string;
-  group: "File" | "View" | "Format" | "Theme" | "Help" | "AI";
+  group: "File" | "View" | "Format" | "Theme" | "Help";
   shortcut?: string; // display form, e.g. "⌘S"
   keywords?: string;
   run: () => void;

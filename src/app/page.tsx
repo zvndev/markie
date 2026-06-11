@@ -14,8 +14,15 @@ import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { ThemeSettings } from "@/components/theme-settings";
 import { Settings } from "@/components/settings";
 import { Library } from "@/components/library";
+import { ActivityBar } from "@/components/activity-bar";
 import { ShareDialog } from "@/components/share-dialog";
 import {
+  applyColorMode,
+  getColorMode,
+  watchSystemColorMode,
+} from "@/lib/color-mode";
+import {
+  adoptAuthToken,
   authClient,
   collabWsBase,
   getAuthToken,
@@ -29,8 +36,6 @@ import {
   getDocTheme,
 } from "@/lib/theme-sync";
 import type { ThemeTokens } from "@/lib/theme";
-import { AIPanel } from "@/components/ai-panel";
-import type { AITaskKind } from "@/lib/ai";
 import type { AppCommand } from "@/lib/commands";
 import {
   applyTheme,
@@ -114,6 +119,10 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
+  // bumps when auth changes out-of-band (deep-link sign-in) so account UI refreshes
+  const [authNonce, setAuthNonce] = useState(0);
+  // bumps to refresh the Library panel (file opened/saved, sync changed)
+  const [libRefreshKey, setLibRefreshKey] = useState(0);
   const [showShare, setShowShare] = useState(false);
   const [cloudId, setCloudId] = useState<string | null>(null);
   const [canShare, setCanShare] = useState(false);
@@ -124,11 +133,6 @@ export default function Home() {
   >("disconnected");
   // Owner-pinned theme on the open shared doc (non-owners only)
   const [enforcedTheme, setEnforcedTheme] = useState<ThemeTokens | null>(null);
-  const [aiTask, setAiTask] = useState<{
-    kind: AITaskKind;
-    input: string;
-    sel?: { from: number; to: number };
-  } | null>(null);
 
   const isDirty = content !== savedContent;
 
@@ -189,6 +193,12 @@ export default function Home() {
     refreshCollab();
   }, [refreshCollab]);
 
+  // Latest refreshCollab, readable from the once-registered deep-link listener
+  const refreshCollabRef = useRef(refreshCollab);
+  useEffect(() => {
+    refreshCollabRef.current = refreshCollab;
+  }, [refreshCollab]);
+
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
     (s: "connecting" | "connected" | "disconnected") => setLiveStatus(s),
@@ -209,6 +219,7 @@ export default function Home() {
           content: data.content,
         });
       }
+      setLibRefreshKey((k) => k + 1);
     },
     []
   );
@@ -464,21 +475,18 @@ export default function Home() {
     handleExportHTML,
   ]);
 
-  // Apply the persisted theme before first paint of the booted UI
+  // Apply the chosen color mode (system/light/dark) before first paint, and
+  // keep "system" tracking the OS preference.
   useEffect(() => {
-    const store = loadThemeStore();
-    applyTheme(findTheme(store, store.activeId).tokens);
+    applyColorMode(getColorMode());
+    const stopWatch = watchSystemColorMode();
     // hand the stored auth token + server URL to the main-process sync engine
     pushSyncConfig();
-    // themes follow the account: pull the cloud store (seed it from local
-    // the first time)
+    // themes follow the account: pull the cloud preset store for availability
     pullCloudThemes().then((pulled) => {
-      if (pulled) {
-        applyTheme(findTheme(pulled, pulled.activeId).tokens);
-      } else if (pulled === false) {
-        pushCloudThemes();
-      }
+      if (pulled === false) pushCloudThemes();
     });
+    return stopWatch;
   }, []);
 
   // Owner-pinned themes override the local choice while the doc is open
@@ -521,7 +529,22 @@ export default function Home() {
     api.onMenuTheme?.(() => setShowTheme((v) => !v));
     api.onMenuSettings?.(() => setShowSettings((v) => !v));
     api.onMenuLibrary?.(() => setShowLibrary((v) => !v));
-    api.onDeepLink?.(() => setShowSettings(true));
+    api.onDeepLink?.((url) => {
+      // markie://auth?token=... — Google sign-in returning via the bridge
+      try {
+        const u = new URL(url);
+        const token = u.searchParams.get("token");
+        if (u.host === "auth" && token) {
+          adoptAuthToken(token);
+          refreshCollabRef.current();
+          setAuthNonce((n) => n + 1); // re-render Settings/account state
+          return;
+        }
+      } catch {
+        // not a parseable deep link — fall through
+      }
+      setShowSettings(true);
+    });
     api.onMenuFormatTables?.(() =>
       setContent((prev) => formatMarkdownTables(prev))
     );
@@ -566,31 +589,8 @@ export default function Home() {
         ? [{ id: "share", title: "Share…", group: "File" as const, keywords: "collaborate invite live people", run: () => setShowShare(true) }]
         : []),
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
-      {
-        id: "ai-summarize",
-        title: "AI: Summarize Document",
-        group: "AI" as const,
-        keywords: "summary tldr local inference",
-        run: () => setAiTask({ kind: "summarize", input: content }),
-      },
-      {
-        id: "ai-rewrite",
-        title: "AI: Rewrite Selection",
-        group: "AI" as const,
-        keywords: "improve clarify local inference",
-        run: () => {
-          if (!richEditor) return;
-          const { from, to, empty } = richEditor.state.selection;
-          if (empty) return;
-          setAiTask({
-            kind: "rewrite",
-            input: richEditor.state.doc.textBetween(from, to, "\n"),
-            sel: { from, to },
-          });
-        },
-      },
     ],
-    [handleOpenFile, handleSave, handleSaveAs, handleFork, handleExportPDF, handleExportHTML, canShare, content, richEditor]
+    [handleOpenFile, handleSave, handleSaveAs, handleFork, handleExportPDF, handleExportHTML, canShare]
   );
 
   if (!booted) {
@@ -616,6 +616,29 @@ export default function Home() {
       />
 
       <div className="flex-1 flex overflow-hidden">
+        {/* Far-left app nav */}
+        <ActivityBar
+          libraryOpen={showLibrary}
+          onToggleLibrary={() => setShowLibrary((v) => !v)}
+          onOpenFile={handleOpenFile}
+          onShortcuts={() => setShowHelp((v) => !v)}
+          onThemePresets={() => setShowTheme(true)}
+          onAccount={() => setShowSettings(true)}
+          authNonce={authNonce}
+        />
+
+        {/* Docked Library panel */}
+        {showLibrary && (
+          <Library
+            onClose={() => setShowLibrary(false)}
+            onOpenPath={openPath}
+            onOpenFile={handleOpenFile}
+            onSignIn={() => setShowSettings(true)}
+            activePath={filePath}
+            refreshKey={libRefreshKey}
+          />
+        )}
+
         {/* Editor pane */}
         {(mode === "edit" || mode === "split") && (
           <div
@@ -680,37 +703,9 @@ export default function Home() {
         <Settings
           onClose={() => {
             setShowSettings(false);
+            setAuthNonce((n) => n + 1); // account/avatar reflects sign-in/out
+            setLibRefreshKey((k) => k + 1);
             refreshCollab(); // sign-in/out changes live eligibility
-          }}
-        />
-      )}
-      {showLibrary && (
-        <Library
-          onClose={() => {
-            setShowLibrary(false);
-            refreshCollab(); // sync on/off changes live eligibility
-          }}
-          onOpenPath={openPath}
-        />
-      )}
-      {aiTask && (
-        <AIPanel
-          task={aiTask.kind}
-          input={aiTask.input}
-          onClose={() => setAiTask(null)}
-          onInsert={(result) => {
-            if (aiTask.kind === "rewrite" && aiTask.sel && richEditor) {
-              richEditor
-                .chain()
-                .focus()
-                .insertContentAt(aiTask.sel, result)
-                .run();
-            } else if (richEditor) {
-              // tiptap-markdown parses markdown strings on insert
-              richEditor.commands.insertContentAt(0, `${result}\n\n---\n`);
-            } else {
-              setContent((prev) => `${result}\n\n---\n\n${prev}`);
-            }
           }}
         />
       )}

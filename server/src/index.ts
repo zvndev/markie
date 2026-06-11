@@ -5,6 +5,7 @@ import { auth } from "./auth.ts";
 import { docs } from "./docs.ts";
 import { shares } from "./shares.ts";
 import { comments } from "./comments.ts";
+import { themes } from "./themes.ts";
 import { attachCollab } from "./collab.ts";
 
 const app = new Hono();
@@ -27,6 +28,7 @@ app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/docs", docs);
 app.route("/api/docs", shares);
 app.route("/api/docs", comments);
+app.route("/api", themes);
 
 app.get("/api/me", async (c) => {
   const session = await auth.api.getSession({ headers: c.req.raw.headers });

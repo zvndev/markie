@@ -12,6 +12,7 @@ import { csvToMarkdownTable, markdownTableToCSV } from "@/lib/csv";
 import { CommandPalette } from "@/components/command-palette";
 import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { ThemeSettings } from "@/components/theme-settings";
+import { Settings } from "@/components/settings";
 import type { AppCommand } from "@/lib/commands";
 import {
   applyTheme,
@@ -92,6 +93,7 @@ export default function Home() {
   const [showPalette, setShowPalette] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showTheme, setShowTheme] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
 
   const isDirty = content !== savedContent;
@@ -366,6 +368,8 @@ export default function Home() {
     api.onMenuCommandPalette?.(() => setShowPalette((v) => !v));
     api.onMenuShortcuts?.(() => setShowHelp((v) => !v));
     api.onMenuTheme?.(() => setShowTheme((v) => !v));
+    api.onMenuSettings?.(() => setShowSettings((v) => !v));
+    api.onDeepLink?.(() => setShowSettings(true));
     api.onMenuFormatTables?.(() =>
       setContent((prev) => formatMarkdownTables(prev))
     );
@@ -403,6 +407,7 @@ export default function Home() {
         },
       })),
       { id: "theme-settings", title: "Theme Settings…", group: "Theme", keywords: "color font preset style", run: () => setShowTheme(true) },
+      { id: "settings", title: "Settings…", group: "File", shortcut: "⌘,", keywords: "account sign in sync login", run: () => setShowSettings(true) },
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
     ],
     [handleOpenFile, handleSave, handleSaveAs, handleFork, handleExportPDF, handleExportHTML]
@@ -467,6 +472,7 @@ export default function Home() {
         <ShortcutsHelp commands={commands} onClose={() => setShowHelp(false)} />
       )}
       {showTheme && <ThemeSettings onClose={() => setShowTheme(false)} />}
+      {showSettings && <Settings onClose={() => setShowSettings(false)} />}
 
       {/* Drag overlay */}
       {isDragging && (

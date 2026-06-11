@@ -34,6 +34,9 @@ export interface ElectronAPI {
   onMenuCommandPalette(cb: () => void): void;
   onMenuShortcuts(cb: () => void): void;
   onMenuTheme(cb: () => void): void;
+  onMenuSettings(cb: () => void): void;
+  onDeepLink(cb: (url: string) => void): void;
+  openExternal(url: string): Promise<void>;
   onSetMode(cb: (mode: ViewMode) => void): void;
   onToggleStats(cb: () => void): void;
   onFileOpened(cb: (data: FilePayload) => void): void;

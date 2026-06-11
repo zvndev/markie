@@ -1,5 +1,5 @@
 import { betterAuth } from "better-auth";
-import { emailOTP } from "better-auth/plugins";
+import { bearer, emailOTP } from "better-auth/plugins";
 import Database from "better-sqlite3";
 import { sendEmail } from "./email.ts";
 
@@ -26,6 +26,9 @@ export const auth = betterAuth({
       }
     : undefined,
   plugins: [
+    // Desktop clients authenticate with a bearer token (set-auth-token
+    // response header) — cross-origin cookies are unreliable from app://
+    bearer(),
     emailOTP({
       async sendVerificationOTP({ email, otp, type }) {
         await sendEmail({

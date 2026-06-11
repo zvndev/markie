@@ -10,6 +10,7 @@ app.use(
   cors({
     origin: ["app://markie", "http://localhost:3000"],
     credentials: true,
+    exposeHeaders: ["set-auth-token"],
   })
 );
 

@@ -67,6 +67,7 @@
     "@tiptap/react": "^3.26.0",
     "@tiptap/starter-kit": "^3.26.0",
     "@uiw/react-codemirror": "^4.25.8",
+    "better-sqlite3": "^12.10.0",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.38",
     "next": "16.1.7",

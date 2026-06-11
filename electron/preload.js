@@ -31,6 +31,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onDeepLink: (callback) =>
     ipcRenderer.on("deep-link", (_event, url) => callback(url)),
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  syncConfig: (cfg) => ipcRenderer.invoke("sync-config", cfg),
+  registryTrack: (args) => ipcRenderer.invoke("registry-track", args),
+  libraryState: () => ipcRenderer.invoke("library-state"),
+  docSyncOn: (args) => ipcRenderer.invoke("doc-sync-on", args),
+  docSyncOff: (args) => ipcRenderer.invoke("doc-sync-off", args),
+  docPush: (args) => ipcRenderer.invoke("doc-push", args),
+  docResolve: (args) => ipcRenderer.invoke("doc-resolve", args),
+  docPull: (args) => ipcRenderer.invoke("doc-pull", args),
+  onMenuLibrary: (callback) =>
+    ipcRenderer.on("menu-library", () => callback()),
   onSetMode: (callback) =>
     ipcRenderer.on("set-mode", (_event, mode) => callback(mode)),
   onToggleStats: (callback) =>

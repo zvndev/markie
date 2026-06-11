@@ -240,6 +240,40 @@ ipcMain.handle("export-html", async (_event, { defaultName, html }) => {
   }
 });
 
+// ── Sync / library IPC ──
+const registry = require("./registry");
+const sync = require("./sync");
+
+ipcMain.handle("sync-config", (_event, cfg) => sync.setConfig(cfg));
+ipcMain.handle("registry-track", (_event, { path: p, name, content }) => {
+  try {
+    registry.track(p, name, content);
+    return { ok: true };
+  } catch (err) {
+    return { error: String(err) };
+  }
+});
+ipcMain.handle("library-state", () => sync.libraryState());
+ipcMain.handle("doc-sync-on", (_event, { path: p, name, content }) =>
+  sync.syncOn(p, name, content)
+);
+ipcMain.handle("doc-sync-off", (_event, { path: p, deleteRemote }) =>
+  sync.syncOff(p, deleteRemote)
+);
+ipcMain.handle("doc-push", (_event, { path: p, name, content }) =>
+  sync.push(p, name, content)
+);
+ipcMain.handle("doc-resolve", (_event, { path: p, strategy }) =>
+  sync.resolve(p, strategy)
+);
+ipcMain.handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: suggestedName || "document.md",
+  });
+  if (result.canceled || !result.filePath) return { canceled: true };
+  return sync.pull(cloudId, result.filePath);
+});
+
 // IPC: open an https URL in the system browser (OAuth flows)
 ipcMain.handle("open-external", (_event, url) => {
   if (/^https?:\/\//i.test(url)) shell.openExternal(url);
@@ -292,6 +326,12 @@ const template = [
         label: "Open…",
         accelerator: "CmdOrCtrl+O",
         click: () => mainWindow?.webContents.send("menu-open-file"),
+      },
+      { type: "separator" },
+      {
+        label: "Library…",
+        accelerator: "CmdOrCtrl+L",
+        click: () => mainWindow?.webContents.send("menu-library"),
       },
       { type: "separator" },
       {

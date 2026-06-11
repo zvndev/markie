@@ -43,6 +43,7 @@ function createWindow() {
     height: 820,
     minWidth: 600,
     minHeight: 400,
+    show: false,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 14, y: 14 },
     backgroundColor: "#09090b",
@@ -51,6 +52,10 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  mainWindow.once("ready-to-show", () => {
+    mainWindow?.show();
   });
 
   mainWindow.on("closed", () => {

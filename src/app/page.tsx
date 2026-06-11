@@ -56,7 +56,8 @@ Start editing to see changes live!
 type ViewMode = "edit" | "preview" | "split";
 
 export default function Home() {
-  const [content, setContent] = useState(SAMPLE);
+  const [content, setContent] = useState("");
+  const [booted, setBooted] = useState(false);
   const [mode, setMode] = useState<ViewMode>("preview");
   const [fileName, setFileName] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -208,14 +209,19 @@ export default function Home() {
     handlersRef.current.exportPDF = handleExportPDF;
   }, [handleOpenFile, handleExportPDF]);
 
-  // Cold start: pull any file the OS asked us to open before React mounted
+  // Boot: decide the first painted document — the OS-opened file or the
+  // welcome sample — before rendering anything, so the wrong doc never flashes
   useEffect(() => {
-    const api = getElectronAPI();
-    api?.getInitialFile?.().then((file) => {
+    const pending =
+      getElectronAPI()?.getInitialFile?.() ?? Promise.resolve(null);
+    pending.then((file) => {
       if (file) {
         setContent(file.content);
         setFileName(file.name);
+      } else {
+        setContent(SAMPLE);
       }
+      setBooted(true);
     });
   }, []);
 
@@ -228,6 +234,10 @@ export default function Home() {
     api.onSetMode?.((m) => setMode(m));
     api.onFileOpened?.((data) => handlersRef.current.fileOpened(data));
   }, []);
+
+  if (!booted) {
+    return <div className="h-screen bg-background" />;
+  }
 
   return (
     <div className="h-screen flex flex-col bg-background">

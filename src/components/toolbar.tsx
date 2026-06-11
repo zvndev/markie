@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import type { PDFTheme } from "@/lib/pdf-styles";
+import { getElectronAPI } from "@/lib/electron";
 
 type ViewMode = "edit" | "preview" | "split";
 
@@ -27,6 +28,14 @@ export function Toolbar({
   const [showPDFMenu, setShowPDFMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Clear the macOS window buttons (hiddenInset traffic lights at x:14).
+  // useSyncExternalStore reads the never-changing platform hydration-safely.
+  const trafficLightPad = useSyncExternalStore(
+    () => () => {},
+    () => getElectronAPI()?.platform === "darwin",
+    () => false
+  );
+
   useEffect(() => {
     if (!showPDFMenu) return;
     const handleClick = (e: MouseEvent) => {
@@ -39,7 +48,10 @@ export function Toolbar({
   }, [showPDFMenu]);
 
   return (
-    <div className="h-11 border-b border-border bg-surface flex items-center justify-between px-4 select-none shrink-0"
+    <div
+      className={`h-11 border-b border-border bg-surface flex items-center justify-between pr-4 select-none shrink-0 ${
+        trafficLightPad ? "pl-[84px]" : "pl-4"
+      }`}
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
     >
       {/* Left: App name + file + export */}

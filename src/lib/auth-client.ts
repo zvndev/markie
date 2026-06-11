@@ -10,7 +10,7 @@ export interface MarkieUser {
 }
 
 const SERVER_KEY = "markie.server.v1";
-const DEFAULT_SERVER = "http://localhost:8787";
+const DEFAULT_SERVER = "https://api-production-602f.up.railway.app";
 
 export function getServerURL(): string {
   try {

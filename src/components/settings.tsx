@@ -10,6 +10,12 @@ import {
   type MarkieUser,
 } from "@/lib/auth-client";
 import { getElectronAPI } from "@/lib/electron";
+import {
+  getAIConfig,
+  setAIConfig,
+  DEFAULT_AI_URL,
+  type AIConfig,
+} from "@/lib/ai";
 
 interface SettingsProps {
   onClose: () => void;
@@ -31,6 +37,12 @@ export function Settings({ onClose }: SettingsProps) {
   const [sync, setSync] = useState(getSyncEnabled);
   const [server, setServer] = useState(getServerURL);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [ai, setAi] = useState(getAIConfig);
+
+  const commitAI = (next: AIConfig) => {
+    setAi(next);
+    setAIConfig(next);
+  };
 
   const refresh = useCallback(async () => {
     const u = await authClient.me();
@@ -231,6 +243,45 @@ export function Settings({ onClose }: SettingsProps) {
             {error && <div className="text-[12px] text-red-400">{error}</div>}
           </div>
         )}
+
+        {/* AI — local inference gateway */}
+        <div className="text-[10px] uppercase tracking-wide text-muted mb-2 mt-1">
+          AI
+        </div>
+        <div className="mb-4 flex flex-col gap-2">
+          <div className="text-[11px] text-muted">
+            Summaries and rewrites run on your own inference gateway — no
+            third-party AI billing.
+          </div>
+          <label className="text-[11px] text-muted block">
+            Gateway URL
+            <input
+              className={inputClass}
+              value={ai.url}
+              placeholder={DEFAULT_AI_URL}
+              onChange={(e) => commitAI({ ...ai, url: e.target.value })}
+            />
+          </label>
+          <label className="text-[11px] text-muted block">
+            API key
+            <input
+              className={inputClass}
+              type="password"
+              value={ai.key}
+              placeholder="INFERENCE_API_KEY"
+              onChange={(e) => commitAI({ ...ai, key: e.target.value })}
+            />
+          </label>
+          <label className="text-[11px] text-muted block">
+            Model
+            <input
+              className={inputClass}
+              value={ai.model}
+              placeholder="auto"
+              onChange={(e) => commitAI({ ...ai, model: e.target.value })}
+            />
+          </label>
+        </div>
 
         {/* Advanced */}
         <button

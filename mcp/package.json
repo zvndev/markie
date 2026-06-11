@@ -1,0 +1,12 @@
+{
+  "name": "markie-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server exposing the Markie library to AI agents",
+  "bin": { "markie-mcp": "./markie-mcp.mjs" },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0"
+  }
+}

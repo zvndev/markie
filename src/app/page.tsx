@@ -29,6 +29,8 @@ import {
   getDocTheme,
 } from "@/lib/theme-sync";
 import type { ThemeTokens } from "@/lib/theme";
+import { AIPanel } from "@/components/ai-panel";
+import type { AITaskKind } from "@/lib/ai";
 import type { AppCommand } from "@/lib/commands";
 import {
   applyTheme,
@@ -122,6 +124,11 @@ export default function Home() {
   >("disconnected");
   // Owner-pinned theme on the open shared doc (non-owners only)
   const [enforcedTheme, setEnforcedTheme] = useState<ThemeTokens | null>(null);
+  const [aiTask, setAiTask] = useState<{
+    kind: AITaskKind;
+    input: string;
+    sel?: { from: number; to: number };
+  } | null>(null);
 
   const isDirty = content !== savedContent;
 
@@ -559,8 +566,31 @@ export default function Home() {
         ? [{ id: "share", title: "Share…", group: "File" as const, keywords: "collaborate invite live people", run: () => setShowShare(true) }]
         : []),
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
+      {
+        id: "ai-summarize",
+        title: "AI: Summarize Document",
+        group: "AI" as const,
+        keywords: "summary tldr local inference",
+        run: () => setAiTask({ kind: "summarize", input: content }),
+      },
+      {
+        id: "ai-rewrite",
+        title: "AI: Rewrite Selection",
+        group: "AI" as const,
+        keywords: "improve clarify local inference",
+        run: () => {
+          if (!richEditor) return;
+          const { from, to, empty } = richEditor.state.selection;
+          if (empty) return;
+          setAiTask({
+            kind: "rewrite",
+            input: richEditor.state.doc.textBetween(from, to, "\n"),
+            sel: { from, to },
+          });
+        },
+      },
     ],
-    [handleOpenFile, handleSave, handleSaveAs, handleFork, handleExportPDF, handleExportHTML, canShare]
+    [handleOpenFile, handleSave, handleSaveAs, handleFork, handleExportPDF, handleExportHTML, canShare, content, richEditor]
   );
 
   if (!booted) {
@@ -661,6 +691,27 @@ export default function Home() {
             refreshCollab(); // sync on/off changes live eligibility
           }}
           onOpenPath={openPath}
+        />
+      )}
+      {aiTask && (
+        <AIPanel
+          task={aiTask.kind}
+          input={aiTask.input}
+          onClose={() => setAiTask(null)}
+          onInsert={(result) => {
+            if (aiTask.kind === "rewrite" && aiTask.sel && richEditor) {
+              richEditor
+                .chain()
+                .focus()
+                .insertContentAt(aiTask.sel, result)
+                .run();
+            } else if (richEditor) {
+              // tiptap-markdown parses markdown strings on insert
+              richEditor.commands.insertContentAt(0, `${result}\n\n---\n`);
+            } else {
+              setContent((prev) => `${result}\n\n---\n\n${prev}`);
+            }
+          }}
         />
       )}
       {showShare && cloudId && (

@@ -1,0 +1,9 @@
+dbs:
+  - path: /data/markie.db
+    replicas:
+      - type: s3
+        endpoint: ${B2_ENDPOINT}      # e.g. https://s3.us-west-004.backblazeb2.com
+        bucket: ${B2_BUCKET}
+        path: markie-db
+        access-key-id: ${B2_KEY_ID}
+        secret-access-key: ${B2_APP_KEY}

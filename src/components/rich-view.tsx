@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useEditor, EditorContent, type Editor } from "@tiptap/react";
+import {
+  useEditor,
+  useEditorState,
+  EditorContent,
+  type Editor,
+} from "@tiptap/react";
+import { TableBar } from "@/components/format-rail";
+import { formatMarkdownTables } from "@/lib/format-tables";
 import { StarterKit } from "@tiptap/starter-kit";
 import { TableKit } from "@tiptap/extension-table";
 import { TaskList } from "@tiptap/extension-task-list";
@@ -43,11 +50,13 @@ export function RichView({ value, onChange, onEditorReady }: RichViewProps) {
     onUpdate: ({ editor }) => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       debounceTimer.current = setTimeout(() => {
-        const md = (
+        const raw = (
           editor.storage as unknown as {
             markdown: { getMarkdown(): string };
           }
         ).markdown.getMarkdown();
+        // Rich edits always emit pretty-aligned table pipes
+        const md = formatMarkdownTables(raw);
         lastEmitted.current = md;
         onChange(md);
       }, 250);
@@ -76,11 +85,19 @@ export function RichView({ value, onChange, onEditorReady }: RichViewProps) {
     };
   }, []);
 
+  const inTable = useEditorState({
+    editor,
+    selector: ({ editor: e }) => e?.isActive("table") ?? false,
+  });
+
   return (
-    <div className="h-full overflow-y-auto px-10 py-8">
-      <article className="markdown-body max-w-3xl mx-auto">
-        <EditorContent editor={editor} />
-      </article>
+    <div className="h-full relative">
+      {editor && inTable && <TableBar editor={editor} />}
+      <div className="h-full overflow-y-auto px-10 py-8">
+        <article className="markdown-body max-w-3xl mx-auto">
+          <EditorContent editor={editor} />
+        </article>
+      </div>
     </div>
   );
 }

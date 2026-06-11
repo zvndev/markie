@@ -17,7 +17,7 @@ let mainWindow;
 let rendererReady = false;
 let pendingFilePath = null;
 
-const OPENABLE = /\.(md|markdown|mdx|txt)$/i;
+const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
 
 function readFilePayload(filePath) {
   try {
@@ -108,6 +108,7 @@ ipcMain.handle("open-file", async () => {
     properties: ["openFile"],
     filters: [
       { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
+      { name: "CSV", extensions: ["csv"] },
       { name: "Text", extensions: ["txt"] },
       { name: "All Files", extensions: ["*"] },
     ],
@@ -179,6 +180,7 @@ ipcMain.handle("save-file-as", async (_event, { defaultName, content }) => {
     defaultPath: defaultName || "untitled.md",
     filters: [
       { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
+      { name: "CSV", extensions: ["csv"] },
       { name: "Text", extensions: ["txt"] },
     ],
   });
@@ -319,6 +321,12 @@ const template = [
       { role: "copy" },
       { role: "paste" },
       { role: "selectAll" },
+      { type: "separator" },
+      {
+        label: "Format Tables",
+        accelerator: "CmdOrCtrl+Alt+T",
+        click: () => mainWindow?.webContents.send("menu-format-tables"),
+      },
     ],
   },
   {

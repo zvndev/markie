@@ -46,6 +46,11 @@
         "ext": "mdx",
         "name": "MDX",
         "role": "Viewer"
+      },
+      {
+        "ext": "csv",
+        "name": "CSV",
+        "role": "Viewer"
       }
     ]
   },

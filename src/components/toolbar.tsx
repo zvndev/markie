@@ -12,8 +12,6 @@ interface ToolbarProps {
   onOpenFile: () => void;
   onExportPDF: (theme: PDFTheme) => void;
   fileName: string | null;
-  charCount: number;
-  wordCount: number;
 }
 
 export function Toolbar({
@@ -22,8 +20,6 @@ export function Toolbar({
   onOpenFile,
   onExportPDF,
   fileName,
-  charCount,
-  wordCount,
 }: ToolbarProps) {
   const [showPDFMenu, setShowPDFMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -158,11 +154,8 @@ export function Toolbar({
         </button>
       </div>
 
-      {/* Right: Stats */}
-      <div className="flex items-center gap-3 text-[11px] text-muted tabular-nums">
-        <span>{wordCount} words</span>
-        <span>{charCount} chars</span>
-      </div>
+      {/* Right: spacer (stats moved to the menu bar) */}
+      <div className="w-24" aria-hidden="true" />
     </div>
   );
 }

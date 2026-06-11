@@ -250,6 +250,12 @@ const template = [
         click: () => mainWindow?.webContents.send("set-mode", "split"),
       },
       { type: "separator" },
+      {
+        label: "Statistics",
+        accelerator: "CmdOrCtrl+Shift+I",
+        click: () => mainWindow?.webContents.send("toggle-stats"),
+      },
+      { type: "separator" },
       { role: "togglefullscreen" },
       { type: "separator" },
       { role: "toggleDevTools" },

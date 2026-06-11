@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Toolbar } from "@/components/toolbar";
 import { Editor } from "@/components/editor";
 import { Preview } from "@/components/preview";
+import { StatsPanel } from "@/components/stats-panel";
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI, type FilePayload } from "@/lib/electron";
 
@@ -61,12 +62,8 @@ export default function Home() {
   const [mode, setMode] = useState<ViewMode>("preview");
   const [fileName, setFileName] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const previewRef = useRef<HTMLElement>(null);
-
-  const wordCount = content.trim()
-    ? content.trim().split(/\s+/).length
-    : 0;
-  const charCount = content.length;
 
   const handleOpenFile = useCallback(() => {
     const api = getElectronAPI();
@@ -232,6 +229,7 @@ export default function Home() {
     api.onMenuOpenFile?.(() => handlersRef.current.openFile());
     api.onMenuExportPDF?.((theme) => handlersRef.current.exportPDF(theme ?? "dark"));
     api.onSetMode?.((m) => setMode(m));
+    api.onToggleStats?.(() => setShowStats((s) => !s));
     api.onFileOpened?.((data) => handlersRef.current.fileOpened(data));
   }, []);
 
@@ -240,15 +238,13 @@ export default function Home() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-background">
+    <div className="h-screen flex flex-col bg-background relative">
       <Toolbar
         mode={mode}
         onModeChange={setMode}
         onOpenFile={handleOpenFile}
         onExportPDF={handleExportPDF}
         fileName={fileName}
-        charCount={charCount}
-        wordCount={wordCount}
       />
 
       <div className="flex-1 flex overflow-hidden">
@@ -274,6 +270,10 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {showStats && (
+        <StatsPanel content={content} onClose={() => setShowStats(false)} />
+      )}
 
       {/* Drag overlay */}
       {isDragging && (

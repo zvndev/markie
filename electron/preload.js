@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("menu-export-pdf", () => callback()),
   onSetMode: (callback) =>
     ipcRenderer.on("set-mode", (_event, mode) => callback(mode)),
+  onToggleStats: (callback) =>
+    ipcRenderer.on("toggle-stats", () => callback()),
   onFileOpened: (callback) =>
     ipcRenderer.on("file-opened", (_event, data) => callback(data)),
 });

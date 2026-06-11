@@ -244,12 +244,21 @@ Spec item: **11**.
   concurrent edits), threads with replies, resolve/reopen, right-margin gutter
   UI Google-Docs style, email notification on new comment on your doc.
 
-### Phase 8 — Shared theming
+### Phase 8 — Shared theming ✅ *(completed 2026-06-11, packaged-app verified)*
+
+> user_themes stores the preset store per account (last-write-wins);
+> desktop pulls at boot and pushes on every theme change (Theme Settings
+> + palette). Share dialog owner toggle "Viewers see my theme" pins the
+> active preset to the doc (docs.enforced_theme, owner-only PUT);
+> members get it applied while the doc is open with an "Owner theme"
+> lock chip, own theme restored when unpinned/closed. Verified: Bob's
+> cloud store pulled at boot, Alice's pinned amber overrides Bob's green
+> while live, unpin restores Bob's own theme.
 Spec item: **13 (cloud half)**.
-- Theme presets sync to the account (theme_presets table).
-- Per-share toggle: **"Viewers see my theme"** (enforced — doc opens locked to
-  the owner's preset, which travels with the share) vs. recipients read in
-  their own theme. Default: viewer's choice.
+- Theme presets sync to the account.
+- Per-doc owner toggle: **"Viewers see my theme"** (enforced — doc opens in
+  the owner's pinned preset, which travels with the share) vs. recipients
+  read in their own theme. Default: viewer's choice.
 
 ### Phase 9 — AI + MCP *(later, design sketch only)*
 Spec item: **9**.

@@ -8,6 +8,8 @@ import {
   type ShareMember,
 } from "@/lib/auth-client";
 import { colorForName, initials } from "@/lib/collab";
+import { getDocTheme, setDocTheme } from "@/lib/theme-sync";
+import { findTheme, loadThemeStore } from "@/lib/theme";
 
 interface ShareDialogProps {
   docId: string;
@@ -29,6 +31,7 @@ export function ShareDialog({
   const [role, setRole] = useState<"viewer" | "editor">("editor");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [themePinned, setThemePinned] = useState(false);
 
   const load = useCallback(() => {
     return Promise.all([authClient.me(), sharesClient.list(docId)]).then(
@@ -41,7 +44,20 @@ export function ShareDialog({
 
   useEffect(() => {
     load();
-  }, [load]);
+    getDocTheme(docId).then((tokens) => setThemePinned(!!tokens));
+  }, [load, docId]);
+
+  const toggleThemePin = async () => {
+    const next = !themePinned;
+    setThemePinned(next);
+    const store = loadThemeStore();
+    const ok = await setDocTheme(
+      docId,
+      next ? findTheme(store, store.activeId).tokens : null
+    );
+    if (!ok) setThemePinned(!next);
+    else onChanged();
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -141,6 +157,20 @@ export function ShareDialog({
               They get an email, and the doc appears in their Library. Everyone
               in it edits live, together.
             </div>
+            <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={themePinned}
+                onChange={toggleThemePin}
+                className="accent-current"
+              />
+              <span className="text-[12px] text-foreground/90">
+                Viewers see my theme
+              </span>
+              <span className="text-[10px] text-muted">
+                — pins your current preset to this doc
+              </span>
+            </label>
           </div>
         )}
 

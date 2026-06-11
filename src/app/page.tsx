@@ -23,6 +23,12 @@ import {
   sharesClient,
 } from "@/lib/auth-client";
 import { colorForName, type CollabConfig, type PeerUser } from "@/lib/collab";
+import {
+  pullCloudThemes,
+  pushCloudThemes,
+  getDocTheme,
+} from "@/lib/theme-sync";
+import type { ThemeTokens } from "@/lib/theme";
 import type { AppCommand } from "@/lib/commands";
 import {
   applyTheme,
@@ -114,6 +120,8 @@ export default function Home() {
   const [liveStatus, setLiveStatus] = useState<
     "connecting" | "connected" | "disconnected"
   >("disconnected");
+  // Owner-pinned theme on the open shared doc (non-owners only)
+  const [enforcedTheme, setEnforcedTheme] = useState<ThemeTokens | null>(null);
 
   const isDirty = content !== savedContent;
 
@@ -133,15 +141,24 @@ export default function Home() {
       setCanShare(!!cid && !!token);
       if (!cid || !token) {
         setCollabCfg(null);
+        setEnforcedTheme(null);
         return;
       }
       const me = await authClient.me();
       const members = me ? await sharesClient.list(cid) : null;
       if (!me || !members || members.length === 0) {
         setCollabCfg(null);
+        setEnforcedTheme(null);
         return;
       }
       const mine = members.find((m) => m.user_id === me.id);
+      // Members read with the owner's pinned theme when one is set;
+      // the owner always keeps their own live theme
+      if (mine) {
+        getDocTheme(cid).then(setEnforcedTheme);
+      } else {
+        setEnforcedTheme(null);
+      }
       const readonly = mine?.role === "viewer";
       const display = me.name || me.email;
       setCollabCfg((prev) =>
@@ -446,7 +463,27 @@ export default function Home() {
     applyTheme(findTheme(store, store.activeId).tokens);
     // hand the stored auth token + server URL to the main-process sync engine
     pushSyncConfig();
+    // themes follow the account: pull the cloud store (seed it from local
+    // the first time)
+    pullCloudThemes().then((pulled) => {
+      if (pulled) {
+        applyTheme(findTheme(pulled, pulled.activeId).tokens);
+      } else if (pulled === false) {
+        pushCloudThemes();
+      }
+    });
   }, []);
+
+  // Owner-pinned themes override the local choice while the doc is open
+  useEffect(() => {
+    if (enforcedTheme) {
+      applyTheme(enforcedTheme);
+      return () => {
+        const store = loadThemeStore();
+        applyTheme(findTheme(store, store.activeId).tokens);
+      };
+    }
+  }, [enforcedTheme]);
 
   // Boot: decide the first painted document — the OS-opened file or the
   // welcome sample — before rendering anything, so the wrong doc never flashes
@@ -512,6 +549,7 @@ export default function Home() {
           const store = loadThemeStore();
           saveThemeStore({ ...store, activeId: t.id });
           applyTheme(t.tokens);
+          pushCloudThemes();
         },
       })),
       { id: "theme-settings", title: "Theme Settings…", group: "Theme", keywords: "color font preset style", run: () => setShowTheme(true) },
@@ -544,6 +582,7 @@ export default function Home() {
         live={!!collabCfg}
         liveStatus={liveStatus}
         peers={peers}
+        themeLocked={!!enforcedTheme}
       />
 
       <div className="flex-1 flex overflow-hidden">

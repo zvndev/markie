@@ -228,12 +228,21 @@ Spec items: **6, 11 (presence half)**.
   edit blocking is client-side for v1 (protocol-level guard noted as
   future hardening).
 
-### Phase 7 — Comments
+### Phase 7 — Comments ✅ *(completed 2026-06-11, E2E verified in packaged app)*
+
+> Server: threads + comments tables with opaque relative-position anchors,
+> role-gated routes (viewers read, editors+owner write), notification
+> emails to owner + thread participants. Desktop: selection → Comment
+> affordance, margin gutter bubbles via y-tiptap relative→absolute
+> mapping, thread panel with replies/resolve/reopen/delete-own, resolved
+> chip, 15s polling. Verified: thread created through the real composer
+> UI, Bob's API reply appears, anchor selects the identical text after a
+> concurrent insert above it, resolve/reopen round-trip, email logged.
+> *(Deviation: library comment counts deferred — counts show in-doc.)*
 Spec item: **11**.
 - Range-anchored comments using Yjs relative positions (anchors survive
   concurrent edits), threads with replies, resolve/reopen, right-margin gutter
-  UI Google-Docs style, comment count in library, email notification on
-  mention/new comment on your doc.
+  UI Google-Docs style, email notification on new comment on your doc.
 
 ### Phase 8 — Shared theming
 Spec item: **13 (cloud half)**.

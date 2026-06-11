@@ -99,24 +99,51 @@ export function Toolbar({
         </div>
       </div>
 
-      {/* Center: Mode toggle */}
+      {/* Center: Mode toggle — View is primary, Edit/Split are icons */}
       <div
         className="flex items-center bg-background rounded-md p-0.5 gap-0.5"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
-        {(["edit", "split", "preview"] as ViewMode[]).map((m) => (
-          <button
-            key={m}
-            onClick={() => onModeChange(m)}
-            className={`px-3 py-1 text-[11px] font-medium rounded transition-all ${
-              mode === m
-                ? "bg-accent text-foreground"
-                : "text-muted hover:text-foreground"
-            }`}
-          >
-            {m === "edit" ? "Edit" : m === "split" ? "Split" : "Preview"}
-          </button>
-        ))}
+        <button
+          onClick={() => onModeChange("preview")}
+          title="View (⌘1)"
+          className={`px-3 py-1 text-[11px] font-medium rounded transition-all ${
+            mode === "preview"
+              ? "bg-accent text-foreground"
+              : "text-muted hover:text-foreground"
+          }`}
+        >
+          View
+        </button>
+        <button
+          onClick={() => onModeChange("edit")}
+          title="Edit (⌘2)"
+          aria-label="Edit mode"
+          className={`px-2 py-1 rounded transition-all ${
+            mode === "edit"
+              ? "bg-accent text-foreground"
+              : "text-muted hover:text-foreground"
+          }`}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+          </svg>
+        </button>
+        <button
+          onClick={() => onModeChange("split")}
+          title="Split (⌘3)"
+          aria-label="Split mode"
+          className={`px-2 py-1 rounded transition-all ${
+            mode === "split"
+              ? "bg-accent text-foreground"
+              : "text-muted hover:text-foreground"
+          }`}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="12" y1="3" x2="12" y2="21" />
+          </svg>
+        </button>
       </div>
 
       {/* Right: Stats */}

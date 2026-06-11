@@ -57,7 +57,7 @@ type ViewMode = "edit" | "preview" | "split";
 
 export default function Home() {
   const [content, setContent] = useState(SAMPLE);
-  const [mode, setMode] = useState<ViewMode>("split");
+  const [mode, setMode] = useState<ViewMode>("preview");
   const [fileName, setFileName] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const previewRef = useRef<HTMLElement>(null);
@@ -172,15 +172,15 @@ export default function Home() {
             break;
           case "1":
             e.preventDefault();
-            setMode("edit");
+            setMode("preview");
             break;
           case "2":
             e.preventDefault();
-            setMode("split");
+            setMode("edit");
             break;
           case "3":
             e.preventDefault();
-            setMode("preview");
+            setMode("split");
             break;
         }
         if (e.shiftKey && (e.key === "e" || e.key === "E")) {

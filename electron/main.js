@@ -230,19 +230,19 @@ const template = [
     label: "View",
     submenu: [
       {
-        label: "Edit Mode",
+        label: "View",
         accelerator: "CmdOrCtrl+1",
+        click: () => mainWindow?.webContents.send("set-mode", "preview"),
+      },
+      {
+        label: "Edit",
+        accelerator: "CmdOrCtrl+2",
         click: () => mainWindow?.webContents.send("set-mode", "edit"),
       },
       {
-        label: "Split Mode",
-        accelerator: "CmdOrCtrl+2",
-        click: () => mainWindow?.webContents.send("set-mode", "split"),
-      },
-      {
-        label: "Preview Mode",
+        label: "Split",
         accelerator: "CmdOrCtrl+3",
-        click: () => mainWindow?.webContents.send("set-mode", "preview"),
+        click: () => mainWindow?.webContents.send("set-mode", "split"),
       },
       { type: "separator" },
       { role: "togglefullscreen" },

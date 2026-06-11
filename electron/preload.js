@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onMenuSave: (callback) => ipcRenderer.on("menu-save", () => callback()),
   onMenuSaveAs: (callback) => ipcRenderer.on("menu-save-as", () => callback()),
   onMenuFork: (callback) => ipcRenderer.on("menu-fork", () => callback()),
+  onMenuFormatTables: (callback) =>
+    ipcRenderer.on("menu-format-tables", () => callback()),
   onSetMode: (callback) =>
     ipcRenderer.on("set-mode", (_event, mode) => callback(mode)),
   onToggleStats: (callback) =>

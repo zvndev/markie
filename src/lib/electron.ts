@@ -30,6 +30,7 @@ export interface ElectronAPI {
   onMenuSave(cb: () => void): void;
   onMenuSaveAs(cb: () => void): void;
   onMenuFork(cb: () => void): void;
+  onMenuFormatTables(cb: () => void): void;
   onSetMode(cb: (mode: ViewMode) => void): void;
   onToggleStats(cb: () => void): void;
   onFileOpened(cb: (data: FilePayload) => void): void;

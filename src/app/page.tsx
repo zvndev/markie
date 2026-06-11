@@ -3,10 +3,15 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Toolbar } from "@/components/toolbar";
 import { Editor } from "@/components/editor";
-import { Preview } from "@/components/preview";
+import { RichView } from "@/components/rich-view";
+import { FormatRail } from "@/components/format-rail";
 import { StatsPanel } from "@/components/stats-panel";
+import type { Editor as TipTapEditor } from "@tiptap/react";
+import { formatMarkdownTables } from "@/lib/format-tables";
+import { csvToMarkdownTable, markdownTableToCSV } from "@/lib/csv";
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI, type FilePayload } from "@/lib/electron";
+import { renderMarkdownHTML } from "@/lib/markdown-html";
 
 const SAMPLE = `# Welcome to Markie
 
@@ -56,6 +61,14 @@ Start editing to see changes live!
 
 type ViewMode = "edit" | "preview" | "split";
 
+const isCSVName = (name: string | null) => !!name && /\.csv$/i.test(name);
+
+// CSV files stay true CSV on disk; in the app they live as a markdown table
+const fromDisk = (name: string | null, raw: string) =>
+  isCSVName(name) ? csvToMarkdownTable(raw) : raw;
+const toDisk = (name: string | null, md: string) =>
+  isCSVName(name) ? markdownTableToCSV(md) : md;
+
 export default function Home() {
   const [content, setContent] = useState("");
   const [booted, setBooted] = useState(false);
@@ -65,46 +78,46 @@ export default function Home() {
   const [savedContent, setSavedContent] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [showStats, setShowStats] = useState(false);
-  const previewRef = useRef<HTMLElement>(null);
+  const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
 
   const isDirty = content !== savedContent;
+
+  const loadFile = useCallback(
+    (data: { name: string; content: string; path: string | null }) => {
+      const md = fromDisk(data.name, data.content);
+      setContent(md);
+      setFileName(data.name);
+      setFilePath(data.path);
+      setSavedContent(md);
+    },
+    []
+  );
 
   const handleOpenFile = useCallback(() => {
     const api = getElectronAPI();
     if (api) {
       api.openFile().then((result) => {
-        if (result) {
-          setContent(result.content);
-          setFileName(result.name);
-          setFilePath(result.path);
-          setSavedContent(result.content);
-        }
+        if (result) loadFile(result);
       });
       return;
     }
 
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".md,.markdown,.mdx,.txt";
+    input.accept = ".md,.markdown,.mdx,.txt,.csv";
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
       const text = await file.text();
-      setContent(text);
-      setFileName(file.name);
-      setFilePath(null);
-      setSavedContent(text);
+      loadFile({ name: file.name, content: text, path: null });
     };
     input.click();
-  }, []);
+  }, [loadFile]);
 
-  const getPreviewHTML = useCallback((): string => {
-    if (previewRef.current) {
-      return previewRef.current.innerHTML;
-    }
-    // Fallback: if ref not available, return raw content
-    return `<pre>${content}</pre>`;
-  }, [content]);
+  const getPreviewHTML = useCallback(
+    (): string => renderMarkdownHTML(content),
+    [content]
+  );
 
   const handleExportPDF = useCallback((theme: PDFTheme) => {
     const html = getPreviewHTML();
@@ -130,9 +143,10 @@ export default function Home() {
   const handleSaveAs = useCallback(async (defaultName?: string) => {
     const api = getElectronAPI();
     if (!api) return;
+    const name = defaultName ?? fileName ?? "untitled.md";
     const res = await api.saveFileAs({
-      defaultName: defaultName ?? fileName ?? "untitled.md",
-      content,
+      defaultName: name,
+      content: toDisk(name, content),
     });
     if (res.success && res.path && res.name) {
       setFilePath(res.path);
@@ -148,9 +162,12 @@ export default function Home() {
       await handleSaveAs();
       return;
     }
-    const res = await api.saveFile({ filePath, content });
+    const res = await api.saveFile({
+      filePath,
+      content: toDisk(fileName, content),
+    });
     if (res.success) setSavedContent(content);
-  }, [filePath, content, handleSaveAs]);
+  }, [filePath, fileName, content, handleSaveAs]);
 
   const handleFork = useCallback(async () => {
     const base = fileName ?? "untitled.md";
@@ -213,10 +230,7 @@ export default function Home() {
       if (!file) return;
 
       const text = await file.text();
-      setContent(text);
-      setFileName(file.name);
-      setFilePath(null);
-      setSavedContent(text);
+      loadFile({ name: file.name, content: text, path: null });
     };
 
     window.addEventListener("dragover", handleDragOver);
@@ -228,7 +242,7 @@ export default function Home() {
       window.removeEventListener("dragleave", handleDragLeave);
       window.removeEventListener("drop", handleDrop);
     };
-  }, []);
+  }, [loadFile]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -279,12 +293,7 @@ export default function Home() {
     saveAs: handleSaveAs,
     fork: handleFork,
     exportHTML: handleExportHTML,
-    fileOpened: (data: FilePayload) => {
-      setContent(data.content);
-      setFileName(data.name);
-      setFilePath(data.path);
-      setSavedContent(data.content);
-    },
+    fileOpened: (data: FilePayload) => loadFile(data),
   });
   useEffect(() => {
     handlersRef.current.openFile = handleOpenFile;
@@ -309,17 +318,14 @@ export default function Home() {
       getElectronAPI()?.getInitialFile?.() ?? Promise.resolve(null);
     pending.then((file) => {
       if (file) {
-        setContent(file.content);
-        setFileName(file.name);
-        setFilePath(file.path);
-        setSavedContent(file.content);
+        loadFile(file);
       } else {
         setContent(SAMPLE);
         setSavedContent(SAMPLE);
       }
       setBooted(true);
     });
-  }, []);
+  }, [loadFile]);
 
   // Listen for Electron IPC events — registered exactly once
   useEffect(() => {
@@ -329,6 +335,9 @@ export default function Home() {
     api.onMenuExportPDF?.((theme) => handlersRef.current.exportPDF(theme ?? "dark"));
     api.onSetMode?.((m) => setMode(m));
     api.onToggleStats?.(() => setShowStats((s) => !s));
+    api.onMenuFormatTables?.(() =>
+      setContent((prev) => formatMarkdownTables(prev))
+    );
     api.onMenuSave?.(() => handlersRef.current.save());
     api.onMenuSaveAs?.(() => handlersRef.current.saveAs());
     api.onMenuFork?.(() => handlersRef.current.fork());
@@ -365,14 +374,21 @@ export default function Home() {
           </div>
         )}
 
-        {/* Preview pane */}
+        {/* Rich View pane with format rail */}
         {(mode === "preview" || mode === "split") && (
           <div
             className={`${
               mode === "split" ? "w-1/2" : "w-full"
-            } h-full overflow-hidden`}
+            } h-full overflow-hidden flex`}
           >
-            <Preview ref={previewRef} content={content} />
+            <FormatRail editor={richEditor} />
+            <div className="flex-1 h-full overflow-hidden">
+              <RichView
+                value={content}
+                onChange={setContent}
+                onEditorReady={setRichEditor}
+              />
+            </div>
           </div>
         )}
       </div>

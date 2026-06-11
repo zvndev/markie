@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Marker — Markdown Viewer",
+  title: "Markie — Markdown Viewer",
   description: "A beautiful markdown viewer and editor",
 };
 

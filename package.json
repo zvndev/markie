@@ -1,5 +1,5 @@
 {
-  "name": "marker",
+  "name": "markie",
   "version": "0.1.0",
   "private": true,
   "main": "electron/main.js",
@@ -13,8 +13,8 @@
     "electron:pack": "npm run build && electron-builder --mac --dir"
   },
   "build": {
-    "appId": "com.zvn.marker",
-    "productName": "Marker",
+    "appId": "com.zvn.markie",
+    "productName": "Markie",
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "public/icon.icns",

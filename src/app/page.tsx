@@ -6,7 +6,7 @@ import { Editor } from "@/components/editor";
 import { Preview } from "@/components/preview";
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
 
-const SAMPLE = `# Welcome to Marker
+const SAMPLE = `# Welcome to Markie
 
 A beautiful markdown viewer and editor. Start writing, paste content, or open a file.
 

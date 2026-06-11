@@ -45,7 +45,7 @@ export function Toolbar({
       {/* Left: App name + file + export */}
       <div className="flex items-center gap-3" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
         <span className="text-[13px] font-semibold tracking-tight text-foreground/90">
-          Marker
+          Markie
         </span>
         <div className="w-px h-4 bg-border" />
         <button

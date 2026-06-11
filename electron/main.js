@@ -35,7 +35,7 @@ function createWindow() {
     mainWindow.loadURL("http://localhost:3000");
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
-    mainWindow.loadURL("app://marker/index.html");
+    mainWindow.loadURL("app://markie/index.html");
   }
 }
 

@@ -126,7 +126,14 @@ Spec items: **3, 8**.
    Fork/Duplicate (Cmd+Shift+D), Export submenu (PDF dark/light, HTML,
    Markdown copy), dirty-state indicator.
 
-### Phase 2 — Rich editing in View
+### Phase 2 — Rich editing in View ✅ *(completed 2026-06-11)*
+
+> Shipped per plan plus two Kirby-requested additions: a contextual table
+> bar + table prettifier (Format Tables, Cmd+Alt+T; rich edits always emit
+> aligned pipes), and native CSV support (.csv opens as an editable rich
+> table, saves back as true RFC-4180 CSV). v1 tradeoffs as documented in
+> the phase plan: math/footnotes insert raw syntax; code blocks unhighlighted
+> in the rich surface.
 Spec item: **4**.
 - TipTap/ProseMirror editable surface replaces read-only preview in View mode;
   markdown round-trip (remark ↔ ProseMirror doc) keeps the .md file as truth.

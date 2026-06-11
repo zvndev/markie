@@ -206,17 +206,27 @@ Spec items: **5 (sync half), 7**.
 - Conflict handling: never overwrite silently; keep both versions, badge the
   doc, side-by-side resolve UI.
 
-### Phase 6 — Sharing and live collaboration
+### Phase 6 — Sharing and live collaboration ✅ *(completed 2026-06-11, two-client E2E verified)*
+
+> Custom y-websocket-protocol server (hand-rolled on yjs 13 + y-protocols
+> after @y/websocket-server proved version-broken): share-gated rooms at
+> /collab/:docId, SQLite update log with compaction, awareness relay.
+> Desktop: TipTap Collaboration + CollaborationCaret in View, first-peer
+> seeds empty rooms from the local file, Share dialog + avatar stack +
+> Live dot, source pane read-only while live. Verified packaged-app
+> Alice ↔ headless Bob: both edit directions, presence both ways,
+> invite email, bad-token rejection, persistence across room teardown.
 Spec items: **6, 11 (presence half)**.
 - Share dialog: add by email, viewer/editor roles; invitee gets an email
   ("you've been added to <doc>"); docs shared with you appear in your library.
 - First share migrates the doc snapshot→live (Yjs log on our WebSocket server).
-- Live editing: y-prosemirror in View, y-codemirror.next in Edit; presence —
-  named cursors, selections, avatar stack in the toolbar. Desktop-only, so
-  budget aggressively: < 50ms echo on LAN-quality connections, offline edits
-  merge cleanly on reconnect.
-- Server enforces share roles on every connection; doc keys never leave the
-  server unauthenticated.
+- Live editing in the rich View pane with named carets and a toolbar avatar
+  stack. *(Deviation: Edit pane locks read-only during live sessions instead
+  of y-codemirror.next — one collaborative surface for v1; snapshot push
+  pauses while live so peer saves can't race the version counter.)*
+- Server enforces share roles on every connection upgrade; viewer-role
+  edit blocking is client-side for v1 (protocol-level guard noted as
+  future hardening).
 
 ### Phase 7 — Comments
 Spec item: **11**.

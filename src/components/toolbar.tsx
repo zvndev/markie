@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import type { PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI } from "@/lib/electron";
+import { initials, type PeerUser } from "@/lib/collab";
 
 type ViewMode = "edit" | "preview" | "split";
 
@@ -15,6 +16,11 @@ interface ToolbarProps {
   isDirty: boolean;
   canRename: boolean;
   onRename: (newName: string) => void;
+  // Cloud-synced docs get a Share button; live docs add presence
+  onShare?: (() => void) | null;
+  live?: boolean;
+  liveStatus?: "connecting" | "connected" | "disconnected";
+  peers?: PeerUser[];
 }
 
 export function Toolbar({
@@ -26,6 +32,10 @@ export function Toolbar({
   isDirty,
   canRename,
   onRename,
+  onShare,
+  live = false,
+  liveStatus = "disconnected",
+  peers = [],
 }: ToolbarProps) {
   const [showPDFMenu, setShowPDFMenu] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -193,8 +203,62 @@ export function Toolbar({
         </button>
       </div>
 
-      {/* Right: spacer (stats moved to the menu bar) */}
-      <div className="w-24" aria-hidden="true" />
+      {/* Right: presence + share (stats moved to the menu bar) */}
+      <div
+        className="w-44 flex items-center justify-end gap-2.5"
+        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      >
+        {live && (
+          <div className="flex items-center gap-1.5" title={`Live session: ${liveStatus}`}>
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                liveStatus === "connected"
+                  ? "bg-emerald-400"
+                  : liveStatus === "connecting"
+                    ? "bg-amber-400"
+                    : "bg-zinc-500"
+              }`}
+            />
+            <span className="text-[10px] uppercase tracking-wide text-muted">
+              Live
+            </span>
+          </div>
+        )}
+        {peers.length > 0 && (
+          <div className="flex -space-x-1.5">
+            {peers.slice(0, 4).map((p, i) => (
+              <span
+                key={`${p.name}-${i}`}
+                title={p.name}
+                className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-semibold text-black/80 ring-2 ring-surface"
+                style={{ background: p.color }}
+              >
+                {initials(p.name)}
+              </span>
+            ))}
+            {peers.length > 4 && (
+              <span className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-semibold bg-accent text-foreground ring-2 ring-surface">
+                +{peers.length - 4}
+              </span>
+            )}
+          </div>
+        )}
+        {onShare && (
+          <button
+            onClick={onShare}
+            className="text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="18" cy="5" r="3" />
+              <circle cx="6" cy="12" r="3" />
+              <circle cx="18" cy="19" r="3" />
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+            </svg>
+            Share
+          </button>
+        )}
+      </div>
     </div>
   );
 }

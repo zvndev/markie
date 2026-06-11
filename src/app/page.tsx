@@ -14,7 +14,15 @@ import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { ThemeSettings } from "@/components/theme-settings";
 import { Settings } from "@/components/settings";
 import { Library } from "@/components/library";
-import { pushSyncConfig } from "@/lib/auth-client";
+import { ShareDialog } from "@/components/share-dialog";
+import {
+  authClient,
+  collabWsBase,
+  getAuthToken,
+  pushSyncConfig,
+  sharesClient,
+} from "@/lib/auth-client";
+import { colorForName, type CollabConfig, type PeerUser } from "@/lib/collab";
 import type { AppCommand } from "@/lib/commands";
 import {
   applyTheme,
@@ -98,8 +106,70 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
+  const [showShare, setShowShare] = useState(false);
+  const [cloudId, setCloudId] = useState<string | null>(null);
+  const [canShare, setCanShare] = useState(false);
+  const [collabCfg, setCollabCfg] = useState<CollabConfig | null>(null);
+  const [peers, setPeers] = useState<PeerUser[]>([]);
+  const [liveStatus, setLiveStatus] = useState<
+    "connecting" | "connected" | "disconnected"
+  >("disconnected");
 
   const isDirty = content !== savedContent;
+
+  // A doc goes live when it's cloud-synced, we're signed in, and at least one
+  // other person has been invited. Re-checked on file open, sign-in changes,
+  // sync changes, and share-list changes.
+  const refreshCollab = useCallback(() => {
+    const api = getElectronAPI();
+    const entryPromise =
+      api?.registryGet && filePath
+        ? api.registryGet(filePath)
+        : Promise.resolve(null);
+    entryPromise.then(async (entry) => {
+      const cid = entry?.cloud_doc_id ?? null;
+      const token = getAuthToken();
+      setCloudId(cid);
+      setCanShare(!!cid && !!token);
+      if (!cid || !token) {
+        setCollabCfg(null);
+        return;
+      }
+      const me = await authClient.me();
+      const members = me ? await sharesClient.list(cid) : null;
+      if (!me || !members || members.length === 0) {
+        setCollabCfg(null);
+        return;
+      }
+      const mine = members.find((m) => m.user_id === me.id);
+      const readonly = mine?.role === "viewer";
+      const display = me.name || me.email;
+      setCollabCfg((prev) =>
+        prev &&
+        prev.docId === cid &&
+        prev.readonly === readonly &&
+        prev.token === token
+          ? prev
+          : {
+              docId: cid,
+              wsBase: collabWsBase(),
+              token,
+              user: { name: display, color: colorForName(display) },
+              readonly,
+            }
+      );
+    });
+  }, [filePath]);
+
+  useEffect(() => {
+    refreshCollab();
+  }, [refreshCollab]);
+
+  const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
+  const handleCollabStatus = useCallback(
+    (s: "connecting" | "connected" | "disconnected") => setLiveStatus(s),
+    []
+  );
 
   const loadFile = useCallback(
     (data: { name: string; content: string; path: string | null }) => {
@@ -203,14 +273,18 @@ export default function Home() {
     const res = await api.saveFile({ filePath, content: diskContent });
     if (res.success) {
       setSavedContent(content);
-      // push the snapshot if this file is cloud-synced
-      api.docPush?.({
-        path: filePath,
-        name: fileName ?? "untitled.md",
-        content: diskContent,
-      });
+      // Push the snapshot if this file is cloud-synced — except during a live
+      // session, where peers saving would race the version counter into fake
+      // conflicts; the Yjs update log is the source of truth while live.
+      if (!collabCfg) {
+        api.docPush?.({
+          path: filePath,
+          name: fileName ?? "untitled.md",
+          content: diskContent,
+        });
+      }
     }
-  }, [filePath, fileName, content, handleSaveAs]);
+  }, [filePath, fileName, content, handleSaveAs, collabCfg]);
 
   const handleFork = useCallback(async () => {
     const base = fileName ?? "untitled.md";
@@ -443,9 +517,12 @@ export default function Home() {
       { id: "theme-settings", title: "Theme Settings…", group: "Theme", keywords: "color font preset style", run: () => setShowTheme(true) },
       { id: "settings", title: "Settings…", group: "File", shortcut: "⌘,", keywords: "account sign in sync login", run: () => setShowSettings(true) },
       { id: "library", title: "Library…", group: "File", shortcut: "⌘L", keywords: "documents cloud sync files recent", run: () => setShowLibrary(true) },
+      ...(canShare
+        ? [{ id: "share", title: "Share…", group: "File" as const, keywords: "collaborate invite live people", run: () => setShowShare(true) }]
+        : []),
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
     ],
-    [handleOpenFile, handleSave, handleSaveAs, handleFork, handleExportPDF, handleExportHTML]
+    [handleOpenFile, handleSave, handleSaveAs, handleFork, handleExportPDF, handleExportHTML, canShare]
   );
 
   if (!booted) {
@@ -463,6 +540,10 @@ export default function Home() {
         isDirty={isDirty}
         canRename={filePath !== null}
         onRename={handleRename}
+        onShare={canShare ? () => setShowShare(true) : null}
+        live={!!collabCfg}
+        liveStatus={liveStatus}
+        peers={peers}
       />
 
       <div className="flex-1 flex overflow-hidden">
@@ -471,9 +552,20 @@ export default function Home() {
           <div
             className={`${
               mode === "split" ? "w-1/2 border-r border-border" : "w-full"
-            } h-full overflow-hidden`}
+            } h-full overflow-hidden flex flex-col`}
           >
-            <Editor value={content} onChange={setContent} />
+            {collabCfg && (
+              <div className="px-3 py-1 text-[11px] text-muted bg-surface border-b border-border shrink-0">
+                Live session — source is read-only, edit in View
+              </div>
+            )}
+            <div className="flex-1 overflow-hidden">
+              <Editor
+                value={content}
+                onChange={setContent}
+                readOnly={!!collabCfg}
+              />
+            </div>
           </div>
         )}
 
@@ -487,9 +579,17 @@ export default function Home() {
             <FormatRail editor={richEditor} />
             <div className="flex-1 h-full overflow-hidden">
               <RichView
+                key={
+                  collabCfg
+                    ? `live:${collabCfg.docId}:${collabCfg.readonly}`
+                    : "solo"
+                }
                 value={content}
                 onChange={setContent}
                 onEditorReady={setRichEditor}
+                collab={collabCfg}
+                onPeersChange={handlePeersChange}
+                onCollabStatus={handleCollabStatus}
               />
             </div>
           </div>
@@ -507,9 +607,30 @@ export default function Home() {
         <ShortcutsHelp commands={commands} onClose={() => setShowHelp(false)} />
       )}
       {showTheme && <ThemeSettings onClose={() => setShowTheme(false)} />}
-      {showSettings && <Settings onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <Settings
+          onClose={() => {
+            setShowSettings(false);
+            refreshCollab(); // sign-in/out changes live eligibility
+          }}
+        />
+      )}
       {showLibrary && (
-        <Library onClose={() => setShowLibrary(false)} onOpenPath={openPath} />
+        <Library
+          onClose={() => {
+            setShowLibrary(false);
+            refreshCollab(); // sync on/off changes live eligibility
+          }}
+          onOpenPath={openPath}
+        />
+      )}
+      {showShare && cloudId && (
+        <ShareDialog
+          docId={cloudId}
+          fileName={fileName ?? "Untitled"}
+          onClose={() => setShowShare(false)}
+          onChanged={refreshCollab}
+        />
       )}
 
       {/* Drag overlay */}

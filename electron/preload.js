@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   syncConfig: (cfg) => ipcRenderer.invoke("sync-config", cfg),
   registryTrack: (args) => ipcRenderer.invoke("registry-track", args),
+  registryGet: (path) => ipcRenderer.invoke("registry-get", path),
   libraryState: () => ipcRenderer.invoke("library-state"),
   docSyncOn: (args) => ipcRenderer.invoke("doc-sync-on", args),
   docSyncOff: (args) => ipcRenderer.invoke("doc-sync-off", args),

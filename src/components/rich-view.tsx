@@ -21,6 +21,7 @@ import { CollaborationCaret } from "@tiptap/extension-collaboration-caret";
 import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import type { CollabConfig, PeerUser } from "@/lib/collab";
+import { CommentLayer } from "@/components/comments";
 
 interface RichViewProps {
   value: string; // canonical markdown
@@ -196,10 +197,13 @@ export function RichView({
     selector: ({ editor: e }) => e?.isActive("table") ?? false,
   });
 
+  // Comment gutter overlay needs the scroll container element
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
+
   return (
     <div className="h-full relative">
       {editor && inTable && !collab?.readonly && <TableBar editor={editor} />}
-      <div className="h-full overflow-y-auto px-10 py-8">
+      <div ref={setScrollEl} className="h-full overflow-y-auto px-10 py-8 relative">
         <article
           className="markdown-body mx-auto"
           style={{
@@ -209,6 +213,15 @@ export function RichView({
         >
           <EditorContent editor={editor} />
         </article>
+        {editor && session && collab && (
+          <CommentLayer
+            editor={editor}
+            ydoc={session.ydoc}
+            docId={collab.docId}
+            readonly={collab.readonly}
+            container={scrollEl}
+          />
+        )}
       </div>
     </div>
   );

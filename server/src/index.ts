@@ -25,6 +25,35 @@ app.get("/health", (c) =>
 
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
+// Desktop Google sign-in must run entirely in the browser, or better-auth's
+// OAuth `state` cookie (set when the flow starts) won't be present on the
+// callback. The app opens this GET in the browser; we start the social flow
+// server-side, forward better-auth's Set-Cookie (the state) to the browser,
+// and redirect it to Google's consent screen.
+const AUTH_BASE =
+  process.env.BETTER_AUTH_URL ?? "http://localhost:8787";
+
+app.get("/auth/google-start", async (c) => {
+  try {
+    const res = await auth.api.signInSocial({
+      body: {
+        provider: "google",
+        callbackURL: `${AUTH_BASE}/auth/desktop-bridge`,
+        errorCallbackURL: `${AUTH_BASE}/auth/desktop-bridge`,
+      },
+      asResponse: true,
+    });
+    const { url } = (await res.clone().json()) as { url?: string };
+    if (!url) return c.text("Could not start Google sign-in.", 500);
+    const headers = new Headers({ location: url });
+    for (const ck of res.headers.getSetCookie()) headers.append("set-cookie", ck);
+    return new Response(null, { status: 302, headers });
+  } catch (err) {
+    console.error("google-start error:", err);
+    return c.text("Could not start Google sign-in.", 500);
+  }
+});
+
 // Desktop OAuth bridge: Google redirects the *browser* here after sign-in
 // (the session cookie is now set on this origin). We hand the session token
 // back to the desktop app via a markie:// deep link, since the app can't read

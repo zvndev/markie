@@ -135,20 +135,11 @@ export const authClient = {
     return res;
   },
 
-  // Desktop Google sign-in: ask better-auth for the Google consent URL
-  // (a POST that returns {url}), pointing the post-auth redirect at our
-  // desktop bridge, which deep-links the session token back into the app.
-  googleSignInURL: async (): Promise<string | null> => {
-    const res = await api<{ url: string }>("/api/auth/sign-in/social", {
-      method: "POST",
-      body: JSON.stringify({
-        provider: "google",
-        callbackURL: `${getServerURL()}/auth/desktop-bridge`,
-        errorCallbackURL: `${getServerURL()}/auth/desktop-bridge`,
-      }),
-    });
-    return res.data?.url ?? null;
-  },
+  // Desktop Google sign-in. The whole flow must run in the browser so
+  // better-auth's OAuth state cookie is present on the callback, so we just
+  // open a server route that starts the flow and redirects to Google. After
+  // consent, the server's desktop bridge deep-links the session back in.
+  googleSignInURL: (): string => `${getServerURL()}/auth/google-start`,
 };
 
 export interface ShareMember {

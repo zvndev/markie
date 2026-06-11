@@ -219,13 +219,9 @@ export function Settings({ onClose }: SettingsProps) {
             )}
             <button
               className="w-full text-[13px] py-2 rounded-md border border-border text-foreground/90 hover:bg-accent/40 transition-colors"
-              onClick={async () => {
+              onClick={() => {
                 setError(null);
-                const url = await authClient.googleSignInURL();
-                if (!url) {
-                  setError("Couldn't start Google sign-in. Try again.");
-                  return;
-                }
+                const url = authClient.googleSignInURL();
                 const api = getElectronAPI();
                 if (api?.openExternal) api.openExternal(url);
                 else window.open(url, "_blank");

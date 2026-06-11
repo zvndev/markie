@@ -349,6 +349,20 @@ const template = [
       },
       { type: "separator" },
       {
+        label: "Command Palette…",
+        accelerator: "CmdOrCtrl+K",
+        click: () => mainWindow?.webContents.send("menu-command-palette"),
+      },
+      {
+        label: "Theme…",
+        click: () => mainWindow?.webContents.send("menu-theme"),
+      },
+      {
+        label: "Keyboard Shortcuts",
+        accelerator: "CmdOrCtrl+/",
+        click: () => mainWindow?.webContents.send("menu-shortcuts"),
+      },
+      {
         label: "Statistics",
         accelerator: "CmdOrCtrl+Shift+I",
         click: () => mainWindow?.webContents.send("toggle-stats"),

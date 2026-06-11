@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Toolbar } from "@/components/toolbar";
 import { Editor } from "@/components/editor";
 import { RichView } from "@/components/rich-view";
@@ -9,6 +9,17 @@ import { StatsPanel } from "@/components/stats-panel";
 import type { Editor as TipTapEditor } from "@tiptap/react";
 import { formatMarkdownTables } from "@/lib/format-tables";
 import { csvToMarkdownTable, markdownTableToCSV } from "@/lib/csv";
+import { CommandPalette } from "@/components/command-palette";
+import { ShortcutsHelp } from "@/components/shortcuts-help";
+import { ThemeSettings } from "@/components/theme-settings";
+import type { AppCommand } from "@/lib/commands";
+import {
+  applyTheme,
+  findTheme,
+  loadThemeStore,
+  saveThemeStore,
+  BUILT_IN_THEMES,
+} from "@/lib/theme";
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI, type FilePayload } from "@/lib/electron";
 import { renderMarkdownHTML } from "@/lib/markdown-html";
@@ -78,6 +89,9 @@ export default function Home() {
   const [savedContent, setSavedContent] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [showPalette, setShowPalette] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showTheme, setShowTheme] = useState(false);
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
 
   const isDirty = content !== savedContent;
@@ -273,6 +287,14 @@ export default function Home() {
               handleSave();
             }
             break;
+          case "k":
+            e.preventDefault();
+            setShowPalette((v) => !v);
+            break;
+          case "/":
+            e.preventDefault();
+            setShowHelp((v) => !v);
+            break;
         }
         if (e.shiftKey && (e.key === "e" || e.key === "E")) {
           e.preventDefault();
@@ -311,6 +333,12 @@ export default function Home() {
     handleExportHTML,
   ]);
 
+  // Apply the persisted theme before first paint of the booted UI
+  useEffect(() => {
+    const store = loadThemeStore();
+    applyTheme(findTheme(store, store.activeId).tokens);
+  }, []);
+
   // Boot: decide the first painted document — the OS-opened file or the
   // welcome sample — before rendering anything, so the wrong doc never flashes
   useEffect(() => {
@@ -335,6 +363,9 @@ export default function Home() {
     api.onMenuExportPDF?.((theme) => handlersRef.current.exportPDF(theme ?? "dark"));
     api.onSetMode?.((m) => setMode(m));
     api.onToggleStats?.(() => setShowStats((s) => !s));
+    api.onMenuCommandPalette?.(() => setShowPalette((v) => !v));
+    api.onMenuShortcuts?.(() => setShowHelp((v) => !v));
+    api.onMenuTheme?.(() => setShowTheme((v) => !v));
     api.onMenuFormatTables?.(() =>
       setContent((prev) => formatMarkdownTables(prev))
     );
@@ -344,6 +375,38 @@ export default function Home() {
     api.onMenuExportHTML?.(() => handlersRef.current.exportHTML());
     api.onFileOpened?.((data) => handlersRef.current.fileOpened(data));
   }, []);
+
+  const commands = useMemo<AppCommand[]>(
+    () => [
+      { id: "open", title: "Open File…", group: "File", shortcut: "⌘O", run: handleOpenFile },
+      { id: "save", title: "Save", group: "File", shortcut: "⌘S", run: handleSave },
+      { id: "save-as", title: "Save As…", group: "File", shortcut: "⇧⌘S", run: () => handleSaveAs() },
+      { id: "fork", title: "Duplicate (Fork)", group: "File", shortcut: "⇧⌘D", keywords: "copy fork duplicate", run: handleFork },
+      { id: "export-pdf-dark", title: "Export PDF (Dark)", group: "File", shortcut: "⇧⌘E", keywords: "print", run: () => handleExportPDF("dark") },
+      { id: "export-pdf-light", title: "Export PDF (Light)", group: "File", keywords: "print", run: () => handleExportPDF("light") },
+      { id: "export-html", title: "Export HTML", group: "File", run: handleExportHTML },
+      { id: "mode-view", title: "View Mode", group: "View", shortcut: "⌘1", keywords: "preview rich", run: () => setMode("preview") },
+      { id: "mode-edit", title: "Edit Mode", group: "View", shortcut: "⌘2", keywords: "source raw markdown", run: () => setMode("edit") },
+      { id: "mode-split", title: "Split Mode", group: "View", shortcut: "⌘3", run: () => setMode("split") },
+      { id: "stats", title: "Statistics", group: "View", shortcut: "⇧⌘I", keywords: "words count reading", run: () => setShowStats((v) => !v) },
+      { id: "palette", title: "Command Palette", group: "View", shortcut: "⌘K", run: () => setShowPalette((v) => !v) },
+      { id: "format-tables", title: "Format Tables", group: "Format", shortcut: "⌥⌘T", keywords: "align prettify pipes", run: () => setContent((prev) => formatMarkdownTables(prev)) },
+      ...BUILT_IN_THEMES.map((t) => ({
+        id: `theme-${t.id}`,
+        title: `Theme: ${t.name}`,
+        group: "Theme" as const,
+        keywords: "dark light color style",
+        run: () => {
+          const store = loadThemeStore();
+          saveThemeStore({ ...store, activeId: t.id });
+          applyTheme(t.tokens);
+        },
+      })),
+      { id: "theme-settings", title: "Theme Settings…", group: "Theme", keywords: "color font preset style", run: () => setShowTheme(true) },
+      { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
+    ],
+    [handleOpenFile, handleSave, handleSaveAs, handleFork, handleExportPDF, handleExportHTML]
+  );
 
   if (!booted) {
     return <div className="h-screen bg-background" />;
@@ -396,6 +459,14 @@ export default function Home() {
       {showStats && (
         <StatsPanel content={content} onClose={() => setShowStats(false)} />
       )}
+
+      {showPalette && (
+        <CommandPalette commands={commands} onClose={() => setShowPalette(false)} />
+      )}
+      {showHelp && (
+        <ShortcutsHelp commands={commands} onClose={() => setShowHelp(false)} />
+      )}
+      {showTheme && <ThemeSettings onClose={() => setShowTheme(false)} />}
 
       {/* Drag overlay */}
       {isDragging && (

@@ -94,7 +94,13 @@ export function RichView({ value, onChange, onEditorReady }: RichViewProps) {
     <div className="h-full relative">
       {editor && inTable && <TableBar editor={editor} />}
       <div className="h-full overflow-y-auto px-10 py-8">
-        <article className="markdown-body max-w-3xl mx-auto">
+        <article
+          className="markdown-body mx-auto"
+          style={{
+            maxWidth: "var(--doc-width, 768px)",
+            fontSize: "var(--doc-font-size, 16px)",
+          }}
+        >
           <EditorContent editor={editor} />
         </article>
       </div>

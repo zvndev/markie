@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import Database from "better-sqlite3";
 import { auth } from "./auth.ts";
+import { accessLevel, sharedDocsFor } from "./shares.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
 
@@ -53,18 +54,21 @@ docs.get("/", async (c) => {
       "SELECT id, name, version, hash, updated_at FROM docs WHERE owner_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC"
     )
     .all(user.id) as Omit<DocRow, "owner_id" | "content" | "deleted_at">[];
-  return c.json({ docs: rows });
+  const shared = sharedDocsFor(user.id).map((d) => ({ ...d, shared: true }));
+  return c.json({ docs: [...rows, ...shared] });
 });
 
 // Fetch one doc with content
 docs.get("/:id", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
+  const docId = c.req.param("id");
+  if (!accessLevel(docId, user.id)) return c.json({ error: "not found" }, 404);
   const row = db
     .prepare(
-      "SELECT id, name, version, content, hash, updated_at FROM docs WHERE id = ? AND owner_id = ? AND deleted_at IS NULL"
+      "SELECT id, name, version, content, hash, updated_at FROM docs WHERE id = ? AND deleted_at IS NULL"
     )
-    .get(c.req.param("id"), user.id) as DocRow | undefined;
+    .get(docId) as DocRow | undefined;
   if (!row) return c.json({ error: "not found" }, 404);
   return c.json({ doc: row });
 });
@@ -89,7 +93,10 @@ docs.put("/:id", async (c) => {
     .get(id) as Pick<DocRow, "version" | "owner_id" | "deleted_at"> | undefined;
 
   if (existing && existing.owner_id !== user.id) {
-    return c.json({ error: "forbidden" }, 403);
+    // editors on a shared doc may push snapshots; viewers may not
+    if (accessLevel(id, user.id) !== "editor") {
+      return c.json({ error: "forbidden" }, 403);
+    }
   }
   if (existing && !existing.deleted_at && existing.version !== body.baseVersion) {
     return c.json({ error: "conflict", serverVersion: existing.version }, 409);

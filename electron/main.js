@@ -253,6 +253,13 @@ ipcMain.handle("registry-track", (_event, { path: p, name, content }) => {
     return { error: String(err) };
   }
 });
+ipcMain.handle("registry-get", (_event, p) => {
+  try {
+    return registry.get(p) ?? null;
+  } catch {
+    return null;
+  }
+});
 ipcMain.handle("library-state", () => sync.libraryState());
 ipcMain.handle("doc-sync-on", (_event, { path: p, name, content }) =>
   sync.syncOn(p, name, content)

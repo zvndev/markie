@@ -28,7 +28,16 @@ export function setServerURL(url: string): void {
   }
 }
 
+// y-websocket appends "/<roomname>" to this base; the server matches /collab/:docId
+export function collabWsBase(): string {
+  return `${getServerURL().replace(/^http/, "ws")}/collab`;
+}
+
 const TOKEN_KEY = "markie.token.v1";
+
+export function getAuthToken(): string | null {
+  return getToken();
+}
 
 function getToken(): string | null {
   try {
@@ -123,6 +132,44 @@ export const authClient = {
 
   googleSignInURL: (): string =>
     `${getServerURL()}/api/auth/sign-in/social?provider=google`,
+};
+
+export interface ShareMember {
+  user_id: string;
+  role: "viewer" | "editor";
+  created_at: string;
+  email: string;
+  name: string;
+}
+
+export const sharesClient = {
+  list: async (docId: string): Promise<ShareMember[] | null> => {
+    const res = await api<{ shares: ShareMember[] }>(
+      `/api/docs/${encodeURIComponent(docId)}/shares`
+    );
+    return res.ok ? res.data?.shares ?? [] : null;
+  },
+
+  add: async (
+    docId: string,
+    email: string,
+    role: "viewer" | "editor"
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const res = await api<{ ok?: boolean; error?: string }>(
+      `/api/docs/${encodeURIComponent(docId)}/shares`,
+      { method: "POST", body: JSON.stringify({ email, role }) }
+    );
+    if (res.ok) return { ok: true };
+    return { ok: false, error: res.data?.error ?? "Couldn't share the doc" };
+  },
+
+  remove: async (docId: string, userId: string): Promise<boolean> => {
+    const res = await api<{ ok?: boolean }>(
+      `/api/docs/${encodeURIComponent(docId)}/shares/${encodeURIComponent(userId)}`,
+      { method: "DELETE" }
+    );
+    return res.ok;
+  },
 };
 
 const SYNC_KEY = "markie.sync.v1";

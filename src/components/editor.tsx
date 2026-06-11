@@ -13,13 +13,17 @@ const theme = EditorView.theme({
 interface EditorProps {
   value: string;
   onChange: (value: string) => void;
+  // Live sessions lock the source pane — edits must flow through the
+  // collaborative View so they reach the shared Yjs doc
+  readOnly?: boolean;
 }
 
-export function Editor({ value, onChange }: EditorProps) {
+export function Editor({ value, onChange, readOnly = false }: EditorProps) {
   return (
     <CodeMirror
       value={value}
       onChange={onChange}
+      readOnly={readOnly}
       extensions={[
         markdown({ base: markdownLanguage, codeLanguages: languages }),
         theme,

@@ -3,6 +3,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { auth } from "./auth.ts";
 import { docs } from "./docs.ts";
+import { shares } from "./shares.ts";
+import { attachCollab } from "./collab.ts";
 
 const app = new Hono();
 
@@ -22,6 +24,7 @@ app.get("/health", (c) =>
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
 app.route("/api/docs", docs);
+app.route("/api/docs", shares);
 
 app.get("/api/me", async (c) => {
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
@@ -36,5 +39,6 @@ app.get("/api/me", async (c) => {
 });
 
 const port = Number(process.env.PORT ?? 8787);
-serve({ fetch: app.fetch, port });
+const server = serve({ fetch: app.fetch, port });
+attachCollab(server as Parameters<typeof attachCollab>[0]);
 console.log(`markie-api listening on :${port}`);

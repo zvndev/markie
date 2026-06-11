@@ -44,6 +44,7 @@ export interface ElectronAPI {
     name: string;
     content?: string;
   }): Promise<{ ok?: boolean; error?: string }>;
+  registryGet(path: string): Promise<RegistryEntry | null>;
   libraryState(): Promise<{ signedIn: boolean; items: LibraryItem[] }>;
   docSyncOn(args: {
     path: string;
@@ -70,6 +71,17 @@ export interface ElectronAPI {
   onSetMode(cb: (mode: ViewMode) => void): void;
   onToggleStats(cb: () => void): void;
   onFileOpened(cb: (data: FilePayload) => void): void;
+}
+
+export interface RegistryEntry {
+  path: string;
+  name: string;
+  content_hash: string | null;
+  cloud_doc_id: string | null;
+  cloud_version: number | null;
+  sync_state: string | null;
+  last_opened_at: string | null;
+  last_synced_at: string | null;
 }
 
 export interface LibraryItem {

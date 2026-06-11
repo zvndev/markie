@@ -39,6 +39,11 @@ export function getAuthToken(): string | null {
   return getToken();
 }
 
+// Store a token that arrived out-of-band (e.g. the Google deep-link bridge).
+export function adoptAuthToken(token: string): void {
+  setToken(token);
+}
+
 function getToken(): string | null {
   try {
     return localStorage.getItem(TOKEN_KEY);
@@ -130,8 +135,20 @@ export const authClient = {
     return res;
   },
 
-  googleSignInURL: (): string =>
-    `${getServerURL()}/api/auth/sign-in/social?provider=google`,
+  // Desktop Google sign-in: ask better-auth for the Google consent URL
+  // (a POST that returns {url}), pointing the post-auth redirect at our
+  // desktop bridge, which deep-links the session token back into the app.
+  googleSignInURL: async (): Promise<string | null> => {
+    const res = await api<{ url: string }>("/api/auth/sign-in/social", {
+      method: "POST",
+      body: JSON.stringify({
+        provider: "google",
+        callbackURL: `${getServerURL()}/auth/desktop-bridge`,
+        errorCallbackURL: `${getServerURL()}/auth/desktop-bridge`,
+      }),
+    });
+    return res.data?.url ?? null;
+  },
 };
 
 export interface ShareMember {

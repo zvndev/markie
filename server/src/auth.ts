@@ -13,6 +13,7 @@ export const auth = betterAuth({
   trustedOrigins: [
     "app://markie", // packaged desktop app
     "http://localhost:3000", // dev renderer
+    "markie://", // desktop deep-link auth bridge target
   ],
   emailAndPassword: {
     enabled: true,

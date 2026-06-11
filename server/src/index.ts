@@ -25,6 +25,37 @@ app.get("/health", (c) =>
 
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
+// Desktop OAuth bridge: Google redirects the *browser* here after sign-in
+// (the session cookie is now set on this origin). We hand the session token
+// back to the desktop app via a markie:// deep link, since the app can't read
+// the browser's cookie.
+app.get("/auth/desktop-bridge", async (c) => {
+  const result = await auth.api.getSession({ headers: c.req.raw.headers });
+  const token = result?.session?.token;
+  const page = (heading: string, sub: string, link?: string) =>
+    c.html(
+      `<!doctype html><html><head><meta charset="utf-8"><title>Markie</title></head>
+<body style="font-family:system-ui,-apple-system,sans-serif;background:#0c0c10;color:#fafafa;display:grid;place-items:center;height:100vh;margin:0">
+<div style="text-align:center;max-width:340px">
+<div style="font-size:34px;font-weight:700;color:#f59e0b;margin-bottom:8px">M</div>
+<h2 style="font-size:17px;margin:0 0 6px">${heading}</h2>
+<p style="color:#a1a1aa;font-size:13px;margin:0 0 16px">${sub}</p>
+${link ? `<a href="${link}" style="color:#fbbf24;font-size:13px;text-decoration:none">Open Markie →</a>` : ""}
+</div>
+${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},400)</script>` : ""}
+</body></html>`,
+      token ? 200 : 401
+    );
+  if (!token) {
+    return page("Sign-in didn't complete", "Head back to Markie and try again.");
+  }
+  return page(
+    "You're signed in",
+    "Returning you to Markie…",
+    `markie://auth?token=${encodeURIComponent(token)}`
+  );
+});
+
 app.route("/api/docs", docs);
 app.route("/api/docs", shares);
 app.route("/api/docs", comments);

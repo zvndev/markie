@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { auth } from "./auth.ts";
+import { docs } from "./docs.ts";
 
 const app = new Hono();
 
@@ -19,6 +20,8 @@ app.get("/health", (c) =>
 );
 
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+
+app.route("/api/docs", docs);
 
 app.get("/api/me", async (c) => {
   const session = await auth.api.getSession({ headers: c.req.raw.headers });

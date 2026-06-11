@@ -337,3 +337,51 @@ body {
   font-weight: 500;
 }
 
+
+/* Rich View (TipTap/ProseMirror) — inherits .markdown-body typography */
+.markdown-body .ProseMirror {
+  outline: none;
+  min-height: 70vh;
+  white-space: pre-wrap;
+}
+
+.markdown-body .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--muted, #71717a);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.markdown-body .ProseMirror td,
+.markdown-body .ProseMirror th {
+  min-width: 3rem;
+  position: relative;
+}
+
+.markdown-body .ProseMirror .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(99, 102, 241, 0.12);
+  pointer-events: none;
+}
+
+.markdown-body .ProseMirror ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.25rem;
+}
+
+.markdown-body .ProseMirror ul[data-type="taskList"] li {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.markdown-body .ProseMirror ul[data-type="taskList"] li > label {
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+.markdown-body .ProseMirror-gapcursor:after {
+  border-top: 1px solid var(--foreground, #fafafa);
+}

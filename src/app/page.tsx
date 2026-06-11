@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Toolbar } from "@/components/toolbar";
 import { Editor } from "@/components/editor";
-import { Preview } from "@/components/preview";
+import { RichView } from "@/components/rich-view";
 import { StatsPanel } from "@/components/stats-panel";
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI, type FilePayload } from "@/lib/electron";
@@ -66,7 +66,6 @@ export default function Home() {
   const [savedContent, setSavedContent] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [showStats, setShowStats] = useState(false);
-  const previewRef = useRef<HTMLElement>(null);
 
   const isDirty = content !== savedContent;
 
@@ -363,14 +362,14 @@ export default function Home() {
           </div>
         )}
 
-        {/* Preview pane */}
+        {/* Rich View pane */}
         {(mode === "preview" || mode === "split") && (
           <div
             className={`${
               mode === "split" ? "w-1/2" : "w-full"
             } h-full overflow-hidden`}
           >
-            <Preview ref={previewRef} content={content} />
+            <RichView value={content} onChange={setContent} />
           </div>
         )}
       </div>

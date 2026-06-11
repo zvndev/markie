@@ -260,14 +260,23 @@ Spec item: **13 (cloud half)**.
   the owner's pinned preset, which travels with the share) vs. recipients
   read in their own theme. Default: viewer's choice.
 
-### Phase 9 — AI + MCP *(later, design sketch only)*
+### Phase 9 — AI + MCP ✅ *(completed 2026-06-11, v1 shipped and verified)*
+
+> mcp/markie-mcp.mjs: stdio MCP server (zero protocol deps) — list_docs,
+> read_doc, write_doc, insert_after_heading, search_docs over the local
+> registry; tracked-file guard. Register:
+> `claude mcp add markie -- node <repo>/mcp/markie-mcp.mjs`.
+> AI: Summarize Document / Rewrite Selection palette commands hit the
+> ZVN inference gateway (OpenAI-compatible, plain fetch); gateway
+> URL/key/model in Settings → AI. Bonus: app icon (public/icon.icns).
+> Verified: full MCP lifecycle over stdio (all five tools + untracked
+> rejection); AI flow E2E in the packaged app against a mock gateway
+> (palette → request with configured auth/model → result panel →
+> insert-at-top). *(Real-gateway run needs Kirby's INFERENCE_API_KEY in
+> Settings → AI; HTTP shape verified against the OpenAI-compatible
+> contract.)* Streamable-HTTP MCP transport + outline→draft remain
+> future nice-to-haves.
 Spec item: **9**.
-- **Markie MCP server** (stdio + streamable HTTP): tools to list/read/edit
-  docs, insert at heading, add comments — so Claude Code & friends can drive
-  Markie.
-- Local AI via the ZVN inference gateway (`@zvndev/inference`): summarize doc,
-  rewrite selection, outline → draft. Cloud-account-free; runs against the M3
-  Max. This is where the home server enters, not the serving path.
 
 ---
 

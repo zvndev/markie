@@ -52,3 +52,4 @@ marker-screenshot.png
 server/node_modules/
 server/markie.db*
 server/.env
+mcp/node_modules/

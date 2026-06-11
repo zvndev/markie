@@ -97,12 +97,18 @@ Ordering principle: Kirby uses this daily as a local tool — ship local value
 first (Phases 0–3), then build the cloud platform (4–8), then AI (9). Each
 phase is independently shippable.
 
-### Phase 0 — Rename to Markie *(bundled into Phase 1 plan)*
+### Phase 0 — Rename to Markie ✅ *(completed 2026-06-11, bundled into Phase 1)*
 `package.json` name/productName/appId (`com.zvn.markie`), window title,
 `layout.tsx` metadata, welcome sample, toolbar wordmark, `app://markie`
 protocol URL. Pre-release, so no migration concerns. Spec item: **10**.
 
-### Phase 1 — Local polish *(detailed plan written — execute now)*
+### Phase 1 — Local polish ✅ *(completed 2026-06-11 on branch feat/markie-phase-1)*
+
+> Shipped with two additions beyond the plan: a no-flash boot sequence
+> (renderer paints nothing until the initial file resolves; window hidden
+> until ready-to-show) and a register-once IPC listener pattern fixing a
+> latent duplicate-handler bug. Known gap: `public/icon.icns` is missing,
+> so the packaged app uses the default Electron icon.
 Spec items: **3, 8**.
 1. **Cold-start file open fix** — queue `open-file` events that arrive before
    the renderer is ready; renderer pulls the pending file on mount via a

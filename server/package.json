@@ -12,7 +12,6 @@
     "migrate": "npx @better-auth/cli@latest migrate --config src/auth.ts -y"
   },
   "dependencies": {
-    "@better-auth/cli": "^1.4.18",
     "@hono/node-server": "^2.0.4",
     "better-auth": "^1.6.16",
     "better-sqlite3": "^12.10.0",

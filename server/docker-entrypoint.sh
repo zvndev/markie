@@ -13,7 +13,7 @@ if [ -n "$B2_BUCKET" ] && [ -n "$B2_KEY_ID" ]; then
 fi
 
 echo "migrating auth schema"
-./node_modules/.bin/better-auth migrate --config src/auth.ts -y || true
+node --experimental-strip-types src/migrate.ts
 
 if [ -n "$B2_BUCKET" ] && [ -n "$B2_KEY_ID" ]; then
   echo "starting under litestream replication"

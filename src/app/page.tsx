@@ -5,6 +5,7 @@ import { Toolbar } from "@/components/toolbar";
 import { Editor } from "@/components/editor";
 import { Preview } from "@/components/preview";
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
+import { getElectronAPI, type FilePayload } from "@/lib/electron";
 
 const SAMPLE = `# Welcome to Markie
 
@@ -67,8 +68,9 @@ export default function Home() {
   const charCount = content.length;
 
   const handleOpenFile = useCallback(() => {
-    if (typeof window !== "undefined" && (window as any).electronAPI) {
-      (window as any).electronAPI.openFile().then((result: { name: string; content: string } | null) => {
+    const api = getElectronAPI();
+    if (api) {
+      api.openFile().then((result) => {
         if (result) {
           setContent(result.content);
           setFileName(result.name);
@@ -103,8 +105,9 @@ export default function Home() {
     const fullHTML = buildPDFHTML(html, theme);
 
     // In Electron, send HTML to main process for printToPDF
-    if (typeof window !== "undefined" && (window as any).electronAPI) {
-      (window as any).electronAPI.exportPDF(fullHTML);
+    const api = getElectronAPI();
+    if (api) {
+      api.exportPDF(fullHTML);
       return;
     }
 
@@ -191,19 +194,29 @@ export default function Home() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleOpenFile, handleExportPDF]);
 
-  // Listen for Electron IPC events
-  useEffect(() => {
-    if (typeof window === "undefined" || !(window as any).electronAPI) return;
-
-    const api = (window as any).electronAPI;
-    api.onMenuOpenFile?.(() => handleOpenFile());
-    api.onMenuExportPDF?.(() => handleExportPDF("dark"));
-    api.onSetMode?.((m: ViewMode) => setMode(m));
-    api.onFileOpened?.((data: { name: string; content: string }) => {
+  // Latest handlers, readable from once-registered IPC listeners
+  const handlersRef = useRef({
+    openFile: handleOpenFile,
+    exportPDF: handleExportPDF,
+    fileOpened: (data: FilePayload) => {
       setContent(data.content);
       setFileName(data.name);
-    });
+    },
+  });
+  useEffect(() => {
+    handlersRef.current.openFile = handleOpenFile;
+    handlersRef.current.exportPDF = handleExportPDF;
   }, [handleOpenFile, handleExportPDF]);
+
+  // Listen for Electron IPC events — registered exactly once
+  useEffect(() => {
+    const api = getElectronAPI();
+    if (!api) return;
+    api.onMenuOpenFile?.(() => handlersRef.current.openFile());
+    api.onMenuExportPDF?.((theme) => handlersRef.current.exportPDF(theme ?? "dark"));
+    api.onSetMode?.((m) => setMode(m));
+    api.onFileOpened?.((data) => handlersRef.current.fileOpened(data));
+  }, []);
 
   return (
     <div className="h-screen flex flex-col bg-background">

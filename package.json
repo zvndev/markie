@@ -1,26 +1,78 @@
 {
-  "name": "markdown-viewer-zvn",
+  "name": "marker",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && NODE_ENV=development electron .\"",
+    "electron:build": "npm run build && electron-builder --mac",
+    "electron:pack": "npm run build && electron-builder --mac --dir"
+  },
+  "build": {
+    "appId": "com.zvn.marker",
+    "productName": "Marker",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "public/icon.icns",
+      "target": ["dmg"],
+      "darkModeSupport": true
+    },
+    "files": [
+      "electron/**/*",
+      "out/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "fileAssociations": [
+      {
+        "ext": "md",
+        "name": "Markdown",
+        "role": "Viewer"
+      },
+      {
+        "ext": "markdown",
+        "name": "Markdown",
+        "role": "Viewer"
+      },
+      {
+        "ext": "mdx",
+        "name": "MDX",
+        "role": "Viewer"
+      }
+    ]
   },
   "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/language-data": "^6.5.2",
+    "@uiw/react-codemirror": "^4.25.8",
+    "highlight.js": "^11.11.1",
+    "katex": "^0.16.38",
     "next": "16.1.7",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^9.2.1",
+    "electron": "^41.0.2",
+    "electron-builder": "^26.8.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.7",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wait-on": "^9.0.4"
   }
 }

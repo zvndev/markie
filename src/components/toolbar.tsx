@@ -1,0 +1,129 @@
+"use client";
+
+import { useState, useRef, useEffect } from "react";
+import type { PDFTheme } from "@/lib/pdf-styles";
+
+type ViewMode = "edit" | "preview" | "split";
+
+interface ToolbarProps {
+  mode: ViewMode;
+  onModeChange: (mode: ViewMode) => void;
+  onOpenFile: () => void;
+  onExportPDF: (theme: PDFTheme) => void;
+  fileName: string | null;
+  charCount: number;
+  wordCount: number;
+}
+
+export function Toolbar({
+  mode,
+  onModeChange,
+  onOpenFile,
+  onExportPDF,
+  fileName,
+  charCount,
+  wordCount,
+}: ToolbarProps) {
+  const [showPDFMenu, setShowPDFMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showPDFMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowPDFMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showPDFMenu]);
+
+  return (
+    <div className="h-11 border-b border-border bg-surface flex items-center justify-between px-4 select-none shrink-0"
+      style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+    >
+      {/* Left: App name + file + export */}
+      <div className="flex items-center gap-3" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+        <span className="text-[13px] font-semibold tracking-tight text-foreground/90">
+          Marker
+        </span>
+        <div className="w-px h-4 bg-border" />
+        <button
+          onClick={onOpenFile}
+          className="text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+            <polyline points="13 2 13 9 20 9" />
+          </svg>
+          {fileName || "Open file…"}
+        </button>
+        <div className="w-px h-4 bg-border" />
+        <div className="relative" ref={menuRef}>
+          <button
+            onClick={() => setShowPDFMenu(!showPDFMenu)}
+            className="text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="12" y1="18" x2="12" y2="12" />
+              <polyline points="9 15 12 18 15 15" />
+            </svg>
+            PDF
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+
+          {showPDFMenu && (
+            <div className="absolute top-full left-0 mt-1.5 bg-surface-2 border border-border rounded-lg shadow-xl py-1 min-w-[140px] z-50"
+              style={{ background: "#1c1c20" }}
+            >
+              <button
+                onClick={() => { onExportPDF("dark"); setShowPDFMenu(false); }}
+                className="w-full text-left px-3 py-1.5 text-[12px] text-muted hover:text-foreground hover:bg-accent/50 transition-colors flex items-center gap-2"
+              >
+                <span className="w-3 h-3 rounded-sm bg-zinc-800 border border-zinc-600 shrink-0" />
+                Export Dark
+              </button>
+              <button
+                onClick={() => { onExportPDF("light"); setShowPDFMenu(false); }}
+                className="w-full text-left px-3 py-1.5 text-[12px] text-muted hover:text-foreground hover:bg-accent/50 transition-colors flex items-center gap-2"
+              >
+                <span className="w-3 h-3 rounded-sm bg-white border border-zinc-300 shrink-0" />
+                Export Light
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Center: Mode toggle */}
+      <div
+        className="flex items-center bg-background rounded-md p-0.5 gap-0.5"
+        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      >
+        {(["edit", "split", "preview"] as ViewMode[]).map((m) => (
+          <button
+            key={m}
+            onClick={() => onModeChange(m)}
+            className={`px-3 py-1 text-[11px] font-medium rounded transition-all ${
+              mode === m
+                ? "bg-accent text-foreground"
+                : "text-muted hover:text-foreground"
+            }`}
+          >
+            {m === "edit" ? "Edit" : m === "split" ? "Split" : "Preview"}
+          </button>
+        ))}
+      </div>
+
+      {/* Right: Stats */}
+      <div className="flex items-center gap-3 text-[11px] text-muted tabular-nums">
+        <span>{wordCount} words</span>
+        <span>{charCount} chars</span>
+      </div>
+    </div>
+  );
+}

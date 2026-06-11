@@ -7,6 +7,7 @@ import { Preview } from "@/components/preview";
 import { StatsPanel } from "@/components/stats-panel";
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI, type FilePayload } from "@/lib/electron";
+import { renderMarkdownHTML } from "@/lib/markdown-html";
 
 const SAMPLE = `# Welcome to Markie
 
@@ -98,13 +99,10 @@ export default function Home() {
     input.click();
   }, []);
 
-  const getPreviewHTML = useCallback((): string => {
-    if (previewRef.current) {
-      return previewRef.current.innerHTML;
-    }
-    // Fallback: if ref not available, return raw content
-    return `<pre>${content}</pre>`;
-  }, [content]);
+  const getPreviewHTML = useCallback(
+    (): string => renderMarkdownHTML(content),
+    [content]
+  );
 
   const handleExportPDF = useCallback((theme: PDFTheme) => {
     const html = getPreviewHTML();

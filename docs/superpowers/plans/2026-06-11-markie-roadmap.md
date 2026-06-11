@@ -146,7 +146,15 @@ Spec item: **4**.
 - Exit criteria: typing in View feels native; Edit/Split still work; PDF
   export unchanged.
 
-### Phase 3 — Keyboard-first, performance, local theming
+### Phase 3 — Keyboard-first, performance, local theming ✅ *(completed 2026-06-11)*
+
+> Command palette (⌘K) over a central registry, shortcut cheat-sheet (⌘/),
+> theme engine (Dark/Light built-ins + custom presets, localStorage).
+> Perf measured, not guessed: p50 3.2ms / p95 9.2ms typing latency on a
+> 5,500-line doc (scripts/perf-check.mjs) — no optimization needed.
+> Critical fix: app:// scheme registered as privileged; production
+> localStorage was silently denied before this, which would have broken
+> Phase 5 sync state too.
 Spec items: **12, 13 (local half)**.
 - **Command palette** (Cmd+K) exposing every action; complete keyboard
   navigation (panes, menus, toolbar, stats, dialogs — zero mouse required);

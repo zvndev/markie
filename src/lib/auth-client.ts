@@ -1,5 +1,7 @@
 // Thin client for the Markie API (better-auth REST endpoints).
-// Session is a cookie scoped to the server origin; all calls send credentials.
+// Sessions use bearer tokens; the token is mirrored to the Electron main
+// process (sync engine) whenever it changes.
+import { getElectronAPI } from "@/lib/electron";
 
 export interface MarkieUser {
   id: string;
@@ -43,6 +45,15 @@ function setToken(token: string | null): void {
   } catch {
     // storage unavailable
   }
+  pushSyncConfig();
+}
+
+// Mirror the current token + server URL into the main-process sync engine.
+export function pushSyncConfig(): void {
+  getElectronAPI()?.syncConfig?.({
+    token: getToken(),
+    serverURL: getServerURL(),
+  });
 }
 
 async function api<T>(

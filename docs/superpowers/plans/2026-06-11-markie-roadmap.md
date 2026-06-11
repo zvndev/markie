@@ -186,7 +186,13 @@ Spec items: **1, 5**.
 - No doc features yet — exit criteria is: create account, sign in from the
   app, see yourself in Settings, sign in from a second machine.
 
-### Phase 5 — Sync, backup, and the library browser
+### Phase 5 — Sync, backup, and the library browser ✅ *(completed 2026-06-11, locally verified)*
+
+> Snapshot sync per D6: versioned PUTs with 409 conflict detection +
+> history on the server; local SQLite registry (D5) in Electron main;
+> Library (⌘L) with full state machine (local-only/synced/paused/
+> conflict/behind/cloud-only) and the keep-or-delete flow exactly as
+> specced. Every state transition CDP-verified in the packaged app.
 Spec items: **5 (sync half), 7**.
 - Local SQLite registry (D5) starts tracking every opened file.
 - **Library view** in-app: all known docs with state badges — *local-only*,

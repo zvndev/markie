@@ -13,6 +13,8 @@ import { CommandPalette } from "@/components/command-palette";
 import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { ThemeSettings } from "@/components/theme-settings";
 import { Settings } from "@/components/settings";
+import { Library } from "@/components/library";
+import { pushSyncConfig } from "@/lib/auth-client";
 import type { AppCommand } from "@/lib/commands";
 import {
   applyTheme,
@@ -94,6 +96,7 @@ export default function Home() {
   const [showHelp, setShowHelp] = useState(false);
   const [showTheme, setShowTheme] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
 
   const isDirty = content !== savedContent;
@@ -105,8 +108,26 @@ export default function Home() {
       setFileName(data.name);
       setFilePath(data.path);
       setSavedContent(md);
+      if (data.path) {
+        getElectronAPI()?.registryTrack?.({
+          path: data.path,
+          name: data.name,
+          content: data.content,
+        });
+      }
     },
     []
+  );
+
+  const openPath = useCallback(
+    (p: string) => {
+      getElectronAPI()
+        ?.openFilePath(p)
+        .then((file) => {
+          if (file) loadFile(file);
+        });
+    },
+    [loadFile]
   );
 
   const handleOpenFile = useCallback(() => {
@@ -178,11 +199,17 @@ export default function Home() {
       await handleSaveAs();
       return;
     }
-    const res = await api.saveFile({
-      filePath,
-      content: toDisk(fileName, content),
-    });
-    if (res.success) setSavedContent(content);
+    const diskContent = toDisk(fileName, content);
+    const res = await api.saveFile({ filePath, content: diskContent });
+    if (res.success) {
+      setSavedContent(content);
+      // push the snapshot if this file is cloud-synced
+      api.docPush?.({
+        path: filePath,
+        name: fileName ?? "untitled.md",
+        content: diskContent,
+      });
+    }
   }, [filePath, fileName, content, handleSaveAs]);
 
   const handleFork = useCallback(async () => {
@@ -293,6 +320,10 @@ export default function Home() {
             e.preventDefault();
             setShowPalette((v) => !v);
             break;
+          case "l":
+            e.preventDefault();
+            setShowLibrary((v) => !v);
+            break;
           case "/":
             e.preventDefault();
             setShowHelp((v) => !v);
@@ -339,6 +370,8 @@ export default function Home() {
   useEffect(() => {
     const store = loadThemeStore();
     applyTheme(findTheme(store, store.activeId).tokens);
+    // hand the stored auth token + server URL to the main-process sync engine
+    pushSyncConfig();
   }, []);
 
   // Boot: decide the first painted document — the OS-opened file or the
@@ -369,6 +402,7 @@ export default function Home() {
     api.onMenuShortcuts?.(() => setShowHelp((v) => !v));
     api.onMenuTheme?.(() => setShowTheme((v) => !v));
     api.onMenuSettings?.(() => setShowSettings((v) => !v));
+    api.onMenuLibrary?.(() => setShowLibrary((v) => !v));
     api.onDeepLink?.(() => setShowSettings(true));
     api.onMenuFormatTables?.(() =>
       setContent((prev) => formatMarkdownTables(prev))
@@ -408,6 +442,7 @@ export default function Home() {
       })),
       { id: "theme-settings", title: "Theme Settings…", group: "Theme", keywords: "color font preset style", run: () => setShowTheme(true) },
       { id: "settings", title: "Settings…", group: "File", shortcut: "⌘,", keywords: "account sign in sync login", run: () => setShowSettings(true) },
+      { id: "library", title: "Library…", group: "File", shortcut: "⌘L", keywords: "documents cloud sync files recent", run: () => setShowLibrary(true) },
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
     ],
     [handleOpenFile, handleSave, handleSaveAs, handleFork, handleExportPDF, handleExportHTML]
@@ -473,6 +508,9 @@ export default function Home() {
       )}
       {showTheme && <ThemeSettings onClose={() => setShowTheme(false)} />}
       {showSettings && <Settings onClose={() => setShowSettings(false)} />}
+      {showLibrary && (
+        <Library onClose={() => setShowLibrary(false)} onOpenPath={openPath} />
+      )}
 
       {/* Drag overlay */}
       {isDragging && (

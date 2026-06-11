@@ -35,11 +35,73 @@ export interface ElectronAPI {
   onMenuShortcuts(cb: () => void): void;
   onMenuTheme(cb: () => void): void;
   onMenuSettings(cb: () => void): void;
+  onMenuLibrary(cb: () => void): void;
   onDeepLink(cb: (url: string) => void): void;
   openExternal(url: string): Promise<void>;
+  syncConfig(cfg: { token: string | null; serverURL: string }): Promise<void>;
+  registryTrack(args: {
+    path: string;
+    name: string;
+    content?: string;
+  }): Promise<{ ok?: boolean; error?: string }>;
+  libraryState(): Promise<{ signedIn: boolean; items: LibraryItem[] }>;
+  docSyncOn(args: {
+    path: string;
+    name: string;
+    content: string;
+  }): Promise<SyncResult>;
+  docSyncOff(args: {
+    path: string;
+    deleteRemote: boolean;
+  }): Promise<SyncResult>;
+  docPush(args: {
+    path: string;
+    name: string;
+    content: string;
+  }): Promise<SyncResult>;
+  docResolve(args: {
+    path: string;
+    strategy: "local" | "cloud";
+  }): Promise<SyncResult>;
+  docPull(args: {
+    cloudId: string;
+    suggestedName: string;
+  }): Promise<SyncResult>;
   onSetMode(cb: (mode: ViewMode) => void): void;
   onToggleStats(cb: () => void): void;
   onFileOpened(cb: (data: FilePayload) => void): void;
+}
+
+export interface LibraryItem {
+  kind: "local" | "cloud-only";
+  path: string | null;
+  name: string;
+  cloudId: string | null;
+  state:
+    | "local-only"
+    | "synced"
+    | "paused"
+    | "conflict"
+    | "behind"
+    | "cloud-only";
+  lastOpenedAt: string | null;
+  remoteVersion: number | null;
+  exists: boolean;
+}
+
+export interface SyncResult {
+  ok?: boolean;
+  error?: string;
+  conflict?: boolean;
+  skipped?: string;
+  canceled?: boolean;
+  deleted?: boolean;
+  paused?: boolean;
+  reloaded?: boolean;
+  pushed?: boolean;
+  version?: number;
+  path?: string;
+  name?: string;
 }
 
 export function getElectronAPI(): ElectronAPI | null {

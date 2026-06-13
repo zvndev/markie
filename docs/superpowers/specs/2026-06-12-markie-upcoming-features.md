@@ -60,17 +60,25 @@ on demand. Built in layers, each useful on its own:
 
 ---
 
-## 2. Account-optional sharing — Phase 2 (parked on domain)
+## 2. Account-optional sharing — Phase 2 ✅ built
 
-**Status:** Phase 1 backend is deployed and smoke-tested (pending-invite claim,
-playful invite emails, viewer-default roles). Phase 2 is the **public
-`/s/:token` page** where a recipient with no account can download the `.md` and
-get nudged to join Markie.
+**Status:** Built on branch `feat/sharing-phase2-public-links` (plan:
+`docs/superpowers/plans/2026-06-12-sharing-phase2-public-links.md`). Public
+`public_links` table + revocable token; `GET /s/:token` renders a hardened
+read-only preview (Markie's existing `unified` renderer + `rehype-sanitize` +
+CSP) with a `Download .md` button and a Markie CTA; `GET /s/:token/raw` streams
+the file (RFC 6266 `filename*`); owner `GET/POST/DELETE /:id/public-link`
+endpoints; invite emails now link straight to the preview. 11/11 server unit
+tests pass; reviewed (XSS + filename hardening applied).
 
-**Blocked on:** Kirby's custom domain going live (the share/site URL). Until
-then `MARKIE_SITE_URL` points at the placeholder.
+**Domain:** No longer a blocker — driven by `MARKIE_SITE_URL` env (default
+`https://markie.zvndev.com`). Flip the env when a custom domain is live; DNS for
+that domain points at the API host, which serves `/s/:token`.
 
-**Related ticket:** Task #43.
+**Remaining:** redeploy the API to Railway; optional later: per-link analytics,
+password-protected links, unify the public render on markie-framework.
+
+**Related tickets:** Task #43 (umbrella), Task #50 (Phase 2).
 
 ---
 

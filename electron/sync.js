@@ -16,6 +16,8 @@ function isConfigured() {
 }
 
 async function api(method, p, body) {
+  // Abort a hung request so the renderer's invoke() can't pend forever
+  // (e.g. an unreachable server would otherwise freeze the save indicator).
   const res = await fetch(`${config.serverURL}${p}`, {
     method,
     headers: {
@@ -23,6 +25,7 @@ async function api(method, p, body) {
       Authorization: `Bearer ${config.token}`,
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(15000),
   });
   const data = await res.json().catch(() => null);
   return { status: res.status, data };
@@ -183,12 +186,16 @@ async function libraryState() {
       lastOpenedAt: f.last_opened_at,
       remoteVersion: r?.version ?? null,
       exists: fs.existsSync(f.path),
+      // a synced copy of a doc that was shared with you
+      shared: !!r?.shared,
+      role: r?.role ?? null,
+      sharedBy: r?.shared_by ?? null,
     };
   });
   for (const d of remote) {
     if (!byCloudId.has(d.id)) {
       items.push({
-        kind: "cloud-only",
+        kind: d.shared ? "shared" : "cloud-only",
         path: null,
         name: d.name,
         cloudId: d.id,
@@ -196,6 +203,9 @@ async function libraryState() {
         lastOpenedAt: d.updated_at,
         remoteVersion: d.version,
         exists: false,
+        shared: !!d.shared,
+        role: d.role ?? null,
+        sharedBy: d.shared_by ?? null,
       });
     }
   }

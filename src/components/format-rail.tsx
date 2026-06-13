@@ -44,10 +44,12 @@ const ADVANCED: RailButton[] = [
 
 export function FormatRail({ editor }: FormatRailProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [linkOpen, setLinkOpen] = useState(false);
-  const [linkUrl, setLinkUrl] = useState("");
-  const [imageOpen, setImageOpen] = useState(false);
-  const [imageUrl, setImageUrl] = useState("");
+  // Link/image insertion uses a centered modal (not an inline rail popover,
+  // which got clipped/scrolled inside the 44px rail). `modal` picks the form.
+  const [modal, setModal] = useState<null | "link" | "image">(null);
+  const [url, setUrl] = useState("");
+  const [label, setLabel] = useState("");
+  const [newTab, setNewTab] = useState(true);
 
   const states = useEditorState({
     editor,
@@ -79,24 +81,79 @@ export function FormatRail({ editor }: FormatRailProps) {
       active ? "bg-accent text-foreground" : "text-muted hover:text-foreground hover:bg-accent/40"
     }`;
 
-  const applyLink = () => {
-    if (linkUrl.trim()) {
-      editor.chain().focus().setLink({ href: linkUrl.trim() }).run();
-    }
-    setLinkOpen(false);
-    setLinkUrl("");
+  const closeModal = () => {
+    setModal(null);
+    setUrl("");
+    setLabel("");
   };
 
-  const applyImage = () => {
-    if (imageUrl.trim()) {
-      editor.chain().focus().setImage({ src: imageUrl.trim() }).run();
+  // Link button: if the cursor sits in a link, toggle it off; otherwise open
+  // the modal, prefilling URL/text/target from the selection or existing link.
+  const openLink = () => {
+    if (states?.link) {
+      editor.chain().focus().unsetLink().run();
+      return;
     }
-    setImageOpen(false);
-    setImageUrl("");
+    const { from, to } = editor.state.selection;
+    const selText = editor.state.doc.textBetween(from, to, " ");
+    const attrs = editor.getAttributes("link");
+    setUrl(typeof attrs.href === "string" ? attrs.href : "");
+    setLabel(selText);
+    setNewTab(attrs.target ? attrs.target === "_blank" : true);
+    setModal("link");
+  };
+
+  const openImage = () => {
+    setUrl("");
+    setLabel("");
+    setModal("image");
+  };
+
+  const applyModal = () => {
+    const href = url.trim();
+    if (!href) {
+      closeModal();
+      return;
+    }
+    if (modal === "image") {
+      editor
+        .chain()
+        .focus()
+        .setImage({ src: href, alt: label.trim() || undefined })
+        .run();
+    } else {
+      const target = newTab ? "_blank" : null;
+      const rel = newTab ? "noopener noreferrer" : null;
+      const text = label.trim();
+      const chain = editor.chain().focus();
+      if (text) {
+        // Insert (or replace the selection with) labeled link text.
+        chain
+          .insertContent({
+            type: "text",
+            text,
+            marks: [{ type: "link", attrs: { href, target, rel } }],
+          })
+          .run();
+      } else {
+        chain.setLink({ href, target, rel }).run();
+      }
+    }
+    closeModal();
+  };
+
+  const onModalKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") applyModal();
+    if (e.key === "Escape") closeModal();
   };
 
   return (
-    <div className="w-11 shrink-0 border-r border-border bg-surface flex flex-col items-center py-2 gap-0.5 overflow-y-auto relative">
+    <div className="w-11 shrink-0 border-r border-border bg-surface relative">
+      {/* Scroll lives on this inner column so the URL popover (a sibling
+          below) can overflow the 44px rail without being clipped. Putting
+          overflow-y on the rail itself forces overflow-x:auto too, which
+          trapped the popover inside the rail and ran it off-screen. */}
+      <div className="h-full flex flex-col items-center py-2 gap-0.5 overflow-y-auto">
       {COMMON.map((b) => (
         <button
           key={b.key}
@@ -112,26 +169,12 @@ export function FormatRail({ editor }: FormatRailProps) {
       {/* Link + image get tiny URL popovers */}
       <button
         title={states?.link ? "Remove link" : "Link"}
-        onClick={() => {
-          if (states?.link) {
-            editor.chain().focus().unsetLink().run();
-          } else {
-            setLinkOpen((v) => !v);
-            setImageOpen(false);
-          }
-        }}
+        onClick={openLink}
         className={btnClass(!!states?.link)}
       >
         🔗
       </button>
-      <button
-        title="Image (URL)"
-        onClick={() => {
-          setImageOpen((v) => !v);
-          setLinkOpen(false);
-        }}
-        className={btnClass(false)}
-      >
+      <button title="Image" onClick={openImage} className={btnClass(false)}>
         🖼
       </button>
 
@@ -150,26 +193,72 @@ export function FormatRail({ editor }: FormatRailProps) {
             {b.label}
           </button>
         ))}
+      </div>
 
-      {(linkOpen || imageOpen) && (
-        <div className="absolute left-12 top-2 z-50 bg-surface-2 border border-border rounded-lg shadow-xl p-2 flex items-center gap-2" style={{ background: "#1c1c20" }}>
-          <input
-            autoFocus
-            value={linkOpen ? linkUrl : imageUrl}
-            onChange={(e) => (linkOpen ? setLinkUrl(e.target.value) : setImageUrl(e.target.value))}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (linkOpen ? applyLink : applyImage)();
-              if (e.key === "Escape") {
-                setLinkOpen(false);
-                setImageOpen(false);
-              }
-            }}
-            placeholder={linkOpen ? "https://link…" : "https://image…"}
-            className="text-[12px] bg-background border border-border rounded px-1.5 py-0.5 w-52 text-foreground outline-none"
-          />
-          <button onClick={linkOpen ? applyLink : applyImage} className="text-[11px] text-muted hover:text-foreground">
-            Add
-          </button>
+      {modal && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50"
+          onMouseDown={closeModal}
+        >
+          <div
+            className="w-[340px] rounded-xl border border-border shadow-2xl p-4"
+            style={{ background: "var(--surface-2)" }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="text-[13px] font-medium text-foreground mb-3">
+              {modal === "link" ? "Insert link" : "Insert image"}
+            </div>
+
+            <label className="block text-[11px] text-muted mb-1">
+              {modal === "link" ? "URL" : "Image URL"}
+            </label>
+            <input
+              autoFocus
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={onModalKey}
+              placeholder={modal === "link" ? "https://…" : "https://…/image.png"}
+              className="w-full text-[12px] bg-background border border-border rounded-md px-2 py-1.5 text-foreground outline-none focus:border-foreground/40"
+            />
+
+            <label className="block text-[11px] text-muted mt-3 mb-1">
+              {modal === "link" ? "Text" : "Alt text"}
+            </label>
+            <input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              onKeyDown={onModalKey}
+              placeholder={modal === "link" ? "Link text (optional)" : "Description (optional)"}
+              className="w-full text-[12px] bg-background border border-border rounded-md px-2 py-1.5 text-foreground outline-none focus:border-foreground/40"
+            />
+
+            {modal === "link" && (
+              <label className="flex items-center gap-2 mt-3 text-[12px] text-muted cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={newTab}
+                  onChange={(e) => setNewTab(e.target.checked)}
+                  className="accent-foreground"
+                />
+                Open in new tab
+              </label>
+            )}
+
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={closeModal}
+                className="text-[12px] px-3 py-1.5 rounded-md text-muted hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={applyModal}
+                className="text-[12px] px-3 py-1.5 rounded-md bg-accent text-foreground hover:opacity-90 transition-opacity"
+              >
+                Insert
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

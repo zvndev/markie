@@ -18,25 +18,55 @@ export interface ElectronAPI {
   platform: string;
   openFile(): Promise<FilePayload | null>;
   openFilePath(path: string): Promise<FilePayload | null>;
+  // resolve a dropped File to its on-disk path (Electron webUtils)
+  pathForFile(file: File): string | null;
+  // make Markie the default app for .md files (macOS)
+  setDefaultMarkdownApp(): Promise<{ ok: boolean; error?: string }>;
+  // whether Markie is already the default .md handler (macOS, packaged only)
+  defaultMarkdownStatus(): Promise<{ supported: boolean; isDefault: boolean }>;
+  // Workspace / Files view
+  wsRoots(): Promise<string[]>;
+  wsDefaultPath(): Promise<string>;
+  wsCreateDefault(): Promise<{ ok?: boolean; path?: string; error?: string }>;
+  wsAddRoot(): Promise<{ ok?: boolean; path?: string; canceled?: boolean; error?: string }>;
+  wsRemoveRoot(p: string): Promise<{ ok?: boolean; error?: string }>;
+  wsListDir(p: string): Promise<WsListing | { error: string }>;
+  wsMkdir(parent: string, name: string): Promise<WsResult>;
+  wsNewFile(parent: string, name: string): Promise<WsResult>;
+  wsMove(src: string, destDir: string): Promise<WsResult>;
+  wsRename(target: string, newName: string): Promise<WsResult>;
+  wsTrash(target: string): Promise<WsResult>;
+  wsReveal(target: string): Promise<WsResult>;
+  // Terminal
+  termAvailable(): Promise<boolean>;
+  termCreate(cwd: string | null): Promise<string | null>;
+  termWrite(id: string, data: string): Promise<void>;
+  termResize(id: string, cols: number, rows: number): Promise<void>;
+  termKill(id: string): Promise<void>;
+  onTermData(cb: (p: { id: string; data: string }) => void): Unsubscribe;
+  onTermExit(cb: (p: { id: string }) => void): Unsubscribe;
+  termExternalApps(): Promise<Array<{ id: string; name: string }>>;
+  termOpenExternal(app: string, cwd: string | null): Promise<WsResult>;
   getInitialFile(): Promise<FilePayload | null>;
   exportPDF(html: string): Promise<{ success: boolean; path?: string }>;
   exportHTML(args: { defaultName: string; html: string }): Promise<SaveResult>;
   saveFile(args: { filePath: string; content: string }): Promise<SaveResult>;
   saveFileAs(args: { defaultName: string; content: string }): Promise<SaveResult>;
   renameFile(args: { oldPath: string; newName: string }): Promise<SaveResult>;
-  onMenuOpenFile(cb: () => void): void;
-  onMenuExportPDF(cb: (theme: "dark" | "light") => void): void;
-  onMenuExportHTML(cb: () => void): void;
-  onMenuSave(cb: () => void): void;
-  onMenuSaveAs(cb: () => void): void;
-  onMenuFork(cb: () => void): void;
-  onMenuFormatTables(cb: () => void): void;
-  onMenuCommandPalette(cb: () => void): void;
-  onMenuShortcuts(cb: () => void): void;
-  onMenuTheme(cb: () => void): void;
-  onMenuSettings(cb: () => void): void;
-  onMenuLibrary(cb: () => void): void;
-  onDeepLink(cb: (url: string) => void): void;
+  // Each onX subscribes and returns an unsubscribe function.
+  onMenuOpenFile(cb: () => void): Unsubscribe;
+  onMenuExportPDF(cb: (theme: "dark" | "light") => void): Unsubscribe;
+  onMenuExportHTML(cb: () => void): Unsubscribe;
+  onMenuSave(cb: () => void): Unsubscribe;
+  onMenuSaveAs(cb: () => void): Unsubscribe;
+  onMenuFork(cb: () => void): Unsubscribe;
+  onMenuFormatTables(cb: () => void): Unsubscribe;
+  onMenuCommandPalette(cb: () => void): Unsubscribe;
+  onMenuShortcuts(cb: () => void): Unsubscribe;
+  onMenuTheme(cb: () => void): Unsubscribe;
+  onMenuSettings(cb: () => void): Unsubscribe;
+  onMenuLibrary(cb: () => void): Unsubscribe;
+  onDeepLink(cb: (url: string) => void): Unsubscribe;
   openExternal(url: string): Promise<void>;
   syncConfig(cfg: { token: string | null; serverURL: string }): Promise<void>;
   registryTrack(args: {
@@ -68,9 +98,33 @@ export interface ElectronAPI {
     cloudId: string;
     suggestedName: string;
   }): Promise<SyncResult>;
-  onSetMode(cb: (mode: ViewMode) => void): void;
-  onToggleStats(cb: () => void): void;
-  onFileOpened(cb: (data: FilePayload) => void): void;
+  onSetMode(cb: (mode: ViewMode) => void): Unsubscribe;
+  onToggleStats(cb: () => void): Unsubscribe;
+  onFileOpened(cb: (data: FilePayload) => void): Unsubscribe;
+  // Auto-update
+  checkForUpdates(): Promise<{ ok: boolean; reason?: string }>;
+  updateStatus(): Promise<string>;
+  quitAndInstall(): Promise<void>;
+  onUpdateAvailable(cb: (info: { version?: string }) => void): Unsubscribe;
+  onUpdateProgress(cb: (info: { percent: number }) => void): Unsubscribe;
+  onUpdateReady(cb: (info: { version?: string }) => void): Unsubscribe;
+}
+
+export type Unsubscribe = (() => void) | undefined;
+
+export interface WsEntry {
+  name: string;
+  path: string;
+  ext?: string;
+}
+export interface WsListing {
+  folders: WsEntry[];
+  files: WsEntry[];
+}
+export interface WsResult {
+  ok?: boolean;
+  path?: string;
+  error?: string;
 }
 
 export interface RegistryEntry {
@@ -85,7 +139,7 @@ export interface RegistryEntry {
 }
 
 export interface LibraryItem {
-  kind: "local" | "cloud-only";
+  kind: "local" | "cloud-only" | "shared";
   path: string | null;
   name: string;
   cloudId: string | null;
@@ -99,6 +153,10 @@ export interface LibraryItem {
   lastOpenedAt: string | null;
   remoteVersion: number | null;
   exists: boolean;
+  // shared-with-me info (present when someone invited you to this doc)
+  shared?: boolean;
+  role?: "viewer" | "editor" | null;
+  sharedBy?: string | null;
 }
 
 export interface SyncResult {

@@ -125,14 +125,21 @@ export function RichView({
 
   useEffect(() => {
     onEditorReady?.(editor);
-    // Test/debug handle for driving the editor via CDP (local desktop app)
+    // Test/debug handle for driving the editor via CDP (kept in prod so the
+    // packaged app stays automatable). Released on cleanup so it only ever
+    // references the *current* editor/doc — never pins destroyed ones across
+    // file/collab switches.
     const w = window as unknown as {
       __markieEditor?: Editor | null;
       __markieCollab?: CollabSession | null;
     };
     w.__markieEditor = editor;
     w.__markieCollab = session;
-    return () => onEditorReady?.(null);
+    return () => {
+      onEditorReady?.(null);
+      if (w.__markieEditor === editor) w.__markieEditor = null;
+      if (w.__markieCollab === session) w.__markieCollab = null;
+    };
   }, [editor, session, onEditorReady]);
 
   // First peer to join an empty room seeds it from the local file

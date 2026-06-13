@@ -13,11 +13,13 @@ import { getElectronAPI } from "@/lib/electron";
 
 interface SettingsProps {
   onClose: () => void;
+  // bumps when auth changes out-of-band (e.g. Google deep-link sign-in)
+  authNonce: number;
 }
 
 type AuthView = "password" | "otp-email" | "otp-code";
 
-export function Settings({ onClose }: SettingsProps) {
+export function Settings({ onClose, authNonce }: SettingsProps) {
   const [user, setUser] = useState<MarkieUser | null>(null);
   const [checking, setChecking] = useState(true);
   const [authView, setAuthView] = useState<AuthView>("password");
@@ -49,6 +51,22 @@ export function Settings({ onClose }: SettingsProps) {
       alive = false;
     };
   }, []);
+
+  // Re-check the session when auth changes out-of-band (Google deep-link
+  // sign-in lands a token via markie://). Without this the open modal stays
+  // stuck on the sign-in form after the browser hands the session back.
+  useEffect(() => {
+    if (authNonce === 0) return;
+    let alive = true;
+    authClient.me().then((u) => {
+      if (!alive) return;
+      setUser(u);
+      setChecking(false);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [authNonce]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

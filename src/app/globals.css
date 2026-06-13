@@ -374,12 +374,36 @@ body {
 
 .markdown-body .ProseMirror ul[data-type="taskList"] li {
   display: flex;
+  align-items: flex-start;
   gap: 0.5rem;
+  margin: 0.15rem 0;
 }
 
 .markdown-body .ProseMirror ul[data-type="taskList"] li > label {
   flex: 0 0 auto;
   user-select: none;
+  /* line up the checkbox with the first line of the label text */
+  display: flex;
+  align-items: center;
+  height: 1.6em;
+  margin: 0;
+}
+
+/* checkbox spacing is handled by the flex gap, not its own margin */
+.markdown-body .ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"] {
+  margin: 0;
+  top: 0;
+}
+
+/* the content side is a div wrapping a paragraph — kill its default margins
+   so the text sits on the same line as the checkbox instead of staggering */
+.markdown-body .ProseMirror ul[data-type="taskList"] li > div {
+  flex: 1 1 auto;
+}
+
+.markdown-body .ProseMirror ul[data-type="taskList"] li > div > p {
+  margin: 0;
+  line-height: 1.6;
 }
 
 .markdown-body .ProseMirror-gapcursor:after {

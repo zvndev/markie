@@ -8,11 +8,17 @@ import {
   applyColorMode,
   type ColorMode,
 } from "@/lib/color-mode";
+import { TERMINAL_ENABLED } from "@/lib/features";
 
 interface ActivityBarProps {
   libraryOpen: boolean;
   onToggleLibrary: () => void;
   onOpenFile: () => void;
+  onShare: () => void;
+  // true once the open doc is signed-in + cloud-synced (shareable now)
+  canShare: boolean;
+  onToggleTerminal: () => void;
+  terminalOpen: boolean;
   onShortcuts: () => void;
   onThemePresets: () => void;
   onAccount: () => void;
@@ -24,6 +30,10 @@ export function ActivityBar({
   libraryOpen,
   onToggleLibrary,
   onOpenFile,
+  onShare,
+  canShare,
+  onToggleTerminal,
+  terminalOpen,
   onShortcuts,
   onThemePresets,
   onAccount,
@@ -60,6 +70,28 @@ export function ActivityBar({
           <polyline points="13 3 13 10 20 10" />
         </svg>
       </IconButton>
+      <IconButton
+        label={
+          canShare
+            ? "Share this document"
+            : "Share — sign in and sync this file to the cloud first"
+        }
+        active={canShare}
+        onClick={onShare}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+          <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+        </svg>
+      </IconButton>
+      {TERMINAL_ENABLED && (
+        <IconButton label="Terminal (⌃`)" active={terminalOpen} onClick={onToggleTerminal}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M7 9l3 3-3 3M13 15h4" />
+          </svg>
+        </IconButton>
+      )}
 
       <div className="flex-1" />
 

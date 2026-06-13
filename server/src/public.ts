@@ -44,9 +44,13 @@ publicShare.get("/s/:token/raw", (c) => {
   const token = c.req.param("token");
   const doc = docForToken(token);
   if (!doc) return c.text("Not found", 404);
-  const base = doc.name.replace(/"/g, "").trim() || "document";
-  const filename = base.toLowerCase().endsWith(".md") ? base : `${base}.md`;
+  const cleaned = doc.name.replace(/[\r\n"\\]/g, "").trim() || "document";
+  const filename = cleaned.toLowerCase().endsWith(".md") ? cleaned : `${cleaned}.md`;
+  const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_");
   c.header("Content-Type", "text/markdown; charset=utf-8");
-  c.header("Content-Disposition", `attachment; filename="${filename}"`);
+  c.header(
+    "Content-Disposition",
+    `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+  );
   return c.body(doc.content);
 });

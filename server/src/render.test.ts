@@ -31,3 +31,24 @@ test("renderNotFoundPage returns a 404 body with a site link", () => {
   assert.match(page, /not found|no longer|expired/i);
   assert.match(page, /https:\/\/markie\.example\.com/);
 });
+
+test("renderMarkdownHTML drops javascript: link hrefs", () => {
+  const html = renderMarkdownHTML("[click](javascript:alert(1))");
+  assert.doesNotMatch(html, /javascript:/);
+});
+
+test("renderMarkdownHTML preserves syntax-highlight classes", () => {
+  const html = renderMarkdownHTML("```js\nconst a = 1;\n```");
+  assert.match(html, /hljs/);
+});
+
+test("renderMarkdownHTML preserves KaTeX math output", () => {
+  const html = renderMarkdownHTML("$E = mc^2$");
+  assert.match(html, /katex/);
+});
+
+test("renderPublicPage sets a Content-Security-Policy", () => {
+  const page = renderPublicPage({ title: "T", markdown: "# H", token: "tok", siteUrl: "https://x.test" });
+  assert.match(page, /Content-Security-Policy/);
+  assert.match(page, /default-src 'none'/);
+});

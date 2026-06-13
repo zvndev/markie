@@ -8,7 +8,32 @@ import remarkMath from "remark-math";
 import remarkRehype from "remark-rehype";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeStringify from "rehype-stringify";
+
+// rehype-sanitize schema: drops scripts, event handlers, and javascript:/data:
+// hrefs (defaultSchema.protocols) while preserving what rehype-highlight (hljs
+// class names) and rehype-katex (MathML tags + inline styles) emit. This is the
+// hardened public variant of the in-app renderer.
+const MATHML = ["math","semantics","annotation","mrow","mi","mo","mn","ms","mtext","mspace","msup","msub","msubsup","mfrac","msqrt","mroot","munder","mover","munderover","mtable","mtr","mtd","mpadded","mphantom","menclose","mstyle","mglyph"];
+const SVG = ["svg","path","line","g","defs","use","rect","polyline"];
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), "span", "div", ...MATHML, ...SVG],
+  attributes: {
+    ...defaultSchema.attributes,
+    "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "ariaHidden", "ariaLabel"],
+    span: ["className", "style", "ariaHidden"],
+    div: ["className", "style"],
+    code: ["className"],
+    pre: ["className"],
+    math: ["xmlns", "display"],
+    annotation: ["encoding"],
+    svg: ["xmlns", "width", "height", "viewBox", "preserveAspectRatio", "style", "ariaHidden"],
+    path: ["d"],
+    line: ["x1", "y1", "x2", "y2"],
+  },
+};
 
 const processor = unified()
   .use(remarkParse)
@@ -17,6 +42,7 @@ const processor = unified()
   .use(remarkRehype)
   .use(rehypeHighlight)
   .use(rehypeKatex)
+  .use(rehypeSanitize, sanitizeSchema)
   .use(rehypeStringify);
 
 export function renderMarkdownHTML(markdown: string): string {
@@ -81,6 +107,7 @@ export function renderPublicPage(opts: {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src * data: https:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; base-uri 'none'; form-action 'none'">
   <title>${safeTitle} · Markie</title>
   ${HEAD_CSS}
   <style>${PAGE_CSS}</style>

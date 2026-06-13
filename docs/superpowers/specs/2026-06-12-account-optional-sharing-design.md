@@ -53,26 +53,19 @@ simply the nicest way to work with `.md`.
   (Kirby is setting domains up now). Until the domain exists we ship the
   account-flow half and the email points people at "get Markie / sign in."
 
-## Open decisions (resolve during review)
+## Open decisions — RESOLVED 2026-06-12
 
-- **OD-1 — Domain.** What domain hosts public links (e.g. `markie.zvndev.com`,
-  or a marketing domain)? Public URLs are `https://<domain>/s/:token`.
-- **OD-2 — Markie-fw coupling.** The public preview page renders Markdown. We
-  have `markie-framework` (`Markie-fw`, v0.3.0): Markdown-native, `.wd`
-  directives, `.skin` styling, **zero-JS static output**. Options:
-  - **(A, recommended) Render public pages with markie-framework.** The shared
-    `.md` is rendered by the framework's renderer; the surrounding landing
-    page + marketing pages are authored as `.wd`/`.skin`. One rendering brain,
-    zero-JS output, dogfoods the framework. Coupling: Markie's server (or a
-    small static build step) depends on markie-framework's renderer.
-  - **(B) Keep Markie's existing renderer** (`src/lib/markdown-html.ts`) for the
-    public page now; revisit unifying on markie-framework later. Faster, but two
-    renderers to keep visually consistent.
-  Recommendation: **A**, because the public page is exactly the framework's
-  sweet spot (static, gorgeous, zero-JS) and it's the moment to dogfood.
-- **OD-3 — Framework naming.** `markie-framework` may be renamed **darkmown** or
-  **darkmound**. Affects branding/package name, not this spec's mechanics. Pick
-  before we hard-link package names in the build.
+- **OD-1 — Domain. RESOLVED: env-driven, decide later.** Build the public page
+  domain-agnostic via `MARKIE_SITE_URL` (default `https://markie.zvndev.com`).
+  Public URLs are `${MARKIE_SITE_URL}/s/:token`. Flip the env when the real
+  domain is live — no code change. DNS for the chosen domain points at the Hono
+  server, which serves `/s/:token` and `/s/:token/raw`.
+- **OD-2 — Renderer. RESOLVED: Markie's existing renderer (option B).** Render
+  the public preview server-side with Markie's current markdown→HTML path. Keep
+  it self-contained to ship Phase 2 fast, with no cross-repo dependency.
+  Revisit unifying on markie-framework once its name/packaging settles.
+- **OD-3 — Framework naming.** Moot for Phase 2 now that OD-2 chose the existing
+  renderer. Revisit if/when we unify on markie-framework (darkmown/darkmound).
 
 ## Architecture
 

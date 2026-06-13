@@ -182,6 +182,29 @@ export const sharesClient = {
     );
     return res.ok;
   },
+
+  getPublicLink: async (docId: string): Promise<string | null> => {
+    const res = await api<{ url: string | null }>(
+      `/api/docs/${encodeURIComponent(docId)}/public-link`
+    );
+    return res.ok ? res.data?.url ?? null : null;
+  },
+
+  createPublicLink: async (docId: string): Promise<string | null> => {
+    const res = await api<{ url?: string }>(
+      `/api/docs/${encodeURIComponent(docId)}/public-link`,
+      { method: "POST", body: "{}" }
+    );
+    return res.ok ? res.data?.url ?? null : null;
+  },
+
+  revokePublicLink: async (docId: string): Promise<boolean> => {
+    const res = await api<{ ok?: boolean }>(
+      `/api/docs/${encodeURIComponent(docId)}/public-link`,
+      { method: "DELETE" }
+    );
+    return res.ok;
+  },
 };
 
 const SYNC_KEY = "markie.sync.v1";

@@ -33,8 +33,14 @@ export function ShareDialog({
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [themePinned, setThemePinned] = useState(false);
+  const [publicUrl, setPublicUrl] = useState<string | null>(null);
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const load = useCallback(() => {
+    sharesClient.getPublicLink(docId).then((url) => {
+      setPublicUrl(url);
+    });
     return Promise.all([authClient.me(), sharesClient.list(docId)]).then(
       ([user, list]) => {
         setMe(user);
@@ -102,6 +108,35 @@ export function ShareDialog({
       await load();
       onChanged();
     }
+  };
+
+  const createLink = async () => {
+    setLinkBusy(true);
+    setError(null);
+    const url = await sharesClient.createPublicLink(docId);
+    setLinkBusy(false);
+    if (url) setPublicUrl(url);
+    else setError("Couldn't create a public link");
+  };
+
+  const revokeLink = async () => {
+    setLinkBusy(true);
+    setError(null);
+    const ok = await sharesClient.revokePublicLink(docId);
+    setLinkBusy(false);
+    if (ok) setPublicUrl(null);
+    else setError("Couldn't revoke the link");
+  };
+
+  const copyLink = () => {
+    if (!publicUrl) return;
+    navigator.clipboard.writeText(publicUrl).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      },
+      () => setError("Couldn't copy the link")
+    );
   };
 
   return (
@@ -230,6 +265,50 @@ export function ShareDialog({
             )}
           </div>
         )}
+
+        <div className="mt-4 pt-3 border-t border-border">
+          <div className="text-[12px] font-medium text-foreground mb-1">
+            Anyone with the link
+          </div>
+          {publicUrl ? (
+            <>
+              <div className="flex items-center gap-2">
+                <input
+                  readOnly
+                  value={publicUrl}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="flex-1 text-[12px] bg-background border border-border rounded-md px-2 py-1.5 text-muted outline-none"
+                />
+                <button
+                  onClick={copyLink}
+                  className="text-[12px] px-3 py-1.5 rounded-md bg-accent text-foreground hover:opacity-90"
+                >
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <div className="flex items-center justify-between mt-1.5">
+                <span className="text-[11px] text-muted">
+                  Anyone with this link can view &amp; download — no account needed.
+                </span>
+                <button
+                  onClick={revokeLink}
+                  disabled={linkBusy}
+                  className="text-[11px] text-red-400 hover:text-red-300 disabled:opacity-50"
+                >
+                  Revoke
+                </button>
+              </div>
+            </>
+          ) : (
+            <button
+              onClick={createLink}
+              disabled={linkBusy}
+              className="text-[12px] px-3 py-1.5 rounded-md border border-border text-muted hover:text-foreground disabled:opacity-50"
+            >
+              {linkBusy ? "Creating…" : "Create a public link"}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

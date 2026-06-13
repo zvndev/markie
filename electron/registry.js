@@ -10,6 +10,8 @@ function getDB() {
   if (db) return db;
   const Database = require("better-sqlite3");
   db = new Database(path.join(app.getPath("userData"), "registry.db"));
+  // WAL survives an abrupt quit better and lets reads not block writes.
+  db.pragma("journal_mode = WAL");
   db.exec(`
     CREATE TABLE IF NOT EXISTS files (
       path TEXT PRIMARY KEY,
@@ -21,8 +23,55 @@ function getDB() {
       last_opened_at TEXT,
       last_synced_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS workspace_roots (
+      path TEXT PRIMARY KEY,
+      added_at TEXT NOT NULL
+    );
   `);
   return db;
+}
+
+// ── Workspace roots (folders the Files view organizes) ──
+function listRoots() {
+  return getDB()
+    .prepare("SELECT path FROM workspace_roots ORDER BY added_at ASC")
+    .all()
+    .map((r) => r.path);
+}
+
+function addRoot(rootPath) {
+  getDB()
+    .prepare(
+      "INSERT INTO workspace_roots (path, added_at) VALUES (?, ?) ON CONFLICT(path) DO NOTHING"
+    )
+    .run(rootPath, new Date().toISOString());
+}
+
+function removeRoot(rootPath) {
+  getDB().prepare("DELETE FROM workspace_roots WHERE path = ?").run(rootPath);
+}
+
+// Move/rename a tracked file's path (keeps cloud linkage). Returns silently if
+// the old path wasn't tracked.
+function movePath(oldPath, newPath) {
+  getDB()
+    .prepare("UPDATE files SET path = ? WHERE path = ?")
+    .run(newPath, oldPath);
+}
+
+// Re-point any tracked file under an old directory prefix to a new prefix
+// (used when a folder is renamed/moved).
+function movePrefix(oldPrefix, newPrefix) {
+  const rows = getDB()
+    .prepare("SELECT path FROM files WHERE path LIKE ?")
+    .all(`${oldPrefix}%`);
+  const update = getDB().prepare("UPDATE files SET path = ? WHERE path = ?");
+  const tx = getDB().transaction(() => {
+    for (const { path: p } of rows) {
+      update.run(newPrefix + p.slice(oldPrefix.length), p);
+    }
+  });
+  tx();
 }
 
 function hashContent(content) {
@@ -76,4 +125,29 @@ function update(filePath, fields) {
     .run(...values);
 }
 
-module.exports = { track, get, list, update, hashContent };
+// Flush + close the handle deterministically on app quit (WAL checkpoint).
+function close() {
+  if (db) {
+    try {
+      db.pragma("wal_checkpoint(TRUNCATE)");
+    } catch {
+      // best effort
+    }
+    db.close();
+    db = null;
+  }
+}
+
+module.exports = {
+  track,
+  get,
+  list,
+  update,
+  hashContent,
+  close,
+  listRoots,
+  addRoot,
+  removeRoot,
+  movePath,
+  movePrefix,
+};

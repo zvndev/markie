@@ -798,6 +798,7 @@ export default function Home() {
       )}
       {showShare && cloudId && (
         <ShareDialog
+          key={cloudId}
           docId={cloudId}
           fileName={fileName ?? "Untitled"}
           onClose={() => setShowShare(false)}

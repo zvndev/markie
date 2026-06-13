@@ -112,23 +112,31 @@ export function ShareDialog({
 
   const createLink = async () => {
     setLinkBusy(true);
+    setError(null);
     const url = await sharesClient.createPublicLink(docId);
     setLinkBusy(false);
     if (url) setPublicUrl(url);
+    else setError("Couldn't create a public link");
   };
 
   const revokeLink = async () => {
     setLinkBusy(true);
+    setError(null);
     const ok = await sharesClient.revokePublicLink(docId);
     setLinkBusy(false);
     if (ok) setPublicUrl(null);
+    else setError("Couldn't revoke the link");
   };
 
   const copyLink = () => {
     if (!publicUrl) return;
-    navigator.clipboard.writeText(publicUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    navigator.clipboard.writeText(publicUrl).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      },
+      () => setError("Couldn't copy the link")
+    );
   };
 
   return (

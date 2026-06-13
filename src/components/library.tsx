@@ -1,17 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type DragEvent } from "react";
 import { getElectronAPI, type LibraryItem } from "@/lib/electron";
+import { FilesView } from "@/components/files-view";
 
 interface LibraryProps {
   onClose: () => void;
   onOpenPath: (path: string) => void;
   onOpenFile: () => void;
+  onAddPaths: (paths: string[]) => void;
   onSignIn: () => void;
   activePath: string | null;
   // bump to force a refresh (file opened/saved/sync changed)
   refreshKey: number;
 }
+
+const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
+const VIEW_KEY = "markie.libview.v1";
+
+type LibView = "recent" | "files" | "shared";
 
 const BADGE: Record<LibraryItem["state"], [string, string]> = {
   "local-only": ["Local", "text-muted border-border"],
@@ -26,6 +33,7 @@ export function Library({
   onClose,
   onOpenPath,
   onOpenFile,
+  onAddPaths,
   onSignIn,
   activePath,
   refreshKey,
@@ -39,6 +47,77 @@ export function Library({
   const [confirmOff, setConfirmOff] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [dropping, setDropping] = useState(false);
+  const [view, setView] = useState<LibView>(() => {
+    try {
+      const v = localStorage.getItem(VIEW_KEY);
+      return v === "files" || v === "shared" ? v : "recent";
+    } catch {
+      return "recent";
+    }
+  });
+  const pickView = (v: LibView) => {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // storage unavailable
+    }
+  };
+  const [defaultMsg, setDefaultMsg] = useState<string | null>(null);
+  const [settingDefault, setSettingDefault] = useState(false);
+  // null = unknown/checking; show the prompt only when we know it's NOT default.
+  // No status API (web/dev) → never show, decided up front to avoid set-in-effect.
+  const [needsDefault, setNeedsDefault] = useState<boolean | null>(() =>
+    getElectronAPI()?.defaultMarkdownStatus ? null : false
+  );
+
+  // Ask the system whether Markie already owns .md, so we don't nag every open.
+  useEffect(() => {
+    const api = getElectronAPI();
+    if (!api?.defaultMarkdownStatus) return;
+    let alive = true;
+    api.defaultMarkdownStatus().then((s) => {
+      if (alive) setNeedsDefault(s.supported && !s.isDefault);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const makeDefault = async () => {
+    const api = getElectronAPI();
+    if (!api?.setDefaultMarkdownApp) return;
+    setSettingDefault(true);
+    setDefaultMsg(null);
+    const res = await api.setDefaultMarkdownApp();
+    setSettingDefault(false);
+    if (res.ok) {
+      setDefaultMsg("Markie now opens .md files.");
+      setNeedsDefault(false); // hide the prompt — it's set now
+    } else {
+      setDefaultMsg(res.error ?? "Couldn't set default.");
+    }
+  };
+
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropping(false);
+    const api = getElectronAPI();
+    if (!api?.pathForFile) {
+      setNotice("Drag-and-drop needs the desktop app.");
+      return;
+    }
+    const paths = Array.from(e.dataTransfer.files)
+      .map((f) => api.pathForFile(f))
+      .filter((p): p is string => !!p && OPENABLE.test(p));
+    if (paths.length === 0) {
+      setNotice("Drop Markdown, text, or CSV files here.");
+      return;
+    }
+    onAddPaths(paths);
+  };
 
   const refresh = useCallback(() => {
     const api = getElectronAPI();
@@ -71,6 +150,33 @@ export function Library({
     refresh();
   };
 
+  const flash = (msg: string) => {
+    setNotice(msg);
+    setMenuFor(null);
+  };
+
+  const copyPath = async (path: string) => {
+    try {
+      await navigator.clipboard.writeText(path);
+      flash("Path copied — paste it anywhere.");
+    } catch {
+      flash("Couldn't copy the path.");
+    }
+  };
+
+  const copyContents = async (item: LibraryItem) => {
+    const api = getElectronAPI();
+    if (!item.path || !api?.openFilePath) return flash("Nothing to copy.");
+    const file = await api.openFilePath(item.path);
+    if (!file) return flash(`Couldn't read ${item.name}.`);
+    try {
+      await navigator.clipboard.writeText(file.content);
+      flash("Contents copied to clipboard.");
+    } catch {
+      flash("Couldn't copy the contents.");
+    }
+  };
+
   const syncOn = (item: LibraryItem) =>
     act(async () => {
       const api = getElectronAPI()!;
@@ -85,10 +191,13 @@ export function Library({
     });
 
   const localFiles = items.filter((i) => i.path);
-  const cloudOnly = items.filter((i) => !i.path);
+  const myCloudOnly = items.filter((i) => !i.path && !i.shared);
+  const sharedItems = items.filter((i) => i.shared);
 
   const fileRow = (item: LibraryItem) => {
-    const [label, badgeClass] = BADGE[item.state];
+    const [label, badgeClass]: [string, string] = item.shared
+      ? ["Shared", "text-purple-400 border-purple-400/40"]
+      : BADGE[item.state];
     const api = getElectronAPI()!;
     const isActive = activePath && item.path === activePath;
     const open = () => {
@@ -130,9 +239,21 @@ export function Library({
         {item.path && !item.exists && (
           <div className="text-[10px] text-red-400 pl-5">Missing on disk</div>
         )}
+        {item.shared && (item.sharedBy || item.role) && (
+          <div className="text-[10px] text-muted pl-5 truncate">
+            {item.sharedBy ? `Shared by ${item.sharedBy}` : "Shared with you"}
+            {item.role ? ` · ${item.role === "editor" ? "Editor" : "Viewer"}` : ""}
+          </div>
+        )}
 
         {menuFor === (item.path ?? item.cloudId) && (
           <div className="flex flex-wrap gap-x-3 gap-y-1 pl-5 pt-1.5 text-[11px]" onClick={(e) => e.stopPropagation()}>
+            {item.path && (
+              <button className="text-muted hover:text-foreground" onClick={() => copyPath(item.path!)}>Copy path</button>
+            )}
+            {item.path && item.exists && (
+              <button className="text-muted hover:text-foreground" onClick={() => copyContents(item)}>Copy contents</button>
+            )}
             {signedIn && item.state === "local-only" && item.exists && (
               <button className="text-muted hover:text-foreground" onClick={() => syncOn(item)}>Sync to cloud</button>
             )}
@@ -161,7 +282,27 @@ export function Library({
   };
 
   return (
-    <div className="w-[260px] shrink-0 h-full flex flex-col border-r border-border bg-surface">
+    <div
+      className={`relative w-[260px] shrink-0 h-full flex flex-col border-r bg-surface ${
+        dropping ? "border-foreground/40" : "border-border"
+      }`}
+      onDragOver={(e) => {
+        if (!getElectronAPI()?.pathForFile) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setDropping(true);
+      }}
+      onDragLeave={(e) => {
+        e.stopPropagation();
+        if (e.relatedTarget === null) setDropping(false);
+      }}
+      onDrop={onDrop}
+    >
+      {dropping && (
+        <div className="absolute inset-0 z-10 m-1.5 rounded-lg border-2 border-dashed border-foreground/40 bg-surface/80 flex items-center justify-center pointer-events-none">
+          <span className="text-[12px] text-foreground/80">Drop to add to your library</span>
+        </div>
+      )}
       <div className="flex items-center justify-between px-3 h-9 shrink-0">
         <span className="text-[11px] uppercase tracking-wide text-muted font-medium">Library</span>
         <div className="flex items-center gap-1">
@@ -174,29 +315,74 @@ export function Library({
         </div>
       </div>
 
+      {/* view switcher */}
+      <div className="flex items-center gap-0.5 px-2 pb-1.5 shrink-0">
+        {(["recent", "files", "shared"] as LibView[]).map((v) => (
+          <button
+            key={v}
+            onClick={() => pickView(v)}
+            className={`flex-1 text-[11px] py-1 rounded-md capitalize transition-colors ${
+              view === v
+                ? "bg-accent text-foreground"
+                : "text-muted hover:text-foreground hover:bg-accent/40"
+            }`}
+          >
+            {v}
+            {v === "shared" && sharedItems.length > 0 && (
+              <span className="ml-1 text-[9px] text-muted">{sharedItems.length}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
       <div className="flex-1 overflow-y-auto px-1.5 pb-2">
         {loading ? (
           <div className="px-2 py-4 text-[12px] text-muted">Loading…</div>
-        ) : items.length === 0 ? (
-          <div className="px-2 py-4 text-[12px] text-muted leading-relaxed">
-            No files yet. Open one (⌘O) — everything you open lives here, on this
-            device, online or off.
-          </div>
-        ) : (
-          <>
-            {localFiles.length > 0 && (
+        ) : view === "recent" ? (
+          localFiles.length === 0 && myCloudOnly.length === 0 ? (
+            <div className="px-2 py-4 text-[12px] text-muted leading-relaxed">
+              No files yet. Open one (⌘O) or drag <code>.md</code> files here —
+              everything you add lives in your library, on this device, online
+              or off.
+            </div>
+          ) : (
+            <>
+              {localFiles.length > 0 && (
+                <div className="text-[9px] uppercase tracking-wide text-muted/70 px-2 pt-2 pb-1">
+                  On this device
+                </div>
+              )}
+              {localFiles.map(fileRow)}
+              {myCloudOnly.length > 0 && (
+                <div className="text-[9px] uppercase tracking-wide text-muted/70 px-2 pt-3 pb-1">
+                  In your cloud
+                </div>
+              )}
+              {myCloudOnly.map(fileRow)}
+            </>
+          )
+        ) : view === "shared" ? (
+          sharedItems.length === 0 ? (
+            <div className="px-2 py-4 text-[12px] text-muted leading-relaxed">
+              {signedIn
+                ? "Nothing shared with you yet. When someone invites you to a doc, it shows up here."
+                : "Sign in to see docs people have shared with you."}
+            </div>
+          ) : (
+            <>
               <div className="text-[9px] uppercase tracking-wide text-muted/70 px-2 pt-2 pb-1">
-                On this device
+                Shared with you
               </div>
-            )}
-            {localFiles.map(fileRow)}
-            {cloudOnly.length > 0 && (
-              <div className="text-[9px] uppercase tracking-wide text-muted/70 px-2 pt-3 pb-1">
-                In your cloud
-              </div>
-            )}
-            {cloudOnly.map(fileRow)}
-          </>
+              {sharedItems.map(fileRow)}
+            </>
+          )
+        ) : (
+          <FilesView
+            activePath={activePath}
+            refreshKey={refreshKey}
+            onOpenPath={onOpenPath}
+            onNotice={setNotice}
+          />
         )}
       </div>
 
@@ -210,7 +396,24 @@ export function Library({
         </button>
       )}
       {notice && (
-        <div className="px-3 py-2 text-[11px] text-red-400 border-t border-border">{notice}</div>
+        <div className="px-3 py-2 text-[11px] text-muted border-t border-border">{notice}</div>
+      )}
+
+      {needsDefault && (
+        <div className="border-t border-border px-2 py-2">
+          <button
+            onClick={makeDefault}
+            disabled={settingDefault}
+            className="w-full text-[11px] text-muted hover:text-foreground rounded-md py-1.5 px-2 text-left hover:bg-accent/40 disabled:opacity-50"
+          >
+            {settingDefault
+              ? "Setting…"
+              : "Open .md files in Markie by default"}
+          </button>
+          {defaultMsg && (
+            <div className="text-[10.5px] text-muted px-2 pt-1 leading-snug">{defaultMsg}</div>
+          )}
+        </div>
       )}
 
       {confirmOff && (

@@ -143,11 +143,14 @@ export const authClient = {
 };
 
 export interface ShareMember {
-  user_id: string;
+  // null for a pending invite (the email hasn't joined yet)
+  user_id: string | null;
   role: "viewer" | "editor";
   created_at: string;
   email: string;
-  name: string;
+  name: string | null;
+  // true when this is an invited-but-not-yet-joined email
+  pending?: boolean;
 }
 
 export const sharesClient = {
@@ -162,18 +165,19 @@ export const sharesClient = {
     docId: string,
     email: string,
     role: "viewer" | "editor"
-  ): Promise<{ ok: boolean; error?: string }> => {
-    const res = await api<{ ok?: boolean; error?: string }>(
+  ): Promise<{ ok: boolean; status?: "member" | "invited"; error?: string }> => {
+    const res = await api<{ ok?: boolean; status?: "member" | "invited"; error?: string }>(
       `/api/docs/${encodeURIComponent(docId)}/shares`,
       { method: "POST", body: JSON.stringify({ email, role }) }
     );
-    if (res.ok) return { ok: true };
+    if (res.ok) return { ok: true, status: res.data?.status };
     return { ok: false, error: res.data?.error ?? "Couldn't share the doc" };
   },
 
-  remove: async (docId: string, userId: string): Promise<boolean> => {
+  // idOrEmail: a user id (member) or an email (pending invite)
+  remove: async (docId: string, idOrEmail: string): Promise<boolean> => {
     const res = await api<{ ok?: boolean }>(
-      `/api/docs/${encodeURIComponent(docId)}/shares/${encodeURIComponent(userId)}`,
+      `/api/docs/${encodeURIComponent(docId)}/shares/${encodeURIComponent(idOrEmail)}`,
       { method: "DELETE" }
     );
     return res.ok;

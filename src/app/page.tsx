@@ -16,6 +16,9 @@ import { Settings } from "@/components/settings";
 import { Library } from "@/components/library";
 import { ActivityBar } from "@/components/activity-bar";
 import { ShareDialog } from "@/components/share-dialog";
+import { UpdateToast } from "@/components/update-toast";
+import { TerminalPanel } from "@/components/terminal-panel";
+import { TERMINAL_ENABLED } from "@/lib/features";
 import {
   applyColorMode,
   getColorMode,
@@ -118,6 +121,7 @@ export default function Home() {
   const [showTheme, setShowTheme] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [showTerminal, setShowTerminal] = useState(false);
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
   // bumps when auth changes out-of-band (deep-link sign-in) so account UI refreshes
   const [authNonce, setAuthNonce] = useState(0);
@@ -135,6 +139,13 @@ export default function Home() {
   const [enforcedTheme, setEnforcedTheme] = useState<ThemeTokens | null>(null);
 
   const isDirty = content !== savedContent;
+
+  // Latest open-doc path + content, read by palette command closures without
+  // rebuilding the command list on every keystroke.
+  const docRef = useRef({ filePath, content });
+  useEffect(() => {
+    docRef.current = { filePath, content };
+  }, [filePath, content]);
 
   // A doc goes live when it's cloud-synced, we're signed in, and at least one
   // other person has been invited. Re-checked on file open, sign-in changes,
@@ -199,6 +210,21 @@ export default function Home() {
     refreshCollabRef.current = refreshCollab;
   }, [refreshCollab]);
 
+  // Share entry point that works from anywhere: open the dialog if the doc is
+  // already shareable, otherwise guide the user through the prerequisites
+  // (sign in, then sync this file to the cloud).
+  const handleShareClick = useCallback(() => {
+    if (canShare) {
+      setShowShare(true);
+      return;
+    }
+    if (!getAuthToken()) {
+      setShowSettings(true); // need to sign in first
+      return;
+    }
+    setShowLibrary(true); // signed in — sync this file from the Library to share
+  }, [canShare]);
+
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
     (s: "connecting" | "connected" | "disconnected") => setLiveStatus(s),
@@ -231,6 +257,28 @@ export default function Home() {
         .then((file) => {
           if (file) loadFile(file);
         });
+    },
+    [loadFile]
+  );
+
+  // Files dropped onto the Library: register each on this device, open the last.
+  const addPaths = useCallback(
+    (paths: string[]) => {
+      const api = getElectronAPI();
+      if (!api || paths.length === 0) return;
+      Promise.all(paths.map((p) => api.openFilePath(p))).then((files) => {
+        const valid = files.filter(
+          (f): f is FilePayload => f !== null
+        );
+        valid.forEach((f, i) => {
+          if (i === valid.length - 1) {
+            loadFile(f); // open + track the last one
+          } else {
+            api.registryTrack?.({ path: f.path, name: f.name, content: f.content });
+          }
+        });
+        setLibRefreshKey((k) => k + 1);
+      });
     },
     [loadFile]
   );
@@ -381,6 +429,15 @@ export default function Home() {
       const file = e.dataTransfer?.files[0];
       if (!file) return;
 
+      // In the desktop app, resolve the real on-disk path so the dropped file
+      // tracks in the registry (and can be organized), instead of an untracked
+      // in-memory copy. Falls back to the browser File API on the web.
+      const api = getElectronAPI();
+      const realPath = api?.pathForFile?.(file) ?? null;
+      if (realPath) {
+        openPath(realPath);
+        return;
+      }
       const text = await file.text();
       loadFile({ name: file.name, content: text, path: null });
     };
@@ -394,11 +451,17 @@ export default function Home() {
       window.removeEventListener("dragleave", handleDragLeave);
       window.removeEventListener("drop", handleDrop);
     };
-  }, [loadFile]);
+  }, [loadFile, openPath]);
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+` toggles the integrated terminal (Cmd+` is a macOS system key)
+      if (TERMINAL_ENABLED && e.ctrlKey && e.key === "`") {
+        e.preventDefault();
+        setShowTerminal((v) => !v);
+        return;
+      }
       if (e.metaKey || e.ctrlKey) {
         switch (e.key) {
           case "o":
@@ -516,43 +579,51 @@ export default function Home() {
     });
   }, [loadFile]);
 
-  // Listen for Electron IPC events — registered exactly once
+  // Listen for Electron IPC events — each subscription returns an unsubscribe
+  // so listeners don't accumulate on the long-lived ipcRenderer (HMR/remount).
   useEffect(() => {
     const api = getElectronAPI();
     if (!api) return;
-    api.onMenuOpenFile?.(() => handlersRef.current.openFile());
-    api.onMenuExportPDF?.((theme) => handlersRef.current.exportPDF(theme ?? "dark"));
-    api.onSetMode?.((m) => setMode(m));
-    api.onToggleStats?.(() => setShowStats((s) => !s));
-    api.onMenuCommandPalette?.(() => setShowPalette((v) => !v));
-    api.onMenuShortcuts?.(() => setShowHelp((v) => !v));
-    api.onMenuTheme?.(() => setShowTheme((v) => !v));
-    api.onMenuSettings?.(() => setShowSettings((v) => !v));
-    api.onMenuLibrary?.(() => setShowLibrary((v) => !v));
-    api.onDeepLink?.((url) => {
-      // markie://auth?token=... — Google sign-in returning via the bridge
-      try {
-        const u = new URL(url);
-        const token = u.searchParams.get("token");
-        if (u.host === "auth" && token) {
-          adoptAuthToken(token);
-          refreshCollabRef.current();
-          setAuthNonce((n) => n + 1); // re-render Settings/account state
-          return;
+    const offs = [
+      api.onMenuOpenFile?.(() => handlersRef.current.openFile()),
+      api.onMenuExportPDF?.((theme) =>
+        handlersRef.current.exportPDF(theme ?? "dark")
+      ),
+      api.onSetMode?.((m) => setMode(m)),
+      api.onToggleStats?.(() => setShowStats((s) => !s)),
+      api.onMenuCommandPalette?.(() => setShowPalette((v) => !v)),
+      api.onMenuShortcuts?.(() => setShowHelp((v) => !v)),
+      api.onMenuTheme?.(() => setShowTheme((v) => !v)),
+      api.onMenuSettings?.(() => setShowSettings((v) => !v)),
+      api.onMenuLibrary?.(() => setShowLibrary((v) => !v)),
+      api.onDeepLink?.((url) => {
+        // markie://auth?token=... — Google sign-in returning via the bridge
+        try {
+          const u = new URL(url);
+          const token = u.searchParams.get("token");
+          if (u.host === "auth" && token) {
+            adoptAuthToken(token);
+            refreshCollabRef.current();
+            setAuthNonce((n) => n + 1); // re-render Settings/account state
+            setShowSettings(false); // dismiss the sign-in modal — we're in now
+            setLibRefreshKey((k) => k + 1); // Library can show cloud files now
+            return;
+          }
+        } catch {
+          // not a parseable deep link — fall through
         }
-      } catch {
-        // not a parseable deep link — fall through
-      }
-      setShowSettings(true);
-    });
-    api.onMenuFormatTables?.(() =>
-      setContent((prev) => formatMarkdownTables(prev))
-    );
-    api.onMenuSave?.(() => handlersRef.current.save());
-    api.onMenuSaveAs?.(() => handlersRef.current.saveAs());
-    api.onMenuFork?.(() => handlersRef.current.fork());
-    api.onMenuExportHTML?.(() => handlersRef.current.exportHTML());
-    api.onFileOpened?.((data) => handlersRef.current.fileOpened(data));
+        setShowSettings(true);
+      }),
+      api.onMenuFormatTables?.(() =>
+        setContent((prev) => formatMarkdownTables(prev))
+      ),
+      api.onMenuSave?.(() => handlersRef.current.save()),
+      api.onMenuSaveAs?.(() => handlersRef.current.saveAs()),
+      api.onMenuFork?.(() => handlersRef.current.fork()),
+      api.onMenuExportHTML?.(() => handlersRef.current.exportHTML()),
+      api.onFileOpened?.((data) => handlersRef.current.fileOpened(data)),
+    ];
+    return () => offs.forEach((off) => off?.());
   }, []);
 
   const commands = useMemo<AppCommand[]>(
@@ -569,6 +640,9 @@ export default function Home() {
       { id: "mode-split", title: "Split Mode", group: "View", shortcut: "⌘3", run: () => setMode("split") },
       { id: "stats", title: "Statistics", group: "View", shortcut: "⇧⌘I", keywords: "words count reading", run: () => setShowStats((v) => !v) },
       { id: "palette", title: "Command Palette", group: "View", shortcut: "⌘K", run: () => setShowPalette((v) => !v) },
+      ...(TERMINAL_ENABLED ? [{ id: "terminal", title: "Toggle Terminal", group: "View", shortcut: "⌃`", keywords: "shell console zsh bash", run: () => setShowTerminal((v) => !v) }] as AppCommand[] : []),
+      { id: "copy-path", title: "Copy File Path", group: "File", keywords: "link location terminal clipboard", run: () => { const p = docRef.current.filePath; if (p) navigator.clipboard.writeText(p); } },
+      { id: "copy-content", title: "Copy Document Contents", group: "File", keywords: "clipboard markdown text", run: () => navigator.clipboard.writeText(docRef.current.content) },
       { id: "format-tables", title: "Format Tables", group: "Format", shortcut: "⌥⌘T", keywords: "align prettify pipes", run: () => setContent((prev) => formatMarkdownTables(prev)) },
       ...BUILT_IN_THEMES.map((t) => ({
         id: `theme-${t.id}`,
@@ -621,6 +695,10 @@ export default function Home() {
           libraryOpen={showLibrary}
           onToggleLibrary={() => setShowLibrary((v) => !v)}
           onOpenFile={handleOpenFile}
+          onShare={handleShareClick}
+          canShare={canShare}
+          onToggleTerminal={() => setShowTerminal((v) => !v)}
+          terminalOpen={showTerminal}
           onShortcuts={() => setShowHelp((v) => !v)}
           onThemePresets={() => setShowTheme(true)}
           onAccount={() => setShowSettings(true)}
@@ -633,6 +711,7 @@ export default function Home() {
             onClose={() => setShowLibrary(false)}
             onOpenPath={openPath}
             onOpenFile={handleOpenFile}
+            onAddPaths={addPaths}
             onSignIn={() => setShowSettings(true)}
             activePath={filePath}
             refreshKey={libRefreshKey}
@@ -688,6 +767,13 @@ export default function Home() {
         )}
       </div>
 
+      {TERMINAL_ENABLED && showTerminal && (
+        <TerminalPanel
+          cwd={filePath ? filePath.slice(0, filePath.lastIndexOf("/")) || null : null}
+          onClose={() => setShowTerminal(false)}
+        />
+      )}
+
       {showStats && (
         <StatsPanel content={content} onClose={() => setShowStats(false)} />
       )}
@@ -701,6 +787,7 @@ export default function Home() {
       {showTheme && <ThemeSettings onClose={() => setShowTheme(false)} />}
       {showSettings && (
         <Settings
+          authNonce={authNonce}
           onClose={() => {
             setShowSettings(false);
             setAuthNonce((n) => n + 1); // account/avatar reflects sign-in/out
@@ -717,6 +804,8 @@ export default function Home() {
           onChanged={refreshCollab}
         />
       )}
+
+      <UpdateToast />
 
       {/* Drag overlay */}
       {isDragging && (

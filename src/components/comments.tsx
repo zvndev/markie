@@ -61,8 +61,32 @@ export function CommentLayer({
   useEffect(() => {
     refresh();
     authClient.me().then(setMe);
-    const interval = setInterval(refresh, POLL_MS);
-    return () => clearInterval(interval);
+    // Poll for new comments, but pause while the window is hidden so a doc
+    // left open overnight doesn't hammer the API thousands of times.
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (interval === null) interval = setInterval(refresh, POLL_MS);
+    };
+    const stop = () => {
+      if (interval !== null) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+    const onVis = () => {
+      if (document.hidden) {
+        stop();
+      } else {
+        refresh();
+        start();
+      }
+    };
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, [refresh]);
 
   // Re-measure anchor positions when the doc changes

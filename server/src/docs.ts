@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import Database from "better-sqlite3";
 import { auth } from "./auth.ts";
 import { accessLevel, sharedDocsFor } from "./shares.ts";
+import { claimPendingInvites } from "./pending.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
 
@@ -49,6 +50,12 @@ export const docs = new Hono();
 docs.get("/", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
+  // Sweep any invites addressed to this email that predate / postdate signup.
+  try {
+    if (user.email) claimPendingInvites(user.email, user.id);
+  } catch (err) {
+    console.error("claim-on-list failed:", err);
+  }
   const rows = db
     .prepare(
       "SELECT id, name, version, hash, updated_at FROM docs WHERE owner_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC"

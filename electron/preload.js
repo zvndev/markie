@@ -1,35 +1,63 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
+
+// Subscribe to an IPC channel and return an unsubscribe function, so the
+// renderer can detach on cleanup. Without this, listeners accumulate on the
+// long-lived ipcRenderer across HMR/StrictMode/remounts and a single menu
+// action fires N times.
+function subscribe(channel, callback, map) {
+  const handler = (_event, ...args) =>
+    map ? callback(map(...args)) : callback();
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+}
 
 contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
   openFile: () => ipcRenderer.invoke("open-file"),
   openFilePath: (path) => ipcRenderer.invoke("open-file-path", path),
+  // Electron 32+ removed File.path; resolve a dropped File to its disk path.
+  pathForFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file) || null;
+    } catch {
+      return null;
+    }
+  },
+  setDefaultMarkdownApp: () => ipcRenderer.invoke("set-default-md"),
+  defaultMarkdownStatus: () => ipcRenderer.invoke("default-md-status"),
+  // Workspace / Files view
+  wsRoots: () => ipcRenderer.invoke("ws-roots"),
+  wsDefaultPath: () => ipcRenderer.invoke("ws-default-path"),
+  wsCreateDefault: () => ipcRenderer.invoke("ws-create-default"),
+  wsAddRoot: () => ipcRenderer.invoke("ws-add-root"),
+  wsRemoveRoot: (p) => ipcRenderer.invoke("ws-remove-root", p),
+  wsListDir: (p) => ipcRenderer.invoke("ws-list-dir", p),
+  wsMkdir: (parent, name) => ipcRenderer.invoke("ws-mkdir", { parent, name }),
+  wsNewFile: (parent, name) => ipcRenderer.invoke("ws-new-file", { parent, name }),
+  wsMove: (src, destDir) => ipcRenderer.invoke("ws-move", { src, destDir }),
+  wsRename: (target, newName) => ipcRenderer.invoke("ws-rename", { target, newName }),
+  wsTrash: (target) => ipcRenderer.invoke("ws-trash", target),
+  wsReveal: (target) => ipcRenderer.invoke("ws-reveal", target),
   getInitialFile: () => ipcRenderer.invoke("get-initial-file"),
   exportPDF: (html) => ipcRenderer.invoke("export-pdf", html),
   exportHTML: (args) => ipcRenderer.invoke("export-html", args),
   saveFile: (args) => ipcRenderer.invoke("save-file", args),
   saveFileAs: (args) => ipcRenderer.invoke("save-file-as", args),
   renameFile: (args) => ipcRenderer.invoke("rename-file", args),
-  onMenuOpenFile: (callback) =>
-    ipcRenderer.on("menu-open-file", () => callback()),
+  onMenuOpenFile: (callback) => subscribe("menu-open-file", callback),
   onMenuExportPDF: (callback) =>
-    ipcRenderer.on("menu-export-pdf", (_event, theme) => callback(theme)),
-  onMenuExportHTML: (callback) =>
-    ipcRenderer.on("menu-export-html", () => callback()),
-  onMenuSave: (callback) => ipcRenderer.on("menu-save", () => callback()),
-  onMenuSaveAs: (callback) => ipcRenderer.on("menu-save-as", () => callback()),
-  onMenuFork: (callback) => ipcRenderer.on("menu-fork", () => callback()),
-  onMenuFormatTables: (callback) =>
-    ipcRenderer.on("menu-format-tables", () => callback()),
+    subscribe("menu-export-pdf", callback, (theme) => theme),
+  onMenuExportHTML: (callback) => subscribe("menu-export-html", callback),
+  onMenuSave: (callback) => subscribe("menu-save", callback),
+  onMenuSaveAs: (callback) => subscribe("menu-save-as", callback),
+  onMenuFork: (callback) => subscribe("menu-fork", callback),
+  onMenuFormatTables: (callback) => subscribe("menu-format-tables", callback),
   onMenuCommandPalette: (callback) =>
-    ipcRenderer.on("menu-command-palette", () => callback()),
-  onMenuShortcuts: (callback) =>
-    ipcRenderer.on("menu-shortcuts", () => callback()),
-  onMenuTheme: (callback) => ipcRenderer.on("menu-theme", () => callback()),
-  onMenuSettings: (callback) =>
-    ipcRenderer.on("menu-settings", () => callback()),
-  onDeepLink: (callback) =>
-    ipcRenderer.on("deep-link", (_event, url) => callback(url)),
+    subscribe("menu-command-palette", callback),
+  onMenuShortcuts: (callback) => subscribe("menu-shortcuts", callback),
+  onMenuTheme: (callback) => subscribe("menu-theme", callback),
+  onMenuSettings: (callback) => subscribe("menu-settings", callback),
+  onDeepLink: (callback) => subscribe("deep-link", callback, (url) => url),
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   syncConfig: (cfg) => ipcRenderer.invoke("sync-config", cfg),
   registryTrack: (args) => ipcRenderer.invoke("registry-track", args),
@@ -40,12 +68,29 @@ contextBridge.exposeInMainWorld("electronAPI", {
   docPush: (args) => ipcRenderer.invoke("doc-push", args),
   docResolve: (args) => ipcRenderer.invoke("doc-resolve", args),
   docPull: (args) => ipcRenderer.invoke("doc-pull", args),
-  onMenuLibrary: (callback) =>
-    ipcRenderer.on("menu-library", () => callback()),
-  onSetMode: (callback) =>
-    ipcRenderer.on("set-mode", (_event, mode) => callback(mode)),
-  onToggleStats: (callback) =>
-    ipcRenderer.on("toggle-stats", () => callback()),
+  onMenuLibrary: (callback) => subscribe("menu-library", callback),
+  onSetMode: (callback) => subscribe("set-mode", callback, (mode) => mode),
+  onToggleStats: (callback) => subscribe("toggle-stats", callback),
   onFileOpened: (callback) =>
-    ipcRenderer.on("file-opened", (_event, data) => callback(data)),
+    subscribe("file-opened", callback, (data) => data),
+  // Terminal
+  termAvailable: () => ipcRenderer.invoke("term-available"),
+  termCreate: (cwd) => ipcRenderer.invoke("term-create", { cwd }),
+  termWrite: (id, data) => ipcRenderer.invoke("term-write", { id, data }),
+  termResize: (id, cols, rows) => ipcRenderer.invoke("term-resize", { id, cols, rows }),
+  termKill: (id) => ipcRenderer.invoke("term-kill", id),
+  onTermData: (callback) => subscribe("term-data", callback, (p) => p),
+  onTermExit: (callback) => subscribe("term-exit", callback, (p) => p),
+  termExternalApps: () => ipcRenderer.invoke("term-external-apps"),
+  termOpenExternal: (app, cwd) => ipcRenderer.invoke("term-open-external", { app, cwd }),
+  // Auto-update
+  checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
+  updateStatus: () => ipcRenderer.invoke("update-status"),
+  quitAndInstall: () => ipcRenderer.invoke("quit-and-install"),
+  onUpdateAvailable: (callback) =>
+    subscribe("update-available", callback, (info) => info),
+  onUpdateProgress: (callback) =>
+    subscribe("update-progress", callback, (info) => info),
+  onUpdateReady: (callback) =>
+    subscribe("update-ready", callback, (info) => info),
 });

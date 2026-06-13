@@ -9,13 +9,22 @@
   "scripts": {
     "dev": "node --watch --experimental-strip-types src/index.ts",
     "start": "node --experimental-strip-types src/index.ts",
-    "migrate": "npx @better-auth/cli@latest migrate --config src/auth.ts -y"
+    "migrate": "npx @better-auth/cli@latest migrate --config src/auth.ts -y",
+    "test": "node --experimental-strip-types --test src/render.test.ts src/public-links.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.4",
     "better-auth": "^1.6.16",
     "better-sqlite3": "^12.10.0",
     "hono": "^4.12.25",
+    "rehype-highlight": "^7.0.2",
+    "rehype-katex": "^7.0.1",
+    "rehype-stringify": "^10.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
+    "unified": "^11.0.5",
     "ws": "^8.21.0",
     "y-protocols": "^1.0.7",
     "y-websocket": "^3.0.0",

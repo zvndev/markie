@@ -28,8 +28,9 @@ export function ShareDialog({
   const [me, setMe] = useState<MarkieUser | null>(null);
   const [members, setMembers] = useState<ShareMember[] | null>(null);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"viewer" | "editor">("editor");
+  const [role, setRole] = useState<"viewer" | "editor">("viewer");
   const [error, setError] = useState<string | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [themePinned, setThemePinned] = useState(false);
 
@@ -75,6 +76,7 @@ export function ShareDialog({
     if (!target) return;
     setBusy(true);
     setError(null);
+    setFlash(null);
     const res = await sharesClient.add(docId, target, role);
     setBusy(false);
     if (!res.ok) {
@@ -82,13 +84,19 @@ export function ShareDialog({
       return;
     }
     setEmail("");
+    setFlash(
+      res.status === "invited"
+        ? `Invited ${target} — they'll get an email and it lands in their Library when they join.`
+        : `Shared with ${target}.`
+    );
     await load();
     onChanged();
   };
 
-  const handleRemove = async (userId: string) => {
+  // idOrEmail: member user id, or the email for a pending invite
+  const handleRemove = async (idOrEmail: string) => {
     setBusy(true);
-    const ok = await sharesClient.remove(docId, userId);
+    const ok = await sharesClient.remove(docId, idOrEmail);
     setBusy(false);
     if (ok) {
       await load();
@@ -139,8 +147,8 @@ export function ShareDialog({
                 aria-label="Role"
                 className="text-[12px] bg-background border border-border rounded-md px-2 text-foreground outline-none"
               >
-                <option value="editor">Can edit</option>
                 <option value="viewer">Can view</option>
+                <option value="editor">Can edit</option>
               </select>
               <button
                 onClick={handleAdd}
@@ -153,9 +161,13 @@ export function ShareDialog({
             {error && (
               <div className="text-[12px] text-red-400 mt-2">{error}</div>
             )}
+            {flash && (
+              <div className="text-[12px] text-green-400 mt-2">{flash}</div>
+            )}
             <div className="text-[11px] text-muted mt-2">
-              They get an email, and the doc appears in their Library. Everyone
-              in it edits live, together.
+              Anyone with an email works — no Markie account needed to invite
+              them. They get an email; the doc shows up in their Library when
+              they join, and editors edit live with you.
             </div>
             <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
               <input
@@ -190,11 +202,22 @@ export function ShareDialog({
             )}
             {members.map((m) => (
               <MemberRow
-                key={m.user_id}
+                key={m.user_id ?? m.email}
                 name={m.name || m.email}
                 email={m.email}
-                roleLabel={m.role === "editor" ? "Editor" : "Viewer"}
-                onRemove={isOwner ? () => handleRemove(m.user_id) : undefined}
+                roleLabel={
+                  m.pending
+                    ? `Invited · ${m.role === "editor" ? "Editor" : "Viewer"}`
+                    : m.role === "editor"
+                      ? "Editor"
+                      : "Viewer"
+                }
+                pending={m.pending}
+                onRemove={
+                  isOwner
+                    ? () => handleRemove(m.pending ? m.email : (m.user_id as string))
+                    : undefined
+                }
               />
             ))}
             {members.length === 0 && !isOwner && (
@@ -216,20 +239,24 @@ function MemberRow({
   name,
   email,
   roleLabel,
+  pending,
   onRemove,
 }: {
   name: string;
   email: string;
   roleLabel: string;
+  pending?: boolean;
   onRemove?: () => void;
 }) {
   return (
     <div className="flex items-center gap-2.5">
       <span
-        className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold text-black/80 shrink-0"
-        style={{ background: colorForName(name) }}
+        className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 ${
+          pending ? "text-muted border border-dashed border-border" : "text-black/80"
+        }`}
+        style={pending ? undefined : { background: colorForName(name) }}
       >
-        {initials(name)}
+        {pending ? "…" : initials(name)}
       </span>
       <div className="flex-1 min-w-0">
         <div className="text-[13px] text-foreground truncate">{name}</div>

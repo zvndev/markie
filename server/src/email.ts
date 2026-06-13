@@ -6,6 +6,7 @@ export async function sendEmail(args: {
   to: string;
   subject: string;
   text: string;
+  html?: string;
 }): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   if (!key) {
@@ -25,6 +26,7 @@ export async function sendEmail(args: {
       to: [args.to],
       subject: args.subject,
       text: args.text,
+      ...(args.html ? { html: args.html } : {}),
     }),
   });
   if (!res.ok) {

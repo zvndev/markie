@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth";
 import { bearer, emailOTP } from "better-auth/plugins";
 import Database from "better-sqlite3";
 import { sendEmail } from "./email.ts";
+import { claimPendingInvites } from "./pending.ts";
 
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
@@ -17,6 +18,21 @@ export const auth = betterAuth({
   ],
   emailAndPassword: {
     enabled: true,
+  },
+  databaseHooks: {
+    user: {
+      create: {
+        // The moment someone joins, sweep any docs that were shared with their
+        // email before they had an account into their Library.
+        after: async (user: { id: string; email: string }) => {
+          try {
+            claimPendingInvites(user.email, user.id);
+          } catch (err) {
+            console.error("claim-on-signup failed:", err);
+          }
+        },
+      },
+    },
   },
   socialProviders: googleConfigured
     ? {

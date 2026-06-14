@@ -55,8 +55,7 @@ export function UpdateToast() {
         Update ready{version ? ` (${version})` : ""}
       </div>
       <div className="text-[12px] text-muted mb-3 leading-snug">
-        A new version of Markie has downloaded. Restart to install it — your app
-        is replaced in place, nothing is duplicated.
+        A new version of Markie has downloaded. Restart to install it.
       </div>
       <div className="flex items-center gap-2">
         <button

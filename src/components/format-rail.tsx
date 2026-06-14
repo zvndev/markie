@@ -166,16 +166,23 @@ export function FormatRail({ editor }: FormatRailProps) {
         </button>
       ))}
 
-      {/* Link + image get tiny URL popovers */}
+      {/* Link + image open a centered insert modal */}
       <button
         title={states?.link ? "Remove link" : "Link"}
         onClick={openLink}
         className={btnClass(!!states?.link)}
       >
-        🔗
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 12a4 4 0 0 0 6 0l2.5-2.5a4 4 0 0 0-5.5-5.5L11 5" />
+          <path d="M15 12a4 4 0 0 0-6 0L6.5 14.5a4 4 0 0 0 5.5 5.5L13 19" />
+        </svg>
       </button>
       <button title="Image" onClick={openImage} className={btnClass(false)}>
-        🖼
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2.5" />
+          <circle cx="8.5" cy="8.5" r="1.6" />
+          <path d="M21 15l-4.5-4.5L5 21" />
+        </svg>
       </button>
 
       <div className="flex-1" />

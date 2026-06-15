@@ -27,6 +27,16 @@ function getDB() {
       path TEXT PRIMARY KEY,
       added_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS md_stars (
+      path TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,           -- 'folder' | 'file'
+      added_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS md_index_cache (
+      path TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      mtime_ms REAL NOT NULL
+    );
   `);
   return db;
 }
@@ -125,6 +135,50 @@ function update(filePath, fields) {
     .run(...values);
 }
 
+// ── Browse: stars (folders + files) ──
+function listStars() {
+  return getDB().prepare("SELECT path, kind FROM md_stars").all();
+}
+
+// Toggle a star; returns the new state. kind is 'folder' | 'file'.
+function toggleStar(p, kind) {
+  const d = getDB();
+  const existing = d.prepare("SELECT path FROM md_stars WHERE path = ?").get(p);
+  if (existing) {
+    d.prepare("DELETE FROM md_stars WHERE path = ?").run(p);
+    return { starred: false };
+  }
+  d.prepare("INSERT INTO md_stars (path, kind, added_at) VALUES (?, ?, ?)")
+    .run(p, kind, new Date().toISOString());
+  return { starred: true };
+}
+
+// ── Browse: persisted index snapshot (instant first paint) ──
+function saveIndexCache(rows) {
+  const d = getDB();
+  const wipe = d.prepare("DELETE FROM md_index_cache");
+  const ins = d.prepare(
+    "INSERT OR REPLACE INTO md_index_cache (path, name, mtime_ms) VALUES (?, ?, ?)"
+  );
+  const tx = d.transaction((items) => {
+    wipe.run();
+    for (const r of items) ins.run(r.path, r.name, r.mtimeMs || 0);
+  });
+  tx(rows);
+}
+
+function loadIndexCache() {
+  return getDB()
+    .prepare("SELECT path, name, mtime_ms FROM md_index_cache")
+    .all()
+    .map((r) => ({
+      path: r.path,
+      name: r.name,
+      dir: path.dirname(r.path),
+      mtimeMs: r.mtime_ms,
+    }));
+}
+
 // Flush + close the handle deterministically on app quit (WAL checkpoint).
 function close() {
   if (db) {
@@ -150,4 +204,8 @@ module.exports = {
   removeRoot,
   movePath,
   movePrefix,
+  listStars,
+  toggleStar,
+  saveIndexCache,
+  loadIndexCache,
 };

@@ -38,6 +38,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
   wsRename: (target, newName) => ipcRenderer.invoke("ws-rename", { target, newName }),
   wsTrash: (target) => ipcRenderer.invoke("ws-trash", target),
   wsReveal: (target) => ipcRenderer.invoke("ws-reveal", target),
+  // Browse — device-wide markdown index
+  mdIndexScan: () => ipcRenderer.invoke("mdindex-scan"),
+  mdIndexRefresh: () => ipcRenderer.invoke("mdindex-refresh"),
+  mdIndexStars: () => ipcRenderer.invoke("mdindex-stars"),
+  mdIndexToggleStar: (path, kind) =>
+    ipcRenderer.invoke("mdindex-star-toggle", { path, kind }),
+  onMdIndexUpdated: (callback) =>
+    subscribe("mdindex-updated", callback, (info) => info),
   getInitialFile: () => ipcRenderer.invoke("get-initial-file"),
   exportPDF: (html) => ipcRenderer.invoke("export-pdf", html),
   exportHTML: (args) => ipcRenderer.invoke("export-html", args),

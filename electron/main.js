@@ -93,6 +93,15 @@ function createWindow() {
     mainWindow?.show();
   });
 
+  // Browse: re-scan the markdown index on window focus, debounced to ≥20s, and
+  // only after the first open (so we never scan before the user visits Browse).
+  mainWindow.on("focus", () => {
+    const now = Date.now();
+    if (now - _mdLastFocusScan < 20_000) return;
+    _mdLastFocusScan = now;
+    if (mdindex.getCached()) mdRescanAndNotify();
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
     rendererReady = false;
@@ -281,6 +290,7 @@ ipcMain.handle("export-html", async (_event, { defaultName, html }) => {
 
 // ── Sync / library IPC ──
 const registry = require("./registry");
+const mdindex = require("./mdindex");
 const sync = require("./sync");
 const workspace = require("./workspace");
 
@@ -374,6 +384,43 @@ ipcMain.handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
 ipcMain.handle("open-external", (_event, url) => {
   if (/^https?:\/\//i.test(url)) shell.openExternal(url);
 });
+
+// ── Browse: device-wide markdown index ──
+let _mdLastFocusScan = 0;
+
+// Run a fresh index scan, persist the snapshot, and tell the renderer.
+async function mdRescanAndNotify() {
+  try {
+    const result = await mdindex.rescan();
+    try { registry.saveIndexCache(result.files); } catch { /* cache best-effort */ }
+    if (mainWindow && !mainWindow.isDestroyed())
+      mainWindow.webContents.send("mdindex-updated", { scannedAt: result.scannedAt });
+  } catch (err) {
+    console.error("md index scan failed:", err == null ? "unknown" : String(err));
+  }
+}
+
+// Return cached rows immediately (seeding from the DB snapshot on first call),
+// and kick a background refresh.
+ipcMain.handle("mdindex-scan", async () => {
+  if (!mdindex.getCached()) {
+    try { mdindex.seed(registry.loadIndexCache(), null); } catch { /* no snapshot yet */ }
+  }
+  const cached = mdindex.getCached();
+  mdRescanAndNotify(); // fire-and-forget refresh
+  return cached || { files: [], scannedAt: null };
+});
+
+ipcMain.handle("mdindex-refresh", async () => {
+  const result = await mdindex.rescan();
+  try { registry.saveIndexCache(result.files); } catch { /* best-effort */ }
+  return result;
+});
+
+ipcMain.handle("mdindex-stars", () => registry.listStars());
+ipcMain.handle("mdindex-star-toggle", (_e, { path: p, kind }) =>
+  registry.toggleStar(p, kind)
+);
 
 // ── Auto-update (electron-updater → Squirrel.Mac) ──
 // Checks the generic feed (see package.json "publish") for a newer signed +

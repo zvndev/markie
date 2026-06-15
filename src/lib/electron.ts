@@ -108,9 +108,35 @@ export interface ElectronAPI {
   onUpdateAvailable(cb: (info: { version?: string }) => void): Unsubscribe;
   onUpdateProgress(cb: (info: { percent: number }) => void): Unsubscribe;
   onUpdateReady(cb: (info: { version?: string }) => void): Unsubscribe;
+  // Browse — device-wide markdown index
+  mdIndexScan?(): Promise<MdScanResult>;
+  mdIndexRefresh?(): Promise<MdScanResult>;
+  mdIndexStars?(): Promise<MdStar[]>;
+  mdIndexToggleStar?(
+    path: string,
+    kind: "folder" | "file"
+  ): Promise<{ starred: boolean }>;
+  onMdIndexUpdated?(cb: (info: { scannedAt: string | null }) => void): Unsubscribe;
 }
 
 export type Unsubscribe = (() => void) | undefined;
+
+export interface MdRow {
+  path: string;
+  name: string;
+  dir: string;
+  mtimeMs: number;
+}
+
+export interface MdStar {
+  path: string;
+  kind: "folder" | "file";
+}
+
+export interface MdScanResult {
+  files: MdRow[];
+  scannedAt: string | null;
+}
 
 export interface WsEntry {
   name: string;

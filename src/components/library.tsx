@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type DragEvent } from "react";
 import { getElectronAPI, type LibraryItem } from "@/lib/electron";
 import { FilesView } from "@/components/files-view";
+import { BrowseView } from "@/components/browse-view";
 
 interface LibraryProps {
   onClose: () => void;
@@ -18,7 +19,7 @@ interface LibraryProps {
 const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
 const VIEW_KEY = "markie.libview.v1";
 
-type LibView = "recent" | "files" | "shared";
+type LibView = "recent" | "files" | "shared" | "browse";
 
 const BADGE: Record<LibraryItem["state"], [string, string]> = {
   "local-only": ["Local", "text-muted border-border"],
@@ -51,7 +52,7 @@ export function Library({
   const [view, setView] = useState<LibView>(() => {
     try {
       const v = localStorage.getItem(VIEW_KEY);
-      return v === "files" || v === "shared" ? v : "recent";
+      return v === "files" || v === "shared" || v === "browse" ? v : "recent";
     } catch {
       return "recent";
     }
@@ -317,7 +318,7 @@ export function Library({
 
       {/* view switcher */}
       <div className="flex items-center gap-0.5 px-2 pb-1.5 shrink-0">
-        {(["recent", "files", "shared"] as LibView[]).map((v) => (
+        {(["recent", "files", "shared", "browse"] as LibView[]).map((v) => (
           <button
             key={v}
             onClick={() => pickView(v)}
@@ -376,6 +377,8 @@ export function Library({
               {sharedItems.map(fileRow)}
             </>
           )
+        ) : view === "browse" ? (
+          <BrowseView onOpenPath={onOpenPath} activePath={activePath} />
         ) : (
           <FilesView
             activePath={activePath}

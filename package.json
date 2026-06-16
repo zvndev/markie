@@ -50,6 +50,21 @@
       "electron/**/*",
       "out/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "mcp",
+        "to": "mcp",
+        "filter": [
+          "markie-mcp.mjs",
+          "lib.mjs",
+          "package.json"
+        ]
+      },
+      {
+        "from": "electron/mdindex.js",
+        "to": "electron/mdindex.js"
+      }
+    ],
     "directories": {
       "output": "dist"
     },

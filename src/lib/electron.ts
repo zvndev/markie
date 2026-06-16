@@ -117,6 +117,8 @@ export interface ElectronAPI {
     kind: "folder" | "file"
   ): Promise<{ starred: boolean }>;
   onMdIndexUpdated?(cb: (info: { scannedAt: string | null }) => void): Unsubscribe;
+  // Markie MCP server location, for the Agents setup dialog
+  mcpInfo?(): Promise<{ serverPath: string; packaged: boolean }>;
 }
 
 export type Unsubscribe = (() => void) | undefined;

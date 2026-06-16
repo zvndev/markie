@@ -22,17 +22,24 @@ access is the chosen surface); writing outside `~`; non-macOS "open in Markie".
 
 ## Architecture
 
-A standalone **ESM Node MCP server** at `mcp/server.mjs`, stdio transport, built
-on the official `@modelcontextprotocol/sdk` + `zod` for input schemas.
+> **Discovery (2026-06-16):** an MCP server already exists at
+> `mcp/markie-mcp.mjs` (committed `4f2a1b9`, on `main`). It is **registry-scoped**
+> — it reads `~/Library/Application Support/Markie/registry.db` via
+> `better-sqlite3`, so it only sees docs the user has *opened* in Markie. We
+> **upgrade this file in place** to the device-wide design rather than adding a
+> parallel server, and **drop the `better-sqlite3` dependency**, which makes the
+> server **dependency-free pure Node**. Its hand-rolled newline-delimited
+> JSON-RPC stdio loop already works and is kept (no `@modelcontextprotocol/sdk`,
+> no `zod`, no esbuild — simpler and nothing to bundle).
 
-- `mcp/lib.mjs` — pure, dependency-light helpers (path guard, query match, skill
-  classification). Unit-tested in isolation.
-- `mcp/server.mjs` — registers the tools and wires them to `lib` + the scanner.
+`mcp/markie-mcp.mjs` — the upgraded ESM stdio server (keeps the existing JSON-RPC
+loop; swaps the registry-backed tools for device-wide ones).
+
+- `mcp/lib.mjs` — pure helpers (path guard, query match, skill classification,
+  grouping). Unit-tested in isolation.
 - Reuses `electron/mdindex.js` (CommonJS, already pure, no electron imports) via
-  a default import: `import mdindex from "../electron/mdindex.js"` → uses
-  `mdindex.walk(home, { home })`, `shouldDescend`, `isExcludedDir`,
-  `EXCLUDED_NAMES`. esbuild inlines it for the bundled build; Node's CJS interop
-  resolves it in dev.
+  `createRequire`: `require("../electron/mdindex.js")` → uses
+  `mdindex.walk(home, { home })`, `isExcludedDir`, `allowlist`, `EXCLUDED_NAMES`.
 - `classifyAgentFile` (~10 lines) is duplicated into `mcp/lib.mjs` with a comment
   pointing at the canonical `src/lib/agent-files.ts`; a unit test asserts the
   same cases. (Too small to justify a shared build step across TS/ESM.)
@@ -65,15 +72,19 @@ the agent gets a clear, actionable message.
 
 ## Packaging & wiring
 
-- **Dev:** `node mcp/server.mjs` runs against the live repo (`../electron/...`).
-- **Release:** an esbuild step bundles `mcp/server.mjs` (+ inlined mdindex +
-  SDK) into a single `mcp/dist/server.mjs`; electron-builder `extraResources`
-  copies `mcp/dist/` to `Contents/Resources/mcp/`. The server needs only a
-  system `node` on PATH (the target user is a developer).
-- **Main process** gains a `mcp-info` IPC returning
-  `{ serverPath, nodePath, packaged }`. `serverPath` =
-  `process.resourcesPath/mcp/server.mjs` when packaged, else
-  `<appPath>/mcp/server.mjs`. Exposed through preload as `mcpInfo()`.
+Because the server is now dependency-free, packaging is just a file copy — no
+bundler, no `node_modules`.
+
+- **Dev:** `node mcp/markie-mcp.mjs` runs against the live repo
+  (`../electron/mdindex.js`, `./lib.mjs`).
+- **Release:** electron-builder `extraResources` copies `mcp/markie-mcp.mjs` +
+  `mcp/lib.mjs` to `Contents/Resources/mcp/` and `electron/mdindex.js` to
+  `Contents/Resources/electron/mdindex.js`, preserving the `../electron`
+  relative layout so the imports resolve unchanged. Needs only a system `node`
+  on PATH (the target user is a developer).
+- **Main process** gains a `mcp-info` IPC returning `{ serverPath, packaged }`.
+  `serverPath` = `process.resourcesPath/mcp/markie-mcp.mjs` when packaged, else
+  `<appPath>/mcp/markie-mcp.mjs`. Exposed through preload as `mcpInfo()`.
 
 ## Agents button + modal
 
@@ -90,9 +101,10 @@ the agent gets a clear, actionable message.
 
 - `mcp/lib.test.mjs` (node:test): path guard (allow/deny matrix incl. excluded
   segments + allowlisted skill roots), query match, `classifyAgentFile` parity.
-- A scripted **live stdio smoke test**: spawn the server, send `initialize` +
-  `tools/list` + a `tools/call` for `markie_find_md`, assert a well-formed
-  response. Run manually during the build (not in CI to avoid walking `~`).
+- A scripted **live stdio smoke test**: spawn `mcp/markie-mcp.mjs`, send
+  `initialize` + `tools/list` + a `tools/call` for `markie_find_md`, assert a
+  well-formed response. Run manually during the build (not in CI to avoid
+  walking `~`).
 - `mcp/package.json` `test` script wired to the node:test file; vitest stays
   scoped to `src/` + `electron/`.
 

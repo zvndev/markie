@@ -14,7 +14,7 @@ import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { ThemeSettings } from "@/components/theme-settings";
 import { Settings } from "@/components/settings";
 import { Library } from "@/components/library";
-import { ActivityBar } from "@/components/activity-bar";
+import { ActivityBar, type LeftView } from "@/components/activity-bar";
 import { ShareDialog } from "@/components/share-dialog";
 import { UpdateToast } from "@/components/update-toast";
 import { TerminalPanel } from "@/components/terminal-panel";
@@ -121,6 +121,10 @@ export default function Home() {
   const [showTheme, setShowTheme] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  // which side-panel view the left rail has selected
+  const [leftView, setLeftView] = useState<LeftView>("library");
+  const leftViewRef = useRef<LeftView>("library");
+  leftViewRef.current = leftView;
   const [showTerminal, setShowTerminal] = useState(false);
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
   // bumps when auth changes out-of-band (deep-link sign-in) so account UI refreshes
@@ -222,8 +226,26 @@ export default function Home() {
       setShowSettings(true); // need to sign in first
       return;
     }
-    setShowLibrary(true); // signed in — sync this file from the Library to share
+    // signed in — open the Library so they can sync this file, then share
+    setLeftView("library");
+    setShowLibrary(true);
   }, [canShare]);
+
+  // Left rail: select a side-panel view. Clicking the active view closes it.
+  const selectView = useCallback((v: LeftView) => {
+    setShowLibrary((open) => !(open && leftViewRef.current === v));
+    setLeftView(v);
+  }, []);
+
+  // Start a fresh, unsaved markdown doc.
+  const handleNewFile = useCallback(() => {
+    setContent("");
+    setSavedContent("");
+    setFileName(null);
+    setFilePath(null);
+    setCloudId(null);
+    setCanShare(false);
+  }, []);
 
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
@@ -494,7 +516,11 @@ export default function Home() {
             break;
           case "l":
             e.preventDefault();
-            setShowLibrary((v) => !v);
+            selectView("library");
+            break;
+          case "n":
+            e.preventDefault();
+            handleNewFile();
             break;
           case "/":
             e.preventDefault();
@@ -595,7 +621,7 @@ export default function Home() {
       api.onMenuShortcuts?.(() => setShowHelp((v) => !v)),
       api.onMenuTheme?.(() => setShowTheme((v) => !v)),
       api.onMenuSettings?.(() => setShowSettings((v) => !v)),
-      api.onMenuLibrary?.(() => setShowLibrary((v) => !v)),
+      api.onMenuLibrary?.(() => selectView("library")),
       api.onDeepLink?.((url) => {
         // markie://auth?token=... — Google sign-in returning via the bridge
         try {
@@ -658,7 +684,10 @@ export default function Home() {
       })),
       { id: "theme-settings", title: "Theme Settings…", group: "Theme", keywords: "color font preset style", run: () => setShowTheme(true) },
       { id: "settings", title: "Settings…", group: "File", shortcut: "⌘,", keywords: "account sign in sync login", run: () => setShowSettings(true) },
-      { id: "library", title: "Library…", group: "File", shortcut: "⌘L", keywords: "documents cloud sync files recent", run: () => setShowLibrary(true) },
+      { id: "library", title: "Library…", group: "File", shortcut: "⌘L", keywords: "documents cloud sync files recent", run: () => selectView("library") },
+      { id: "browse", title: "Browse all markdown…", group: "File", keywords: "all files device skills index find", run: () => selectView("browse") },
+      { id: "skills", title: "Skills & agent files…", group: "File", keywords: "claude agents codex gemini cursor instructions", run: () => selectView("skills") },
+      { id: "new-file", title: "New file", group: "File", shortcut: "⌘N", keywords: "blank create empty document", run: handleNewFile },
       ...(canShare
         ? [{ id: "share", title: "Share…", group: "File" as const, keywords: "collaborate invite live people", run: () => setShowShare(true) }]
         : []),
@@ -682,7 +711,9 @@ export default function Home() {
         isDirty={isDirty}
         canRename={filePath !== null}
         onRename={handleRename}
-        onShare={canShare ? () => setShowShare(true) : null}
+        onShare={handleShareClick}
+        canShare={canShare}
+        onThemePresets={() => setShowTheme(true)}
         live={!!collabCfg}
         liveStatus={liveStatus}
         peers={peers}
@@ -692,22 +723,19 @@ export default function Home() {
       <div className="flex-1 flex overflow-hidden">
         {/* Far-left app nav */}
         <ActivityBar
-          libraryOpen={showLibrary}
-          onToggleLibrary={() => setShowLibrary((v) => !v)}
-          onOpenFile={handleOpenFile}
-          onShare={handleShareClick}
-          canShare={canShare}
-          onToggleTerminal={() => setShowTerminal((v) => !v)}
-          terminalOpen={showTerminal}
+          activeView={leftView}
+          panelOpen={showLibrary}
+          onSelectView={selectView}
+          onNewFile={handleNewFile}
           onShortcuts={() => setShowHelp((v) => !v)}
-          onThemePresets={() => setShowTheme(true)}
           onAccount={() => setShowSettings(true)}
           authNonce={authNonce}
         />
 
-        {/* Docked Library panel */}
+        {/* Docked side panel (Library / Browse / Shared / Skills) */}
         {showLibrary && (
           <Library
+            view={leftView}
             onClose={() => setShowLibrary(false)}
             onOpenPath={openPath}
             onOpenFile={handleOpenFile}

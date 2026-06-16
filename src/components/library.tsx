@@ -4,8 +4,12 @@ import { useCallback, useEffect, useState, type DragEvent } from "react";
 import { getElectronAPI, type LibraryItem } from "@/lib/electron";
 import { FilesView } from "@/components/files-view";
 import { BrowseView } from "@/components/browse-view";
+import { SkillsView } from "@/components/skills-view";
+import type { LeftView } from "@/components/activity-bar";
 
 interface LibraryProps {
+  // which view the left rail selected (library | browse | shared | skills)
+  view: LeftView;
   onClose: () => void;
   onOpenPath: (path: string) => void;
   onOpenFile: () => void;
@@ -17,9 +21,18 @@ interface LibraryProps {
 }
 
 const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
-const VIEW_KEY = "markie.libview.v1";
+const TAB_KEY = "markie.libtab.v1";
 
-type LibView = "recent" | "files" | "shared" | "browse";
+// The "Library" view has a Recent/Files sub-toggle; the other views come from
+// the left rail and have no sub-tabs.
+type LibTab = "recent" | "files";
+
+const VIEW_TITLE: Record<LeftView, string> = {
+  library: "Library",
+  browse: "Browse",
+  shared: "Shared",
+  skills: "Skills",
+};
 
 const BADGE: Record<LibraryItem["state"], [string, string]> = {
   "local-only": ["Local", "text-muted border-border"],
@@ -31,6 +44,7 @@ const BADGE: Record<LibraryItem["state"], [string, string]> = {
 };
 
 export function Library({
+  view,
   onClose,
   onOpenPath,
   onOpenFile,
@@ -49,18 +63,17 @@ export function Library({
   const [notice, setNotice] = useState<string | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [dropping, setDropping] = useState(false);
-  const [view, setView] = useState<LibView>(() => {
+  const [libTab, setLibTab] = useState<LibTab>(() => {
     try {
-      const v = localStorage.getItem(VIEW_KEY);
-      return v === "files" || v === "shared" || v === "browse" ? v : "recent";
+      return localStorage.getItem(TAB_KEY) === "files" ? "files" : "recent";
     } catch {
       return "recent";
     }
   });
-  const pickView = (v: LibView) => {
-    setView(v);
+  const pickTab = (t: LibTab) => {
+    setLibTab(t);
     try {
-      localStorage.setItem(VIEW_KEY, v);
+      localStorage.setItem(TAB_KEY, t);
     } catch {
       // storage unavailable
     }
@@ -305,7 +318,7 @@ export function Library({
         </div>
       )}
       <div className="flex items-center justify-between px-3 h-9 shrink-0">
-        <span className="text-[11px] uppercase tracking-wide text-muted font-medium">Library</span>
+        <span className="text-[11px] uppercase tracking-wide text-muted font-medium">{VIEW_TITLE[view]}</span>
         <div className="flex items-center gap-1">
           <button onClick={onOpenFile} title="Open file (⌘O)" className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
@@ -316,52 +329,32 @@ export function Library({
         </div>
       </div>
 
-      {/* view switcher */}
-      <div className="flex items-center gap-0.5 px-2 pb-1.5 shrink-0">
-        {(["recent", "files", "shared", "browse"] as LibView[]).map((v) => (
-          <button
-            key={v}
-            onClick={() => pickView(v)}
-            className={`flex-1 text-[11px] py-1 rounded-md capitalize transition-colors ${
-              view === v
-                ? "bg-accent text-foreground"
-                : "text-muted hover:text-foreground hover:bg-accent/40"
-            }`}
-          >
-            {v}
-            {v === "shared" && sharedItems.length > 0 && (
-              <span className="ml-1 text-[9px] text-muted">{sharedItems.length}</span>
-            )}
-          </button>
-        ))}
-      </div>
+      {/* Recent/Files sub-toggle — only the Library view has sub-tabs */}
+      {view === "library" && (
+        <div className="flex items-center gap-0.5 px-2 pb-1.5 shrink-0">
+          {(["recent", "files"] as LibTab[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => pickTab(t)}
+              className={`flex-1 text-[11px] py-1 rounded-md capitalize transition-colors ${
+                libTab === t
+                  ? "bg-accent text-foreground"
+                  : "text-muted hover:text-foreground hover:bg-accent/40"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-1.5 pb-2">
-        {loading ? (
+        {view === "browse" ? (
+          <BrowseView onOpenPath={onOpenPath} activePath={activePath} />
+        ) : view === "skills" ? (
+          <SkillsView onOpenPath={onOpenPath} activePath={activePath} />
+        ) : loading ? (
           <div className="px-2 py-4 text-[12px] text-muted">Loading…</div>
-        ) : view === "recent" ? (
-          localFiles.length === 0 && myCloudOnly.length === 0 ? (
-            <div className="px-2 py-4 text-[12px] text-muted leading-relaxed">
-              No files yet. Open one (⌘O) or drag <code>.md</code> files here —
-              everything you add lives in your library, on this device, online
-              or off.
-            </div>
-          ) : (
-            <>
-              {localFiles.length > 0 && (
-                <div className="text-[9px] uppercase tracking-wide text-muted/70 px-2 pt-2 pb-1">
-                  On this device
-                </div>
-              )}
-              {localFiles.map(fileRow)}
-              {myCloudOnly.length > 0 && (
-                <div className="text-[9px] uppercase tracking-wide text-muted/70 px-2 pt-3 pb-1">
-                  In your cloud
-                </div>
-              )}
-              {myCloudOnly.map(fileRow)}
-            </>
-          )
         ) : view === "shared" ? (
           sharedItems.length === 0 ? (
             <div className="px-2 py-4 text-[12px] text-muted leading-relaxed">
@@ -377,15 +370,34 @@ export function Library({
               {sharedItems.map(fileRow)}
             </>
           )
-        ) : view === "browse" ? (
-          <BrowseView onOpenPath={onOpenPath} activePath={activePath} />
-        ) : (
+        ) : libTab === "files" ? (
           <FilesView
             activePath={activePath}
             refreshKey={refreshKey}
             onOpenPath={onOpenPath}
             onNotice={setNotice}
           />
+        ) : localFiles.length === 0 && myCloudOnly.length === 0 ? (
+          <div className="px-2 py-4 text-[12px] text-muted leading-relaxed">
+            No files yet. Open one (⌘O) or drag <code>.md</code> files here —
+            everything you add lives in your library, on this device, online
+            or off.
+          </div>
+        ) : (
+          <>
+            {localFiles.length > 0 && (
+              <div className="text-[9px] uppercase tracking-wide text-muted/70 px-2 pt-2 pb-1">
+                On this device
+              </div>
+            )}
+            {localFiles.map(fileRow)}
+            {myCloudOnly.length > 0 && (
+              <div className="text-[9px] uppercase tracking-wide text-muted/70 px-2 pt-3 pb-1">
+                In your cloud
+              </div>
+            )}
+            {myCloudOnly.map(fileRow)}
+          </>
         )}
       </div>
 

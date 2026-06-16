@@ -3,44 +3,31 @@
 import { useEffect, useState } from "react";
 import { authClient, type MarkieUser } from "@/lib/auth-client";
 import { colorForName, initials } from "@/lib/collab";
-import {
-  getColorMode,
-  applyColorMode,
-  type ColorMode,
-} from "@/lib/color-mode";
-import { TERMINAL_ENABLED } from "@/lib/features";
+
+export type LeftView = "library" | "browse" | "shared" | "skills";
 
 interface ActivityBarProps {
-  libraryOpen: boolean;
-  onToggleLibrary: () => void;
-  onOpenFile: () => void;
-  onShare: () => void;
-  // true once the open doc is signed-in + cloud-synced (shareable now)
-  canShare: boolean;
-  onToggleTerminal: () => void;
-  terminalOpen: boolean;
+  // which side-panel view is selected, and whether the panel is open
+  activeView: LeftView;
+  panelOpen: boolean;
+  onSelectView: (v: LeftView) => void;
+  onNewFile: () => void;
   onShortcuts: () => void;
-  onThemePresets: () => void;
   onAccount: () => void;
   // bumps when auth changes elsewhere (deep-link sign-in, sign-out)
   authNonce: number;
 }
 
 export function ActivityBar({
-  libraryOpen,
-  onToggleLibrary,
-  onOpenFile,
-  onShare,
-  canShare,
-  onToggleTerminal,
-  terminalOpen,
+  activeView,
+  panelOpen,
+  onSelectView,
+  onNewFile,
   onShortcuts,
-  onThemePresets,
   onAccount,
   authNonce,
 }: ActivityBarProps) {
   const [user, setUser] = useState<MarkieUser | null>(null);
-  const [mode, setMode] = useState<ColorMode>(() => getColorMode());
 
   useEffect(() => {
     let alive = true;
@@ -52,76 +39,46 @@ export function ActivityBar({
     };
   }, [authNonce]);
 
-  const pickMode = (m: ColorMode) => {
-    setMode(m);
-    applyColorMode(m);
-  };
+  const isActive = (v: LeftView) => panelOpen && activeView === v;
 
   return (
     <div className="w-[52px] shrink-0 h-full flex flex-col items-center py-2 gap-1 border-r border-border bg-surface">
-      <IconButton label="Library (⌘L)" active={libraryOpen} onClick={onToggleLibrary}>
+      {/* New file — primary action, set apart by a divider */}
+      <NavButton label="New file (⌘N)" onClick={onNewFile}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+          <path d="M14 3v6h6M12 12v6M9 15h6" />
+        </svg>
+      </NavButton>
+      <div className="w-7 h-px bg-border my-1" />
+
+      <NavButton label="Library — recent & files (⌘L)" active={isActive("library")} onClick={() => onSelectView("library")}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
         </svg>
-      </IconButton>
-      <IconButton label="Open file (⌘O)" onClick={onOpenFile}>
+      </NavButton>
+      <NavButton label="Browse all markdown" active={isActive("browse")} onClick={() => onSelectView("browse")}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10z" />
-          <polyline points="13 3 13 10 20 10" />
+          <circle cx="12" cy="12" r="9" />
+          <polygon points="15.5 8.5 10.5 10.5 8.5 15.5 13.5 13.5" />
         </svg>
-      </IconButton>
-      <IconButton
-        label={
-          canShare
-            ? "Share this document"
-            : "Share — sign in and sync this file to the cloud first"
-        }
-        active={canShare}
-        onClick={onShare}
-      >
+      </NavButton>
+      <NavButton label="Shared with you" active={isActive("shared")} onClick={() => onSelectView("shared")}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
-          <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
         </svg>
-      </IconButton>
-      {TERMINAL_ENABLED && (
-        <IconButton label="Terminal (⌃`)" active={terminalOpen} onClick={onToggleTerminal}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="4" width="18" height="16" rx="2" />
-            <path d="M7 9l3 3-3 3M13 15h4" />
-          </svg>
-        </IconButton>
-      )}
+      </NavButton>
+      <NavButton label="Skills & agent files" active={isActive("skills")} onClick={() => onSelectView("skills")}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z" />
+          <path d="M19 15l.7 1.8L21.5 17.5l-1.8.7L19 20l-.7-1.8L16.5 17.5l1.8-.7z" />
+        </svg>
+      </NavButton>
 
       <div className="flex-1" />
 
-      {/* Color mode: System / Light / Dark */}
-      <div className="flex flex-col items-center gap-0.5 mb-1 p-0.5 rounded-lg bg-background/60">
-        <ModeButton label="System theme" active={mode === "system"} onClick={() => pickMode("system")}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="2" y="3" width="20" height="14" rx="2" />
-            <path d="M8 21h8M12 17v4" />
-          </svg>
-        </ModeButton>
-        <ModeButton label="Light theme" active={mode === "light"} onClick={() => pickMode("light")}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="4" />
-            <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-          </svg>
-        </ModeButton>
-        <ModeButton label="Dark theme" active={mode === "dark"} onClick={() => pickMode("dark")}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" />
-          </svg>
-        </ModeButton>
-      </div>
-
-      <IconButton label="Theme presets" onClick={onThemePresets}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="13.5" cy="6.5" r="1.5" /><circle cx="17.5" cy="10.5" r="1.5" /><circle cx="8.5" cy="7.5" r="1.5" /><circle cx="6.5" cy="12.5" r="1.5" />
-          <path d="M12 2a10 10 0 1 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.2 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 22 11c0-4.97-4.48-9-10-9z" />
-        </svg>
-      </IconButton>
       <IconButton label="Keyboard shortcuts (⌘/)" onClick={onShortcuts}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="5" width="20" height="14" rx="2" />
@@ -153,7 +110,8 @@ export function ActivityBar({
   );
 }
 
-function IconButton({
+// A selectable side-panel view icon (shows an active rail state).
+function NavButton({
   label,
   active = false,
   onClick,
@@ -169,25 +127,25 @@ function IconButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${
+      className={`relative w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${
         active
           ? "bg-accent text-foreground"
           : "text-muted hover:text-foreground hover:bg-accent/40"
       }`}
     >
+      {active && <span className="absolute left-[-8px] top-1.5 bottom-1.5 w-0.5 rounded-full bg-foreground" />}
       {children}
     </button>
   );
 }
 
-function ModeButton({
+// A plain action icon (no active state).
+function IconButton({
   label,
-  active,
   onClick,
   children,
 }: {
   label: string;
-  active: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -196,9 +154,7 @@ function ModeButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`w-8 h-7 rounded-md flex items-center justify-center transition-colors ${
-        active ? "bg-accent text-foreground" : "text-muted hover:text-foreground"
-      }`}
+      className="w-9 h-9 rounded-lg flex items-center justify-center transition-colors text-muted hover:text-foreground hover:bg-accent/40"
     >
       {children}
     </button>

@@ -12,6 +12,7 @@ const EXCLUDED_NAMES = new Set([
   "node_modules", "Library", "vendor", "bower_components",
   "dist", "build", "out", "target", "Pods",
   "venv", "site-packages", "DerivedData",
+  "tmp", "temp",
 ]);
 
 // A directory is excluded if it is hidden (dot-dir) or a known vendored name.
@@ -26,17 +27,10 @@ function isExcludedDir(name) {
 // Directories explicitly re-included even though the rules above would prune
 // them (they live under a dot-dir). Absolute paths, resolved against home.
 function allowlist(home) {
-  return [path.join(home, ".claude", "skills")];
-}
-
-// True if `full` is an allowlisted dir, inside one, or an ancestor of one (so
-// the walk can reach it through an otherwise-excluded dot-dir like `.claude`).
-function isOnAllowlistPath(full, home) {
-  for (const a of allowlist(home)) {
-    if (full === a || full.startsWith(a + path.sep) || a.startsWith(full + path.sep))
-      return true;
-  }
-  return false;
+  return [
+    path.join(home, ".claude", "skills"),
+    path.join(home, ".codex"), // OpenAI Codex agent files (AGENTS.md, etc.)
+  ];
 }
 
 // True if any path segment of `full` (relative to home) is itself an excluded
@@ -48,9 +42,25 @@ function hasExcludedSegment(full, home) {
 }
 
 // Decide whether to descend into `full` (a directory named `name`).
-// Order: allowlist path wins, then go/pkg prune, then the segment predicate.
+//
+// Allowlisted roots (e.g. ~/.claude/skills, ~/.codex) let the walk pierce the
+// dot-dir barrier, but *inside* them we still prune node_modules, other vendored
+// dirs, and any nested dot-dir — otherwise allowlisting a tool dir would drag in
+// its node_modules. Everything outside the allowlist uses the segment predicate.
 function shouldDescend(full, name, home) {
-  if (isOnAllowlistPath(full, home)) return true;
+  const allow = allowlist(home);
+  // The allowlisted root itself → descend into it.
+  if (allow.some((a) => a === full)) return true;
+  // An ancestor of an allowlisted root → descend toward it.
+  if (allow.some((a) => a.startsWith(full + path.sep))) return true;
+  // Strictly inside an allowlisted root → keep pruning vendored + nested dots.
+  if (allow.some((a) => full.startsWith(a + path.sep))) {
+    if (name === "pkg" && path.basename(path.dirname(full)) === "go") return false;
+    if (name.startsWith(".")) return false;
+    if (EXCLUDED_NAMES.has(name)) return false;
+    return true;
+  }
+  // Outside the allowlist entirely.
   if (name === "pkg" && path.basename(path.dirname(full)) === "go") return false;
   return !hasExcludedSegment(full, home);
 }

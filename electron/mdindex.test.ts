@@ -13,6 +13,9 @@ describe("isExcludedDir", () => {
     for (const n of ["node_modules", "Library", "vendor", "bower_components", "dist", "build", "out", "target", "Pods", "venv", "site-packages", "DerivedData"])
       expect(isExcludedDir(n)).toBe(true);
   });
+  it("excludes tmp and temp dirs", () => {
+    for (const n of ["tmp", "temp"]) expect(isExcludedDir(n)).toBe(true);
+  });
   it("keeps normal directories", () => {
     for (const n of ["Documents", "Coding", "skills", "docs", "notes", "src"])
       expect(isExcludedDir(n)).toBe(false);
@@ -39,6 +42,16 @@ describe("shouldDescend", () => {
   it("still prunes other .claude subdirs", () => {
     expect(shouldDescend(path.join(home, ".claude", "sessions"), "sessions", home)).toBe(false);
     expect(shouldDescend(path.join(home, ".claude", "plugins"), "plugins", home)).toBe(false);
+  });
+  it("re-includes ~/.codex (OpenAI Codex agent files)", () => {
+    expect(shouldDescend(path.join(home, ".codex"), ".codex", home)).toBe(true);
+    expect(shouldDescend(path.join(home, ".codex", "sub"), "sub", home)).toBe(true);
+  });
+  it("still prunes node_modules and nested dot-dirs INSIDE an allowlisted root", () => {
+    // allowlisting ~/.codex must not drag in its node_modules / nested .git
+    expect(shouldDescend(path.join(home, ".codex", "node_modules"), "node_modules", home)).toBe(false);
+    expect(shouldDescend(path.join(home, ".codex", ".git"), ".git", home)).toBe(false);
+    expect(shouldDescend(path.join(home, ".claude", "skills", "node_modules"), "node_modules", home)).toBe(false);
   });
 });
 

@@ -1,60 +1,69 @@
 #!/usr/bin/env node
-// Markie MCP server (stdio): lets Claude Code & friends browse and edit
-// the local Markie library. Speaks MCP over newline-delimited JSON-RPC.
+// Markie MCP server (stdio): a device-wide markdown workspace for AI agents.
+// Lets Claude Code, Codex & friends find, read, write, and open the markdown on
+// this Mac — notes, docs, and agent/skill files (~/.claude/skills, ~/.codex,
+// CLAUDE.md, AGENTS.md, …). Speaks MCP over newline-delimited JSON-RPC.
 //
-// Claude Code registration:
+// Dependency-free pure Node. Reuses Markie's device index (electron/mdindex.js)
+// so it sees exactly what the app's Browse/Skills panels see.
+//
+// Register with Claude Code:
 //   claude mcp add markie -- node /path/to/markie-mcp.mjs
 import { createRequire } from "node:module";
-import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname } from "node:path";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { guardPath, matchQuery, groupSkills } from "./lib.mjs";
 
 const require = createRequire(import.meta.url);
-const Database = require("better-sqlite3");
+const mdindex = require("../electron/mdindex.js");
 
-const REGISTRY = join(
-  homedir(),
-  "Library/Application Support/Markie/registry.db"
-);
+const HOME = homedir();
 
-function db() {
-  if (!existsSync(REGISTRY)) {
-    throw new Error("Markie registry not found — open Markie once first");
-  }
-  return new Database(REGISTRY, { readonly: false });
+// Cache the device scan for the process lifetime; writes invalidate it so new
+// files surface in the next find.
+let _scan = null;
+async function scan() {
+  if (!_scan) _scan = await mdindex.walk(HOME, { home: HOME });
+  return _scan;
 }
-
-const sha256 = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 
 // ---- tools ----
 
 const TOOLS = [
   {
-    name: "list_docs",
+    name: "markie_find_md",
     description:
-      "List every document Markie knows about: name, absolute path, sync state, last opened time. Cloud-synced docs include their cloud id.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
-  },
-  {
-    name: "read_doc",
-    description: "Read a document from the Markie library by absolute path.",
+      "Find markdown files anywhere on this Mac (matches name or path, case-insensitive), newest first. Leave query empty to list everything. Mirrors what Markie's Browse panel shows.",
     inputSchema: {
       type: "object",
-      properties: { path: { type: "string", description: "Absolute file path" } },
+      properties: {
+        query: { type: "string", description: "Text to match in the name or path" },
+        limit: { type: "number", description: "Max results (default 50, max 500)" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "markie_read_md",
+    description: "Read a markdown file's contents by absolute path.",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string", description: "Absolute path, ~ allowed" } },
       required: ["path"],
       additionalProperties: false,
     },
   },
   {
-    name: "write_doc",
+    name: "markie_write_md",
     description:
-      "Replace a Markie document's content on disk (the running app picks changes up on reopen). Keeps the registry hash in sync.",
+      "Create or overwrite a markdown file. Only .md/.markdown/.mdx under your home folder, never inside excluded dirs (node_modules, tmp, hidden dirs except the skill roots). Markie picks up changes on reopen.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Absolute file path" },
+        path: { type: "string", description: "Absolute path, ~ allowed" },
         content: { type: "string", description: "Full new markdown content" },
       },
       required: ["path", "content"],
@@ -62,110 +71,75 @@ const TOOLS = [
     },
   },
   {
-    name: "insert_after_heading",
+    name: "markie_list_skills",
     description:
-      "Insert markdown right after a heading line in a Markie document. The heading matches by its text, any level (e.g. 'Roadmap' matches '## Roadmap').",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: "string", description: "Absolute file path" },
-        heading: { type: "string", description: "Heading text to find" },
-        content: { type: "string", description: "Markdown to insert after it" },
-      },
-      required: ["path", "heading", "content"],
-      additionalProperties: false,
-    },
+      "List the agent/skill instruction files on this Mac (CLAUDE.md, AGENTS.md, GEMINI.md, ~/.claude/skills, ~/.codex, .cursor rules), grouped by tool. Great for finding and editing skills.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
-    name: "search_docs",
-    description:
-      "Search the contents of every tracked Markie document for a string (case-insensitive). Returns matching lines with paths and line numbers.",
+    name: "markie_open_in_markie",
+    description: "Open a markdown file rendered in the Markie app.",
     inputSchema: {
       type: "object",
-      properties: { query: { type: "string", description: "Text to find" } },
-      required: ["query"],
+      properties: { path: { type: "string", description: "Absolute path, ~ allowed" } },
+      required: ["path"],
       additionalProperties: false,
     },
   },
 ];
 
-function requireTracked(database, path) {
-  const row = database
-    .prepare("SELECT * FROM files WHERE path = ?")
-    .get(path);
-  if (!row) {
-    throw new Error(
-      `Not in the Markie library: ${path} — use list_docs to see tracked files`
-    );
-  }
-  return row;
-}
-
-function runTool(name, args) {
-  const database = db();
-  try {
-    switch (name) {
-      case "list_docs": {
-        const rows = database
-          .prepare(
-            "SELECT path, name, sync_state, cloud_doc_id, last_opened_at FROM files ORDER BY last_opened_at DESC"
-          )
-          .all();
-        return rows.map((r) => ({
-          ...r,
-          exists: existsSync(r.path),
-        }));
-      }
-      case "read_doc": {
-        requireTracked(database, args.path);
-        return readFileSync(args.path, "utf8");
-      }
-      case "write_doc": {
-        requireTracked(database, args.path);
-        writeFileSync(args.path, args.content, "utf8");
-        database
-          .prepare("UPDATE files SET content_hash = ? WHERE path = ?")
-          .run(sha256(args.content), args.path);
-        return `Wrote ${Buffer.byteLength(args.content)} bytes to ${args.path}`;
-      }
-      case "insert_after_heading": {
-        requireTracked(database, args.path);
-        const lines = readFileSync(args.path, "utf8").split("\n");
-        const target = args.heading.trim().toLowerCase();
-        const idx = lines.findIndex(
-          (l) => /^#{1,6}\s+/.test(l) && l.replace(/^#{1,6}\s+/, "").trim().toLowerCase() === target
-        );
-        if (idx === -1) throw new Error(`Heading not found: ${args.heading}`);
-        lines.splice(idx + 1, 0, "", args.content.replace(/\n$/, ""));
-        const next = lines.join("\n");
-        writeFileSync(args.path, next, "utf8");
-        database
-          .prepare("UPDATE files SET content_hash = ? WHERE path = ?")
-          .run(sha256(next), args.path);
-        return `Inserted after "${lines[idx]}" (line ${idx + 1}) in ${args.path}`;
-      }
-      case "search_docs": {
-        const q = args.query.toLowerCase();
-        const rows = database
-          .prepare("SELECT path, name FROM files ORDER BY last_opened_at DESC")
-          .all();
-        const hits = [];
-        for (const r of rows) {
-          if (!existsSync(r.path)) continue;
-          const lines = readFileSync(r.path, "utf8").split("\n");
-          lines.forEach((line, i) => {
-            if (line.toLowerCase().includes(q)) {
-              hits.push({ path: r.path, line: i + 1, text: line.trim().slice(0, 200) });
-            }
-          });
-        }
-        return hits.slice(0, 100);
-      }
-      default:
-        throw new Error(`Unknown tool: ${name}`);
+async function runTool(name, args) {
+  switch (name) {
+    case "markie_find_md": {
+      const rows = await scan();
+      const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 500);
+      const hits = rows
+        .filter((r) => matchQuery(r, args.query))
+        .sort((a, b) => b.mtimeMs - a.mtimeMs)
+        .slice(0, limit)
+        .map((r) => ({ path: r.path, name: r.name, dir: r.dir }));
+      return { count: hits.length, files: hits };
     }
-  } finally {
-    database.close();
+    case "markie_read_md": {
+      const g = guardPath(args.path, HOME);
+      if (!g.ok) throw new Error(g.error);
+      return await readFile(g.path, "utf8");
+    }
+    case "markie_write_md": {
+      const g = guardPath(args.path, HOME);
+      if (!g.ok) throw new Error(g.error);
+      const body = String(args.content ?? "");
+      // The guard already vetted every ancestor segment (under home, no excluded
+      // dirs), so creating missing parents stays inside an allowed tree.
+      await mkdir(dirname(g.path), { recursive: true });
+      await writeFile(g.path, body, "utf8");
+      _scan = null; // new file should show up in the next find
+      return `Wrote ${Buffer.byteLength(body)} bytes to ${g.path}`;
+    }
+    case "markie_list_skills": {
+      const rows = await scan();
+      return groupSkills(rows).map((grp) => ({
+        tool: grp.label,
+        files: grp.files.map((f) => ({ path: f.path, name: f.name })),
+      }));
+    }
+    case "markie_open_in_markie": {
+      const g = guardPath(args.path, HOME);
+      if (!g.ok) throw new Error(g.error);
+      try {
+        await stat(g.path);
+      } catch {
+        throw new Error(`No such file: ${g.path}`);
+      }
+      const child = spawn("open", ["-a", "Markie", g.path], {
+        stdio: "ignore",
+        detached: true,
+      });
+      child.unref();
+      return `Opening ${g.path} in Markie`;
+    }
+    default:
+      throw new Error(`Unknown tool: ${name}`);
   }
 }
 
@@ -174,7 +148,7 @@ function runTool(name, args) {
 const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
 
 const rl = createInterface({ input: process.stdin, terminal: false });
-rl.on("line", (line) => {
+rl.on("line", async (line) => {
   if (!line.trim()) return;
   let req;
   try {
@@ -191,7 +165,7 @@ rl.on("line", (line) => {
         result: {
           protocolVersion: params?.protocolVersion ?? "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "markie-mcp", version: "0.1.0" },
+          serverInfo: { name: "markie-mcp", version: "0.2.0" },
         },
       });
     } else if (method === "notifications/initialized") {
@@ -199,7 +173,7 @@ rl.on("line", (line) => {
     } else if (method === "tools/list") {
       send({ jsonrpc: "2.0", id, result: { tools: TOOLS } });
     } else if (method === "tools/call") {
-      const out = runTool(params.name, params.arguments ?? {});
+      const out = await runTool(params.name, params.arguments ?? {});
       send({
         jsonrpc: "2.0",
         id,

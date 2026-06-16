@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("mdindex-star-toggle", { path, kind }),
   onMdIndexUpdated: (callback) =>
     subscribe("mdindex-updated", callback, (info) => info),
+  mcpInfo: () => ipcRenderer.invoke("mcp-info"),
   getInitialFile: () => ipcRenderer.invoke("get-initial-file"),
   exportPDF: (html) => ipcRenderer.invoke("export-pdf", html),
   exportHTML: (args) => ipcRenderer.invoke("export-html", args),

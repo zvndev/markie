@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import Database from "better-sqlite3";
 import { auth } from "./auth.ts";
-import { accessLevel, sharedDocsFor } from "./shares.ts";
+import { accessLevel, sharedDocsFor, docsSharedByMe } from "./shares.ts";
 import { claimPendingInvites } from "./pending.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
@@ -63,6 +63,21 @@ docs.get("/", async (c) => {
     .all(user.id) as Omit<DocRow, "owner_id" | "content" | "deleted_at">[];
   const shared = sharedDocsFor(user.id).map((d) => ({ ...d, shared: true }));
   return c.json({ docs: [...rows, ...shared] });
+});
+
+// Owned docs I've shared with people — the "shared by me" tab. Registered
+// before "/:id" so the literal path wins over the param route.
+docs.get("/shared-by-me", async (c) => {
+  const user = await requireUser(c);
+  if (!user) return c.json({ error: "unauthorized" }, 401);
+  const rows = docsSharedByMe(user.id).map((d) => ({
+    id: d.id,
+    name: d.name,
+    updated_at: d.updated_at,
+    memberCount: d.member_count,
+    pendingCount: d.pending_count,
+  }));
+  return c.json({ docs: rows });
 });
 
 // Fetch one doc with content

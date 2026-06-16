@@ -16,6 +16,7 @@ import { Settings } from "@/components/settings";
 import { Library } from "@/components/library";
 import { ActivityBar, type LeftView } from "@/components/activity-bar";
 import { ShareDialog } from "@/components/share-dialog";
+import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
 import { TerminalPanel } from "@/components/terminal-panel";
 import { TERMINAL_ENABLED } from "@/lib/features";
@@ -134,6 +135,10 @@ export default function Home() {
   const [showShare, setShowShare] = useState(false);
   const [cloudId, setCloudId] = useState<string | null>(null);
   const [canShare, setCanShare] = useState(false);
+  // Manage sharing on an arbitrary owned doc (from the Shared → "by me" tab),
+  // independent of whichever doc is currently open.
+  const [manageShare, setManageShare] = useState<{ docId: string; name: string } | null>(null);
+  const [showAgents, setShowAgents] = useState(false);
   const [collabCfg, setCollabCfg] = useState<CollabConfig | null>(null);
   const [peers, setPeers] = useState<PeerUser[]>([]);
   const [liveStatus, setLiveStatus] = useState<
@@ -230,6 +235,11 @@ export default function Home() {
     setLeftView("library");
     setShowLibrary(true);
   }, [canShare]);
+
+  // Open the share dialog to manage people on a doc I own (Shared → "by me").
+  const handleManageShare = useCallback((docId: string, name: string) => {
+    setManageShare({ docId, name });
+  }, []);
 
   // Left rail: select a side-panel view. Clicking the active view closes it.
   const selectView = useCallback((v: LeftView) => {
@@ -727,6 +737,7 @@ export default function Home() {
           panelOpen={showLibrary}
           onSelectView={selectView}
           onNewFile={handleNewFile}
+          onAgents={() => setShowAgents(true)}
           onShortcuts={() => setShowHelp((v) => !v)}
           onAccount={() => setShowSettings(true)}
           authNonce={authNonce}
@@ -741,6 +752,7 @@ export default function Home() {
             onOpenFile={handleOpenFile}
             onAddPaths={addPaths}
             onSignIn={() => setShowSettings(true)}
+            onManageShare={handleManageShare}
             activePath={filePath}
             refreshKey={libRefreshKey}
           />
@@ -833,6 +845,18 @@ export default function Home() {
           onChanged={refreshCollab}
         />
       )}
+      {manageShare && (
+        <ShareDialog
+          key={`manage:${manageShare.docId}`}
+          docId={manageShare.docId}
+          fileName={manageShare.name}
+          onClose={() => setManageShare(null)}
+          // membership changed → refresh the Shared lists' counts
+          onChanged={() => setLibRefreshKey((k) => k + 1)}
+        />
+      )}
+
+      {showAgents && <AgentsDialog onClose={() => setShowAgents(false)} />}
 
       <UpdateToast />
 

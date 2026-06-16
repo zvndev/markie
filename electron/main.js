@@ -422,6 +422,17 @@ ipcMain.handle("mdindex-star-toggle", (_e, { path: p, kind }) =>
   registry.toggleStar(p, kind)
 );
 
+// Where the bundled Markie MCP server lives, so the Agents dialog can hand an
+// agent a working `node <path>` command. Packaged: under Resources (copied via
+// extraResources); dev: the repo's mcp/ next to the app path.
+ipcMain.handle("mcp-info", () => {
+  const base = app.isPackaged ? process.resourcesPath : app.getAppPath();
+  return {
+    serverPath: path.join(base, "mcp", "markie-mcp.mjs"),
+    packaged: app.isPackaged,
+  };
+});
+
 // ── Auto-update (electron-updater → Squirrel.Mac) ──
 // Checks the generic feed (see package.json "publish") for a newer signed +
 // notarized build, downloads it in the background, and installs on quit. The

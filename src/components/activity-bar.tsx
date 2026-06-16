@@ -12,6 +12,7 @@ interface ActivityBarProps {
   panelOpen: boolean;
   onSelectView: (v: LeftView) => void;
   onNewFile: () => void;
+  onAgents: () => void;
   onShortcuts: () => void;
   onAccount: () => void;
   // bumps when auth changes elsewhere (deep-link sign-in, sign-out)
@@ -23,6 +24,7 @@ export function ActivityBar({
   panelOpen,
   onSelectView,
   onNewFile,
+  onAgents,
   onShortcuts,
   onAccount,
   authNonce,
@@ -78,6 +80,16 @@ export function ActivityBar({
       </NavButton>
 
       <div className="flex-1" />
+
+      <IconButton label="Connect an agent (MCP)" onClick={onAgents}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="5" y="8" width="14" height="11" rx="2.5" />
+          <path d="M12 8V4M9 4h6" />
+          <circle cx="9.5" cy="13" r="1" fill="currentColor" stroke="none" />
+          <circle cx="14.5" cy="13" r="1" fill="currentColor" stroke="none" />
+          <path d="M2 12v3M22 12v3" />
+        </svg>
+      </IconButton>
 
       <IconButton label="Keyboard shortcuts (⌘/)" onClick={onShortcuts}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">

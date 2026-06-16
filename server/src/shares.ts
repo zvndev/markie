@@ -230,7 +230,8 @@ function inviteHtml(
   <p style="margin:20px 0">
     <a href="${escapeHtml(previewUrl)}" style="background:#f59e0b;color:#000;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;display:inline-block">Open it →</a>
   </p>
-  <p style="font-size:13px;color:#3f3f46">Prefer the file? <a href="${escapeHtml(previewUrl)}/raw" style="color:#b45309">Download the .md</a>. And make an account with this email to keep it in your Library — your markdown will thank you.</p>
+  <p style="font-size:13px;line-height:1.7;color:#3f3f46">Or get the app: <a href="${escapeHtml(MARKIE_SITE)}/download/mac" style="color:#b45309;font-weight:600">Get Markie for macOS</a> · <a href="markie://open" style="color:#b45309">Open in Markie</a> · <a href="${escapeHtml(previewUrl)}/raw" style="color:#b45309">Download the .md</a></p>
+  <p style="font-size:13px;color:#3f3f46">Make an account with this email to keep <strong>${escapeHtml(docName)}</strong> in your Library — your markdown will thank you.</p>
 </div>`;
 }
 

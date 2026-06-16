@@ -26,6 +26,17 @@ test("renderPublicPage embeds title, content, and download link", () => {
   assert.match(page, /markie:\/\//);
 });
 
+test("renderPublicPage offers a Get Markie for macOS download", () => {
+  const page = renderPublicPage({
+    title: "Doc",
+    markdown: "# Hi",
+    token: "tok",
+    siteUrl: "https://markie.example.com",
+  });
+  assert.match(page, /href="\/download\/mac"/);
+  assert.match(page, /Get Markie for macOS/);
+});
+
 test("renderNotFoundPage returns a 404 body with a site link", () => {
   const page = renderNotFoundPage("https://markie.example.com");
   assert.match(page, /not found|no longer|expired/i);

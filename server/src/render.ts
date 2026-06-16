@@ -116,6 +116,7 @@ export function renderPublicPage(opts: {
     <span class="brand">M</span>
     <span class="title">${safeTitle}</span>
     <a class="btn ghost" href="markie://open">Open in Markie</a>
+    <a class="btn ghost" href="/download/mac">Get Markie for macOS</a>
     <a class="btn primary" href="/s/${esc(token)}/raw">Download .md</a>
   </div>
   <main>${content}</main>

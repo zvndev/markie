@@ -57,12 +57,9 @@
         "filter": [
           "markie-mcp.mjs",
           "lib.mjs",
+          "scan.mjs",
           "package.json"
         ]
-      },
-      {
-        "from": "electron/mdindex.js",
-        "to": "electron/mdindex.js"
       }
     ],
     "directories": {

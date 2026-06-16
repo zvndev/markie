@@ -1,15 +1,9 @@
 // Pure helpers for the Markie MCP server: path guarding, query matching, and
 // agent-file classification. Kept dependency-light and side-effect-free so they
 // can be unit-tested in isolation (node --test lib.test.mjs).
-import { createRequire } from "node:module";
 import { resolve, join, sep } from "node:path";
-
-// Reuse Markie's exact device-index exclusion rules so the MCP server sees the
-// same files as the app's Browse/Skills panels. electron/mdindex.js is CommonJS
-// and pure (no electron imports), so it loads fine here.
-const require = createRequire(import.meta.url);
-const mdindex = require("../electron/mdindex.js");
-const { isExcludedDir, allowlist } = mdindex;
+// Self-contained scan rules (no ../electron dependency — see scan.mjs header).
+import { isExcludedDir, allowlist } from "./scan.mjs";
 
 export const MD_RE = /\.(md|markdown|mdx)$/i;
 

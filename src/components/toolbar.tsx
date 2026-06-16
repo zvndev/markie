@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import type { PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI } from "@/lib/electron";
 import { initials, type PeerUser } from "@/lib/collab";
+import { getColorMode, applyColorMode, type ColorMode } from "@/lib/color-mode";
 
 type ViewMode = "edit" | "preview" | "split";
 
@@ -16,8 +17,12 @@ interface ToolbarProps {
   isDirty: boolean;
   canRename: boolean;
   onRename: (newName: string) => void;
-  // Cloud-synced docs get a Share button; live docs add presence
-  onShare?: (() => void) | null;
+  // Share lives in the top bar now; always shown. onShare handles both the
+  // shareable and the "sign in / sync first" cases. canShare drives styling.
+  onShare: () => void;
+  canShare?: boolean;
+  // Open the theme-presets dialog (palette button next to the mode switch).
+  onThemePresets: () => void;
   live?: boolean;
   liveStatus?: "connecting" | "connected" | "disconnected";
   peers?: PeerUser[];
@@ -35,6 +40,8 @@ export function Toolbar({
   canRename,
   onRename,
   onShare,
+  canShare = false,
+  onThemePresets,
   live = false,
   liveStatus = "disconnected",
   peers = [],
@@ -43,7 +50,13 @@ export function Toolbar({
   const [showPDFMenu, setShowPDFMenu] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState("");
+  const [colorMode, setColorMode] = useState<ColorMode>(() => getColorMode());
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const pickColorMode = (m: ColorMode) => {
+    setColorMode(m);
+    applyColorMode(m);
+  };
 
   // Clear the macOS window buttons (hiddenInset traffic lights at x:14).
   // useSyncExternalStore reads the never-changing platform hydration-safely.
@@ -206,9 +219,9 @@ export function Toolbar({
         </button>
       </div>
 
-      {/* Right: presence + share (stats moved to the menu bar) */}
+      {/* Right: theme/mode + presence + share */}
       <div
-        className="w-44 flex items-center justify-end gap-2.5"
+        className="flex items-center justify-end gap-2"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
         {themeLocked && (
@@ -258,22 +271,78 @@ export function Toolbar({
             )}
           </div>
         )}
-        {onShare && (
-          <button
-            onClick={onShare}
-            className="text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="18" cy="5" r="3" />
-              <circle cx="6" cy="12" r="3" />
-              <circle cx="18" cy="19" r="3" />
-              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+        {/* Color mode: System / Light / Dark */}
+        <div className="flex items-center bg-background rounded-md p-0.5 gap-0.5">
+          <ModeBtn label="System theme" active={colorMode === "system"} onClick={() => pickColorMode("system")}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" />
             </svg>
-            Share
-          </button>
-        )}
+          </ModeBtn>
+          <ModeBtn label="Light theme" active={colorMode === "light"} onClick={() => pickColorMode("light")}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+            </svg>
+          </ModeBtn>
+          <ModeBtn label="Dark theme" active={colorMode === "dark"} onClick={() => pickColorMode("dark")}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" />
+            </svg>
+          </ModeBtn>
+        </div>
+        <button
+          onClick={onThemePresets}
+          title="Theme presets"
+          aria-label="Theme presets"
+          className="p-1 rounded text-muted hover:text-foreground transition-colors"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="13.5" cy="6.5" r="1.5" /><circle cx="17.5" cy="10.5" r="1.5" /><circle cx="8.5" cy="7.5" r="1.5" /><circle cx="6.5" cy="12.5" r="1.5" />
+            <path d="M12 2a10 10 0 1 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.2 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 22 11c0-4.97-4.48-9-10-9z" />
+          </svg>
+        </button>
+        <div className="w-px h-4 bg-border" />
+        <button
+          onClick={onShare}
+          title={canShare ? "Share this document" : "Share — sign in and sync this file first"}
+          className={`text-[12px] transition-colors flex items-center gap-1.5 ${
+            canShare ? "text-foreground hover:opacity-80" : "text-muted hover:text-foreground"
+          }`}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="18" cy="5" r="3" />
+            <circle cx="6" cy="12" r="3" />
+            <circle cx="18" cy="19" r="3" />
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+          </svg>
+          Share
+        </button>
       </div>
     </div>
+  );
+}
+
+function ModeBtn({
+  label,
+  active,
+  onClick,
+  children,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className={`px-1.5 py-1 rounded transition-all ${
+        active ? "bg-accent text-foreground" : "text-muted hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
   );
 }

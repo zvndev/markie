@@ -12,6 +12,7 @@ const EXCLUDED_NAMES = new Set([
   "node_modules", "Library", "vendor", "bower_components",
   "dist", "build", "out", "target", "Pods",
   "venv", "site-packages", "DerivedData",
+  "tmp", "temp",
 ]);
 
 // A directory is excluded if it is hidden (dot-dir) or a known vendored name.
@@ -26,7 +27,10 @@ function isExcludedDir(name) {
 // Directories explicitly re-included even though the rules above would prune
 // them (they live under a dot-dir). Absolute paths, resolved against home.
 function allowlist(home) {
-  return [path.join(home, ".claude", "skills")];
+  return [
+    path.join(home, ".claude", "skills"),
+    path.join(home, ".codex"), // OpenAI Codex agent files (AGENTS.md, etc.)
+  ];
 }
 
 // True if `full` is an allowlisted dir, inside one, or an ancestor of one (so

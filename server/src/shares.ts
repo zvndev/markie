@@ -79,6 +79,29 @@ export function sharedDocsFor(userId: string) {
   }>;
 }
 
+// Owned, non-deleted docs that have at least one member or pending invite —
+// the "shared by me" tab. Counts members and pending invites separately.
+export function docsSharedByMe(userId: string) {
+  return db
+    .prepare(
+      `SELECT d.id, d.name, d.updated_at,
+              (SELECT COUNT(*) FROM shares s WHERE s.doc_id = d.id) AS member_count,
+              (SELECT COUNT(*) FROM pending_shares p WHERE p.doc_id = d.id) AS pending_count
+       FROM docs d
+       WHERE d.owner_id = ? AND d.deleted_at IS NULL
+         AND ( EXISTS (SELECT 1 FROM shares s WHERE s.doc_id = d.id)
+            OR EXISTS (SELECT 1 FROM pending_shares p WHERE p.doc_id = d.id) )
+       ORDER BY d.updated_at DESC`
+    )
+    .all(userId) as Array<{
+    id: string;
+    name: string;
+    updated_at: string;
+    member_count: number;
+    pending_count: number;
+  }>;
+}
+
 export const shares = new Hono();
 
 // List members + pending invites (owner or member can see)

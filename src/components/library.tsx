@@ -5,6 +5,7 @@ import { getElectronAPI, type LibraryItem } from "@/lib/electron";
 import { FilesView } from "@/components/files-view";
 import { BrowseView } from "@/components/browse-view";
 import { SkillsView } from "@/components/skills-view";
+import { SharedView } from "@/components/shared-view";
 import type { LeftView } from "@/components/activity-bar";
 
 interface LibraryProps {
@@ -15,6 +16,8 @@ interface LibraryProps {
   onOpenFile: () => void;
   onAddPaths: (paths: string[]) => void;
   onSignIn: () => void;
+  // open the share dialog to manage people on a doc I own
+  onManageShare: (docId: string, name: string) => void;
   activePath: string | null;
   // bump to force a refresh (file opened/saved/sync changed)
   refreshKey: number;
@@ -50,6 +53,7 @@ export function Library({
   onOpenFile,
   onAddPaths,
   onSignIn,
+  onManageShare,
   activePath,
   refreshKey,
 }: LibraryProps) {
@@ -353,23 +357,17 @@ export function Library({
           <BrowseView onOpenPath={onOpenPath} activePath={activePath} />
         ) : view === "skills" ? (
           <SkillsView onOpenPath={onOpenPath} activePath={activePath} />
+        ) : view === "shared" ? (
+          <SharedView
+            sharedWithMe={sharedItems}
+            withMeLoading={loading}
+            renderRow={fileRow}
+            signedIn={signedIn}
+            onManage={onManageShare}
+            refreshKey={refreshKey}
+          />
         ) : loading ? (
           <div className="px-2 py-4 text-[12px] text-muted">Loading…</div>
-        ) : view === "shared" ? (
-          sharedItems.length === 0 ? (
-            <div className="px-2 py-4 text-[12px] text-muted leading-relaxed">
-              {signedIn
-                ? "Nothing shared with you yet. When someone invites you to a doc, it shows up here."
-                : "Sign in to see docs people have shared with you."}
-            </div>
-          ) : (
-            <>
-              <div className="text-[9px] uppercase tracking-wide text-muted/70 px-2 pt-2 pb-1">
-                Shared with you
-              </div>
-              {sharedItems.map(fileRow)}
-            </>
-          )
         ) : libTab === "files" ? (
           <FilesView
             activePath={activePath}

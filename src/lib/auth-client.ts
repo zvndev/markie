@@ -153,7 +153,22 @@ export interface ShareMember {
   pending?: boolean;
 }
 
+// A doc I own that I've shared with people (the "shared by me" tab).
+export interface SharedByMeDoc {
+  id: string;
+  name: string;
+  updated_at: string;
+  memberCount: number;
+  pendingCount: number;
+}
+
 export const sharesClient = {
+  // Owned docs that have at least one collaborator or pending invite.
+  sharedByMe: async (): Promise<SharedByMeDoc[]> => {
+    const res = await api<{ docs: SharedByMeDoc[] }>("/api/docs/shared-by-me");
+    return res.ok ? res.data?.docs ?? [] : [];
+  },
+
   list: async (docId: string): Promise<ShareMember[] | null> => {
     const res = await api<{ shares: ShareMember[] }>(
       `/api/docs/${encodeURIComponent(docId)}/shares`

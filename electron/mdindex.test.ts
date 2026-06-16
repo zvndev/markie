@@ -47,6 +47,12 @@ describe("shouldDescend", () => {
     expect(shouldDescend(path.join(home, ".codex"), ".codex", home)).toBe(true);
     expect(shouldDescend(path.join(home, ".codex", "sub"), "sub", home)).toBe(true);
   });
+  it("still prunes node_modules and nested dot-dirs INSIDE an allowlisted root", () => {
+    // allowlisting ~/.codex must not drag in its node_modules / nested .git
+    expect(shouldDescend(path.join(home, ".codex", "node_modules"), "node_modules", home)).toBe(false);
+    expect(shouldDescend(path.join(home, ".codex", ".git"), ".git", home)).toBe(false);
+    expect(shouldDescend(path.join(home, ".claude", "skills", "node_modules"), "node_modules", home)).toBe(false);
+  });
 });
 
 describe("walk", () => {

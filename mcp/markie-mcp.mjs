@@ -9,16 +9,13 @@
 //
 // Register with Claude Code:
 //   claude mcp add markie -- node /path/to/markie-mcp.mjs
-import { createRequire } from "node:module";
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { guardPath, matchQuery, groupSkills } from "./lib.mjs";
-
-const require = createRequire(import.meta.url);
-const mdindex = require("../electron/mdindex.js");
+import { walk } from "./scan.mjs";
 
 const HOME = homedir();
 
@@ -26,7 +23,7 @@ const HOME = homedir();
 // files surface in the next find.
 let _scan = null;
 async function scan() {
-  if (!_scan) _scan = await mdindex.walk(HOME, { home: HOME });
+  if (!_scan) _scan = await walk(HOME, { home: HOME });
   return _scan;
 }
 

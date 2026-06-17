@@ -7,6 +7,7 @@ const {
   protocol,
   net,
   shell,
+  session,
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -225,6 +226,14 @@ function registerProtocol() {
     const outDir = path.join(__dirname, "../out");
     const fullPath = path.join(outDir, filePath);
 
+    // SECURITY: never serve outside the bundled out/ dir even if the path
+    // contains traversal (defensive — the renderer origin is app:// only).
+    const resolvedOut = path.resolve(outDir);
+    const resolvedFull = path.resolve(fullPath);
+    if (resolvedFull !== resolvedOut && !resolvedFull.startsWith(resolvedOut + path.sep)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
     // If path doesn't exist, try adding .html
     if (!fs.existsSync(fullPath) && !path.extname(fullPath)) {
       const htmlPath = fullPath + ".html";
@@ -242,6 +251,28 @@ function registerProtocol() {
     }
 
     return net.fetch(url.pathToFileURL(fullPath).toString());
+  });
+}
+
+// Strict CSP for the packaged app:// renderer. A backstop behind the markdown
+// sanitizer. Not applied in dev (Next HMR needs a looser policy).
+function setupCSP() {
+  if (isDev) return;
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'", // Next static export inlines a bootstrap
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https://api-production-602f.up.railway.app wss://api-production-602f.up.railway.app",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: { ...details.responseHeaders, "Content-Security-Policy": [csp] },
+    });
   });
 }
 
@@ -898,6 +929,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     registerProtocol();
+    setupCSP();
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
     createWindow();
     setupAutoUpdate();

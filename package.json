@@ -1,7 +1,22 @@
 {
   "name": "markie",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "private": true,
+  "description": "A fast, native markdown editor for macOS (Apple Silicon), with a built-in MCP server for AI agents.",
+  "author": "ZVN",
+  "license": "MIT",
+  "homepage": "https://markie.zvndev.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zvndev/markie.git"
+  },
+  "keywords": [
+    "markdown",
+    "editor",
+    "macos",
+    "electron",
+    "mcp"
+  ],
   "main": "electron/main.js",
   "scripts": {
     "dev": "next dev --turbopack",

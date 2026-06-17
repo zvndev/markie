@@ -3,6 +3,7 @@ import { bearer, emailOTP } from "better-auth/plugins";
 import Database from "better-sqlite3";
 import { sendEmail } from "./email.ts";
 import { claimPendingInvites } from "./pending.ts";
+import { resolveAuthSecret } from "./auth-secret.ts";
 
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
@@ -10,12 +11,24 @@ const googleConfigured =
 export const auth = betterAuth({
   database: new Database(process.env.DB_PATH ?? "./markie.db"),
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:8787",
-  secret: process.env.BETTER_AUTH_SECRET ?? "markie-dev-secret-not-for-prod",
+  secret: resolveAuthSecret(process.env),
   trustedOrigins: [
     "app://markie", // packaged desktop app
     "http://localhost:3000", // dev renderer
     "markie://", // desktop deep-link auth bridge target
   ],
+  rateLimit: {
+    enabled: true, // better-auth defaults to prod-only; turn it on everywhere
+    window: 10,
+    max: 100,
+    customRules: {
+      // Tighter limits on the abuse-prone unauthenticated endpoints; the OTP
+      // send is an email trigger (spam/cost vector).
+      "/sign-in/email": { window: 60, max: 10 },
+      "/sign-up/email": { window: 60, max: 10 },
+      "/email-otp/send-verification-otp": { window: 60, max: 5 },
+    },
+  },
   emailAndPassword: {
     enabled: true,
   },

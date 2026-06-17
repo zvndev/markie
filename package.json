@@ -17,6 +17,7 @@
   "build": {
     "appId": "com.zvn.markie",
     "productName": "Markie",
+    "afterPack": "build/preflight.cjs",
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "public/icon.icns",

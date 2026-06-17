@@ -221,6 +221,9 @@ export function Library({
     const open = () => {
       if (item.path && item.exists) {
         onOpenPath(item.path);
+      } else if (item.shared && item.cloudId && api.docOpenShared) {
+        // shared with me → just save to Downloads and open it, no save dialog
+        act(() => api.docOpenShared!({ cloudId: item.cloudId!, suggestedName: item.name }));
       } else if (item.state === "cloud-only" && item.cloudId) {
         act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name }));
       }

@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   docPush: (args) => ipcRenderer.invoke("doc-push", args),
   docResolve: (args) => ipcRenderer.invoke("doc-resolve", args),
   docPull: (args) => ipcRenderer.invoke("doc-pull", args),
+  docOpenShared: (args) => ipcRenderer.invoke("doc-open-shared", args),
   onMenuLibrary: (callback) => subscribe("menu-library", callback),
   onSetMode: (callback) => subscribe("set-mode", callback, (mode) => mode),
   onToggleStats: (callback) => subscribe("toggle-stats", callback),

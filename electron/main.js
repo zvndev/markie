@@ -12,6 +12,7 @@ const path = require("path");
 const fs = require("fs");
 const url = require("url");
 const { autoUpdater } = require("electron-updater");
+const { shareBaseFromSrc } = require("./share-origin");
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -112,7 +113,7 @@ async function openSharedFromDeepLink(link) {
   try { parsed = new URL(link); } catch { return; }
   const token = parsed.searchParams.get("token");
   const src = parsed.searchParams.get("src");
-  if (!token || !src) return;
+  if (!token) return;
   if (!mainWindow) createWindow();
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -120,7 +121,9 @@ async function openSharedFromDeepLink(link) {
     mainWindow.focus();
   }
   try {
-    const base = (/^https?:\/\//i.test(src) ? src : `https://${src}`).replace(/\/$/, "");
+    // SECURITY: never fetch from the deep link's raw `src` (SSRF). Pin to an
+    // allowlisted Markie origin; unknown/attacker srcs fall back to production.
+    const base = shareBaseFromSrc(src, { allowDev: isDev });
     const res = await net.fetch(`${base}/s/${encodeURIComponent(token)}/raw`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const content = await res.text();

@@ -1,35 +1,47 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { guardPath, matchQuery, classifyAgentFile, groupSkills } from "./lib.mjs";
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as pjoin } from "node:path";
 
 const HOME = "/home/u";
 
+// These "allow" cases use a REAL temp home because guardPath now canonicalizes
+// via realpath (a fake /home/u would be rewritten by macOS autofs resolution).
 test("guardPath allows ordinary markdown under home", () => {
-  for (const p of [
-    "/home/u/notes.md",
-    "/home/u/projects/app/README.md",
-    "/home/u/Desktop/Coding/x.markdown",
-    "/home/u/a/b/c.mdx",
-  ]) {
-    const r = guardPath(p, HOME);
-    assert.equal(r.ok, true, `${p} should be allowed: ${r.error}`);
-    assert.equal(r.path, p);
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  try {
+    for (const rel of ["notes.md", "projects/app/README.md", "Desktop/Coding/x.markdown", "a/b/c.mdx"]) {
+      const p = pjoin(home, rel);
+      const r = guardPath(p, home);
+      assert.equal(r.ok, true, `${p} should be allowed: ${r.error}`);
+      assert.equal(r.path, p);
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
 test("guardPath expands ~ against home", () => {
-  const r = guardPath("~/notes.md", HOME);
-  assert.equal(r.ok, true);
-  assert.equal(r.path, "/home/u/notes.md");
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  try {
+    const r = guardPath("~/notes.md", home);
+    assert.equal(r.ok, true);
+    assert.equal(r.path, pjoin(home, "notes.md"));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("guardPath allows the skill/agent allowlist roots despite the dot-dir", () => {
-  for (const p of [
-    "/home/u/.claude/skills/kirby/SKILL.md",
-    "/home/u/.codex/AGENTS.md",
-    "/home/u/.codex/notes/todo.md",
-  ]) {
-    assert.equal(guardPath(p, HOME).ok, true, `${p} should be allowed`);
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  try {
+    for (const rel of [".claude/skills/kirby/SKILL.md", ".codex/AGENTS.md", ".codex/notes/todo.md"]) {
+      assert.equal(guardPath(pjoin(home, rel), home).ok, true, `${rel} should be allowed`);
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
@@ -95,4 +107,56 @@ test("groupSkills groups classified files by tool, in display order", () => {
   assert.deepEqual(ids, ["claude", "openai"]);
   assert.equal(groups[0].files.length, 2); // CLAUDE.md + SKILL.md
   assert.equal(groups[1].files.length, 1); // AGENTS.md
+});
+
+test("guardPath denies a .md symlink that points outside home (read escape)", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const outside = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-out-")));
+  try {
+    writeFileSync(pjoin(outside, "secret.txt"), "TOP SECRET");
+    symlinkSync(pjoin(outside, "secret.txt"), pjoin(home, "link.md"));
+    const r = guardPath(pjoin(home, "link.md"), home);
+    assert.equal(r.ok, false, "symlink to outside-home non-md must be denied");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("guardPath denies writing through a symlinked directory (write escape)", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const outside = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-out-")));
+  try {
+    symlinkSync(outside, pjoin(home, "escape")); // dir symlink under home
+    const r = guardPath(pjoin(home, "escape", "implanted.md"), home, { mode: "write" });
+    assert.equal(r.ok, false, "write through a symlinked dir must be denied");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("guardPath allows an ordinary real .md under a real home", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  try {
+    mkdirSync(pjoin(home, "notes"));
+    writeFileSync(pjoin(home, "notes", "a.md"), "# hi");
+    const r = guardPath(pjoin(home, "notes", "a.md"), home);
+    assert.equal(r.ok, true, r.error);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("guardPath write-mode denies the allowlist skill roots (no agent-file implant)", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  try {
+    mkdirSync(pjoin(home, ".claude", "skills"), { recursive: true });
+    const r = guardPath(pjoin(home, ".claude", "skills", "x.md"), home, { mode: "write" });
+    assert.equal(r.ok, false, "writing under ~/.claude/skills must be denied");
+    // but reading is still fine
+    assert.equal(guardPath(pjoin(home, ".claude", "skills", "x.md"), home).ok, true);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

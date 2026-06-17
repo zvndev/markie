@@ -4,11 +4,18 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const registry = require("./registry");
+const { isAllowedServerOrigin } = require("./share-origin");
 
 let config = { token: null, serverURL: null };
 
 function setConfig(next) {
-  config = { token: next.token ?? null, serverURL: next.serverURL ?? null };
+  const serverURL = next.serverURL ?? null;
+  // SECURITY: only forward the bearer token to an allowlisted origin so a future
+  // code path can't be tricked into exfiltrating the session token.
+  const allowed = isAllowedServerOrigin(serverURL, {
+    allowDev: process.env.NODE_ENV === "development",
+  });
+  config = { token: next.token ?? null, serverURL: allowed ? serverURL : null };
 }
 
 function isConfigured() {

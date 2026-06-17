@@ -101,8 +101,15 @@ function externalApps() {
   );
 }
 
+// Only a known candidate (by id or display name) may be launched — the appName
+// comes from the renderer, so never hand an arbitrary value to `open -a`.
+function isKnownApp(appName) {
+  return CANDIDATES.some((c) => c.id === appName || c.name === appName);
+}
+
 function openExternal(appName, cwd) {
   if (process.platform !== "darwin") return { error: "macOS only" };
+  if (!isKnownApp(appName)) return { error: "unknown terminal app" };
   const dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
   try {
     spawn("open", ["-a", appName, dir], { detached: true, stdio: "ignore" }).unref();
@@ -121,4 +128,5 @@ module.exports = {
   killAll,
   externalApps,
   openExternal,
+  isKnownApp,
 };

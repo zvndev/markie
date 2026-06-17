@@ -1,36 +1,77 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Markie
 
-## Getting Started
+A fast, native markdown editor for macOS (Apple Silicon). Free.
 
-First, run the development server:
+<!-- demo gif added in Phase 2 -->
+
+Markie is a desktop markdown app that gets out of your way: a clean editor with
+live preview, a device-wide index of every markdown file you own, painless
+sharing, and a built-in [MCP](https://modelcontextprotocol.io) server so AI
+agents like Claude Code and Codex can find, read, and write your markdown.
+
+## Features
+
+- **Editor + live preview** — edit, preview, or split view; GitHub-flavored
+  markdown, tables, code highlighting, and KaTeX math.
+- **Browse** — a device-wide index of every `.md` on your Mac, so your notes and
+  docs are one search away.
+- **Agent & skill files** — surfaces `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+  `~/.claude/skills`, `~/.codex`, and Cursor rules, grouped by tool.
+- **Sharing** — share a doc via a public link or by email; recipients open it in
+  one click, no account required.
+- **Markie MCP** — let Claude Code / Codex work with your markdown (see below).
+
+## Install
+
+Download for **Apple Silicon macOS** (M-series). The app is signed and notarized
+by Apple, and updates itself automatically.
+
+➡️ **[Download Markie](https://markie.zvndev.com)**
+
+> Apple Silicon only. Intel Macs are not supported.
+
+## The Markie MCP
+
+Markie ships a dependency-free [MCP](https://modelcontextprotocol.io) server that
+gives an AI agent a local markdown workspace: `markie_find_md`, `markie_read_md`,
+`markie_write_md`, `markie_list_skills`, and `markie_open_in_markie`. Reads/writes
+are restricted to markdown under your home folder.
+
+**Claude Code:**
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+claude mcp add markie -- node /path/to/markie/mcp/markie-mcp.mjs
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+**Codex** — add to `~/.codex/config.toml`:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```toml
+[mcp_servers.markie]
+command = "node"
+args = ["/path/to/markie/mcp/markie-mcp.mjs"]
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+(The installed app also bundles the server; the in-app **Agents** dialog shows the
+exact path and copy-paste commands.)
 
-## Learn More
+## Build from source
 
-To learn more about Next.js, take a look at the following resources:
+Requires Node ≥ 22.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm install
+npm run electron:dev     # run the app in development
+npm run electron:pack    # build an unsigned .app into dist/mac-arm64/
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Other scripts: `npm run build` (Next static export), `npm test` (renderer +
+Electron unit tests), `node --test mcp/lib.test.mjs` (MCP tests).
 
-## Deploy on Vercel
+## Tech
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Electron · Next.js (static export) · React · TypeScript · Tailwind · TipTap ·
+CodeMirror · a unified/remark/rehype render pipeline.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## License
+
+[MIT](./LICENSE) © ZVN

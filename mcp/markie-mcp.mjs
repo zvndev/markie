@@ -103,7 +103,7 @@ async function runTool(name, args) {
       return await readFile(g.path, "utf8");
     }
     case "markie_write_md": {
-      const g = guardPath(args.path, HOME);
+      const g = guardPath(args.path, HOME, { mode: "write" });
       if (!g.ok) throw new Error(g.error);
       const body = String(args.content ?? "");
       // The guard already vetted every ancestor segment (under home, no excluded

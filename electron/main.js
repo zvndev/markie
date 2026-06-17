@@ -7,11 +7,13 @@ const {
   protocol,
   net,
   shell,
+  session,
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const url = require("url");
 const { autoUpdater } = require("electron-updater");
+const { shareBaseFromSrc } = require("./share-origin");
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -112,7 +114,7 @@ async function openSharedFromDeepLink(link) {
   try { parsed = new URL(link); } catch { return; }
   const token = parsed.searchParams.get("token");
   const src = parsed.searchParams.get("src");
-  if (!token || !src) return;
+  if (!token) return;
   if (!mainWindow) createWindow();
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -120,7 +122,9 @@ async function openSharedFromDeepLink(link) {
     mainWindow.focus();
   }
   try {
-    const base = (/^https?:\/\//i.test(src) ? src : `https://${src}`).replace(/\/$/, "");
+    // SECURITY: never fetch from the deep link's raw `src` (SSRF). Pin to an
+    // allowlisted Markie origin; unknown/attacker srcs fall back to production.
+    const base = shareBaseFromSrc(src, { allowDev: isDev });
     const res = await net.fetch(`${base}/s/${encodeURIComponent(token)}/raw`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const content = await res.text();
@@ -222,6 +226,14 @@ function registerProtocol() {
     const outDir = path.join(__dirname, "../out");
     const fullPath = path.join(outDir, filePath);
 
+    // SECURITY: never serve outside the bundled out/ dir even if the path
+    // contains traversal (defensive — the renderer origin is app:// only).
+    const resolvedOut = path.resolve(outDir);
+    const resolvedFull = path.resolve(fullPath);
+    if (resolvedFull !== resolvedOut && !resolvedFull.startsWith(resolvedOut + path.sep)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
     // If path doesn't exist, try adding .html
     if (!fs.existsSync(fullPath) && !path.extname(fullPath)) {
       const htmlPath = fullPath + ".html";
@@ -239,6 +251,28 @@ function registerProtocol() {
     }
 
     return net.fetch(url.pathToFileURL(fullPath).toString());
+  });
+}
+
+// Strict CSP for the packaged app:// renderer. A backstop behind the markdown
+// sanitizer. Not applied in dev (Next HMR needs a looser policy).
+function setupCSP() {
+  if (isDev) return;
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'", // Next static export inlines a bootstrap
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https://api-production-602f.up.railway.app wss://api-production-602f.up.railway.app",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: { ...details.responseHeaders, "Content-Security-Policy": [csp] },
+    });
   });
 }
 
@@ -895,6 +929,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     registerProtocol();
+    setupCSP();
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
     createWindow();
     setupAutoUpdate();

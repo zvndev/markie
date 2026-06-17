@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "description": "Local markdown-workspace MCP server for Markie (dependency-free)",
+  "author": "ZVN",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zvndev/markie.git"
+  },
   "bin": { "markie-mcp": "./markie-mcp.mjs" },
   "engines": { "node": ">=18" },
   "scripts": {

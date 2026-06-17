@@ -10,7 +10,7 @@
     "dev": "node --watch --experimental-strip-types src/index.ts",
     "start": "node --experimental-strip-types src/index.ts",
     "migrate": "npx @better-auth/cli@latest migrate --config src/auth.ts -y",
-    "test": "node --experimental-strip-types --test src/render.test.ts src/public-links.test.ts src/public.test.ts src/shared-by-me.test.ts"
+    "test": "node --experimental-strip-types --test src/render.test.ts src/public-links.test.ts src/public.test.ts src/shared-by-me.test.ts src/auth-secret.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.4",

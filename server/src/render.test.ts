@@ -37,6 +37,19 @@ test("renderPublicPage offers a Get Markie for macOS download", () => {
   assert.match(page, /Get Markie for macOS/);
 });
 
+test("renderPublicPage's Open in Markie deep link carries the token + source", () => {
+  const page = renderPublicPage({
+    title: "Doc",
+    markdown: "# Hi",
+    token: "tok123",
+    siteUrl: "https://markie.example.com",
+  });
+  // primary "Open in Markie" → markie://open?token=…&src=… so the app can fetch
+  // the shared doc (no account needed) and open it.
+  assert.match(page, /href="markie:\/\/open\?token=tok123&amp;src=https%3A%2F%2Fmarkie\.example\.com"/);
+  assert.match(page, /class="btn primary"[^>]*>Open in Markie/);
+});
+
 test("renderNotFoundPage returns a 404 body with a site link", () => {
   const page = renderNotFoundPage("https://markie.example.com");
   assert.match(page, /not found|no longer|expired/i);

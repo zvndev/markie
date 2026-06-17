@@ -37,6 +37,12 @@ const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
 // the window so the user lands back in Markie focused.
 function deliverDeepLink(link) {
   if (!link || !link.startsWith("markie://")) return;
+  // markie://open?token=…&src=… — a shared doc opened from the public link /
+  // email. Fetch it and open it locally (no account needed); handled in main.
+  if (link.startsWith("markie://open")) {
+    openSharedFromDeepLink(link);
+    return;
+  }
   if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("deep-link", link);
   } else {
@@ -47,6 +53,90 @@ function deliverDeepLink(link) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
+  }
+}
+
+// Save a shared doc to ~/Downloads with a collision-safe markdown name.
+function downloadsUniquePath(name) {
+  let safe = path.basename(String(name || "")).replace(/[\\/:]/g, "_").trim() || "Shared document";
+  if (!/\.(md|markdown|mdx|txt)$/i.test(safe)) safe += ".md";
+  const dir = app.getPath("downloads");
+  const ext = path.extname(safe);
+  const stem = path.basename(safe, ext);
+  let candidate = path.join(dir, safe);
+  let i = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(dir, `${stem} (${i})${ext}`);
+    i++;
+  }
+  return candidate;
+}
+
+// Pull a filename out of a Content-Disposition header, if present.
+function filenameFromDisposition(cd) {
+  if (!cd) return null;
+  const star = cd.match(/filename\*=UTF-8''([^;]+)/i);
+  if (star) {
+    try { return path.basename(decodeURIComponent(star[1])); } catch { /* fall through */ }
+  }
+  const plain = cd.match(/filename="?([^";]+)"?/i);
+  return plain ? path.basename(plain[1].trim()) : null;
+}
+
+// Open a markdown file that already exists on disk in the editor window,
+// creating/showing the window and bridging cold start via pendingFilePath.
+function openLocalFile(filePath) {
+  if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
+    const payload = readFilePayload(filePath);
+    if (payload) mainWindow.webContents.send("file-opened", payload);
+  } else {
+    pendingFilePath = filePath;
+    if (!mainWindow && app.isReady()) createWindow();
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+}
+
+// markie://open?token=…&src=… — fetch the shared doc from its public link (the
+// token is the authorization, no account needed), save it to ~/Downloads, and
+// open it. Waits for app-ready on a cold start.
+async function openSharedFromDeepLink(link) {
+  if (!app.isReady()) {
+    app.whenReady().then(() => openSharedFromDeepLink(link));
+    return;
+  }
+  let parsed;
+  try { parsed = new URL(link); } catch { return; }
+  const token = parsed.searchParams.get("token");
+  const src = parsed.searchParams.get("src");
+  if (!token || !src) return;
+  if (!mainWindow) createWindow();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+  try {
+    const base = (/^https?:\/\//i.test(src) ? src : `https://${src}`).replace(/\/$/, "");
+    const res = await net.fetch(`${base}/s/${encodeURIComponent(token)}/raw`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const content = await res.text();
+    const name = filenameFromDisposition(res.headers.get("content-disposition")) || "Shared document.md";
+    const dest = downloadsUniquePath(name);
+    fs.writeFileSync(dest, content, "utf-8");
+    openLocalFile(dest);
+  } catch (err) {
+    console.error("markie://open failed:", err);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      dialog.showMessageBox(mainWindow, {
+        type: "warning",
+        message: "Couldn't open the shared document",
+        detail: "The link may have expired, or you're offline. Try opening it again from the email.",
+      });
+    }
   }
 }
 
@@ -378,6 +468,16 @@ ipcMain.handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
   });
   if (result.canceled || !result.filePath) return { canceled: true };
   return sync.pull(cloudId, result.filePath);
+});
+
+// Open a shared cloud doc with one click: save it to ~/Downloads and open it,
+// no "where do you want to save" dialog. Backs the "Shared with you" list.
+ipcMain.handle("doc-open-shared", async (_event, { cloudId, suggestedName }) => {
+  const dest = downloadsUniquePath(suggestedName || "Shared document.md");
+  const res = await sync.pull(cloudId, dest);
+  if (res && res.error) return res;
+  openLocalFile(dest);
+  return { ok: true, path: dest };
 });
 
 // IPC: open an https URL in the system browser (OAuth flows)

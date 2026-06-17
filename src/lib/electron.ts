@@ -98,6 +98,11 @@ export interface ElectronAPI {
     cloudId: string;
     suggestedName: string;
   }): Promise<SyncResult>;
+  // open a shared cloud doc by saving it to ~/Downloads and opening it (no dialog)
+  docOpenShared?(args: {
+    cloudId: string;
+    suggestedName: string;
+  }): Promise<{ ok?: boolean; path?: string; error?: string }>;
   onSetMode(cb: (mode: ViewMode) => void): Unsubscribe;
   onToggleStats(cb: () => void): Unsubscribe;
   onFileOpened(cb: (data: FilePayload) => void): Unsubscribe;

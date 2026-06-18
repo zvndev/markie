@@ -1,7 +1,7 @@
 {
   "name": "markie",
   "displayName": "Markie",
-  "version": "0.2.0",
+  "version": "0.2.8",
   "description": "Local markdown workspace for AI agents — find, read & write the .md files on your machine. No cloud, no API key.",
   "author": {
     "name": "ZVN",

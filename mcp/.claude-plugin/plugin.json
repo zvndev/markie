@@ -1,0 +1,14 @@
+{
+  "name": "markie",
+  "displayName": "Markie",
+  "version": "0.2.0",
+  "description": "Local markdown workspace for AI agents — find, read & write the .md files on your machine. No cloud, no API key.",
+  "author": {
+    "name": "ZVN",
+    "url": "https://markie.zvndev.com"
+  },
+  "homepage": "https://markie.zvndev.com",
+  "repository": "https://github.com/zvndev/markie",
+  "license": "MIT",
+  "keywords": ["markdown", "mcp", "local-first", "ai-agent", "claude-code"]
+}

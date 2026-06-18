@@ -1,0 +1,159 @@
+{
+  "name": "markie",
+  "version": "0.2.8",
+  "private": true,
+  "description": "A fast, native markdown editor for macOS (Apple Silicon), with a built-in MCP server for AI agents.",
+  "author": "ZVN",
+  "license": "MIT",
+  "homepage": "https://markie.zvndev.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zvndev/markie.git"
+  },
+  "keywords": [
+    "markdown",
+    "editor",
+    "macos",
+    "electron",
+    "mcp"
+  ],
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "vitest run",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && NODE_ENV=development electron .\"",
+    "electron:build": "npm run build && electron-builder --mac",
+    "electron:pack": "npm run build && electron-builder --mac --dir",
+    "electron:release": "npm run build && electron-builder --mac --publish always"
+  },
+  "build": {
+    "appId": "com.zvn.markie",
+    "productName": "Markie",
+    "afterPack": "build/preflight.cjs",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "public/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "arm64"
+        },
+        {
+          "target": "zip",
+          "arch": "arm64"
+        }
+      ],
+      "darkModeSupport": true,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true
+    },
+    "publish": [
+      {
+        "provider": "s3",
+        "bucket": "markie-releases",
+        "endpoint": "https://s3.us-east-005.backblazeb2.com",
+        "region": "us-east-005",
+        "path": "mac"
+      }
+    ],
+    "files": [
+      "electron/**/*",
+      "out/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "mcp",
+        "to": "mcp",
+        "filter": [
+          "markie-mcp.mjs",
+          "lib.mjs",
+          "scan.mjs",
+          "package.json"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "fileAssociations": [
+      {
+        "ext": "md",
+        "name": "Markdown",
+        "role": "Editor"
+      },
+      {
+        "ext": "markdown",
+        "name": "Markdown",
+        "role": "Editor"
+      },
+      {
+        "ext": "mdx",
+        "name": "MDX",
+        "role": "Editor"
+      },
+      {
+        "ext": "csv",
+        "name": "CSV",
+        "role": "Editor"
+      }
+    ]
+  },
+  "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/language-data": "^6.5.2",
+    "@tiptap/core": "^3.26.0",
+    "@tiptap/extension-collaboration": "^3.26.0",
+    "@tiptap/extension-collaboration-caret": "^3.26.0",
+    "@tiptap/extension-image": "^3.26.0",
+    "@tiptap/extension-placeholder": "^3.26.0",
+    "@tiptap/extension-table": "^3.26.0",
+    "@tiptap/extension-task-item": "^3.26.0",
+    "@tiptap/extension-task-list": "^3.26.0",
+    "@tiptap/pm": "^3.26.0",
+    "@tiptap/react": "^3.26.0",
+    "@tiptap/starter-kit": "^3.26.0",
+    "@uiw/react-codemirror": "^4.25.8",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "better-sqlite3": "^12.10.0",
+    "electron-updater": "^6.8.9",
+    "highlight.js": "^11.11.1",
+    "katex": "^0.16.38",
+    "next": "16.1.7",
+    "node-pty": "^1.1.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "rehype-highlight": "^7.0.2",
+    "rehype-katex": "^7.0.1",
+    "rehype-stringify": "^10.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
+    "tiptap-markdown": "^0.9.0",
+    "unified": "^11.0.5",
+    "y-websocket": "^3.0.0",
+    "yjs": "^13.6.31"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "concurrently": "^9.2.1",
+    "electron": "^41.0.2",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.7",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^4.1.8",
+    "wait-on": "^9.0.4"
+  }
+}

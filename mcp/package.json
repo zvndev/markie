@@ -1,0 +1,38 @@
+{
+  "name": "@zvndev/markie-mcp",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Local, dependency-free MCP server that lets any AI agent find, read & write the markdown files on your machine.",
+  "author": "ZVN",
+  "license": "MIT",
+  "homepage": "https://markie.zvndev.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zvndev/markie.git",
+    "directory": "mcp"
+  },
+  "bugs": { "url": "https://github.com/zvndev/markie/issues" },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "markdown",
+    "ai-agent",
+    "claude",
+    "claude-code",
+    "codex",
+    "local-first"
+  ],
+  "bin": { "markie-mcp": "./markie-mcp.mjs" },
+  "files": [
+    "markie-mcp.mjs",
+    "lib.mjs",
+    "scan.mjs",
+    "README.md"
+  ],
+  "engines": { "node": ">=18" },
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "start": "node markie-mcp.mjs",
+    "test": "node --test lib.test.mjs"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "markie": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/markie-mcp.mjs"],
+      "cwd": "${CLAUDE_PLUGIN_ROOT}"
+    }
+  }
+}

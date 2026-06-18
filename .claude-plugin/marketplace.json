@@ -1,0 +1,14 @@
+{
+  "name": "markie",
+  "owner": {
+    "name": "ZVN DEV",
+    "url": "https://markie.zvndev.com"
+  },
+  "plugins": [
+    {
+      "name": "markie",
+      "source": "./mcp",
+      "description": "Local markdown workspace for AI agents — find, read & write the .md files on your machine. The MCP server that ships inside Markie."
+    }
+  ]
+}

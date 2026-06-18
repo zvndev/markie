@@ -162,7 +162,7 @@ rl.on("line", async (line) => {
         result: {
           protocolVersion: params?.protocolVersion ?? "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "markie-mcp", version: "0.2.0" },
+          serverInfo: { name: "markie-mcp", version: "0.2.8" },
         },
       });
     } else if (method === "notifications/initialized") {

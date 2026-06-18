@@ -1,6 +1,6 @@
 {
   "name": "@zvndev/markie-mcp",
-  "version": "0.2.0",
+  "version": "0.2.8",
   "type": "module",
   "description": "Local, dependency-free MCP server that lets any AI agent find, read & write the markdown files on your machine.",
   "author": "ZVN",

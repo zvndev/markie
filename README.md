@@ -34,12 +34,11 @@ by Apple, and updates itself automatically.
 ## The Markie MCP
 
 Markie ships a dependency-free [MCP](https://modelcontextprotocol.io) server that
-gives **any** AI agent — Claude Code, Codex, or a local model — a markdown
-workspace on *your* machine: `markie_find_md`, `markie_read_md`, `markie_write_md`,
-`markie_list_skills`, and `markie_open_in_markie`. It runs entirely locally — no
-cloud, no API key. Reads/writes are fenced to markdown under your home folder
-(symlink-guarded), so an agent can *"find my notes and add a section"* and actually
-do it. Published standalone as [`@zvndev/markie-mcp`](https://www.npmjs.com/package/@zvndev/markie-mcp).
+gives an AI agent a markdown workspace on *your* machine: `markie_find_md`,
+`markie_read_md`, `markie_write_md`, `markie_list_skills`, and
+`markie_open_in_markie`. It runs entirely locally — no cloud, no API key.
+Reads/writes are fenced to markdown under your home folder (symlink-guarded), so an
+agent can *"find my notes and add a section"* and actually do it.
 
 **Claude Code — plugin (easiest):**
 
@@ -48,25 +47,17 @@ do it. Published standalone as [`@zvndev/markie-mcp`](https://www.npmjs.com/pack
 /plugin install markie@markie
 ```
 
-**Claude Code — or add the server directly:**
-
-```bash
-claude mcp add markie -- npx -y @zvndev/markie-mcp
-```
-
-**Codex** — add to `~/.codex/config.toml`:
+**Codex or any other MCP client** — point it at the bundled server. The installed
+app's **Agents** dialog shows the exact command; it looks like:
 
 ```toml
+# ~/.codex/config.toml
 [mcp_servers.markie]
-command = "npx"
-args = ["-y", "@zvndev/markie-mcp"]
+command = "node"
+args = ["/Applications/Markie.app/Contents/Resources/mcp/markie-mcp.mjs"]
 ```
 
-**Any other MCP client / local model** — run `npx -y @zvndev/markie-mcp` over stdio
-and point your client (or local-model MCP bridge) at it.
-
-(The installed app also bundles the server; the in-app **Agents** dialog shows the
-exact path and copy-paste commands. See [`mcp/README.md`](./mcp/README.md) for details.)
+(Running from source instead? Use `node /path/to/markie/mcp/markie-mcp.mjs`.)
 
 ## Build from source
 

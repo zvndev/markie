@@ -1,16 +1,16 @@
-# Current Task — F-011
+# Current Task — F-012
 
 ## Selected feature
-A visual regression guard prevents future built-in theme contrast regressions across representative Markie surfaces.
+The primary desktop shell receives one native-feeling refinement pass for spacing, density, window chrome, and panel boundaries.
 
 ## Acceptance criteria
-- Turn the light-mode audit/fix workflow into a repeatable test or script that can run headlessly or with a local app window.
-- Cover at least one representative shell surface, one editor/content surface, and one modal/panel surface.
-- Make the script fail or produce clear findings when key foreground/background pairs fall below the chosen contrast threshold.
-- Run the visual regression guard plus `./init.sh`.
+- Review the main app shell after light-mode fixes in both light and dark mode.
+- Make a narrow layout polish pass on toolbar height/density, rail alignment, panel borders, and content spacing without changing navigation structure.
+- Verify no text overlaps or clips at the minimum supported window size and at a normal desktop size.
+- Run screenshot/visual verification plus `./init.sh`.
 
 ## Plan
-- Inspect the existing light-mode visual audit harness and package scripts.
-- Add a narrow regression-guard entry point around the existing audit so CI/local runs have a clear contrast-gate command.
-- Ensure the guard records representative coverage and fails on shell/content/overlay contrast findings below AA.
-- Verify with the guard command and the full repo baseline.
+- Inspect the current shell, toolbar, activity rail, panel, and editor layout classes.
+- Make one focused CSS/component pass on shell density, boundaries, and content spacing only.
+- Verify with rendered screenshots/computed layout evidence in built-in light and dark modes at normal and compact desktop sizes.
+- Run the visual guard and full `./init.sh` before marking the feature complete.

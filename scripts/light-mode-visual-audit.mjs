@@ -4,6 +4,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -19,6 +20,8 @@ const baseEnv = { ...process.env };
 const regressionGuardEnabled = process.argv.includes("--regression-guard");
 const children = [];
 const tempPaths = [];
+let devOrigin = "http://localhost:3000";
+const electronDevBootstrapOrigin = "http://localhost:3000";
 
 const guardCategories = {
   shell: [
@@ -116,6 +119,30 @@ async function waitFor(label, fn, timeoutMs = 30000) {
   throw new Error(`timed out waiting for ${label}${lastError ? `: ${lastError.message}` : ""}`);
 }
 
+async function pickDevPort() {
+  if (process.env.MARKIE_VISUAL_AUDIT_PORT) {
+    return Number(process.env.MARKIE_VISUAL_AUDIT_PORT);
+  }
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close(() => {
+        if (!address || typeof address === "string") {
+          reject(new Error("could not allocate a visual audit port"));
+          return;
+        }
+        resolve(address.port);
+      });
+    });
+  });
+}
+
+function appUrlExpression() {
+  return `document.location.href.startsWith(${JSON.stringify(devOrigin)})`;
+}
+
 async function cdpConnect() {
   const targets = await (await fetch("http://127.0.0.1:9222/json")).json();
   const page = targets.find(
@@ -123,8 +150,8 @@ async function cdpConnect() {
       target.type === "page" &&
       !target.url.startsWith("devtools://") &&
       (target.url.startsWith("app://") ||
-        target.url.startsWith("http://localhost:3000") ||
-        target.url.startsWith("http://127.0.0.1:3000"))
+        target.url.startsWith(electronDevBootstrapOrigin) ||
+        target.url.startsWith(devOrigin))
   );
   if (!page) return null;
 
@@ -221,12 +248,14 @@ function buildRegressionGuard(audit) {
 }
 
 async function main() {
+  const devPort = await pickDevPort();
+  devOrigin = `http://localhost:${devPort}`;
   const userDataDir = await mkdtemp(path.join(tmpdir(), "markie-light-audit-"));
   tempPaths.push(userDataDir);
 
-  start("npm", ["run", "dev"], { log: logPath("next") });
+  start("npm", ["run", "dev", "--", "--port", String(devPort)], { log: logPath("next") });
   await waitFor("Next dev renderer", async () => {
-    const res = await fetch("http://localhost:3000").catch(() => null);
+    const res = await fetch(devOrigin).catch(() => null);
     return !!res;
   }, 60000);
 
@@ -243,10 +272,10 @@ async function main() {
   const cdp = await waitFor("Electron CDP app target", cdpConnect, 30000);
   await cdp.send("Runtime.enable");
   await cdp.send("Page.enable");
-  await cdp.send("Page.navigate", { url: "http://localhost:3000" });
+  await cdp.send("Page.navigate", { url: devOrigin });
   await waitFor(
     "renderer boot",
-    () => cdp.ev("document.location.href.startsWith('http://localhost:3000') && document.readyState === 'complete' && !!document.body"),
+    () => cdp.ev(`${appUrlExpression()} && document.readyState === 'complete' && !!document.body`),
     30000
   );
 
@@ -293,17 +322,17 @@ async function main() {
     document.querySelectorAll('[data-audit-surface="library-probe"], [data-audit-surface="side-panel-probes"]').forEach((node) => node.remove());
     const panel = document.createElement('aside');
     panel.setAttribute('data-audit-surface', 'library-probe');
-    panel.className = 'fixed top-11 bottom-0 left-[52px] z-[90] w-[260px] shrink-0 flex flex-col border-r border-border bg-surface';
+    panel.className = 'fixed top-10 bottom-0 left-[48px] z-[90] w-[252px] shrink-0 flex flex-col border-r border-border bg-surface';
     panel.innerHTML = \`
-      <div class="flex items-center justify-between px-3 h-9 shrink-0">
+      <div class="flex items-center justify-between px-3 h-10 shrink-0 border-b border-border">
         <span data-audit-sample="library-heading" class="text-[11px] uppercase tracking-wide text-muted font-medium">Library</span>
         <button title="Collapse" aria-label="Collapse library" class="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">x</button>
       </div>
-      <div class="flex items-center gap-0.5 px-2 pb-1.5 shrink-0">
+      <div class="flex items-center gap-0.5 px-2 py-1.5 shrink-0 border-b border-border/60">
         <button class="flex-1 text-[11px] py-1 rounded-md capitalize bg-accent text-foreground">recent</button>
         <button class="flex-1 text-[11px] py-1 rounded-md capitalize text-muted hover:text-foreground hover:bg-accent/40">files</button>
       </div>
-      <div class="flex-1 overflow-y-auto px-1.5 pb-2">
+      <div class="flex-1 overflow-y-auto px-1.5 py-2">
         <div data-audit-sample="library-empty" class="px-2 py-4 text-[12px] text-muted leading-relaxed">
           No files yet. Open one or drag <code>.md</code> files here.
         </div>
@@ -330,7 +359,7 @@ async function main() {
     document.body.appendChild(panel);
     const sidePanels = document.createElement('section');
     sidePanels.setAttribute('data-audit-surface', 'side-panel-probes');
-    sidePanels.className = 'fixed top-[58px] left-[330px] z-[90] grid grid-cols-4 gap-2 text-[12px]';
+    sidePanels.className = 'fixed top-[54px] left-[316px] z-[90] grid grid-cols-4 gap-2 text-[12px]';
     sidePanels.innerHTML = \`
       <div class="w-[215px] rounded-lg border border-border bg-surface shadow-xl overflow-hidden">
         <div data-audit-sample="browse-heading" class="text-[9px] uppercase tracking-wide text-muted px-2 pt-2 pb-1">Browse</div>

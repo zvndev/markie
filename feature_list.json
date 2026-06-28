@@ -176,10 +176,10 @@
         "Verify no text overlaps or clips at the minimum supported window size and at a normal desktop size.",
         "Run screenshot/visual verification plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "User approved more refined and modern/native layout. Keep this to one small visible pass."
+      "evidence": "In-app browser QA against `http://localhost:3002/` passed with zero console warnings/errors and wrote `.autoloop/runs/shell-layout-browser-f012-20260628.json`; normal dark mode measured a 40px toolbar, 48px rail, 1188px document area, and no sampled overflow, while compact 760x720 dark and light modes both measured no sampled overflow after clicking the real Light theme toolbar control. `npm run visual:guard:theme > .autoloop/runs/theme-visual-guard-f012-20260628-rerun.log 2>&1` passed and wrote `.autoloop/runs/light-mode-audit-20260628210028/audit.json` plus shell, PDF menu, library, narrow side-panel, command palette, settings, and gated surface screenshots with zero findings. `npm test -- src/lib/theme.test.ts src/lib/color-mode.test.ts > .autoloop/runs/theme-tests-f012-20260628.log 2>&1` passed. `./init.sh > .autoloop/runs/init-20260628-f012-post.log 2>&1` passed.",
+      "notes": "Completed one narrow shell polish pass: denser native-feeling toolbar/rail, clearer side-panel boundaries, responsive document/source spacing, and a visual audit harness that avoids unrelated port-3000 dev servers."
     },
     {
       "id": "F-013",

@@ -714,7 +714,7 @@ export default function Home() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-background relative">
+    <div className="markie-shell h-screen flex flex-col bg-background relative">
       <Toolbar
         mode={mode}
         onModeChange={setMode}
@@ -733,7 +733,7 @@ export default function Home() {
         themeLocked={!!enforcedTheme}
       />
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="markie-workspace flex-1 flex overflow-hidden">
         {/* Far-left app nav */}
         <ActivityBar
           activeView={leftView}
@@ -766,7 +766,7 @@ export default function Home() {
           <div
             className={`${
               mode === "split" ? "w-1/2 border-r border-border" : "w-full"
-            } h-full overflow-hidden flex flex-col`}
+            } markie-source-pane h-full overflow-hidden flex flex-col`}
           >
             {collabCfg && (
               <div className="px-3 py-1 text-[11px] text-muted bg-surface border-b border-border shrink-0">
@@ -788,7 +788,7 @@ export default function Home() {
           <div
             className={`${
               mode === "split" ? "w-1/2" : "w-full"
-            } h-full overflow-hidden flex`}
+            } markie-rich-pane h-full overflow-hidden flex`}
           >
             <FormatRail editor={richEditor} />
             <div className="flex-1 h-full overflow-hidden">

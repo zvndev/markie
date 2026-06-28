@@ -322,7 +322,7 @@ export function Library({
 
   return (
     <div
-      className={`relative w-[260px] shrink-0 h-full flex flex-col border-r bg-surface ${
+      className={`markie-side-panel relative w-[252px] shrink-0 h-full flex flex-col border-r bg-surface ${
         dropping ? "border-foreground/40" : "border-border"
       }`}
       onDragOver={(e) => {
@@ -342,7 +342,7 @@ export function Library({
           <span className="text-[12px] text-foreground/80">Drop to add to your library</span>
         </div>
       )}
-      <div className="flex items-center justify-between px-3 h-9 shrink-0">
+      <div className="flex items-center justify-between px-3 h-10 shrink-0 border-b border-border">
         <span className="text-[11px] uppercase tracking-wide text-muted font-medium">{VIEW_TITLE[view]}</span>
         <div className="flex items-center gap-1">
           <button onClick={onOpenFile} title="Open file (⌘O)" className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
@@ -356,7 +356,7 @@ export function Library({
 
       {/* Recent/Files sub-toggle — only the Library view has sub-tabs */}
       {view === "library" && (
-        <div className="flex items-center gap-0.5 px-2 pb-1.5 shrink-0">
+        <div className="flex items-center gap-0.5 px-2 py-1.5 shrink-0 border-b border-border/60">
           {(["recent", "files"] as LibTab[]).map((t) => (
             <button
               key={t}
@@ -373,7 +373,7 @@ export function Library({
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto px-1.5 pb-2">
+      <div className="flex-1 overflow-y-auto px-1.5 py-2">
         {view === "browse" ? (
           <BrowseView onOpenPath={onOpenPath} activePath={activePath} />
         ) : view === "skills" ? (

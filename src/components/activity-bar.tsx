@@ -44,7 +44,7 @@ export function ActivityBar({
   const isActive = (v: LeftView) => panelOpen && activeView === v;
 
   return (
-    <div className="w-[52px] shrink-0 h-full flex flex-col items-center py-2 gap-1 border-r border-border bg-surface">
+    <div className="markie-activity-bar w-[48px] shrink-0 h-full flex flex-col items-center py-1.5 gap-0.5 border-r border-border bg-surface">
       {/* New file — primary action, set apart by a divider */}
       <NavButton label="New file (⌘N)" onClick={onNewFile}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -52,7 +52,7 @@ export function ActivityBar({
           <path d="M14 3v6h6M12 12v6M9 15h6" />
         </svg>
       </NavButton>
-      <div className="w-7 h-px bg-border my-1" />
+      <div className="w-6 h-px bg-border my-1" />
 
       <NavButton label="Library — recent & files (⌘L)" active={isActive("library")} onClick={() => onSelectView("library")}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -102,7 +102,7 @@ export function ActivityBar({
         onClick={onAccount}
         title={user ? `${user.name || user.email} — Account` : "Sign in"}
         aria-label={user ? "Account" : "Sign in"}
-        className="mt-0.5 w-9 h-9 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity"
+        className="mt-0.5 w-8 h-8 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
         {user ? (
@@ -139,13 +139,13 @@ function NavButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`relative w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${
+      className={`relative w-8 h-8 rounded-md flex items-center justify-center transition-colors ${
         active
           ? "bg-accent text-foreground"
           : "text-muted hover:text-foreground hover:bg-accent/40"
       }`}
     >
-      {active && <span className="absolute left-[-8px] top-1.5 bottom-1.5 w-0.5 rounded-full bg-foreground" />}
+      {active && <span className="absolute left-[-6px] top-1.5 bottom-1.5 w-0.5 rounded-full bg-foreground" />}
       {children}
     </button>
   );
@@ -166,7 +166,7 @@ function IconButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className="w-9 h-9 rounded-lg flex items-center justify-center transition-colors text-muted hover:text-foreground hover:bg-accent/40"
+      className="w-8 h-8 rounded-md flex items-center justify-center transition-colors text-muted hover:text-foreground hover:bg-accent/40"
     >
       {children}
     </button>

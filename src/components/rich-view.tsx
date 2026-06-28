@@ -210,7 +210,7 @@ export function RichView({
   return (
     <div className="h-full relative">
       {editor && inTable && !collab?.readonly && <TableBar editor={editor} />}
-      <div ref={setScrollEl} className="h-full overflow-y-auto px-10 py-8 relative">
+      <div ref={setScrollEl} className="markie-document-scroll h-full overflow-y-auto relative">
         <article
           className="markdown-body mx-auto"
           style={{

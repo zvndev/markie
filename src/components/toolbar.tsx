@@ -79,20 +79,20 @@ export function Toolbar({
 
   return (
     <div
-      className={`h-11 border-b border-border bg-surface flex items-center justify-between pr-4 select-none shrink-0 ${
-        trafficLightPad ? "pl-[84px]" : "pl-4"
+      className={`markie-toolbar h-10 border-b border-border bg-surface grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 pr-3 sm:pr-4 select-none shrink-0 ${
+        trafficLightPad ? "pl-[82px]" : "pl-3 sm:pl-4"
       }`}
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
     >
       {/* Left: App name + file + export */}
-      <div className="flex items-center gap-3" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
-        <span className="text-[13px] font-semibold tracking-tight text-foreground/90">
+      <div className="min-w-0 flex items-center gap-2.5" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+        <span className="shrink-0 text-[13px] font-semibold tracking-tight text-foreground/90">
           Markie
         </span>
         <div className="w-px h-4 bg-border" />
         <button
           onClick={onOpenFile}
-          className="text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
+          className="shrink-0 text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
@@ -125,13 +125,13 @@ export function Toolbar({
                 setRenaming(true);
               }}
               title={canRename ? "Click to rename" : undefined}
-              className="text-[12px] text-foreground/80 hover:text-foreground transition-colors"
+              className="min-w-0 max-w-[min(18rem,28vw)] truncate text-[12px] text-foreground/80 hover:text-foreground transition-colors"
             >
               {fileName}
               {isDirty && <span className="text-muted ml-1.5">•</span>}
             </button>
           ))}
-        <div className="w-px h-4 bg-border" />
+        <div className="w-px h-4 bg-border shrink-0" />
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setShowPDFMenu(!showPDFMenu)}
@@ -219,7 +219,7 @@ export function Toolbar({
 
       {/* Right: theme/mode + presence + share */}
       <div
-        className="flex items-center justify-end gap-2"
+        className="min-w-0 flex items-center justify-end gap-2"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
         {themeLocked && (

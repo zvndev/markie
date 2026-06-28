@@ -131,10 +131,10 @@
         "Verify keyboard focus visibility and text contrast for each modal/popover.",
         "Run the focused visual/style verification plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "One wakeup scope: overlays only. Keep broader interaction redesign for later layout tasks."
+      "evidence": "`npm run visual:audit:light > .autoloop/runs/light-mode-audit-f009-20260628.log 2>&1` passed and wrote `.autoloop/runs/light-mode-audit-20260628175435/audit.json` plus screenshots. Newly sampled command palette, settings, theme settings, stats, share, agents, and comments overlay targets all passed AA contrast in built-in light mode; share/comment status colors measured 5.88:1 to 6.86:1 and the stats popover measured 6.38:1 to 14.62:1. `npm test -- src/lib/theme.test.ts > .autoloop/runs/theme-test-f009-20260628.log 2>&1` passed 7 tests. `./init.sh > .autoloop/runs/init-20260628-f009-post.log 2>&1` passed renderer tests, MCP tests, server tests, lint, and build.",
+      "notes": "Fixed overlay-only theme-token issues: the stats popover and table bar no longer hardcode a dark surface, and overlay success/error/warning/resolved/delete text now uses built-in status tokens. The audit still records the known editor strong-text finding reserved for F-010."
     },
     {
       "id": "F-010",

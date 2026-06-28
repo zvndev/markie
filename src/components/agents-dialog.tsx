@@ -97,7 +97,7 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
           {!serverPath && (
             <>
               {" "}
-              <span className="text-yellow-500/90">
+              <span className="text-[var(--status-yellow)]">
                 Open this from the Markie desktop app to auto-fill the exact
                 server path.
               </span>

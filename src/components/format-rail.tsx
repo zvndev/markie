@@ -289,7 +289,7 @@ export function TableBar({ editor }: TableBarProps) {
   ];
 
   return (
-    <div className="absolute top-2 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 bg-surface-2 border border-border rounded-lg shadow-xl px-2 py-1" style={{ background: "#1c1c20" }}>
+    <div className="absolute top-2 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 bg-surface-2 border border-border rounded-lg shadow-xl px-2 py-1" style={{ background: "var(--surface-2)" }}>
       {actions.map(([label, title, run]) => (
         <button
           key={label}

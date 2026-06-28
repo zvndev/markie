@@ -194,10 +194,10 @@ export function ShareDialog({
               </button>
             </div>
             {error && (
-              <div className="text-[12px] text-red-400 mt-2">{error}</div>
+              <div className="text-[12px] text-[var(--status-red)] mt-2">{error}</div>
             )}
             {flash && (
-              <div className="text-[12px] text-green-400 mt-2">{flash}</div>
+              <div className="text-[12px] text-[var(--status-green)] mt-2">{flash}</div>
             )}
             <div className="text-[11px] text-muted mt-2">
               Anyone with an email works — no Markie account needed to invite
@@ -293,7 +293,7 @@ export function ShareDialog({
                 <button
                   onClick={revokeLink}
                   disabled={linkBusy}
-                  className="text-[11px] text-red-400 hover:text-red-300 disabled:opacity-50"
+                  className="text-[11px] text-[var(--status-red)] hover:opacity-80 disabled:opacity-50"
                 >
                   Revoke
                 </button>
@@ -346,7 +346,7 @@ function MemberRow({
         <button
           onClick={onRemove}
           aria-label={`Remove ${name}`}
-          className="text-muted hover:text-red-400 text-[13px] px-1"
+          className="text-muted hover:text-[var(--status-red)] text-[13px] px-1"
         >
           ×
         </button>

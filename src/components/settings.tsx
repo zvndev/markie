@@ -247,7 +247,7 @@ export function Settings({ onClose, authNonce }: SettingsProps) {
             >
               Continue with Google
             </button>
-            {error && <div className="text-[12px] text-red-400">{error}</div>}
+            {error && <div className="text-[12px] text-[var(--status-red)]">{error}</div>}
           </div>
         )}
 

@@ -356,8 +356,54 @@ async function main() {
     if (existing) existing.remove();
     const host = document.createElement('div');
     host.setAttribute('data-light-audit-probes', 'true');
-    host.className = 'fixed inset-0 z-[120] flex items-center justify-center gap-5 bg-black/20';
+    host.className = 'fixed inset-0 z-[120] grid grid-cols-3 content-start gap-4 overflow-auto bg-black/20 p-5';
     host.innerHTML = \`
+      <section data-audit-surface="stats-panel-probe" class="w-[240px] rounded-lg border border-border shadow-xl py-2" style="background: var(--surface-2)">
+        <div class="flex items-center justify-between px-3 pb-1.5 border-b border-border">
+          <span class="text-[11px] font-semibold uppercase tracking-wide text-muted">Statistics</span>
+          <button aria-label="Close statistics" class="text-muted hover:text-foreground text-[13px] leading-none">x</button>
+        </div>
+        <div class="flex items-center justify-between px-3 py-1">
+          <span data-audit-sample="stats-label" class="text-[12px] text-muted">Words</span>
+          <span data-audit-sample="stats-value" class="text-[12px] text-foreground tabular-nums">1,248</span>
+        </div>
+      </section>
+      <section data-audit-surface="theme-settings-probe" class="w-[340px] rounded-xl border border-border shadow-2xl p-5" style="background: var(--surface-2)">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-[14px] font-semibold text-foreground">Theme</h2>
+          <button aria-label="Close theme settings" class="text-muted hover:text-foreground">x</button>
+        </div>
+        <div class="flex flex-wrap gap-2 mb-5">
+          <button data-audit-sample="theme-active-preset" class="px-3 py-1.5 rounded-md text-[12px] border border-foreground/40 text-foreground bg-accent">Markie Light</button>
+          <button data-audit-sample="theme-idle-preset" class="px-3 py-1.5 rounded-md text-[12px] border border-border text-muted hover:text-foreground">Markie Dark</button>
+        </div>
+        <label class="flex items-center justify-between text-[12px] text-muted">
+          Text
+          <input type="color" value="#18181b" class="w-8 h-6 rounded border border-border bg-transparent cursor-pointer" />
+        </label>
+        <label class="flex items-center justify-between text-[12px] text-muted mt-3">
+          Font size - 16px
+          <input type="range" min="13" max="22" value="16" class="w-36" />
+        </label>
+      </section>
+      <section data-audit-surface="agents-dialog-probe" class="w-[360px] rounded-xl border border-border shadow-2xl p-5" style="background: var(--surface-2)">
+        <div class="flex items-center justify-between mb-1">
+          <h2 class="text-[14px] font-semibold text-foreground">Connect an agent to Markie</h2>
+          <button aria-label="Close" class="text-muted hover:text-foreground">x</button>
+        </div>
+        <p class="text-[12px] text-muted leading-relaxed mb-4">Markie ships a local <strong>MCP server</strong> that gives an agent markdown-aware access.</p>
+        <div class="text-[10px] uppercase tracking-wide text-muted mb-1.5">Tools it gives your agent</div>
+        <div class="flex gap-2 text-[12px]">
+          <code data-audit-sample="agents-tool-name" class="text-foreground/90 shrink-0">markie_read_md</code>
+          <span data-audit-sample="agents-tool-description" class="text-muted truncate">- read a markdown file</span>
+        </div>
+        <div class="mt-3">
+          <span class="text-[10px] uppercase tracking-wide text-muted">Claude Code - run this in your terminal</span>
+          <button data-audit-sample="agents-copy-button" class="float-right text-[11px] px-2 py-0.5 rounded-md bg-accent text-foreground">Copy</button>
+          <pre data-audit-sample="agents-copy-block" class="mt-2 text-[11.5px] leading-relaxed bg-background border border-border rounded-md p-2.5 overflow-x-auto text-foreground/90 whitespace-pre-wrap break-all">claude mcp add markie -- node /Applications/Markie.app/server.mjs</pre>
+        </div>
+        <p data-audit-sample="agents-warning" class="text-[11px] text-[var(--status-yellow)] leading-relaxed mt-3">Open this from the Markie desktop app to auto-fill the exact server path.</p>
+      </section>
       <section data-audit-surface="share-dialog-probe" class="w-[440px] max-w-[92vw] rounded-xl border border-border shadow-2xl p-5" style="background: var(--surface-2)">
         <div class="flex items-center justify-between mb-1">
           <h2 class="text-[14px] font-semibold text-foreground">Share</h2>
@@ -370,6 +416,9 @@ async function main() {
         </div>
         <div class="text-[10px] uppercase tracking-wide text-muted mt-4 mb-2">People with access</div>
         <div class="text-[12px] text-muted">Not shared with anyone yet.</div>
+        <div data-audit-sample="share-success" class="text-[12px] text-[var(--status-green)] mt-2">Shared with person@example.com.</div>
+        <div data-audit-sample="share-error" class="text-[12px] text-[var(--status-red)] mt-2">Couldn't create a public link.</div>
+        <button data-audit-sample="share-revoke" class="mt-2 text-[11px] text-[var(--status-red)]">Revoke</button>
       </section>
       <section data-audit-surface="comments-probe" class="w-[300px] rounded-lg border border-border shadow-xl p-2.5 flex flex-col gap-2" style="background: var(--surface-2)">
         <div class="flex items-center justify-between">
@@ -382,6 +431,10 @@ async function main() {
             <div class="text-[11px] font-medium text-foreground truncate">Alice</div>
             <div class="text-[12px] text-foreground/90 whitespace-pre-wrap break-words">Can we tighten this intro?</div>
           </div>
+        </div>
+        <div class="flex items-center justify-between">
+          <span data-audit-sample="comments-resolved" class="text-[10px] uppercase tracking-wide text-[var(--status-green)]">Resolved</span>
+          <button data-audit-sample="comments-delete" class="text-[11px] text-[var(--status-red)]">Delete</button>
         </div>
         <textarea rows="2" class="text-[12px] bg-background border border-border rounded-md px-2 py-1.5 text-foreground outline-none resize-none">Reply...</textarea>
         <button class="self-end text-[11px] px-2.5 py-1 rounded-md bg-accent text-foreground">Send</button>
@@ -563,11 +616,27 @@ async function main() {
       ['settings heading', [...document.querySelectorAll('h2')].find((el) => text(el) === 'Settings')],
       ['settings email input', document.querySelector('input[type="email"]')],
       ['settings google button', findText('Continue with Google')],
+      ['stats heading', document.querySelector('[data-audit-surface="stats-panel-probe"] span')],
+      ['stats value', document.querySelector('[data-audit-sample="stats-value"]')],
+      ['theme settings heading', document.querySelector('[data-audit-surface="theme-settings-probe"] h2')],
+      ['theme settings active preset', document.querySelector('[data-audit-sample="theme-active-preset"]')],
+      ['theme settings idle preset', document.querySelector('[data-audit-sample="theme-idle-preset"]')],
+      ['theme settings field label', [...document.querySelectorAll('[data-audit-surface="theme-settings-probe"] label')].find((el) => text(el).includes('Text'))],
+      ['agents heading', document.querySelector('[data-audit-surface="agents-dialog-probe"] h2')],
+      ['agents description', document.querySelector('[data-audit-sample="agents-tool-description"]')],
+      ['agents copy button', document.querySelector('[data-audit-sample="agents-copy-button"]')],
+      ['agents copy block', document.querySelector('[data-audit-sample="agents-copy-block"]')],
+      ['agents warning', document.querySelector('[data-audit-sample="agents-warning"]')],
       ['share dialog heading', document.querySelector('[data-audit-surface="share-dialog-probe"] h2')],
       ['share dialog filename', document.querySelector('[data-audit-surface="share-dialog-probe"] .text-muted')],
       ['share dialog invite button', [...document.querySelectorAll('[data-audit-surface="share-dialog-probe"] button')].find((el) => text(el) === 'Invite')],
+      ['share dialog success', document.querySelector('[data-audit-sample="share-success"]')],
+      ['share dialog error', document.querySelector('[data-audit-sample="share-error"]')],
+      ['share dialog revoke', document.querySelector('[data-audit-sample="share-revoke"]')],
       ['comments status', document.querySelector('[data-audit-surface="comments-probe"] span.text-muted')],
       ['comments body', findText('Can we tighten')],
+      ['comments resolved status', document.querySelector('[data-audit-sample="comments-resolved"]')],
+      ['comments delete action', document.querySelector('[data-audit-sample="comments-delete"]')],
       ['comments composer', document.querySelector('[data-audit-surface="comments-probe"] textarea')],
       ['comments send button', [...document.querySelectorAll('[data-audit-surface="comments-probe"] button')].find((el) => text(el) === 'Send')]
     ];
@@ -590,7 +659,7 @@ async function main() {
         passesAA: contrast >= 4.5
       };
     });
-    const surfaces = ['toolbar', 'editor/rich view', 'left rail', 'library', 'browse', 'files', 'shared', 'skills/agents', 'command palette', 'settings', 'share dialog', 'comments'];
+    const surfaces = ['toolbar', 'editor/rich view', 'left rail', 'library', 'browse', 'files', 'shared', 'skills/agents', 'command palette', 'settings', 'theme settings', 'stats', 'share dialog', 'agents', 'comments'];
     const sidePanelLabels = new Set([
       'library heading',
       'library body',

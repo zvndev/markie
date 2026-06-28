@@ -210,3 +210,23 @@
   settings, theme settings, stats, share, agents, and comments.
 - blockers: none for `F-008`. The audit still records the known editor strong-text light-mode
   finding reserved for `F-010`; lint still reports the pre-existing 4 warnings and zero errors.
+
+## 2026-06-28 13:55 — terminal: progressed
+- did: Completed `F-009` by making modal/popover status and warning colors use built-in Markie
+  status tokens, removing hardcoded dark surfaces from the stats popover and table toolbar, and
+  expanding the light visual audit to cover stats, theme settings, agents, share feedback, and
+  comments resolved/delete states alongside the existing command palette, settings, share, and
+  comments probes.
+- evidence: `./init.sh > .autoloop/runs/init-20260628-f009-pre.log 2>&1` passed before selection.
+  `npm run visual:audit:light > .autoloop/runs/light-mode-audit-f009-20260628.log 2>&1` passed and
+  wrote `.autoloop/runs/light-mode-audit-20260628175435/audit.json` plus screenshots. All sampled
+  `F-009` overlay targets passed AA contrast in built-in light mode; examples include stats at
+  6.38:1 to 14.62:1, agents warning at 5.85:1, share success/error/revoke at 5.88:1 to 6.86:1,
+  and comments resolved/delete at 5.88:1 to 6.86:1. `npm test -- src/lib/theme.test.ts >
+  .autoloop/runs/theme-test-f009-20260628.log 2>&1` passed 7 tests. `./init.sh >
+  .autoloop/runs/init-20260628-f009-post.log 2>&1` passed renderer tests, MCP tests, server tests,
+  lint, and build.
+- next: Select `F-010` to fix markdown/rich editor content light-mode contrast, including the
+  known strong-text finding still reported by the audit.
+- blockers: none for `F-009`. The audit still records the known editor strong-text light-mode
+  finding reserved for `F-010`; lint still reports the pre-existing 4 warnings and zero errors.

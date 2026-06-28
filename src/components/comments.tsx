@@ -307,7 +307,7 @@ function ThreadCard({
       <div className="flex items-center justify-between">
         <span
           className={`text-[10px] uppercase tracking-wide ${
-            thread.status === "resolved" ? "text-emerald-400" : "text-muted"
+            thread.status === "resolved" ? "text-[var(--status-green)]" : "text-muted"
           }`}
         >
           {thread.status === "resolved" ? "Resolved" : "Open"}
@@ -356,7 +356,7 @@ function ThreadCard({
             <button
               onClick={() => remove(c.id)}
               aria-label="Delete comment"
-              className="text-muted hover:text-red-400 text-[11px] self-start"
+              className="text-muted hover:text-[var(--status-red)] text-[11px] self-start"
             >
               ×
             </button>

@@ -33,7 +33,7 @@ export function StatsPanel({ content, onClose }: StatsPanelProps) {
   return (
     <div
       className="absolute top-12 right-4 z-50 w-60 bg-surface-2 border border-border rounded-lg shadow-xl py-2"
-      style={{ background: "#1c1c20" }}
+      style={{ background: "var(--surface-2)" }}
     >
       <div className="flex items-center justify-between px-3 pb-1.5 border-b border-border">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">

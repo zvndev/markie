@@ -142,3 +142,19 @@
   wakeup can split the first implementable slice into `feature_list.json`.
 - blockers: Human approval is required before implementing bundled `markie` CLI commands or new MCP
   current-document tools. No other eligible unattended feature or backlog task is currently open.
+
+## 2026-06-28 10:18 — terminal: progressed
+- did: Added the user-requested roadmap lane for fixing Markie style issues, especially invisible
+  light-mode UI, improving the desktop layout to feel more refined/native, enabling Apple Silicon
+  Mac, Intel Mac, Windows, and Linux desktop builds/downloads, and preparing for a later React
+  Native version. Split the lane into `F-006` through `F-022`, each intended as one roughly
+  30-minute wakeup.
+- evidence: `feature_list.json` parsed successfully with 22 entries. `./init.sh >
+  .autoloop/runs/init-20260628-plan-update.log 2>&1` passed. Added
+  `docs/superpowers/plans/2026-06-28-style-platform-react-native-roadmap.md`, updated
+  `VISION.md`, `CONSTITUTION.md`, `SPEC.md`, and reset `CURRENT_TASK.md` so the next wakeup selects
+  `F-006`.
+- next: Select `F-006` and create the repeatable light-mode visual audit before fixing individual
+  style clusters.
+- blockers: none for the new lane. The terminal API approval item remains open but is no longer the
+  only eligible work because the feature ledger now contains the new style/platform/RN sequence.

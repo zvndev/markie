@@ -8,7 +8,8 @@
 - Framework(s): Electron 41, Next.js 16 static export, React 19, Tailwind 4, CodeMirror 6, TipTap /
   ProseMirror, Yjs, Hono, better-auth, better-sqlite3.
 - Datastore: local SQLite registry in Electron; server SQLite with Litestream/B2 backups.
-- Deploy target: Apple Silicon macOS app; optional server API on the existing Markie cloud host.
+- Deploy target: Electron desktop builds for Apple Silicon macOS, Intel macOS, Windows, and Linux;
+  optional server API on the existing Markie cloud host.
 
 ## Always
 - Verify a feature by reproducing its `steps[]` as a real user before marking it `passes:true`.
@@ -16,6 +17,9 @@
 - Keep each run's diff small and reviewable; one task per run.
 - Leave the tree clean and mergeable; commit with the Lore commit protocol every run.
 - Preserve local-first behavior: account, sync, sharing, and collaboration must stay optional.
+- Keep dark mode and light mode fully legible across primary app surfaces before adding speculative
+  product surface.
+- Improve toward a refined, modern, native-feeling desktop layout in small verified passes.
 - Prefer existing utilities and patterns over new dependencies or new architectural layers.
 
 ## Never (hard prohibitions)
@@ -44,4 +48,6 @@ Record lower-severity findings but do not task them unless the backlog is otherw
   keep blocked items in `BACKLOG.md`.
 - Review rotation is product, real-user-flow, code review, and security review.
 - In-bounds work is local-first Markie functionality, Electron/renderer/MCP/server tests, developer
-  experience, and documented roadmap items that do not require production credentials.
+  experience, light-mode/style fixes, cross-platform desktop enablement, download-page preparation,
+  React Native planning/prep that does not add a new app stack unattended, and documented roadmap
+  items that do not require production credentials.

@@ -1,9 +1,9 @@
 # Spec — Markie
 
 ## Overview
-Markie is maintained as a working macOS markdown application with a local-first core and optional
-cloud collaboration. The durable feature ledger is the checkable definition of done; this file is
-the human-readable companion that explains the product surface future runs should preserve.
+Markie is maintained as a working native desktop markdown application with a local-first core and
+optional cloud collaboration. The durable feature ledger is the checkable definition of done; this
+file is the human-readable companion that explains the product surface future runs should preserve.
 
 ## Canonical user journeys
 1. As a local user, I can open a `.md`, `.markdown`, `.mdx`, or `.csv` file from Finder or inside
@@ -14,6 +14,8 @@ the human-readable companion that explains the product surface future runs shoul
    preserve local ownership and safe conflict handling.
 4. As an AI-agent user, I can point Codex, Claude Code, or another MCP client at Markie's local MCP
    server and safely find/read/write markdown within the allowed local scope.
+5. As a desktop user, I can download the correct Markie build for Apple Silicon macOS, Intel macOS,
+   Windows, or Linux from a clear download page.
 
 These journeys are the backbone of `feature_list.json` acceptance `steps[]`.
 
@@ -24,7 +26,8 @@ These journeys are the backbone of `feature_list.json` acceptance `steps[]`.
   `./init.sh` as a repair-only run.
 - Aspirational / not yet built: context-aware terminal phases from
   `docs/superpowers/specs/2026-06-12-markie-upcoming-features.md`, deeper MCP/current-document
-  affordances, release hardening, and recurring QA/security/product review findings.
+  affordances, complete light-mode polish, cross-platform desktop packaging/downloads, React Native
+  planning, release hardening, and recurring QA/security/product review findings.
 
 ## Out of scope
 Markie should not become cloud-first, paid-tier driven, or a non-Markdown storage system. External

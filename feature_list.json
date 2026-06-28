@@ -75,6 +75,261 @@
       "attempts": 0,
       "evidence": "`npm run comments:verify:e2e > .autoloop/runs/comments-verify-e2e-20260628.log 2>&1` passed. The wrapper ran the comments API verifier from a migrated temp DB and the Electron/CDP UI verifier, covering create, reply, resolve, reopen, and Yjs anchor survival after Bob inserted content above Alice's selection.",
       "notes": "Added repeatable local verifier orchestration and an E2E-only Electron launch escape hatch; comments product UX was unchanged."
+    },
+    {
+      "id": "F-006",
+      "description": "A repeatable light-mode visual audit captures the primary Markie app shell and flags invisible or low-contrast UI before style fixes continue.",
+      "priority": 6,
+      "steps": [
+        "Start the app or renderer in a local development environment with the built-in light theme active.",
+        "Capture screenshots or DOM/computed-style evidence for the toolbar, editor/rich view, left rail, library, command palette, settings, share dialog, and comments surfaces.",
+        "Record each invisible or low-contrast issue as a concrete checklist in a local audit artifact or test output.",
+        "Run the focused audit plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "First priority from the 2026-06-28 user direction. Keep this to audit/harness/evidence; fix only a trivial issue if needed to make the audit run."
+    },
+    {
+      "id": "F-007",
+      "description": "Light mode is legible in the top toolbar, mode switcher, PDF/export menu, file controls, and activity/header chrome.",
+      "priority": 7,
+      "steps": [
+        "Use the light-mode audit evidence from F-006 to identify toolbar/header/menu contrast failures.",
+        "Replace hardcoded dark styles and weak token combinations with theme-aware colors for that surface only.",
+        "Verify toolbar controls, hover/active states, dropdown text, dividers, and disabled/secondary text are visible in light and dark mode.",
+        "Run the focused style check or screenshot comparison plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "One wakeup scope: top chrome only. Do not redesign the whole layout in this task."
+    },
+    {
+      "id": "F-008",
+      "description": "Light mode is legible in side-panel surfaces: Library, Browse, Skills/Agents, Shared, and file lists.",
+      "priority": 8,
+      "steps": [
+        "Inspect side-panel surfaces in light and dark mode using the established audit harness.",
+        "Fix invisible links, badges, rows, empty states, buttons, and selected/hover states in the side panels.",
+        "Verify side panels remain readable at narrow and normal desktop widths.",
+        "Run the focused visual/style verification plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "One wakeup scope: side panels only."
+    },
+    {
+      "id": "F-009",
+      "description": "Light mode is legible in modal and popover surfaces: command palette, settings, theme settings, stats, share, agents, and comments.",
+      "priority": 9,
+      "steps": [
+        "Open each modal/popover surface in light and dark mode.",
+        "Fix hardcoded dark backgrounds, invisible text, weak borders, and unreadable hover/focus states in those surfaces.",
+        "Verify keyboard focus visibility and text contrast for each modal/popover.",
+        "Run the focused visual/style verification plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "One wakeup scope: overlays only. Keep broader interaction redesign for later layout tasks."
+    },
+    {
+      "id": "F-010",
+      "description": "Markdown and rich editor content use theme-aware colors so light mode does not hide strong text, inline code, code blocks, tables, selections, or task controls.",
+      "priority": 10,
+      "steps": [
+        "Open a document containing headings, bold text, links, inline code, code blocks, tables, task lists, blockquotes, math, and comments in light and dark mode.",
+        "Fix hardcoded content colors and highlight styles that make content invisible or visually broken in light mode.",
+        "Add or update theme/content tests where pure style-token behavior is testable.",
+        "Run the focused content-style verification plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "Known likely issue: hardcoded dark-oriented markdown/code styles. Keep the patch to document surfaces."
+    },
+    {
+      "id": "F-011",
+      "description": "A visual regression guard prevents future built-in theme contrast regressions across representative Markie surfaces.",
+      "priority": 11,
+      "steps": [
+        "Turn the light-mode audit/fix workflow into a repeatable test or script that can run headlessly or with a local app window.",
+        "Cover at least one representative shell surface, one editor/content surface, and one modal/panel surface.",
+        "Make the script fail or produce clear findings when key foreground/background pairs fall below the chosen contrast threshold.",
+        "Run the visual regression guard plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "Prefer no new dependencies. If a dependency is necessary, escalate before adding it."
+    },
+    {
+      "id": "F-012",
+      "description": "The primary desktop shell receives one native-feeling refinement pass for spacing, density, window chrome, and panel boundaries.",
+      "priority": 12,
+      "steps": [
+        "Review the main app shell after light-mode fixes in both light and dark mode.",
+        "Make a narrow layout polish pass on toolbar height/density, rail alignment, panel borders, and content spacing without changing navigation structure.",
+        "Verify no text overlaps or clips at the minimum supported window size and at a normal desktop size.",
+        "Run screenshot/visual verification plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "User approved more refined and modern/native layout. Keep this to one small visible pass."
+    },
+    {
+      "id": "F-013",
+      "description": "The editor and document canvas receive one refinement pass for reading width, split-mode balance, empty states, and responsive behavior.",
+      "priority": 13,
+      "steps": [
+        "Inspect editor, rich view, preview, split mode, and empty/welcome states at narrow and normal desktop widths.",
+        "Make one focused layout refinement pass that improves native polish without changing core editor behavior.",
+        "Verify long filenames, long headings, and common markdown examples do not overlap or clip.",
+        "Run screenshot/visual verification plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "One wakeup scope: document work area only."
+    },
+    {
+      "id": "F-014",
+      "description": "Keyboard-first overlays and menus receive one native-feeling refinement pass for focus, hover, spacing, and hierarchy.",
+      "priority": 14,
+      "steps": [
+        "Inspect command palette, menus, settings, share, stats, and theme settings after the light-mode overlay fixes.",
+        "Make one focused polish pass that improves focus rings, menu spacing, hierarchy, and native-feeling affordances.",
+        "Verify keyboard navigation and focus visibility still work.",
+        "Run focused interaction/visual verification plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "Do not add new feature surface; polish existing overlays."
+    },
+    {
+      "id": "F-015",
+      "description": "A cross-platform desktop audit maps macOS-only assumptions and creates a safe implementation checklist for Windows, Intel Mac, and Linux support.",
+      "priority": 15,
+      "steps": [
+        "Search Electron, renderer, MCP, release, and docs code for macOS-only assumptions and Apple-Silicon-only release assumptions.",
+        "Classify each finding as runtime behavior, packaging config, docs/download page, test/preflight, or human-gated release/deploy work.",
+        "Add the resulting checklist to the roadmap docs or backlog without changing runtime behavior.",
+        "Run `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "Start cross-platform work with a map. Do not publish or deploy."
+    },
+    {
+      "id": "F-016",
+      "description": "Markie's runtime gracefully handles non-macOS platforms for platform-specific actions instead of assuming Darwin behavior.",
+      "priority": 16,
+      "steps": [
+        "Use the F-015 audit to pick the highest-impact runtime macOS assumption that can be fixed without API redesign.",
+        "Add or update tests for darwin, win32, linux, and unsupported/fallback branches.",
+        "Implement the smallest runtime guard or platform abstraction for that action.",
+        "Run the focused platform test plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "One platform behavior per wakeup. Add follow-up ledger items for additional assumptions discovered."
+    },
+    {
+      "id": "F-017",
+      "description": "Electron packaging config supports local dry-run targets for Apple Silicon macOS, Intel macOS, Windows, and Linux without publishing.",
+      "priority": 17,
+      "steps": [
+        "Inspect existing electron-builder configuration and release docs.",
+        "Add or adjust local-only packaging scripts/config for mac arm64, mac x64, Windows, and Linux targets while keeping publish disabled by default.",
+        "Verify the config can be parsed and the safe local packaging/preflight command stops before signing, notarization, upload, publish, or deploy.",
+        "Run the packaging/preflight verification plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "No publishing. If cross-compilation cannot build an artifact on the current host, the task should still add a verifiable dry-run/preflight."
+    },
+    {
+      "id": "F-018",
+      "description": "Release docs and local preflight describe how to produce and verify downloads for macOS Apple Silicon, macOS Intel, Windows, and Linux.",
+      "priority": 18,
+      "steps": [
+        "Update release documentation to include per-platform artifact names, local build commands, signing/notarization expectations, and verification steps.",
+        "Update the local release preflight to validate required metadata for all desktop platforms without requiring credentials.",
+        "Verify the docs and preflight make it impossible to confuse local dry-run checks with actual publishing.",
+        "Run the release preflight plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "Keep actual signing, notarization, upload, and release as human checkpoints."
+    },
+    {
+      "id": "F-019",
+      "description": "A download manifest or equivalent source of truth lists all supported desktop platform downloads for the download page.",
+      "priority": 19,
+      "steps": [
+        "Find where the Markie download page is sourced from in this repo or document that it lives outside this repo.",
+        "Add a repo-local download manifest or documented interface covering Apple Silicon Mac, Intel Mac, Windows, and Linux artifact labels, filenames, and URLs/placeholders.",
+        "Add a test or validation script that checks the manifest shape and required platform entries.",
+        "Run the manifest validation plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "Do not deploy the page. If the live marketing site is in another repo, leave an explicit integration note and keep the manifest here."
+    },
+    {
+      "id": "F-020",
+      "description": "The download page or public-facing download copy is updated to present all supported desktop platforms when the source lives in this repo.",
+      "priority": 20,
+      "steps": [
+        "Use the F-019 manifest/source discovery to determine whether this repo owns the download page or only docs/metadata.",
+        "If this repo owns the page, update it to show Apple Silicon Mac, Intel Mac, Windows, and Linux downloads clearly.",
+        "If this repo does not own the page, update README/docs with the manifest contract and add a backlog item for the owning repo.",
+        "Run the relevant page/docs validation plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "No production deploy. This task is complete when the repo-owned source or integration contract is updated and verified."
+    },
+    {
+      "id": "F-021",
+      "description": "A React Native feasibility ADR defines the mobile product scope, shared-code strategy, and decisions that require human approval before scaffolding.",
+      "priority": 21,
+      "steps": [
+        "Review current Electron/Next renderer, markdown pipeline, theme tokens, sync/auth client boundaries, and platform-specific Electron APIs.",
+        "Write an ADR for the React Native direction, including target platforms, MVP scope, shared modules, dependencies, and risks.",
+        "Explicitly list the stack/dependency decisions that require human approval before creating a React Native app.",
+        "Run `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "Planning only. Do not scaffold React Native or add dependencies in this task."
+    },
+    {
+      "id": "F-022",
+      "description": "Portable markdown/theme code boundaries are prepared so a future React Native app can reuse non-Electron logic.",
+      "priority": 22,
+      "steps": [
+        "Use the React Native ADR to identify one pure module boundary that can be shared without adding a new app stack.",
+        "Extract or document that boundary while preserving existing Electron/Next behavior.",
+        "Add focused tests proving the shared pure logic still works.",
+        "Run the focused test plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "No React Native dependencies. One pure-code boundary per wakeup; add follow-up items for additional boundaries."
     }
   ]
 }

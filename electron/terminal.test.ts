@@ -61,4 +61,26 @@ describe("terminal Markie context", () => {
       MARKIE_WORKSPACE: "/Users/me/Docs/Markie",
     });
   });
+
+  it("uses the newly active document context for future shells", () => {
+    const workspaceRoots = ["/Users/me/Docs/Markie"];
+    const documentA = resolveContext(
+      { filePath: "/Users/me/Docs/Markie/project/notes/a.md" },
+      workspaceRoots
+    );
+    const firstShellEnv = buildEnv(documentA, { PATH: "/usr/bin" });
+
+    const documentB = resolveContext(
+      { filePath: "/Users/me/Docs/Markie/project/drafts/b.md" },
+      workspaceRoots
+    );
+    const nextShellEnv = buildEnv(documentB, firstShellEnv);
+
+    expect(nextShellEnv).toMatchObject({
+      PATH: "/usr/bin",
+      MARKIE_FILE: "/Users/me/Docs/Markie/project/drafts/b.md",
+      MARKIE_DIR: "/Users/me/Docs/Markie/project/drafts",
+      MARKIE_WORKSPACE: "/Users/me/Docs/Markie",
+    });
+  });
 });

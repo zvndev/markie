@@ -26,10 +26,10 @@
         "Confirm MARKIE_FILE and MARKIE_DIR point at document B, not document A.",
         "Run the focused terminal regression test plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "Depends on F-001. Do not build shell re-injection into already-running shells unless split into a separate task."
+      "evidence": "`npm test -- electron/terminal.test.ts` passed with 6 tests, including the document A to document B future-shell context regression. `./init.sh > .autoloop/runs/init-20260628-automated-f002-post.log 2>&1` passed renderer tests, MCP tests, server tests, lint, and build.",
+      "notes": "Depends on F-001. Verified future shells pick up the newly active document context. Existing shells are intentionally not re-injected."
     },
     {
       "id": "F-003",

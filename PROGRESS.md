@@ -37,3 +37,15 @@
 - next: Select `F-002` to verify future embedded terminal sessions receive updated context after
   the active document changes.
 - blockers: none. Lint still reports the pre-existing 4 warnings and zero errors.
+
+## 2026-06-28 02:50 — terminal: progressed
+- did: Completed `F-002` by keeping the terminal panel's new-session action pointed at the latest
+  active document context, so future embedded terminal sessions after a document switch inherit the
+  new file and folder instead of stale values.
+- evidence: `PATH="$HOME/.nvm/versions/node/v22.13.1/bin:$HOME/.nvm/versions/node/v22.17.0/bin:/opt/homebrew/bin:/usr/local/bin:$PATH" npm test -- electron/terminal.test.ts`
+  passed 6 tests, including the document A to document B future-shell context regression.
+  `./init.sh > .autoloop/runs/init-20260628-automated-f002-post.log 2>&1` passed renderer tests,
+  MCP tests, server tests, lint, and build.
+- next: Select `F-003` to add the safe release preflight command that stops before any publish,
+  notarize, upload, deploy, or credentialed network action.
+- blockers: none. Lint still reports the pre-existing 4 warnings and zero errors.

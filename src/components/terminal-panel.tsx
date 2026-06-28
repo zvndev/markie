@@ -20,16 +20,21 @@ export function TerminalPanel({ context, onClose }: TerminalPanelProps) {
   const [externalApps, setExternalApps] = useState<Array<{ id: string; name: string }>>([]);
   const [showExternal, setShowExternal] = useState(false);
   const creating = useRef(false);
+  const latestContext = useRef(context);
+
+  useEffect(() => {
+    latestContext.current = context;
+  }, [context]);
 
   const newTab = useCallback(async () => {
     if (!api?.termCreate || creating.current) return;
     creating.current = true;
-    const id = await api.termCreate(context);
+    const id = await api.termCreate(latestContext.current);
     creating.current = false;
     if (!id) return;
     setTabs((prev) => [...prev, { id }]);
     setActiveId(id);
-  }, [api, context]);
+  }, [api]);
 
   // first tab on mount + load external apps
   useEffect(() => {

@@ -56,10 +56,10 @@
         "Confirm symlink escape and unsafe extension cases still fail.",
         "Run `node --test mcp/lib.test.mjs` and `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "Do not widen the MCP public API shape in this task."
+      "evidence": "`node --test mcp/lib.test.mjs > .autoloop/runs/mcp-lib-f004-20260628.log 2>&1` passed 15 tests, including a stdio MCP `markie_write_md`/`markie_read_md` journey under a temporary safe home plus unsafe extension and symlink escape tool-level failures. `./init.sh > .autoloop/runs/init-20260628-automated-f004-post.log 2>&1` passed renderer tests, MCP tests, server tests, lint, and build.",
+      "notes": "Did not widen the MCP public API shape; added regression coverage through the existing JSON-RPC `tools/call` path."
     },
     {
       "id": "F-005",

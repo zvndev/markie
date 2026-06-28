@@ -63,3 +63,14 @@
 - next: Select `F-004` to add the MCP safe markdown write/read regression without widening the MCP
   public API shape.
 - blockers: none. Lint still reports the pre-existing 4 warnings and zero errors.
+
+## 2026-06-28 04:51 — terminal: progressed
+- did: Completed `F-004` by adding a stdio MCP regression that drives the existing
+  `tools/call` path to write an allowed markdown file under a temporary safe home, read it back,
+  and reject unsafe extension plus symlink escape writes without widening the MCP public API shape.
+- evidence: `node --test mcp/lib.test.mjs > .autoloop/runs/mcp-lib-f004-20260628.log 2>&1`
+  passed 15 tests. `./init.sh > .autoloop/runs/init-20260628-automated-f004-post.log 2>&1`
+  passed renderer tests, MCP tests, server tests, lint, and build.
+- next: Select `F-005` to run or repair the real-user comments verification journey for create,
+  reply, resolve, reopen, and anchor survival.
+- blockers: none. Lint still reports the pre-existing 4 warnings and zero errors.

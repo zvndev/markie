@@ -1,15 +1,20 @@
-# Current Task — F-003
+# Current Task — F-004
 
-## Selected item
-`F-003`: A safe preflight command verifies release prerequisites without signing, notarizing, uploading, or touching production services.
+## Description
+The MCP server has a regression journey proving allowed markdown writes remain fenced to safe local markdown paths.
 
-## Acceptance criteria
-1. Run the documented release preflight command on a clean checkout without release credentials.
-2. Confirm it checks package metadata, required local files, and build/test prerequisites.
-3. Confirm it exits before any publish, notarize, upload, deploy, or credentialed network action.
-4. Run `./init.sh`.
+## Acceptance Criteria
+1. Run the MCP test suite and identify the current filesystem guard coverage.
+2. Add a user-observable MCP write/read regression that writes an allowed markdown file under a temporary safe home and reads it back.
+3. Confirm symlink escape and unsafe extension cases still fail.
+4. Run `node --test mcp/lib.test.mjs` and `./init.sh`.
 
 ## Scope
-- Add or wire a local-only release preflight command.
-- It may inspect files, package metadata, and run local validation commands.
-- It must not sign, notarize, upload, publish, deploy, mutate production services, or require release credentials.
+- Modify only the MCP regression coverage needed for this task unless a narrow implementation bug is exposed.
+- Do not widen the MCP public API shape.
+- Do not touch production, deployment, credentials, or external service configuration.
+
+## Plan
+1. Inspect `mcp/lib.test.mjs` and MCP filesystem guard helpers.
+2. Add the smallest regression that exercises the existing write and read tool path against a temporary safe home.
+3. Run the focused MCP suite, then the repo baseline.

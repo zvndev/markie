@@ -3,9 +3,82 @@ import assert from "node:assert/strict";
 import { guardPath, matchQuery, classifyAgentFile, groupSkills } from "./lib.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as pjoin } from "node:path";
+import { spawn } from "node:child_process";
+import { dirname as pdirname, join as pjoin } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const HOME = "/home/u";
+const MCP_DIR = pdirname(fileURLToPath(import.meta.url));
+
+function startMcpClient(home) {
+  const child = spawn(process.execPath, [pjoin(MCP_DIR, "markie-mcp.mjs")], {
+    cwd: pdirname(MCP_DIR),
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const pending = new Map();
+  const stderr = [];
+  let buffer = "";
+  let id = 1;
+
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const msg = JSON.parse(line);
+      const waiter = pending.get(msg.id);
+      if (waiter) {
+        pending.delete(msg.id);
+        waiter.resolve(msg);
+      }
+    }
+  });
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => stderr.push(chunk));
+  child.on("exit", () => {
+    const err = new Error(`MCP server exited early: ${stderr.join("")}`);
+    for (const waiter of pending.values()) waiter.reject(err);
+    pending.clear();
+  });
+
+  function request(method, params) {
+    const reqId = id++;
+    const response = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        pending.delete(reqId);
+        reject(new Error(`Timed out waiting for ${method}: ${stderr.join("")}`));
+      }, 3000);
+      pending.set(reqId, {
+        resolve: (msg) => {
+          clearTimeout(timeout);
+          resolve(msg);
+        },
+        reject: (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        },
+      });
+    });
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: reqId, method, params }) + "\n");
+    return response;
+  }
+
+  return {
+    request,
+    notify(method, params) {
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
+    },
+    callTool(name, args) {
+      return request("tools/call", { name, arguments: args });
+    },
+    close() {
+      child.kill();
+    },
+  };
+}
 
 // These "allow" cases use a REAL temp home because guardPath now canonicalizes
 // via realpath (a fake /home/u would be rewritten by macOS autofs resolution).
@@ -158,5 +231,48 @@ test("guardPath write-mode denies the allowlist skill roots (no agent-file impla
     assert.equal(guardPath(pjoin(home, ".claude", "skills", "x.md"), home).ok, true);
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("MCP stdio write/read keeps markdown writes fenced to safe home paths", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const outside = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-out-")));
+  const client = startMcpClient(home);
+  try {
+    await client.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "markie-test", version: "0.0.0" },
+    });
+    client.notify("notifications/initialized", {});
+
+    const target = pjoin(home, "workspace", "agent-note.md");
+    const body = "# MCP write\n\nLocal fenced markdown.";
+    const write = await client.callTool("markie_write_md", { path: target, content: body });
+    assert.equal(write.result.isError, undefined);
+    assert.match(write.result.content[0].text, /^Wrote \d+ bytes to /);
+
+    const read = await client.callTool("markie_read_md", { path: target });
+    assert.equal(read.result.isError, undefined);
+    assert.equal(read.result.content[0].text, body);
+
+    const unsafeExtension = await client.callTool("markie_write_md", {
+      path: pjoin(home, "workspace", "agent-note.txt"),
+      content: "not markdown",
+    });
+    assert.equal(unsafeExtension.result.isError, true);
+    assert.match(unsafeExtension.result.content[0].text, /only \.md, \.markdown, or \.mdx files are allowed/);
+
+    symlinkSync(outside, pjoin(home, "escape"));
+    const symlinkEscape = await client.callTool("markie_write_md", {
+      path: pjoin(home, "escape", "implanted.md"),
+      content: "# escape",
+    });
+    assert.equal(symlinkEscape.result.isError, true);
+    assert.match(symlinkEscape.result.content[0].text, /path must be inside your home folder/);
+  } finally {
+    client.close();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });

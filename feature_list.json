@@ -71,10 +71,10 @@
         "Confirm the journey covers create, reply, resolve, reopen, and anchor survival after an edit above the selection.",
         "Run the focused comments verifier plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "Do not change comments product UX unless a failing verification requires a narrow bugfix."
+      "evidence": "`npm run comments:verify:e2e > .autoloop/runs/comments-verify-e2e-20260628.log 2>&1` passed. The wrapper ran the comments API verifier from a migrated temp DB and the Electron/CDP UI verifier, covering create, reply, resolve, reopen, and Yjs anchor survival after Bob inserted content above Alice's selection.",
+      "notes": "Added repeatable local verifier orchestration and an E2E-only Electron launch escape hatch; comments product UX was unchanged."
     }
   ]
 }

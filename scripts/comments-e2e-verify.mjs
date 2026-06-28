@@ -9,7 +9,10 @@ const WebSocket = require("ws");
 
 const SERVER = "http://localhost:8787";
 const ORIGIN = { Origin: "http://localhost:3000" };
-const [, bobToken, docId] = process.argv.slice(2);
+const [aliceToken, bobToken, docId] = process.argv.slice(2);
+if (!aliceToken || !bobToken || !docId) {
+  throw new Error("usage: comments-e2e-verify.mjs <aliceToken> <bobToken> <docId>");
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const api = async (token, method, path, body) => {
@@ -26,8 +29,17 @@ const api = async (token, method, path, body) => {
 };
 
 async function cdpConnect() {
-  const targets = await (await fetch("http://localhost:9222/json")).json();
-  const page = targets.find((t) => t.type === "page" && t.url.startsWith("app://"));
+  const targets = await (await fetch("http://127.0.0.1:9222/json")).json();
+  const page = targets.find(
+    (t) =>
+      t.type === "page" &&
+      !t.url.startsWith("devtools://") &&
+      (t.url.startsWith("app://") ||
+        t.url.startsWith("http://localhost:3000") ||
+        t.url.startsWith("http://127.0.0.1:3000") ||
+        t.title?.startsWith("Markie"))
+  );
+  if (!page) throw new Error("no Markie page target on localhost:9222");
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((res, rej) => (ws.on("open", res), ws.on("error", rej)));
   let nextId = 1;

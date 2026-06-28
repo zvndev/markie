@@ -894,7 +894,9 @@ const template = [
 
 // Deep links (markie://…) — used by the Google OAuth callback.
 // macOS delivers these via the open-url event below.
-app.setAsDefaultProtocolClient("markie");
+if (process.env.MARKIE_E2E !== "1") {
+  app.setAsDefaultProtocolClient("markie");
+}
 app.on("open-url", (event, url) => {
   event.preventDefault();
   deliverDeepLink(url);
@@ -903,7 +905,7 @@ app.on("open-url", (event, url) => {
 // Single instance: a second launch (e.g. the OS opening markie:// on
 // Windows/Linux, or a double-clicked file) hands its argv to the running
 // instance instead of starting a rival process that would steal the deep link.
-const gotLock = app.requestSingleInstanceLock();
+const gotLock = process.env.MARKIE_E2E === "1" || app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {

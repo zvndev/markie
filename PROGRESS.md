@@ -74,3 +74,18 @@
 - next: Select `F-005` to run or repair the real-user comments verification journey for create,
   reply, resolve, reopen, and anchor survival.
 - blockers: none. Lint still reports the pre-existing 4 warnings and zero errors.
+
+## 2026-06-28 06:00 — terminal: progressed
+- did: Completed `F-005` by making the comments verification journey repeatable from a local temp
+  database, adding explicit reopen coverage to the API verifier, and adding an E2E-only Electron
+  launch path that drives the existing comments UI verifier without depending on the user's running
+  Markie instance.
+- evidence: `npm run comments:verify:e2e > .autoloop/runs/comments-verify-e2e-20260628.log 2>&1`
+  passed API checks for create, reply, list shape, resolve, reopen, access gating, and deletion,
+  then passed Electron/CDP UI checks for comment creation, Bob's reply, reply count, anchor survival
+  after an edit above the selection, panel authors, resolve, and reopen. `./init.sh > .autoloop/runs/init-20260628-automated-f005-post.log 2>&1`
+  passed renderer tests, MCP tests, server tests, lint, and build.
+- next: With all current feature ledger entries passing, the next run should handle the top open
+  backlog item by escalating the human checkpoint for terminal API shape approval, or run the next
+  scheduled review pass if that item is deferred.
+- blockers: none for `F-005`. Lint still reports the pre-existing 4 warnings and zero errors.

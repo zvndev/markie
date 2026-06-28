@@ -3,6 +3,9 @@
 const SERVER = "http://localhost:8787";
 const ORIGIN = { Origin: "http://localhost:3000" };
 const [aliceToken, bobToken, docId] = process.argv.slice(2);
+if (!aliceToken || !bobToken || !docId) {
+  throw new Error("usage: comments-api-verify.mjs <aliceToken> <bobToken> <docId>");
+}
 
 const call = async (token, method, path, body) => {
   const res = await fetch(`${SERVER}${path}`, {
@@ -58,9 +61,13 @@ const afterResolve = await call(aliceToken, "GET", `/api/docs/${docId}/threads`)
 results.resolve =
   resolved.status === 200 &&
   afterResolve.data.threads.find((t) => t.id === threadId).status === "resolved";
-await call(aliceToken, "POST", `/api/docs/${docId}/threads/${threadId}/status`, {
+const reopened = await call(aliceToken, "POST", `/api/docs/${docId}/threads/${threadId}/status`, {
   status: "open",
 });
+const afterReopen = await call(aliceToken, "GET", `/api/docs/${docId}/threads`);
+results.reopen =
+  reopened.status === 200 &&
+  afterReopen.data.threads.find((t) => t.id === threadId).status === "open";
 
 // A stranger gets 403/401 everywhere
 const stranger = await call("garbage-token", "GET", `/api/docs/${docId}/threads`);

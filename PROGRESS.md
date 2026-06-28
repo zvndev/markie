@@ -89,3 +89,15 @@
   backlog item by escalating the human checkpoint for terminal API shape approval, or run the next
   scheduled review pass if that item is deferred.
 - blockers: none for `F-005`. Lint still reports the pre-existing 4 warnings and zero errors.
+
+## 2026-06-28 06:49 — terminal: escalated
+- did: Selected the top open backlog item, "Approve or revise the context-aware terminal API shape
+  before implementing bundled `markie` CLI commands or new MCP current-document tools," and wrote
+  it to `CURRENT_TASK.md`.
+- evidence: `./init.sh > .autoloop/runs/init-20260628-automated-wakeup.log 2>&1` passed renderer
+  tests, MCP tests, server tests, lint, and build. The selected backlog item requires a public API
+  shape decision, which `CONSTITUTION.md` marks as a human checkpoint.
+- next: Human should approve or revise the terminal command/tool surface in an ADR; then a future
+  wakeup can split the first implementable slice into `feature_list.json`.
+- blockers: Human approval is required before implementing bundled `markie` CLI commands or new MCP
+  current-document tools.

@@ -1,21 +1,19 @@
-# Current Task - F-005
+# Current Task - Backlog: terminal API shape approval
 
 ## Description
-A real-user comments regression verifies thread creation, reply, resolve, reopen, and anchor survival using the existing verifier scripts.
+Approve or revise the context-aware terminal API shape before implementing bundled `markie` CLI
+commands or new MCP current-document tools.
 
 ## Acceptance Criteria
-1. Run the existing comments verification scripts against the local dev server setup they document.
-2. If setup gaps prevent the journey, add the smallest script/docs fix needed for repeatable local verification.
-3. Confirm the journey covers create, reply, resolve, reopen, and anchor survival after an edit above the selection.
-4. Run the focused comments verifier plus `./init.sh`.
+1. A human-approved ADR records the initial command/tool surface.
+2. The first implementable slice is split into `feature_list.json`.
 
 ## Scope
-- Implement only the smallest verifier/script/docs or narrow product fix needed for this comments regression.
-- Do not change comments product UX unless a failing verification requires a focused bugfix.
-- Do not touch production, deployment, credentials, or external service configuration.
+- This task touches public local API shape, including bundled CLI commands and/or MCP tools.
+- `CONSTITUTION.md` lists public API shape as a human checkpoint.
+- Do not implement bundled `markie` CLI commands or new MCP current-document tools unattended.
 
 ## Plan
-1. Inspect `scripts/comments-api-verify.mjs`, `scripts/comments-e2e-verify.mjs`, and related package scripts.
-2. Run the existing verifier in the documented local setup and capture the failure or proof.
-3. Patch only the verifier/setup or a narrow comments bug needed to make the journey repeatable.
-4. Run the focused verifier and the repo baseline, then update the feature ledger and progress log.
+1. Escalate this task for human approval instead of implementing it in this wakeup.
+2. Keep the backlog item open until a human-approved ADR records the command/tool surface.
+3. After approval, split the first implementable slice into `feature_list.json` for a future run.

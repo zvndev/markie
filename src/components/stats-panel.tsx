@@ -32,23 +32,24 @@ export function StatsPanel({ content, onClose }: StatsPanelProps) {
 
   return (
     <div
-      className="absolute top-12 right-4 z-50 w-60 bg-surface-2 border border-border rounded-lg shadow-xl py-2"
-      style={{ background: "var(--surface-2)" }}
+      className="markie-menu-panel absolute top-12 right-4 z-50 w-60 rounded-lg py-2"
+      role="dialog"
+      aria-label="Document statistics"
     >
       <div className="flex items-center justify-between px-3 pb-1.5 border-b border-border">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+        <span className="markie-overlay-section">
           Statistics
         </span>
         <button
           onClick={onClose}
           aria-label="Close statistics"
-          className="text-muted hover:text-foreground text-[13px] leading-none"
+          className="markie-overlay-close text-[13px] leading-none"
         >
           ×
         </button>
       </div>
       {rows.map(([label, value]) => (
-        <div key={label} className="flex items-center justify-between px-3 py-1">
+        <div key={label} className="flex items-center justify-between gap-4 px-3 py-1.5">
           <span className="text-[12px] text-muted">{label}</span>
           <span className="text-[12px] text-foreground tabular-nums">{value}</span>
         </div>

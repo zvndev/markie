@@ -206,10 +206,10 @@
         "Verify keyboard navigation and focus visibility still work.",
         "Run focused interaction/visual verification plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "Do not add new feature surface; polish existing overlays."
+      "evidence": "`npm run visual:check:overlays > .autoloop/runs/overlay-interaction-check-f014-20260628.log 2>&1` passed and wrote `.autoloop/runs/overlay-interaction-check-20260628230923/overlay-interaction.json` with 10 screenshots and 14 focus/selection metrics across light and dark mode. `npm run visual:guard:theme > .autoloop/runs/theme-visual-guard-f014-20260628.log 2>&1` passed and wrote `.autoloop/runs/light-mode-audit-20260628230952/audit.json` with 68 samples, zero findings, and passing shell/content/overlay guard categories. `./init.sh > .autoloop/runs/init-20260628-f014-post.log 2>&1` passed.",
+      "notes": "Completed one focused polish pass over existing overlays only: shared panel/menu/focus styles, command palette ARIA/keyboard selection affordances, accessible PDF menu targeting, and consistent modal close/button/field hierarchy."
     },
     {
       "id": "F-015",

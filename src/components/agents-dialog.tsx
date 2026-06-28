@@ -53,17 +53,19 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
       }}
     >
       <div
-        className="w-[520px] max-w-[94vw] max-h-[86vh] overflow-y-auto rounded-xl border border-border shadow-2xl p-5"
-        style={{ background: "var(--surface-2)" }}
+        className="markie-overlay-panel w-[520px] max-w-[94vw] max-h-[86vh] overflow-y-auto rounded-xl p-5"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="markie-agents-title"
       >
         <div className="flex items-center justify-between mb-1">
-          <h2 className="text-[14px] font-semibold text-foreground">
+          <h2 id="markie-agents-title" className="text-[14px] font-semibold text-foreground">
             Connect an agent to Markie
           </h2>
           <button
             onClick={onClose}
             aria-label="Close"
-            className="text-muted hover:text-foreground"
+            className="markie-overlay-close"
           >
             ×
           </button>
@@ -76,7 +78,7 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
           <code>~/.codex</code>). It runs on demand, locally; nothing is uploaded.
         </p>
 
-        <div className="text-[10px] uppercase tracking-wide text-muted mb-1.5">
+        <div className="markie-overlay-section mb-1.5">
           Tools it gives your agent
         </div>
         <div className="flex flex-col gap-1 mb-4">
@@ -129,7 +131,7 @@ function CopyBlock({ label, text }: { label: string; text: string }) {
         </span>
         <button
           onClick={copy}
-          className="text-[11px] px-2 py-0.5 rounded-md bg-accent text-foreground hover:opacity-90"
+          className="markie-overlay-button text-[11px] px-2 py-0.5 rounded-md bg-accent text-foreground hover:opacity-90"
         >
           {copied ? "Copied" : "Copy"}
         </button>

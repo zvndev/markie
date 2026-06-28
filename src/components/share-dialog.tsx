@@ -147,15 +147,17 @@ export function ShareDialog({
       }}
     >
       <div
-        className="w-[440px] max-w-[92vw] max-h-[84vh] overflow-y-auto rounded-xl border border-border shadow-2xl p-5"
-        style={{ background: "var(--surface-2)" }}
+        className="markie-overlay-panel w-[440px] max-w-[92vw] max-h-[84vh] overflow-y-auto rounded-xl p-5"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="markie-share-title"
       >
         <div className="flex items-center justify-between mb-1">
-          <h2 className="text-[14px] font-semibold text-foreground">Share</h2>
+          <h2 id="markie-share-title" className="text-[14px] font-semibold text-foreground">Share</h2>
           <button
             onClick={onClose}
             aria-label="Close share dialog"
-            className="text-muted hover:text-foreground"
+            className="markie-overlay-close"
           >
             ×
           </button>
@@ -174,13 +176,13 @@ export function ShareDialog({
                   if (e.key === "Enter") handleAdd();
                 }}
                 placeholder="person@example.com"
-                className="flex-1 text-[13px] bg-background border border-border rounded-md px-2.5 py-1.5 text-foreground outline-none focus:border-accent"
+                className="markie-overlay-field flex-1 text-[13px] px-2.5 py-1.5"
               />
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value as "viewer" | "editor")}
                 aria-label="Role"
-                className="text-[12px] bg-background border border-border rounded-md px-2 text-foreground outline-none"
+                className="markie-overlay-field text-[12px] px-2"
               >
                 <option value="viewer">Can view</option>
                 <option value="editor">Can edit</option>
@@ -188,7 +190,7 @@ export function ShareDialog({
               <button
                 onClick={handleAdd}
                 disabled={busy || !email.trim()}
-                className="text-[13px] px-3 rounded-md bg-accent text-foreground hover:opacity-90 transition-opacity disabled:opacity-50"
+                className="markie-overlay-button text-[13px] px-3 rounded-md bg-accent text-foreground hover:opacity-90 disabled:opacity-50"
               >
                 Invite
               </button>
@@ -221,7 +223,7 @@ export function ShareDialog({
           </div>
         )}
 
-        <div className="text-[10px] uppercase tracking-wide text-muted mb-2">
+        <div className="markie-overlay-section mb-2">
           People with access
         </div>
         {members === null ? (
@@ -277,11 +279,11 @@ export function ShareDialog({
                   readOnly
                   value={publicUrl}
                   onFocus={(e) => e.currentTarget.select()}
-                  className="flex-1 text-[12px] bg-background border border-border rounded-md px-2 py-1.5 text-muted outline-none"
+                  className="markie-overlay-field flex-1 text-[12px] px-2 py-1.5 text-muted"
                 />
                 <button
                   onClick={copyLink}
-                  className="text-[12px] px-3 py-1.5 rounded-md bg-accent text-foreground hover:opacity-90"
+                  className="markie-overlay-button text-[12px] px-3 py-1.5 rounded-md bg-accent text-foreground hover:opacity-90"
                 >
                   {copied ? "Copied" : "Copy"}
                 </button>
@@ -301,9 +303,9 @@ export function ShareDialog({
             </>
           ) : (
             <button
-              onClick={createLink}
-              disabled={linkBusy}
-              className="text-[12px] px-3 py-1.5 rounded-md border border-border text-muted hover:text-foreground disabled:opacity-50"
+                onClick={createLink}
+                disabled={linkBusy}
+              className="markie-overlay-button text-[12px] px-3 py-1.5 rounded-md border border-border text-muted hover:text-foreground disabled:opacity-50"
             >
               {linkBusy ? "Creating…" : "Create a public link"}
             </button>
@@ -346,7 +348,7 @@ function MemberRow({
         <button
           onClick={onRemove}
           aria-label={`Remove ${name}`}
-          className="text-muted hover:text-[var(--status-red)] text-[13px] px-1"
+          className="markie-overlay-close hover:text-[var(--status-red)] text-[13px]"
         >
           ×
         </button>

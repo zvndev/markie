@@ -1,13 +1,16 @@
-# Current Task — F-013
+# Current Task — F-014
 
-## Description
-The editor and document canvas receive one refinement pass for reading width, split-mode balance, empty states, and responsive behavior.
+## Task
+Keyboard-first overlays and menus receive one native-feeling refinement pass for focus, hover,
+spacing, and hierarchy.
 
 ## Acceptance Criteria
-- Inspect editor, rich view, preview, split mode, and empty/welcome states at narrow and normal desktop widths.
-- Make one focused layout refinement pass that improves native polish without changing core editor behavior.
-- Verify long filenames, long headings, and common markdown examples do not overlap or clip.
-- Run screenshot/visual verification plus `./init.sh`.
+1. Inspect command palette, menus, settings, share, stats, and theme settings after the light-mode
+   overlay fixes.
+2. Make one focused polish pass that improves focus rings, menu spacing, hierarchy, and
+   native-feeling affordances.
+3. Verify keyboard navigation and focus visibility still work.
+4. Run focused interaction/visual verification plus `./init.sh`.
 
-## Scope
-Document work area only. Do not change navigation structure, add new feature surface, release/publish/deploy, or touch human-gated API/schema decisions.
+## Scope Guard
+Do not add new feature surface. Polish existing overlays only.

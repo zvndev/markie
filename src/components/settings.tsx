@@ -114,9 +114,9 @@ export function Settings({ onClose, authNonce }: SettingsProps) {
   };
 
   const inputClass =
-    "w-full text-[13px] bg-background border border-border rounded-md px-3 py-2 text-foreground outline-none focus:border-foreground/30";
+    "markie-overlay-field w-full text-[13px] px-3 py-2";
   const buttonClass =
-    "w-full text-[13px] py-2 rounded-md bg-accent text-foreground hover:opacity-90 transition-opacity disabled:opacity-50";
+    "markie-overlay-button w-full text-[13px] py-2 rounded-md bg-accent text-foreground hover:opacity-90 disabled:opacity-50";
 
   return (
     <div
@@ -126,18 +126,20 @@ export function Settings({ onClose, authNonce }: SettingsProps) {
       }}
     >
       <div
-        className="w-[440px] max-w-[92vw] max-h-[84vh] overflow-y-auto rounded-xl border border-border shadow-2xl p-5"
-        style={{ background: "var(--surface-2)" }}
+        className="markie-overlay-panel w-[440px] max-w-[92vw] max-h-[84vh] overflow-y-auto rounded-xl p-5"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="markie-settings-title"
       >
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-[14px] font-semibold text-foreground">Settings</h2>
-          <button onClick={onClose} aria-label="Close settings" className="text-muted hover:text-foreground">
+          <h2 id="markie-settings-title" className="text-[14px] font-semibold text-foreground">Settings</h2>
+          <button onClick={onClose} aria-label="Close settings" className="markie-overlay-close">
             ×
           </button>
         </div>
 
         {/* Account */}
-        <div className="text-[10px] uppercase tracking-wide text-muted mb-2">Account</div>
+        <div className="markie-overlay-section mb-2">Account</div>
         {checking ? (
           <div className="text-[12px] text-muted mb-5">Checking session…</div>
         ) : user ? (
@@ -152,7 +154,7 @@ export function Settings({ onClose, authNonce }: SettingsProps) {
                   await authClient.signOut();
                   refresh();
                 }}
-                className="text-[12px] text-muted hover:text-foreground border border-border rounded-md px-3 py-1.5"
+                className="markie-overlay-button text-[12px] text-muted hover:text-foreground border border-border rounded-md px-3 py-1.5"
               >
                 Sign out
               </button>
@@ -236,7 +238,7 @@ export function Settings({ onClose, authNonce }: SettingsProps) {
               </>
             )}
             <button
-              className="w-full text-[13px] py-2 rounded-md border border-border text-foreground/90 hover:bg-accent/40 transition-colors"
+              className="markie-overlay-button w-full text-[13px] py-2 rounded-md border border-border text-foreground/90 hover:bg-accent/40"
               onClick={() => {
                 setError(null);
                 const url = authClient.googleSignInURL();
@@ -253,7 +255,7 @@ export function Settings({ onClose, authNonce }: SettingsProps) {
 
         {/* Advanced */}
         <button
-          className="text-[11px] text-muted hover:text-foreground"
+          className="markie-overlay-button rounded-md px-1 py-0.5 text-[11px] text-muted hover:text-foreground"
           onClick={() => setShowAdvanced((v) => !v)}
         >
           {showAdvanced ? "Hide advanced" : "Advanced…"}

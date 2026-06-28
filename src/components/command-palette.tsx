@@ -36,11 +36,15 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
       }}
     >
       <div
-        className="w-[480px] max-w-[90vw] rounded-xl border border-border shadow-2xl overflow-hidden"
-        style={{ background: "var(--surface-2)" }}
+        className="markie-overlay-panel w-[480px] max-w-[90vw] rounded-xl overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
       >
         <input
           autoFocus
+          aria-controls="markie-command-palette-list"
+          aria-activedescendant={results[clamped] ? `markie-command-${results[clamped].id}` : undefined}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -60,20 +64,28 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
             }
           }}
           placeholder="Type a command…"
-          className="w-full bg-transparent px-4 py-3 text-[14px] text-foreground outline-none border-b border-border"
+          className="markie-overlay-field markie-command-input w-full px-4 py-3 text-[14px] text-foreground"
         />
-        <div ref={listRef} className="max-h-72 overflow-y-auto py-1">
+        <div
+          id="markie-command-palette-list"
+          ref={listRef}
+          role="listbox"
+          className="max-h-72 overflow-y-auto py-1.5"
+        >
           {results.length === 0 && (
             <div className="px-4 py-3 text-[12px] text-muted">No commands match</div>
           )}
           {results.map((c, i) => (
             <button
               key={c.id}
+              id={`markie-command-${c.id}`}
+              role="option"
+              aria-selected={i === clamped}
               data-selected={i === clamped}
               onMouseEnter={() => setSelected(i)}
               onClick={() => runCommand(c)}
-              className={`w-full flex items-center justify-between px-4 py-2 text-left text-[13px] transition-colors ${
-                i === clamped ? "bg-accent text-foreground" : "text-muted"
+              className={`markie-command-row w-full flex items-center justify-between gap-4 px-4 py-2.5 text-left text-[13px] ${
+                i === clamped ? "text-foreground" : "text-muted hover:text-foreground"
               }`}
             >
               <span>

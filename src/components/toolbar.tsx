@@ -135,6 +135,7 @@ export function Toolbar({
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setShowPDFMenu(!showPDFMenu)}
+            aria-label="PDF export menu"
             className="text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -150,17 +151,17 @@ export function Toolbar({
           </button>
 
           {showPDFMenu && (
-            <div className="absolute top-full left-0 mt-1.5 bg-surface-2 border border-border rounded-lg shadow-xl py-1 min-w-[140px] z-50">
+            <div className="markie-menu-panel absolute top-full left-0 mt-1.5 rounded-lg py-1.5 min-w-[152px] z-50">
               <button
                 onClick={() => { onExportPDF("dark"); setShowPDFMenu(false); }}
-                className="w-full text-left px-3 py-1.5 text-[12px] text-muted hover:text-foreground hover:bg-accent/50 transition-colors flex items-center gap-2"
+                className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
               >
                 <span className="w-3 h-3 rounded-sm bg-zinc-800 border border-zinc-600 shrink-0" />
                 Export Dark
               </button>
               <button
                 onClick={() => { onExportPDF("light"); setShowPDFMenu(false); }}
-                className="w-full text-left px-3 py-1.5 text-[12px] text-muted hover:text-foreground hover:bg-accent/50 transition-colors flex items-center gap-2"
+                className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
               >
                 <span className="w-3 h-3 rounded-sm bg-white border border-zinc-300 shrink-0" />
                 Export Light

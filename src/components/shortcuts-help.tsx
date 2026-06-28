@@ -33,17 +33,19 @@ export function ShortcutsHelp({ commands, onClose }: ShortcutsHelpProps) {
       }}
     >
       <div
-        className="w-[560px] max-w-[92vw] max-h-[80vh] overflow-y-auto rounded-xl border border-border shadow-2xl p-5"
-        style={{ background: "var(--surface-2)" }}
+        className="markie-overlay-panel w-[560px] max-w-[92vw] max-h-[80vh] overflow-y-auto rounded-xl p-5"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="markie-shortcuts-title"
       >
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-[14px] font-semibold text-foreground">
+          <h2 id="markie-shortcuts-title" className="text-[14px] font-semibold text-foreground">
             Keyboard Shortcuts
           </h2>
           <button
             onClick={onClose}
             aria-label="Close shortcuts"
-            className="text-muted hover:text-foreground"
+            className="markie-overlay-close"
           >
             ×
           </button>
@@ -51,7 +53,7 @@ export function ShortcutsHelp({ commands, onClose }: ShortcutsHelpProps) {
         <div className="grid grid-cols-2 gap-x-8 gap-y-4">
           {[...groups.entries()].map(([group, cmds]) => (
             <div key={group}>
-              <div className="text-[10px] uppercase tracking-wide text-muted mb-1.5">
+              <div className="markie-overlay-section mb-1.5">
                 {group}
               </div>
               {cmds.map((c) => (

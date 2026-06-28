@@ -88,12 +88,14 @@ export function ThemeSettings({ onClose }: ThemeSettingsProps) {
       }}
     >
       <div
-        className="w-[520px] max-w-[92vw] max-h-[84vh] overflow-y-auto rounded-xl border border-border shadow-2xl p-5"
-        style={{ background: "var(--surface-2)" }}
+        className="markie-overlay-panel w-[520px] max-w-[92vw] max-h-[84vh] overflow-y-auto rounded-xl p-5"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="markie-theme-title"
       >
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-[14px] font-semibold text-foreground">Theme</h2>
-          <button onClick={onClose} aria-label="Close theme settings" className="text-muted hover:text-foreground">
+          <h2 id="markie-theme-title" className="text-[14px] font-semibold text-foreground">Theme</h2>
+          <button onClick={onClose} aria-label="Close theme settings" className="markie-overlay-close">
             ×
           </button>
         </div>
@@ -103,7 +105,7 @@ export function ThemeSettings({ onClose }: ThemeSettingsProps) {
             <button
               key={t.id}
               onClick={() => selectTheme(t.id)}
-              className={`px-3 py-1.5 rounded-md text-[12px] border transition-all ${
+              className={`markie-overlay-button px-3 py-1.5 rounded-md text-[12px] border ${
                 t.id === store.activeId
                   ? "border-foreground/40 text-foreground bg-accent"
                   : "border-border text-muted hover:text-foreground"
@@ -122,7 +124,7 @@ export function ThemeSettings({ onClose }: ThemeSettingsProps) {
                 type="color"
                 value={String(active.tokens[key])}
                 onChange={(e) => updateToken(key, e.target.value)}
-                className="w-8 h-6 rounded border border-border bg-transparent cursor-pointer"
+                className="markie-overlay-field w-8 h-6 bg-transparent cursor-pointer"
               />
             </label>
           ))}
@@ -137,7 +139,7 @@ export function ThemeSettings({ onClose }: ThemeSettingsProps) {
               max={22}
               value={active.tokens.fontSize}
               onChange={(e) => updateToken("fontSize", Number(e.target.value))}
-              className="w-52"
+              className="markie-overlay-field w-52"
             />
           </label>
           <label className="flex items-center justify-between text-[12px] text-muted">
@@ -149,7 +151,7 @@ export function ThemeSettings({ onClose }: ThemeSettingsProps) {
               step={16}
               value={active.tokens.contentWidth}
               onChange={(e) => updateToken("contentWidth", Number(e.target.value))}
-              className="w-52"
+              className="markie-overlay-field w-52"
             />
           </label>
         </div>

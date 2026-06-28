@@ -100,6 +100,100 @@ body {
   min-height: calc(100% - clamp(2.5rem, 6vw, 4.5rem));
 }
 
+.markie-overlay-panel,
+.markie-menu-panel {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  box-shadow:
+    0 18px 44px color-mix(in srgb, #000 26%, transparent),
+    inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+.markie-overlay-panel:focus-within,
+.markie-menu-panel:focus-within {
+  box-shadow:
+    0 18px 44px color-mix(in srgb, #000 26%, transparent),
+    inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--blue) 45%, transparent);
+}
+
+.markie-overlay-close,
+.markie-overlay-button,
+.markie-overlay-field,
+.markie-menu-item,
+.markie-command-row {
+  outline: none;
+}
+
+.markie-overlay-close:focus,
+.markie-overlay-close:focus-visible,
+.markie-overlay-button:focus,
+.markie-overlay-button:focus-visible,
+.markie-overlay-field:focus,
+.markie-overlay-field:focus-visible,
+.markie-menu-item:focus,
+.markie-menu-item:focus-visible,
+.markie-command-row:focus,
+.markie-command-row:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 70%, transparent);
+}
+
+.markie-overlay-close {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.markie-overlay-close:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--accent) 58%, transparent);
+}
+
+.markie-overlay-field {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--foreground);
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+
+.markie-overlay-field:focus,
+.markie-overlay-field:focus-visible {
+  border-color: color-mix(in srgb, var(--blue) 72%, var(--border));
+}
+
+.markie-command-input {
+  background: transparent;
+  border-width: 0 0 1px;
+  border-radius: 0;
+}
+
+.markie-overlay-button,
+.markie-menu-item,
+.markie-command-row {
+  transition: background-color 0.15s, color 0.15s, opacity 0.15s, border-color 0.15s;
+}
+
+.markie-menu-item:hover,
+.markie-menu-item:focus-visible,
+.markie-command-row[data-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 72%, transparent);
+  color: var(--foreground);
+}
+
+.markie-overlay-section {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 @media (max-width: 820px) {
   .markie-document-scroll {
     padding: 1rem 1.25rem;

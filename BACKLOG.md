@@ -14,7 +14,10 @@
         first implementable slice is split into `feature_list.json`.
       source: long-agent-loop initializer 2026-06-28
 
-- [ ] Add a release/deploy smoke checklist that can run without production credentials.
+## Done
+<!-- moved here with closing evidence -->
+
+- [x] Add a release/deploy smoke checklist that can run without production credentials.
       type: dx
       severity: medium
       rationale: Existing release and cloud deployment steps are credential-gated; the unattended
@@ -22,6 +25,7 @@
       acceptance_criteria: A documented command verifies packaging prerequisites and server config
         shape without signing, notarizing, uploading, or touching production.
       source: long-agent-loop initializer 2026-06-28
-
-## Done
-<!-- moved here with closing evidence -->
+      evidence: `npm run release:preflight > .autoloop/runs/release-preflight-20260628-035123.log 2>&1`
+        passed and stopped before any signing, notarization, upload, publish, deploy, or
+        credentialed network action; `./init.sh > .autoloop/runs/init-20260628-035139-post-f003.log 2>&1`
+        passed.

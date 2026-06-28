@@ -49,3 +49,17 @@
 - next: Select `F-003` to add the safe release preflight command that stops before any publish,
   notarize, upload, deploy, or credentialed network action.
 - blockers: none. Lint still reports the pre-existing 4 warnings and zero errors.
+
+## 2026-06-28 03:52 — terminal: progressed
+- did: Completed `F-003` by adding `npm run release:preflight`, a local-only release readiness
+  command that checks package metadata, required release files, renderer/Electron tests, MCP tests,
+  server tests, lint, and static build while explicitly stopping before signing, notarization,
+  upload, publish, deploy, or credentialed network actions. Fixed the root `package-lock.json`
+  version metadata to match `package.json`.
+- evidence: `npm test -- electron/release-preflight.test.ts` passed 3 tests.
+  `npm run release:preflight > .autoloop/runs/release-preflight-20260628-035123.log 2>&1` passed
+  and ended with the credentialed-release stop message. `./init.sh > .autoloop/runs/init-20260628-035139-post-f003.log 2>&1`
+  passed renderer tests, MCP tests, server tests, lint, and build.
+- next: Select `F-004` to add the MCP safe markdown write/read regression without widening the MCP
+  public API shape.
+- blockers: none. Lint still reports the pre-existing 4 warnings and zero errors.

@@ -41,10 +41,10 @@
         "Confirm it exits before any publish, notarize, upload, deploy, or credentialed network action.",
         "Run `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "This is safe DX hardening only; actual release/deploy remains a human checkpoint."
+      "evidence": "`npm test -- electron/release-preflight.test.ts` passed 3 tests. `npm run release:preflight > .autoloop/runs/release-preflight-20260628-035123.log 2>&1` passed metadata, required-file, renderer/Electron, MCP, server, lint, and static build checks, ending before credentialed release actions. `./init.sh > .autoloop/runs/init-20260628-035139-post-f003.log 2>&1` passed.",
+      "notes": "Added `npm run release:preflight` as a local-only DX gate. Actual signing, notarization, upload, publish, deploy, and credentialed release actions remain human checkpoints."
     },
     {
       "id": "F-004",

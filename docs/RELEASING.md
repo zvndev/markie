@@ -35,7 +35,18 @@ package.json); the app reads the feed back over public HTTPS at
 ## Cutting a release
 
 1. Bump `version` in `package.json`.
-2. With all the env vars above set:
+2. Run the safe local preflight without release credentials:
+
+   ```sh
+   npm run release:preflight
+   ```
+
+   This checks package metadata, required release files, renderer/Electron
+   tests, MCP tests, server tests, lint, and the static build. It stops before
+   signing, notarization, upload, publish, deploy, or any credentialed network
+   action.
+
+3. With all the env vars above set:
 
    ```sh
    npm run electron:release
@@ -45,7 +56,7 @@ package.json); the app reads the feed back over public HTTPS at
    staples it, builds the `.dmg` and `.zip`, and uploads the artifacts +
    `latest-mac.yml` to the B2 bucket.
 
-3. Verify: `spctl -a -vvv -t install dist/mac-arm64/Markie.app` should report
+4. Verify: `spctl -a -vvv -t install dist/mac-arm64/Markie.app` should report
    `accepted` / `source=Notarized Developer ID`.
 
 ## How auto-update works at runtime

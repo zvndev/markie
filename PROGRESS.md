@@ -114,3 +114,17 @@
   wakeup can split the first implementable slice into `feature_list.json`.
 - blockers: Human approval is required before implementing bundled `markie` CLI commands or new MCP
   current-document tools. No other eligible unattended feature or backlog task is currently open.
+
+## 2026-06-28 08:50 — terminal: escalated
+- did: Ran one loop wakeup, re-grounded on the product vision and constitution, confirmed all
+  current feature ledger entries still pass, and selected the only open backlog item, "Approve or
+  revise the context-aware terminal API shape before implementing bundled `markie` CLI commands or
+  new MCP current-document tools." No product code was changed because public local API shape is a
+  human checkpoint.
+- evidence: `./init.sh > .autoloop/runs/init-20260628-automated-wakeup-084954.log 2>&1` passed
+  renderer tests, MCP tests, server tests, lint, and build. Lint still reports the known 4 warnings
+  and zero errors.
+- next: Human should approve or revise the terminal command/tool surface in an ADR; then a future
+  wakeup can split the first implementable slice into `feature_list.json`.
+- blockers: Human approval is required before implementing bundled `markie` CLI commands or new MCP
+  current-document tools. No other eligible unattended feature or backlog task is currently open.

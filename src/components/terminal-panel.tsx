@@ -2,11 +2,10 @@
 
 import "@xterm/xterm/css/xterm.css";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getElectronAPI } from "@/lib/electron";
+import { getElectronAPI, type TerminalContext } from "@/lib/electron";
 
 interface TerminalPanelProps {
-  // working directory for new shells (open file's folder, else home)
-  cwd: string | null;
+  context: TerminalContext;
   onClose: () => void;
 }
 
@@ -14,7 +13,7 @@ interface Tab {
   id: string;
 }
 
-export function TerminalPanel({ cwd, onClose }: TerminalPanelProps) {
+export function TerminalPanel({ context, onClose }: TerminalPanelProps) {
   const api = getElectronAPI();
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -25,19 +24,19 @@ export function TerminalPanel({ cwd, onClose }: TerminalPanelProps) {
   const newTab = useCallback(async () => {
     if (!api?.termCreate || creating.current) return;
     creating.current = true;
-    const id = await api.termCreate(cwd);
+    const id = await api.termCreate(context);
     creating.current = false;
     if (!id) return;
     setTabs((prev) => [...prev, { id }]);
     setActiveId(id);
-  }, [api, cwd]);
+  }, [api, context]);
 
   // first tab on mount + load external apps
   useEffect(() => {
     let alive = true;
     (async () => {
       if (!api?.termCreate) return;
-      const id = await api.termCreate(cwd);
+      const id = await api.termCreate(context);
       if (!alive || !id) return;
       setTabs([{ id }]);
       setActiveId(id);
@@ -107,7 +106,7 @@ export function TerminalPanel({ cwd, onClose }: TerminalPanelProps) {
                 {externalApps.map((app) => (
                   <button
                     key={app.id}
-                    onClick={() => { setShowExternal(false); api?.termOpenExternal?.(app.name, cwd); }}
+                    onClick={() => { setShowExternal(false); api?.termOpenExternal?.(app.name, context.cwd); }}
                     className="w-full text-left text-[12px] px-3 py-1 text-muted hover:text-foreground hover:bg-accent/40"
                   >
                     {app.name}

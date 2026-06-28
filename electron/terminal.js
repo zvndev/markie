@@ -16,18 +16,48 @@ try {
 const sessions = new Map(); // id -> ptyProcess
 let counter = 0;
 
-function create(cwd, onData, onExit) {
+function nearestWorkspace(filePath, workspaceRoots = []) {
+  if (!filePath) return null;
+  const resolved = path.resolve(filePath);
+  let nearest = null;
+  for (const root of workspaceRoots) {
+    if (!root) continue;
+    const candidate = path.resolve(root);
+    if (resolved === candidate || resolved.startsWith(candidate + path.sep)) {
+      if (!nearest || candidate.length > nearest.length) nearest = candidate;
+    }
+  }
+  return nearest;
+}
+
+function resolveContext(context = {}, workspaceRoots = []) {
+  const filePath = context.filePath ? path.resolve(context.filePath) : null;
+  const fallbackDir = filePath ? path.dirname(filePath) : null;
+  const cwd = context.cwd || fallbackDir;
+  const workspace = nearestWorkspace(filePath, workspaceRoots) || fallbackDir;
+  return { cwd, filePath, dir: fallbackDir, workspace };
+}
+
+function buildEnv(context, baseEnv = process.env) {
+  const env = { ...baseEnv, TERM: "xterm-256color" };
+  if (context?.filePath) env.MARKIE_FILE = context.filePath;
+  if (context?.dir) env.MARKIE_DIR = context.dir;
+  if (context?.workspace) env.MARKIE_WORKSPACE = context.workspace;
+  return env;
+}
+
+function create(context, onData, onExit) {
   if (!pty) return null;
   const id = `t${++counter}`;
   const shell = process.env.SHELL || "/bin/zsh";
   const home = os.homedir();
-  const dir = cwd && fs.existsSync(cwd) ? cwd : home;
+  const dir = context?.cwd && fs.existsSync(context.cwd) ? context.cwd : home;
   const p = pty.spawn(shell, ["-l"], {
     name: "xterm-256color",
     cols: 80,
     rows: 24,
     cwd: dir,
-    env: { ...process.env, TERM: "xterm-256color" },
+    env: buildEnv(context),
   });
   p.onData((d) => onData(id, d));
   p.onExit(() => {
@@ -129,4 +159,6 @@ module.exports = {
   externalApps,
   openExternal,
   isKnownApp,
+  resolveContext,
+  buildEnv,
 };

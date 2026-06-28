@@ -812,7 +812,10 @@ export default function Home() {
 
       {TERMINAL_ENABLED && showTerminal && (
         <TerminalPanel
-          cwd={filePath ? filePath.slice(0, filePath.lastIndexOf("/")) || null : null}
+          context={{
+            cwd: filePath ? filePath.slice(0, filePath.lastIndexOf("/")) || null : null,
+            filePath,
+          }}
           onClose={() => setShowTerminal(false)}
         />
       )}

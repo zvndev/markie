@@ -11,10 +11,10 @@
         "Run `printf '%s\\n' \"$MARKIE_FILE\" \"$MARKIE_DIR\" \"$MARKIE_WORKSPACE\"` and confirm the values match the active document and workspace.",
         "Run the focused terminal regression test plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "Seeded from the context-aware terminal Phase A plan. Keep this to env/cwd injection only; do not expose the hidden terminal UI or define new CLI/MCP API in this task."
+      "evidence": "`npm test -- electron/terminal.test.ts` passed with 5 tests, including terminal Markie context regression. `./init.sh > .autoloop/runs/init-20260628-015021-post-f001.log 2>&1` passed renderer tests, MCP tests, server tests, lint, and build.",
+      "notes": "Implemented env/cwd injection only. The terminal UI remains hidden by `TERMINAL_ENABLED = false`, so the user journey was verified via the focused Electron terminal regression instead of manual UI driving."
     },
     {
       "id": "F-002",

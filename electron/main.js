@@ -454,9 +454,9 @@ ipcMain.handle("ws-reveal", (_e, target) => wsTry(() => workspace.reveal(target)
 // ── Terminal IPC ──
 const terminal = require("./terminal");
 ipcMain.handle("term-available", () => terminal.available());
-ipcMain.handle("term-create", (_e, { cwd }) =>
+ipcMain.handle("term-create", (_e, context = {}) =>
   terminal.create(
-    cwd,
+    terminal.resolveContext(context, workspace.roots()),
     (id, data) => mainWindow?.webContents.send("term-data", { id, data }),
     (id) => mainWindow?.webContents.send("term-exit", { id })
   )

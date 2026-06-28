@@ -14,6 +14,11 @@ export interface SaveResult {
 
 export type ViewMode = "edit" | "preview" | "split";
 
+export interface TerminalContext {
+  cwd: string | null;
+  filePath?: string | null;
+}
+
 export interface ElectronAPI {
   platform: string;
   openFile(): Promise<FilePayload | null>;
@@ -39,7 +44,7 @@ export interface ElectronAPI {
   wsReveal(target: string): Promise<WsResult>;
   // Terminal
   termAvailable(): Promise<boolean>;
-  termCreate(cwd: string | null): Promise<string | null>;
+  termCreate(context: TerminalContext): Promise<string | null>;
   termWrite(id: string, data: string): Promise<void>;
   termResize(id: string, cols: number, rows: number): Promise<void>;
   termKill(id: string): Promise<void>;

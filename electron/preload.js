@@ -85,7 +85,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     subscribe("file-opened", callback, (data) => data),
   // Terminal
   termAvailable: () => ipcRenderer.invoke("term-available"),
-  termCreate: (cwd) => ipcRenderer.invoke("term-create", { cwd }),
+  termCreate: (context) => ipcRenderer.invoke("term-create", context),
   termWrite: (id, data) => ipcRenderer.invoke("term-write", { id, data }),
   termResize: (id, cols, rows) => ipcRenderer.invoke("term-resize", { id, cols, rows }),
   termKill: (id) => ipcRenderer.invoke("term-kill", id),

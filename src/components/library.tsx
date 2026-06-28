@@ -39,11 +39,26 @@ const VIEW_TITLE: Record<LeftView, string> = {
 
 const BADGE: Record<LibraryItem["state"], [string, string]> = {
   "local-only": ["Local", "text-muted border-border"],
-  synced: ["Synced", "text-green-400 border-green-400/40"],
-  paused: ["Paused", "text-yellow-400 border-yellow-400/40"],
-  conflict: ["Conflict", "text-red-400 border-red-400/40"],
-  behind: ["Update", "text-blue-400 border-blue-400/40"],
-  "cloud-only": ["Cloud", "text-blue-400 border-blue-400/40"],
+  synced: [
+    "Synced",
+    "text-[var(--status-green)] border-[color:var(--status-green)]",
+  ],
+  paused: [
+    "Paused",
+    "text-[var(--status-yellow)] border-[color:var(--status-yellow)]",
+  ],
+  conflict: [
+    "Conflict",
+    "text-[var(--status-red)] border-[color:var(--status-red)]",
+  ],
+  behind: [
+    "Update",
+    "text-[var(--status-blue)] border-[color:var(--status-blue)]",
+  ],
+  "cloud-only": [
+    "Cloud",
+    "text-[var(--status-blue)] border-[color:var(--status-blue)]",
+  ],
 };
 
 export function Library({
@@ -214,7 +229,10 @@ export function Library({
 
   const fileRow = (item: LibraryItem) => {
     const [label, badgeClass]: [string, string] = item.shared
-      ? ["Shared", "text-purple-400 border-purple-400/40"]
+      ? [
+          "Shared",
+          "text-[var(--status-purple)] border-[color:var(--status-purple)]",
+        ]
       : BADGE[item.state];
     const api = getElectronAPI()!;
     const isActive = activePath && item.path === activePath;
@@ -258,7 +276,7 @@ export function Library({
           )}
         </div>
         {item.path && !item.exists && (
-          <div className="text-[10px] text-red-400 pl-5">Missing on disk</div>
+          <div className="text-[10px] text-[var(--status-red)] pl-5">Missing on disk</div>
         )}
         {item.shared && (item.sharedBy || item.role) && (
           <div className="text-[10px] text-muted pl-5 truncate">
@@ -285,7 +303,7 @@ export function Library({
               <button className="text-muted hover:text-foreground" onClick={() => setConfirmOff(item.path)}>Stop syncing</button>
             )}
             {signedIn && item.state === "behind" && (
-              <button className="text-blue-400 hover:text-blue-300" onClick={() => act(() => api.docResolve({ path: item.path!, strategy: "cloud" }))}>Pull latest</button>
+              <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docResolve({ path: item.path!, strategy: "cloud" }))}>Pull latest</button>
             )}
             {signedIn && item.state === "conflict" && (
               <>
@@ -294,7 +312,7 @@ export function Library({
               </>
             )}
             {item.state === "cloud-only" && signedIn && (
-              <button className="text-blue-400 hover:text-blue-300" onClick={() => act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name }))}>Download…</button>
+              <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name }))}>Download…</button>
             )}
           </div>
         )}
@@ -387,13 +405,13 @@ export function Library({
         ) : (
           <>
             {localFiles.length > 0 && (
-              <div className="text-[9px] uppercase tracking-wide text-muted/70 px-2 pt-2 pb-1">
+              <div className="text-[9px] uppercase tracking-wide text-muted px-2 pt-2 pb-1">
                 On this device
               </div>
             )}
             {localFiles.map(fileRow)}
             {myCloudOnly.length > 0 && (
-              <div className="text-[9px] uppercase tracking-wide text-muted/70 px-2 pt-3 pb-1">
+              <div className="text-[9px] uppercase tracking-wide text-muted px-2 pt-3 pb-1">
                 In your cloud
               </div>
             )}
@@ -444,7 +462,7 @@ export function Library({
               <button className="w-full text-[12px] py-2 rounded-md bg-accent text-foreground" onClick={() => act(async () => { await getElectronAPI()!.docSyncOff({ path: confirmOff, deleteRemote: false }); setConfirmOff(null); })}>
                 Keep cloud copy, pause syncing
               </button>
-              <button className="w-full text-[12px] py-2 rounded-md border border-red-400/40 text-red-400 hover:bg-red-400/10" onClick={() => act(async () => { await getElectronAPI()!.docSyncOff({ path: confirmOff, deleteRemote: true }); setConfirmOff(null); })}>
+              <button className="w-full text-[12px] py-2 rounded-md border border-[color:var(--status-red)] text-[var(--status-red)] hover:bg-accent/40" onClick={() => act(async () => { await getElectronAPI()!.docSyncOff({ path: confirmOff, deleteRemote: true }); setConfirmOff(null); })}>
                 Delete the cloud copy
               </button>
               <button className="w-full text-[12px] py-1.5 text-muted hover:text-foreground" onClick={() => setConfirmOff(null)}>Cancel</button>

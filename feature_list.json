@@ -116,10 +116,10 @@
         "Verify side panels remain readable at narrow and normal desktop widths.",
         "Run the focused visual/style verification plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "One wakeup scope: side panels only."
+      "evidence": "`npm run visual:audit:light > .autoloop/runs/light-mode-audit-f008-20260628.log 2>&1` passed and wrote `.autoloop/runs/light-mode-audit-20260628170137/audit.json`; `sidePanelFindings` is empty and Library/Browse/Files/Shared/Skills side-panel samples pass AA in light mode, including normal and narrow screenshots. `npm test -- src/lib/color-mode.test.ts src/lib/theme.test.ts > .autoloop/runs/theme-tests-f008-20260628.log 2>&1` passed 9 tests, including root dark-class toggling and built-in side-panel status color contrast. Browser sanity on http://localhost:3000 loaded Markie, opened Library, and reported zero console warnings/errors. `./init.sh > .autoloop/runs/init-20260628-f008-post.log 2>&1` passed renderer tests, MCP tests, server tests, lint, and build.",
+      "notes": "Fixed side-panel theme semantics only. Status badges/actions and starred states now use active-theme CSS variables instead of dark-biased Tailwind color variants; the audit still records the known editor strong-text finding reserved for F-010."
     },
     {
       "id": "F-009",

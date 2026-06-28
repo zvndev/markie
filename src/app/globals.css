@@ -15,6 +15,11 @@
   --purple: #c084fc;
   --orange: #fb923c;
   --yellow: #facc15;
+  --status-green: #4ade80;
+  --status-yellow: #fde047;
+  --status-red: #f87171;
+  --status-blue: #60a5fa;
+  --status-purple: #d8b4fe;
 }
 
 @theme inline {

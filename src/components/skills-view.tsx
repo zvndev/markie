@@ -122,9 +122,9 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
         ) : (
           grouped.map((g) => (
             <div key={g.tool.id}>
-              <div className="text-[9px] uppercase tracking-wide text-muted/70 px-2 pt-3 pb-1">
+              <div className="text-[9px] uppercase tracking-wide text-muted px-2 pt-3 pb-1">
                 {g.tool.label}
-                <span className="ml-1 text-muted/50">{g.files.length}</span>
+                <span className="ml-1 text-muted">{g.files.length}</span>
               </div>
               {g.files.map((f) => (
                 <div
@@ -144,7 +144,7 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
                     onClick={(e) => { e.stopPropagation(); toggleStar(f.path); }}
                     title={stars.has(f.path) ? "Unstar" : "Star"}
                     className={`shrink-0 px-1 text-[12px] ${
-                      stars.has(f.path) ? "text-yellow-400" : "text-muted hover:text-foreground"
+                      stars.has(f.path) ? "text-[var(--status-yellow)]" : "text-muted hover:text-foreground"
                     }`}
                   >
                     {stars.has(f.path) ? "★" : "☆"}

@@ -269,7 +269,7 @@ export function FilesView({
           />
         ))}
         {listing.folders.length === 0 && listing.files.length === 0 && depth > 0 && (
-          <div style={{ paddingLeft: `${depth * 12 + 20}px` }} className="text-[10.5px] text-muted/60 py-0.5">empty</div>
+          <div style={{ paddingLeft: `${depth * 12 + 20}px` }} className="text-[10.5px] text-muted py-0.5">empty</div>
         )}
       </>
     );
@@ -379,7 +379,7 @@ function Row(props: RowProps) {
           <button className="text-muted hover:text-foreground" onClick={props.onRename}>Rename</button>
           <button className="text-muted hover:text-foreground" onClick={props.onCopyPath}>Copy path</button>
           <button className="text-muted hover:text-foreground" onClick={props.onReveal}>Reveal</button>
-          <button className="text-red-400 hover:text-red-300" onClick={props.onTrash}>Trash</button>
+          <button className="text-[var(--status-red)] hover:underline" onClick={props.onTrash}>Trash</button>
         </div>
       )}
     </div>

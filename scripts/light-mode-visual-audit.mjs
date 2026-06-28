@@ -181,6 +181,11 @@ async function main() {
       "--border": "#d4d4d8",
       "--accent": "#d4d4d8",
       "--blue": "#2563eb",
+      "--status-green": "#166534",
+      "--status-yellow": "#92400e",
+      "--status-red": "#991b1b",
+      "--status-blue": "#1d4ed8",
+      "--status-purple": "#6b21a8",
       "--doc-font-size": "16px",
       "--doc-width": "768px"
     };
@@ -204,14 +209,13 @@ async function main() {
 
   await cdp.ev(`(() => {
     document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    const existing = document.querySelector('[data-audit-surface="library-probe"]');
-    if (existing) existing.remove();
+    document.querySelectorAll('[data-audit-surface="library-probe"], [data-audit-surface="side-panel-probes"]').forEach((node) => node.remove());
     const panel = document.createElement('aside');
     panel.setAttribute('data-audit-surface', 'library-probe');
     panel.className = 'fixed top-11 bottom-0 left-[52px] z-[90] w-[260px] shrink-0 flex flex-col border-r border-border bg-surface';
     panel.innerHTML = \`
       <div class="flex items-center justify-between px-3 h-9 shrink-0">
-        <span class="text-[11px] uppercase tracking-wide text-muted font-medium">Library</span>
+        <span data-audit-sample="library-heading" class="text-[11px] uppercase tracking-wide text-muted font-medium">Library</span>
         <button title="Collapse" aria-label="Collapse library" class="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">x</button>
       </div>
       <div class="flex items-center gap-0.5 px-2 pb-1.5 shrink-0">
@@ -219,14 +223,80 @@ async function main() {
         <button class="flex-1 text-[11px] py-1 rounded-md capitalize text-muted hover:text-foreground hover:bg-accent/40">files</button>
       </div>
       <div class="flex-1 overflow-y-auto px-1.5 pb-2">
-        <div class="px-2 py-4 text-[12px] text-muted leading-relaxed">
+        <div data-audit-sample="library-empty" class="px-2 py-4 text-[12px] text-muted leading-relaxed">
           No files yet. Open one or drag <code>.md</code> files here.
         </div>
+        <div class="rounded-md px-2 py-1.5 cursor-pointer hover:bg-accent/40">
+          <div class="flex items-center gap-1.5">
+            <span class="text-[12.5px] text-foreground truncate flex-1">launch-notes.md</span>
+            <span data-audit-sample="library-synced-badge" class="text-[9px] px-1 py-px rounded border shrink-0 text-[var(--status-green)] border-[color:var(--status-green)]">Synced</span>
+          </div>
+        </div>
+        <div class="rounded-md px-2 py-1.5 cursor-pointer hover:bg-accent/40">
+          <div class="flex items-center gap-1.5">
+            <span class="text-[12.5px] text-foreground truncate flex-1">shared-plan.md</span>
+            <span data-audit-sample="library-shared-badge" class="text-[9px] px-1 py-px rounded border shrink-0 text-[var(--status-purple)] border-[color:var(--status-purple)]">Shared</span>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-x-3 gap-y-1 px-2 pt-1.5 text-[11px]">
+          <button data-audit-sample="library-download-action" class="text-[var(--status-blue)] hover:underline">Download...</button>
+          <button data-audit-sample="library-trash-action" class="text-[var(--status-red)] hover:underline">Trash</button>
+        </div>
       </div>
-      <button class="m-2 text-[11px] text-muted hover:text-foreground border border-border rounded-md py-1.5 px-2 text-left leading-snug">
+      <button data-audit-sample="library-sign-in-prompt" class="m-2 text-[11px] text-muted hover:text-foreground border border-border rounded-md py-1.5 px-2 text-left leading-snug">
         <span class="text-foreground/90">Sign in</span> to sync these files across your devices and share them.
       </button>\`;
     document.body.appendChild(panel);
+    const sidePanels = document.createElement('section');
+    sidePanels.setAttribute('data-audit-surface', 'side-panel-probes');
+    sidePanels.className = 'fixed top-[58px] left-[330px] z-[90] grid grid-cols-4 gap-2 text-[12px]';
+    sidePanels.innerHTML = \`
+      <div class="w-[215px] rounded-lg border border-border bg-surface shadow-xl overflow-hidden">
+        <div data-audit-sample="browse-heading" class="text-[9px] uppercase tracking-wide text-muted px-2 pt-2 pb-1">Browse</div>
+        <div class="px-2 py-1.5 border-b border-border">
+          <input value="roadmap" class="w-full text-[12px] bg-background border border-border rounded-md px-2 py-1 text-foreground outline-none" />
+        </div>
+        <div class="group flex items-center gap-1 px-2 py-1 hover:bg-accent/30">
+          <span class="text-muted">▾</span>
+          <span data-audit-sample="browse-row" class="truncate flex-1 text-foreground/90">~/Documents/Markie</span>
+          <span data-audit-sample="browse-count" class="text-[9px] text-muted">12</span>
+          <button data-audit-sample="browse-star" class="shrink-0 px-1 text-[12px] text-[var(--status-yellow)]">★</button>
+        </div>
+      </div>
+      <div class="w-[215px] rounded-lg border border-border bg-surface shadow-xl overflow-hidden">
+        <div data-audit-sample="files-heading" class="text-[9px] uppercase tracking-wide text-muted px-2 pt-2 pb-1">Files</div>
+        <div class="group flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-accent/40">
+          <span class="text-muted">▸</span>
+          <span data-audit-sample="files-row" class="text-[12.5px] text-foreground truncate flex-1">Drafts</span>
+          <button class="text-muted hover:text-foreground">...</button>
+        </div>
+        <div data-audit-sample="files-empty" class="pl-8 text-[10.5px] text-muted py-0.5">empty</div>
+        <div class="flex flex-wrap gap-x-3 gap-y-1 pl-8 pb-1 text-[11px]">
+          <button data-audit-sample="files-trash-action" class="text-[var(--status-red)] hover:underline">Trash</button>
+        </div>
+      </div>
+      <div class="w-[215px] rounded-lg border border-border bg-surface shadow-xl overflow-hidden">
+        <div class="flex items-center gap-0.5 px-1 py-1.5">
+          <button data-audit-sample="shared-tab-active" class="flex-1 text-[11px] py-1 rounded-md bg-accent text-foreground">Shared with me</button>
+          <button data-audit-sample="shared-tab-idle" class="flex-1 text-[11px] py-1 rounded-md text-muted hover:text-foreground hover:bg-accent/40">By me</button>
+        </div>
+        <div data-audit-sample="shared-empty" class="px-2 py-4 text-[12px] text-muted leading-relaxed">Nothing shared with you yet.</div>
+      </div>
+      <div class="w-[215px] rounded-lg border border-border bg-surface shadow-xl overflow-hidden">
+        <div class="px-2 py-1.5 flex items-center gap-1.5 border-b border-border">
+          <input value="agent" class="flex-1 text-[12px] bg-background border border-border rounded-md px-2 py-1 text-foreground outline-none" />
+          <button data-audit-sample="skills-path-toggle" class="px-1.5 py-0.5 rounded text-[11px] bg-accent text-foreground">~/</button>
+        </div>
+        <div data-audit-sample="skills-heading" class="text-[9px] uppercase tracking-wide text-muted px-2 pt-3 pb-1">Codex <span class="ml-1 text-muted">3</span></div>
+        <div class="flex items-center gap-1 px-2 py-1 hover:bg-accent/30">
+          <div class="min-w-0 flex-1">
+            <div data-audit-sample="skills-row" class="truncate text-[12px] text-foreground/90">AGENTS.md</div>
+            <div data-audit-sample="skills-path" class="truncate text-[10px] text-muted">~/project</div>
+          </div>
+          <button data-audit-sample="skills-star" class="shrink-0 px-1 text-[12px] text-[var(--status-yellow)]">★</button>
+        </div>
+      </div>\`;
+    document.body.appendChild(sidePanels);
     const pdfMenu = document.createElement('div');
     pdfMenu.setAttribute('data-audit-surface', 'pdf-menu-probe');
     pdfMenu.className = 'fixed top-[58px] left-[390px] z-[90] bg-surface-2 border border-border rounded-lg shadow-xl py-1 min-w-[140px]';
@@ -242,6 +312,14 @@ async function main() {
     document.body.appendChild(pdfMenu);
   })()`);
   screenshots.library = await capture(cdp, "03-library");
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width: 760,
+    height: 720,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  screenshots.sidePanelsNarrow = await capture(cdp, "03b-side-panels-narrow");
+  await cdp.send("Emulation.clearDeviceMetricsOverride");
 
   await cdp.ev("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true }))");
   await waitFor("command palette", () => cdp.ev("!!document.querySelector('input[placeholder^=\"Type a command\"]')"));
@@ -360,6 +438,34 @@ async function main() {
           a: oklab[4] ? Number.parseFloat(oklab[4]) : 1
         };
       }
+      const lab = raw.match(/^lab\\(([-\\d.]+)%?\\s+([-\\d.]+)\\s+([-\\d.]+)(?:\\s*\\/\\s*([\\d.]+))?\\)$/);
+      if (lab) {
+        const L = Number.parseFloat(lab[1]);
+        const A = Number.parseFloat(lab[2]);
+        const B = Number.parseFloat(lab[3]);
+        const fInv = (t) => {
+          const delta = 6 / 29;
+          return t > delta ? t ** 3 : 3 * delta ** 2 * (t - 4 / 29);
+        };
+        const fy = (L + 16) / 116;
+        const fx = fy + A / 500;
+        const fz = fy - B / 200;
+        const x50 = 0.96422 * fInv(fx);
+        const y50 = fInv(fy);
+        const z50 = 0.82521 * fInv(fz);
+        const x = 0.9555766 * x50 - 0.0230393 * y50 + 0.0631636 * z50;
+        const y = -0.0282895 * x50 + 1.0099416 * y50 + 0.0210077 * z50;
+        const z = 0.0122982 * x50 - 0.0204830 * y50 + 1.3299098 * z50;
+        const r = 3.2404542 * x - 1.5371385 * y - 0.4985314 * z;
+        const g = -0.9692660 * x + 1.8760108 * y + 0.0415560 * z;
+        const b = 0.0556434 * x - 0.2040259 * y + 1.0572252 * z;
+        return {
+          r: clamp(gamma(r) * 255),
+          g: clamp(gamma(g) * 255),
+          b: clamp(gamma(b) * 255),
+          a: lab[4] ? Number.parseFloat(lab[4]) : 1
+        };
+      }
       const match = raw.match(/rgba?\\(([^)]+)\\)/);
       if (!match) return null;
       const parts = match[1].split(',').map((p) => Number.parseFloat(p.trim()));
@@ -426,9 +532,29 @@ async function main() {
       ['toolbar PDF menu light option', [...document.querySelectorAll('[data-audit-surface="pdf-menu-probe"] button')].find((el) => text(el).includes('Export Light'))],
       ['left rail library button', document.querySelector('button[aria-label^="Library"]')],
       ['left rail sign-in button', document.querySelector('button[aria-label="Sign in"]')],
-      ['library heading', document.querySelector('[data-audit-surface="library-probe"] span')],
-      ['library body', [...document.querySelectorAll('[data-audit-surface="library-probe"] div')].find((el) => text(el).includes('No files yet'))],
-      ['library sign-in prompt', document.querySelector('[data-audit-surface="library-probe"] button:last-child')],
+      ['library heading', document.querySelector('[data-audit-sample="library-heading"]')],
+      ['library body', document.querySelector('[data-audit-sample="library-empty"]')],
+      ['library synced badge', document.querySelector('[data-audit-sample="library-synced-badge"]')],
+      ['library shared badge', document.querySelector('[data-audit-sample="library-shared-badge"]')],
+      ['library download action', document.querySelector('[data-audit-sample="library-download-action"]')],
+      ['library trash action', document.querySelector('[data-audit-sample="library-trash-action"]')],
+      ['library sign-in prompt', document.querySelector('[data-audit-sample="library-sign-in-prompt"]')],
+      ['browse heading', document.querySelector('[data-audit-sample="browse-heading"]')],
+      ['browse row', document.querySelector('[data-audit-sample="browse-row"]')],
+      ['browse count', document.querySelector('[data-audit-sample="browse-count"]')],
+      ['browse starred state', document.querySelector('[data-audit-sample="browse-star"]')],
+      ['files heading', document.querySelector('[data-audit-sample="files-heading"]')],
+      ['files row', document.querySelector('[data-audit-sample="files-row"]')],
+      ['files empty state', document.querySelector('[data-audit-sample="files-empty"]')],
+      ['files trash action', document.querySelector('[data-audit-sample="files-trash-action"]')],
+      ['shared active tab', document.querySelector('[data-audit-sample="shared-tab-active"]')],
+      ['shared idle tab', document.querySelector('[data-audit-sample="shared-tab-idle"]')],
+      ['shared empty state', document.querySelector('[data-audit-sample="shared-empty"]')],
+      ['skills path toggle', document.querySelector('[data-audit-sample="skills-path-toggle"]')],
+      ['skills heading', document.querySelector('[data-audit-sample="skills-heading"]')],
+      ['skills row', document.querySelector('[data-audit-sample="skills-row"]')],
+      ['skills path', document.querySelector('[data-audit-sample="skills-path"]')],
+      ['skills starred state', document.querySelector('[data-audit-sample="skills-star"]')],
       ['editor rich article', document.querySelector('.markdown-body')],
       ['editor strong text', document.querySelector('.markdown-body strong')],
       ['editor inline code', document.querySelector('.markdown-body code')],
@@ -464,13 +590,41 @@ async function main() {
         passesAA: contrast >= 4.5
       };
     });
-    const surfaces = ['toolbar', 'editor/rich view', 'left rail', 'library', 'command palette', 'settings', 'share dialog', 'comments'];
+    const surfaces = ['toolbar', 'editor/rich view', 'left rail', 'library', 'browse', 'files', 'shared', 'skills/agents', 'command palette', 'settings', 'share dialog', 'comments'];
+    const sidePanelLabels = new Set([
+      'library heading',
+      'library body',
+      'library synced badge',
+      'library shared badge',
+      'library download action',
+      'library trash action',
+      'library sign-in prompt',
+      'browse heading',
+      'browse row',
+      'browse count',
+      'browse starred state',
+      'files heading',
+      'files row',
+      'files empty state',
+      'files trash action',
+      'shared active tab',
+      'shared idle tab',
+      'shared empty state',
+      'skills path toggle',
+      'skills heading',
+      'skills row',
+      'skills path',
+      'skills starred state'
+    ]);
+    const sidePanelFindings = results.filter((item) => sidePanelLabels.has(item.label) && (!item.present || !item.passesAA));
     return {
       ok: results.every((item) => item.present),
       mode: 'light',
       threshold: 4.5,
-      tokens: Object.fromEntries(['--background', '--surface', '--surface-2', '--foreground', '--muted', '--border', '--accent', '--blue'].map((name) => [name, getComputedStyle(document.documentElement).getPropertyValue(name).trim()])),
+      tokens: Object.fromEntries(['--background', '--surface', '--surface-2', '--foreground', '--muted', '--border', '--accent', '--blue', '--status-green', '--status-yellow', '--status-red', '--status-blue', '--status-purple'].map((name) => [name, getComputedStyle(document.documentElement).getPropertyValue(name).trim()])),
       surfaces,
+      sidePanelSamples: results.filter((item) => sidePanelLabels.has(item.label)),
+      sidePanelFindings,
       samples: results,
       findings: results.filter((item) => !item.present || !item.passesAA).map((item) => ({
         surface: item.label,

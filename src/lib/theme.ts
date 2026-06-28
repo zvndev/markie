@@ -7,6 +7,11 @@ export interface ThemeTokens {
   border: string;
   accent: string;
   link: string;
+  statusGreen?: string;
+  statusYellow?: string;
+  statusRed?: string;
+  statusBlue?: string;
+  statusPurple?: string;
   fontSize: number; // base px for the document body
   contentWidth: number; // max width px for the reading column
 }
@@ -31,6 +36,11 @@ export const MARKIE_DARK: ThemePreset = {
     border: "#27272a",
     accent: "#3f3f46",
     link: "#60a5fa",
+    statusGreen: "#4ade80",
+    statusYellow: "#fde047",
+    statusRed: "#f87171",
+    statusBlue: "#60a5fa",
+    statusPurple: "#d8b4fe",
     fontSize: 16,
     contentWidth: 768,
   },
@@ -49,6 +59,11 @@ export const MARKIE_LIGHT: ThemePreset = {
     border: "#d4d4d8",
     accent: "#d4d4d8",
     link: "#2563eb",
+    statusGreen: "#166534",
+    statusYellow: "#92400e",
+    statusRed: "#991b1b",
+    statusBlue: "#1d4ed8",
+    statusPurple: "#6b21a8",
     fontSize: 16,
     contentWidth: 768,
   },
@@ -109,6 +124,11 @@ export function applyTheme(tokens: ThemeTokens): void {
   r.setProperty("--border", tokens.border);
   r.setProperty("--accent", tokens.accent);
   r.setProperty("--blue", tokens.link);
+  r.setProperty("--status-green", tokens.statusGreen ?? tokens.foreground);
+  r.setProperty("--status-yellow", tokens.statusYellow ?? tokens.foreground);
+  r.setProperty("--status-red", tokens.statusRed ?? tokens.foreground);
+  r.setProperty("--status-blue", tokens.statusBlue ?? tokens.link);
+  r.setProperty("--status-purple", tokens.statusPurple ?? tokens.foreground);
   r.setProperty("--doc-font-size", `${tokens.fontSize}px`);
   r.setProperty("--doc-width", `${tokens.contentWidth}px`);
 }

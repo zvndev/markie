@@ -190,3 +190,23 @@
   Shared, and file lists.
 - blockers: none for `F-007`. The audit still records the editor strong-text light-mode finding
   reserved for `F-010`; lint still reports the pre-existing 4 warnings and zero errors.
+
+## 2026-06-28 13:03 — terminal: progressed
+- did: Completed `F-008` by making side-panel status/action colors follow active Markie theme
+  variables instead of Tailwind dark-biased variants, ensuring light mode remains legible even when
+  OS dark preference is active. Fixed color-mode application so the root `dark` class tracks the
+  resolved mode, and expanded the light visual audit to cover Library, Browse, Files, Shared, and
+  Skills/Agents side-panel samples at normal and narrow widths.
+- evidence: `./init.sh > .autoloop/runs/init-20260628-f008-pre.log 2>&1` passed before selection.
+  `npm run visual:audit:light > .autoloop/runs/light-mode-audit-f008-20260628.log 2>&1` passed and
+  wrote `.autoloop/runs/light-mode-audit-20260628170137/audit.json`; `sidePanelFindings` is empty
+  and side-panel samples pass AA contrast in light mode, with representative contrast from 5.94:1
+  to 15.71:1. `npm test -- src/lib/color-mode.test.ts src/lib/theme.test.ts >
+  .autoloop/runs/theme-tests-f008-20260628.log 2>&1` passed 9 tests. In-app browser sanity loaded
+  `http://localhost:3000`, opened Library, and reported zero console warnings/errors. `./init.sh >
+  .autoloop/runs/init-20260628-f008-post.log 2>&1` passed renderer tests, MCP tests, server tests,
+  lint, and build.
+- next: Select `F-009` to fix modal and popover light-mode legibility for command palette,
+  settings, theme settings, stats, share, agents, and comments.
+- blockers: none for `F-008`. The audit still records the known editor strong-text light-mode
+  finding reserved for `F-010`; lint still reports the pre-existing 4 warnings and zero errors.

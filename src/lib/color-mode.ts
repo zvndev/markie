@@ -7,7 +7,7 @@ import {
   saveThemeStore,
   MARKIE_DARK,
   MARKIE_LIGHT,
-} from "@/lib/theme";
+} from "./theme";
 
 export type ColorMode = "system" | "light" | "dark";
 
@@ -44,6 +44,9 @@ export function applyColorMode(mode: ColorMode): void {
   }
   const resolved = resolveColorMode(mode);
   const preset = resolved === "dark" ? MARKIE_DARK : MARKIE_LIGHT;
+  if (typeof document !== "undefined") {
+    document.documentElement.classList.toggle("dark", resolved === "dark");
+  }
   const store = loadThemeStore();
   saveThemeStore({ ...store, activeId: preset.id });
   applyTheme(preset.tokens);

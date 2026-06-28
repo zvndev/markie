@@ -132,7 +132,7 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
       }}
       title={on ? "Unstar" : "Star"}
       className={`shrink-0 px-1 text-[12px] ${
-        on ? "text-yellow-400" : "text-muted hover:text-foreground"
+        on ? "text-[var(--status-yellow)]" : "text-muted hover:text-foreground"
       }`}
     >
       {on ? "★" : "☆"}
@@ -180,7 +180,7 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
               persist(STAR_KEY, v ? "1" : "0");
             }}
             className={`px-1.5 py-0.5 rounded ${
-              starredOnly ? "bg-accent text-yellow-400" : "text-muted hover:text-foreground"
+              starredOnly ? "bg-accent text-[var(--status-yellow)]" : "text-muted hover:text-foreground"
             }`}
             title="Show starred only"
           >

@@ -80,4 +80,21 @@ describe("theme store", () => {
       expect(contrast(theme.tokens.muted, theme.tokens.surface2)).toBeGreaterThanOrEqual(4.5);
     }
   });
+
+  it("keeps side-panel status colors readable in built-in themes", () => {
+    const statusKeys = [
+      "statusGreen",
+      "statusYellow",
+      "statusRed",
+      "statusBlue",
+      "statusPurple",
+    ] as const;
+
+    for (const theme of [MARKIE_DARK, MARKIE_LIGHT]) {
+      for (const key of statusKeys) {
+        expect(contrast(theme.tokens[key]!, theme.tokens.surface)).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(theme.tokens[key]!, theme.tokens.surface2)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
 });

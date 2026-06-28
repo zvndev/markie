@@ -1,16 +1,13 @@
-# Current Task — F-012
+# Current Task — F-013
 
-## Selected feature
-The primary desktop shell receives one native-feeling refinement pass for spacing, density, window chrome, and panel boundaries.
+## Description
+The editor and document canvas receive one refinement pass for reading width, split-mode balance, empty states, and responsive behavior.
 
-## Acceptance criteria
-- Review the main app shell after light-mode fixes in both light and dark mode.
-- Make a narrow layout polish pass on toolbar height/density, rail alignment, panel borders, and content spacing without changing navigation structure.
-- Verify no text overlaps or clips at the minimum supported window size and at a normal desktop size.
+## Acceptance Criteria
+- Inspect editor, rich view, preview, split mode, and empty/welcome states at narrow and normal desktop widths.
+- Make one focused layout refinement pass that improves native polish without changing core editor behavior.
+- Verify long filenames, long headings, and common markdown examples do not overlap or clip.
 - Run screenshot/visual verification plus `./init.sh`.
 
-## Plan
-- Inspect the current shell, toolbar, activity rail, panel, and editor layout classes.
-- Make one focused CSS/component pass on shell density, boundaries, and content spacing only.
-- Verify with rendered screenshots/computed layout evidence in built-in light and dark modes at normal and compact desktop sizes.
-- Run the visual guard and full `./init.sh` before marking the feature complete.
+## Scope
+Document work area only. Do not change navigation structure, add new feature surface, release/publish/deploy, or touch human-gated API/schema decisions.

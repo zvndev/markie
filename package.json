@@ -28,6 +28,7 @@
     "comments:verify:e2e": "node scripts/comments-verify-local.mjs --with-e2e",
     "visual:audit:light": "node scripts/light-mode-visual-audit.mjs",
     "visual:guard:theme": "node scripts/light-mode-visual-audit.mjs --regression-guard",
+    "visual:check:document": "node scripts/document-canvas-layout-check.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && NODE_ENV=development electron .\"",
     "electron:build": "npm run build && electron-builder --mac",

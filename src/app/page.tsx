@@ -761,53 +761,62 @@ export default function Home() {
           />
         )}
 
-        {/* Editor pane */}
-        {(mode === "edit" || mode === "split") && (
-          <div
-            className={`${
-              mode === "split" ? "w-1/2 border-r border-border" : "w-full"
-            } markie-source-pane h-full overflow-hidden flex flex-col`}
-          >
-            {collabCfg && (
-              <div className="px-3 py-1 text-[11px] text-muted bg-surface border-b border-border shrink-0">
-                Live session — source is read-only, edit in View
+        <div
+          data-markie-document-area
+          className={`markie-document-area flex-1 min-w-0 overflow-hidden ${
+            mode === "split"
+              ? "markie-document-area--split grid grid-cols-[minmax(0,0.96fr)_minmax(0,1.04fr)] max-[820px]:grid-cols-[minmax(0,0.94fr)_minmax(0,1.06fr)]"
+              : "markie-document-area--single flex"
+          }`}
+        >
+          {/* Editor pane */}
+          {(mode === "edit" || mode === "split") && (
+            <div
+              data-markie-source-pane
+              className={`${
+                mode === "split" ? "markie-pane-divider" : ""
+              } markie-source-pane h-full min-w-0 w-full flex-1 overflow-hidden flex flex-col`}
+            >
+              {collabCfg && (
+                <div className="px-3 py-1 text-[11px] text-muted bg-surface border-b border-border shrink-0">
+                  Live session — source is read-only, edit in View
+                </div>
+              )}
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <Editor
+                  value={content}
+                  onChange={setContent}
+                  readOnly={!!collabCfg}
+                />
               </div>
-            )}
-            <div className="flex-1 overflow-hidden">
-              <Editor
-                value={content}
-                onChange={setContent}
-                readOnly={!!collabCfg}
-              />
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Rich View pane with format rail */}
-        {(mode === "preview" || mode === "split") && (
-          <div
-            className={`${
-              mode === "split" ? "w-1/2" : "w-full"
-            } markie-rich-pane h-full overflow-hidden flex`}
-          >
-            <FormatRail editor={richEditor} />
-            <div className="flex-1 h-full overflow-hidden">
-              <RichView
-                key={
-                  collabCfg
-                    ? `live:${collabCfg.docId}:${collabCfg.readonly}`
-                    : "solo"
-                }
-                value={content}
-                onChange={setContent}
-                onEditorReady={setRichEditor}
-                collab={collabCfg}
-                onPeersChange={handlePeersChange}
-                onCollabStatus={handleCollabStatus}
-              />
+          {/* Rich View pane with format rail */}
+          {(mode === "preview" || mode === "split") && (
+            <div
+              data-markie-rich-pane
+              className="markie-rich-pane h-full min-w-0 w-full flex-1 overflow-hidden flex"
+            >
+              <FormatRail editor={richEditor} />
+              <div className="flex-1 min-w-0 h-full overflow-hidden">
+                <RichView
+                  key={
+                    collabCfg
+                      ? `live:${collabCfg.docId}:${collabCfg.readonly}`
+                      : "solo"
+                  }
+                  value={content}
+                  onChange={setContent}
+                  onEditorReady={setRichEditor}
+                  collab={collabCfg}
+                  onPeersChange={handlePeersChange}
+                  onCollabStatus={handleCollabStatus}
+                />
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {TERMINAL_ENABLED && showTerminal && (

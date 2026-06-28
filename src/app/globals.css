@@ -66,13 +66,47 @@ body {
   background: var(--background);
 }
 
+.markie-document-area--single {
+  display: flex;
+}
+
+.markie-document-area--single > .markie-source-pane,
+.markie-document-area--single > .markie-rich-pane {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.markie-document-area--split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.96fr) minmax(0, 1.04fr);
+}
+
+.markie-document-area > .markie-source-pane,
+.markie-document-area > .markie-rich-pane {
+  min-width: 0;
+}
+
+.markie-pane-divider {
+  border-right: 1px solid var(--border);
+}
+
 .markie-document-scroll {
   padding: clamp(1.25rem, 3vw, 2.25rem) clamp(1.5rem, 4vw, 3rem);
+  scroll-padding: clamp(1.25rem, 3vw, 2.25rem);
+}
+
+.markie-document-canvas {
+  width: min(100%, var(--doc-width, 768px));
+  min-height: calc(100% - clamp(2.5rem, 6vw, 4.5rem));
 }
 
 @media (max-width: 820px) {
   .markie-document-scroll {
     padding: 1rem 1.25rem;
+  }
+
+  .markie-document-area--split {
+    grid-template-columns: minmax(0, 0.94fr) minmax(0, 1.06fr);
   }
 }
 
@@ -97,6 +131,7 @@ body {
   font-size: 15px;
   line-height: 1.75;
   color: var(--foreground);
+  overflow-wrap: anywhere;
 }
 
 .markdown-body h1 {
@@ -105,7 +140,8 @@ body {
   margin: 1.5em 0 0.6em;
   padding-bottom: 0.3em;
   border-bottom: 1px solid var(--border);
-  letter-spacing: -0.025em;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
 }
 
 .markdown-body h2 {
@@ -114,13 +150,15 @@ body {
   margin: 1.4em 0 0.5em;
   padding-bottom: 0.25em;
   border-bottom: 1px solid var(--border);
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
 }
 
 .markdown-body h3 {
   font-size: 1.25em;
   font-weight: 600;
   margin: 1.3em 0 0.4em;
+  overflow-wrap: anywhere;
 }
 
 .markdown-body h4 {
@@ -215,6 +253,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow-x: auto;
+  max-width: 100%;
 }
 
 .markdown-body pre code {
@@ -242,9 +281,12 @@ body {
 
 .markdown-body table {
   width: 100%;
+  max-width: 100%;
   margin: 1em 0;
   border-collapse: collapse;
   font-size: 0.9em;
+  display: block;
+  overflow-x: auto;
 }
 
 .markdown-body thead th {
@@ -326,7 +368,16 @@ body {
 }
 
 .cm-editor .cm-content {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--doc-width, 768px) + clamp(2.5rem, 6vw, 5rem));
+  min-height: calc(100% - 2.5rem);
+  margin: 0 auto;
   padding: 0 clamp(1.25rem, 3vw, 2.5rem);
+}
+
+.cm-editor .cm-line {
+  overflow-wrap: anywhere;
 }
 
 .cm-editor .cm-gutters {

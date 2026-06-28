@@ -212,9 +212,10 @@ export function RichView({
       {editor && inTable && !collab?.readonly && <TableBar editor={editor} />}
       <div ref={setScrollEl} className="markie-document-scroll h-full overflow-y-auto relative">
         <article
-          className="markdown-body mx-auto"
+          data-markie-rich-canvas
+          className="markdown-body markie-document-canvas mx-auto"
           style={{
-            maxWidth: "var(--doc-width, 768px)",
+            width: "min(100%, var(--doc-width, 768px))",
             fontSize: "var(--doc-font-size, 16px)",
           }}
         >

@@ -191,10 +191,10 @@
         "Verify long filenames, long headings, and common markdown examples do not overlap or clip.",
         "Run screenshot/visual verification plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "One wakeup scope: document work area only."
+      "evidence": "`npm run visual:check:document > .autoloop/runs/document-layout-check-f013-20260628-final.log 2>&1` passed and wrote `.autoloop/runs/document-layout-check-20260628215931/document-layout.json` plus screenshots for normal preview, normal split, compact split, compact edit, and compact empty states. The final metrics reported zero document-node overflows, no source/rich pane overlap, 0px split gaps, bounded rich canvases, and usable source/rich pane widths. `npm run visual:guard:theme > .autoloop/runs/theme-visual-guard-f013-20260628.log 2>&1` passed with zero findings across shell/content/overlay samples and wrote `.autoloop/runs/light-mode-audit-20260628215943/audit.json`. `./init.sh > .autoloop/runs/init-20260628-f013-post.log 2>&1` passed.",
+      "notes": "Completed one focused document work-area polish pass: single-pane View/Edit now fill the canvas, split mode uses an explicit grid balance, rich content stays bounded to the theme reading width, and long headings/common markdown wrap or scroll inside the document area."
     },
     {
       "id": "F-014",

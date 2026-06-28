@@ -173,3 +173,20 @@
   evidence.
 - blockers: none for `F-006`. The terminal API approval item remains human-gated and deferred
   behind the active `F-006` through `F-022` lane.
+
+## 2026-06-28 11:54 — terminal: progressed
+- did: Completed `F-007` by removing the hardcoded dark PDF/export menu background from the top
+  toolbar and keeping both the real menu and audit probe on theme-aware surface tokens. Added a
+  focused built-in theme contrast regression for muted top-chrome controls in dark and light mode.
+- evidence: `./init.sh > .autoloop/runs/init-20260628-f007-pre.log 2>&1` passed before selection.
+  `npm run visual:audit:light > .autoloop/runs/light-mode-audit-f007-20260628.log 2>&1` passed and
+  wrote `.autoloop/runs/light-mode-audit-20260628155223/audit.json`; toolbar, file control, and PDF
+  menu samples passed AA contrast, with PDF menu options improving from 2.2:1 to 6.38:1 in light
+  mode. `npm test -- src/lib/theme.test.ts > .autoloop/runs/theme-test-f007-20260628.log 2>&1`
+  passed 6 tests, including built-in dark/light top-chrome token contrast. `./init.sh >
+  .autoloop/runs/init-20260628-f007-post.log 2>&1` passed renderer tests, MCP tests, server tests,
+  lint, and build.
+- next: Select `F-008` to fix side-panel light-mode legibility for Library, Browse, Skills/Agents,
+  Shared, and file lists.
+- blockers: none for `F-007`. The audit still records the editor strong-text light-mode finding
+  reserved for `F-010`; lint still reports the pre-existing 4 warnings and zero errors.

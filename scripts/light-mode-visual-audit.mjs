@@ -229,8 +229,7 @@ async function main() {
     document.body.appendChild(panel);
     const pdfMenu = document.createElement('div');
     pdfMenu.setAttribute('data-audit-surface', 'pdf-menu-probe');
-    pdfMenu.className = 'fixed top-[58px] left-[390px] z-[90] border border-border rounded-lg shadow-xl py-1 min-w-[140px]';
-    pdfMenu.style.background = '#1c1c20';
+    pdfMenu.className = 'fixed top-[58px] left-[390px] z-[90] bg-surface-2 border border-border rounded-lg shadow-xl py-1 min-w-[140px]';
     pdfMenu.innerHTML = \`
       <button class="w-full text-left px-3 py-1.5 text-[12px] text-muted hover:text-foreground hover:bg-accent/50 flex items-center gap-2">
         <span class="w-3 h-3 rounded-sm bg-zinc-800 border border-zinc-600 shrink-0"></span>

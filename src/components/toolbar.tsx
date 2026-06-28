@@ -150,9 +150,7 @@ export function Toolbar({
           </button>
 
           {showPDFMenu && (
-            <div className="absolute top-full left-0 mt-1.5 bg-surface-2 border border-border rounded-lg shadow-xl py-1 min-w-[140px] z-50"
-              style={{ background: "#1c1c20" }}
-            >
+            <div className="absolute top-full left-0 mt-1.5 bg-surface-2 border border-border rounded-lg shadow-xl py-1 min-w-[140px] z-50">
               <button
                 onClick={() => { onExportPDF("dark"); setShowPDFMenu(false); }}
                 className="w-full text-left px-3 py-1.5 text-[12px] text-muted hover:text-foreground hover:bg-accent/50 transition-colors flex items-center gap-2"

@@ -15,6 +15,23 @@ const storage = new Map<string, string>();
   removeItem: (k: string) => void storage.delete(k),
 };
 
+function luminance(hex: string) {
+  const [r, g, b] = hex
+    .replace("#", "")
+    .match(/.{2}/g)!
+    .map((pair) => parseInt(pair, 16) / 255)
+    .map((value) =>
+      value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+    );
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrast(foreground: string, background: string) {
+  const a = luminance(foreground);
+  const b = luminance(background);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
 describe("theme store", () => {
   beforeEach(() => storage.clear());
 
@@ -55,5 +72,12 @@ describe("theme store", () => {
 
   it("falls back to dark for unknown ids", () => {
     expect(findTheme(loadThemeStore(), "nope").id).toBe(MARKIE_DARK.id);
+  });
+
+  it("keeps top chrome muted controls readable in built-in themes", () => {
+    for (const theme of [MARKIE_DARK, MARKIE_LIGHT]) {
+      expect(contrast(theme.tokens.muted, theme.tokens.surface)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(theme.tokens.muted, theme.tokens.surface2)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });

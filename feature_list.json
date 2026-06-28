@@ -101,10 +101,10 @@
         "Verify toolbar controls, hover/active states, dropdown text, dividers, and disabled/secondary text are visible in light and dark mode.",
         "Run the focused style check or screenshot comparison plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "One wakeup scope: top chrome only. Do not redesign the whole layout in this task."
+      "evidence": "`npm run visual:audit:light > .autoloop/runs/light-mode-audit-f007-20260628.log 2>&1` passed and wrote `.autoloop/runs/light-mode-audit-20260628155223/audit.json` plus screenshots. Toolbar, file control, and PDF menu samples passed AA contrast in light mode; PDF menu options improved from 2.2:1 to 6.38:1. `npm test -- src/lib/theme.test.ts > .autoloop/runs/theme-test-f007-20260628.log 2>&1` passed 6 tests, including built-in dark/light top-chrome token contrast. `./init.sh > .autoloop/runs/init-20260628-f007-post.log 2>&1` passed.",
+      "notes": "Fixed top chrome only by removing the hardcoded dark PDF menu background and keeping the audit probe on theme tokens. The remaining editor strong-text light-mode finding stays reserved for F-010."
     },
     {
       "id": "F-008",

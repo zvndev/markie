@@ -30,6 +30,11 @@ Tasks should land in this order:
 - Treat React Native scaffolding as a later checkpoint. Before that, the automation may write an
   ADR, map shared code, and extract pure modules that help both Electron and RN.
 
+## Audit Artifacts
+- [Cross-platform desktop audit](./2026-06-28-cross-platform-desktop-audit.md) classifies the
+  current macOS-only and Apple-Silicon-only assumptions by runtime behavior, packaging config,
+  docs/download page, test/preflight, and human-gated release/deploy work.
+
 ## Chunking Standard
 Each feature-ledger item should be small enough that an agent can:
 - Re-ground and run `./init.sh`.

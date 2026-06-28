@@ -1,16 +1,17 @@
-# Current Task — F-014
+# Current Task — F-015
 
 ## Task
-Keyboard-first overlays and menus receive one native-feeling refinement pass for focus, hover,
-spacing, and hierarchy.
+A cross-platform desktop audit maps macOS-only assumptions and creates a safe implementation
+checklist for Windows, Intel Mac, and Linux support.
 
 ## Acceptance Criteria
-1. Inspect command palette, menus, settings, share, stats, and theme settings after the light-mode
-   overlay fixes.
-2. Make one focused polish pass that improves focus rings, menu spacing, hierarchy, and
-   native-feeling affordances.
-3. Verify keyboard navigation and focus visibility still work.
-4. Run focused interaction/visual verification plus `./init.sh`.
+1. Search Electron, renderer, MCP, release, and docs code for macOS-only assumptions and
+   Apple-Silicon-only release assumptions.
+2. Classify each finding as runtime behavior, packaging config, docs/download page, test/preflight,
+   or human-gated release/deploy work.
+3. Add the resulting checklist to the roadmap docs or backlog without changing runtime behavior.
+4. Run `./init.sh`.
 
 ## Scope Guard
-Do not add new feature surface. Polish existing overlays only.
+Audit and checklist only. Do not change runtime behavior, publish, deploy, notarize, upload,
+or use release credentials.

@@ -284,3 +284,20 @@
 - evidence: `./init.sh > .autoloop/runs/init-20260628-f014-pre.log 2>&1` passed before selection. `npm run visual:check:overlays > .autoloop/runs/overlay-interaction-check-f014-20260628.log 2>&1` passed and wrote `.autoloop/runs/overlay-interaction-check-20260628230923/overlay-interaction.json` with 10 screenshots and 14 focus/selection metrics across light and dark mode. `npm run visual:guard:theme > .autoloop/runs/theme-visual-guard-f014-20260628.log 2>&1` passed and wrote `.autoloop/runs/light-mode-audit-20260628230952/audit.json` with 68 samples, zero findings, and passing shell/content/overlay guard categories. `./init.sh > .autoloop/runs/init-20260628-f014-post.log 2>&1` passed renderer tests, MCP tests, server tests, lint, and build.
 - next: Select `F-015` for a cross-platform desktop audit that maps macOS-only assumptions and creates the Windows, Intel Mac, and Linux support checklist without changing runtime behavior.
 - blockers: none for `F-014`. Lint still reports the pre-existing 4 warnings and zero errors. The pre-existing local `electron/main.js` updater/menu diff was not part of this task and was left untouched.
+
+## 2026-06-28 19:57 EDT — terminal: progressed
+- did: Completed `F-015` by auditing Electron runtime code, renderer copy/layout assumptions, MCP
+  behavior, release packaging config, release preflight, server download routes, README, and release
+  docs for macOS-only and Apple-Silicon-only assumptions. Added
+  `docs/superpowers/plans/2026-06-28-cross-platform-desktop-audit.md` with findings classified as
+  runtime behavior, packaging config, docs/download page, test/preflight, and human-gated
+  release/deploy work, then linked it from the style/platform/RN roadmap.
+- evidence: `./init.sh > .autoloop/runs/init-20260628-current-pre.log 2>&1` passed before
+  selection. `rg ... > .autoloop/runs/cross-platform-audit-f015-20260628.log 2>&1` captured the
+  source scan. `./init.sh > .autoloop/runs/init-20260628-f015-post.log 2>&1` passed renderer tests,
+  MCP tests, server tests, lint, and build.
+- next: Select `F-016`; use the audit to fix one high-impact runtime platform fallback, preferably
+  `mcp/markie-mcp.mjs` `markie_open_in_markie` or `electron/terminal.js` shell selection, with
+  darwin/win32/linux tests.
+- blockers: none for `F-015`. The pre-existing local `electron/main.js` updater/menu diff was not
+  part of this task and was left untouched.

@@ -221,10 +221,10 @@
         "Add the resulting checklist to the roadmap docs or backlog without changing runtime behavior.",
         "Run `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "Start cross-platform work with a map. Do not publish or deploy."
+      "evidence": "`rg ... > .autoloop/runs/cross-platform-audit-f015-20260628.log 2>&1` captured the Electron, renderer, MCP, release, docs, and server platform scan. `docs/superpowers/plans/2026-06-28-cross-platform-desktop-audit.md` classifies findings into runtime behavior, packaging config, docs/download page, test/preflight, and human-gated release/deploy work. `./init.sh > .autoloop/runs/init-20260628-f015-post.log 2>&1` passed.",
+      "notes": "Completed as audit/checklist only. No runtime behavior, packaging, publishing, notarization, upload, deploy, or credentialed release action changed."
     },
     {
       "id": "F-016",

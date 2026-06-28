@@ -1,0 +1,100 @@
+# Cross-Platform Desktop Audit
+
+_Created: 2026-06-28_
+
+## Scope
+This audit maps the macOS-only and Apple-Silicon-only assumptions that block first-class desktop
+support for Apple Silicon macOS, Intel macOS, Windows, and Linux. It is a checklist only: no runtime
+behavior, packaging, publishing, notarization, upload, deploy, or credentialed release action changed
+in this pass.
+
+## Summary
+Markie already has some platform-aware Electron behavior for file opens, deep links, and app
+lifecycle, but the product is still configured, documented, and marketed as an Apple Silicon macOS
+app. The highest-impact safe path is:
+
+1. Make one runtime fallback fully platform-aware and test it across `darwin`, `win32`, and `linux`.
+2. Expand local packaging scripts/config so all four desktop targets can be validated without
+   publishing.
+3. Extend release docs and preflight metadata to describe the full artifact matrix.
+4. Add a repo-local download manifest, then update the download-page source or integration contract.
+
+## Findings By Category
+
+### Runtime Behavior
+- [ ] `electron/terminal.js` starts PTYs with `process.env.SHELL || "/bin/zsh"`. On Windows this
+      needs an explicit shell selection such as PowerShell or `cmd.exe`, plus tests for `darwin`,
+      `win32`, and `linux`.
+- [ ] `electron/terminal.js` discovers only macOS `.app` terminal candidates and opens external
+      terminals via `open -a`. Non-macOS currently returns no external terminal apps and
+      `"macOS only"` for launch requests. Decide whether Windows/Linux should expose native
+      launchers or hide the launcher with clearer copy.
+- [ ] `mcp/markie-mcp.mjs` implements `markie_open_in_markie` with `spawn("open", ["-a", "Markie",
+      path])`. This needs a platform guard or platform-specific opener before MCP is advertised as
+      cross-platform.
+- [ ] `src/components/browse-view.tsx` derives `~` display paths only from `/Users/<name>`, so
+      Windows paths and most Linux home paths will not shorten correctly.
+- [ ] `src/components/toolbar.tsx` correctly applies the traffic-light padding only on Darwin. Keep
+      this as the desktop-chrome pattern when adding Windows/Linux window controls or spacing.
+- [ ] `electron/main.js` handles Darwin `open-url`/`open-file`, Windows/Linux argv handoff, and
+      non-Darwin `window-all-closed` quit behavior. Preserve these paths when adding packaged
+      cross-platform launch tests.
+- [ ] `electron/main.js` default Markdown handler actions are explicitly Darwin-only through Swift
+      and LaunchServices. For cross-platform support, either add Windows/Linux registration flows or
+      keep the UI hidden/unsupported with tests proving graceful fallback.
+
+### Packaging Config
+- [ ] `package.json` describes Markie as `macOS (Apple Silicon)` and uses `macos` as a keyword.
+      Update metadata once local packaging support includes all desktop targets.
+- [ ] `package.json` `electron:build`, `electron:pack`, and `electron:release` are all `--mac`
+      only. Add local-only scripts for macOS arm64, macOS x64, Windows, and Linux before changing
+      release behavior.
+- [ ] `package.json` `build.mac.target` emits only `arm64` `dmg` and `zip`. Add Intel Mac targets
+      first, then Windows and Linux targets in a way electron-builder can parse locally.
+- [ ] `package.json` `build.publish` points to the `mac` release path only. Treat new publish paths
+      as release/deploy work and keep them human-gated.
+- [ ] `electron-updater` comments and feed assumptions in `electron/main.js` are Mac feed oriented.
+      Cross-platform updater work should wait until platform artifact names and feed files are
+      defined.
+
+### Docs And Download Page
+- [ ] `README.md` says files live on a Mac, Browse indexes files on a Mac, install is Apple Silicon
+      macOS only, Intel Macs are unsupported, and source packaging writes to `dist/mac-arm64/`.
+- [ ] `docs/RELEASING.md` is titled for Apple Silicon macOS and documents only `latest-mac.yml`,
+      `dist/mac-arm64/Markie.app`, and `Markie-<version>-arm64.dmg`.
+- [ ] `server/src/public.ts`, `server/src/render.ts`, `server/src/shares.ts`, and
+      `server/src/render.test.ts` expose only `/download/mac` and "Get Markie for macOS" copy.
+- [ ] `server/src/public.ts` parses only `Markie-*-arm64.dmg` from `latest-mac.yml`. The download
+      page needs a manifest or equivalent source of truth before it can advertise Intel Mac,
+      Windows, and Linux.
+- [ ] `src/components/agents-dialog.tsx`, `src/components/files-view.tsx`, and
+      `mcp/markie-mcp.mjs` use "this Mac" or "on your Mac" copy for local files. Update after the
+      runtime fallbacks are real.
+
+### Test And Preflight
+- [ ] `build/preflight.cjs` returns immediately for non-Darwin builds and uses `osascript` for the
+      macOS smoke check. Add platform-specific local preflight coverage or explicit skip reporting
+      before relying on Windows/Linux artifacts.
+- [ ] `scripts/release-preflight.mjs` validates Mac notarization, Mac entitlements, a publish
+      target, and the explicit `electron:release` publishing command, but it does not validate a
+      platform artifact matrix.
+- [ ] `electron/release-preflight.test.ts` only asserts Mac release prerequisites. Expand it when
+      `release:preflight` learns the full desktop matrix.
+- [ ] `server/src/public.test.ts` and `server/src/render.test.ts` assert Mac-only download behavior.
+      Replace these with manifest-driven platform tests once the manifest exists.
+- [ ] `scripts/perf-check.mjs` documents a Mac-only `open -a dist/mac-arm64/Markie.app` command.
+      Add equivalent instructions for cross-platform smoke/performance checks.
+
+### Human-Gated Release Or Deploy Work
+- [ ] Signing, notarization, upload, publish, deployment, credential rotation, cloud storage paths,
+      public release feed changes, and external service configuration remain human checkpoints.
+- [ ] Windows code signing, Linux distribution format decisions, Intel Mac release notarization, and
+      public download URL shape need human review before production publishing.
+- [ ] Do not change the live marketing/download site or B2 bucket layout unattended. Prepare local
+      manifests, docs, validation, and dry-run scripts first.
+
+## Recommended Next Slice
+For `F-016`, pick the smallest runtime assumption with clear fallback behavior and test it across
+platform values. The best candidates are `mcp/markie-mcp.mjs` `markie_open_in_markie` or
+`electron/terminal.js` shell selection, because both can be fixed locally without changing public
+API shape, release credentials, or packaging targets.

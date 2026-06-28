@@ -125,7 +125,6 @@ export default function Home() {
   // which side-panel view the left rail has selected
   const [leftView, setLeftView] = useState<LeftView>("library");
   const leftViewRef = useRef<LeftView>("library");
-  leftViewRef.current = leftView;
   const [showTerminal, setShowTerminal] = useState(false);
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
   // bumps when auth changes out-of-band (deep-link sign-in) so account UI refreshes
@@ -148,6 +147,10 @@ export default function Home() {
   const [enforcedTheme, setEnforcedTheme] = useState<ThemeTokens | null>(null);
 
   const isDirty = content !== savedContent;
+
+  useEffect(() => {
+    leftViewRef.current = leftView;
+  }, [leftView]);
 
   // Latest open-doc path + content, read by palette command closures without
   // rebuilding the command list on every keystroke.

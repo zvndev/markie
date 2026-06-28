@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Autoloop feature ledger",
+  "description": "Machine-checkable definition of done. The agent flips `passes` only after reproducing `steps` as a real user and recording `evidence`. The agent may add entries but must not delete them.",
+  "type": "object",
+  "required": ["features"],
+  "properties": {
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "description", "priority", "steps", "passes"],
+        "properties": {
+          "id": { "type": "string", "description": "Stable id, e.g. F-014." },
+          "description": { "type": "string", "description": "Small, end-to-end, user-observable behavior." },
+          "priority": { "type": "integer", "description": "Lower = sooner. Encode dependency order here." },
+          "steps": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Reproducible user actions + assertions that define done."
+          },
+          "passes": { "type": "boolean", "description": "True only with evidence; never self-graded." },
+          "attempts": { "type": "integer", "default": 0, "description": "Failed tries; at the limit, escalate not retry." },
+          "evidence": { "type": ["string", "null"], "description": "Test name / screenshot path / journey transcript." },
+          "notes": { "type": "string", "description": "Observations, dead-ends." }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "features": [
+    {
+      "id": "F-001",
+      "description": "When Markie's embedded terminal is enabled, a new shell starts in the current document folder and exposes MARKIE_FILE, MARKIE_DIR, and MARKIE_WORKSPACE for the active document.",
+      "priority": 1,
+      "steps": [
+        "Open a markdown file in Markie with the terminal feature enabled in a development run.",
+        "Create a new embedded terminal session.",
+        "Run `pwd` and confirm it starts in the active document's folder.",
+        "Run `printf '%s\\n' \"$MARKIE_FILE\" \"$MARKIE_DIR\" \"$MARKIE_WORKSPACE\"` and confirm the values match the active document and workspace.",
+        "Run the focused terminal regression test plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "Seeded from the context-aware terminal Phase A plan. Keep this to env/cwd injection only; do not expose the hidden terminal UI or define new CLI/MCP API in this task."
+    },
+    {
+      "id": "F-002",
+      "description": "When the active document changes, future embedded terminal sessions receive updated Markie context instead of stale document paths.",
+      "priority": 2,
+      "steps": [
+        "Open document A, then open document B in the same Markie session.",
+        "Create a new embedded terminal session after document B becomes active.",
+        "Confirm MARKIE_FILE and MARKIE_DIR point at document B, not document A.",
+        "Run the focused terminal regression test plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "Depends on F-001. Do not build shell re-injection into already-running shells unless split into a separate task."
+    },
+    {
+      "id": "F-003",
+      "description": "A safe preflight command verifies release prerequisites without signing, notarizing, uploading, or touching production services.",
+      "priority": 3,
+      "steps": [
+        "Run the documented release preflight command on a clean checkout without release credentials.",
+        "Confirm it checks package metadata, required local files, and build/test prerequisites.",
+        "Confirm it exits before any publish, notarize, upload, deploy, or credentialed network action.",
+        "Run `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "This is safe DX hardening only; actual release/deploy remains a human checkpoint."
+    },
+    {
+      "id": "F-004",
+      "description": "The MCP server has a regression journey proving allowed markdown writes remain fenced to safe local markdown paths.",
+      "priority": 4,
+      "steps": [
+        "Run the MCP test suite and identify the current filesystem guard coverage.",
+        "Add a user-observable MCP write/read regression that writes an allowed markdown file under a temporary safe home and reads it back.",
+        "Confirm symlink escape and unsafe extension cases still fail.",
+        "Run `node --test mcp/lib.test.mjs` and `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "Do not widen the MCP public API shape in this task."
+    },
+    {
+      "id": "F-005",
+      "description": "A real-user comments regression verifies thread creation, reply, resolve, reopen, and anchor survival using the existing verifier scripts.",
+      "priority": 5,
+      "steps": [
+        "Run the existing comments verification scripts against the local dev server setup they document.",
+        "If setup gaps prevent the journey, add the smallest script/docs fix needed for repeatable local verification.",
+        "Confirm the journey covers create, reply, resolve, reopen, and anchor survival after an edit above the selection.",
+        "Run the focused comments verifier plus `./init.sh`."
+      ],
+      "passes": false,
+      "attempts": 0,
+      "evidence": null,
+      "notes": "Do not change comments product UX unless a failing verification requires a narrow bugfix."
+    }
+  ]
+}

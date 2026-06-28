@@ -1,0 +1,55 @@
+{
+  "mode": "build",
+  "cadence": "hourly",
+  "budget_cap": {
+    "max_turns": 60,
+    "max_minutes": 45,
+    "max_usd": 5
+  },
+  "escalation": {
+    "kind": "file",
+    "value": "PROGRESS.md and BACKLOG.md"
+  },
+  "review_skills": [
+    {
+      "type": "product",
+      "name": "product-review",
+      "invoke": "$product-review"
+    },
+    {
+      "type": "e2e",
+      "name": "real-user-flow-qa",
+      "invoke": "$real-user-flow-qa"
+    },
+    {
+      "type": "code-quality",
+      "name": "code-review",
+      "invoke": "$code-review"
+    },
+    {
+      "type": "security",
+      "name": "security-review",
+      "invoke": "$security-review"
+    }
+  ],
+  "review_cursor": 0,
+  "severity_floor": "medium",
+  "autonomy": {
+    "never": [
+      "change stack",
+      "delete or weaken tests",
+      "add dependency without escalation",
+      "force-push",
+      "publish, notarize, release, or deploy",
+      "touch prod data, billing, auth provider configuration, release credentials, or cloud infrastructure",
+      "commit secrets or user document contents"
+    ]
+  },
+  "human_checkpoints": [
+    "schema or data-model change",
+    "public API shape",
+    "major visible design direction",
+    "release, deployment, notarization, credential rotation, or external service configuration"
+  ],
+  "attempt_limit": 3
+}

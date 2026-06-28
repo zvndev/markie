@@ -1,6 +1,6 @@
 # Current Task - Backlog: terminal API shape approval
 
-Selected: 2026-06-28 08:50 EDT
+Selected: 2026-06-28 09:51 EDT
 
 ## Description
 Approve or revise the context-aware terminal API shape before implementing bundled `markie` CLI

@@ -54,7 +54,7 @@ import { renderMarkdownHTML } from "@/lib/markdown-html";
 
 const SAMPLE = `# Welcome to Markie
 
-A beautiful markdown viewer and editor. Start writing, paste content, or open a file.
+A beautiful markdown viewer and editor. Start writing with \`inline code\`, [links](https://markie.app), ~~strikethrough~~, or open a file.
 
 ## Features
 

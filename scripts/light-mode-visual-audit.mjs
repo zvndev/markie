@@ -195,7 +195,7 @@ async function main() {
   })()`);
   await cdp.ev("location.reload()");
   await waitFor("light theme tokens", () =>
-    cdp.ev("getComputedStyle(document.documentElement).getPropertyValue('--background').trim() === '#fafafa'"),
+    cdp.ev("document.documentElement && getComputedStyle(document.documentElement).getPropertyValue('--background').trim() === '#fafafa'"),
     30000
   );
   await waitFor("toolbar ready", () => cdp.ev("[...document.querySelectorAll('button')].some((b) => b.textContent.includes('PDF'))"));
@@ -609,8 +609,16 @@ async function main() {
       ['skills path', document.querySelector('[data-audit-sample="skills-path"]')],
       ['skills starred state', document.querySelector('[data-audit-sample="skills-star"]')],
       ['editor rich article', document.querySelector('.markdown-body')],
+      ['editor heading', document.querySelector('.markdown-body h1')],
       ['editor strong text', document.querySelector('.markdown-body strong')],
-      ['editor inline code', document.querySelector('.markdown-body code')],
+      ['editor link', document.querySelector('.markdown-body a')],
+      ['editor inline code', [...document.querySelectorAll('.markdown-body code')].find((el) => !el.closest('pre'))],
+      ['editor code block', document.querySelector('.markdown-body pre code')],
+      ['editor blockquote', document.querySelector('.markdown-body blockquote')],
+      ['editor table heading', document.querySelector('.markdown-body th')],
+      ['editor table cell', document.querySelector('.markdown-body td')],
+      ['editor task checkbox', document.querySelector('.markdown-body input[type="checkbox"]')],
+      ['editor math text', findText('E = mc')],
       ['command palette input', document.querySelector('input[placeholder^="Type a command"]')],
       ['command palette row', findText('Open File')],
       ['settings heading', [...document.querySelectorAll('h2')].find((el) => text(el) === 'Settings')],
@@ -685,7 +693,21 @@ async function main() {
       'skills path',
       'skills starred state'
     ]);
+    const contentLabels = new Set([
+      'editor rich article',
+      'editor heading',
+      'editor strong text',
+      'editor link',
+      'editor inline code',
+      'editor code block',
+      'editor blockquote',
+      'editor table heading',
+      'editor table cell',
+      'editor task checkbox',
+      'editor math text'
+    ]);
     const sidePanelFindings = results.filter((item) => sidePanelLabels.has(item.label) && (!item.present || !item.passesAA));
+    const contentFindings = results.filter((item) => contentLabels.has(item.label) && (!item.present || !item.passesAA));
     return {
       ok: results.every((item) => item.present),
       mode: 'light',
@@ -694,6 +716,8 @@ async function main() {
       surfaces,
       sidePanelSamples: results.filter((item) => sidePanelLabels.has(item.label)),
       sidePanelFindings,
+      contentSamples: results.filter((item) => contentLabels.has(item.label)),
+      contentFindings,
       samples: results,
       findings: results.filter((item) => !item.present || !item.passesAA).map((item) => ({
         surface: item.label,

@@ -230,3 +230,22 @@
   known strong-text finding still reported by the audit.
 - blockers: none for `F-009`. The audit still records the known editor strong-text light-mode
   finding reserved for `F-010`; lint still reports the pre-existing 4 warnings and zero errors.
+
+## 2026-06-28 14:58 — terminal: progressed
+- did: Completed `F-010` by removing dark-only document content colors from strong text, inline
+  code, and checked task controls, then expanded the welcome sample and light-mode audit so document
+  content contrast is measured across headings, links, inline code, code blocks, blockquotes,
+  tables, task controls, and math text.
+- evidence: `./init.sh > .autoloop/runs/init-20260628-f010-pre.log 2>&1` passed before selection.
+  `npm test -- src/lib/theme.test.ts > .autoloop/runs/theme-test-f010-20260628.log 2>&1` passed
+  8 tests covering built-in dark/light document token contrast. `npm run visual:audit:light >
+  .autoloop/runs/light-mode-audit-f010-20260628.log 2>&1` passed and wrote
+  `.autoloop/runs/light-mode-audit-20260628185757/audit.json`; `contentFindings` is empty and
+  content samples pass AA contrast in built-in light mode, including strong text at 16.97:1, links
+  at 4.95:1, inline code at 6.29:1, code blocks at 15.71:1, blockquotes at 6.85:1, checked task
+  controls at 4.95:1, tables, headings, and math text. `./init.sh >
+  .autoloop/runs/init-20260628-f010-post.log 2>&1` passed renderer tests, MCP tests, server tests,
+  lint, and build.
+- next: Select `F-011` to turn the visual audit workflow into a regression guard for representative
+  shell, editor/content, and modal/panel surfaces.
+- blockers: none for `F-010`. Lint still reports the pre-existing 4 warnings and zero errors.

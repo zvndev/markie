@@ -97,4 +97,18 @@ describe("theme store", () => {
       }
     }
   });
+
+  it("keeps document content colors readable in built-in themes", () => {
+    for (const theme of [MARKIE_DARK, MARKIE_LIGHT]) {
+      expect(contrast(theme.tokens.foreground, theme.tokens.background)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(theme.tokens.foreground, theme.tokens.surface)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(theme.tokens.foreground, theme.tokens.surface2)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(theme.tokens.muted, theme.tokens.background)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(theme.tokens.muted, theme.tokens.surface)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(theme.tokens.link, theme.tokens.background)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(theme.tokens.link, theme.tokens.surface)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(theme.tokens.statusYellow!, theme.tokens.surface)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(theme.tokens.background, theme.tokens.link)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
 });

@@ -146,10 +146,10 @@
         "Add or update theme/content tests where pure style-token behavior is testable.",
         "Run the focused content-style verification plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "Known likely issue: hardcoded dark-oriented markdown/code styles. Keep the patch to document surfaces."
+      "evidence": "`npm run visual:audit:light > .autoloop/runs/light-mode-audit-f010-20260628.log 2>&1` passed and wrote `.autoloop/runs/light-mode-audit-20260628185757/audit.json` plus screenshots; `contentFindings` is empty and editor content samples pass AA contrast in built-in light mode, including strong text at 16.97:1, links at 4.95:1, inline code at 6.29:1, code blocks at 15.71:1, blockquotes at 6.85:1, checked task controls at 4.95:1, tables, headings, and math text. `npm test -- src/lib/theme.test.ts > .autoloop/runs/theme-test-f010-20260628.log 2>&1` passed 8 tests covering built-in dark/light document token contrast. `./init.sh > .autoloop/runs/init-20260628-f010-post.log 2>&1` passed.",
+      "notes": "Fixed document content only: strong text, inline code, and checked task controls now use active theme tokens. Expanded the default sample and audit coverage so links, inline code, code blocks, tables, blockquotes, task controls, and math text remain observable."
     },
     {
       "id": "F-011",

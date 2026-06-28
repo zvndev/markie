@@ -161,10 +161,10 @@
         "Make the script fail or produce clear findings when key foreground/background pairs fall below the chosen contrast threshold.",
         "Run the visual regression guard plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "Prefer no new dependencies. If a dependency is necessary, escalate before adding it."
+      "evidence": "`npm run visual:guard:theme > .autoloop/runs/theme-visual-guard-f011-20260628-final.log 2>&1` passed and wrote `.autoloop/runs/light-mode-audit-20260628195511/audit.json` plus screenshots. The guard sampled 6 shell, 11 content, and 16 overlay/panel targets at a 4.5 AA threshold with zero findings; checked task controls measured 4.95:1 after the live ProseMirror checkbox override. `./init.sh > .autoloop/runs/init-20260628-f011-post.log 2>&1` passed.",
+      "notes": "Added `npm run visual:guard:theme` as a dependency-free regression guard around the existing audit. The regular audit still writes findings/artifacts; guard mode fails when required shell, content, or overlay/panel samples are missing or below AA contrast."
     },
     {
       "id": "F-012",

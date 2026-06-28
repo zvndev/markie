@@ -404,6 +404,12 @@ body {
   top: 0;
 }
 
+.markdown-body .ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"]:checked {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: var(--background);
+}
+
 /* the content side is a div wrapping a paragraph — kill its default margins
    so the text sits on the same line as the checkbox instead of staggering */
 .markdown-body .ProseMirror ul[data-type="taskList"] li > div {

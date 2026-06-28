@@ -16,8 +16,51 @@ const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 const artifactDir = path.join(runDir, `light-mode-audit-${stamp}`);
 const screenshotsDir = path.join(artifactDir, "screenshots");
 const baseEnv = { ...process.env };
+const regressionGuardEnabled = process.argv.includes("--regression-guard");
 const children = [];
 const tempPaths = [];
+
+const guardCategories = {
+  shell: [
+    "toolbar",
+    "toolbar file control",
+    "toolbar PDF menu dark option",
+    "toolbar PDF menu light option",
+    "left rail library button",
+    "left rail sign-in button",
+  ],
+  content: [
+    "editor rich article",
+    "editor heading",
+    "editor strong text",
+    "editor link",
+    "editor inline code",
+    "editor code block",
+    "editor blockquote",
+    "editor table heading",
+    "editor table cell",
+    "editor task checkbox",
+    "editor math text",
+  ],
+  overlayOrPanel: [
+    "library heading",
+    "library body",
+    "browse row",
+    "files row",
+    "shared active tab",
+    "skills row",
+    "command palette input",
+    "command palette row",
+    "settings heading",
+    "settings email input",
+    "stats heading",
+    "theme settings heading",
+    "agents heading",
+    "share dialog heading",
+    "comments body",
+    "comments composer",
+  ],
+};
 
 await mkdir(screenshotsDir, { recursive: true });
 
@@ -137,6 +180,44 @@ async function capture(cdp, name) {
   const file = path.join(screenshotsDir, `${name}.png`);
   await writeFile(file, Buffer.from(shot.data, "base64"));
   return file;
+}
+
+function buildRegressionGuard(audit) {
+  const samplesByLabel = new Map(audit.samples.map((sample) => [sample.label, sample]));
+  const findingsByLabel = new Map(audit.findings.map((finding) => [finding.surface, finding]));
+  const categories = Object.fromEntries(
+    Object.entries(guardCategories).map(([name, labels]) => {
+      const samples = labels.map((label) => samplesByLabel.get(label)).filter(Boolean);
+      const missingSamples = labels
+        .filter((label) => !samplesByLabel.has(label))
+        .map((label) => ({
+          surface: label,
+          issue: "missing regression guard sample",
+          checklist: "Restore this label to the light-mode visual audit samples.",
+        }));
+      const failures = [
+        ...missingSamples,
+        ...labels.map((label) => findingsByLabel.get(label)).filter(Boolean),
+      ];
+      return [
+        name,
+        {
+          requiredSamples: labels,
+          sampled: samples.length,
+          failures,
+          passes: samples.length === labels.length && failures.length === 0,
+        },
+      ];
+    })
+  );
+
+  return {
+    enabled: regressionGuardEnabled,
+    threshold: audit.threshold,
+    requiredCategories: Object.keys(guardCategories),
+    categories,
+    passes: Object.values(categories).every((category) => category.passes),
+  };
 }
 
 async function main() {
@@ -730,10 +811,12 @@ async function main() {
     };
   })()`);
 
+  const regressionGuard = buildRegressionGuard(audit);
   const artifact = {
     ...audit,
     artifactDir,
     screenshots,
+    regressionGuard,
     generatedAt: new Date().toISOString(),
   };
   await writeFile(path.join(artifactDir, "audit.json"), `${JSON.stringify(artifact, null, 2)}\n`);
@@ -742,8 +825,16 @@ async function main() {
     throw new Error("light-mode audit missed one or more required targets");
   }
 
+  if (regressionGuardEnabled && !artifact.regressionGuard.passes) {
+    const failedCategories = Object.entries(artifact.regressionGuard.categories)
+      .filter(([, category]) => !category.passes)
+      .map(([name, category]) => `${name}: ${category.failures.length} contrast failures`);
+    throw new Error(`theme visual regression guard failed (${failedCategories.join("; ")})`);
+  }
+
   console.log(JSON.stringify({
     ok: true,
+    regressionGuard: artifact.regressionGuard,
     artifact: path.join(artifactDir, "audit.json"),
     screenshots,
     findings: artifact.findings.length,

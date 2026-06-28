@@ -249,3 +249,20 @@
 - next: Select `F-011` to turn the visual audit workflow into a regression guard for representative
   shell, editor/content, and modal/panel surfaces.
 - blockers: none for `F-010`. Lint still reports the pre-existing 4 warnings and zero errors.
+
+## 2026-06-28 15:55 — terminal: progressed
+- did: Completed `F-011` by adding `npm run visual:guard:theme`, a dependency-free guard mode
+  around the existing light-mode audit. Guard mode records required shell, content, and
+  overlay/panel coverage in `audit.json` and fails when any required sample is missing or below AA
+  contrast. While tightening the guard, fixed the live ProseMirror checked task checkbox so its
+  check glyph uses the readable theme background color on the blue checked state.
+- evidence: `./init.sh > .autoloop/runs/init-20260628-f011-pre.log 2>&1` passed before selection.
+  `npm run visual:guard:theme > .autoloop/runs/theme-visual-guard-f011-20260628-final.log 2>&1`
+  passed and wrote `.autoloop/runs/light-mode-audit-20260628195511/audit.json` plus screenshots;
+  the guard sampled 6 shell, 11 content, and 16 overlay/panel targets at a 4.5 AA threshold with
+  zero findings, and the checked task checkbox measured 4.95:1. `./init.sh >
+  .autoloop/runs/init-20260628-f011-post.log 2>&1` passed renderer tests, MCP tests, server tests,
+  lint, and build.
+- next: Select `F-012` for one native-feeling refinement pass on the primary desktop shell spacing,
+  density, window chrome, and panel boundaries.
+- blockers: none for `F-011`. Lint still reports the pre-existing 4 warnings and zero errors.

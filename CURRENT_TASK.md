@@ -1,13 +1,16 @@
-# Current Task — F-010
+# Current Task — F-011
 
-## Description
-Markdown and rich editor content use theme-aware colors so light mode does not hide strong text, inline code, code blocks, tables, selections, or task controls.
+## Selected feature
+A visual regression guard prevents future built-in theme contrast regressions across representative Markie surfaces.
 
-## Acceptance Criteria
-- Open a document containing headings, bold text, links, inline code, code blocks, tables, task lists, blockquotes, math, and comments in light and dark mode.
-- Fix hardcoded content colors and highlight styles that make content invisible or visually broken in light mode.
-- Add or update theme/content tests where pure style-token behavior is testable.
-- Run the focused content-style verification plus `./init.sh`.
+## Acceptance criteria
+- Turn the light-mode audit/fix workflow into a repeatable test or script that can run headlessly or with a local app window.
+- Cover at least one representative shell surface, one editor/content surface, and one modal/panel surface.
+- Make the script fail or produce clear findings when key foreground/background pairs fall below the chosen contrast threshold.
+- Run the visual regression guard plus `./init.sh`.
 
-## Scope
-This wakeup may touch markdown/rich editor content styles, the default sample needed to exercise content styles, and focused content visual audit/test coverage only. Broader shell, side-panel, overlay, and layout polish stay in later ledger items.
+## Plan
+- Inspect the existing light-mode visual audit harness and package scripts.
+- Add a narrow regression-guard entry point around the existing audit so CI/local runs have a clear contrast-gate command.
+- Ensure the guard records representative coverage and fails on shell/content/overlay contrast findings below AA.
+- Verify with the guard command and the full repo baseline.

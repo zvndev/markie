@@ -158,3 +158,18 @@
   style clusters.
 - blockers: none for the new lane. The terminal API approval item remains open but is no longer the
   only eligible work because the feature ledger now contains the new style/platform/RN sequence.
+
+## 2026-06-28 11:07 — terminal: progressed
+- did: Selected `F-006` and added a repeatable local light-mode visual audit command that starts the
+  renderer/Electron app, forces the built-in light theme, captures screenshots, and writes computed
+  contrast findings for the primary shell plus representative gated surfaces.
+- evidence: `./init.sh > .autoloop/runs/init-20260628-f006-pre.log 2>&1` passed before selection.
+  `npm run visual:audit:light > .autoloop/runs/light-mode-audit-20260628-focused.log 2>&1` passed
+  and wrote `.autoloop/runs/light-mode-audit-20260628150614/audit.json` with screenshots for shell,
+  PDF menu, Library, command palette, settings, share, and comments surfaces. The audit recorded
+  three concrete contrast findings: PDF menu options at 2.2:1 and markdown strong text at 1.04:1.
+  `./init.sh > .autoloop/runs/init-20260628-f006-post.log 2>&1` passed after the change.
+- next: Select `F-007` to fix top toolbar/header/PDF menu light-mode contrast using the audit
+  evidence.
+- blockers: none for `F-006`. The terminal API approval item remains human-gated and deferred
+  behind the active `F-006` through `F-022` lane.

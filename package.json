@@ -26,6 +26,7 @@
     "test": "vitest run",
     "comments:verify": "node scripts/comments-verify-local.mjs",
     "comments:verify:e2e": "node scripts/comments-verify-local.mjs --with-e2e",
+    "visual:audit:light": "node scripts/light-mode-visual-audit.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && NODE_ENV=development electron .\"",
     "electron:build": "npm run build && electron-builder --mac",

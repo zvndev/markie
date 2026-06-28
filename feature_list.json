@@ -86,10 +86,10 @@
         "Record each invisible or low-contrast issue as a concrete checklist in a local audit artifact or test output.",
         "Run the focused audit plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "First priority from the 2026-06-28 user direction. Keep this to audit/harness/evidence; fix only a trivial issue if needed to make the audit run."
+      "evidence": "`npm run visual:audit:light > .autoloop/runs/light-mode-audit-20260628-focused.log 2>&1` passed and wrote `.autoloop/runs/light-mode-audit-20260628150614/audit.json` plus screenshots for shell, PDF menu, Library probe, command palette, settings probe, and share/comments probes. The audit recorded 3 concrete light-mode contrast findings: PDF menu options at 2.2:1 and markdown strong text at 1.04:1. `./init.sh > .autoloop/runs/init-20260628-f006-post.log 2>&1` passed.",
+      "notes": "Audit/harness/evidence only. The findings map to the existing follow-up scopes: F-007 for toolbar/PDF menu contrast and F-010 for markdown strong text/content contrast."
     },
     {
       "id": "F-007",

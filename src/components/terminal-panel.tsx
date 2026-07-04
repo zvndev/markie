@@ -87,7 +87,7 @@ export function TerminalPanel({ context, onClose }: TerminalPanelProps) {
                 activeId === t.id ? "bg-accent text-foreground" : "text-muted hover:text-foreground hover:bg-accent/40"
               }`}
             >
-              zsh {i + 1}
+              Shell {i + 1}
               <span
                 onClick={(e) => { e.stopPropagation(); closeTab(t.id); }}
                 className="opacity-0 group-hover:opacity-100 hover:text-red-400"

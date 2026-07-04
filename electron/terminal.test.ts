@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { buildEnv, isKnownApp, resolveContext, resolveShell } from "./terminal.js";
+import {
+  buildEnv,
+  commandExists,
+  externalApps,
+  isKnownApp,
+  openExternal,
+  resolveContext,
+  resolveShell,
+  terminalLabel,
+} from "./terminal.js";
 
 describe("isKnownApp", () => {
   it("accepts detected terminal ids and names", () => {
@@ -119,5 +128,123 @@ describe("resolveShell", () => {
       command: "powershell.exe",
       args: [],
     });
+  });
+});
+
+describe("external terminal launchers", () => {
+  it("detects executable terminal commands on PATH", () => {
+    expect(
+      commandExists("wt.exe", {
+        platform: "win32",
+        env: { PATH: "C:\\Tools", PATHEXT: ".EXE;.CMD" },
+        existsSync: (p: string) => p.endsWith("wt.exe"),
+      })
+    ).toBe(true);
+
+    expect(
+      commandExists("gnome-terminal", {
+        platform: "linux",
+        env: { PATH: "/usr/local/bin:/usr/bin" },
+        existsSync: (p: string) => p === "/usr/bin/gnome-terminal",
+      })
+    ).toBe(true);
+  });
+
+  it("returns safe Windows terminal choices instead of macOS-only emptiness", () => {
+    const apps = externalApps({
+      platform: "win32",
+      env: { PATH: "C:\\Tools", PATHEXT: ".EXE;.CMD" },
+      existsSync: (p: string) => p.endsWith("wt.exe"),
+    });
+
+    expect(apps).toEqual([
+      { id: "windows-terminal", name: "Windows Terminal" },
+      { id: "powershell", name: "PowerShell" },
+      { id: "cmd", name: "Command Prompt" },
+    ]);
+  });
+
+  it("returns Linux terminal choices from TERMINAL and common detected emulators", () => {
+    const apps = externalApps({
+      platform: "linux",
+      env: { TERMINAL: "alacritty", PATH: "/usr/bin" },
+      existsSync: (p: string) => p === "/usr/bin/alacritty" || p === "/usr/bin/konsole",
+    });
+
+    expect(apps).toEqual([
+      { id: "env-terminal", name: "alacritty" },
+      { id: "konsole", name: "Konsole" },
+    ]);
+  });
+
+  it("launches PowerShell in the requested folder without using a shell string", () => {
+    const calls: Array<{ command: string; args: string[]; options: Record<string, unknown> }> = [];
+    const result = openExternal("PowerShell", "C:\\Users\\me\\Documents\\Markie", {
+      platform: "win32",
+      existsSync: (p: string) => p === "C:\\Users\\me\\Documents\\Markie",
+      home: "C:\\Users\\me",
+      spawnFn: (command: string, args: string[], options: Record<string, unknown>) => {
+        calls.push({ command, args, options });
+        return { unref() {} };
+      },
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(calls).toEqual([
+      {
+        command: "powershell.exe",
+        args: ["-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\Users\\me\\Documents\\Markie'"],
+        options: expect.objectContaining({
+          cwd: "C:\\Users\\me\\Documents\\Markie",
+          shell: false,
+        }),
+      },
+    ]);
+  });
+
+  it("launches detected Linux terminals in the requested folder", () => {
+    const calls: Array<{ command: string; args: string[]; options: Record<string, unknown> }> = [];
+    const result = openExternal("GNOME Terminal", "/home/me/notes", {
+      platform: "linux",
+      env: { PATH: "/usr/bin" },
+      existsSync: (p: string) => p === "/home/me/notes" || p === "/usr/bin/gnome-terminal",
+      home: "/home/me",
+      spawnFn: (command: string, args: string[], options: Record<string, unknown>) => {
+        calls.push({ command, args, options });
+        return { unref() {} };
+      },
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(calls).toEqual([
+      {
+        command: "gnome-terminal",
+        args: ["--working-directory", "/home/me/notes"],
+        options: expect.objectContaining({
+          cwd: "/home/me/notes",
+          shell: false,
+        }),
+      },
+    ]);
+  });
+
+  it("rejects unknown renderer-supplied terminal names", () => {
+    expect(openExternal("Calculator", "/tmp", { platform: "linux" })).toEqual({
+      error: "unknown terminal app",
+    });
+    expect(
+      openExternal("GNOME Terminal", "/tmp", {
+        platform: "linux",
+        env: { PATH: "/usr/bin" },
+        existsSync: () => false,
+      })
+    ).toEqual({ error: "terminal app unavailable" });
+    expect(isKnownApp("Calculator")).toBe(false);
+  });
+
+  it("uses a neutral shell label across desktop platforms", () => {
+    expect(terminalLabel("darwin", { SHELL: "/bin/zsh" })).toBe("zsh");
+    expect(terminalLabel("linux", {})).toBe("bash");
+    expect(terminalLabel("win32", {})).toBe("powershell");
   });
 });

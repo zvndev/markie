@@ -529,3 +529,24 @@
   until that Windows-host launch run, code signing, updater feeds, public download URLs, and
   human-gated release work are verified. The pre-existing updater/menu edits in `electron/main.js`
   were preserved and not intentionally included in this pass.
+
+## 2026-07-04 15:44 EDT — terminal: progressed
+- did: Completed the remaining `F-016` external-terminal runtime platform slice. Replaced the
+  macOS-only external terminal discovery/launch path with platform-aware candidates for macOS,
+  Windows, and Linux while preserving the renderer-supplied app-name allowlist. Windows now exposes
+  detected Windows Terminal plus PowerShell and Command Prompt, Linux exposes `$TERMINAL` plus
+  detected common terminal emulators, and launch commands use `spawn` argument arrays with
+  `shell:false`. The hidden terminal renderer tab label now says `Shell` instead of hardcoded `zsh`.
+- evidence: `node --check electron/terminal.js` passed. `npm test -- electron/terminal.test.ts`
+  passed 1 file / 18 tests, including shell selection, Markie context, command detection,
+  Windows/Linux external terminal choices, guarded renderer-supplied app names, unavailable terminal
+  handling, and neutral shell labels. `git diff --check` passed. `./init.sh` passed 18
+  renderer/Electron test files / 118 tests, 19 MCP tests, 32 server tests, lint with the same 4
+  warnings and zero errors, and static build.
+- next: Continue `F-017`/release readiness or the remaining goal surfaces: Windows-host launch
+  evidence, signing/feed/public URL gates, library organization, sharing permission UX, and live UI
+  verification.
+- blockers: none for this runtime slice. Full Windows support remains incomplete until the
+  Windows-host launch smoke actually runs and human-gated signing, updater feeds, public URLs, and
+  release approval are complete. The pre-existing updater/menu edits in `electron/main.js` were
+  preserved and not intentionally included in this pass.

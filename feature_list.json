@@ -236,10 +236,10 @@
         "Implement the smallest runtime guard or platform abstraction for that action.",
         "Run the focused platform test plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "One platform behavior per wakeup. Add follow-up ledger items for additional assumptions discovered."
+      "evidence": "`node --check electron/terminal.js` passed. `npm test -- electron/terminal.test.ts` passed 1 file / 18 tests, covering shell selection, Markie terminal context, external terminal command detection, Windows Terminal / PowerShell / Command Prompt choices, Linux `$TERMINAL` / emulator choices, guarded renderer-supplied app names, unavailable terminal handling, and neutral shell labels. `git diff --check` passed. `./init.sh` passed 18 renderer/Electron test files / 118 tests, 19 MCP tests, 32 server tests, lint with 4 existing warnings, and static build.",
+      "notes": "Completed the remaining external-terminal runtime assumption from F-015. `electron/terminal.js` no longer treats non-macOS external launch as `macOS only`; the terminal UI remains hidden behind `TERMINAL_ENABLED = false`."
     },
     {
       "id": "F-017",

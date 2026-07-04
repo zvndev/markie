@@ -1,25 +1,23 @@
-# Current Task - Windows native launch smoke path
+# Current Task - Cross-platform external terminal runtime fallback
 
 ## Task
-Make Windows launch readiness auditable by adding a Windows-host smoke command and CI workflow that
-build the unsigned Windows x64 unpacked app, verify its package structure, launch `Markie.exe` on a
-real Windows runner, and prove the packaged renderer loads Markie UI through CDP.
+Complete one `F-016` runtime-platform slice by replacing the remaining macOS-only external terminal
+launcher behavior with platform-aware candidates for macOS, Windows, and Linux, while preserving the
+renderer-supplied app-name guard.
 
 ## Acceptance Criteria
-1. `electron:smoke:win:launch` exists and runs only on `win32`, with a clear failure on Mac/Linux so
-   structure-only checks cannot be mistaken for native Windows launch evidence.
-2. The launch smoke resolves `dist/win-unpacked/Markie.exe`, starts it with an isolated user data
-   directory and remote debugging port, connects to the packaged Electron page through CDP, and
-   validates title, document readiness, and visible Markie UI.
-3. Focused tests cover the host guard, Windows executable resolution, CDP target selection, and
-   renderer-probe validation without attempting to run a Windows binary on this Mac.
-4. Release preflight requires the launch smoke script, package script, and Windows-host workflow to
-   remain present, but does not run the Windows-only launch smoke on non-Windows hosts.
-5. Documentation and the cross-platform audit distinguish local Windows structure evidence from
-   native Windows launch proof.
+1. `electron/terminal.js` no longer returns no external terminal apps or `"macOS only"` just because
+   the host is Windows or Linux.
+2. Windows exposes safe built-in terminal choices (`PowerShell`, `Command Prompt`) and detected
+   Windows Terminal, and opens them in the requested Markie folder without shell-string execution.
+3. Linux exposes `$TERMINAL` plus detected common terminal emulators and opens them in the requested
+   folder without accepting arbitrary renderer-supplied commands.
+4. Focused terminal tests cover macOS, Windows, Linux, unknown renderer-supplied app names,
+   availability checks, and neutral terminal UI labels.
+5. The hidden terminal renderer surface stops hardcoding `zsh` as the tab label, while preserving
+   existing feature-flagged behavior.
 
 ## Scope Guard
-Keep this local/CI-only and reversible. Do not code sign, publish, upload, deploy, touch release
-credentials, or claim public Windows support is complete without a successful Windows-host run,
-Windows code signing, update feeds, public download URLs, and human-gated release approval. Preserve
+Do not expose the terminal feature flag, add public APIs, add dependencies, or change terminal
+product scope. Keep this to the existing hidden terminal surface and local runtime helpers. Preserve
 unrelated local edits, including the pre-existing `electron/main.js` updater/menu diff.

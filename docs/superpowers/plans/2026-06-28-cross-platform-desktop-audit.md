@@ -27,10 +27,13 @@ app. The highest-impact safe path is:
       `win32`, and `linux`.
       Completed 2026-07-03: `resolveShell` now selects macOS, Linux, and Windows shell fallbacks
       with regression coverage in `electron/terminal.test.ts`.
-- [ ] `electron/terminal.js` discovers only macOS `.app` terminal candidates and opens external
+- [x] `electron/terminal.js` discovers only macOS `.app` terminal candidates and opens external
       terminals via `open -a`. Non-macOS currently returns no external terminal apps and
       `"macOS only"` for launch requests. Decide whether Windows/Linux should expose native
       launchers or hide the launcher with clearer copy.
+      Completed 2026-07-04: external terminal candidates now cover macOS `.app` launchers,
+      Windows Terminal / PowerShell / Command Prompt, and Linux `$TERMINAL` plus common detected
+      emulators, with focused command-shape tests across `darwin`, `win32`, and `linux`.
 - [x] `mcp/markie-mcp.mjs` implements `markie_open_in_markie` with `spawn("open", ["-a", "Markie",
       path])`. This needs a platform guard or platform-specific opener before MCP is advertised as
       cross-platform.

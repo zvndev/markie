@@ -41,9 +41,10 @@ npm run electron:smoke:linux
 ```
 
 The macOS local package path also runs the `build/preflight.cjs` window smoke
-gate during `afterPack`. Windows and Linux currently get deterministic
-structure checks locally; OS-level launch evidence still needs a matching
-Windows or Linux host before public release.
+gate during `afterPack`; Apple Silicon hosts with Rosetta can launch-smoke the
+Intel macOS package. Windows and Linux currently get deterministic structure
+checks locally; OS-level launch evidence still needs a matching Windows or
+Linux host before public release.
 
 ## One-time setup
 

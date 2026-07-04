@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import os from "node:os";
 import path from "node:path";
 import {
+  detectRosettaAvailable,
   hostSmokeMode,
   packageProfile,
   verifyPackageLayout,
@@ -101,5 +102,17 @@ describe("package smoke checker", () => {
     expect(hostSmokeMode(macArm, { platform: "darwin", arch: "x64" })).toMatchObject({
       mode: "structure-only",
     });
+  });
+
+  it("reports macOS Intel artifacts as host-compatible on Apple Silicon with Rosetta", () => {
+    const macIntel = packageProfile({ platform: "mac", arch: "x64" });
+
+    expect(hostSmokeMode(macIntel, { platform: "darwin", arch: "arm64", rosettaAvailable: true })).toMatchObject({
+      mode: "host-compatible",
+    });
+    expect(hostSmokeMode(macIntel, { platform: "darwin", arch: "arm64", rosettaAvailable: false })).toMatchObject({
+      mode: "structure-only",
+    });
+    expect(typeof detectRosettaAvailable()).toBe("boolean");
   });
 });

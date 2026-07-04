@@ -117,6 +117,11 @@ app. The highest-impact safe path is:
       Completed 2026-07-04: packaged-app perf instructions now include macOS, Windows, and Linux
       commands, and `scripts/package-smoke.mjs` plus `electron:smoke:*` scripts define the
       unpacked artifact structure checks for each local packaging target.
+- [x] macOS Intel local package path has launch evidence.
+      Completed 2026-07-04: `npm run electron:pack:mac:x64` built `dist/mac/Markie.app` through
+      the certificate-free local wrapper, the macOS window preflight loaded `Markie — Markdown
+      Viewer` through Rosetta, and `npm run electron:smoke:mac:x64` verified bundled app/MCP
+      structure with host-compatible reporting.
 
 ### Human-Gated Release Or Deploy Work
 - [ ] Signing, notarization, upload, publish, deployment, credential rotation, cloud storage paths,

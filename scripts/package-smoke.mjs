@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -53,6 +54,15 @@ function readProductName(rootDir) {
   } catch {
     return DEFAULT_PRODUCT_NAME;
   }
+}
+
+export function detectRosettaAvailable() {
+  if (process.platform !== "darwin" || process.arch !== "arm64") return false;
+  const result = spawnSync("/usr/bin/arch", ["-x86_64", "/usr/bin/true"], {
+    stdio: "ignore",
+    shell: false,
+  });
+  return result.status === 0;
 }
 
 export function packageProfile({
@@ -122,7 +132,10 @@ export function packageProfile({
   };
 }
 
-export function hostSmokeMode(profile, host = { platform: process.platform, arch: process.arch }) {
+export function hostSmokeMode(
+  profile,
+  host = { platform: process.platform, arch: process.arch, rosettaAvailable: detectRosettaAvailable() }
+) {
   const hostPlatform = normalizePlatform(host.platform);
   const hostArch = normalizeArch(host.arch);
   if (profile.platform !== hostPlatform) {
@@ -132,6 +145,12 @@ export function hostSmokeMode(profile, host = { platform: process.platform, arch
     };
   }
   if (profile.arch !== hostArch) {
+    if (profile.platform === "mac" && profile.arch === "x64" && hostArch === "arm64" && host.rosettaAvailable) {
+      return {
+        mode: "host-compatible",
+        reason: "Apple Silicon host can run Intel macOS artifacts through Rosetta",
+      };
+    }
     return {
       mode: "structure-only",
       reason: `host arch is ${hostArch}; OS-level launch should run on ${profile.platform}/${profile.arch}`,

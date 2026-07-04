@@ -447,3 +447,29 @@
   updater feeds, approved public download URLs, and human-gated publishing/deploy work are verified.
   The pre-existing updater/menu edits in `electron/main.js` were preserved and not intentionally
   included in this package-smoke change.
+
+## 2026-07-04 13:50 EDT — terminal: progressed
+- did: Completed a macOS Intel package evidence pass on the Apple Silicon host. Taught
+  `scripts/package-smoke.mjs` to report macOS x64 artifacts as host-compatible when Rosetta is
+  available, then built the Intel unpacked app through the certificate-free local wrapper. Updated
+  release docs and the cross-platform audit plan to reflect that Intel macOS can be locally
+  launch-smoked through Rosetta, while Windows/Linux still require matching host launch evidence.
+- evidence: `arch -x86_64 /usr/bin/true` passed and `rosetta-oahd-running` was present.
+  `node --check scripts/package-smoke.mjs` passed. `npm test --
+  electron/package-smoke.test.ts electron/release-preflight.test.ts` passed 2 files / 10 tests.
+  `npm run electron:pack:mac:x64` passed after downloading `electron-v41.0.2-darwin-x64.zip`;
+  the local wrapper printed `CSC_IDENTITY_AUTO_DISCOVERY=false` and `mac.identity=null`, the
+  `build/preflight.cjs` window smoke gate loaded `Markie — Markdown Viewer`, and electron-builder
+  skipped macOS code signing because identity was explicitly null. `npm run electron:smoke:mac:x64`
+  passed against `dist/mac/Markie.app` and reported host-compatible Rosetta execution. `file` and
+  `lipo -archs dist/mac/Markie.app/Contents/MacOS/Markie` reported `x86_64`. `codesign -dv
+  dist/mac/Markie.app` reported `code object is not signed at all`. `npm run release:preflight`
+  passed 17 renderer/Electron test files / 103 tests, 19 MCP tests, 32 server tests, lint with the
+  same 4 warnings and zero errors, and static build.
+- next: Exercise Windows x64 and Linux x64 package/smoke checks on matching hosts or CI runners.
+  Keep public Windows/Linux routes planned until signing, updater feeds, public URLs, and
+  human-gated release approval are complete.
+- blockers: none for local macOS Intel package evidence. Full Windows support is still not complete
+  until Windows x64 native-host package evidence, code signing, updater feeds, public download URLs,
+  and human-gated release work are verified. The pre-existing updater/menu edits in
+  `electron/main.js` were preserved and not intentionally included in this macOS Intel pass.

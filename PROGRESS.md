@@ -473,3 +473,34 @@
   until Windows x64 native-host package evidence, code signing, updater feeds, public download URLs,
   and human-gated release work are verified. The pre-existing updater/menu edits in
   `electron/main.js` were preserved and not intentionally included in this macOS Intel pass.
+
+## 2026-07-04 14:31 EDT — terminal: progressed
+- did: Completed a Windows x64 unpacked package structure/native-payload evidence pass. Strengthened
+  `scripts/package-smoke.mjs` so Windows artifacts must include `Markie.exe`, `app.asar`, bundled
+  MCP files, `better-sqlite3`, and Windows x64 `node-pty` native payloads, and those executable
+  payloads must be Windows PE/MZ binaries. Added `scripts/install-win-native-prebuild.mjs` to fetch
+  the Electron 41 `better-sqlite3` Windows x64 prebuild into a temporary package copy and install
+  only the resulting PE `.node` file into `dist/win-unpacked`, leaving the Mac development
+  `node_modules` intact. Updated local Windows package scripts/docs/preflight expectations.
+- evidence: `node --check scripts/install-win-native-prebuild.mjs scripts/local-electron-builder.mjs
+  scripts/package-smoke.mjs scripts/release-preflight.mjs` passed. `npm test --
+  electron/local-electron-builder.test.ts electron/package-smoke.test.ts
+  electron/release-preflight.test.ts` passed 3 files / 16 tests. The stricter smoke initially caught
+  the cross-package bug: `dist/win-unpacked/.../better_sqlite3.node` was `Mach-O 64-bit bundle
+  x86_64` instead of PE. After adding the prebuild installer, `npm run electron:pack:win` passed
+  with `CSC_IDENTITY_AUTO_DISCOVERY=false`, `win.signAndEditExecutable=false`, `--publish never`,
+  and no signtool step; it installed the Electron 41.0.2 win32-x64 `better-sqlite3` prebuild.
+  `npm run electron:smoke:win` passed against `dist/win-unpacked` and reported structure-only host
+  mode because the current host is `mac/arm64`. `file` reported `Markie.exe`, `better_sqlite3.node`,
+  and the Windows x64 `node-pty` `.node` files as PE32+ x86-64 Windows payloads. `dist/win-unpacked`
+  is 690M and contains the expected MCP files. `npm run release:preflight` passed 17
+  renderer/Electron test files / 106 tests, 19 MCP tests, 32 server tests, lint with the same 4
+  warnings and zero errors, and static build. `./init.sh` passed the same renderer/Electron test
+  suite, MCP tests, server tests, lint, and build.
+- next: Run the Windows x64 unpacked app on a Windows host/CI runner to prove OS-level launch and
+  renderer load, then add code signing, update feed, public download URLs, and human-gated release
+  approval before changing public Windows status from planned.
+- blockers: none for local Windows package structure evidence. Full Windows support remains
+  incomplete until native Windows launch evidence, code signing, updater feeds, public download URLs,
+  and human-gated release work are verified. The pre-existing updater/menu edits in
+  `electron/main.js` were preserved and not intentionally included in this Windows package pass.

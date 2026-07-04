@@ -122,6 +122,12 @@ app. The highest-impact safe path is:
       the certificate-free local wrapper, the macOS window preflight loaded `Markie — Markdown
       Viewer` through Rosetta, and `npm run electron:smoke:mac:x64` verified bundled app/MCP
       structure with host-compatible reporting.
+- [x] Windows x64 local unpacked package has structure/native-payload evidence.
+      Completed 2026-07-04: `npm run electron:pack:win` builds `dist/win-unpacked` through the
+      certificate-free local wrapper, installs the Electron 41 `better-sqlite3` Windows x64
+      prebuild, and `npm run electron:smoke:win` verifies `Markie.exe`, critical native `.node`
+      files, app bundle, and MCP resources as Windows PE payloads. Native Windows launch evidence
+      remains host-gated.
 
 ### Human-Gated Release Or Deploy Work
 - [ ] Signing, notarization, upload, publish, deployment, credential rotation, cloud storage paths,

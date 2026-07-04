@@ -30,6 +30,7 @@ const REQUIRED_FILES = [
   "build/icons/512x512.png",
   "public/icon.icns",
   "scripts/local-electron-builder.mjs",
+  "scripts/install-win-native-prebuild.mjs",
   "scripts/package-smoke.mjs",
   "electron/main.js",
   "electron/preload.js",
@@ -173,6 +174,9 @@ export function validatePackagingMatrix(rootDir) {
     assert(script.includes("scripts/local-electron-builder.mjs"), `${name} must use unsigned local electron-builder wrapper`);
     assert(script.includes("--dir"), `${name} must be a local unpacked packaging script`);
     assert(script.includes("--publish never"), `${name} must disable publishing`);
+    if (name === "electron:pack:win") {
+      assert(script.includes("scripts/install-win-native-prebuild.mjs"), `${name} must install the Windows native prebuild`);
+    }
   }
   for (const name of REQUIRED_BUILD_SCRIPTS) {
     const script = scripts[name];

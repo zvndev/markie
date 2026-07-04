@@ -17,11 +17,78 @@ function makeTempDir() {
   return dir;
 }
 
-function writeFixtureFile(rootDir: string, relativePath: string, mode?: number) {
+function writeFixtureFile(rootDir: string, relativePath: string, mode?: number, content: string | Buffer = "fixture") {
   const fullPath = path.join(rootDir, relativePath);
   mkdirSync(path.dirname(fullPath), { recursive: true });
-  writeFileSync(fullPath, "fixture");
+  writeFileSync(fullPath, content);
   if (mode) chmodSync(fullPath, mode);
+}
+
+const machoHeader = Buffer.from("cffaedfe00000000", "hex");
+const peHeader = Buffer.from("4d5a900000000000", "hex");
+
+function writeMacFixture(rootDir: string, appDir: string) {
+  writeFixtureFile(rootDir, path.join(appDir, "Contents", "MacOS", "Markie"), 0o755, machoHeader);
+  writeFixtureFile(rootDir, path.join(appDir, "Contents", "Info.plist"));
+  writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "app.asar"));
+  writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "mcp", "markie-mcp.mjs"));
+  writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "mcp", "lib.mjs"));
+  writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "mcp", "scan.mjs"));
+  writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "mcp", "package.json"));
+  writeFixtureFile(
+    rootDir,
+    path.join(
+      appDir,
+      "Contents",
+      "Resources",
+      "app.asar.unpacked",
+      "node_modules",
+      "better-sqlite3",
+      "build",
+      "Release",
+      "better_sqlite3.node"
+    ),
+    undefined,
+    machoHeader
+  );
+  writeFixtureFile(
+    rootDir,
+    path.join(appDir, "Contents", "Resources", "app.asar.unpacked", "node_modules", "node-pty", "build", "Release", "pty.node"),
+    undefined,
+    machoHeader
+  );
+}
+
+function writeWindowsFixture(rootDir: string, appDir: string, betterSqliteHeader = peHeader) {
+  writeFixtureFile(rootDir, path.join(appDir, "Markie.exe"), undefined, peHeader);
+  writeFixtureFile(rootDir, path.join(appDir, "resources", "app.asar"));
+  writeFixtureFile(rootDir, path.join(appDir, "resources", "mcp", "markie-mcp.mjs"));
+  writeFixtureFile(rootDir, path.join(appDir, "resources", "mcp", "lib.mjs"));
+  writeFixtureFile(rootDir, path.join(appDir, "resources", "mcp", "scan.mjs"));
+  writeFixtureFile(rootDir, path.join(appDir, "resources", "mcp", "package.json"));
+  writeFixtureFile(
+    rootDir,
+    path.join(
+      appDir,
+      "resources",
+      "app.asar.unpacked",
+      "node_modules",
+      "better-sqlite3",
+      "build",
+      "Release",
+      "better_sqlite3.node"
+    ),
+    undefined,
+    betterSqliteHeader
+  );
+  for (const name of ["pty.node", "conpty.node", "conpty_console_list.node"]) {
+    writeFixtureFile(
+      rootDir,
+      path.join(appDir, "resources", "app.asar.unpacked", "node_modules", "node-pty", "prebuilds", "win32-x64", name),
+      undefined,
+      peHeader
+    );
+  }
 }
 
 afterEach(() => {
@@ -63,6 +130,19 @@ describe("package smoke checker", () => {
         path.join("dist", "mac-arm64", "Markie.app", "Contents", "MacOS", "Markie"),
         path.join("dist", "mac-arm64", "Markie.app", "Contents", "Resources", "app.asar"),
         path.join("dist", "mac-arm64", "Markie.app", "Contents", "Resources", "mcp", "markie-mcp.mjs"),
+        path.join(
+          "dist",
+          "mac-arm64",
+          "Markie.app",
+          "Contents",
+          "Resources",
+          "app.asar.unpacked",
+          "node_modules",
+          "better-sqlite3",
+          "build",
+          "Release",
+          "better_sqlite3.node"
+        ),
       ])
     );
   });
@@ -76,19 +156,50 @@ describe("package smoke checker", () => {
     const rootDir = makeTempDir();
     const appDir = path.join("dist", "mac-arm64", "Markie.app");
 
-    writeFixtureFile(rootDir, path.join(appDir, "Contents", "MacOS", "Markie"), 0o755);
-    writeFixtureFile(rootDir, path.join(appDir, "Contents", "Info.plist"));
-    writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "app.asar"));
-    writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "mcp", "markie-mcp.mjs"));
-    writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "mcp", "lib.mjs"));
-    writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "mcp", "scan.mjs"));
-    writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "mcp", "package.json"));
+    writeMacFixture(rootDir, appDir);
 
     const result = verifyPackageLayout(rootDir, { platform: "mac", arch: "arm64" });
 
     expect(result.ok).toBe(true);
     expect(result.executable).toBe(path.join(appDir, "Contents", "MacOS", "Markie"));
     expect(result.missing).toEqual([]);
+    expect(result.binaryFailures).toEqual([]);
+  });
+
+  it("requires Windows native modules and PE binaries", () => {
+    const rootDir = makeTempDir();
+    const appDir = path.join("dist", "win-unpacked");
+
+    writeWindowsFixture(rootDir, appDir);
+
+    const result = verifyPackageLayout(rootDir, { platform: "windows", arch: "x64" });
+
+    expect(result.ok).toBe(true);
+    expect(result.missing).toEqual([]);
+    expect(result.binaryFailures).toEqual([]);
+  });
+
+  it("rejects Windows artifacts that contain non-PE native payloads", () => {
+    const rootDir = makeTempDir();
+    const appDir = path.join("dist", "win-unpacked");
+
+    writeWindowsFixture(rootDir, appDir, machoHeader);
+
+    const result = verifyPackageLayout(rootDir, { platform: "windows", arch: "x64" });
+
+    expect(result.ok).toBe(false);
+    expect(result.binaryFailures).toEqual([
+      path.join(
+        appDir,
+        "resources",
+        "app.asar.unpacked",
+        "node_modules",
+        "better-sqlite3",
+        "build",
+        "Release",
+        "better_sqlite3.node"
+      ) + " (macho, expected pe)",
+    ]);
   });
 
   it("separates structure-only smoke from host-native launch evidence", () => {

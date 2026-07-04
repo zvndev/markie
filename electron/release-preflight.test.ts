@@ -24,6 +24,7 @@ describe("release preflight", () => {
         "build/entitlements.mac.plist",
         "build/icon.ico",
         "build/icons/256x256.png",
+        "scripts/install-win-native-prebuild.mjs",
         "scripts/local-electron-builder.mjs",
         "scripts/package-smoke.mjs",
         "public/icon.icns",

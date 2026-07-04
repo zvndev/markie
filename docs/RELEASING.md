@@ -28,8 +28,10 @@ These commands pass `--publish never` through `scripts/local-electron-builder.mj
 which also sets `CSC_IDENTITY_AUTO_DISCOVERY=false` and strips local signing /
 notarization credentials. For macOS local builds it also adds
 `-c.mac.identity=null`, so these are not Developer ID signing, notarization,
-release, or upload commands. Apple Silicon binaries may still report an ad-hoc
-linker signature; that is not a distributable release signature.
+release, or upload commands. For Windows local builds it adds
+`-c.win.signAndEditExecutable=false`, so local Windows packaging does not invoke
+signtool. Apple Silicon binaries may still report an ad-hoc linker signature;
+that is not a distributable release signature.
 After a local package command, smoke the unpacked artifact structure before
 making any platform-readiness claim:
 
@@ -45,6 +47,11 @@ gate during `afterPack`; Apple Silicon hosts with Rosetta can launch-smoke the
 Intel macOS package. Windows and Linux currently get deterministic structure
 checks locally; OS-level launch evidence still needs a matching Windows or
 Linux host before public release.
+For cross-packaged Windows `--dir` artifacts, `electron:pack:win` runs
+`scripts/install-win-native-prebuild.mjs` after electron-builder so the unpacked
+app contains the Electron 41 `better-sqlite3` Windows x64 prebuild instead of
+the Mac development binary. `electron:smoke:win` verifies the executable,
+critical `.node` files, app bundle, and MCP resources as Windows PE payloads.
 
 ## One-time setup
 

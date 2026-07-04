@@ -46,4 +46,17 @@ describe("local electron-builder wrapper", () => {
       "-c.mac.identity=Developer ID",
     ]);
   });
+
+  it("adds win.signAndEditExecutable=false for local Windows package and build commands", () => {
+    expect(localElectronBuilderArgs(["--win", "--x64", "--dir", "--publish", "never"])).toEqual(
+      expect.arrayContaining(["-c.win.signAndEditExecutable=false"])
+    );
+    expect(localElectronBuilderArgs(["--linux", "--x64", "--dir", "--publish", "never"])).not.toContain(
+      "-c.win.signAndEditExecutable=false"
+    );
+    expect(localElectronBuilderArgs(["--win", "-c.win.signAndEditExecutable=true"])).toEqual([
+      "--win",
+      "-c.win.signAndEditExecutable=true",
+    ]);
+  });
 });

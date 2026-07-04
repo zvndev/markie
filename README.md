@@ -82,7 +82,8 @@ npm run electron:smoke:linux
 
 The local pack/build scripts use a certificate-free electron-builder wrapper and
 pass `--publish never`; `npm run electron:release` is the only Developer ID
-signing/publishing path.
+signing/publishing path. The Windows unpacked package also installs the matching
+Electron `better-sqlite3` Windows prebuild before `electron:smoke:win` runs.
 
 Other scripts: `npm run build` (Next static export), `npm test` (renderer +
 Electron unit tests), `node --test mcp/lib.test.mjs` (MCP tests), and

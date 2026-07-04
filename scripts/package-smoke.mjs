@@ -56,6 +56,37 @@ function readProductName(rootDir) {
   }
 }
 
+function nativeModuleFiles(resourcesDir, platform, arch) {
+  const files = [
+    path.join(resourcesDir, "app.asar.unpacked", "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node"),
+  ];
+  if (platform === "windows") {
+    const ptyDir = path.join(resourcesDir, "app.asar.unpacked", "node_modules", "node-pty", "prebuilds", `win32-${arch}`);
+    files.push(
+      path.join(ptyDir, "pty.node"),
+      path.join(ptyDir, "conpty.node"),
+      path.join(ptyDir, "conpty_console_list.node")
+    );
+  } else {
+    files.push(path.join(resourcesDir, "app.asar.unpacked", "node_modules", "node-pty", "build", "Release", "pty.node"));
+  }
+  return files;
+}
+
+function binaryChecksFor(files, kind) {
+  return files.map((file) => ({ file, kind }));
+}
+
+function binaryKind(pathname) {
+  const header = readFileSync(pathname, { flag: "r" }).subarray(0, 4);
+  if (header.length < 2) return "unknown";
+  if (header[0] === 0x4d && header[1] === 0x5a) return "pe";
+  if (header[0] === 0x7f && header[1] === 0x45 && header[2] === 0x4c && header[3] === 0x46) return "elf";
+  const hex = header.toString("hex");
+  if (["feedfacf", "cffaedfe", "feedface", "cefaedfe", "cafebabe", "cafebabf"].includes(hex)) return "macho";
+  return "unknown";
+}
+
 export function detectRosettaAvailable() {
   if (process.platform !== "darwin" || process.arch !== "arm64") return false;
   const result = spawnSync("/usr/bin/arch", ["-x86_64", "/usr/bin/true"], {
@@ -76,20 +107,25 @@ export function packageProfile({
 
   if (targetPlatform === "mac") {
     const appDir = path.join(distDir, macOutputDir(targetArch), `${productName}.app`);
+    const resourcesDir = path.join(appDir, "Contents", "Resources");
+    const executable = path.join(appDir, "Contents", "MacOS", productName);
+    const nativeFiles = nativeModuleFiles(resourcesDir, targetPlatform, targetArch);
     return {
       id: `mac-${targetArch}`,
       platform: targetPlatform,
       arch: targetArch,
       appDir,
-      executableCandidates: [path.join(appDir, "Contents", "MacOS", productName)],
+      executableCandidates: [executable],
       requiredFiles: [
         path.join(appDir, "Contents", "Info.plist"),
-        path.join(appDir, "Contents", "Resources", "app.asar"),
-        path.join(appDir, "Contents", "Resources", "mcp", "markie-mcp.mjs"),
-        path.join(appDir, "Contents", "Resources", "mcp", "lib.mjs"),
-        path.join(appDir, "Contents", "Resources", "mcp", "scan.mjs"),
-        path.join(appDir, "Contents", "Resources", "mcp", "package.json"),
+        path.join(resourcesDir, "app.asar"),
+        path.join(resourcesDir, "mcp", "markie-mcp.mjs"),
+        path.join(resourcesDir, "mcp", "lib.mjs"),
+        path.join(resourcesDir, "mcp", "scan.mjs"),
+        path.join(resourcesDir, "mcp", "package.json"),
+        ...nativeFiles,
       ],
+      binaryChecks: binaryChecksFor([executable, ...nativeFiles], "macho"),
     };
   }
 
@@ -99,36 +135,46 @@ export function packageProfile({
 
   if (targetPlatform === "windows") {
     const appDir = path.join(distDir, "win-unpacked");
+    const resourcesDir = path.join(appDir, "resources");
+    const executable = path.join(appDir, `${productName}.exe`);
+    const nativeFiles = nativeModuleFiles(resourcesDir, targetPlatform, targetArch);
     return {
       id: "windows-x64",
       platform: targetPlatform,
       arch: targetArch,
       appDir,
-      executableCandidates: [path.join(appDir, `${productName}.exe`)],
+      executableCandidates: [executable],
       requiredFiles: [
-        path.join(appDir, "resources", "app.asar"),
-        path.join(appDir, "resources", "mcp", "markie-mcp.mjs"),
-        path.join(appDir, "resources", "mcp", "lib.mjs"),
-        path.join(appDir, "resources", "mcp", "scan.mjs"),
-        path.join(appDir, "resources", "mcp", "package.json"),
+        path.join(resourcesDir, "app.asar"),
+        path.join(resourcesDir, "mcp", "markie-mcp.mjs"),
+        path.join(resourcesDir, "mcp", "lib.mjs"),
+        path.join(resourcesDir, "mcp", "scan.mjs"),
+        path.join(resourcesDir, "mcp", "package.json"),
+        ...nativeFiles,
       ],
+      binaryChecks: binaryChecksFor([executable, ...nativeFiles], "pe"),
     };
   }
 
   const appDir = path.join(distDir, "linux-unpacked");
+  const resourcesDir = path.join(appDir, "resources");
+  const executableCandidates = [path.join(appDir, "markie"), path.join(appDir, productName)];
+  const nativeFiles = nativeModuleFiles(resourcesDir, targetPlatform, targetArch);
   return {
     id: "linux-x64",
     platform: targetPlatform,
     arch: targetArch,
     appDir,
-    executableCandidates: [path.join(appDir, "markie"), path.join(appDir, productName)],
+    executableCandidates,
     requiredFiles: [
-      path.join(appDir, "resources", "app.asar"),
-      path.join(appDir, "resources", "mcp", "markie-mcp.mjs"),
-      path.join(appDir, "resources", "mcp", "lib.mjs"),
-      path.join(appDir, "resources", "mcp", "scan.mjs"),
-      path.join(appDir, "resources", "mcp", "package.json"),
+      path.join(resourcesDir, "app.asar"),
+      path.join(resourcesDir, "mcp", "markie-mcp.mjs"),
+      path.join(resourcesDir, "mcp", "lib.mjs"),
+      path.join(resourcesDir, "mcp", "scan.mjs"),
+      path.join(resourcesDir, "mcp", "package.json"),
+      ...nativeFiles,
     ],
+    binaryChecks: binaryChecksFor([...executableCandidates, ...nativeFiles], "elf"),
   };
 }
 
@@ -183,10 +229,21 @@ export function verifyPackageLayout(rootDir, options = {}) {
     if (!existsSync(path.join(rootDir, file))) missing.push(file);
   }
 
+  const binaryFailures = [];
+  for (const check of profile.binaryChecks ?? []) {
+    const absolutePath = path.join(rootDir, check.file);
+    if (!existsSync(absolutePath)) continue;
+    const actual = binaryKind(absolutePath);
+    if (actual !== check.kind) {
+      binaryFailures.push(`${check.file} (${actual}, expected ${check.kind})`);
+    }
+  }
+
   return {
-    ok: missing.length === 0,
+    ok: missing.length === 0 && binaryFailures.length === 0,
     profile,
     missing,
+    binaryFailures,
     executable,
     host: hostSmokeMode(profile),
   };
@@ -236,6 +293,7 @@ export function runPackageSmokeCli(argv = process.argv.slice(2), rootDir = path.
     } else {
       console.error(`[package:smoke] missing package files for ${result.profile.id}:`);
       for (const item of result.missing) console.error(`  - ${item}`);
+      for (const item of result.binaryFailures) console.error(`  - ${item}`);
     }
   }
 

@@ -32,10 +32,17 @@ function targetsMac(argv) {
   return argv.some((arg) => arg === "--mac" || arg === "-m" || arg.startsWith("--mac=") || arg.startsWith("-m="));
 }
 
+function targetsWindows(argv) {
+  return argv.some((arg) => arg === "--win" || arg === "-w" || arg.startsWith("--win=") || arg.startsWith("-w="));
+}
+
 export function localElectronBuilderArgs(argv) {
   const args = [...argv];
   if (targetsMac(args) && !args.some((arg) => arg.includes("mac.identity"))) {
     args.push("-c.mac.identity=null");
+  }
+  if (targetsWindows(args) && !args.some((arg) => arg.includes("win.signAndEditExecutable"))) {
+    args.push("-c.win.signAndEditExecutable=false");
   }
   return args;
 }
@@ -56,6 +63,9 @@ export function runLocalElectronBuilder(
   console.log("[local-electron-builder] CSC_IDENTITY_AUTO_DISCOVERY=false; signing credentials stripped");
   if (args.some((arg) => arg === "-c.mac.identity=null")) {
     console.log("[local-electron-builder] mac.identity=null; Developer ID signing disabled");
+  }
+  if (args.some((arg) => arg === "-c.win.signAndEditExecutable=false")) {
+    console.log("[local-electron-builder] win.signAndEditExecutable=false; Windows signing/editing disabled");
   }
   const result = spawnSync(command, args, {
     cwd: rootDir,

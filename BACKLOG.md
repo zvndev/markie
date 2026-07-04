@@ -4,6 +4,24 @@
 > evidence; do not delete history. Move completed items to Done with the verification record.
 
 ## Open
+- [ ] Harden privileged Electron file IPC with main-owned file grants.
+      type: security
+      severity: medium
+      rationale: `open-file-path`, `save-file`, and `rename-file` trust renderer-supplied paths.
+        A compromised renderer could read/write/rename arbitrary local files unless main owns a
+        grant list from dialogs, dropped files, and workspace roots.
+      acceptance_criteria: Main process validates open/save/rename paths against user-granted
+        paths or workspace roots, rejects unsafe names/extensions, and focused regressions prove
+        ungranted paths are refused.
+      source: product-review security pass 2026-07-03
+- [ ] Replace or document packaged CSP inline-script allowance.
+      type: security
+      severity: low
+      rationale: Packaged Electron CSP currently includes `script-src 'self' 'unsafe-inline'`,
+        reducing CSP value if a renderer XSS path is introduced later.
+      acceptance_criteria: Inline bootstrap requirements are replaced with hashes/nonces where
+        practical, or the exact required inline script is documented and constrained with a hash.
+      source: product-review security pass 2026-07-03
 - [ ] Approve or revise the context-aware terminal API shape before implementing bundled `markie`
       CLI commands or new MCP current-document tools.
       type: product

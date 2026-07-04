@@ -204,7 +204,7 @@ export function FormatRail({ editor }: FormatRailProps) {
 
       {modal && (
         <div
-          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50"
+          className="markie-scrim-strong fixed inset-0 z-[110] flex items-center justify-center"
           onMouseDown={closeModal}
         >
           <div

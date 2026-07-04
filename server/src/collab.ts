@@ -119,7 +119,30 @@ function broadcast(room: Room, message: Uint8Array): void {
   }
 }
 
-function handleConnection(conn: WebSocket, docId: string): void {
+export function readAccessControlledSyncMessage(
+  decoder: decoding.Decoder,
+  encoder: encoding.Encoder,
+  ydoc: Y.Doc,
+  transactionOrigin: unknown,
+  canEdit: boolean
+): number {
+  if (canEdit) {
+    return syncProtocol.readSyncMessage(
+      decoder,
+      encoder,
+      ydoc,
+      transactionOrigin
+    );
+  }
+
+  const messageType = decoding.readVarUint(decoder);
+  if (messageType === syncProtocol.messageYjsSyncStep1) {
+    syncProtocol.readSyncStep1(decoder, encoder, ydoc);
+  }
+  return messageType;
+}
+
+function handleConnection(conn: WebSocket, docId: string, canEdit: boolean): void {
   const room = getRoom(docId);
   room.conns.set(conn, new Set());
   conn.binaryType = "arraybuffer";
@@ -132,7 +155,13 @@ function handleConnection(conn: WebSocket, docId: string): void {
       if (messageType === MESSAGE_SYNC) {
         const encoder = encoding.createEncoder();
         encoding.writeVarUint(encoder, MESSAGE_SYNC);
-        syncProtocol.readSyncMessage(decoder, encoder, room.ydoc, conn);
+        readAccessControlledSyncMessage(
+          decoder,
+          encoder,
+          room.ydoc,
+          conn,
+          canEdit
+        );
         if (encoding.length(encoder) > 1) {
           conn.send(encoding.toUint8Array(encoder));
         }
@@ -199,13 +228,15 @@ export function attachCollab(server: Server): void {
       const docId = decodeURIComponent(match[1]);
       const token = url.searchParams.get("token") ?? "";
       const session = await sessionFromToken(token);
-      if (!session?.user || !accessLevel(docId, session.user.id)) {
+      const level = session?.user ? accessLevel(docId, session.user.id) : null;
+      if (!session?.user || !level) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
       }
+      const canEdit = level === "owner" || level === "editor";
       wss.handleUpgrade(req, socket, head, (conn) => {
-        handleConnection(conn, docId);
+        handleConnection(conn, docId, canEdit);
       });
     } catch (err) {
       console.error("collab upgrade error:", err);

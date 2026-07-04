@@ -116,7 +116,7 @@ export function SharedView({
                 <span className="text-[12.5px] text-foreground truncate flex-1">
                   {d.name}
                 </span>
-                <span className="text-[10px] text-muted opacity-0 group-hover:opacity-100 shrink-0">
+                <span className="text-[10px] text-muted opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 shrink-0 transition">
                   Manage
                 </span>
               </div>

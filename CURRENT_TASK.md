@@ -1,17 +1,18 @@
-# Current Task — F-015
+# Current Task — User-directed polish/review pass
 
 ## Task
-A cross-platform desktop audit maps macOS-only assumptions and creates a safe implementation
-checklist for Windows, Intel Mac, and Linux support.
+Fix first-use default workspace setup, make source-editor theming follow the active theme, improve
+light-mode polish, and address high-confidence review findings that are safe in the current scope.
 
 ## Acceptance Criteria
-1. Search Electron, renderer, MCP, release, and docs code for macOS-only assumptions and
-   Apple-Silicon-only release assumptions.
-2. Classify each finding as runtime behavior, packaging config, docs/download page, test/preflight,
-   or human-gated release/deploy work.
-3. Add the resulting checklist to the roadmap docs or backlog without changing runtime behavior.
-4. Run `./init.sh`.
+1. The Files view creates/registers the default workspace root on first use and has regression
+   coverage for existing-root, first-use, and failure paths.
+2. CodeMirror source editing follows active light/dark/custom theme tone instead of staying dark.
+3. Light-mode visual guard covers source-editor samples and passes with zero contrast findings.
+4. High-severity viewer live-collab write access is blocked at the WebSocket sync boundary.
+5. Run focused tests, visual guard, and `./init.sh`.
 
 ## Scope Guard
-Audit and checklist only. Do not change runtime behavior, publish, deploy, notarize, upload,
-or use release credentials.
+Keep local-first behavior intact. Do not change public API shapes, deploy, release, notarize,
+publish, or touch credentials. Preserve unrelated local edits, including the pre-existing
+`electron/main.js` updater/menu diff.

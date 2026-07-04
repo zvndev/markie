@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { getElectronAPI, type WsListing } from "@/lib/electron";
+import { ensureDefaultWorkspaceRoot } from "@/lib/workspace-default";
 
 interface FilesViewProps {
   activePath: string | null;
@@ -50,9 +51,12 @@ export function FilesView({
 
   const loadRoots = useCallback(async () => {
     if (!api?.wsRoots) return;
-    const [rs, dp] = await Promise.all([api.wsRoots(), api.wsDefaultPath()]);
+    const result = await ensureDefaultWorkspaceRoot(api);
+    const rs = result.roots;
+    const dp = result.defaultPath;
     setRoots(rs);
     setDefaultPath(dp);
+    if (result.error) onNotice(result.error);
     // auto-expand + load each root
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -60,16 +64,18 @@ export function FilesView({
       return next;
     });
     rs.forEach((r) => loadDir(r));
-  }, [api, loadDir]);
+  }, [api, loadDir, onNotice]);
 
   useEffect(() => {
     if (!api?.wsRoots) return;
     let alive = true;
     (async () => {
-      const [rs, dp] = await Promise.all([api.wsRoots(), api.wsDefaultPath()]);
+      const result = await ensureDefaultWorkspaceRoot(api);
       if (!alive) return;
+      const rs = result.roots;
       setRoots(rs);
-      setDefaultPath(dp);
+      setDefaultPath(result.defaultPath);
+      if (result.error) onNotice(result.error);
       setExpanded((prev) => {
         const next = new Set(prev);
         rs.forEach((r) => next.add(r));
@@ -80,7 +86,7 @@ export function FilesView({
     return () => {
       alive = false;
     };
-  }, [api, loadDir, refreshKey]);
+  }, [api, loadDir, onNotice, refreshKey]);
 
   const toggle = (folder: string) => {
     setExpanded((prev) => {
@@ -173,7 +179,8 @@ export function FilesView({
     return (
       <div className="px-2 py-4 text-[12px] text-muted leading-relaxed">
         <div className="mb-3">
-          Organize your markdown in real folders on your Mac. Pick a home for it.
+          Markie could not set up its default workspace automatically. Pick a
+          folder to organize your markdown on this computer.
         </div>
         <button
           onClick={createDefault}
@@ -289,7 +296,7 @@ export function FilesView({
             <span className="text-[11px] uppercase tracking-wide text-muted font-medium flex-1 truncate" title={root}>
               {basename(root)}
             </span>
-            <button onClick={(e) => { e.stopPropagation(); startNew(root, "new-folder"); }} title="New folder" className="opacity-0 group-hover:opacity-100 text-muted hover:text-foreground text-[13px]">＋</button>
+            <button onClick={(e) => { e.stopPropagation(); startNew(root, "new-folder"); }} title="New folder" className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-muted hover:text-foreground hover:bg-accent/40 text-[13px] transition">＋</button>
           </div>
           {expanded.has(root) && renderDir(root, 1)}
         </div>
@@ -366,7 +373,7 @@ function Row(props: RowProps) {
         )}
         <button
           onClick={(e) => { e.stopPropagation(); props.onMenu(); }}
-          className="opacity-0 group-hover:opacity-100 text-muted hover:text-foreground shrink-0"
+          className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-muted hover:text-foreground hover:bg-accent/40 shrink-0 transition"
           aria-label="Actions"
         >
           ⋯

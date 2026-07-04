@@ -4,15 +4,25 @@ import {
   saveThemeStore,
   allThemes,
   findTheme,
+  applyTheme,
+  editorThemeForTokens,
   MARKIE_DARK,
   MARKIE_LIGHT,
 } from "./theme";
 
 const storage = new Map<string, string>();
+const styles = new Map<string, string>();
 (globalThis as Record<string, unknown>).localStorage = {
   getItem: (k: string) => storage.get(k) ?? null,
   setItem: (k: string, v: string) => void storage.set(k, v),
   removeItem: (k: string) => void storage.delete(k),
+};
+(globalThis as Record<string, unknown>).document = {
+  documentElement: {
+    style: {
+      setProperty: (name: string, value: string) => void styles.set(name, value),
+    },
+  },
 };
 
 function luminance(hex: string) {
@@ -33,7 +43,10 @@ function contrast(foreground: string, background: string) {
 }
 
 describe("theme store", () => {
-  beforeEach(() => storage.clear());
+  beforeEach(() => {
+    storage.clear();
+    styles.clear();
+  });
 
   it("defaults to Markie Dark with no custom themes", () => {
     const store = loadThemeStore();
@@ -110,5 +123,32 @@ describe("theme store", () => {
       expect(contrast(theme.tokens.statusYellow!, theme.tokens.surface)).toBeGreaterThanOrEqual(4.5);
       expect(contrast(theme.tokens.background, theme.tokens.link)).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  it("applies every app and document CSS variable", () => {
+    applyTheme(MARKIE_LIGHT.tokens);
+
+    expect(styles.get("--background")).toBe(MARKIE_LIGHT.tokens.background);
+    expect(styles.get("--surface")).toBe(MARKIE_LIGHT.tokens.surface);
+    expect(styles.get("--surface-2")).toBe(MARKIE_LIGHT.tokens.surface2);
+    expect(styles.get("--foreground")).toBe(MARKIE_LIGHT.tokens.foreground);
+    expect(styles.get("--muted")).toBe(MARKIE_LIGHT.tokens.muted);
+    expect(styles.get("--border")).toBe(MARKIE_LIGHT.tokens.border);
+    expect(styles.get("--accent")).toBe(MARKIE_LIGHT.tokens.accent);
+    expect(styles.get("--blue")).toBe(MARKIE_LIGHT.tokens.link);
+    expect(styles.get("--status-green")).toBe(MARKIE_LIGHT.tokens.statusGreen);
+    expect(styles.get("--status-yellow")).toBe(MARKIE_LIGHT.tokens.statusYellow);
+    expect(styles.get("--status-red")).toBe(MARKIE_LIGHT.tokens.statusRed);
+    expect(styles.get("--status-blue")).toBe(MARKIE_LIGHT.tokens.statusBlue);
+    expect(styles.get("--status-purple")).toBe(MARKIE_LIGHT.tokens.statusPurple);
+    expect(styles.get("--doc-font-size")).toBe("16px");
+    expect(styles.get("--doc-width")).toBe("768px");
+  });
+
+  it("chooses a readable source-editor theme from theme background tone", () => {
+    expect(editorThemeForTokens(MARKIE_DARK.tokens)).toBe("dark");
+    expect(editorThemeForTokens(MARKIE_LIGHT.tokens)).toBe("light");
+    expect(editorThemeForTokens({ background: "#fff" })).toBe("light");
+    expect(editorThemeForTokens({ background: "not-a-color" })).toBe("dark");
   });
 });

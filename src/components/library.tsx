@@ -268,7 +268,7 @@ export function Library({
                 e.stopPropagation();
                 setMenuFor(menuFor === (item.path ?? item.cloudId) ? null : item.path ?? item.cloudId);
               }}
-              className="opacity-0 group-hover:opacity-100 text-muted hover:text-foreground shrink-0"
+              className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-muted hover:text-foreground hover:bg-accent/40 shrink-0 transition"
               aria-label="Actions"
             >
               ⋯
@@ -451,7 +451,7 @@ export function Library({
       )}
 
       {confirmOff && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50">
+        <div className="markie-scrim-strong fixed inset-0 z-[110] flex items-center justify-center">
           <div className="w-[380px] rounded-xl border border-border shadow-2xl p-4" style={{ background: "var(--surface-2)" }}>
             <div className="text-[13px] text-foreground mb-1">Stop syncing this document?</div>
             <div className="text-[12px] text-muted mb-4">

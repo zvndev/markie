@@ -301,3 +301,24 @@
   darwin/win32/linux tests.
 - blockers: none for `F-015`. The pre-existing local `electron/main.js` updater/menu diff was not
   part of this task and was left untouched.
+
+## 2026-07-03 23:22 EDT — terminal: progressed
+- did: Completed a user-directed polish/review pass over default workspace setup, active theming,
+  light-mode source editing, and review-driven security hardening. Files view now creates/registers
+  the default `~/Documents/Markie` workspace on first use, CodeMirror follows the active theme tone
+  instead of staying dark, the built-in light palette has clearer control hierarchy, modal scrims are
+  theme-aware, side-panel actions reveal on keyboard focus, workspace reveal is root-guarded, and
+  viewer live-collab clients can no longer apply Yjs document updates.
+- evidence: `npm test` passed 13 files / 76 tests, including the new default workspace bootstrap
+  tests and theme CSS-variable/source-editor theme tests. `node --experimental-strip-types --test
+  server/src/collab.test.ts` passed 3 viewer/editor sync authorization tests. `npm run
+  visual:guard:theme` passed with zero findings and wrote
+  `.autoloop/runs/light-mode-audit-20260704031946/audit.json`, sampling shell, rendered content,
+  source editor, and overlay/panel surfaces. `./init.sh` passed renderer tests, MCP tests, server
+  tests, lint, and build.
+- next: Tackle the medium-severity Electron file IPC grant model from `BACKLOG.md`, or continue with
+  first-run empty-state/product polish after the default workspace path has been verified in normal
+  use.
+- blockers: none for this pass. Lint still reports the pre-existing 4 warnings and zero errors.
+  The pre-existing local `electron/main.js` updater/menu diff was not part of this task and was
+  left untouched.

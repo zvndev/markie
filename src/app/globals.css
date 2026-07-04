@@ -52,6 +52,16 @@ body {
   box-shadow: inset 0 -1px color-mix(in srgb, var(--foreground) 6%, transparent);
 }
 
+.markie-scrim {
+  background: color-mix(in srgb, var(--background) 58%, transparent);
+  backdrop-filter: blur(10px) saturate(1.08);
+}
+
+.markie-scrim-strong {
+  background: color-mix(in srgb, var(--background) 72%, transparent);
+  backdrop-filter: blur(12px) saturate(1.08);
+}
+
 .markie-workspace {
   background: color-mix(in srgb, var(--background) 92%, var(--surface) 8%);
 }
@@ -477,7 +487,7 @@ body {
 .cm-editor .cm-gutters {
   background: var(--background) !important;
   border-right: 1px solid var(--border) !important;
-  color: var(--accent) !important;
+  color: var(--muted) !important;
 }
 
 .cm-editor .cm-activeLineGutter {

@@ -34,6 +34,9 @@ const guardCategories = {
   ],
   content: [
     "editor rich article",
+    "source editor",
+    "source editor text",
+    "source editor gutter",
     "editor heading",
     "editor strong text",
     "editor link",
@@ -283,14 +286,14 @@ async function main() {
     localStorage.setItem("markie.colormode.v1", "light");
     localStorage.setItem("markie.themes.v1", JSON.stringify({ activeId: "markie-light", custom: [] }));
     const tokens = {
-      "--background": "#fafafa",
-      "--surface": "#f1f1f3",
-      "--surface-2": "#e9e9ec",
+      "--background": "#f8fafc",
+      "--surface": "#eef2f6",
+      "--surface-2": "#e3e8ef",
       "--foreground": "#18181b",
-      "--muted": "#52525b",
-      "--border": "#d4d4d8",
-      "--accent": "#d4d4d8",
-      "--blue": "#2563eb",
+      "--muted": "#475569",
+      "--border": "#c7d0dc",
+      "--accent": "#dbeafe",
+      "--blue": "#1d4ed8",
       "--status-green": "#166534",
       "--status-yellow": "#92400e",
       "--status-red": "#991b1b",
@@ -305,7 +308,7 @@ async function main() {
   })()`);
   await cdp.ev("location.reload()");
   await waitFor("light theme tokens", () =>
-    cdp.ev("document.documentElement && getComputedStyle(document.documentElement).getPropertyValue('--background').trim() === '#fafafa'"),
+    cdp.ev("document.documentElement && getComputedStyle(document.documentElement).getPropertyValue('--background').trim() === '#f8fafc'"),
     30000
   );
   await waitFor("toolbar ready", () => cdp.ev("[...document.querySelectorAll('button')].some((b) => b.textContent.includes('PDF'))"));
@@ -316,6 +319,17 @@ async function main() {
   await cdp.ev("[...document.querySelectorAll('button')].find((b) => b.textContent.includes('PDF'))?.click()");
   await waitFor("PDF menu", () => cdp.ev("document.body.innerText.includes('Export Dark')"));
   screenshots.toolbarPdfMenu = await capture(cdp, "02-toolbar-pdf-menu");
+
+  await cdp.ev("document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))");
+  await cdp.ev(`document.querySelector('button[aria-label="Split mode"]')?.click()`);
+  await waitFor("source editor in split mode", () =>
+    cdp.ev("!!document.querySelector('.cm-editor .cm-line') && !!document.querySelector('.markdown-body h1')")
+  );
+  screenshots.sourceEditor = await capture(cdp, "02b-source-editor-light");
+  await cdp.ev(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'View')?.click()`);
+  await waitFor("rich view restored", () =>
+    cdp.ev("!!document.querySelector('.markdown-body h1') && !document.querySelector('.cm-editor')")
+  );
 
   await cdp.ev(`(() => {
     document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
@@ -441,7 +455,7 @@ async function main() {
     if (existing) existing.remove();
     const modal = document.createElement('section');
     modal.setAttribute('data-audit-surface', 'settings-probe');
-    modal.className = 'fixed inset-0 z-[100] flex items-center justify-center bg-black/40';
+    modal.className = 'markie-scrim fixed inset-0 z-[100] flex items-center justify-center';
     modal.innerHTML = \`
       <div class="w-[440px] max-w-[92vw] max-h-[84vh] overflow-y-auto rounded-xl border border-border shadow-2xl p-5" style="background: var(--surface-2)">
         <div class="flex items-center justify-between mb-4">
@@ -552,6 +566,11 @@ async function main() {
     document.body.appendChild(host);
   })()`);
   screenshots.gatedSurfaceProbes = await capture(cdp, "06-share-comments-probes");
+
+  await cdp.ev(`document.querySelector('button[aria-label="Split mode"]')?.click()`);
+  await waitFor("source editor in split mode", () =>
+    cdp.ev("!!document.querySelector('.cm-editor .cm-line') && !!document.querySelector('.markdown-body h1')")
+  );
 
   const audit = await cdp.ev(`(() => {
     const rgba = (value) => {
@@ -664,10 +683,10 @@ async function main() {
       let node = el;
       while (node && node.nodeType === 1) {
         const bg = rgba(getComputedStyle(node).backgroundColor);
-        if (bg && bg.a > 0) return bg.a < 1 ? blend(bg, { r: 250, g: 250, b: 250, a: 1 }) : bg;
+        if (bg && bg.a > 0) return bg.a < 1 ? blend(bg, { r: 248, g: 250, b: 252, a: 1 }) : bg;
         node = node.parentElement;
       }
-      return { r: 250, g: 250, b: 250, a: 1 };
+      return { r: 248, g: 250, b: 252, a: 1 };
     };
     const cssPath = (el) => {
       const bits = [];
@@ -719,6 +738,9 @@ async function main() {
       ['skills path', document.querySelector('[data-audit-sample="skills-path"]')],
       ['skills starred state', document.querySelector('[data-audit-sample="skills-star"]')],
       ['editor rich article', document.querySelector('.markdown-body')],
+      ['source editor', document.querySelector('.cm-editor')],
+      ['source editor text', document.querySelector('.cm-editor .cm-line')],
+      ['source editor gutter', document.querySelector('.cm-editor .cm-gutters')],
       ['editor heading', document.querySelector('.markdown-body h1')],
       ['editor strong text', document.querySelector('.markdown-body strong')],
       ['editor link', document.querySelector('.markdown-body a')],
@@ -777,7 +799,7 @@ async function main() {
         passesAA: contrast >= 4.5
       };
     });
-    const surfaces = ['toolbar', 'editor/rich view', 'left rail', 'library', 'browse', 'files', 'shared', 'skills/agents', 'command palette', 'settings', 'theme settings', 'stats', 'share dialog', 'agents', 'comments'];
+    const surfaces = ['toolbar', 'editor/rich/source view', 'left rail', 'library', 'browse', 'files', 'shared', 'skills/agents', 'command palette', 'settings', 'theme settings', 'stats', 'share dialog', 'agents', 'comments'];
     const sidePanelLabels = new Set([
       'library heading',
       'library body',
@@ -805,6 +827,9 @@ async function main() {
     ]);
     const contentLabels = new Set([
       'editor rich article',
+      'source editor',
+      'source editor text',
+      'source editor gutter',
       'editor heading',
       'editor strong text',
       'editor link',

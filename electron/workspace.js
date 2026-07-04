@@ -127,6 +127,7 @@ async function trash(target) {
 }
 
 function reveal(target) {
+  guard(target);
   shell.showItemInFolder(target);
   return { ok: true };
 }

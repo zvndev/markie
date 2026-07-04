@@ -23,6 +23,8 @@ export interface ThemePreset {
   tokens: ThemeTokens;
 }
 
+export const THEME_APPLIED_EVENT = "markie:theme-applied";
+
 export const MARKIE_DARK: ThemePreset = {
   id: "markie-dark",
   name: "Markie Dark",
@@ -51,14 +53,14 @@ export const MARKIE_LIGHT: ThemePreset = {
   name: "Markie Light",
   builtIn: true,
   tokens: {
-    background: "#fafafa",
-    surface: "#f1f1f3",
-    surface2: "#e9e9ec",
+    background: "#f8fafc",
+    surface: "#eef2f6",
+    surface2: "#e3e8ef",
     foreground: "#18181b",
-    muted: "#52525b",
-    border: "#d4d4d8",
-    accent: "#d4d4d8",
-    link: "#2563eb",
+    muted: "#475569",
+    border: "#c7d0dc",
+    accent: "#dbeafe",
+    link: "#1d4ed8",
     statusGreen: "#166534",
     statusYellow: "#92400e",
     statusRed: "#991b1b",
@@ -113,6 +115,41 @@ export function findTheme(store: ThemeStore, id: string): ThemePreset {
   return allThemes(store).find((t) => t.id === id) ?? MARKIE_DARK;
 }
 
+function hexToRgb(hex: string): [number, number, number] | null {
+  const raw = hex.trim().replace(/^#/, "");
+  const value =
+    raw.length === 3
+      ? raw
+          .split("")
+          .map((char) => char + char)
+          .join("")
+      : raw;
+  if (!/^[0-9a-f]{6}$/i.test(value)) return null;
+  return [
+    parseInt(value.slice(0, 2), 16),
+    parseInt(value.slice(2, 4), 16),
+    parseInt(value.slice(4, 6), 16),
+  ];
+}
+
+function luminance(hex: string): number | null {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return null;
+  const [r, g, b] = rgb
+    .map((channel) => channel / 255)
+    .map((value) =>
+      value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+    );
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+export function editorThemeForTokens(
+  tokens: Pick<ThemeTokens, "background">
+): "light" | "dark" {
+  const tone = luminance(tokens.background);
+  return tone !== null && tone > 0.45 ? "light" : "dark";
+}
+
 export function applyTheme(tokens: ThemeTokens): void {
   if (typeof document === "undefined") return;
   const r = document.documentElement.style;
@@ -131,4 +168,11 @@ export function applyTheme(tokens: ThemeTokens): void {
   r.setProperty("--status-purple", tokens.statusPurple ?? tokens.foreground);
   r.setProperty("--doc-font-size", `${tokens.fontSize}px`);
   r.setProperty("--doc-width", `${tokens.contentWidth}px`);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent(THEME_APPLIED_EVENT, {
+        detail: { tokens, editorTheme: editorThemeForTokens(tokens) },
+      })
+    );
+  }
 }

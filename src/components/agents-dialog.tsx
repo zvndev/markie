@@ -47,7 +47,7 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40"
+      className="markie-scrim fixed inset-0 z-[100] flex items-center justify-center"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

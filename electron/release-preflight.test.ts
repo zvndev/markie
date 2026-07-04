@@ -27,6 +27,7 @@ describe("release preflight", () => {
         "public/icon.icns",
         "mcp/markie-mcp.mjs",
         "server/package.json",
+        "server/download-manifest.json",
       ])
     );
   });

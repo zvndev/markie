@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  renderDownloadPage,
   renderMarkdownHTML,
   renderPublicPage,
   renderNotFoundPage,
@@ -26,7 +27,7 @@ test("renderPublicPage embeds title, content, and download link", () => {
   assert.match(page, /markie:\/\//);
 });
 
-test("renderPublicPage offers a Get Markie for macOS download", () => {
+test("renderPublicPage offers the manifest primary download", () => {
   const page = renderPublicPage({
     title: "Doc",
     markdown: "# Hi",
@@ -35,6 +36,15 @@ test("renderPublicPage offers a Get Markie for macOS download", () => {
   });
   assert.match(page, /href="\/download\/mac"/);
   assert.match(page, /Get Markie for macOS/);
+});
+
+test("renderDownloadPage lists public and planned platforms", () => {
+  const page = renderDownloadPage({ siteUrl: "https://markie.example.com" });
+
+  assert.match(page, /Download Markie/);
+  assert.match(page, /macOS Apple Silicon/);
+  assert.match(page, /Windows x64/);
+  assert.match(page, /Not published yet/);
 });
 
 test("renderPublicPage's Open in Markie deep link carries the token + source", () => {

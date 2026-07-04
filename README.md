@@ -27,7 +27,8 @@ markdown right alongside you.
 The current public download is **Apple Silicon macOS**. The source tree now has
 local packaging configuration for Apple Silicon macOS, Intel macOS, Windows x64,
 and Linux x64; signed public artifacts for the new targets are still release
-work.
+work. Server download routes are backed by `server/download-manifest.json` so
+planned platforms stay visible without pointing to unpublished files.
 
 ➡️ **[Download Markie](https://markie.zvndev.com)**
 

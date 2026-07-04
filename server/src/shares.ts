@@ -8,6 +8,7 @@ import {
   getPublicLinkToken,
   revokePublicLink,
 } from "./public-links.ts";
+import { primaryDownloadCta } from "./downloads.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
 
@@ -264,6 +265,7 @@ function inviteHtml(
   docName: string,
   previewUrl: string
 ): string {
+  const download = primaryDownloadCta(MARKIE_SITE);
   return `<div style="font-family:system-ui,-apple-system,sans-serif;max-width:460px;margin:0 auto;color:#18181b">
   <div style="font-size:32px;font-weight:800;color:#f59e0b">M</div>
   <h2 style="font-size:19px;margin:8px 0 4px">${escapeHtml(inviter)} tossed you a doc 📄</h2>
@@ -272,7 +274,7 @@ function inviteHtml(
   <p style="margin:20px 0">
     <a href="${escapeHtml(previewUrl)}" style="background:#f59e0b;color:#000;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;display:inline-block">Open it →</a>
   </p>
-  <p style="font-size:13px;line-height:1.7;color:#3f3f46">Or get the app: <a href="${escapeHtml(MARKIE_SITE)}/download/mac" style="color:#b45309;font-weight:600">Get Markie for macOS</a> · <a href="markie://open" style="color:#b45309">Open in Markie</a> · <a href="${escapeHtml(previewUrl)}/raw" style="color:#b45309">Download the .md</a></p>
+  <p style="font-size:13px;line-height:1.7;color:#3f3f46">Or get the app: <a href="${escapeHtml(download.href)}" style="color:#b45309;font-weight:600">${escapeHtml(download.label)}</a> · <a href="markie://open" style="color:#b45309">Open in Markie</a> · <a href="${escapeHtml(previewUrl)}/raw" style="color:#b45309">Download the .md</a></p>
   <p style="font-size:13px;color:#3f3f46">Make an account with this email to keep <strong>${escapeHtml(docName)}</strong> in your Library — your markdown will thank you.</p>
 </div>`;
 }

@@ -4,9 +4,15 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// public.ts opens a sqlite handle at import — point it at a throwaway file first.
+// public.ts opens a sqlite handle at import - point it at a throwaway file first.
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-pub-")), "t.db");
-const { parseDmgName } = await import("./public.ts");
+const {
+  downloadPlatforms,
+  findDownloadPlatform,
+  parseDmgName,
+  primaryDownloadCta,
+} = await import("./downloads.ts");
+const { clearDownloadCacheForTests, publicShare } = await import("./public.ts");
 
 const SAMPLE_YML = `version: 0.2.3
 files:
@@ -34,4 +40,45 @@ test("parseDmgName works across version bumps", () => {
 
 test("parseDmgName returns null when no dmg is present", () => {
   assert.equal(parseDmgName("files:\n  - url: Markie-0.2.3-arm64-mac.zip\n"), null);
+});
+
+test("download manifest covers public and planned desktop targets", () => {
+  const platforms = downloadPlatforms();
+  assert.deepEqual(
+    platforms.map((platform) => platform.id),
+    ["mac-arm64", "mac-x64", "windows-x64", "linux-x64"]
+  );
+  assert.equal(findDownloadPlatform("/download/windows")?.status, "planned");
+  assert.deepEqual(primaryDownloadCta(), {
+    href: "/download/mac",
+    label: "Get Markie for macOS",
+    platform: findDownloadPlatform("mac-arm64"),
+  });
+});
+
+test("published download route redirects to the manifest artifact", async (t) => {
+  const previousFetch = globalThis.fetch;
+  clearDownloadCacheForTests();
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+    clearDownloadCacheForTests();
+  });
+  globalThis.fetch = async () => new Response(SAMPLE_YML, { status: 200 });
+
+  const res = await publicShare.request("/download/mac");
+
+  assert.equal(res.status, 302);
+  assert.equal(
+    res.headers.get("location"),
+    "https://f005.backblazeb2.com/file/markie-releases/mac/Markie-0.2.3-arm64.dmg"
+  );
+});
+
+test("planned download routes render an honest unavailable page", async () => {
+  const res = await publicShare.request("/download/windows");
+  const body = await res.text();
+
+  assert.equal(res.status, 404);
+  assert.match(body, /Windows x64 Is Not Published Yet/);
+  assert.match(body, /current public build remains macOS Apple Silicon/i);
 });

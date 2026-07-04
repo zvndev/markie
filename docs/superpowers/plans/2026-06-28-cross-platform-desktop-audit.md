@@ -79,11 +79,17 @@ app. The highest-impact safe path is:
       `dist/mac-arm64/Markie.app`, and `Markie-<version>-arm64.dmg`.
       Completed 2026-07-04: release docs now include the local desktop artifact matrix and keep
       public non-macOS releases behind explicit signing/feed/download approval.
-- [ ] `server/src/public.ts`, `server/src/render.ts`, `server/src/shares.ts`, and
+- [x] `server/src/public.ts`, `server/src/render.ts`, `server/src/shares.ts`, and
       `server/src/render.test.ts` expose only `/download/mac` and "Get Markie for macOS" copy.
-- [ ] `server/src/public.ts` parses only `Markie-*-arm64.dmg` from `latest-mac.yml`. The download
+      Completed 2026-07-04: public/share CTA copy now comes from `server/download-manifest.json`;
+      the current primary remains Apple Silicon macOS while planned platform routes render an
+      unavailable page instead of fake artifact redirects.
+- [x] `server/src/public.ts` parses only `Markie-*-arm64.dmg` from `latest-mac.yml`. The download
       page needs a manifest or equivalent source of truth before it can advertise Intel Mac,
       Windows, and Linux.
+      Completed 2026-07-04: artifact parsing moved behind manifest platform metadata, with
+      Apple Silicon macOS as the only public feed and Intel Mac/Windows/Linux represented as
+      planned targets.
 - [x] `src/components/agents-dialog.tsx`, `src/components/files-view.tsx`, and
       `mcp/markie-mcp.mjs` use "this Mac" or "on your Mac" copy for local files. Update after the
       runtime fallbacks are real.
@@ -104,8 +110,8 @@ app. The highest-impact safe path is:
 - [x] `electron/release-preflight.test.ts` only asserts Mac release prerequisites. Expand it when
       `release:preflight` learns the full desktop matrix.
       Completed 2026-07-04: preflight tests now cover local packaging scripts and artifact targets.
-- [ ] `server/src/public.test.ts` and `server/src/render.test.ts` assert Mac-only download behavior.
-      Replace these with manifest-driven platform tests once the manifest exists.
+- [x] `server/src/public.test.ts` and `server/src/render.test.ts` assert Mac-only download behavior.
+      Replaced 2026-07-04 with manifest-driven platform tests for public and planned downloads.
 - [ ] `scripts/perf-check.mjs` documents a Mac-only `open -a dist/mac-arm64/Markie.app` command.
       Add equivalent instructions for cross-platform smoke/performance checks.
 

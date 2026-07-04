@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "primaryPlatformId": "mac-arm64",
+  "platforms": [
+    {
+      "id": "mac-arm64",
+      "route": "/download/mac",
+      "label": "macOS Apple Silicon",
+      "ctaLabel": "Get Markie for macOS",
+      "os": "macos",
+      "arch": "arm64",
+      "status": "public",
+      "description": "Current signed public download.",
+      "artifactPattern": "Markie-*-arm64.dmg",
+      "feed": {
+        "type": "electron-builder-mac-yml",
+        "url": "https://f005.backblazeb2.com/file/markie-releases/mac/latest-mac.yml",
+        "artifactBaseUrl": "https://f005.backblazeb2.com/file/markie-releases/mac"
+      }
+    },
+    {
+      "id": "mac-x64",
+      "route": "/download/mac-intel",
+      "label": "macOS Intel",
+      "ctaLabel": "Get Markie for Intel Mac",
+      "os": "macos",
+      "arch": "x64",
+      "status": "planned",
+      "description": "Local packaging is configured; public notarized artifacts are not published yet."
+    },
+    {
+      "id": "windows-x64",
+      "route": "/download/windows",
+      "label": "Windows x64",
+      "ctaLabel": "Get Markie for Windows",
+      "os": "windows",
+      "arch": "x64",
+      "status": "planned",
+      "description": "Local packaging is configured; public signed artifacts are not published yet."
+    },
+    {
+      "id": "linux-x64",
+      "route": "/download/linux",
+      "label": "Linux x64",
+      "ctaLabel": "Get Markie for Linux",
+      "os": "linux",
+      "arch": "x64",
+      "status": "planned",
+      "description": "Local packaging is configured; public artifacts are not published yet."
+    }
+  ]
+}

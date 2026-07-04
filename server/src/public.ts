@@ -4,41 +4,46 @@ import { Hono } from "hono";
 import Database from "better-sqlite3";
 import { resolvePublicToken } from "./public-links.ts";
 import {
+  renderDownloadPage,
   renderPublicPage,
   renderNotFoundPage,
 } from "./render.ts";
+import {
+  artifactDownloadUrl,
+  feedForPlatform,
+  findDownloadPlatform,
+  parseArtifactName,
+  type DownloadPlatform,
+} from "./downloads.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
 const MARKIE_SITE = process.env.MARKIE_SITE_URL ?? "https://markie.zvndev.com";
 
-// Public B2 folder that holds the published macOS releases + latest-mac.yml.
-const MARKIE_DOWNLOAD_BASE =
-  process.env.MARKIE_DOWNLOAD_BASE ??
-  "https://f005.backblazeb2.com/file/markie-releases/mac";
-
-// Pull the current macOS .dmg filename out of electron-builder's latest-mac.yml.
-export function parseDmgName(yml: string): string | null {
-  const m = yml.match(/(Markie-[^\s"']+?-arm64\.dmg)/);
-  return m ? m[1] : null;
-}
-
-// Cache the resolved DMG URL so a "Get Markie" click doesn't hit B2 every time.
-let dmgCache: { url: string; at: number } | null = null;
+// Cache resolved artifact URLs so a "Get Markie" click does not hit B2 every time.
+const downloadCache = new Map<string, { url: string; at: number }>();
 const DMG_TTL_MS = 5 * 60 * 1000;
 
-async function resolveDmgUrl(): Promise<string | null> {
-  if (dmgCache && Date.now() - dmgCache.at < DMG_TTL_MS) return dmgCache.url;
+async function resolveDownloadUrl(platform: DownloadPlatform): Promise<string | null> {
+  const cached = downloadCache.get(platform.id);
+  if (cached && Date.now() - cached.at < DMG_TTL_MS) return cached.url;
+  const feed = feedForPlatform(platform);
+  if (!feed) return null;
   try {
-    const res = await fetch(`${MARKIE_DOWNLOAD_BASE}/latest-mac.yml`);
+    const res = await fetch(feed.url);
     if (!res.ok) throw new Error(`feed ${res.status}`);
-    const dmg = parseDmgName(await res.text());
-    if (!dmg) throw new Error("no dmg in feed");
-    const url = `${MARKIE_DOWNLOAD_BASE}/${dmg}`;
-    dmgCache = { url, at: Date.now() };
+    const artifactName = parseArtifactName(await res.text(), platform);
+    if (!artifactName) throw new Error(`no artifact for ${platform.id} in feed`);
+    const url = artifactDownloadUrl(platform, artifactName);
+    if (!url) throw new Error(`no artifact base for ${platform.id}`);
+    downloadCache.set(platform.id, { url, at: Date.now() });
     return url;
   } catch {
-    return dmgCache?.url ?? null; // serve a stale value through a transient blip
+    return cached?.url ?? null; // serve a stale value through a transient blip
   }
+}
+
+export function clearDownloadCacheForTests() {
+  downloadCache.clear();
 }
 
 function docForToken(
@@ -56,9 +61,17 @@ function docForToken(
 
 export const publicShare = new Hono();
 
-// "Get Markie for macOS" — always redirect to the current published .dmg.
-publicShare.get("/download/mac", async (c) => {
-  const url = await resolveDmgUrl();
+publicShare.get("/download", (c) => {
+  return c.html(renderDownloadPage({ siteUrl: MARKIE_SITE }));
+});
+
+publicShare.get("/download/:platform", async (c) => {
+  const platform = findDownloadPlatform(c.req.path) ?? findDownloadPlatform(c.req.param("platform"));
+  if (!platform) return c.html(renderDownloadPage({ siteUrl: MARKIE_SITE, status: "missing" }), 404);
+  if (platform.status !== "public") {
+    return c.html(renderDownloadPage({ siteUrl: MARKIE_SITE, selectedPlatform: platform }), 404);
+  }
+  const url = await resolveDownloadUrl(platform);
   if (!url) return c.redirect(MARKIE_SITE, 302); // last-resort if B2 is down
   return c.redirect(url, 302);
 });

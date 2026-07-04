@@ -370,3 +370,25 @@
   native-host packaging is exercised, macOS Intel notarization, Windows code signing, updater feeds,
   and public download URLs are verified. The pre-existing local `electron/main.js` updater/menu diff
   was not part of this task and was left untouched.
+
+## 2026-07-04 05:16 EDT — terminal: progressed
+- did: Completed a local-only download manifest pass. Added `server/download-manifest.json` as the
+  source of truth for public and planned desktop downloads, moved public artifact parsing into
+  manifest-backed helpers, added `/download` and planned-platform unavailable pages, and updated
+  public share pages plus invite email CTAs to read the primary download route/copy from the
+  manifest. The server-rendered public pages now use light/dark CSS variables and matching
+  highlight.js styles instead of a dark-only surface. `release:preflight` now requires the manifest.
+- evidence: `(cd server && npm test)` passed 32 server tests, including manifest coverage for the
+  public Apple Silicon macOS redirect and planned Windows route. `npm test --
+  electron/release-preflight.test.ts` passed 4 release-preflight tests. `npm run
+  release:preflight` passed renderer/electron tests, MCP tests, server tests, lint, and build while
+  stopping before signing, notarization, upload, publish, deploy, or credential checks. `npm run
+  visual:guard:theme` passed with zero findings and wrote
+  `.autoloop/runs/light-mode-audit-20260704041142/audit.json` plus screenshots. `./init.sh` passed
+  renderer tests, MCP tests, server tests, lint, and build. `git diff --check` passed.
+- next: Harden the remaining medium-severity Electron file IPC grant model from `BACKLOG.md`, then
+  exercise native-host packaging on macOS Intel and Windows hosts before any public release claim.
+- blockers: none for this pass. Full Windows/macOS release support is still blocked on native-host
+  artifact verification, macOS Intel notarization, Windows code signing, updater feeds, approved
+  public download URLs, and human-gated publishing/deploy work. The pre-existing local
+  `electron/main.js` updater/menu diff was not part of this task and was left untouched.

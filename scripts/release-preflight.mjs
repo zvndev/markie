@@ -35,6 +35,7 @@ const REQUIRED_FILES = [
   "mcp/lib.mjs",
   "mcp/package.json",
   "server/package.json",
+  "server/download-manifest.json",
 ];
 
 const LOCAL_CHECKS = [

@@ -414,3 +414,36 @@
   public download URLs, and human-gated publishing/deploy work are verified. The pre-existing
   updater/menu edits in `electron/main.js` were preserved and not intentionally included in this
   security change.
+
+## 2026-07-04 13:27 EDT — terminal: progressed
+- did: Completed a local package smoke evidence pass. Added a cross-platform unpacked package smoke
+  checker for macOS Apple Silicon, macOS Intel, Windows x64, and Linux x64 layouts, plus local
+  `electron:smoke:*` scripts and focused tests. Added a credential-stripping
+  `scripts/local-electron-builder.mjs` wrapper so local package/build scripts use
+  `CSC_IDENTITY_AUTO_DISCOVERY=false` and `-c.mac.identity=null` for macOS instead of silently
+  selecting the Developer ID certificate. Updated release docs, README, perf-check usage, and the
+  cross-platform audit plan to use the package smoke contract.
+- evidence: `node --check scripts/local-electron-builder.mjs`,
+  `node --check scripts/package-smoke.mjs`, `node --check scripts/release-preflight.mjs`, and
+  `node --check scripts/perf-check.mjs` passed. `npm test --
+  electron/local-electron-builder.test.ts electron/package-smoke.test.ts
+  electron/release-preflight.test.ts` passed 3 files / 12 tests. `npm run release:preflight` passed
+  17 renderer/Electron test files / 102 tests, 19 MCP tests, 32 server tests, lint with the same 4
+  warnings and zero errors, and static build. `npm run electron:pack:mac:arm64` passed with the
+  macOS window smoke gate loading `Markie — Markdown Viewer` and skipped Developer ID signing due
+  `mac.identity=null`. `npm run electron:smoke:mac:arm64` passed against
+  `dist/mac-arm64/Markie.app` and reported host-native `mac/arm64`. `codesign -dv
+  dist/mac-arm64/Markie.app` reported `Signature=adhoc` and `TeamIdentifier=not set`, confirming it
+  is not a Developer ID release build. `npm run visual:guard:theme` passed with zero findings and
+  wrote `.autoloop/runs/light-mode-audit-20260704172441/audit.json` plus screenshots. `./init.sh`
+  passed renderer/Electron tests, MCP tests, server tests, lint, and build. `git diff --check`
+  passed.
+- next: Exercise macOS Intel packaging on a matching host or Rosetta-verified path, then Windows x64
+  and Linux x64 package/smoke checks on matching hosts. Keep public Windows/Intel Mac/Linux download
+  routes planned until signing, updater feeds, public URLs, and human-gated release approval are
+  complete.
+- blockers: none for local Apple Silicon package evidence. Full Windows/macOS release support is
+  still not complete until native-host artifacts, macOS Intel notarization, Windows code signing,
+  updater feeds, approved public download URLs, and human-gated publishing/deploy work are verified.
+  The pre-existing updater/menu edits in `electron/main.js` were preserved and not intentionally
+  included in this package-smoke change.

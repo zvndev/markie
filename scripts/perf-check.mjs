@@ -2,8 +2,10 @@
 // --remote-debugging-port=9222. Loads a 5k-line doc into the rich view,
 // types 50 characters, and reports input→frame latency. Fails if p95 > 32ms.
 //
-// Usage:
+// Usage against a packaged app:
 //   open -a dist/mac-arm64/Markie.app --args --remote-debugging-port=9222
+//   dist/win-unpacked/Markie.exe --remote-debugging-port=9222
+//   dist/linux-unpacked/markie --remote-debugging-port=9222
 //   node scripts/perf-check.mjs
 
 const targets = await (await fetch("http://127.0.0.1:9222/json")).json();

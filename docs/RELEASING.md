@@ -24,7 +24,26 @@ npm run electron:pack:win
 npm run electron:pack:linux
 ```
 
-These commands pass `--publish never` and are not release/upload commands.
+These commands pass `--publish never` through `scripts/local-electron-builder.mjs`,
+which also sets `CSC_IDENTITY_AUTO_DISCOVERY=false` and strips local signing /
+notarization credentials. For macOS local builds it also adds
+`-c.mac.identity=null`, so these are not Developer ID signing, notarization,
+release, or upload commands. Apple Silicon binaries may still report an ad-hoc
+linker signature; that is not a distributable release signature.
+After a local package command, smoke the unpacked artifact structure before
+making any platform-readiness claim:
+
+```sh
+npm run electron:smoke:mac:arm64
+npm run electron:smoke:mac:x64
+npm run electron:smoke:win
+npm run electron:smoke:linux
+```
+
+The macOS local package path also runs the `build/preflight.cjs` window smoke
+gate during `afterPack`. Windows and Linux currently get deterministic
+structure checks locally; OS-level launch evidence still needs a matching
+Windows or Linux host before public release.
 
 ## One-time setup
 
@@ -67,7 +86,9 @@ package.json); the app reads the feed back over public HTTPS at
    This checks package metadata, required release files, renderer/Electron
    tests, MCP tests, server tests, lint, and the static build. It stops before
    signing, notarization, upload, publish, deploy, or any credentialed network
-   action.
+   action. It also verifies that local packaging and package-smoke scripts exist
+   for the desktop matrix; run the relevant `electron:pack:*` and
+   `electron:smoke:*` commands separately when proving an artifact on a host.
 
 3. With all the env vars above set:
 

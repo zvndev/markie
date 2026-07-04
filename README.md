@@ -74,7 +74,15 @@ npm run electron:pack:mac:arm64
 npm run electron:pack:mac:x64
 npm run electron:pack:win
 npm run electron:pack:linux
+npm run electron:smoke:mac:arm64
+npm run electron:smoke:mac:x64
+npm run electron:smoke:win
+npm run electron:smoke:linux
 ```
+
+The local pack/build scripts use a certificate-free electron-builder wrapper and
+pass `--publish never`; `npm run electron:release` is the only Developer ID
+signing/publishing path.
 
 Other scripts: `npm run build` (Next static export), `npm test` (renderer +
 Electron unit tests), `node --test mcp/lib.test.mjs` (MCP tests), and

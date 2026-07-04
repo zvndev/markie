@@ -112,8 +112,11 @@ app. The highest-impact safe path is:
       Completed 2026-07-04: preflight tests now cover local packaging scripts and artifact targets.
 - [x] `server/src/public.test.ts` and `server/src/render.test.ts` assert Mac-only download behavior.
       Replaced 2026-07-04 with manifest-driven platform tests for public and planned downloads.
-- [ ] `scripts/perf-check.mjs` documents a Mac-only `open -a dist/mac-arm64/Markie.app` command.
+- [x] `scripts/perf-check.mjs` documents a Mac-only `open -a dist/mac-arm64/Markie.app` command.
       Add equivalent instructions for cross-platform smoke/performance checks.
+      Completed 2026-07-04: packaged-app perf instructions now include macOS, Windows, and Linux
+      commands, and `scripts/package-smoke.mjs` plus `electron:smoke:*` scripts define the
+      unpacked artifact structure checks for each local packaging target.
 
 ### Human-Gated Release Or Deploy Work
 - [ ] Signing, notarization, upload, publish, deployment, credential rotation, cloud storage paths,

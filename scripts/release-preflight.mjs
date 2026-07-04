@@ -29,6 +29,8 @@ const REQUIRED_FILES = [
   "build/icons/256x256.png",
   "build/icons/512x512.png",
   "public/icon.icns",
+  "scripts/local-electron-builder.mjs",
+  "scripts/package-smoke.mjs",
   "electron/main.js",
   "electron/preload.js",
   "mcp/markie-mcp.mjs",
@@ -57,6 +59,13 @@ const REQUIRED_BUILD_SCRIPTS = [
   "electron:build:mac",
   "electron:build:win",
   "electron:build:linux",
+];
+
+const REQUIRED_SMOKE_SCRIPTS = [
+  ["electron:smoke:mac:arm64", "--platform mac", "--arch arm64"],
+  ["electron:smoke:mac:x64", "--platform mac", "--arch x64"],
+  ["electron:smoke:win", "--platform windows", "--arch x64"],
+  ["electron:smoke:linux", "--platform linux", "--arch x64"],
 ];
 
 const readJson = (rootDir, relativePath) =>
@@ -161,13 +170,22 @@ export function validatePackagingMatrix(rootDir) {
   for (const name of REQUIRED_PACK_SCRIPTS) {
     const script = scripts[name];
     assert(Boolean(script), `missing local packaging script: ${name}`);
+    assert(script.includes("scripts/local-electron-builder.mjs"), `${name} must use unsigned local electron-builder wrapper`);
     assert(script.includes("--dir"), `${name} must be a local unpacked packaging script`);
     assert(script.includes("--publish never"), `${name} must disable publishing`);
   }
   for (const name of REQUIRED_BUILD_SCRIPTS) {
     const script = scripts[name];
     assert(Boolean(script), `missing local build script: ${name}`);
+    assert(script.includes("scripts/local-electron-builder.mjs"), `${name} must use unsigned local electron-builder wrapper`);
     assert(script.includes("--publish never"), `${name} must disable publishing`);
+  }
+  for (const [name, platformFlag, archFlag] of REQUIRED_SMOKE_SCRIPTS) {
+    const script = scripts[name];
+    assert(Boolean(script), `missing package smoke script: ${name}`);
+    assert(script.includes("scripts/package-smoke.mjs"), `${name} must use the package smoke checker`);
+    assert(script.includes(platformFlag), `${name} must target ${platformFlag}`);
+    assert(script.includes(archFlag), `${name} must target ${archFlag}`);
   }
 
   assert(hasTarget(pkg.build?.mac, "dmg", "arm64"), "macOS matrix must include arm64 dmg");
@@ -183,7 +201,7 @@ export function validatePackagingMatrix(rootDir) {
     mac: listTargetEntries(pkg.build.mac),
     win: listTargetEntries(pkg.build.win),
     linux: listTargetEntries(pkg.build.linux),
-    scripts: [...REQUIRED_PACK_SCRIPTS, ...REQUIRED_BUILD_SCRIPTS],
+    scripts: [...REQUIRED_PACK_SCRIPTS, ...REQUIRED_BUILD_SCRIPTS, ...REQUIRED_SMOKE_SCRIPTS.map(([name]) => name)],
   };
 }
 

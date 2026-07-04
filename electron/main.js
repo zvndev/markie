@@ -14,6 +14,7 @@ const fs = require("fs");
 const url = require("url");
 const { autoUpdater } = require("electron-updater");
 const { shareBaseFromSrc } = require("./share-origin");
+const { createFileGrants } = require("./file-grants");
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -89,7 +90,7 @@ function filenameFromDisposition(cd) {
 // creating/showing the window and bridging cold start via pendingFilePath.
 function openLocalFile(filePath) {
   if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
-    const payload = readFilePayload(filePath);
+    const payload = readFilePayload(filePath, { grant: true });
     if (payload) mainWindow.webContents.send("file-opened", payload);
   } else {
     pendingFilePath = filePath;
@@ -144,12 +145,14 @@ async function openSharedFromDeepLink(link) {
   }
 }
 
-function readFilePayload(filePath) {
+function readFilePayload(filePath, { grant = false } = {}) {
   try {
+    const access = grant ? fileGrants.grantFile(filePath) : fileGrants.canRead(filePath);
+    if (!access.ok) return null;
     return {
-      name: path.basename(filePath),
-      content: fs.readFileSync(filePath, "utf-8"),
-      path: filePath,
+      name: path.basename(access.path),
+      content: fs.readFileSync(access.path, "utf-8"),
+      path: access.path,
     };
   } catch {
     return null;
@@ -292,14 +295,8 @@ ipcMain.handle("open-file", async () => {
     return null;
   }
 
-  const filePath = result.filePaths[0];
-  try {
-    const content = fs.readFileSync(filePath, "utf-8");
-    return { name: path.basename(filePath), content, path: filePath };
-  } catch {
-    // file became unreadable between selection and read
-    return null;
-  }
+  // The dialog is the user grant. Store it in main before returning the file.
+  return readFilePayload(result.filePaths[0], { grant: true });
 });
 
 // IPC: Export PDF — render standalone HTML in hidden window, then printToPDF
@@ -349,8 +346,10 @@ ipcMain.handle("export-pdf", async (_event, html) => {
 // IPC: write content to a known path
 ipcMain.handle("save-file", async (_event, { filePath, content }) => {
   try {
-    fs.writeFileSync(filePath, content, "utf-8");
-    return { success: true, path: filePath };
+    const access = fileGrants.canWrite(filePath);
+    if (!access.ok) return { success: false, error: access.error };
+    fs.writeFileSync(access.path, content, "utf-8");
+    return { success: true, path: access.path };
   } catch (err) {
     return { success: false, error: String(err) };
   }
@@ -369,12 +368,17 @@ ipcMain.handle("save-file-as", async (_event, { defaultName, content }) => {
   if (result.canceled || !result.filePath) {
     return { success: false, canceled: true };
   }
+  if (!OPENABLE.test(result.filePath)) {
+    return { success: false, error: "Unsupported file type" };
+  }
   try {
     fs.writeFileSync(result.filePath, content, "utf-8");
+    const grant = fileGrants.grantFile(result.filePath);
+    const savedPath = grant.ok ? grant.path : result.filePath;
     return {
       success: true,
-      path: result.filePath,
-      name: path.basename(result.filePath),
+      path: savedPath,
+      name: path.basename(savedPath),
     };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -384,12 +388,12 @@ ipcMain.handle("save-file-as", async (_event, { defaultName, content }) => {
 // IPC: rename the file on disk, same directory
 ipcMain.handle("rename-file", async (_event, { oldPath, newName }) => {
   try {
-    const newPath = path.join(path.dirname(oldPath), newName);
-    if (fs.existsSync(newPath)) {
-      return { success: false, error: "A file with that name already exists" };
-    }
-    fs.renameSync(oldPath, newPath);
-    return { success: true, path: newPath, name: newName };
+    const access = fileGrants.canRename(oldPath, newName);
+    if (!access.ok) return { success: false, error: access.error };
+    fs.renameSync(access.oldPath, access.newPath);
+    fileGrants.moveGrant(access.oldPath, access.newPath);
+    try { registry.movePath(access.oldPath, access.newPath); } catch { /* registry best-effort */ }
+    return { success: true, path: access.newPath, name: access.name };
   } catch (err) {
     return { success: false, error: String(err) };
   }
@@ -417,6 +421,7 @@ const registry = require("./registry");
 const mdindex = require("./mdindex");
 const sync = require("./sync");
 const workspace = require("./workspace");
+const fileGrants = createFileGrants({ workspaceRoots: () => workspace.roots() });
 
 // ── Workspace / Files-view IPC ──
 const wsTry = (fn) => {
@@ -470,7 +475,9 @@ ipcMain.handle("term-open-external", (_e, { app, cwd }) => terminal.openExternal
 ipcMain.handle("sync-config", (_event, cfg) => sync.setConfig(cfg));
 ipcMain.handle("registry-track", (_event, { path: p, name, content }) => {
   try {
-    registry.track(p, name, content);
+    const access = fileGrants.canRead(p);
+    if (!access.ok) return { error: access.error };
+    registry.track(access.path, name, content);
     return { ok: true };
   } catch (err) {
     return { error: String(err) };
@@ -499,9 +506,16 @@ ipcMain.handle("doc-resolve", (_event, { path: p, strategy }) =>
 ipcMain.handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: suggestedName || "document.md",
+    filters: [
+      { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
+      { name: "Text", extensions: ["txt"] },
+    ],
   });
   if (result.canceled || !result.filePath) return { canceled: true };
-  return sync.pull(cloudId, result.filePath);
+  if (!OPENABLE.test(result.filePath)) return { error: "Unsupported file type" };
+  const pulled = await sync.pull(cloudId, result.filePath);
+  if (pulled?.ok) fileGrants.grantFile(pulled.path);
+  return pulled;
 });
 
 // Open a shared cloud doc with one click: save it to ~/Downloads and open it,
@@ -510,6 +524,7 @@ ipcMain.handle("doc-open-shared", async (_event, { cloudId, suggestedName }) => 
   const dest = downloadsUniquePath(suggestedName || "Shared document.md");
   const res = await sync.pull(cloudId, dest);
   if (res && res.error) return res;
+  fileGrants.grantFile(dest);
   openLocalFile(dest);
   return { ok: true, path: dest };
 });
@@ -730,20 +745,21 @@ ipcMain.handle("get-initial-file", () => {
     }, 0);
   }
   if (!pendingFilePath) return null;
-  const payload = readFilePayload(pendingFilePath);
+  const payload = readFilePayload(pendingFilePath, { grant: true });
   pendingFilePath = null;
   return payload;
 });
 
-// IPC: Open file from path (for "open with" and drag-drop from Finder)
+// IPC: Open file from a path already granted by a dialog, OS event, drop, or workspace root.
 ipcMain.handle("open-file-path", async (_event, filePath) => {
-  try {
-    const content = fs.readFileSync(filePath, "utf-8");
-    const name = path.basename(filePath);
-    return { name, content, path: filePath };
-  } catch {
-    return null;
-  }
+  return readFilePayload(filePath);
+});
+
+// Synchronous so preload can grant a dropped/selected File before renderer code
+// calls open-file-path with the returned path.
+ipcMain.on("grant-file-path", (event, filePath) => {
+  const grant = fileGrants.grantFile(filePath);
+  event.returnValue = grant.ok;
 });
 
 // App menu
@@ -917,7 +933,7 @@ if (!gotLock) {
     }
     const file = argv.find((a) => OPENABLE.test(a) && fs.existsSync(a));
     if (file && rendererReady && mainWindow && !mainWindow.isDestroyed()) {
-      const payload = readFilePayload(path.resolve(file));
+      const payload = readFilePayload(path.resolve(file), { grant: true });
       if (payload) mainWindow.webContents.send("file-opened", payload);
     } else if (file) {
       pendingFilePath = path.resolve(file);
@@ -970,7 +986,7 @@ app.on("window-all-closed", () => {
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
   if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
-    const payload = readFilePayload(filePath);
+    const payload = readFilePayload(filePath, { grant: true });
     if (payload) mainWindow.webContents.send("file-opened", payload);
   } else {
     pendingFilePath = filePath;

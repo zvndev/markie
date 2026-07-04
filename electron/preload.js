@@ -18,7 +18,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Electron 32+ removed File.path; resolve a dropped File to its disk path.
   pathForFile: (file) => {
     try {
-      return webUtils.getPathForFile(file) || null;
+      const filePath = webUtils.getPathForFile(file) || null;
+      if (!filePath) return null;
+      return ipcRenderer.sendSync("grant-file-path", filePath) ? filePath : null;
     } catch {
       return null;
     }

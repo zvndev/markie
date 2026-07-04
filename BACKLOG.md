@@ -4,16 +4,6 @@
 > evidence; do not delete history. Move completed items to Done with the verification record.
 
 ## Open
-- [ ] Harden privileged Electron file IPC with main-owned file grants.
-      type: security
-      severity: medium
-      rationale: `open-file-path`, `save-file`, and `rename-file` trust renderer-supplied paths.
-        A compromised renderer could read/write/rename arbitrary local files unless main owns a
-        grant list from dialogs, dropped files, and workspace roots.
-      acceptance_criteria: Main process validates open/save/rename paths against user-granted
-        paths or workspace roots, rejects unsafe names/extensions, and focused regressions prove
-        ungranted paths are refused.
-      source: product-review security pass 2026-07-03
 - [ ] Replace or document packaged CSP inline-script allowance.
       type: security
       severity: low
@@ -35,6 +25,21 @@
 ## Done
 <!-- moved here with closing evidence -->
 
+- [x] Harden privileged Electron file IPC with main-owned file grants.
+      type: security
+      severity: medium
+      rationale: `open-file-path`, `save-file`, and `rename-file` trusted renderer-supplied paths.
+        A compromised renderer could read/write/rename arbitrary local files unless main owned a
+        grant list from dialogs, dropped files, and workspace roots.
+      acceptance_criteria: Main process validates open/save/rename paths against user-granted
+        paths or workspace roots, rejects unsafe names/extensions, and focused regressions prove
+        ungranted paths are refused.
+      source: product-review security pass 2026-07-03
+      evidence: 2026-07-04 pass added `electron/file-grants.js` and
+        `electron/file-grants.test.ts`; `npm test -- electron/file-grants.test.ts` passed 7 grant
+        tests; `npm test` passed 15 files / 94 tests; `./init.sh` passed renderer/Electron tests,
+        MCP tests, server tests, lint, and build; `npm run visual:guard:theme` passed with zero
+        findings and wrote `.autoloop/runs/light-mode-audit-20260704165637/audit.json`.
 - [x] Add a release/deploy smoke checklist that can run without production credentials.
       type: dx
       severity: medium

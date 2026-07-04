@@ -392,3 +392,25 @@
   artifact verification, macOS Intel notarization, Windows code signing, updater feeds, approved
   public download URLs, and human-gated publishing/deploy work. The pre-existing local
   `electron/main.js` updater/menu diff was not part of this task and was left untouched.
+
+## 2026-07-04 12:56 EDT — terminal: progressed
+- did: Completed the medium-severity Electron file IPC grant hardening pass. Added a main-owned
+  file grant helper for dialog, OS-open, dropped-file, shared/cloud-download, and workspace-root
+  grants. `open-file-path`, `save-file`, `rename-file`, and `registry-track` now validate renderer
+  paths against those grants, reject unsupported extensions, refuse rename traversal, canonicalize
+  symlinks, and preserve grants across Save As / cloud pull / same-directory rename flows. Closed
+  the corresponding `BACKLOG.md` security item with evidence.
+- evidence: `node --check electron/main.js`, `node --check electron/preload.js`, and
+  `node --check electron/file-grants.js` passed. `npm test -- electron/file-grants.test.ts` passed
+  7 focused grant tests. `npm test` passed 15 renderer/Electron test files / 94 tests. `./init.sh`
+  passed renderer/Electron tests, MCP tests, server tests, lint, and build. `npm run
+  visual:guard:theme` passed with zero findings and wrote
+  `.autoloop/runs/light-mode-audit-20260704165637/audit.json` plus screenshots.
+- next: Continue the full-goal audit by exercising native-host packaging on supported platforms
+  when available, and keep polishing the library/default workspace UX only where real-user flow
+  evidence shows friction.
+- blockers: none for this pass. Full Windows/macOS release support is still not complete until
+  native-host artifacts, macOS Intel notarization, Windows code signing, updater feeds, approved
+  public download URLs, and human-gated publishing/deploy work are verified. The pre-existing
+  updater/menu edits in `electron/main.js` were preserved and not intentionally included in this
+  security change.

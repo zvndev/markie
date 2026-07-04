@@ -33,6 +33,7 @@
     "visual:check:document": "node scripts/document-canvas-layout-check.mjs",
     "visual:check:overlays": "node scripts/overlay-interaction-check.mjs",
     "icons:generate": "node scripts/generate-icons.mjs",
+    "native:restore": "node scripts/restore-host-native-prebuild.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
     "electron:smoke": "node scripts/package-smoke.mjs",
     "electron:smoke:mac:arm64": "node scripts/package-smoke.mjs --platform mac --arch arm64",

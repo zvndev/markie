@@ -57,6 +57,11 @@ For cross-packaged Windows `--dir` artifacts, `electron:pack:win` runs
 app contains the Electron 41 `better-sqlite3` Windows x64 prebuild instead of
 the Mac development binary. `electron:smoke:win` verifies the executable,
 critical `.node` files, app bundle, and MCP resources as Windows PE payloads.
+Cross-platform and cross-architecture local packaging can temporarily rebuild
+root `node_modules` native packages for the target artifact. The local
+electron-builder wrapper restores the development `better-sqlite3` Electron
+prebuild for the current host afterward; run `npm run native:restore` manually
+if a package command is interrupted and the Library/Files view cannot load.
 
 ## One-time setup
 

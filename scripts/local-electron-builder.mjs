@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { restoreHostElectronNativePrebuild } from "./restore-host-native-prebuild.mjs";
 
 const SIGNING_ENV_KEYS = [
   "APPLE_ID",
@@ -34,6 +35,35 @@ function targetsMac(argv) {
 
 function targetsWindows(argv) {
   return argv.some((arg) => arg === "--win" || arg === "-w" || arg.startsWith("--win=") || arg.startsWith("-w="));
+}
+
+function targetsLinux(argv) {
+  return argv.some((arg) => arg === "--linux" || arg === "-l" || arg.startsWith("--linux=") || arg.startsWith("-l="));
+}
+
+function targetPlatforms(argv) {
+  const platforms = [];
+  if (targetsMac(argv)) platforms.push("darwin");
+  if (targetsWindows(argv)) platforms.push("win32");
+  if (targetsLinux(argv)) platforms.push("linux");
+  return platforms;
+}
+
+function targetArchs(argv) {
+  const archs = [];
+  if (argv.includes("--arm64") || argv.includes("arm64")) archs.push("arm64");
+  if (argv.includes("--x64") || argv.includes("x64")) archs.push("x64");
+  return archs;
+}
+
+export function shouldRestoreHostNativePrebuild(
+  argv,
+  host = { platform: process.platform, arch: process.arch }
+) {
+  const platforms = targetPlatforms(argv);
+  const archs = targetArchs(argv);
+  return platforms.some((platform) => platform !== host.platform) ||
+    archs.some((arch) => arch !== host.arch);
 }
 
 export function localElectronBuilderArgs(argv) {
@@ -75,7 +105,17 @@ export function runLocalElectronBuilder(
   });
 
   if (result.error) throw result.error;
-  return result.status ?? 1;
+  let restoreFailed = false;
+  if (shouldRestoreHostNativePrebuild(args)) {
+    try {
+      restoreHostElectronNativePrebuild({ root: rootDir });
+    } catch (error) {
+      restoreFailed = true;
+      console.error(`[local-electron-builder] failed to restore host native modules: ${error.message}`);
+    }
+  }
+  const status = result.status ?? 1;
+  return status === 0 && restoreFailed ? 1 : status;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

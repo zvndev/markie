@@ -88,6 +88,9 @@ Electron `better-sqlite3` Windows prebuild before `electron:smoke:win` runs.
 Native Windows launch evidence is handled by `electron:smoke:win:launch` or the
 `Windows launch smoke` workflow on `windows-latest`; it is not claimed from a
 Mac structure check.
+After cross-architecture local packaging, the wrapper restores the development
+`better-sqlite3` native module for your current Electron host. If Library or
+Files ever get stuck after packaging, run `npm run native:restore`.
 
 Other scripts: `npm run build` (Next static export), `npm test` (renderer +
 Electron unit tests), `node --test mcp/lib.test.mjs` (MCP tests), and

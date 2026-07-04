@@ -4,6 +4,7 @@ import {
   electronBuilderBin,
   localElectronBuilderArgs,
   localElectronBuilderEnv,
+  shouldRestoreHostNativePrebuild,
 } from "../scripts/local-electron-builder.mjs";
 
 describe("local electron-builder wrapper", () => {
@@ -58,5 +59,14 @@ describe("local electron-builder wrapper", () => {
       "--win",
       "-c.win.signAndEditExecutable=true",
     ]);
+  });
+
+  it("restores host native modules after cross-platform or cross-arch local builds", () => {
+    const appleSilicon = { platform: "darwin", arch: "arm64" };
+
+    expect(shouldRestoreHostNativePrebuild(["--mac", "--arm64"], appleSilicon)).toBe(false);
+    expect(shouldRestoreHostNativePrebuild(["--mac", "--x64"], appleSilicon)).toBe(true);
+    expect(shouldRestoreHostNativePrebuild(["--win", "--x64"], appleSilicon)).toBe(true);
+    expect(shouldRestoreHostNativePrebuild(["--linux", "--x64"], appleSilicon)).toBe(true);
   });
 });

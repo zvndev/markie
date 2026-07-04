@@ -26,6 +26,7 @@ describe("release preflight", () => {
         "build/icons/256x256.png",
         "scripts/install-win-native-prebuild.mjs",
         "scripts/local-electron-builder.mjs",
+        "scripts/restore-host-native-prebuild.mjs",
         "scripts/package-smoke.mjs",
         "scripts/windows-launch-smoke.mjs",
         ".github/workflows/windows-launch-smoke.yml",

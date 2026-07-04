@@ -30,6 +30,7 @@ const REQUIRED_FILES = [
   "build/icons/512x512.png",
   "public/icon.icns",
   "scripts/local-electron-builder.mjs",
+  "scripts/restore-host-native-prebuild.mjs",
   "scripts/install-win-native-prebuild.mjs",
   "scripts/package-smoke.mjs",
   "scripts/windows-launch-smoke.mjs",

@@ -550,3 +550,26 @@
   Windows-host launch smoke actually runs and human-gated signing, updater feeds, public URLs, and
   release approval are complete. The pre-existing updater/menu edits in `electron/main.js` were
   preserved and not intentionally included in this pass.
+
+## 2026-07-04 15:54 EDT — terminal: progressed
+- did: Fixed the live Library/default-workspace blocker caused by cross-architecture local packaging
+  leaving root `node_modules/better-sqlite3` as an x86_64 native module on the arm64 Electron host.
+  Added `scripts/restore-host-native-prebuild.mjs`, exposed `npm run native:restore`, and wired
+  `scripts/local-electron-builder.mjs` to restore the host Electron native prebuild after
+  cross-platform or cross-arch package/build commands. Added Library load error handling so IPC
+  failures no longer leave the panel stuck on `Loading...`; they settle to an empty state with a
+  readable notice.
+- evidence: Live Electron/CDP initially showed `libraryState` and `wsRoots` failing with
+  `better_sqlite3.node` as `x86_64` while the app needed `arm64`. `npm run native:restore` restored
+  the Electron 41.0.2 `darwin-arm64` prebuild, and `file
+  node_modules/better-sqlite3/build/Release/better_sqlite3.node` reported `Mach-O 64-bit bundle
+  arm64`. Focused tests `npm test -- electron/local-electron-builder.test.ts
+  electron/release-preflight.test.ts src/lib/library-state.test.ts src/lib/workspace-default.test.ts`
+  passed 4 files / 15 tests. Live Electron/CDP then showed `libraryState` returning
+  `{ signedIn:false, items:[] }`, `wsCreateDefault` returning `/Users/macbookpro-kirby/Documents/Markie`,
+  `wsRoots` containing that default path, and the real Files tab displaying `MARKIE`, `empty`, and no
+  `Loading...`.
+- next: Run full verification and commit this bugfix. Continue toward Windows-host launch evidence,
+  sharing permission UX, and broader library organization once this regression is locked.
+- blockers: none for this bugfix. The pre-existing updater/menu edits in `electron/main.js` were
+  preserved and not intentionally included in this pass.

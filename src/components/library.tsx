@@ -7,6 +7,7 @@ import { BrowseView } from "@/components/browse-view";
 import { SkillsView } from "@/components/skills-view";
 import { SharedView } from "@/components/shared-view";
 import type { LeftView } from "@/components/activity-bar";
+import { readLibrarySnapshot } from "@/lib/library-state";
 
 interface LibraryProps {
   // which view the left rail selected (library | browse | shared | skills)
@@ -155,10 +156,11 @@ export function Library({
   const refresh = useCallback(() => {
     const api = getElectronAPI();
     if (!api?.libraryState) return Promise.resolve();
-    return api.libraryState().then((s) => {
+    return readLibrarySnapshot(api).then((s) => {
       setItems(s.items);
       setSignedIn(s.signedIn);
       setLoading(false);
+      if (s.error) setNotice(s.error);
     });
   }, []);
 
@@ -166,11 +168,12 @@ export function Library({
     const api = getElectronAPI();
     if (!api?.libraryState) return;
     let alive = true;
-    api.libraryState().then((s) => {
+    readLibrarySnapshot(api).then((s) => {
       if (!alive) return;
       setItems(s.items);
       setSignedIn(s.signedIn);
       setLoading(false);
+      if (s.error) setNotice(s.error);
     });
     return () => {
       alive = false;

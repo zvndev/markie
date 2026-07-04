@@ -138,3 +138,34 @@ export function groupSkills(rows) {
     files: (byTool.get(t.id) ?? []).sort((a, b) => a.path.localeCompare(b.path)),
   })).filter((g) => g.files.length > 0);
 }
+
+export function markieOpenCommand(filePath, platform = process.platform) {
+  if (!filePath || typeof filePath !== "string") {
+    return { ok: false, error: "path is required" };
+  }
+  if (platform === "darwin") {
+    return {
+      ok: true,
+      command: "open",
+      args: ["-a", "Markie", filePath],
+      message: `Opening ${filePath} in Markie`,
+    };
+  }
+  if (platform === "win32") {
+    return {
+      ok: true,
+      command: "powershell.exe",
+      args: ["-NoProfile", "-Command", "Start-Process -LiteralPath $args[0]", filePath],
+      message: `Opening ${filePath} with your system Markdown handler`,
+    };
+  }
+  if (platform === "linux") {
+    return {
+      ok: true,
+      command: "xdg-open",
+      args: [filePath],
+      message: `Opening ${filePath} with your system Markdown handler`,
+    };
+  }
+  return { ok: false, error: `unsupported platform: ${platform}` };
+}

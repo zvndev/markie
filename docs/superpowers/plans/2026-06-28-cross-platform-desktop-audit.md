@@ -22,18 +22,24 @@ app. The highest-impact safe path is:
 ## Findings By Category
 
 ### Runtime Behavior
-- [ ] `electron/terminal.js` starts PTYs with `process.env.SHELL || "/bin/zsh"`. On Windows this
+- [x] `electron/terminal.js` starts PTYs with `process.env.SHELL || "/bin/zsh"`. On Windows this
       needs an explicit shell selection such as PowerShell or `cmd.exe`, plus tests for `darwin`,
       `win32`, and `linux`.
+      Completed 2026-07-03: `resolveShell` now selects macOS, Linux, and Windows shell fallbacks
+      with regression coverage in `electron/terminal.test.ts`.
 - [ ] `electron/terminal.js` discovers only macOS `.app` terminal candidates and opens external
       terminals via `open -a`. Non-macOS currently returns no external terminal apps and
       `"macOS only"` for launch requests. Decide whether Windows/Linux should expose native
       launchers or hide the launcher with clearer copy.
-- [ ] `mcp/markie-mcp.mjs` implements `markie_open_in_markie` with `spawn("open", ["-a", "Markie",
+- [x] `mcp/markie-mcp.mjs` implements `markie_open_in_markie` with `spawn("open", ["-a", "Markie",
       path])`. This needs a platform guard or platform-specific opener before MCP is advertised as
       cross-platform.
-- [ ] `src/components/browse-view.tsx` derives `~` display paths only from `/Users/<name>`, so
+      Completed 2026-07-03: MCP open command selection now covers `darwin`, `win32`, and `linux`
+      through a side-effect-free helper tested in `mcp/lib.test.mjs`.
+- [x] `src/components/browse-view.tsx` derives `~` display paths only from `/Users/<name>`, so
       Windows paths and most Linux home paths will not shorten correctly.
+      Completed 2026-07-03: Browse and Skills share cross-platform home-path compaction for
+      `/Users`, `/home`, and Windows user homes.
 - [ ] `src/components/toolbar.tsx` correctly applies the traffic-light padding only on Darwin. Keep
       this as the desktop-chrome pattern when adding Windows/Linux window controls or spacing.
 - [ ] `electron/main.js` handles Darwin `open-url`/`open-file`, Windows/Linux argv handoff, and
@@ -67,9 +73,11 @@ app. The highest-impact safe path is:
 - [ ] `server/src/public.ts` parses only `Markie-*-arm64.dmg` from `latest-mac.yml`. The download
       page needs a manifest or equivalent source of truth before it can advertise Intel Mac,
       Windows, and Linux.
-- [ ] `src/components/agents-dialog.tsx`, `src/components/files-view.tsx`, and
+- [x] `src/components/agents-dialog.tsx`, `src/components/files-view.tsx`, and
       `mcp/markie-mcp.mjs` use "this Mac" or "on your Mac" copy for local files. Update after the
       runtime fallbacks are real.
+      Completed 2026-07-03 for the live Agents dialog and MCP server copy; no live Files-view
+      "Mac" copy remained in source.
 
 ### Test And Preflight
 - [ ] `build/preflight.cjs` returns immediately for non-Darwin builds and uses `osascript` for the

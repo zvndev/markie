@@ -35,9 +35,16 @@ async function requireUser(c: { req: { raw: Request } }) {
   return session?.user ?? null;
 }
 
+export type ShareAccessLevel = "owner" | "editor" | "viewer" | null;
+
 export function getShare(docId: string, userId: string) {
   return db
-    .prepare("SELECT role FROM shares WHERE doc_id = ? AND user_id = ?")
+    .prepare(
+      `SELECT s.role
+       FROM shares s
+       JOIN docs d ON d.id = s.doc_id
+       WHERE s.doc_id = ? AND s.user_id = ? AND d.deleted_at IS NULL`
+    )
     .get(docId, userId) as { role: "viewer" | "editor" } | undefined;
 }
 
@@ -52,9 +59,21 @@ export function isOwner(docId: string, userId: string): boolean {
 export function accessLevel(
   docId: string,
   userId: string
-): "owner" | "editor" | "viewer" | null {
+): ShareAccessLevel {
   if (isOwner(docId, userId)) return "owner";
   return getShare(docId, userId)?.role ?? null;
+}
+
+export function canReadLevel(level: ShareAccessLevel): boolean {
+  return level !== null;
+}
+
+export function canEditLevel(level: ShareAccessLevel): boolean {
+  return level === "owner" || level === "editor";
+}
+
+export function canManageLevel(level: ShareAccessLevel): boolean {
+  return level === "owner";
 }
 
 export function sharedDocsFor(userId: string) {
@@ -109,7 +128,7 @@ shares.get("/:id/shares", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  if (!accessLevel(docId, user.id)) return c.json({ error: "forbidden" }, 403);
+  if (!canReadLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   const members = db
     .prepare(
       `SELECT s.user_id, s.role, s.created_at, u.email, u.name
@@ -136,7 +155,7 @@ shares.post("/:id/shares", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  if (!isOwner(docId, user.id)) return c.json({ error: "forbidden" }, 403);
+  if (!canManageLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   const { email, role } = (await c.req.json()) as {
     email: string;
     role: "viewer" | "editor";
@@ -195,7 +214,7 @@ shares.delete("/:id/shares/:idOrEmail", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  if (!isOwner(docId, user.id)) return c.json({ error: "forbidden" }, 403);
+  if (!canManageLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   const target = decodeURIComponent(c.req.param("idOrEmail"));
   const removedMember = db
     .prepare("DELETE FROM shares WHERE doc_id = ? AND user_id = ?")
@@ -214,7 +233,7 @@ shares.get("/:id/public-link", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  if (!accessLevel(docId, user.id)) return c.json({ error: "forbidden" }, 403);
+  if (!canReadLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   const token = getPublicLinkToken(docId);
   return c.json({ url: token ? `${MARKIE_SITE}/s/${token}` : null });
 });
@@ -224,7 +243,7 @@ shares.post("/:id/public-link", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  if (!isOwner(docId, user.id)) return c.json({ error: "forbidden" }, 403);
+  if (!canManageLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   const token = createOrGetPublicLink(docId, user.id);
   return c.json({ url: `${MARKIE_SITE}/s/${token}` });
 });
@@ -234,7 +253,7 @@ shares.delete("/:id/public-link", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  if (!isOwner(docId, user.id)) return c.json({ error: "forbidden" }, 403);
+  if (!canManageLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   revokePublicLink(docId);
   return c.json({ ok: true });
 });

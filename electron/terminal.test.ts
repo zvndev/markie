@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildEnv, isKnownApp, resolveContext } from "./terminal.js";
+import { buildEnv, isKnownApp, resolveContext, resolveShell } from "./terminal.js";
 
 describe("isKnownApp", () => {
   it("accepts detected terminal ids and names", () => {
@@ -81,6 +81,43 @@ describe("terminal Markie context", () => {
       MARKIE_FILE: "/Users/me/Docs/Markie/project/drafts/b.md",
       MARKIE_DIR: "/Users/me/Docs/Markie/project/drafts",
       MARKIE_WORKSPACE: "/Users/me/Docs/Markie",
+    });
+  });
+});
+
+describe("resolveShell", () => {
+  it("uses the user's login shell on macOS", () => {
+    expect(resolveShell("darwin", { SHELL: "/bin/fish" })).toEqual({
+      command: "/bin/fish",
+      args: ["-l"],
+    });
+  });
+
+  it("falls back to zsh on macOS when SHELL is missing", () => {
+    expect(resolveShell("darwin", {})).toEqual({
+      command: "/bin/zsh",
+      args: ["-l"],
+    });
+  });
+
+  it("uses bash as the Linux fallback instead of a macOS-only shell", () => {
+    expect(resolveShell("linux", {})).toEqual({
+      command: "/bin/bash",
+      args: ["-l"],
+    });
+  });
+
+  it("uses ComSpec on Windows without Unix login-shell args", () => {
+    expect(resolveShell("win32", { ComSpec: "C:\\Windows\\System32\\cmd.exe" })).toEqual({
+      command: "C:\\Windows\\System32\\cmd.exe",
+      args: [],
+    });
+  });
+
+  it("falls back to PowerShell on Windows when ComSpec is missing", () => {
+    expect(resolveShell("win32", {})).toEqual({
+      command: "powershell.exe",
+      args: [],
     });
   });
 });

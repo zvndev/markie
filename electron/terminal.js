@@ -46,13 +46,39 @@ function buildEnv(context, baseEnv = process.env) {
   return env;
 }
 
+function envValue(baseEnv, ...names) {
+  for (const name of names) {
+    if (baseEnv[name]) return baseEnv[name];
+  }
+  const wanted = new Set(names.map((name) => name.toLowerCase()));
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (wanted.has(key.toLowerCase()) && value) return value;
+  }
+  return null;
+}
+
+function resolveShell(platform = process.platform, baseEnv = process.env) {
+  if (platform === "win32") {
+    return {
+      command: envValue(baseEnv, "ComSpec", "COMSPEC") || "powershell.exe",
+      args: [],
+    };
+  }
+  return {
+    command:
+      envValue(baseEnv, "SHELL") ||
+      (platform === "darwin" ? "/bin/zsh" : "/bin/bash"),
+    args: ["-l"],
+  };
+}
+
 function create(context, onData, onExit) {
   if (!pty) return null;
   const id = `t${++counter}`;
-  const shell = process.env.SHELL || "/bin/zsh";
+  const shell = resolveShell(process.platform, process.env);
   const home = os.homedir();
   const dir = context?.cwd && fs.existsSync(context.cwd) ? context.cwd : home;
-  const p = pty.spawn(shell, ["-l"], {
+  const p = pty.spawn(shell.command, shell.args, {
     name: "xterm-256color",
     cols: 80,
     rows: 24,
@@ -161,4 +187,5 @@ module.exports = {
   isKnownApp,
   resolveContext,
   buildEnv,
+  resolveShell,
 };

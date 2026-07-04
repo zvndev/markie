@@ -322,3 +322,28 @@
 - blockers: none for this pass. Lint still reports the pre-existing 4 warnings and zero errors.
   The pre-existing local `electron/main.js` updater/menu diff was not part of this task and was
   left untouched.
+
+## 2026-07-03 23:47 EDT — terminal: progressed
+- did: Completed a focused cross-platform runtime/share-scope pass. The in-app terminal now picks
+  platform-aware shells for macOS, Windows, and Linux instead of assuming `/bin/zsh`; MCP
+  `markie_open_in_markie` now chooses platform-specific open commands instead of hardcoding
+  `open -a Markie`; Browse and Skills share a cross-platform home-path display helper for macOS,
+  Linux, and Windows user homes; the live agent/MCP copy no longer says "this Mac"; and sharing
+  access now has explicit read/edit/manage helpers while soft-deleted docs lose owner/share access.
+  Also tightened CodeMirror gutter overrides after the visual guard caught a light-mode contrast
+  regression.
+- evidence: `npm test` passed 14 files / 86 tests. `node --test mcp/lib.test.mjs` passed 19 MCP
+  tests. `(cd server && npm test)` passed 28 server tests, including the new share-access policy
+  tests. `npm run lint` passed with the same 4 pre-existing warnings and zero errors. `npm run
+  build` passed. `npm run visual:guard:theme` passed with zero findings and wrote
+  `.autoloop/runs/light-mode-audit-20260704034415/audit.json` plus screenshots. `./init.sh`
+  passed renderer tests, MCP tests, server tests, lint, and build. For user inspection, a Markie
+  Electron dev window was booted against this checkout via `http://localhost:3027` with CDP on
+  `9224`.
+- next: Continue toward full Windows/macOS support by adding local packaging matrix scripts/config,
+  release-preflight checks for macOS arm64/x64 and Windows artifacts, updater/download manifest
+  support, and the remaining medium-severity Electron file IPC grant hardening from `BACKLOG.md`.
+- blockers: none for this pass. Full Windows/macOS release support is not complete until packaging,
+  signing/notarization/code-signing, updater feeds, and download-page evidence exist. The
+  pre-existing local `electron/main.js` updater/menu diff was not part of this task and was left
+  untouched.

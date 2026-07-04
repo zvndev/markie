@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { guardPath, matchQuery, classifyAgentFile, groupSkills } from "./lib.mjs";
+import { guardPath, matchQuery, classifyAgentFile, groupSkills, markieOpenCommand } from "./lib.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
@@ -180,6 +180,44 @@ test("groupSkills groups classified files by tool, in display order", () => {
   assert.deepEqual(ids, ["claude", "openai"]);
   assert.equal(groups[0].files.length, 2); // CLAUDE.md + SKILL.md
   assert.equal(groups[1].files.length, 1); // AGENTS.md
+});
+
+test("markieOpenCommand uses the Markie app on macOS", () => {
+  assert.deepEqual(markieOpenCommand("/Users/u/Notes/a.md", "darwin"), {
+    ok: true,
+    command: "open",
+    args: ["-a", "Markie", "/Users/u/Notes/a.md"],
+    message: "Opening /Users/u/Notes/a.md in Markie",
+  });
+});
+
+test("markieOpenCommand uses a Windows file association opener without a Unix command", () => {
+  assert.deepEqual(markieOpenCommand("C:\\Users\\u\\Notes\\a.md", "win32"), {
+    ok: true,
+    command: "powershell.exe",
+    args: [
+      "-NoProfile",
+      "-Command",
+      "Start-Process -LiteralPath $args[0]",
+      "C:\\Users\\u\\Notes\\a.md",
+    ],
+    message: "Opening C:\\Users\\u\\Notes\\a.md with your system Markdown handler",
+  });
+});
+
+test("markieOpenCommand uses xdg-open on Linux", () => {
+  assert.deepEqual(markieOpenCommand("/home/u/Notes/a.md", "linux"), {
+    ok: true,
+    command: "xdg-open",
+    args: ["/home/u/Notes/a.md"],
+    message: "Opening /home/u/Notes/a.md with your system Markdown handler",
+  });
+});
+
+test("markieOpenCommand rejects unsupported platforms", () => {
+  const out = markieOpenCommand("/home/u/Notes/a.md", "freebsd");
+  assert.equal(out.ok, false);
+  assert.match(out.error, /unsupported platform/);
 });
 
 test("guardPath denies a .md symlink that points outside home (read escape)", () => {

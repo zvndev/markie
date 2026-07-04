@@ -490,6 +490,15 @@ body {
   color: var(--muted) !important;
 }
 
+.cm-theme-light .cm-editor .cm-gutters,
+.cm-theme-light .cm-editor .cm-gutter,
+.cm-theme-light .cm-editor .cm-gutterElement,
+.cm-theme-dark .cm-editor .cm-gutters,
+.cm-theme-dark .cm-editor .cm-gutter,
+.cm-theme-dark .cm-editor .cm-gutterElement {
+  color: var(--muted) !important;
+}
+
 .cm-editor .cm-activeLineGutter {
   background: var(--surface) !important;
   color: var(--muted) !important;

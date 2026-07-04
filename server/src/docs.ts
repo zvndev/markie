@@ -1,7 +1,13 @@
 import { Hono } from "hono";
 import Database from "better-sqlite3";
 import { auth } from "./auth.ts";
-import { accessLevel, sharedDocsFor, docsSharedByMe } from "./shares.ts";
+import {
+  accessLevel,
+  canEditLevel,
+  canReadLevel,
+  sharedDocsFor,
+  docsSharedByMe,
+} from "./shares.ts";
 import { claimPendingInvites } from "./pending.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
@@ -85,7 +91,7 @@ docs.get("/:id", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  if (!accessLevel(docId, user.id)) return c.json({ error: "not found" }, 404);
+  if (!canReadLevel(accessLevel(docId, user.id))) return c.json({ error: "not found" }, 404);
   const row = db
     .prepare(
       "SELECT id, name, version, content, hash, updated_at FROM docs WHERE id = ? AND deleted_at IS NULL"
@@ -116,7 +122,7 @@ docs.put("/:id", async (c) => {
 
   if (existing && existing.owner_id !== user.id) {
     // editors on a shared doc may push snapshots; viewers may not
-    if (accessLevel(id, user.id) !== "editor") {
+    if (!canEditLevel(accessLevel(id, user.id))) {
       return c.json({ error: "forbidden" }, 403);
     }
   }

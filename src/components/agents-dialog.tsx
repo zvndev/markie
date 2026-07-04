@@ -8,7 +8,7 @@ interface AgentsDialogProps {
 }
 
 const TOOLS: [string, string][] = [
-  ["markie_find_md", "find markdown anywhere on this Mac (name or path)"],
+  ["markie_find_md", "find markdown anywhere on this computer (name or path)"],
   ["markie_read_md", "read a markdown file"],
   ["markie_write_md", "create or edit a markdown file (guard-railed)"],
   ["markie_list_skills", "list your agent/skill files, grouped by tool"],
@@ -73,7 +73,7 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
         <p className="text-[12px] text-muted leading-relaxed mb-4">
           Markie ships a local <strong>MCP server</strong> that gives an agent
           like Claude Code or Codex markdown-aware access to the files on this
-          Mac — your notes, docs, and agent/skill files (<code>CLAUDE.md</code>,{" "}
+          computer — your notes, docs, and agent/skill files (<code>CLAUDE.md</code>,{" "}
           <code>AGENTS.md</code>, <code>~/.claude/skills</code>,{" "}
           <code>~/.codex</code>). It runs on demand, locally; nothing is uploaded.
         </p>

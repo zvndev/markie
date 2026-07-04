@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Markie MCP server (stdio): a device-wide markdown workspace for AI agents.
 // Lets Claude Code, Codex & friends find, read, write, and open the markdown on
-// this Mac — notes, docs, and agent/skill files (~/.claude/skills, ~/.codex,
+// this computer — notes, docs, and agent/skill files (~/.claude/skills, ~/.codex,
 // CLAUDE.md, AGENTS.md, …). Speaks MCP over newline-delimited JSON-RPC.
 //
 // Dependency-free pure Node. Reuses Markie's device index (electron/mdindex.js)
@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { guardPath, matchQuery, groupSkills } from "./lib.mjs";
+import { guardPath, matchQuery, groupSkills, markieOpenCommand } from "./lib.mjs";
 import { walk } from "./scan.mjs";
 
 const HOME = homedir();
@@ -33,7 +33,7 @@ const TOOLS = [
   {
     name: "markie_find_md",
     description:
-      "Find markdown files anywhere on this Mac (matches name or path, case-insensitive), newest first. Leave query empty to list everything. Mirrors what Markie's Browse panel shows.",
+      "Find markdown files anywhere on this computer (matches name or path, case-insensitive), newest first. Leave query empty to list everything. Mirrors what Markie's Browse panel shows.",
     inputSchema: {
       type: "object",
       properties: {
@@ -70,7 +70,7 @@ const TOOLS = [
   {
     name: "markie_list_skills",
     description:
-      "List the agent/skill instruction files on this Mac (CLAUDE.md, AGENTS.md, GEMINI.md, ~/.claude/skills, ~/.codex, .cursor rules), grouped by tool. Great for finding and editing skills.",
+      "List the agent/skill instruction files on this computer (CLAUDE.md, AGENTS.md, GEMINI.md, ~/.claude/skills, ~/.codex, .cursor rules), grouped by tool. Great for finding and editing skills.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -128,12 +128,14 @@ async function runTool(name, args) {
       } catch {
         throw new Error(`No such file: ${g.path}`);
       }
-      const child = spawn("open", ["-a", "Markie", g.path], {
+      const launcher = markieOpenCommand(g.path);
+      if (!launcher.ok) throw new Error(launcher.error);
+      const child = spawn(launcher.command, launcher.args, {
         stdio: "ignore",
         detached: true,
       });
       child.unref();
-      return `Opening ${g.path} in Markie`;
+      return launcher.message;
     }
     default:
       throw new Error(`Unknown tool: ${name}`);

@@ -4,7 +4,11 @@
 import { Hono } from "hono";
 import Database from "better-sqlite3";
 import { auth } from "./auth.ts";
-import { accessLevel, isOwner } from "./shares.ts";
+import {
+  accessLevel,
+  canManageLevel,
+  canReadLevel,
+} from "./shares.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
 
@@ -60,7 +64,7 @@ themes.put("/docs/:id/theme", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  if (!isOwner(docId, user.id)) return c.json({ error: "forbidden" }, 403);
+  if (!canManageLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   const { tokens } = (await c.req.json()) as { tokens: unknown };
   if (tokens !== null && typeof tokens !== "object") {
     return c.json({ error: "bad request" }, 400);
@@ -77,7 +81,7 @@ themes.get("/docs/:id/theme", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  if (!accessLevel(docId, user.id)) return c.json({ error: "forbidden" }, 403);
+  if (!canReadLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   const row = db
     .prepare("SELECT enforced_theme FROM docs WHERE id = ? AND deleted_at IS NULL")
     .get(docId) as { enforced_theme: string | null } | undefined;

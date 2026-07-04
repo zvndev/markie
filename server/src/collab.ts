@@ -10,7 +10,7 @@ import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import Database from "better-sqlite3";
 import { auth } from "./auth.ts";
-import { accessLevel } from "./shares.ts";
+import { accessLevel, canEditLevel, canReadLevel } from "./shares.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
 
@@ -229,12 +229,12 @@ export function attachCollab(server: Server): void {
       const token = url.searchParams.get("token") ?? "";
       const session = await sessionFromToken(token);
       const level = session?.user ? accessLevel(docId, session.user.id) : null;
-      if (!session?.user || !level) {
+      if (!session?.user || !canReadLevel(level)) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
       }
-      const canEdit = level === "owner" || level === "editor";
+      const canEdit = canEditLevel(level);
       wss.handleUpgrade(req, socket, head, (conn) => {
         handleConnection(conn, docId, canEdit);
       });

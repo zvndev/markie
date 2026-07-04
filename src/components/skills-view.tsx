@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getElectronAPI, type MdRow, type MdStar } from "@/lib/electron";
 import { classifyAgentFile, AGENT_TOOLS, type AgentTool } from "@/lib/agent-files";
+import { compactHomePath, inferHomePath } from "@/lib/path-display";
 
 interface SkillsViewProps {
   onOpenPath: (path: string) => void;
@@ -10,11 +11,6 @@ interface SkillsViewProps {
 }
 
 const FULL_KEY = "markie.skills.fullpath.v1";
-
-function homeShort(p: string, home: string, full: boolean) {
-  if (full) return home && p.startsWith(home) ? "~" + p.slice(home.length) : p;
-  return home && p.startsWith(home) ? p.slice(home.length + 1) : p;
-}
 
 export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
   const api = getElectronAPI();
@@ -27,9 +23,7 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
   );
 
   const home = useMemo(() => {
-    const r = rows[0];
-    if (!r || !r.path.startsWith("/Users/")) return "";
-    return r.path.split("/").slice(0, 3).join("/");
+    return inferHomePath(rows.flatMap((r) => [r.path, r.dir]));
   }, [rows]);
 
   const loadStars = () =>
@@ -137,7 +131,7 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[12px] text-foreground/90">{f.name}</div>
                     <div className="truncate text-[10px] text-muted">
-                      {homeShort(f.dir, home, fullPath)}
+                      {compactHomePath(f.dir, home, fullPath)}
                     </div>
                   </div>
                   <button

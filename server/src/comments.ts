@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { auth } from "./auth.ts";
-import { accessLevel, isOwner } from "./shares.ts";
+import { accessLevel, canEditLevel, canReadLevel, isOwner } from "./shares.ts";
 import { sendEmail } from "./email.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
@@ -36,8 +36,7 @@ async function requireUser(c: { req: { raw: Request } }) {
 }
 
 function canWrite(docId: string, userId: string): boolean {
-  const level = accessLevel(docId, userId);
-  return level === "owner" || level === "editor";
+  return canEditLevel(accessLevel(docId, userId));
 }
 
 interface ThreadRow {
@@ -106,7 +105,7 @@ comments.get("/:id/threads", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  if (!accessLevel(docId, user.id)) return c.json({ error: "forbidden" }, 403);
+  if (!canReadLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   const threads = db
     .prepare("SELECT * FROM threads WHERE doc_id = ? ORDER BY created_at")
     .all(docId) as ThreadRow[];

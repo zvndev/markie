@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getElectronAPI, type MdRow, type MdStar } from "@/lib/electron";
+import { compactHomePath, inferHomePath } from "@/lib/path-display";
 
 interface BrowseViewProps {
   onOpenPath: (path: string) => void;
@@ -13,11 +14,6 @@ const MODE_KEY = "markie.browse.mode.v1";
 const STAR_KEY = "markie.browse.starred.v1";
 const FULL_KEY = "markie.browse.fullpath.v1";
 const FLAT_CAP = 300;
-
-function homeShort(p: string, home: string, full: boolean) {
-  if (full) return home && p.startsWith(home) ? "~" + p.slice(home.length) : p;
-  return home && p.startsWith(home) ? p.slice(home.length + 1) : p;
-}
 
 export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   const api = getElectronAPI();
@@ -37,11 +33,9 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
 
-  // Derive home from any row's path (macOS /Users/<name>). Avoids an IPC call.
+  // Derive home from indexed paths. Avoids an IPC call and works across desktop platforms.
   const home = useMemo(() => {
-    const r = rows[0];
-    if (!r || !r.path.startsWith("/Users/")) return "";
-    return r.path.split("/").slice(0, 3).join("/");
+    return inferHomePath(rows.flatMap((r) => [r.path, r.dir]));
   }, [rows]);
 
   const loadStars = () =>
@@ -236,7 +230,7 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
                   >
                     <span className="text-muted w-3">{isOpen ? "▾" : "▸"}</span>
                     <span className="truncate flex-1 text-foreground/90">
-                      {homeShort(dir, home, fullPath)}
+                      {compactHomePath(dir, home, fullPath)}
                     </span>
                     <span className="text-[9px] text-muted">{files.length}</span>
                     <Star on={stars.has(dir)} onClick={() => toggleStar(dir, "folder")} />
@@ -275,7 +269,7 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[12px] text-foreground/90">{f.name}</div>
                   <div className="truncate text-[10px] text-muted">
-                    {homeShort(f.dir, home, fullPath)}
+                    {compactHomePath(f.dir, home, fullPath)}
                   </div>
                 </div>
                 <Star on={stars.has(f.path)} onClick={() => toggleStar(f.path, "file")} />

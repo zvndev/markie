@@ -504,3 +504,28 @@
   incomplete until native Windows launch evidence, code signing, updater feeds, public download URLs,
   and human-gated release work are verified. The pre-existing updater/menu edits in
   `electron/main.js` were preserved and not intentionally included in this Windows package pass.
+
+## 2026-07-04 14:56 EDT — terminal: progressed
+- did: Added a Windows-host native launch smoke path without changing signing, publishing, upload,
+  deploy, or release credentials. `scripts/windows-launch-smoke.mjs` runs only on `win32`, resolves
+  `dist/win-unpacked/Markie.exe`, launches it with an isolated profile and CDP port, and validates
+  the packaged renderer title/readiness/visible Markie UI. Added `electron:smoke:win:launch`,
+  focused launch-smoke tests, release-preflight requirements, docs, and
+  `.github/workflows/windows-launch-smoke.yml` so `windows-latest` can build, structure-smoke, and
+  launch-smoke the unsigned Windows x64 unpacked package.
+- evidence: `node --check scripts/windows-launch-smoke.mjs` and
+  `node --check scripts/release-preflight.mjs` passed. `npm test --
+  electron/windows-launch-smoke.test.ts electron/release-preflight.test.ts` passed 2 files / 9
+  tests. `npm run release:preflight` passed 18 renderer/Electron test files / 111 tests, 19 MCP
+  tests, 32 server tests, lint with the same 4 warnings and zero errors, and static build.
+  `npm run electron:smoke:win` passed against `dist/win-unpacked` and correctly reported
+  structure-only host mode on this Mac. `git diff --check` passed. `./init.sh` passed renderer /
+  Electron tests, MCP tests, server tests, lint, and build.
+- next: Run the `Windows launch smoke` workflow or `npm run electron:smoke:win:launch` on an actual
+  Windows host to collect native launch evidence, then keep Windows public release work behind code
+  signing, updater feed, public URL, and human approval gates.
+- blockers: Native Windows launch has a repo-owned host-runner path but was not executed on this
+  Mac because the command is intentionally `win32`-only. Full Windows support remains incomplete
+  until that Windows-host launch run, code signing, updater feeds, public download URLs, and
+  human-gated release work are verified. The pre-existing updater/menu edits in `electron/main.js`
+  were preserved and not intentionally included in this pass.

@@ -39,14 +39,19 @@ making any platform-readiness claim:
 npm run electron:smoke:mac:arm64
 npm run electron:smoke:mac:x64
 npm run electron:smoke:win
+npm run electron:smoke:win:launch   # Windows host only
 npm run electron:smoke:linux
 ```
 
 The macOS local package path also runs the `build/preflight.cjs` window smoke
 gate during `afterPack`; Apple Silicon hosts with Rosetta can launch-smoke the
-Intel macOS package. Windows and Linux currently get deterministic structure
-checks locally; OS-level launch evidence still needs a matching Windows or
-Linux host before public release.
+Intel macOS package. Windows gets deterministic structure checks locally, then
+`electron:smoke:win:launch` proves `dist/win-unpacked/Markie.exe` starts and
+loads the packaged renderer on a Windows host. The
+`.github/workflows/windows-launch-smoke.yml` workflow runs that sequence on
+`windows-latest` without signing, publishing, uploading, or release credentials.
+Linux currently gets deterministic structure checks locally; OS-level launch
+evidence still needs a matching Linux host before public release.
 For cross-packaged Windows `--dir` artifacts, `electron:pack:win` runs
 `scripts/install-win-native-prebuild.mjs` after electron-builder so the unpacked
 app contains the Electron 41 `better-sqlite3` Windows x64 prebuild instead of

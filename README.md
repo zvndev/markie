@@ -77,6 +77,7 @@ npm run electron:pack:linux
 npm run electron:smoke:mac:arm64
 npm run electron:smoke:mac:x64
 npm run electron:smoke:win
+npm run electron:smoke:win:launch # Windows host only
 npm run electron:smoke:linux
 ```
 
@@ -84,6 +85,9 @@ The local pack/build scripts use a certificate-free electron-builder wrapper and
 pass `--publish never`; `npm run electron:release` is the only Developer ID
 signing/publishing path. The Windows unpacked package also installs the matching
 Electron `better-sqlite3` Windows prebuild before `electron:smoke:win` runs.
+Native Windows launch evidence is handled by `electron:smoke:win:launch` or the
+`Windows launch smoke` workflow on `windows-latest`; it is not claimed from a
+Mac structure check.
 
 Other scripts: `npm run build` (Next static export), `npm test` (renderer +
 Electron unit tests), `node --test mcp/lib.test.mjs` (MCP tests), and

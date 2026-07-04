@@ -38,6 +38,7 @@
     "electron:smoke:mac:arm64": "node scripts/package-smoke.mjs --platform mac --arch arm64",
     "electron:smoke:mac:x64": "node scripts/package-smoke.mjs --platform mac --arch x64",
     "electron:smoke:win": "node scripts/package-smoke.mjs --platform windows --arch x64",
+    "electron:smoke:win:launch": "node scripts/windows-launch-smoke.mjs",
     "electron:smoke:linux": "node scripts/package-smoke.mjs --platform linux --arch x64",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && NODE_ENV=development electron .\"",
     "electron:build": "npm run build && node scripts/local-electron-builder.mjs --mac --publish never",

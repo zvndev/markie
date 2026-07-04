@@ -32,6 +32,8 @@ const REQUIRED_FILES = [
   "scripts/local-electron-builder.mjs",
   "scripts/install-win-native-prebuild.mjs",
   "scripts/package-smoke.mjs",
+  "scripts/windows-launch-smoke.mjs",
+  ".github/workflows/windows-launch-smoke.yml",
   "electron/main.js",
   "electron/preload.js",
   "mcp/markie-mcp.mjs",
@@ -67,6 +69,10 @@ const REQUIRED_SMOKE_SCRIPTS = [
   ["electron:smoke:mac:x64", "--platform mac", "--arch x64"],
   ["electron:smoke:win", "--platform windows", "--arch x64"],
   ["electron:smoke:linux", "--platform linux", "--arch x64"],
+];
+
+const REQUIRED_HOST_SMOKE_SCRIPTS = [
+  ["electron:smoke:win:launch", "scripts/windows-launch-smoke.mjs"],
 ];
 
 const readJson = (rootDir, relativePath) =>
@@ -191,6 +197,11 @@ export function validatePackagingMatrix(rootDir) {
     assert(script.includes(platformFlag), `${name} must target ${platformFlag}`);
     assert(script.includes(archFlag), `${name} must target ${archFlag}`);
   }
+  for (const [name, scriptPath] of REQUIRED_HOST_SMOKE_SCRIPTS) {
+    const script = scripts[name];
+    assert(Boolean(script), `missing host launch smoke script: ${name}`);
+    assert(script.includes(scriptPath), `${name} must use ${scriptPath}`);
+  }
 
   assert(hasTarget(pkg.build?.mac, "dmg", "arm64"), "macOS matrix must include arm64 dmg");
   assert(hasTarget(pkg.build?.mac, "zip", "arm64"), "macOS matrix must include arm64 zip");
@@ -205,7 +216,12 @@ export function validatePackagingMatrix(rootDir) {
     mac: listTargetEntries(pkg.build.mac),
     win: listTargetEntries(pkg.build.win),
     linux: listTargetEntries(pkg.build.linux),
-    scripts: [...REQUIRED_PACK_SCRIPTS, ...REQUIRED_BUILD_SCRIPTS, ...REQUIRED_SMOKE_SCRIPTS.map(([name]) => name)],
+    scripts: [
+      ...REQUIRED_PACK_SCRIPTS,
+      ...REQUIRED_BUILD_SCRIPTS,
+      ...REQUIRED_SMOKE_SCRIPTS.map(([name]) => name),
+      ...REQUIRED_HOST_SMOKE_SCRIPTS.map(([name]) => name),
+    ],
   };
 }
 

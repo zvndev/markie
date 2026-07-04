@@ -27,6 +27,8 @@ describe("release preflight", () => {
         "scripts/install-win-native-prebuild.mjs",
         "scripts/local-electron-builder.mjs",
         "scripts/package-smoke.mjs",
+        "scripts/windows-launch-smoke.mjs",
+        ".github/workflows/windows-launch-smoke.yml",
         "public/icon.icns",
         "mcp/markie-mcp.mjs",
         "server/package.json",
@@ -48,6 +50,7 @@ describe("release preflight", () => {
         "electron:smoke:mac:arm64",
         "electron:smoke:mac:x64",
         "electron:smoke:win",
+        "electron:smoke:win:launch",
         "electron:smoke:linux",
       ]),
       mac: expect.arrayContaining([

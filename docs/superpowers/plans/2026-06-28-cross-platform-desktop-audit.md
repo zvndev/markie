@@ -128,6 +128,12 @@ app. The highest-impact safe path is:
       prebuild, and `npm run electron:smoke:win` verifies `Markie.exe`, critical native `.node`
       files, app bundle, and MCP resources as Windows PE payloads. Native Windows launch evidence
       remains host-gated.
+- [x] Windows x64 native launch evidence has a host-runner path.
+      Completed 2026-07-04: `scripts/windows-launch-smoke.mjs` runs only on `win32`, launches
+      `dist/win-unpacked/Markie.exe` with a temporary profile and CDP port, and verifies the
+      packaged renderer loads Markie UI. `.github/workflows/windows-launch-smoke.yml` runs
+      `electron:pack:win`, `electron:smoke:win`, and `electron:smoke:win:launch` on
+      `windows-latest` without signing, publishing, uploading, or release credentials.
 
 ### Human-Gated Release Or Deploy Work
 - [ ] Signing, notarization, upload, publish, deployment, credential rotation, cloud storage paths,

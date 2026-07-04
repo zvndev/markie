@@ -2,7 +2,7 @@
   "name": "markie",
   "version": "0.2.8",
   "private": true,
-  "description": "A fast, native markdown editor for macOS (Apple Silicon), with a built-in MCP server for AI agents.",
+  "description": "A fast, native desktop markdown editor for local files, sharing, and AI agents.",
   "author": "ZVN",
   "license": "MIT",
   "homepage": "https://markie.zvndev.com",
@@ -13,7 +13,9 @@
   "keywords": [
     "markdown",
     "editor",
-    "macos",
+    "desktop",
+    "windows",
+    "linux",
     "electron",
     "mcp"
   ],
@@ -30,10 +32,19 @@
     "visual:guard:theme": "node scripts/light-mode-visual-audit.mjs --regression-guard",
     "visual:check:document": "node scripts/document-canvas-layout-check.mjs",
     "visual:check:overlays": "node scripts/overlay-interaction-check.mjs",
+    "icons:generate": "node scripts/generate-icons.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && NODE_ENV=development electron .\"",
-    "electron:build": "npm run build && electron-builder --mac",
-    "electron:pack": "npm run build && electron-builder --mac --dir",
+    "electron:build": "npm run build && electron-builder --mac --publish never",
+    "electron:build:mac": "npm run build && electron-builder --mac --publish never",
+    "electron:build:win": "npm run build && electron-builder --win --publish never",
+    "electron:build:linux": "npm run build && electron-builder --linux --publish never",
+    "electron:pack": "npm run electron:pack:mac",
+    "electron:pack:mac": "npm run build && electron-builder --mac --dir --publish never",
+    "electron:pack:mac:arm64": "npm run build && electron-builder --mac --arm64 --dir --publish never",
+    "electron:pack:mac:x64": "npm run build && electron-builder --mac --x64 --dir --publish never",
+    "electron:pack:win": "npm run build && electron-builder --win --x64 --dir --publish never",
+    "electron:pack:linux": "npm run build && electron-builder --linux --x64 --dir --publish never",
     "electron:release": "npm run build && electron-builder --mac --publish always"
   },
   "build": {
@@ -43,14 +54,21 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "public/icon.icns",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "target": [
         {
           "target": "dmg",
-          "arch": "arm64"
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         },
         {
           "target": "zip",
-          "arch": "arm64"
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         }
       ],
       "darkModeSupport": true,
@@ -59,6 +77,43 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "notarize": true
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "linux": {
+      "icon": "build/icons",
+      "category": "Office",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     },
     "publish": [
       {

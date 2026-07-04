@@ -32,7 +32,12 @@ const sh = (cmd) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 module.exports = async function afterPack(context) {
-  if (context.electronPlatformName !== "darwin") return;
+  if (context.electronPlatformName !== "darwin") {
+    console.log(
+      `[preflight] ${context.electronPlatformName} packaged; OS-level window smoke is currently implemented for macOS only`
+    );
+    return;
+  }
   if (process.env.MARKIE_SKIP_PREFLIGHT === "1") {
     console.log("[preflight] skipped (MARKIE_SKIP_PREFLIGHT=1)");
     return;

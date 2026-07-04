@@ -19,6 +19,12 @@
 
 # production
 /build
+!/build/
+!/build/preflight.cjs
+!/build/entitlements.mac.plist
+!/build/icon.ico
+!/build/icons/
+!/build/icons/*.png
 
 # misc
 .DS_Store

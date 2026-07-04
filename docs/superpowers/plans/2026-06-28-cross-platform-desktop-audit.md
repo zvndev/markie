@@ -50,13 +50,19 @@ app. The highest-impact safe path is:
       keep the UI hidden/unsupported with tests proving graceful fallback.
 
 ### Packaging Config
-- [ ] `package.json` describes Markie as `macOS (Apple Silicon)` and uses `macos` as a keyword.
+- [x] `package.json` describes Markie as `macOS (Apple Silicon)` and uses `macos` as a keyword.
       Update metadata once local packaging support includes all desktop targets.
-- [ ] `package.json` `electron:build`, `electron:pack`, and `electron:release` are all `--mac`
+      Completed 2026-07-04: package metadata now describes native desktop Markie and local
+      packaging config covers macOS arm64/x64, Windows x64, and Linux x64.
+- [x] `package.json` `electron:build`, `electron:pack`, and `electron:release` are all `--mac`
       only. Add local-only scripts for macOS arm64, macOS x64, Windows, and Linux before changing
       release behavior.
-- [ ] `package.json` `build.mac.target` emits only `arm64` `dmg` and `zip`. Add Intel Mac targets
+      Completed 2026-07-04: added no-publish local scripts for macOS arm64, macOS x64, Windows x64,
+      and Linux x64 while keeping the credentialed `electron:release` path explicit.
+- [x] `package.json` `build.mac.target` emits only `arm64` `dmg` and `zip`. Add Intel Mac targets
       first, then Windows and Linux targets in a way electron-builder can parse locally.
+      Completed 2026-07-04: macOS targets now include arm64/x64 `dmg` and `zip`; Windows includes
+      x64 `nsis` and `zip`; Linux includes x64 `AppImage` and `deb`.
 - [ ] `package.json` `build.publish` points to the `mac` release path only. Treat new publish paths
       as release/deploy work and keep them human-gated.
 - [ ] `electron-updater` comments and feed assumptions in `electron/main.js` are Mac feed oriented.
@@ -64,10 +70,15 @@ app. The highest-impact safe path is:
       defined.
 
 ### Docs And Download Page
-- [ ] `README.md` says files live on a Mac, Browse indexes files on a Mac, install is Apple Silicon
+- [x] `README.md` says files live on a Mac, Browse indexes files on a Mac, install is Apple Silicon
       macOS only, Intel Macs are unsupported, and source packaging writes to `dist/mac-arm64/`.
-- [ ] `docs/RELEASING.md` is titled for Apple Silicon macOS and documents only `latest-mac.yml`,
+      Completed 2026-07-04: README now describes files on the user's machine, local packaging
+      commands for macOS arm64/x64, Windows, and Linux, and clearly states only Apple Silicon macOS
+      is currently public.
+- [x] `docs/RELEASING.md` is titled for Apple Silicon macOS and documents only `latest-mac.yml`,
       `dist/mac-arm64/Markie.app`, and `Markie-<version>-arm64.dmg`.
+      Completed 2026-07-04: release docs now include the local desktop artifact matrix and keep
+      public non-macOS releases behind explicit signing/feed/download approval.
 - [ ] `server/src/public.ts`, `server/src/render.ts`, `server/src/shares.ts`, and
       `server/src/render.test.ts` expose only `/download/mac` and "Get Markie for macOS" copy.
 - [ ] `server/src/public.ts` parses only `Markie-*-arm64.dmg` from `latest-mac.yml`. The download
@@ -80,14 +91,19 @@ app. The highest-impact safe path is:
       "Mac" copy remained in source.
 
 ### Test And Preflight
-- [ ] `build/preflight.cjs` returns immediately for non-Darwin builds and uses `osascript` for the
+- [x] `build/preflight.cjs` returns immediately for non-Darwin builds and uses `osascript` for the
       macOS smoke check. Add platform-specific local preflight coverage or explicit skip reporting
       before relying on Windows/Linux artifacts.
-- [ ] `scripts/release-preflight.mjs` validates Mac notarization, Mac entitlements, a publish
+      Completed 2026-07-04: non-macOS afterPack now logs an explicit OS-level smoke skip instead
+      of returning silently.
+- [x] `scripts/release-preflight.mjs` validates Mac notarization, Mac entitlements, a publish
       target, and the explicit `electron:release` publishing command, but it does not validate a
       platform artifact matrix.
-- [ ] `electron/release-preflight.test.ts` only asserts Mac release prerequisites. Expand it when
+      Completed 2026-07-04: `release:preflight` validates local no-publish scripts, platform
+      targets, and generated Windows/Linux icon assets.
+- [x] `electron/release-preflight.test.ts` only asserts Mac release prerequisites. Expand it when
       `release:preflight` learns the full desktop matrix.
+      Completed 2026-07-04: preflight tests now cover local packaging scripts and artifact targets.
 - [ ] `server/src/public.test.ts` and `server/src/render.test.ts` assert Mac-only download behavior.
       Replace these with manifest-driven platform tests once the manifest exists.
 - [ ] `scripts/perf-check.mjs` documents a Mac-only `open -a dist/mac-arm64/Markie.app` command.

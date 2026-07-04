@@ -1,6 +1,6 @@
 # Markie
 
-**The Google Docs of Markdown — except your files live on your Mac.** Free, native, Apple Silicon.
+**The Google Docs of Markdown — except your files live on your machine.** Native desktop markdown.
 
 [![Markie](https://markie.zvndev.com/markie-demo-poster.jpg)](https://markie.zvndev.com)
 
@@ -14,7 +14,7 @@ markdown right alongside you.
 
 - **Editor + live preview** — edit, preview, or split view; GitHub-flavored
   markdown, tables, code highlighting, and KaTeX math.
-- **Browse** — a device-wide index of every `.md` on your Mac, so your notes and
+- **Browse** — a device-wide index of every `.md` on your machine, so your notes and
   docs are one search away.
 - **Agent & skill files** — surfaces `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
   `~/.claude/skills`, `~/.codex`, and Cursor rules, grouped by tool.
@@ -24,12 +24,14 @@ markdown right alongside you.
 
 ## Install
 
-Download for **Apple Silicon macOS** (M-series). The app is signed and notarized
-by Apple, and updates itself automatically.
+The current public download is **Apple Silicon macOS**. The source tree now has
+local packaging configuration for Apple Silicon macOS, Intel macOS, Windows x64,
+and Linux x64; signed public artifacts for the new targets are still release
+work.
 
 ➡️ **[Download Markie](https://markie.zvndev.com)**
 
-> Apple Silicon only. Intel Macs are not supported.
+> Public Windows, Intel Mac, and Linux downloads are not published yet.
 
 ## The Markie MCP
 
@@ -66,11 +68,16 @@ Requires Node ≥ 22.
 ```bash
 npm install
 npm run electron:dev     # run the app in development
-npm run electron:pack    # build an unsigned .app into dist/mac-arm64/
+npm run electron:pack    # build an unsigned local macOS app
+npm run electron:pack:mac:arm64
+npm run electron:pack:mac:x64
+npm run electron:pack:win
+npm run electron:pack:linux
 ```
 
 Other scripts: `npm run build` (Next static export), `npm test` (renderer +
-Electron unit tests), `node --test mcp/lib.test.mjs` (MCP tests).
+Electron unit tests), `node --test mcp/lib.test.mjs` (MCP tests), and
+`npm run release:preflight` (safe local release-readiness checks, no publishing).
 
 ## Tech
 

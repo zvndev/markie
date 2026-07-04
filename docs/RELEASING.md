@@ -1,7 +1,30 @@
-# Releasing Markie (macOS, Apple Silicon)
+# Releasing Markie
 
-Markie ships as a signed + notarized `.dmg`, and updates itself via
-`electron-updater` reading a public feed on Backblaze B2.
+Markie currently publishes a signed + notarized Apple Silicon macOS `.dmg`, and
+updates itself via `electron-updater` reading a public feed on Backblaze B2.
+The repo also defines local packaging targets for Intel macOS, Windows x64, and
+Linux x64 so those artifacts can be prepared and verified before any public
+release work.
+
+## Desktop artifact matrix
+
+| Platform | Local target(s) | Public release status |
+| --- | --- | --- |
+| macOS Apple Silicon | `dmg`, `zip` | Current signed/notarized release path |
+| macOS Intel | `dmg`, `zip` | Local packaging config exists; public release not yet shipped |
+| Windows x64 | `nsis`, `zip` | Local packaging config exists; code signing/feed work still required |
+| Linux x64 | `AppImage`, `deb` | Local packaging config exists; distribution decision still required |
+
+Safe local packaging commands:
+
+```sh
+npm run electron:pack:mac:arm64
+npm run electron:pack:mac:x64
+npm run electron:pack:win
+npm run electron:pack:linux
+```
+
+These commands pass `--publish never` and are not release/upload commands.
 
 ## One-time setup
 
@@ -52,9 +75,11 @@ package.json); the app reads the feed back over public HTTPS at
    npm run electron:release
    ```
 
-   This builds the static site, packages the arm64 app, signs it, notarizes +
-   staples it, builds the `.dmg` and `.zip`, and uploads the artifacts +
-   `latest-mac.yml` to the B2 bucket.
+   This builds the static site, packages the configured macOS targets, signs
+   them, notarizes + staples them, builds the `.dmg` and `.zip`, and uploads the
+   artifacts + `latest-mac.yml` to the B2 bucket. Do not use this command for
+   Windows or Linux until their signing, update feeds, and public download URLs
+   have been explicitly approved.
 
 4. Verify: `spctl -a -vvv -t install dist/mac-arm64/Markie.app` should report
    `accepted` / `source=Notarized Developer ID`.
@@ -70,4 +95,5 @@ package.json); the app reads the feed back over public HTTPS at
 ## Sharing a build manually
 
 `dist/Markie-<version>-arm64.dmg` is a normal notarized DMG — AirDrop / send it
-and the recipient just drags it to Applications. (Apple Silicon only.)
+and the recipient just drags it to Applications. Intel Mac, Windows, and Linux
+artifacts should stay private/local until their release checklist is complete.

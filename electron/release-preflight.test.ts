@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertLocalOnlyChecks,
+  validatePackagingMatrix,
   validateReleaseMetadata,
   validateRequiredFiles,
 } from "../scripts/release-preflight.mjs";
@@ -21,11 +22,39 @@ describe("release preflight", () => {
       expect.arrayContaining([
         "build/preflight.cjs",
         "build/entitlements.mac.plist",
+        "build/icon.ico",
+        "build/icons/256x256.png",
         "public/icon.icns",
         "mcp/markie-mcp.mjs",
         "server/package.json",
       ])
     );
+  });
+
+  it("validates the local desktop packaging matrix without publishing", () => {
+    expect(validatePackagingMatrix(rootDir)).toMatchObject({
+      scripts: expect.arrayContaining([
+        "electron:pack:mac:arm64",
+        "electron:pack:mac:x64",
+        "electron:pack:win",
+        "electron:pack:linux",
+        "electron:build:mac",
+        "electron:build:win",
+        "electron:build:linux",
+      ]),
+      mac: expect.arrayContaining([
+        { target: "dmg", arch: expect.arrayContaining(["arm64", "x64"]) },
+        { target: "zip", arch: expect.arrayContaining(["arm64", "x64"]) },
+      ]),
+      win: expect.arrayContaining([
+        { target: "nsis", arch: expect.arrayContaining(["x64"]) },
+        { target: "zip", arch: expect.arrayContaining(["x64"]) },
+      ]),
+      linux: expect.arrayContaining([
+        { target: "AppImage", arch: expect.arrayContaining(["x64"]) },
+        { target: "deb", arch: expect.arrayContaining(["x64"]) },
+      ]),
+    });
   });
 
   it("runs only local test, lint, and build checks", () => {

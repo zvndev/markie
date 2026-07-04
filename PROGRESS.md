@@ -347,3 +347,26 @@
   signing/notarization/code-signing, updater feeds, and download-page evidence exist. The
   pre-existing local `electron/main.js` updater/menu diff was not part of this task and was left
   untouched.
+
+## 2026-07-04 00:01 EDT — terminal: progressed
+- did: Completed a local-only desktop packaging matrix pass. Added generated Windows/Linux icon
+  assets from the existing macOS `.icns`, introduced no-publish local packaging/build scripts for
+  macOS arm64, macOS x64, Windows x64, and Linux x64, expanded electron-builder targets for that
+  matrix, and taught `release:preflight` to validate required icons, scripts, and target coverage.
+  `build/preflight.cjs` now logs explicit non-macOS smoke-check skip reporting instead of silently
+  returning. README and release docs now describe current Apple Silicon public release status
+  separately from source-level local platform readiness.
+- evidence: `npm run icons:generate` regenerated `build/icon.ico` and `build/icons/*.png`.
+  `npm test -- electron/release-preflight.test.ts` passed 4 preflight tests. `npm run
+  release:preflight` passed and explicitly stopped before signing, notarization, upload, publish,
+  deploy, or credential checks while validating `mac=2 win=2 linux=2` package targets. `npm run
+  visual:guard:theme` passed with zero findings and wrote
+  `.autoloop/runs/light-mode-audit-20260704040031/audit.json` plus screenshots. `./init.sh`
+  passed renderer tests, MCP tests, server tests, lint, and build.
+- next: Add a repo-local download/platform manifest and update server download tests/routes to be
+  manifest-driven, then harden the remaining medium-severity Electron file IPC grant model from
+  `BACKLOG.md`.
+- blockers: none for this pass. Full Windows/macOS release support is still not complete until
+  native-host packaging is exercised, macOS Intel notarization, Windows code signing, updater feeds,
+  and public download URLs are verified. The pre-existing local `electron/main.js` updater/menu diff
+  was not part of this task and was left untouched.

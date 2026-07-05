@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   assertLocalOnlyChecks,
   validatePackagingMatrix,
+  validateElectronMainDesktopSupport,
   validateReleaseDocs,
   validateReleaseMetadata,
   validateRequiredFiles,
@@ -108,6 +109,19 @@ describe("release preflight", () => {
         "package-lock.json",
       ]),
     });
+  });
+
+  it("keeps desktop update checks user-visible and packaged menus clean", () => {
+    expect(validateElectronMainDesktopSupport(rootDir)).toEqual(
+      expect.arrayContaining([
+        "async function requestUpdateCheck",
+        'return { ok: false, reason: "dev" }',
+        "autoUpdater.checkForUpdates()",
+        'buttons: ["Restart & Update", "Later"]',
+        'label: "Check for Updates…"',
+        "...(isDev ? [{ type: \"separator\" }, { role: \"toggleDevTools\" }] : [])",
+      ])
+    );
   });
 
   it("runs only local test, lint, and build checks", () => {

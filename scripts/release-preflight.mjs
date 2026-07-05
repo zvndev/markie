@@ -104,6 +104,20 @@ const REQUIRED_WINDOWS_WORKFLOW_PATHS = [
   "package-lock.json",
 ];
 
+const REQUIRED_ELECTRON_MAIN_SNIPPETS = [
+  'let updateState = "idle"',
+  "let manualUpdateCheck = false",
+  "async function requestUpdateCheck",
+  'requestUpdateCheck({ manual = false } = {})',
+  'return { ok: false, reason: "dev" }',
+  "autoUpdater.checkForUpdates()",
+  'buttons: ["Restart & Update", "Later"]',
+  "autoUpdater.quitAndInstall()",
+  'ipcMain.handle("check-for-updates", () => requestUpdateCheck({ manual: true }))',
+  'label: "Check for Updates…"',
+  "...(isDev ? [{ type: \"separator\" }, { role: \"toggleDevTools\" }] : [])",
+];
+
 const REQUIRED_RELEASE_DOC_SNIPPETS = [
   "Per-platform local artifact contract",
   "npm run electron:pack:mac:arm64",
@@ -304,6 +318,27 @@ export function validateWindowsLaunchWorkflow(
   return { snippets, paths };
 }
 
+export function validateElectronMainDesktopSupport(
+  rootDir,
+  snippets = REQUIRED_ELECTRON_MAIN_SNIPPETS
+) {
+  const main = readFileSync(path.join(rootDir, "electron/main.js"), "utf8");
+  const missing = snippets.filter((snippet) => !main.includes(snippet));
+  assert(
+    missing.length === 0,
+    `Electron main missing desktop-support snippets: ${missing.join(", ")}`
+  );
+  assert(
+    main.indexOf("async function requestUpdateCheck") < main.indexOf("function setupAutoUpdate"),
+    "manual update check helper must be defined before setupAutoUpdate"
+  );
+  assert(
+    main.indexOf('ipcMain.handle("check-for-updates"') < main.indexOf("// IPC: user accepted the update"),
+    "update check IPC must stay with the update IPC handlers"
+  );
+  return snippets;
+}
+
 export function validateReleaseDocs(
   rootDir,
   snippets = REQUIRED_RELEASE_DOC_SNIPPETS
@@ -335,6 +370,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   const files = validateRequiredFiles(resolvedRoot);
   const matrix = validatePackagingMatrix(resolvedRoot);
   const windowsWorkflow = validateWindowsLaunchWorkflow(resolvedRoot);
+  const electronMain = validateElectronMainDesktopSupport(resolvedRoot);
   const docs = validateReleaseDocs(resolvedRoot);
   const inspected = assertLocalOnlyChecks(resolvedRoot);
 
@@ -346,6 +382,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   console.log(
     `[release:preflight] Windows launch workflow ok: ${windowsWorkflow.paths.length} watched paths`
   );
+  console.log(`[release:preflight] Electron desktop support ok: ${electronMain.length} snippets`);
   console.log(`[release:preflight] release docs ok: ${docs.length} snippets`);
   console.log(`[release:preflight] local check plan ok: ${inspected.length} commands`);
 
@@ -354,7 +391,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   }
 
   console.log("[release:preflight] passed; stop here before any credentialed release action");
-  return { metadata, files, matrix, windowsWorkflow, docs, inspected };
+  return { metadata, files, matrix, windowsWorkflow, electronMain, docs, inspected };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

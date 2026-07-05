@@ -823,3 +823,21 @@
   remain human-gated. Authenticated share invite/remove with real accounts still needs valid local
   auth state. The pre-existing updater/menu edits in `electron/main.js` were preserved and not
   intentionally included.
+
+## 2026-07-04 23:05 EDT — terminal: progressed
+- did: Took ownership of the Electron desktop update/menu lane. Manual `Check for Updates…` now
+  routes through the same update state machine as automatic checks, dev/unpackaged builds explain
+  that updates require a packaged release build, already-downloaded updates offer `Restart & Update`,
+  and the View menu only exposes DevTools in development. Release preflight now validates these
+  Electron main-process desktop-support invariants.
+- evidence: `node --check scripts/release-preflight.mjs` passed. `npm test --
+  electron/release-preflight.test.ts` passed 1 file / 7 tests. `node --check electron/main.js`
+  passed. `npm run release:preflight` passed, including renderer/Electron tests 22 files / 135
+  tests, MCP tests 19 tests, server tests 34 tests, lint, static build, and `Electron desktop
+  support ok: 11 snippets`.
+- next: Continue native Windows workflow execution after the branch is published, authenticated
+  real-account share invite/remove sessions, and human-gated signing/feed/public URL release work.
+- blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
+  are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
+  approval remain human-gated. Authenticated share invite/remove with real accounts still needs
+  valid local auth state.

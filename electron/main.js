@@ -587,9 +587,71 @@ ipcMain.handle("mcp-info", () => {
 // notarized build, downloads it in the background, and installs on quit. The
 // renderer is notified so it can offer a "Restart to update" prompt.
 let updateState = "idle"; // idle | checking | available | downloading | ready | error
+let manualUpdateCheck = false;
 function sendUpdate(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
+  }
+}
+
+async function showUpdateMessage(options) {
+  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  return dialog.showMessageBox(parent, options);
+}
+
+async function requestUpdateCheck({ manual = false } = {}) {
+  if (isDev || !app.isPackaged) {
+    if (manual) {
+      await showUpdateMessage({
+        type: "info",
+        message: "Updates are checked in packaged Markie builds.",
+        detail: "This development build cannot update itself. Build and release Markie with electron-builder to test the production update feed.",
+      });
+    }
+    return { ok: false, reason: "dev" };
+  }
+
+  if (updateState === "ready") {
+    if (manual) {
+      const { response } = await showUpdateMessage({
+        type: "info",
+        buttons: ["Restart & Update", "Later"],
+        defaultId: 0,
+        cancelId: 1,
+        message: "A Markie update is ready to install.",
+        detail: "Restart Markie to finish installing the downloaded update.",
+      });
+      if (response === 0) autoUpdater.quitAndInstall();
+    }
+    return { ok: true, state: updateState };
+  }
+
+  if (updateState === "checking" || updateState === "downloading") {
+    if (manual) {
+      await showUpdateMessage({
+        type: "info",
+        message: updateState === "checking" ? "Markie is already checking for updates." : "Markie is already downloading an update.",
+      });
+    }
+    return { ok: true, state: updateState };
+  }
+
+  manualUpdateCheck = manual;
+  updateState = "checking";
+  try {
+    await autoUpdater.checkForUpdates();
+    return { ok: true };
+  } catch (err) {
+    updateState = "error";
+    if (manualUpdateCheck) {
+      manualUpdateCheck = false;
+      await showUpdateMessage({
+        type: "warning",
+        message: "Markie couldn't check for updates.",
+        detail: String(err?.message ?? err ?? "Unknown updater error"),
+      });
+    }
+    return { ok: false, reason: "error" };
   }
 }
 
@@ -605,9 +667,25 @@ function setupAutoUpdate() {
   autoUpdater.on("update-available", (info) => {
     updateState = "available";
     sendUpdate("update-available", { version: info?.version });
+    if (manualUpdateCheck) {
+      manualUpdateCheck = false;
+      showUpdateMessage({
+        type: "info",
+        message: "A Markie update is available.",
+        detail: `Version ${info?.version ?? "latest"} is downloading in the background. Markie will prompt you when it is ready to install.`,
+      });
+    }
   });
   autoUpdater.on("update-not-available", () => {
     updateState = "idle";
+    if (manualUpdateCheck) {
+      manualUpdateCheck = false;
+      showUpdateMessage({
+        type: "info",
+        message: "Markie is up to date.",
+        detail: `You are running Markie ${app.getVersion()}.`,
+      });
+    }
   });
   autoUpdater.on("download-progress", (p) => {
     updateState = "downloading";
@@ -621,21 +699,25 @@ function setupAutoUpdate() {
     updateState = "error";
     // Don't surface noisy network errors to the user; just log.
     console.error("auto-update error:", err == null ? "unknown" : String(err));
+    if (manualUpdateCheck) {
+      manualUpdateCheck = false;
+      showUpdateMessage({
+        type: "warning",
+        message: "Markie couldn't check for updates.",
+        detail: String(err?.message ?? err ?? "Unknown updater error"),
+      });
+    }
   });
 
   // Check shortly after launch, then every 6 hours while running.
-  const check = () => autoUpdater.checkForUpdates().catch(() => {});
+  const check = () => requestUpdateCheck().catch(() => {});
   setTimeout(check, 10_000);
   setInterval(check, 6 * 60 * 60 * 1000);
 }
 
 // IPC: renderer asks for the latest known update status / triggers a check
 ipcMain.handle("update-status", () => updateState);
-ipcMain.handle("check-for-updates", () => {
-  if (isDev || !app.isPackaged) return { ok: false, reason: "dev" };
-  autoUpdater.checkForUpdates().catch(() => {});
-  return { ok: true };
-});
+ipcMain.handle("check-for-updates", () => requestUpdateCheck({ manual: true }));
 // IPC: user accepted the update — quit and install the downloaded version
 ipcMain.handle("quit-and-install", () => {
   if (updateState === "ready") autoUpdater.quitAndInstall();
@@ -774,6 +856,10 @@ const template = [
         accelerator: "CmdOrCtrl+,",
         click: () => mainWindow?.webContents.send("menu-settings"),
       },
+      {
+        label: "Check for Updates…",
+        click: () => requestUpdateCheck({ manual: true }),
+      },
       { type: "separator" },
       { role: "hide" },
       { role: "hideOthers" },
@@ -893,8 +979,7 @@ const template = [
       },
       { type: "separator" },
       { role: "togglefullscreen" },
-      { type: "separator" },
-      { role: "toggleDevTools" },
+      ...(isDev ? [{ type: "separator" }, { role: "toggleDevTools" }] : []),
     ],
   },
   {

@@ -1,7 +1,7 @@
 import type { ShareAccess } from "./auth-client";
 
 export interface ShareCapabilityView {
-  label: "Read" | "Edit" | "Manage";
+  label: "Read" | "Comment" | "Edit" | "Manage";
   enabled: boolean;
 }
 
@@ -15,6 +15,7 @@ export function shareRoleLabel(access: ShareAccess | null): string {
 export function shareCapabilityView(access: ShareAccess | null): ShareCapabilityView[] {
   return [
     { label: "Read", enabled: !!access?.canRead },
+    { label: "Comment", enabled: !!access?.canEdit },
     { label: "Edit", enabled: !!access?.canEdit },
     { label: "Manage", enabled: !!access?.canManage },
   ];
@@ -22,7 +23,7 @@ export function shareCapabilityView(access: ShareAccess | null): ShareCapability
 
 export function shareAccessLine(access: ShareAccess | null): string {
   if (!access) return "Checking server access…";
-  if (access.canManage) return "Can invite people, remove access, publish links, and pin the doc theme.";
-  if (access.canEdit) return "Can edit the document; owner-only controls stay locked.";
-  return "Can view and comment; editing and owner controls stay locked.";
+  if (access.canManage) return "Can invite people, remove access, publish links, pin the doc theme, edit, and comment.";
+  if (access.canEdit) return "Can edit and comment; owner-only controls stay locked.";
+  return "Can view only; commenting, editing, and owner controls stay locked.";
 }

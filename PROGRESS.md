@@ -804,3 +804,22 @@
   remain human-gated. Authenticated share management with real accounts still needs valid local auth
   state. The pre-existing updater/menu edits in `electron/main.js` were preserved and not
   intentionally included.
+
+## 2026-07-04 22:59 EDT — terminal: progressed
+- did: Tightened the Share dialog's visible permission contract so it matches server-scoped actions.
+  The access summary now shows `Comment` as its own capability derived from the server's edit
+  permission, and viewer copy now says viewers can view only while commenting, editing, and owner
+  controls remain locked. Server coverage now records that comment writing follows edit permission,
+  not read permission.
+- evidence: `npm test -- src/lib/share-access-view.test.ts` passed 1 file / 4 tests.
+  `node --experimental-strip-types --test server/src/share-access.test.ts server/src/collab.test.ts`
+  passed 8 server permission/collab tests. `npm run lint` passed. `npm run build` passed.
+  `npm run visual:guard:theme` passed with zero findings and wrote
+  `.autoloop/runs/light-mode-audit-20260705025919/audit.json`.
+- next: Continue native Windows workflow execution after the branch is published, authenticated
+  real-account share invite/remove sessions, and human-gated signing/feed/public URL release work.
+- blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
+  are pushed. Signing, notarization, update feeds, public URLs, deploy, upload, and release approval
+  remain human-gated. Authenticated share invite/remove with real accounts still needs valid local
+  auth state. The pre-existing updater/menu edits in `electron/main.js` were preserved and not
+  intentionally included.

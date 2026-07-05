@@ -20,27 +20,32 @@ describe("share access view", () => {
   it("maps owner permissions to read, edit, and manage", () => {
     expect(shareCapabilityView(access("owner"))).toEqual([
       { label: "Read", enabled: true },
+      { label: "Comment", enabled: true },
       { label: "Edit", enabled: true },
       { label: "Manage", enabled: true },
     ]);
-    expect(shareAccessLine(access("owner"))).toMatch(/invite people/);
+    expect(shareAccessLine(access("owner"))).toMatch(/edit, and comment/);
   });
 
   it("maps editor permissions without owner management", () => {
     expect(shareCapabilityView(access("editor"))).toEqual([
       { label: "Read", enabled: true },
+      { label: "Comment", enabled: true },
       { label: "Edit", enabled: true },
       { label: "Manage", enabled: false },
     ]);
-    expect(shareAccessLine(access("editor"))).toMatch(/owner-only controls/);
+    expect(shareAccessLine(access("editor"))).toMatch(/edit and comment/);
   });
 
   it("maps viewer permissions as read-only", () => {
     expect(shareCapabilityView(access("viewer"))).toEqual([
       { label: "Read", enabled: true },
+      { label: "Comment", enabled: false },
       { label: "Edit", enabled: false },
       { label: "Manage", enabled: false },
     ]);
-    expect(shareAccessLine(access("viewer"))).toMatch(/editing and owner controls/);
+    expect(shareAccessLine(access("viewer"))).toBe(
+      "Can view only; commenting, editing, and owner controls stay locked."
+    );
   });
 });

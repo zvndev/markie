@@ -62,6 +62,14 @@ test("role helpers make read/edit/manage permissions explicit", () => {
   assert.equal(canManageLevel(null), false);
 });
 
+test("comment-writing follows edit permission, not read permission", () => {
+  assert.equal(canReadLevel("viewer"), true);
+  assert.equal(canEditLevel("viewer"), false);
+
+  assert.equal(canEditLevel("editor"), true);
+  assert.equal(canEditLevel("owner"), true);
+});
+
 test("shareAccessSummary returns role and scoped capabilities from server truth", () => {
   assert.deepEqual(shareAccessSummary("doc-active", "owner"), {
     role: "owner",

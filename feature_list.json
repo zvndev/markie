@@ -296,10 +296,10 @@
         "If this repo does not own the page, update README/docs with the manifest contract and add a backlog item for the owning repo.",
         "Run the relevant page/docs validation plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "No production deploy. This task is complete when the repo-owned source or integration contract is updated and verified."
+      "evidence": "`node --experimental-strip-types --test server/src/render.test.ts server/src/public.test.ts` passed 16 tests, covering the manifest-backed download page, platform artifact patterns/routes, planned placeholders, and public macOS feed redirect. `npm run release:preflight` passed all local-only release gates. `./init.sh` passed 19 renderer/Electron test files / 123 tests, 19 MCP tests, 33 server tests, lint, and static build.",
+      "notes": "This repo owns the public download page renderer in `server/src/render.ts`; the page now presents all supported desktop platforms from the manifest and shows artifact pattern plus route details while planned platforms remain unpublished placeholders. No production deploy was performed."
     },
     {
       "id": "F-021",

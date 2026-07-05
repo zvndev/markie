@@ -1,18 +1,17 @@
-# Current Task - F-019 download manifest source of truth
+# Current Task - F-020 manifest-backed download page copy
 
 ## Task
-Make the repo-local download manifest a complete source of truth for supported desktop downloads,
-including current public macOS and planned Intel Mac, Windows, and Linux targets.
+Update the repo-owned public download page copy so it clearly presents all supported desktop
+platforms from the manifest, including planned platforms without pretending they are published.
 
 ## Acceptance Criteria
-1. `server/download-manifest.json` covers Apple Silicon macOS, Intel macOS, Windows x64, and Linux
-   x64 with labels, routes, status, and artifact filename patterns.
-2. Manifest validation rejects any platform missing an artifact pattern, while only public platforms
-   require a live feed.
-3. Server tests prove planned routes stay honest placeholders and the public route still resolves
-   from the feed.
-4. Manifest/server tests, release preflight, and full boot smoke pass.
-5. `feature_list.json` marks `F-019` passing only with fresh evidence.
+1. The download page renders Apple Silicon macOS, Intel macOS, Windows x64, and Linux x64 cards from
+   the manifest.
+2. Each platform card exposes the manifest-backed route and expected artifact pattern.
+3. Planned platform cards remain unavailable placeholders; the public macOS route still links through
+   the feed.
+4. Render/server tests, release preflight, and full boot smoke pass.
+5. `feature_list.json` marks `F-020` passing only with fresh evidence.
 
 ## Scope Guard
 Do not sign, notarize, publish, deploy, upload, change release credentials, touch production data, or

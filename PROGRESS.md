@@ -687,3 +687,22 @@
   unavailable until human-gated signed artifacts, update feeds, public URLs, and release approval are
   complete. The pre-existing updater/menu edits in `electron/main.js` were preserved and not
   intentionally included.
+
+## 2026-07-04 20:58 EDT — terminal: progressed
+- did: Closed `F-020` by updating the repo-owned public download page renderer. `server/src/render.ts`
+  now presents all manifest-backed desktop platforms with visible artifact patterns and route
+  details, while planned Intel Mac, Windows, and Linux cards remain unavailable placeholders instead
+  of links to unpublished files.
+- evidence: `node --experimental-strip-types --test server/src/render.test.ts server/src/public.test.ts`
+  passed 16 tests covering platform names, routes, artifact patterns, planned placeholders, and the
+  public macOS feed redirect. `npm run release:preflight` passed renderer/Electron tests 19 files /
+  123 tests, MCP tests 19 tests, server tests 33 tests, lint, static build, and the explicit
+  local-only release stop. `./init.sh` passed 19 renderer/Electron test files / 123 tests, 19 MCP
+  tests, 33 server tests, lint, and static build. `feature_list.json` now marks `F-020` passing with
+  this evidence.
+- next: Continue authenticated share-dialog sessions, broader Library organization polish, native
+  Windows launch evidence, and human-gated signing/feed/public URL release work.
+- blockers: none for repo-owned download-page copy. No production deploy was performed. Public
+  planned platform downloads intentionally remain unavailable until release approval and artifacts
+  exist. The pre-existing updater/menu edits in `electron/main.js` were preserved and not
+  intentionally included.

@@ -134,6 +134,10 @@ const PAGE_CSS = `
   .platform-card { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-strong); padding: 16px; box-shadow: var(--shadow); }
   .platform-card h2 { margin: 0 0 6px; font-size: 1rem; }
   .platform-card p { margin: 0 0 14px; color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+  .artifact { display: grid; gap: 2px; margin: 12px 0 2px; color: var(--muted);
+    font-size: 0.78rem; line-height: 1.4; }
+  .artifact code { color: var(--text); background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 5px; overflow-wrap: anywhere; }
   .status { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; color: var(--muted); font-size: 0.76rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
   .status.public { color: var(--accent-text); background: var(--accent-strong); border-color: transparent; }
   .platform-card .btn { display: inline-flex; margin-top: 12px; }
@@ -231,6 +235,10 @@ export function renderDownloadPage(opts: {
         <span class="status${isPublic ? " public" : ""}">${platformStatusLabel(platform)}</span>
         <h2>${esc(platform.label)}</h2>
         <p>${esc(platform.description)}</p>
+        <div class="artifact">
+          <span>Artifact <code>${esc(platform.artifactPattern ?? "unknown")}</code></span>
+          <span>Route <code>${esc(platform.route)}</code></span>
+        </div>
         ${
           isPublic
             ? `<a class="btn primary" href="${esc(downloadHref(platform))}">${esc(platform.ctaLabel)}</a>`

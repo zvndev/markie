@@ -45,6 +45,13 @@ test("renderDownloadPage lists public and planned platforms", () => {
   assert.match(page, /macOS Apple Silicon/);
   assert.match(page, /Windows x64/);
   assert.match(page, /Not published yet/);
+  assert.match(page, /Markie-\*-arm64\.dmg/);
+  assert.match(page, /Markie-\*-x64\.dmg/);
+  assert.match(page, /Markie-\*-x64\.exe/);
+  assert.match(page, /Markie-\*-x64\.AppImage/);
+  assert.match(page, /\/download\/mac-intel/);
+  assert.match(page, /\/download\/windows/);
+  assert.match(page, /\/download\/linux/);
 });
 
 test("renderPublicPage's Open in Markie deep link carries the token + source", () => {

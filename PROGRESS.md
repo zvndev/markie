@@ -782,3 +782,25 @@
   will not run on GitHub until the ahead local commits are pushed. Signing, notarization, update
   feeds, public URLs, deploy, upload, and release approval remain human-gated. The pre-existing
   updater/menu edits in `electron/main.js` were preserved and not intentionally included.
+
+## 2026-07-04 22:53 EDT — terminal: progressed
+- did: Fixed the default Library bootstrap gap. The Library startup path now creates the default
+  `~/Documents/Markie` workspace before the user visits Files, records the workspace result beside
+  the library snapshot, and renders an empty Recent state as `Workspace ready` with the compact
+  default path when the root is available. Existing local Library items still render if workspace
+  creation fails.
+- evidence: `npm test -- src/lib/library-startup.test.ts src/lib/workspace-default.test.ts
+  src/lib/library-state.test.ts` passed 3 files / 9 tests. `npm run lint` passed. `npm run build`
+  passed. `npm run visual:guard:theme` passed with zero findings and wrote
+  `.autoloop/runs/light-mode-audit-20260705024544/audit.json`. Live Electron/CDP against the real
+  desktop app wrote `.autoloop/runs/library-startup-check-20260704224634/actual-check.json` with
+  `ok: true`, `roots: ["/Users/macbookpro-kirby/Documents/Markie"]`, and dark/light screenshots
+  showing `Workspace ready`. A detached built Electron preview remains open at `app://markie/index.html`
+  with the Library panel visible.
+- next: Continue native Windows workflow execution after the branch is published, authenticated
+  real-account share invite/remove sessions, and human-gated signing/feed/public URL release work.
+- blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
+  are pushed. Signing, notarization, update feeds, public URLs, deploy, upload, and release approval
+  remain human-gated. Authenticated share management with real accounts still needs valid local auth
+  state. The pre-existing updater/menu edits in `electron/main.js` were preserved and not
+  intentionally included.

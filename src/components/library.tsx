@@ -7,8 +7,9 @@ import { BrowseView } from "@/components/browse-view";
 import { SkillsView } from "@/components/skills-view";
 import { SharedView } from "@/components/shared-view";
 import type { LeftView } from "@/components/activity-bar";
-import { readLibrarySnapshot } from "@/lib/library-state";
+import { readLibraryStartupSnapshot } from "@/lib/library-startup";
 import { summarizeLibrary, type LibraryOverview } from "@/lib/library-overview";
+import type { WorkspaceBootstrapResult } from "@/lib/workspace-default";
 
 interface LibraryProps {
   // which view the left rail selected (library | browse | shared | skills)
@@ -82,6 +83,7 @@ export function Library({
   );
   const [confirmOff, setConfirmOff] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [workspace, setWorkspace] = useState<WorkspaceBootstrapResult | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [dropping, setDropping] = useState(false);
   const [libTab, setLibTab] = useState<LibTab>(() => {
@@ -157,9 +159,10 @@ export function Library({
   const refresh = useCallback(() => {
     const api = getElectronAPI();
     if (!api?.libraryState) return Promise.resolve();
-    return readLibrarySnapshot(api).then((s) => {
+    return readLibraryStartupSnapshot(api).then((s) => {
       setItems(s.items);
       setSignedIn(s.signedIn);
+      setWorkspace(s.workspace);
       setLoading(false);
       if (s.error) setNotice(s.error);
     });
@@ -169,10 +172,11 @@ export function Library({
     const api = getElectronAPI();
     if (!api?.libraryState) return;
     let alive = true;
-    readLibrarySnapshot(api).then((s) => {
+    readLibraryStartupSnapshot(api).then((s) => {
       if (!alive) return;
       setItems(s.items);
       setSignedIn(s.signedIn);
+      setWorkspace(s.workspace);
       setLoading(false);
       if (s.error) setNotice(s.error);
     });
@@ -405,7 +409,11 @@ export function Library({
             onNotice={setNotice}
           />
         ) : localFiles.length === 0 && myCloudOnly.length === 0 ? (
-          <RecentEmptyState onOpenFile={onOpenFile} onShowFiles={() => pickTab("files")} />
+          <RecentEmptyState
+            onOpenFile={onOpenFile}
+            onShowFiles={() => pickTab("files")}
+            workspace={workspace}
+          />
         ) : (
           <>
             {localFiles.length > 0 && (
@@ -517,14 +525,38 @@ function LibraryMetric({ label, value }: { label: string; value: number }) {
 function RecentEmptyState({
   onOpenFile,
   onShowFiles,
+  workspace,
 }: {
   onOpenFile: () => void;
   onShowFiles: () => void;
+  workspace: WorkspaceBootstrapResult | null;
 }) {
+  const readyPath =
+    workspace && !workspace.error && workspace.roots.length > 0
+      ? workspace.defaultPath || workspace.roots[0]
+      : null;
+  const compactPath = readyPath ? compactWorkspacePath(readyPath) : null;
+
   return (
     <div className="px-2 py-3">
-      <div className="rounded-md border border-border/70 bg-background/40 px-2.5 py-2.5">
-        <div className="text-[12px] font-medium text-foreground">No recent files</div>
+      <div className="rounded-md border border-border/70 bg-background/45 px-2.5 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <div className="text-[12px] font-medium text-foreground">
+              {compactPath ? "Workspace ready" : "No recent files"}
+            </div>
+            {compactPath && (
+              <div className="mt-0.5 text-[10.5px] text-muted truncate" title={readyPath ?? undefined}>
+                {compactPath}
+              </div>
+            )}
+          </div>
+          {workspace?.created && (
+            <span className="rounded border border-[color:var(--status-green)] px-1 py-px text-[9px] uppercase tracking-wide text-[var(--status-green)]">
+              New
+            </span>
+          )}
+        </div>
         <div className="mt-2 flex items-center gap-1.5">
           <button
             onClick={onOpenFile}
@@ -542,6 +574,13 @@ function RecentEmptyState({
       </div>
     </div>
   );
+}
+
+function compactWorkspacePath(path: string) {
+  const normalized = path.replace(/\\/g, "/");
+  const documentsMarkie = normalized.match(/(?:^|\/)(Documents\/Markie)$/);
+  if (documentsMarkie) return `~/${documentsMarkie[1]}`;
+  return path;
 }
 
 function FileIcon() {

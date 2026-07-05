@@ -861,3 +861,23 @@
 - blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
   are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
   approval remain human-gated.
+
+## 2026-07-04 23:29 EDT — terminal: progressed
+- did: Tightened the first visible editor surface. Replaced the generic `Welcome to Markie` sample
+  with a product-neutral sprint brief that still exercises headings, strong text, links, inline
+  code, fenced code, tables, task lists, blockquotes, and math contrast targets. Reworked the rich
+  editor format rail from raw mixed glyph labels toward stable icon-like controls with explicit
+  accessible labels, while keeping the existing TipTap commands unchanged.
+- evidence: Actual Electron app inspected through Computer Use at `app://markie/index.html` in both
+  dark and light mode. `npm run lint` passed. `npm test -- src/lib/color-mode.test.ts
+  src/lib/theme.test.ts` passed 2 files / 12 tests. `npm run build` passed. `npm run
+  visual:guard:theme` passed with zero findings and all shell/content/overlay guard categories
+  passing. `npm run release:preflight` passed, including renderer/Electron tests 22 files / 135
+  tests, MCP tests 19 tests, server tests 35 tests, lint, static build, Windows workflow checks,
+  Electron desktop support checks, and release docs checks.
+- next: Continue native Windows workflow execution only after the ahead commits are pushed with
+  approval, and continue signed/notarized update feed plus public release work only with explicit
+  release approval.
+- blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
+  are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
+  approval remain human-gated.

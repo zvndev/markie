@@ -52,50 +52,47 @@ import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI, type FilePayload } from "@/lib/electron";
 import { renderMarkdownHTML } from "@/lib/markdown-html";
 
-const SAMPLE = `# Welcome to Markie
+const SAMPLE = `# Northstar Sprint Brief
 
-A beautiful markdown viewer and editor. Start writing with \`inline code\`, [links](https://markie.app), ~~strikethrough~~, or open a file.
+A calm launch room needs one source of truth: \`decisions\`, owners, evidence, and [source links](https://markie.zvndev.com). This brief keeps the work legible without turning it into a status meeting.
 
-## Features
+## Signal
 
-- **Live preview** — See your markdown rendered in real-time
-- **Syntax highlighting** — Code blocks with full language support
-- **GFM support** — Tables, task lists, strikethrough, and more
-- **Math rendering** — LaTeX via KaTeX: $E = mc^2$
-- **Dark theme** — Easy on the eyes
+- **Customer promise** - local files stay fast, private, and portable.
+- **Launch proof** - every platform claim needs a build, a smoke test, and a screenshot.
+- **Quality bar** - permissions, sync state, and visual themes must agree with the server truth.
 
-## Code Example
+## Release Gate
 
 \`\`\`typescript
-function greet(name: string): string {
-  return \`Hello, \${name}!\`;
-}
+type Gate = "blocked" | "ready";
 
-const message = greet("World");
-console.log(message);
+const releaseGate = ({ mac, windows, sharing }: Record<string, boolean>): Gate =>
+  mac && windows && sharing ? "ready" : "blocked";
 \`\`\`
 
-## Table
+## Evidence
 
-| Feature | Status |
-|---------|--------|
-| Markdown parsing | ✅ Done |
-| Syntax highlighting | ✅ Done |
-| File open | ✅ Done |
-| Export | ✅ Done |
+| Track | Evidence | State |
+| --- | --- | --- |
+| Research | Interview notes and source links | Stable |
+| Prototype | Screen captures and edge cases | In review |
+| Security | Access rules and audit notes | Ready |
+| Rollout | Owner, date, and follow-up plan | Draft |
 
-## Task List
+## Open Work
 
-- [x] Set up project
-- [x] Build editor
-- [x] Build preview
-- [x] PDF export (light + dark)
+- [x] Name the customer promise
+- [x] Record the decision log
+- [x] Attach verification evidence
+- [ ] Trim loose language
+- [ ] Send the final brief
 
-> "The best way to predict the future is to invent it." — Alan Kay
+> A good tool disappears when the work gets serious.
 
 ---
 
-Start editing to see changes live!
+$E = mc^2$
 `;
 
 type ViewMode = "edit" | "preview" | "split";

@@ -1,18 +1,15 @@
-# Current Task - Authenticated share route verification
+# Current Task - Premium first-screen polish
 
 ## Task
-Prove the share invite/remove/public-link lifecycle locally with authenticated API routes, without
-requiring production accounts, external credentials, or release actions.
+Make the first visible editor screen feel more premium and intentional while preserving the existing
+markdown editing behavior and light/dark theme support.
 
 ## Acceptance Criteria
-1. Local test users can sign up through the real Better Auth route and receive bearer tokens.
-2. Owners can add an existing user as a member and remove that member by user id.
-3. Owners can add and remove pending email invites by email.
-4. Pending invites claim into real member access when the invited email signs up.
-5. Viewer, editor, and owner permissions are enforced on doc writes, share management, and public
-   link creation/revocation.
-6. The server test command and release preflight pass with the new coverage.
+1. The default document no longer reads like placeholder onboarding or a feature checklist.
+2. The visible format rail uses clearer, icon-like controls with stable sizing and accessible labels.
+3. The updated first screen renders cleanly in dark mode and light mode in the actual Electron app.
+4. Theme contrast guards and release preflight pass locally.
 
 ## Scope Guard
-Do not use production accounts, production credentials, external email delivery, public deploys,
-pushes, signing, notarization, update feeds, or release publishing.
+Do not add dependencies, rewrite editor architecture, push, publish, deploy, sign/notarize, change
+release credentials, or run production update feeds.

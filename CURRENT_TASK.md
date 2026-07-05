@@ -1,17 +1,17 @@
-# Current Task - Main-page lint dependency cleanup
+# Current Task - Files workspace empty-state polish
 
 ## Task
-Remove the remaining ESLint warnings that make the main app shell look messier than it is, without
-changing UI behavior or broadening product scope.
+Make the default Files workspace feel intentionally set up when it is empty, instead of showing a
+bare `empty` label under the `MARKIE` root.
 
 ## Acceptance Criteria
-1. `src/app/page.tsx` satisfies React hook dependency lint without making Electron IPC handlers
-   capture stale callbacks.
-2. The stale MCP eslint-disable comment is removed only if the underlying loop still lints cleanly.
-3. `npm run lint` exits with zero warnings.
-4. Focused MCP tests and renderer build still pass.
+1. The default workspace root is visibly marked as the default root when available.
+2. An empty top-level workspace root shows a compact, theme-aware empty state with New file and New
+   folder actions.
+3. Empty nested folders remain compact and do not consume the whole side panel.
+4. Build, lint, visual theme guard, and live Electron/CDP Library checks pass.
 
 ## Scope Guard
-Do not change app behavior, add dependencies, alter public API shape, or touch production/release
-surfaces. Preserve unrelated local edits, including the pre-existing `electron/main.js`
-updater/menu diff.
+Do not change workspace persistence, filesystem IPC behavior, dependencies, public API shape,
+release surfaces, or production data. Preserve unrelated local edits, including the pre-existing
+`electron/main.js` updater/menu diff.

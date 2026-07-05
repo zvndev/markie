@@ -611,3 +611,19 @@
   signing or publishing.
 - blockers: none for this cleanup. The pre-existing updater/menu edits in `electron/main.js` were
   preserved and not intentionally included.
+
+## 2026-07-04 20:26 EDT — terminal: progressed
+- did: Polished the Files workspace empty state. The default workspace root now shows a small
+  `Default` badge when it matches the default path, and an empty top-level workspace renders a
+  compact theme-aware panel with `New file` and `New folder` actions instead of a bare `empty`
+  label. Nested empty folders still stay compact.
+- evidence: `npm run lint` passed with zero warnings. `npm run build` passed. Live Electron/CDP on
+  the actual Library panel showed the `Default` badge, `New file`, `New folder`, and no loading
+  state. `npm run visual:guard:theme` passed with zero findings across shell, content, and
+  overlay/panel categories. `./init.sh` passed 19 renderer/Electron test files / 122 tests, 19 MCP
+  tests, 33 server tests, lint, and static build.
+- next: Continue premium UI/product work with authenticated share-dialog sessions, broader Library
+  organization polish, and remaining desktop release evidence that does not require signing or
+  publishing.
+- blockers: none for this UI pass. The pre-existing updater/menu edits in `electron/main.js` were
+  preserved and not intentionally included.

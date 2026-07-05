@@ -276,7 +276,15 @@ export function FilesView({
           />
         ))}
         {listing.folders.length === 0 && listing.files.length === 0 && depth > 0 && (
-          <div style={{ paddingLeft: `${depth * 12 + 20}px` }} className="text-[10.5px] text-muted py-0.5">empty</div>
+          depth === 1 ? (
+            <RootEmptyState
+              rootName={basename(dir)}
+              onNewFile={() => startNew(dir, "new-file")}
+              onNewFolder={() => startNew(dir, "new-folder")}
+            />
+          ) : (
+            <div style={{ paddingLeft: `${depth * 12 + 20}px` }} className="text-[10.5px] text-muted py-0.5">empty</div>
+          )
         )}
       </>
     );
@@ -284,24 +292,69 @@ export function FilesView({
 
   return (
     <div className="pt-1">
-      {roots.map((root) => (
-        <div key={root}>
-          <div
-            className="group flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-accent/40 rounded-md"
-            onClick={() => toggle(root)}
-            onDragOver={(e) => { e.preventDefault(); }}
-            onDrop={(e) => { e.preventDefault(); onDropInto(root); }}
-          >
-            <Chevron open={expanded.has(root)} />
-            <span className="text-[11px] uppercase tracking-wide text-muted font-medium flex-1 truncate" title={root}>
-              {basename(root)}
-            </span>
-            <button onClick={(e) => { e.stopPropagation(); startNew(root, "new-folder"); }} title="New folder" className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-muted hover:text-foreground hover:bg-accent/40 text-[13px] transition">＋</button>
+      {roots.map((root) => {
+        const isDefaultRoot = root === defaultPath;
+        return (
+          <div key={root}>
+            <div
+              className="group flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-accent/40 rounded-md"
+              onClick={() => toggle(root)}
+              onDragOver={(e) => { e.preventDefault(); }}
+              onDrop={(e) => { e.preventDefault(); onDropInto(root); }}
+            >
+              <Chevron open={expanded.has(root)} />
+              <span className="text-[11px] uppercase tracking-wide text-muted font-medium flex-1 truncate" title={root}>
+                {basename(root)}
+              </span>
+              {isDefaultRoot && (
+                <span className="text-[9px] px-1 py-px rounded border border-border/80 text-muted shrink-0">
+                  Default
+                </span>
+              )}
+              <button onClick={(e) => { e.stopPropagation(); startNew(root, "new-folder"); }} title="New folder" className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-muted hover:text-foreground hover:bg-accent/40 text-[13px] transition">＋</button>
+            </div>
+            {expanded.has(root) && renderDir(root, 1)}
           </div>
-          {expanded.has(root) && renderDir(root, 1)}
-        </div>
-      ))}
+        );
+      })}
       <button onClick={addRoot} className="mt-1.5 ml-2 text-[11px] text-muted hover:text-foreground">+ Add folder</button>
+    </div>
+  );
+}
+
+function RootEmptyState({
+  rootName,
+  onNewFile,
+  onNewFolder,
+}: {
+  rootName: string;
+  onNewFile: () => void;
+  onNewFolder: () => void;
+}) {
+  return (
+    <div className="pl-8 pr-2 py-1.5">
+      <div className="rounded-md border border-border/70 bg-background/45 px-2.5 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+        <div className="text-[12px] text-foreground/90 font-medium truncate">
+          {rootName} is ready
+        </div>
+        <div className="mt-0.5 text-[11px] text-muted leading-snug">
+          Start with a markdown file or organize a folder.
+        </div>
+        <div className="mt-2 flex items-center gap-1.5">
+          <button
+            onClick={onNewFile}
+            className="rounded-md bg-accent px-2 py-1 text-[11px] text-foreground hover:opacity-90"
+          >
+            New file
+          </button>
+          <button
+            onClick={onNewFolder}
+            className="rounded-md border border-border px-2 py-1 text-[11px] text-muted hover:bg-accent/40 hover:text-foreground"
+          >
+            New folder
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

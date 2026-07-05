@@ -1,15 +1,17 @@
-# Current Task - Share permission scope clarity
+# Current Task - Windows workflow evidence trigger
 
 ## Task
-Make the Share dialog visibly reflect the server-derived role and capabilities for the current user.
+Make the Windows launch-smoke workflow run automatically when release-relevant changes reach `main`,
+while keeping manual dispatch and PR coverage.
 
 ## Acceptance Criteria
-1. The Share dialog shows the current role from `/api/docs/:id/access`.
-2. Read, edit, and manage capabilities render from the same server-derived access object.
-3. Owner/editor/viewer capability mapping has focused regression coverage.
-4. Existing server share-access tests still pass.
-5. Lint/build/tests and a live Electron dialog smoke pass where reachable without real auth.
+1. `.github/workflows/windows-launch-smoke.yml` supports `workflow_dispatch`, `pull_request`, and
+   `push` on `main`.
+2. The push and PR triggers watch the release-relevant desktop paths.
+3. `release:preflight` validates the workflow trigger and command shape.
+4. Focused release-preflight tests pass.
+5. Lint/build or full boot smoke passes after the workflow guard change.
 
 ## Scope Guard
-Do not change public API routes, auth provider configuration, production data, release credentials,
-or the unrelated pre-existing `electron/main.js` updater/menu diff.
+Do not push, publish, deploy, run external CI, sign/notarize artifacts, change release credentials,
+or alter the unrelated pre-existing `electron/main.js` updater/menu diff.

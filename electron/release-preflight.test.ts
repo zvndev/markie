@@ -7,6 +7,7 @@ import {
   validateReleaseDocs,
   validateReleaseMetadata,
   validateRequiredFiles,
+  validateWindowsLaunchWorkflow,
 } from "../scripts/release-preflight.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -85,6 +86,28 @@ describe("release preflight", () => {
         "--publish never",
       ])
     );
+  });
+
+  it("keeps the Windows launch workflow dispatchable and automatic on main", () => {
+    expect(validateWindowsLaunchWorkflow(rootDir)).toEqual({
+      snippets: expect.arrayContaining([
+        "workflow_dispatch:",
+        "push:",
+        "pull_request:",
+        "windows-latest",
+        "npm run electron:pack:win",
+        "npm run electron:smoke:win",
+        "npm run electron:smoke:win:launch",
+      ]),
+      paths: expect.arrayContaining([
+        ".github/workflows/windows-launch-smoke.yml",
+        "electron/**",
+        "scripts/**",
+        "src/**",
+        "package.json",
+        "package-lock.json",
+      ]),
+    });
   });
 
   it("runs only local test, lint, and build checks", () => {

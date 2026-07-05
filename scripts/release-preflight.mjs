@@ -76,6 +76,34 @@ const REQUIRED_HOST_SMOKE_SCRIPTS = [
   ["electron:smoke:win:launch", "scripts/windows-launch-smoke.mjs"],
 ];
 
+const REQUIRED_WINDOWS_WORKFLOW_SNIPPETS = [
+  "workflow_dispatch:",
+  "push:",
+  "branches:",
+  "- main",
+  "pull_request:",
+  "windows-latest",
+  "npm ci",
+  "npm run electron:pack:win",
+  "npm run electron:smoke:win",
+  "npm run electron:smoke:win:launch",
+  "actions/upload-artifact@v4",
+  ".autoloop/runs/windows-launch-smoke-*/launch-smoke.json",
+];
+
+const REQUIRED_WINDOWS_WORKFLOW_PATHS = [
+  ".github/workflows/windows-launch-smoke.yml",
+  "build/**",
+  "electron/**",
+  "mcp/**",
+  "out/**",
+  "public/**",
+  "scripts/**",
+  "src/**",
+  "package.json",
+  "package-lock.json",
+];
+
 const REQUIRED_RELEASE_DOC_SNIPPETS = [
   "Per-platform local artifact contract",
   "npm run electron:pack:mac:arm64",
@@ -250,6 +278,32 @@ export function validateRequiredFiles(rootDir, files = REQUIRED_FILES) {
   return files;
 }
 
+export function validateWindowsLaunchWorkflow(
+  rootDir,
+  snippets = REQUIRED_WINDOWS_WORKFLOW_SNIPPETS,
+  paths = REQUIRED_WINDOWS_WORKFLOW_PATHS
+) {
+  const workflow = readFileSync(
+    path.join(rootDir, ".github/workflows/windows-launch-smoke.yml"),
+    "utf8"
+  );
+  const missingSnippets = snippets.filter((snippet) => !workflow.includes(snippet));
+  assert(
+    missingSnippets.length === 0,
+    `Windows launch workflow missing required snippets: ${missingSnippets.join(", ")}`
+  );
+  const missingPaths = paths.filter((snippet) => !workflow.includes(`- "${snippet}"`));
+  assert(
+    missingPaths.length === 0,
+    `Windows launch workflow missing required path filters: ${missingPaths.join(", ")}`
+  );
+  assert(
+    workflow.indexOf("push:") < workflow.indexOf("pull_request:"),
+    "Windows launch workflow must keep a push trigger before pull_request for main-branch evidence"
+  );
+  return { snippets, paths };
+}
+
 export function validateReleaseDocs(
   rootDir,
   snippets = REQUIRED_RELEASE_DOC_SNIPPETS
@@ -280,6 +334,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   const metadata = validateReleaseMetadata(resolvedRoot);
   const files = validateRequiredFiles(resolvedRoot);
   const matrix = validatePackagingMatrix(resolvedRoot);
+  const windowsWorkflow = validateWindowsLaunchWorkflow(resolvedRoot);
   const docs = validateReleaseDocs(resolvedRoot);
   const inspected = assertLocalOnlyChecks(resolvedRoot);
 
@@ -287,6 +342,9 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   console.log(`[release:preflight] required files ok: ${files.length} files`);
   console.log(
     `[release:preflight] packaging matrix ok: mac=${matrix.mac.length} win=${matrix.win.length} linux=${matrix.linux.length}`
+  );
+  console.log(
+    `[release:preflight] Windows launch workflow ok: ${windowsWorkflow.paths.length} watched paths`
   );
   console.log(`[release:preflight] release docs ok: ${docs.length} snippets`);
   console.log(`[release:preflight] local check plan ok: ${inspected.length} commands`);
@@ -296,7 +354,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   }
 
   console.log("[release:preflight] passed; stop here before any credentialed release action");
-  return { metadata, files, matrix, docs, inspected };
+  return { metadata, files, matrix, windowsWorkflow, docs, inspected };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

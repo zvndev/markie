@@ -765,3 +765,20 @@
   and native Windows launch still needs a Windows host/workflow run. Signing, notarization, update
   feeds, public URLs, deploy, upload, and release approval remain human-gated. The pre-existing
   updater/menu edits in `electron/main.js` were preserved and not intentionally included.
+
+## 2026-07-04 22:36 EDT — terminal: progressed
+- did: Made the Windows launch-smoke workflow automatic once release-relevant changes reach `main`.
+  `.github/workflows/windows-launch-smoke.yml` now keeps manual dispatch and PR coverage while also
+  running on `push` to `main` for the same desktop/release paths. `release:preflight` now validates
+  that the workflow remains dispatchable, push-triggered, path-filtered, Windows-hosted, and runs
+  pack, structure smoke, launch smoke, and evidence upload steps.
+- evidence: `node --check scripts/release-preflight.mjs` passed. `npm test --
+  electron/release-preflight.test.ts` passed 1 file / 6 tests. `npm run release:preflight` passed
+  renderer/Electron tests 21 files / 131 tests, MCP tests 19 tests, server tests 33 tests, lint,
+  static build, and reported `Windows launch workflow ok: 10 watched paths`.
+- next: Continue native Windows workflow execution after the branch is published, and human-gated
+  signing/feed/public URL release work.
+- blockers: This Mac still cannot produce native Windows launch evidence locally, and the workflow
+  will not run on GitHub until the ahead local commits are pushed. Signing, notarization, update
+  feeds, public URLs, deploy, upload, and release approval remain human-gated. The pre-existing
+  updater/menu edits in `electron/main.js` were preserved and not intentionally included.

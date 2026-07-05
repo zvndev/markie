@@ -2,6 +2,20 @@ name: Windows launch smoke
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/windows-launch-smoke.yml"
+      - "build/**"
+      - "electron/**"
+      - "mcp/**"
+      - "out/**"
+      - "public/**"
+      - "scripts/**"
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
   pull_request:
     paths:
       - ".github/workflows/windows-launch-smoke.yml"

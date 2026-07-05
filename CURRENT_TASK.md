@@ -1,17 +1,19 @@
-# Current Task - F-017 local packaging dry-run closure
+# Current Task - F-018 release docs and preflight clarity
 
 ## Task
-Close F-017 by verifying that Electron packaging config supports local dry-run targets for Apple
-Silicon macOS, Intel macOS, Windows, and Linux without publishing.
+Make the release docs and local preflight clearly describe how to produce and verify desktop
+downloads for Apple Silicon macOS, Intel macOS, Windows, and Linux without confusing local checks
+with public publishing.
 
 ## Acceptance Criteria
-1. The electron-builder package matrix includes mac arm64, mac x64, Windows x64, and Linux x64 local
-   targets.
-2. Local pack/build scripts use the unsigned local wrapper and disable publishing.
-3. Release preflight validates the packaging matrix and stops before signing, notarization, upload,
-   publish, deploy, or credential checks.
-4. Focused packaging/preflight tests and full boot smoke pass.
-5. `feature_list.json` marks `F-017` passing only with fresh evidence.
+1. `docs/RELEASING.md` lists per-platform local build/pack commands, expected artifact patterns,
+   and verification commands for Apple Silicon macOS, Intel macOS, Windows x64, and Linux x64.
+2. The docs explicitly separate safe local dry runs from signing, notarization, upload, publish,
+   deploy, and public release approval.
+3. `release:preflight` validates that the release-doc contract contains required platform/gate
+   snippets without requiring credentials.
+4. Focused release-preflight tests and full boot smoke pass.
+5. `feature_list.json` marks `F-018` passing only with fresh evidence.
 
 ## Scope Guard
 Do not sign, notarize, publish, deploy, upload, change release credentials, touch production data, or

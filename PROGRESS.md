@@ -646,3 +646,24 @@
   native Windows launch evidence and human-gated signing, notarization, update-feed, download URL,
   and release approval work. The pre-existing updater/menu edits in `electron/main.js` were
   preserved and not intentionally included.
+
+## 2026-07-04 20:50 EDT — terminal: progressed
+- did: Closed `F-018` by turning release-doc clarity into a preflight-checked contract. Expanded
+  `docs/RELEASING.md` with a per-platform local artifact table covering Apple Silicon macOS, Intel
+  macOS, Windows x64, and Linux x64 pack/build commands, expected artifact patterns, and required
+  verification commands. `scripts/release-preflight.mjs` now validates that the release guide keeps
+  those platform commands, artifact patterns, smoke commands, and local-only release gates visible.
+- evidence: `npm test -- electron/release-preflight.test.ts` passed 1 file / 5 tests. `npm run
+  release:preflight` passed, reporting required files ok, packaging matrix `mac=2 win=2 linux=2`,
+  release docs ok with 15 required snippets, renderer/Electron tests 19 files / 123 tests, MCP
+  tests 19 tests, server tests 33 tests, lint, static build, and the explicit stop before signing,
+  notarization, upload, publish, deploy, or credential checks. `./init.sh` passed 19
+  renderer/Electron test files / 123 tests, 19 MCP tests, 33 server tests, lint, and static build.
+  `feature_list.json` now marks `F-018` passing with this evidence.
+- next: Continue `F-019`/`F-020` download manifest and public-facing download copy, authenticated
+  share-dialog sessions, broader Library organization polish, and native Windows launch/signing/feed
+  gates.
+- blockers: none for docs/preflight clarity. Public platform support still requires native Windows
+  launch evidence and human-gated signing, notarization, update-feed, public URL, and release
+  approval work. The pre-existing updater/menu edits in `electron/main.js` were preserved and not
+  intentionally included.

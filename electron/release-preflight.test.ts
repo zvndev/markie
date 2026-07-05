@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   assertLocalOnlyChecks,
   validatePackagingMatrix,
+  validateReleaseDocs,
   validateReleaseMetadata,
   validateRequiredFiles,
 } from "../scripts/release-preflight.mjs";
@@ -67,6 +68,23 @@ describe("release preflight", () => {
         { target: "deb", arch: expect.arrayContaining(["x64"]) },
       ]),
     });
+  });
+
+  it("keeps release docs explicit about platform artifacts and local-only gates", () => {
+    expect(validateReleaseDocs(rootDir)).toEqual(
+      expect.arrayContaining([
+        "Per-platform local artifact contract",
+        "npm run electron:pack:mac:arm64",
+        "npm run electron:pack:mac:x64",
+        "npm run electron:pack:win",
+        "npm run electron:pack:linux",
+        "Markie-<version>-arm64.dmg",
+        "Markie-<version>-x64.exe",
+        "Markie-<version>-x64.AppImage",
+        "npm run electron:smoke:win:launch",
+        "--publish never",
+      ])
+    );
   });
 
   it("runs only local test, lint, and build checks", () => {

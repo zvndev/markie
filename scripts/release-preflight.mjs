@@ -76,6 +76,24 @@ const REQUIRED_HOST_SMOKE_SCRIPTS = [
   ["electron:smoke:win:launch", "scripts/windows-launch-smoke.mjs"],
 ];
 
+const REQUIRED_RELEASE_DOC_SNIPPETS = [
+  "Per-platform local artifact contract",
+  "npm run electron:pack:mac:arm64",
+  "npm run electron:pack:mac:x64",
+  "npm run electron:pack:win",
+  "npm run electron:pack:linux",
+  "npm run electron:build:mac",
+  "npm run electron:build:win",
+  "npm run electron:build:linux",
+  "Markie-<version>-arm64.dmg",
+  "Markie-<version>-x64.exe",
+  "Markie-<version>-x64.AppImage",
+  "npm run electron:smoke:win:launch",
+  "npm run release:preflight",
+  "--publish never",
+  "does **not** mean an artifact is\nsigned, notarized, published, uploaded, deployed, or approved",
+];
+
 const readJson = (rootDir, relativePath) =>
   JSON.parse(readFileSync(path.join(rootDir, relativePath), "utf8"));
 
@@ -232,6 +250,16 @@ export function validateRequiredFiles(rootDir, files = REQUIRED_FILES) {
   return files;
 }
 
+export function validateReleaseDocs(
+  rootDir,
+  snippets = REQUIRED_RELEASE_DOC_SNIPPETS
+) {
+  const doc = readFileSync(path.join(rootDir, "docs/RELEASING.md"), "utf8");
+  const missing = snippets.filter((snippet) => !doc.includes(snippet));
+  assert(missing.length === 0, `release docs missing required snippets: ${missing.join(", ")}`);
+  return snippets;
+}
+
 function runCheck(rootDir, check) {
   const cwd = path.join(rootDir, check.cwd || ".");
   console.log(`[release:preflight] ${check.label}: ${commandLine(check)}`);
@@ -252,6 +280,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   const metadata = validateReleaseMetadata(resolvedRoot);
   const files = validateRequiredFiles(resolvedRoot);
   const matrix = validatePackagingMatrix(resolvedRoot);
+  const docs = validateReleaseDocs(resolvedRoot);
   const inspected = assertLocalOnlyChecks(resolvedRoot);
 
   console.log(`[release:preflight] metadata ok: Markie ${metadata.version} (${metadata.appId})`);
@@ -259,6 +288,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   console.log(
     `[release:preflight] packaging matrix ok: mac=${matrix.mac.length} win=${matrix.win.length} linux=${matrix.linux.length}`
   );
+  console.log(`[release:preflight] release docs ok: ${docs.length} snippets`);
   console.log(`[release:preflight] local check plan ok: ${inspected.length} commands`);
 
   if (runLocalChecks) {
@@ -266,7 +296,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   }
 
   console.log("[release:preflight] passed; stop here before any credentialed release action");
-  return { metadata, files, matrix, inspected };
+  return { metadata, files, matrix, docs, inspected };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

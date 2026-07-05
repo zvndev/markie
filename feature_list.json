@@ -266,10 +266,10 @@
         "Verify the docs and preflight make it impossible to confuse local dry-run checks with actual publishing.",
         "Run the release preflight plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "Keep actual signing, notarization, upload, and release as human checkpoints."
+      "evidence": "`npm test -- electron/release-preflight.test.ts` passed 1 file / 5 tests, including release-doc contract coverage. `npm run release:preflight` passed, reporting required files ok, packaging matrix `mac=2 win=2 linux=2`, release docs ok with 15 required snippets, renderer/Electron tests 19 files / 123 tests, MCP tests 19 tests, server tests 33 tests, lint, static build, and the explicit stop before signing, notarization, upload, publish, deploy, or credential checks. `./init.sh` passed the same renderer/Electron, MCP, server, lint, and build gates.",
+      "notes": "Docs now list per-platform local pack/build commands, expected artifact patterns, and verification commands for Apple Silicon macOS, Intel macOS, Windows x64, and Linux x64. Public release, signing, notarization, upload, updater-feed, public URL, and approval remain separate human-gated work."
     },
     {
       "id": "F-019",

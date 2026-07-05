@@ -15,6 +15,31 @@ release work.
 | Windows x64 | `nsis`, `zip` | Local packaging config exists; code signing/feed work still required |
 | Linux x64 | `AppImage`, `deb` | Local packaging config exists; distribution decision still required |
 
+## Per-platform local artifact contract
+
+Use this table when preparing a local artifact for inspection. The `electron:pack:*`
+commands produce unsigned unpacked apps for smoke verification. The `electron:build:*`
+commands produce installer/download-shaped artifacts with `--publish never`; they are
+still local outputs, not public releases.
+
+| Platform | Local unpacked pack command | Local artifact build command | Expected download pattern | Required verification |
+| --- | --- | --- | --- | --- |
+| macOS Apple Silicon | `npm run electron:pack:mac:arm64` | `npm run electron:build:mac` | `Markie-<version>-arm64.dmg`, `Markie-<version>-arm64.zip`, `latest-mac.yml` | `npm run electron:smoke:mac:arm64`, `spctl` after signed release only |
+| macOS Intel | `npm run electron:pack:mac:x64` | `npm run electron:build:mac` | `Markie-<version>-x64.dmg`, `Markie-<version>-x64.zip`, future feed entry | `npm run electron:smoke:mac:x64` on a Mac host with Rosetta or Intel hardware |
+| Windows x64 | `npm run electron:pack:win` | `npm run electron:build:win` | `Markie-<version>-x64.exe`, `Markie-<version>-x64.zip`, future Windows feed entry | `npm run electron:smoke:win`, then `npm run electron:smoke:win:launch` on Windows |
+| Linux x64 | `npm run electron:pack:linux` | `npm run electron:build:linux` | `Markie-<version>-x64.AppImage`, `Markie-<version>-x64.deb`, future Linux download entry | `npm run electron:smoke:linux`, then OS-level launch on a Linux host before public release |
+
+Before running any platform build command, run:
+
+```sh
+npm run release:preflight
+```
+
+`release:preflight` is the local gate for metadata, docs, packaging matrix,
+tests, lint, and static build. Passing it does **not** mean an artifact is
+signed, notarized, published, uploaded, deployed, or approved for public
+downloads.
+
 Safe local packaging commands:
 
 ```sh

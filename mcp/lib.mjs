@@ -42,7 +42,6 @@ function allowRootFor(full, home) {
 function canonicalize(full) {
   let existing = full;
   const tail = [];
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
       const real = realpathSync(existing);

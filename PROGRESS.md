@@ -595,3 +595,19 @@
 - blockers: none for this permission-gating slice. Real multi-user browser sessions were not run in
   this pass. The pre-existing updater/menu edits in `electron/main.js` were preserved and not
   intentionally included.
+
+## 2026-07-04 20:17 EDT — terminal: progressed
+- did: Completed a narrow main-page cleanup pass. Added the missing stable dependencies to the
+  keyboard, Electron IPC, and command palette hook arrays in `src/app/page.tsx`, preserving the
+  once-registered handler-ref pattern for Electron menu callbacks. Removed a stale MCP
+  `eslint-disable` that no longer suppressed an actual constant-condition warning.
+- evidence: `npm run lint` exits cleanly with zero warnings. `node --test mcp/lib.test.mjs` passed
+  19 MCP tests. `npm run build` passed. `./init.sh` passed 19 renderer/Electron test files / 122
+  tests, 19 MCP tests, 33 server tests, lint, and static build. Live Electron/CDP after the cleanup
+  showed `Markie — Markdown Viewer`, complete readiness, no loading state, a visible Library
+  button, and the active dark theme class.
+- next: Continue premium UI/product work with authenticated share-dialog sessions, Library
+  organization polish, and remaining desktop release evidence that does not require human-gated
+  signing or publishing.
+- blockers: none for this cleanup. The pre-existing updater/menu edits in `electron/main.js` were
+  preserved and not intentionally included.

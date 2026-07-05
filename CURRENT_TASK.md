@@ -1,19 +1,17 @@
-# Current Task - Server-truth share permission gating
+# Current Task - Main-page lint dependency cleanup
 
 ## Task
-Remove client-side ownership inference from the Share dialog and gate share management actions from
-an explicit server-backed access summary for the current user and document.
+Remove the remaining ESLint warnings that make the main app shell look messier than it is, without
+changing UI behavior or broadening product scope.
 
 ## Acceptance Criteria
-1. The server exposes a read-gated access summary for a doc with `role`, `canRead`, `canEdit`, and
-   `canManage` derived from the same permission helpers used by docs, comments, themes, and collab.
-2. Share access tests cover owner, editor, viewer, stranger, and deleted-doc summaries.
-3. The renderer client can fetch the access summary without changing the existing share-list API.
-4. `ShareDialog` uses `canManage` to show invite, remove, public-link revoke/create, and theme-pin
-   controls instead of inferring owner status from whether the current user appears in `shares`.
-5. Non-owners see their access role and cannot trigger owner-only management UI from the dialog.
+1. `src/app/page.tsx` satisfies React hook dependency lint without making Electron IPC handlers
+   capture stale callbacks.
+2. The stale MCP eslint-disable comment is removed only if the underlying loop still lints cleanly.
+3. `npm run lint` exits with zero warnings.
+4. Focused MCP tests and renderer build still pass.
 
 ## Scope Guard
-Do not change the sharing schema, public-link token model, auth provider config, production data, or
-release/deploy credentials. Preserve unrelated local edits, including the pre-existing
-`electron/main.js` updater/menu diff.
+Do not change app behavior, add dependencies, alter public API shape, or touch production/release
+surfaces. Preserve unrelated local edits, including the pre-existing `electron/main.js`
+updater/menu diff.

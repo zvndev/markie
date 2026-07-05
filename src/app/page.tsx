@@ -549,7 +549,14 @@ export default function Home() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleOpenFile, handleExportPDF, handleSave, handleSaveAs]);
+  }, [
+    handleOpenFile,
+    handleExportPDF,
+    handleSave,
+    handleSaveAs,
+    handleNewFile,
+    selectView,
+  ]);
 
   // Latest handlers, readable from once-registered IPC listeners
   const handlersRef = useRef({
@@ -663,7 +670,7 @@ export default function Home() {
       api.onFileOpened?.((data) => handlersRef.current.fileOpened(data)),
     ];
     return () => offs.forEach((off) => off?.());
-  }, []);
+  }, [selectView]);
 
   const commands = useMemo<AppCommand[]>(
     () => [
@@ -706,7 +713,17 @@ export default function Home() {
         : []),
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
     ],
-    [handleOpenFile, handleSave, handleSaveAs, handleFork, handleExportPDF, handleExportHTML, canShare]
+    [
+      handleOpenFile,
+      handleSave,
+      handleSaveAs,
+      handleFork,
+      handleExportPDF,
+      handleExportHTML,
+      handleNewFile,
+      selectView,
+      canShare,
+    ]
   );
 
   if (!booted) {

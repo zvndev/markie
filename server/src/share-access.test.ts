@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-share-access-")), "t.db");
+process.env.BETTER_AUTH_SECRET = "markie-share-access-test-secret-32-plus-chars";
 const {
   accessLevel,
   canEditLevel,

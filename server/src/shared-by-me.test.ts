@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 // Point every module's db at a throwaway file BEFORE importing them.
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-sbm-")), "t.db");
+process.env.BETTER_AUTH_SECRET = "markie-shared-by-me-test-secret-32-plus-chars";
 const { docsSharedByMe } = await import("./shares.ts");
 await import("./docs.ts"); // ensures the docs table exists
 const Database = (await import("better-sqlite3")).default;

@@ -841,3 +841,23 @@
   are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
   approval remain human-gated. Authenticated share invite/remove with real accounts still needs
   valid local auth state.
+
+## 2026-07-04 23:13 EDT — terminal: progressed
+- did: Converted the authenticated share invite/remove blocker into local route coverage. Added a
+  temp-SQLite Hono route test that runs Better Auth migrations, signs up local users, creates a doc,
+  adds and removes an existing viewer, creates/removes pending email invites, proves pending invites
+  claim into editor access on signup, and verifies public-link management remains owner-scoped while
+  members can only read the current link. Also set explicit test auth secrets in auth-importing
+  server tests to keep local auth checks deterministic.
+- evidence: `node --experimental-strip-types --test server/src/share-routes.test.ts` passed 1 test.
+  `(cd server && npm test)` passed 35 tests. `npm run lint` passed. `npm test --
+  src/lib/share-access-view.test.ts` passed 1 file / 4 tests. `npm run release:preflight` passed,
+  including renderer/Electron tests 22 files / 135 tests, MCP tests 19 tests, server tests 35
+  tests, lint, static build, Windows workflow checks, Electron desktop support checks, and release
+  docs checks.
+- next: Continue native Windows workflow execution only after the ahead commits are pushed with
+  approval, and continue signed/notarized update feed plus public release work only with explicit
+  release approval.
+- blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
+  are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
+  approval remain human-gated.

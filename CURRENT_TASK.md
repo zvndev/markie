@@ -1,16 +1,18 @@
-# Current Task - Desktop update menu support
+# Current Task - Authenticated share route verification
 
 ## Task
-Make desktop update checks user-visible from the app menu while keeping local/dev builds honest and
-packaged production menus clean.
+Prove the share invite/remove/public-link lifecycle locally with authenticated API routes, without
+requiring production accounts, external credentials, or release actions.
 
 ## Acceptance Criteria
-1. Manual update checks route through the same update state machine as automatic checks.
-2. Dev and unpackaged builds explain that updates require a packaged release build.
-3. A downloaded update can be installed from the manual update prompt.
-4. Packaged production menus do not expose DevTools.
-5. Release preflight validates the Electron desktop-support contract and passes locally.
+1. Local test users can sign up through the real Better Auth route and receive bearer tokens.
+2. Owners can add an existing user as a member and remove that member by user id.
+3. Owners can add and remove pending email invites by email.
+4. Pending invites claim into real member access when the invited email signs up.
+5. Viewer, editor, and owner permissions are enforced on doc writes, share management, and public
+   link creation/revocation.
+6. The server test command and release preflight pass with the new coverage.
 
 ## Scope Guard
-Do not push, publish, deploy, run external CI, sign/notarize artifacts, change release credentials,
-or run production update feeds.
+Do not use production accounts, production credentials, external email delivery, public deploys,
+pushes, signing, notarization, update feeds, or release publishing.

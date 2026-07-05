@@ -9,6 +9,7 @@ import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-collab-")), "t.db");
+process.env.BETTER_AUTH_SECRET = "markie-collab-test-secret-32-plus-chars";
 const { readAccessControlledSyncMessage } = await import("./collab.ts");
 
 function writeUpdateMessage(update: Uint8Array): Uint8Array {

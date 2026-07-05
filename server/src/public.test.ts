@@ -48,6 +48,45 @@ test("download manifest covers public and planned desktop targets", () => {
     platforms.map((platform) => platform.id),
     ["mac-arm64", "mac-x64", "windows-x64", "linux-x64"]
   );
+  assert.deepEqual(
+    platforms.map((platform) => ({
+      id: platform.id,
+      label: platform.label,
+      route: platform.route,
+      status: platform.status,
+      artifactPattern: platform.artifactPattern,
+    })),
+    [
+      {
+        id: "mac-arm64",
+        label: "macOS Apple Silicon",
+        route: "/download/mac",
+        status: "public",
+        artifactPattern: "Markie-*-arm64.dmg",
+      },
+      {
+        id: "mac-x64",
+        label: "macOS Intel",
+        route: "/download/mac-intel",
+        status: "planned",
+        artifactPattern: "Markie-*-x64.dmg",
+      },
+      {
+        id: "windows-x64",
+        label: "Windows x64",
+        route: "/download/windows",
+        status: "planned",
+        artifactPattern: "Markie-*-x64.exe",
+      },
+      {
+        id: "linux-x64",
+        label: "Linux x64",
+        route: "/download/linux",
+        status: "planned",
+        artifactPattern: "Markie-*-x64.AppImage",
+      },
+    ]
+  );
   assert.equal(findDownloadPlatform("/download/windows")?.status, "planned");
   assert.deepEqual(primaryDownloadCta(), {
     href: "/download/mac",

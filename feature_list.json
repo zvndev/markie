@@ -281,10 +281,10 @@
         "Add a test or validation script that checks the manifest shape and required platform entries.",
         "Run the manifest validation plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "Do not deploy the page. If the live marketing site is in another repo, leave an explicit integration note and keep the manifest here."
+      "evidence": "`node --experimental-strip-types --test server/src/public.test.ts` passed 6 tests, covering manifest entries for Apple Silicon macOS, Intel macOS, Windows x64, Linux x64, public feed redirect, and honest planned-platform placeholders. `npm run release:preflight` passed, including server tests with the expanded manifest contract, lint, and static build. `./init.sh` passed 19 renderer/Electron test files / 123 tests, 19 MCP tests, 33 server tests, lint, and static build.",
+      "notes": "The repo-local `server/download-manifest.json` now includes labels, routes, status, and artifact filename patterns for all supported desktop targets. Public URLs remain gated: planned routes render unavailable placeholders until signed/notarized/published artifacts and approved feeds exist."
     },
     {
       "id": "F-020",

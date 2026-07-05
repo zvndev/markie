@@ -667,3 +667,23 @@
   launch evidence and human-gated signing, notarization, update-feed, public URL, and release
   approval work. The pre-existing updater/menu edits in `electron/main.js` were preserved and not
   intentionally included.
+
+## 2026-07-04 20:53 EDT — terminal: progressed
+- did: Closed `F-019` by completing the repo-local download manifest contract. Planned Intel Mac,
+  Windows x64, and Linux x64 entries now include artifact filename patterns alongside labels,
+  routes, status, and descriptions. The manifest loader now rejects any platform missing an artifact
+  pattern while still requiring live feeds only for public platforms.
+- evidence: `node --experimental-strip-types --test server/src/public.test.ts` passed 6 tests,
+  covering all four desktop manifest entries, public macOS feed redirect, and honest planned-route
+  placeholders. An initial parallel `release:preflight`/`./init.sh` run collided at the Next static
+  build lock; rerunning sequentially fixed the command-shape issue. `npm run release:preflight`
+  then passed renderer/Electron tests 19 files / 123 tests, MCP tests 19 tests, server tests 33
+  tests, lint, static build, and the explicit local-only release stop. `./init.sh` passed 19
+  renderer/Electron test files / 123 tests, 19 MCP tests, 33 server tests, lint, and static build.
+  `feature_list.json` now marks `F-019` passing with this evidence.
+- next: Continue `F-020` public-facing download copy, authenticated share-dialog sessions, broader
+  Library organization polish, and native Windows launch/signing/feed gates.
+- blockers: none for the manifest source of truth. Public planned routes still intentionally remain
+  unavailable until human-gated signed artifacts, update feeds, public URLs, and release approval are
+  complete. The pre-existing updater/menu edits in `electron/main.js` were preserved and not
+  intentionally included.

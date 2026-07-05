@@ -1,19 +1,18 @@
-# Current Task - F-018 release docs and preflight clarity
+# Current Task - F-019 download manifest source of truth
 
 ## Task
-Make the release docs and local preflight clearly describe how to produce and verify desktop
-downloads for Apple Silicon macOS, Intel macOS, Windows, and Linux without confusing local checks
-with public publishing.
+Make the repo-local download manifest a complete source of truth for supported desktop downloads,
+including current public macOS and planned Intel Mac, Windows, and Linux targets.
 
 ## Acceptance Criteria
-1. `docs/RELEASING.md` lists per-platform local build/pack commands, expected artifact patterns,
-   and verification commands for Apple Silicon macOS, Intel macOS, Windows x64, and Linux x64.
-2. The docs explicitly separate safe local dry runs from signing, notarization, upload, publish,
-   deploy, and public release approval.
-3. `release:preflight` validates that the release-doc contract contains required platform/gate
-   snippets without requiring credentials.
-4. Focused release-preflight tests and full boot smoke pass.
-5. `feature_list.json` marks `F-018` passing only with fresh evidence.
+1. `server/download-manifest.json` covers Apple Silicon macOS, Intel macOS, Windows x64, and Linux
+   x64 with labels, routes, status, and artifact filename patterns.
+2. Manifest validation rejects any platform missing an artifact pattern, while only public platforms
+   require a live feed.
+3. Server tests prove planned routes stay honest placeholders and the public route still resolves
+   from the feed.
+4. Manifest/server tests, release preflight, and full boot smoke pass.
+5. `feature_list.json` marks `F-019` passing only with fresh evidence.
 
 ## Scope Guard
 Do not sign, notarize, publish, deploy, upload, change release credentials, touch production data, or

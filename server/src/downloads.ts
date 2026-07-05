@@ -44,8 +44,11 @@ const loadManifest = (): DownloadManifest => {
     if (!platform.id || ids.has(platform.id)) throw new Error(`invalid download platform id: ${platform.id}`);
     if (!platform.route.startsWith("/download/")) throw new Error(`invalid download route: ${platform.route}`);
     if (routes.has(platform.route)) throw new Error(`duplicate download route: ${platform.route}`);
-    if (platform.status === "public" && (!platform.feed || !platform.artifactPattern)) {
-      throw new Error(`public download platform ${platform.id} needs a feed and artifact pattern`);
+    if (!platform.artifactPattern) {
+      throw new Error(`download platform ${platform.id} needs an artifact pattern`);
+    }
+    if (platform.status === "public" && !platform.feed) {
+      throw new Error(`public download platform ${platform.id} needs a feed`);
     }
     ids.add(platform.id);
     routes.add(platform.route);

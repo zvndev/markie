@@ -747,3 +747,21 @@
   run, and signing, notarization, update feeds, public URLs, deploy, upload, and release approval
   remain human-gated. The pre-existing updater/menu edits in `electron/main.js` were preserved and
   not intentionally included.
+
+## 2026-07-04 22:30 EDT — terminal: progressed
+- did: Tightened Share dialog permission clarity. The dialog now shows a server-derived `Your
+  access` summary with role plus Read/Edit/Manage capability chips, using `/api/docs/:id/access`
+  truth instead of inferring from the member list. Owner-only controls remain gated by
+  `access.canManage`.
+- evidence: `npm test -- src/lib/share-access-view.test.ts` passed 1 file / 4 tests.
+  `node --experimental-strip-types --test server/src/share-access.test.ts
+  server/src/shared-by-me.test.ts` passed 7 server share tests. `npm run lint` passed. `npm run
+  build` passed. `npm run visual:guard:theme` passed with zero findings and wrote
+  `.autoloop/runs/light-mode-audit-20260705022844/audit.json`. `./init.sh` passed 21
+  renderer/Electron test files / 130 tests, 19 MCP tests, 33 server tests, lint, and static build.
+- next: Continue native Windows workflow execution evidence and human-gated signing/feed/public URL
+  release work.
+- blockers: Authenticated real-account invite/remove sessions still require valid local auth state,
+  and native Windows launch still needs a Windows host/workflow run. Signing, notarization, update
+  feeds, public URLs, deploy, upload, and release approval remain human-gated. The pre-existing
+  updater/menu edits in `electron/main.js` were preserved and not intentionally included.

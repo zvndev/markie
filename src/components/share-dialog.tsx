@@ -11,6 +11,11 @@ import {
 import { colorForName, initials } from "@/lib/collab";
 import { getDocTheme, setDocTheme } from "@/lib/theme-sync";
 import { findTheme, loadThemeStore } from "@/lib/theme";
+import {
+  shareAccessLine,
+  shareCapabilityView,
+  shareRoleLabel,
+} from "@/lib/share-access-view";
 
 interface ShareDialogProps {
   docId: string;
@@ -168,6 +173,7 @@ export function ShareDialog({
           </button>
         </div>
         <div className="text-[11px] text-muted mb-4 truncate">{fileName}</div>
+        <ShareAccessSummary access={access} />
 
         {canManage && (
           <div className="mb-4">
@@ -231,12 +237,6 @@ export function ShareDialog({
         <div className="markie-overlay-section mb-2">
           People with access
         </div>
-        {access && !canManage && (
-          <div className="mb-2 text-[11px] text-muted">
-            Your access: {access.role === "editor" ? "Editor" : "Viewer"}
-            {access.canEdit ? " — you can edit this doc." : " — you can view and comment."}
-          </div>
-        )}
         {members === null ? (
           <div className="text-[12px] text-muted">Loading…</div>
         ) : (
@@ -328,6 +328,39 @@ export function ShareDialog({
             </button>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ShareAccessSummary({ access }: { access: ShareAccess | null }) {
+  const capabilities = shareCapabilityView(access);
+  return (
+    <div className="mb-4 rounded-md border border-border/70 bg-background/40 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted">Your access</div>
+          <div className="mt-0.5 text-[13px] font-medium text-foreground">
+            {shareRoleLabel(access)}
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          {capabilities.map((capability) => (
+            <span
+              key={capability.label}
+              className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                capability.enabled
+                  ? "border-[color:var(--status-green)] text-[var(--status-green)]"
+                  : "border-border text-muted"
+              }`}
+            >
+              {capability.label}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="mt-1.5 text-[11px] leading-snug text-muted">
+        {shareAccessLine(access)}
       </div>
     </div>
   );

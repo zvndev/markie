@@ -706,3 +706,25 @@
   planned platform downloads intentionally remain unavailable until release approval and artifacts
   exist. The pre-existing updater/menu edits in `electron/main.js` were preserved and not
   intentionally included.
+
+## 2026-07-04 21:26 EDT — terminal: progressed
+- did: Hardened the Windows packaged launch evidence and removed the renderer build's remote font
+  dependency. `scripts/windows-launch-smoke.mjs` now writes self-contained `launch-smoke.json`
+  evidence with host, package, app, CDP target, renderer probe, and validation metadata while
+  preserving the existing top-level compatibility fields. The Next renderer now uses repo-owned
+  native font variables instead of `next/font/google`, so production builds no longer need a live
+  Google Fonts fetch.
+- evidence: `node --check scripts/windows-launch-smoke.mjs` passed.
+  `npm test -- electron/windows-launch-smoke.test.ts electron/release-preflight.test.ts` passed 2
+  files / 11 tests. `npm run release:preflight` passed renderer/Electron tests 19 files / 124
+  tests, MCP tests 19 tests, server tests 33 tests, lint, static build, and the explicit local-only
+  release stop. `./init.sh` passed 19 renderer/Electron test files / 124 tests, 19 MCP tests, 33
+  server tests, lint, and static build. Live Electron CDP verification captured dark and light theme
+  screenshots, confirmed `Markie — Markdown Viewer`, complete ready state, no loading text, and the
+  native font stack in computed styles.
+- next: Continue authenticated share-dialog sessions, broader Library organization polish, native
+  Windows workflow execution evidence, and human-gated signing/feed/public URL release work.
+- blockers: The richer Windows launch artifact is ready for the GitHub/Windows host, but native
+  Windows workflow evidence was not executed from this Mac. Signing, notarization, update feeds,
+  public URLs, deploy, upload, and release approval remain human-gated. The pre-existing
+  updater/menu edits in `electron/main.js` were preserved and not intentionally included.

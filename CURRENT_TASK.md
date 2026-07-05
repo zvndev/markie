@@ -1,18 +1,18 @@
-# Current Task - F-020 manifest-backed download page copy
+# Current Task - Windows evidence and offline build hardening
 
 ## Task
-Update the repo-owned public download page copy so it clearly presents all supported desktop
-platforms from the manifest, including planned platforms without pretending they are published.
+Make the Windows packaged-app launch smoke artifact self-contained enough to audit after GitHub
+Actions uploads it, and remove the production build's remote font dependency uncovered during
+verification.
 
 ## Acceptance Criteria
-1. The download page renders Apple Silicon macOS, Intel macOS, Windows x64, and Linux x64 cards from
-   the manifest.
-2. Each platform card exposes the manifest-backed route and expected artifact pattern.
-3. Planned platform cards remain unavailable placeholders; the public macOS route still links through
-   the feed.
-4. Render/server tests, release preflight, and full boot smoke pass.
-5. `feature_list.json` marks `F-020` passing only with fresh evidence.
+1. The launch smoke JSON keeps the existing top-level compatibility fields.
+2. The artifact records host, package, app, target, and renderer probe metadata needed to understand
+   what executable was launched and what UI loaded.
+3. Focused unit coverage proves the artifact builder works without requiring a Windows host.
+4. The Next app builds without fetching Google-hosted font assets.
+5. Syntax checks, focused Windows/release tests, and release preflight pass.
 
 ## Scope Guard
-Do not sign, notarize, publish, deploy, upload, change release credentials, touch production data, or
-alter the unrelated pre-existing `electron/main.js` updater/menu diff.
+Do not sign, notarize, publish, deploy, upload, change release credentials, or alter the unrelated
+pre-existing `electron/main.js` updater/menu diff.

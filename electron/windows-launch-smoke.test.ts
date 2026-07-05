@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   assertWindowsHost,
+  buildWindowsLaunchSmokeArtifact,
   resolveWindowsApp,
   selectPageTarget,
   validateRendererProbe,
@@ -47,6 +48,72 @@ describe("Windows launch smoke", () => {
     const rootDir = makeTempDir();
 
     expect(() => resolveWindowsApp(rootDir)).toThrow(/run npm run electron:pack:win first/);
+  });
+
+  it("builds self-contained launch evidence metadata", () => {
+    const rootDir = makeTempDir();
+    writeFileSync(
+      path.join(rootDir, "package.json"),
+      JSON.stringify({ name: "markie", version: "0.2.8" })
+    );
+    const executable = windowsExecutablePath(rootDir);
+    const app = {
+      appDir: path.dirname(executable),
+      executable,
+    };
+    const target = {
+      type: "page",
+      title: "Markie — Markdown Viewer",
+      url: "app://markie/index.html",
+      webSocketDebuggerUrl: "ws://127.0.0.1:3210/devtools/page/1",
+    };
+    const probe = {
+      title: "Markie — Markdown Viewer",
+      readyState: "complete",
+      url: "app://markie/index.html",
+      bodyText: "Library Markdown",
+      hasEditor: true,
+    };
+
+    const artifact = buildWindowsLaunchSmokeArtifact({
+      baseDir: rootDir,
+      distDir: "dist",
+      productName: "Markie",
+      app,
+      debugOrigin: "http://127.0.0.1:3210",
+      target,
+      probe,
+      validation: { ok: true, failures: [] },
+      generatedAt: "2026-07-04T20:00:00.000Z",
+      platform: "win32",
+      arch: "x64",
+      versions: { node: "22.13.1", electron: "41.0.2", chrome: "142.0.0.0" },
+    });
+
+    expect(artifact).toMatchObject({
+      ok: true,
+      generatedAt: "2026-07-04T20:00:00.000Z",
+      executable,
+      host: {
+        platform: "win32",
+        arch: "x64",
+        node: "22.13.1",
+        electron: "41.0.2",
+        chrome: "142.0.0.0",
+      },
+      package: {
+        name: "markie",
+        version: "0.2.8",
+        productName: "Markie",
+        distDir: "dist",
+        layout: "win-unpacked",
+      },
+      app,
+      debugOrigin: "http://127.0.0.1:3210",
+      target,
+      probe,
+      validation: { ok: true, failures: [] },
+    });
   });
 
   it("chooses the packaged Markie page target and ignores DevTools targets", () => {

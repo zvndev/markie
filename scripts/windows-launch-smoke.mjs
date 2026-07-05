@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -38,6 +38,65 @@ export function resolveWindowsApp(
   return {
     appDir: path.dirname(executable),
     executable,
+  };
+}
+
+function readPackageMetadata(baseDir) {
+  try {
+    const parsed = JSON.parse(readFileSync(path.join(baseDir, "package.json"), "utf8"));
+    return {
+      name: typeof parsed.name === "string" ? parsed.name : null,
+      version: typeof parsed.version === "string" ? parsed.version : null,
+    };
+  } catch {
+    return { name: null, version: null };
+  }
+}
+
+export function buildWindowsLaunchSmokeArtifact({
+  baseDir = rootDir,
+  distDir = "dist",
+  productName = DEFAULT_PRODUCT_NAME,
+  app,
+  debugOrigin,
+  target,
+  probe,
+  validation,
+  generatedAt = new Date().toISOString(),
+  platform = process.platform,
+  arch = process.arch,
+  versions = process.versions,
+} = {}) {
+  if (!app?.executable || !app?.appDir) {
+    throw new Error("Windows launch smoke artifact requires an app directory and executable");
+  }
+
+  const packageMetadata = readPackageMetadata(baseDir);
+  return {
+    ok: true,
+    generatedAt,
+    executable: app.executable,
+    host: {
+      platform,
+      arch,
+      node: versions?.node || null,
+      electron: versions?.electron || null,
+      chrome: versions?.chrome || null,
+    },
+    package: {
+      ...packageMetadata,
+      productName,
+      distDir,
+      layout: "win-unpacked",
+    },
+    app: {
+      appDir: app.appDir,
+      executable: app.executable,
+    },
+    debugOrigin,
+    target,
+    probe,
+    validation: validation || null,
   };
 }
 
@@ -269,14 +328,16 @@ export async function runWindowsLaunchSmoke({
     );
     cdp = connected.cdp;
     const renderer = await probeRenderer(cdp, timeoutMs);
-    const artifact = {
-      ok: true,
-      generatedAt: new Date().toISOString(),
-      executable: app.executable,
+    const artifact = buildWindowsLaunchSmokeArtifact({
+      baseDir,
+      distDir,
+      productName,
+      app,
       debugOrigin,
       target: connected.target,
       probe: renderer.probe,
-    };
+      validation: renderer.validation,
+    });
     artifact.artifactPath = await writeArtifact(baseDir, artifact);
     return artifact;
   } finally {

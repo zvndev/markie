@@ -72,7 +72,9 @@ The macOS local package path also runs the `build/preflight.cjs` window smoke
 gate during `afterPack`; Apple Silicon hosts with Rosetta can launch-smoke the
 Intel macOS package. Windows gets deterministic structure checks locally, then
 `electron:smoke:win:launch` proves `dist/win-unpacked/Markie.exe` starts and
-loads the packaged renderer on a Windows host. The
+loads the packaged renderer on a Windows host. Its uploaded `launch-smoke.json`
+evidence includes the Windows host, package version, unpacked app path, CDP
+target, renderer probe, and validation result. The
 `.github/workflows/windows-launch-smoke.yml` workflow runs that sequence on
 `windows-latest` without signing, publishing, uploading, or release credentials.
 Linux currently gets deterministic structure checks locally; OS-level launch

@@ -77,6 +77,16 @@ export function canManageLevel(level: ShareAccessLevel): boolean {
   return level === "owner";
 }
 
+export function shareAccessSummary(docId: string, userId: string) {
+  const level = accessLevel(docId, userId);
+  return {
+    role: level,
+    canRead: canReadLevel(level),
+    canEdit: canEditLevel(level),
+    canManage: canManageLevel(level),
+  };
+}
+
 export function sharedDocsFor(userId: string) {
   return db
     .prepare(
@@ -123,6 +133,17 @@ export function docsSharedByMe(userId: string) {
 }
 
 export const shares = new Hono();
+
+// Current user's explicit access level for this doc. The renderer must not infer
+// ownership from the member list because owners are intentionally absent from
+// `shares`.
+shares.get("/:id/access", async (c) => {
+  const user = await requireUser(c);
+  if (!user) return c.json({ error: "unauthorized" }, 401);
+  const access = shareAccessSummary(c.req.param("id"), user.id);
+  if (!access.canRead) return c.json({ error: "forbidden" }, 403);
+  return c.json({ access });
+});
 
 // List members + pending invites (owner or member can see)
 shares.get("/:id/shares", async (c) => {

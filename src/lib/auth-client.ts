@@ -153,6 +153,13 @@ export interface ShareMember {
   pending?: boolean;
 }
 
+export interface ShareAccess {
+  role: "owner" | "editor" | "viewer";
+  canRead: boolean;
+  canEdit: boolean;
+  canManage: boolean;
+}
+
 // A doc I own that I've shared with people (the "shared by me" tab).
 export interface SharedByMeDoc {
   id: string;
@@ -163,6 +170,13 @@ export interface SharedByMeDoc {
 }
 
 export const sharesClient = {
+  access: async (docId: string): Promise<ShareAccess | null> => {
+    const res = await api<{ access: ShareAccess }>(
+      `/api/docs/${encodeURIComponent(docId)}/access`
+    );
+    return res.ok ? res.data?.access ?? null : null;
+  },
+
   // Owned docs that have at least one collaborator or pending invite.
   sharedByMe: async (): Promise<SharedByMeDoc[]> => {
     const res = await api<{ docs: SharedByMeDoc[] }>("/api/docs/shared-by-me");

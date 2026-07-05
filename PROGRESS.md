@@ -573,3 +573,25 @@
   sharing permission UX, and broader library organization once this regression is locked.
 - blockers: none for this bugfix. The pre-existing updater/menu edits in `electron/main.js` were
   preserved and not intentionally included in this pass.
+
+## 2026-07-04 20:12 EDT — terminal: progressed
+- did: Completed the server-truth share permission gating slice. Added a read-gated
+  `/api/docs/:id/access` summary backed by the same share permission helpers used across docs,
+  comments, themes, and collaboration. The renderer now fetches that access summary separately from
+  the share list, and `ShareDialog` gates invite, remove, public-link create/revoke, and theme-pin
+  management UI from `access.canManage` instead of inferring ownership from share-list membership.
+  Non-managers see their current access role and lose owner-only controls.
+- evidence: `node --experimental-strip-types --test server/src/share-access.test.ts` passed 4 tests
+  covering owner, editor, viewer, stranger, and deleted-doc summaries. `npm run build`, `npm run
+  lint`, and `./init.sh` passed; lint still reports the existing 4 warnings in `mcp/lib.mjs` and
+  `src/app/page.tsx`. `npm run visual:guard:theme` passed with zero findings across shell, content,
+  and overlay/panel categories. Live Electron/CDP showed `Markie — Markdown Viewer`, complete
+  readiness, no loading state, visible editor chrome, the Library panel showing the default `MARKIE`
+  root with `empty`, and light/dark theme buttons changing renderer colors from `rgb(248, 250,
+  252)`/`rgb(24, 24, 27)` to `rgb(9, 9, 11)`/`rgb(250, 250, 250)`.
+- next: Continue the larger goal with real authenticated owner/editor/viewer share-dialog sessions,
+  broader Library organization polish, Windows-host launch evidence, signing/feed/public URL gates,
+  and the remaining premium UI passes.
+- blockers: none for this permission-gating slice. Real multi-user browser sessions were not run in
+  this pass. The pre-existing updater/menu edits in `electron/main.js` were preserved and not
+  intentionally included.

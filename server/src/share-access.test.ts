@@ -10,6 +10,7 @@ const {
   canEditLevel,
   canManageLevel,
   canReadLevel,
+  shareAccessSummary,
 } = await import("./shares.ts");
 await import("./docs.ts");
 const Database = (await import("better-sqlite3")).default;
@@ -61,7 +62,40 @@ test("role helpers make read/edit/manage permissions explicit", () => {
   assert.equal(canManageLevel(null), false);
 });
 
+test("shareAccessSummary returns role and scoped capabilities from server truth", () => {
+  assert.deepEqual(shareAccessSummary("doc-active", "owner"), {
+    role: "owner",
+    canRead: true,
+    canEdit: true,
+    canManage: true,
+  });
+  assert.deepEqual(shareAccessSummary("doc-active", "editor"), {
+    role: "editor",
+    canRead: true,
+    canEdit: true,
+    canManage: false,
+  });
+  assert.deepEqual(shareAccessSummary("doc-active", "viewer"), {
+    role: "viewer",
+    canRead: true,
+    canEdit: false,
+    canManage: false,
+  });
+  assert.deepEqual(shareAccessSummary("doc-active", "stranger"), {
+    role: null,
+    canRead: false,
+    canEdit: false,
+    canManage: false,
+  });
+});
+
 test("soft-deleted docs do not retain owner or share access", () => {
   assert.equal(accessLevel("doc-deleted", "owner"), null);
   assert.equal(accessLevel("doc-deleted", "viewer"), null);
+  assert.deepEqual(shareAccessSummary("doc-deleted", "owner"), {
+    role: null,
+    canRead: false,
+    canEdit: false,
+    canManage: false,
+  });
 });

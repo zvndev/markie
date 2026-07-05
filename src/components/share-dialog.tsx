@@ -5,6 +5,7 @@ import {
   authClient,
   sharesClient,
   type MarkieUser,
+  type ShareAccess,
   type ShareMember,
 } from "@/lib/auth-client";
 import { colorForName, initials } from "@/lib/collab";
@@ -26,6 +27,7 @@ export function ShareDialog({
   onChanged,
 }: ShareDialogProps) {
   const [me, setMe] = useState<MarkieUser | null>(null);
+  const [access, setAccess] = useState<ShareAccess | null>(null);
   const [members, setMembers] = useState<ShareMember[] | null>(null);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"viewer" | "editor">("viewer");
@@ -38,13 +40,17 @@ export function ShareDialog({
   const [copied, setCopied] = useState(false);
 
   const load = useCallback(() => {
-    sharesClient.getPublicLink(docId).then((url) => {
-      setPublicUrl(url);
-    });
-    return Promise.all([authClient.me(), sharesClient.list(docId)]).then(
-      ([user, list]) => {
+    return Promise.all([
+      authClient.me(),
+      sharesClient.access(docId),
+      sharesClient.list(docId),
+      sharesClient.getPublicLink(docId),
+    ]).then(
+      ([user, nextAccess, list, url]) => {
         setMe(user);
+        setAccess(nextAccess);
         setMembers(list ?? []);
+        setPublicUrl(url);
       }
     );
   }, [docId]);
@@ -74,8 +80,7 @@ export function ShareDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // The owner isn't in the shares table; members see the list read-only
-  const isOwner = !!me && !!members && !members.some((m) => m.user_id === me.id);
+  const canManage = !!access?.canManage;
 
   const handleAdd = async () => {
     const target = email.trim().toLowerCase();
@@ -164,7 +169,7 @@ export function ShareDialog({
         </div>
         <div className="text-[11px] text-muted mb-4 truncate">{fileName}</div>
 
-        {isOwner && (
+        {canManage && (
           <div className="mb-4">
             <div className="flex gap-2">
               <input
@@ -226,11 +231,17 @@ export function ShareDialog({
         <div className="markie-overlay-section mb-2">
           People with access
         </div>
+        {access && !canManage && (
+          <div className="mb-2 text-[11px] text-muted">
+            Your access: {access.role === "editor" ? "Editor" : "Viewer"}
+            {access.canEdit ? " — you can edit this doc." : " — you can view and comment."}
+          </div>
+        )}
         {members === null ? (
           <div className="text-[12px] text-muted">Loading…</div>
         ) : (
           <div className="flex flex-col gap-2">
-            {isOwner && me && (
+            {canManage && me && (
               <MemberRow
                 name={me.name || me.email}
                 email={me.email}
@@ -251,16 +262,16 @@ export function ShareDialog({
                 }
                 pending={m.pending}
                 onRemove={
-                  isOwner
+                  canManage
                     ? () => handleRemove(m.pending ? m.email : (m.user_id as string))
                     : undefined
                 }
               />
             ))}
-            {members.length === 0 && !isOwner && (
+            {members.length === 0 && !canManage && (
               <div className="text-[12px] text-muted">Just you so far.</div>
             )}
-            {members.length === 0 && isOwner && (
+            {members.length === 0 && canManage && (
               <div className="text-[12px] text-muted">
                 Not shared with anyone yet.
               </div>
@@ -292,19 +303,25 @@ export function ShareDialog({
                 <span className="text-[11px] text-muted">
                   Anyone with this link can view &amp; download — no account needed.
                 </span>
-                <button
-                  onClick={revokeLink}
-                  disabled={linkBusy}
-                  className="text-[11px] text-[var(--status-red)] hover:opacity-80 disabled:opacity-50"
-                >
-                  Revoke
-                </button>
+                {canManage && (
+                  <button
+                    onClick={revokeLink}
+                    disabled={linkBusy}
+                    className="text-[11px] text-[var(--status-red)] hover:opacity-80 disabled:opacity-50"
+                  >
+                    Revoke
+                  </button>
+                )}
               </div>
             </>
+          ) : !canManage ? (
+            <div className="text-[11px] text-muted">
+              Only the owner can create a public link.
+            </div>
           ) : (
             <button
-                onClick={createLink}
-                disabled={linkBusy}
+              onClick={createLink}
+              disabled={linkBusy}
               className="markie-overlay-button text-[12px] px-3 py-1.5 rounded-md border border-border text-muted hover:text-foreground disabled:opacity-50"
             >
               {linkBusy ? "Creating…" : "Create a public link"}

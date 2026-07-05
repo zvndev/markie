@@ -627,3 +627,22 @@
   publishing.
 - blockers: none for this UI pass. The pre-existing updater/menu edits in `electron/main.js` were
   preserved and not intentionally included.
+
+## 2026-07-04 20:45 EDT — terminal: progressed
+- did: Closed `F-017` with fresh platform-packaging evidence. Confirmed the existing local-only
+  packaging matrix covers Apple Silicon macOS, Intel macOS, Windows x64, and Linux x64 dry-run
+  targets through `scripts/local-electron-builder.mjs`, with publishing disabled by default and
+  release actions still human-gated.
+- evidence: `npm test -- electron/local-electron-builder.test.ts electron/release-preflight.test.ts
+  electron/package-smoke.test.ts` passed 3 files / 17 tests. `npm run release:preflight` passed,
+  validated required release files, reported packaging matrix `mac=2 win=2 linux=2`, ran
+  renderer/Electron tests, MCP tests, server tests, lint, and static build, and ended with the
+  explicit stop before signing, notarization, upload, publish, deploy, or credential checks.
+  `./init.sh` passed 19 renderer/Electron test files / 122 tests, 19 MCP tests, 33 server tests,
+  lint, and static build. `feature_list.json` now marks `F-017` passing with this evidence.
+- next: Continue `F-018` release-doc/preflight clarity, authenticated share-dialog sessions,
+  broader Library organization polish, and native Windows launch/signing/feed/public URL gates.
+- blockers: none for local dry-run packaging config. Full public platform support still requires
+  native Windows launch evidence and human-gated signing, notarization, update-feed, download URL,
+  and release approval work. The pre-existing updater/menu edits in `electron/main.js` were
+  preserved and not intentionally included.

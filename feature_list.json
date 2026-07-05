@@ -251,10 +251,10 @@
         "Verify the config can be parsed and the safe local packaging/preflight command stops before signing, notarization, upload, publish, or deploy.",
         "Run the packaging/preflight verification plus `./init.sh`."
       ],
-      "passes": false,
+      "passes": true,
       "attempts": 0,
-      "evidence": null,
-      "notes": "No publishing. If cross-compilation cannot build an artifact on the current host, the task should still add a verifiable dry-run/preflight."
+      "evidence": "`npm test -- electron/local-electron-builder.test.ts electron/release-preflight.test.ts electron/package-smoke.test.ts` passed 3 files / 17 tests. `npm run release:preflight` passed, validating required release files, local-only checks, and a packaging matrix of mac=2, win=2, linux=2, then running renderer/Electron tests, MCP tests, server tests, lint, and static build before stopping explicitly before signing, notarization, upload, publish, deploy, or credential checks.",
+      "notes": "Completed with existing local-only scripts/config: `electron:pack:mac:arm64`, `electron:pack:mac:x64`, `electron:pack:win`, and `electron:pack:linux` all route through `scripts/local-electron-builder.mjs` with `--publish never`; actual public release, signing, notarization, updater feeds, and native Windows launch evidence remain separate gates."
     },
     {
       "id": "F-018",

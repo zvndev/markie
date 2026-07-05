@@ -1,17 +1,18 @@
-# Current Task - Files workspace empty-state polish
+# Current Task - F-017 local packaging dry-run closure
 
 ## Task
-Make the default Files workspace feel intentionally set up when it is empty, instead of showing a
-bare `empty` label under the `MARKIE` root.
+Close F-017 by verifying that Electron packaging config supports local dry-run targets for Apple
+Silicon macOS, Intel macOS, Windows, and Linux without publishing.
 
 ## Acceptance Criteria
-1. The default workspace root is visibly marked as the default root when available.
-2. An empty top-level workspace root shows a compact, theme-aware empty state with New file and New
-   folder actions.
-3. Empty nested folders remain compact and do not consume the whole side panel.
-4. Build, lint, visual theme guard, and live Electron/CDP Library checks pass.
+1. The electron-builder package matrix includes mac arm64, mac x64, Windows x64, and Linux x64 local
+   targets.
+2. Local pack/build scripts use the unsigned local wrapper and disable publishing.
+3. Release preflight validates the packaging matrix and stops before signing, notarization, upload,
+   publish, deploy, or credential checks.
+4. Focused packaging/preflight tests and full boot smoke pass.
+5. `feature_list.json` marks `F-017` passing only with fresh evidence.
 
 ## Scope Guard
-Do not change workspace persistence, filesystem IPC behavior, dependencies, public API shape,
-release surfaces, or production data. Preserve unrelated local edits, including the pre-existing
-`electron/main.js` updater/menu diff.
+Do not sign, notarize, publish, deploy, upload, change release credentials, touch production data, or
+alter the unrelated pre-existing `electron/main.js` updater/menu diff.

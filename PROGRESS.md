@@ -728,3 +728,22 @@
   Windows workflow evidence was not executed from this Mac. Signing, notarization, update feeds,
   public URLs, deploy, upload, and release approval remain human-gated. The pre-existing
   updater/menu edits in `electron/main.js` were preserved and not intentionally included.
+
+## 2026-07-04 22:22 EDT — terminal: progressed
+- did: Polished the Library Recent view with a compact document-status overview. The panel now
+  summarizes device-local, synced, shared, cloud-only, and attention-needed documents without
+  affecting the Files workspace, and the empty Recent state now offers direct `Open file` and
+  `Files` actions instead of a paragraph.
+- evidence: `npm test -- src/lib/library-overview.test.ts src/lib/library-state.test.ts
+  src/lib/workspace-default.test.ts` passed 3 files / 8 tests. `npm run lint` passed. `npm run
+  build` passed. `npm run visual:guard:theme` passed with zero findings and wrote
+  `.autoloop/runs/light-mode-audit-20260705022006/audit.json`. `./init.sh` passed 20
+  renderer/Electron test files / 126 tests, 19 MCP tests, 33 server tests, lint, and static build.
+  Live Electron/CDP after restarting the preview confirmed `DOCUMENTS`, `DEVICE`, `SYNCED`,
+  `SHARED`, `No recent files`, complete ready state, dark theme, and no loading/error text.
+- next: Continue authenticated share-dialog sessions, native Windows workflow execution evidence,
+  and human-gated signing/feed/public URL release work.
+- blockers: none for this Library polish. Native Windows launch still needs a Windows host/workflow
+  run, and signing, notarization, update feeds, public URLs, deploy, upload, and release approval
+  remain human-gated. The pre-existing updater/menu edits in `electron/main.js` were preserved and
+  not intentionally included.

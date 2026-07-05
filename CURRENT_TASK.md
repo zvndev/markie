@@ -1,17 +1,15 @@
-# Current Task - Windows evidence and offline build hardening
+# Current Task - Library status overview polish
 
 ## Task
-Make the Windows packaged-app launch smoke artifact self-contained enough to audit after GitHub
-Actions uploads it, and remove the production build's remote font dependency uncovered during
-verification.
+Make the Library feel more organized by showing a compact status overview for local, synced, shared,
+and attention-needed documents.
 
 ## Acceptance Criteria
-1. The launch smoke JSON keeps the existing top-level compatibility fields.
-2. The artifact records host, package, app, target, and renderer probe metadata needed to understand
-   what executable was launched and what UI loaded.
-3. Focused unit coverage proves the artifact builder works without requiring a Windows host.
-4. The Next app builds without fetching Google-hosted font assets.
-5. Syntax checks, focused Windows/release tests, and release preflight pass.
+1. The Library panel summarizes tracked documents without blocking the Files workspace.
+2. The summary distinguishes device-local files, synced docs, shared docs, and issues.
+3. Empty Recent state has clear primary actions instead of a paragraph.
+4. The summary logic has focused regression coverage.
+5. Lint/build/tests and live dark/light Electron checks pass.
 
 ## Scope Guard
 Do not sign, notarize, publish, deploy, upload, change release credentials, or alter the unrelated

@@ -8,6 +8,7 @@ import { SkillsView } from "@/components/skills-view";
 import { SharedView } from "@/components/shared-view";
 import type { LeftView } from "@/components/activity-bar";
 import { readLibrarySnapshot } from "@/lib/library-state";
+import { summarizeLibrary, type LibraryOverview } from "@/lib/library-overview";
 
 interface LibraryProps {
   // which view the left rail selected (library | browse | shared | skills)
@@ -229,6 +230,7 @@ export function Library({
   const localFiles = items.filter((i) => i.path);
   const myCloudOnly = items.filter((i) => !i.path && !i.shared);
   const sharedItems = items.filter((i) => i.shared);
+  const overview = summarizeLibrary(items);
 
   const fileRow = (item: LibraryItem) => {
     const [label, badgeClass]: [string, string] = item.shared
@@ -359,21 +361,24 @@ export function Library({
 
       {/* Recent/Files sub-toggle — only the Library view has sub-tabs */}
       {view === "library" && (
-        <div className="flex items-center gap-0.5 px-2 py-1.5 shrink-0 border-b border-border/60">
-          {(["recent", "files"] as LibTab[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => pickTab(t)}
-              className={`flex-1 text-[11px] py-1 rounded-md capitalize transition-colors ${
-                libTab === t
-                  ? "bg-accent text-foreground"
-                  : "text-muted hover:text-foreground hover:bg-accent/40"
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="flex items-center gap-0.5 px-2 py-1.5 shrink-0 border-b border-border/60">
+            {(["recent", "files"] as LibTab[]).map((t) => (
+              <button
+                key={t}
+                onClick={() => pickTab(t)}
+                className={`flex-1 text-[11px] py-1 rounded-md capitalize transition-colors ${
+                  libTab === t
+                    ? "bg-accent text-foreground"
+                    : "text-muted hover:text-foreground hover:bg-accent/40"
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+          {!loading && libTab === "recent" && <LibraryOverviewBand overview={overview} />}
+        </>
       )}
 
       <div className="flex-1 overflow-y-auto px-1.5 py-2">
@@ -400,11 +405,7 @@ export function Library({
             onNotice={setNotice}
           />
         ) : localFiles.length === 0 && myCloudOnly.length === 0 ? (
-          <div className="px-2 py-4 text-[12px] text-muted leading-relaxed">
-            No files yet. Open one (⌘O) or drag <code>.md</code> files here —
-            everything you add lives in your library, on this device, online
-            or off.
-          </div>
+          <RecentEmptyState onOpenFile={onOpenFile} onShowFiles={() => pickTab("files")} />
         ) : (
           <>
             {localFiles.length > 0 && (
@@ -473,6 +474,72 @@ export function Library({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function LibraryOverviewBand({ overview }: { overview: LibraryOverview }) {
+  return (
+    <div className="shrink-0 border-b border-border/60 px-2.5 py-2">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-wide text-muted">Documents</span>
+        <span
+          className={`text-[10.5px] ${
+            overview.needsAttention > 0 ? "text-[var(--status-yellow)]" : "text-muted"
+          }`}
+        >
+          {overview.needsAttention > 0 ? `${overview.needsAttention} need attention` : "All clear"}
+        </span>
+      </div>
+      <div className="mt-1.5 grid grid-cols-3 gap-1">
+        <LibraryMetric label="Device" value={overview.onDevice} />
+        <LibraryMetric label="Synced" value={overview.synced} />
+        <LibraryMetric label="Shared" value={overview.shared} />
+      </div>
+      {overview.cloudOnly > 0 && (
+        <div className="mt-1.5 text-[10.5px] text-muted">
+          {overview.cloudOnly} cloud-only {overview.cloudOnly === 1 ? "doc" : "docs"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LibraryMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border border-border/70 bg-background/35 px-1.5 py-1">
+      <div className="text-[13px] leading-none text-foreground tabular-nums">{value}</div>
+      <div className="mt-0.5 text-[9px] uppercase tracking-wide text-muted">{label}</div>
+    </div>
+  );
+}
+
+function RecentEmptyState({
+  onOpenFile,
+  onShowFiles,
+}: {
+  onOpenFile: () => void;
+  onShowFiles: () => void;
+}) {
+  return (
+    <div className="px-2 py-3">
+      <div className="rounded-md border border-border/70 bg-background/40 px-2.5 py-2.5">
+        <div className="text-[12px] font-medium text-foreground">No recent files</div>
+        <div className="mt-2 flex items-center gap-1.5">
+          <button
+            onClick={onOpenFile}
+            className="rounded-md bg-accent px-2 py-1 text-[11px] text-foreground hover:opacity-90"
+          >
+            Open file
+          </button>
+          <button
+            onClick={onShowFiles}
+            className="rounded-md border border-border px-2 py-1 text-[11px] text-muted hover:bg-accent/40 hover:text-foreground"
+          >
+            Files
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

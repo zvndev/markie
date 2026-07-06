@@ -22,6 +22,7 @@ import { TerminalPanel } from "@/components/terminal-panel";
 import { TERMINAL_ENABLED } from "@/lib/features";
 import {
   applyColorMode,
+  colorModeForThemeId,
   getColorMode,
   watchSystemColorMode,
 } from "@/lib/color-mode";
@@ -693,9 +694,14 @@ export default function Home() {
         group: "Theme" as const,
         keywords: "dark light color style",
         run: () => {
-          const store = loadThemeStore();
-          saveThemeStore({ ...store, activeId: t.id });
-          applyTheme(t.tokens);
+          const mode = colorModeForThemeId(t.id);
+          if (mode) {
+            applyColorMode(mode);
+          } else {
+            const store = loadThemeStore();
+            saveThemeStore({ ...store, activeId: t.id });
+            applyTheme(t.tokens);
+          }
           pushCloudThemes();
         },
       })),

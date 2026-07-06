@@ -10,6 +10,7 @@ import {
 } from "./theme";
 
 export type ColorMode = "system" | "light" | "dark";
+export const COLOR_MODE_CHANGED_EVENT = "markie:color-mode-changed";
 
 const MODE_KEY = "markie.colormode.v1";
 
@@ -35,6 +36,12 @@ export function resolveColorMode(mode: ColorMode): "light" | "dark" {
   return mode;
 }
 
+export function colorModeForThemeId(themeId: string): Exclude<ColorMode, "system"> | null {
+  if (themeId === MARKIE_LIGHT.id) return "light";
+  if (themeId === MARKIE_DARK.id) return "dark";
+  return null;
+}
+
 // Apply the resolved mode by switching the active built-in theme.
 export function applyColorMode(mode: ColorMode): void {
   try {
@@ -50,6 +57,13 @@ export function applyColorMode(mode: ColorMode): void {
   const store = loadThemeStore();
   saveThemeStore({ ...store, activeId: preset.id });
   applyTheme(preset.tokens);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent(COLOR_MODE_CHANGED_EVENT, {
+        detail: { mode, resolved },
+      })
+    );
+  }
 }
 
 // Keep "system" in sync with live OS changes; returns an unsubscribe fn.

@@ -977,3 +977,26 @@
 - blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
   are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
   approval remain human-gated.
+
+## 2026-07-05 21:41 EDT — terminal: progressed
+- did: Tightened theme-control consistency across the renderer. Built-in theme commands now route
+  through `applyColorMode`, the color-mode helper emits a renderer event with the chosen and
+  resolved mode, and the toolbar subscribes so its active System/Light/Dark state follows theme
+  changes triggered outside the toolbar. This keeps stored color mode, active built-in theme,
+  document CSS variables, toolbar state, and command-palette theme actions aligned.
+- evidence: Actual Electron app inspected through Computer Use at `app://markie/index.html` after
+  rebuilding and reloading the static bundle. The editor and Library were visible in light mode, and
+  the Library showed the default `~/Documents/Markie` workspace as ready. CDP reported
+  `markie.colormode.v1=light`, `activeId=markie-light`, no `dark` class, and light CSS variables
+  (`--background: #f8fafc`, `--surface: #eef2f6`, `--foreground: #18181b`). `npm test --
+  src/lib/color-mode.test.ts src/lib/theme.test.ts` passed 2 files / 13 tests. `npm run lint`
+  passed. `npm run build` passed. `npm run visual:guard:theme` passed with zero findings across
+  shell, content, and overlay/panel samples. `npm run release:preflight` passed, including
+  renderer/Electron tests 25 files / 150 tests, MCP tests 19 tests, server tests 35 tests, lint,
+  static build, Windows workflow checks, Electron desktop support checks, and release docs checks.
+- next: Continue native Windows workflow execution only after the ahead commits are pushed with
+  approval, and continue signed/notarized update feed plus public release work only with explicit
+  release approval.
+- blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
+  are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
+  approval remain human-gated.

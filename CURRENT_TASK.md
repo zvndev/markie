@@ -1,16 +1,16 @@
-# Current Task - Platform-scoped desktop update checks
+# Current Task - Theme control consistency
 
 ## Task
-Make packaged desktop update behavior defensible across macOS, Windows, and Linux by extracting and
-testing the update-feed policy and keeping non-macOS local packages away from the macOS production
-feed.
+Make theming behave consistently across toolbar buttons, command-palette built-in theme commands,
+stored color mode, CSS variables, and the visible Library/editor surfaces.
 
 ## Acceptance Criteria
-1. Packaged macOS remains the only platform that can set up `electron-updater`.
-2. Packaged Windows/Linux manual update checks return an explicit unsupported-platform message.
-3. `electron/main.js` delegates update support decisions to a side-effect-free helper.
-4. Release preflight requires the update policy helper, main-process wiring, and runtime docs.
-5. Focused update-policy tests and full local release preflight pass.
+1. Applying built-in light/dark themes through non-toolbar paths updates the same color-mode state
+   as the toolbar buttons.
+2. Toolbar active state follows color-mode changes triggered elsewhere in the renderer.
+3. Light and dark CSS variables remain readable across editor, Library, and overlay surfaces.
+4. The live Electron app visibly switches into light mode and shows the default Library workspace.
+5. Focused theme tests, visual guard, build/lint, and full local release preflight pass.
 
 ## Scope Guard
 Do not push, publish, deploy, sign/notarize, change release credentials, or run production update

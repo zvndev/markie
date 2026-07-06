@@ -4,7 +4,12 @@ import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import type { PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI } from "@/lib/electron";
 import { initials, type PeerUser } from "@/lib/collab";
-import { getColorMode, applyColorMode, type ColorMode } from "@/lib/color-mode";
+import {
+  COLOR_MODE_CHANGED_EVENT,
+  getColorMode,
+  applyColorMode,
+  type ColorMode,
+} from "@/lib/color-mode";
 
 type ViewMode = "edit" | "preview" | "split";
 
@@ -57,6 +62,15 @@ export function Toolbar({
     setColorMode(m);
     applyColorMode(m);
   };
+
+  useEffect(() => {
+    const syncColorMode = (event: Event) => {
+      const mode = (event as CustomEvent<{ mode?: ColorMode }>).detail?.mode;
+      setColorMode(mode ?? getColorMode());
+    };
+    window.addEventListener(COLOR_MODE_CHANGED_EVENT, syncColorMode);
+    return () => window.removeEventListener(COLOR_MODE_CHANGED_EVENT, syncColorMode);
+  }, []);
 
   // Clear the macOS window buttons (hiddenInset traffic lights at x:14).
   // useSyncExternalStore reads the never-changing platform hydration-safely.

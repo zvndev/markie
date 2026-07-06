@@ -904,3 +904,26 @@
 - blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
   are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
   approval remain human-gated.
+
+## 2026-07-05 21:24 EDT — terminal: progressed
+- did: Added visual proof to packaged desktop launch evidence. Both the generic desktop launch smoke
+  and the Windows launch smoke now capture `screenshot.png` through CDP after the renderer probe
+  passes, persist it beside `launch-smoke.json`, and include screenshot metadata in the JSON
+  artifact. The Windows GitHub workflow now uploads both files, and release preflight requires the
+  screenshot path in the workflow/docs contract. README and release docs now list the mac launch
+  smoke and explain that native launch evidence includes the screenshot.
+- evidence: `node --check scripts/windows-launch-smoke.mjs` passed. `node --check
+  scripts/desktop-launch-smoke.mjs` passed. `npm test -- electron/desktop-launch-smoke.test.ts
+  electron/windows-launch-smoke.test.ts electron/release-preflight.test.ts` passed 3 files / 16
+  tests. `npm run electron:smoke:mac:launch` launched
+  `dist/mac-arm64/Markie.app/Contents/MacOS/Markie`, validated `Markie — Markdown Viewer` at
+  `document.readyState=complete`, and wrote a 2560x1640 PNG screenshot with the polished
+  Northstar Sprint Brief editor visible. `npm run release:preflight` passed, including
+  renderer/Electron tests 23 files / 138 tests, MCP tests 19 tests, server tests 35 tests, lint,
+  static build, Windows workflow checks, Electron desktop support checks, and release docs checks.
+- next: Continue native Windows workflow execution only after the ahead commits are pushed with
+  approval, and continue signed/notarized update feed plus public release work only with explicit
+  release approval.
+- blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
+  are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
+  approval remain human-gated.

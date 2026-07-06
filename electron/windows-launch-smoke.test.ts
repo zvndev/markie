@@ -84,6 +84,7 @@ describe("Windows launch smoke", () => {
       target,
       probe,
       validation: { ok: true, failures: [] },
+      screenshot: { fileName: "screenshot.png", contentType: "image/png", bytes: 1234 },
       generatedAt: "2026-07-04T20:00:00.000Z",
       platform: "win32",
       arch: "x64",
@@ -113,6 +114,7 @@ describe("Windows launch smoke", () => {
       target,
       probe,
       validation: { ok: true, failures: [] },
+      screenshot: { fileName: "screenshot.png", contentType: "image/png", bytes: 1234 },
     });
   });
 

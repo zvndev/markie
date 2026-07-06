@@ -7,10 +7,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostSmokeMode, verifyPackageLayout } from "./package-smoke.mjs";
-import { selectPageTarget, validateRendererProbe } from "./windows-launch-smoke.mjs";
+import { capturePageScreenshot, selectPageTarget, validateRendererProbe } from "./windows-launch-smoke.mjs";
 
 const DEFAULT_PRODUCT_NAME = "Markie";
 const DEFAULT_TIMEOUT_MS = 45000;
+const SCREENSHOT_FILE_NAME = "screenshot.png";
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function readPackageMetadata(baseDir) {
@@ -66,6 +67,7 @@ export function buildDesktopLaunchSmokeArtifact({
   target,
   probe,
   validation,
+  screenshot,
   generatedAt = new Date().toISOString(),
   platform = process.platform,
   arch = process.arch,
@@ -103,6 +105,7 @@ export function buildDesktopLaunchSmokeArtifact({
     target,
     probe,
     validation: validation || null,
+    screenshot: screenshot || null,
   };
 }
 
@@ -266,12 +269,23 @@ function stamp() {
   return new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 }
 
-async function writeArtifact(baseDir, artifact) {
+async function writeArtifact(baseDir, artifact, screenshotPng) {
   const artifactDir = path.join(baseDir, ".autoloop", "runs", `desktop-launch-smoke-${artifact.package.profile}-${stamp()}`);
   await mkdir(artifactDir, { recursive: true });
   const artifactPath = path.join(artifactDir, "launch-smoke.json");
-  await writeFile(artifactPath, `${JSON.stringify({ ...artifact, artifactPath }, null, 2)}\n`);
-  return artifactPath;
+  const persistedArtifact = { ...artifact, artifactPath };
+  if (screenshotPng) {
+    const screenshotPath = path.join(artifactDir, SCREENSHOT_FILE_NAME);
+    await writeFile(screenshotPath, screenshotPng);
+    persistedArtifact.screenshot = {
+      ...(artifact.screenshot || {}),
+      path: screenshotPath,
+      bytes: screenshotPng.length,
+      contentType: "image/png",
+    };
+  }
+  await writeFile(artifactPath, `${JSON.stringify(persistedArtifact, null, 2)}\n`);
+  return persistedArtifact;
 }
 
 export async function runDesktopLaunchSmoke({
@@ -323,6 +337,7 @@ export async function runDesktopLaunchSmoke({
     );
     cdp = connected.cdp;
     const renderer = await probeRenderer(cdp, timeoutMs);
+    const screenshotPng = await capturePageScreenshot(cdp);
     const artifact = buildDesktopLaunchSmokeArtifact({
       baseDir,
       distDir,
@@ -332,9 +347,13 @@ export async function runDesktopLaunchSmoke({
       target: connected.target,
       probe: renderer.probe,
       validation: renderer.validation,
+      screenshot: {
+        fileName: SCREENSHOT_FILE_NAME,
+        contentType: "image/png",
+        bytes: screenshotPng.length,
+      },
     });
-    artifact.artifactPath = await writeArtifact(baseDir, artifact);
-    return artifact;
+    return await writeArtifact(baseDir, artifact, screenshotPng);
   } finally {
     cdp?.close();
     await stopProcessTree(child);
@@ -388,6 +407,9 @@ export async function runDesktopLaunchSmokeCli(
     console.log(`[desktop:launch-smoke] launched ${path.relative(baseDir, result.executable)}`);
     console.log(`[desktop:launch-smoke] renderer ok: ${result.probe.title} (${result.probe.readyState})`);
     console.log(`[desktop:launch-smoke] evidence: ${path.relative(baseDir, result.artifactPath)}`);
+    if (result.screenshot?.path) {
+      console.log(`[desktop:launch-smoke] screenshot: ${path.relative(baseDir, result.screenshot.path)}`);
+    }
   }
   return result;
 }

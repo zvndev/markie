@@ -113,6 +113,7 @@ describe("desktop launch smoke", () => {
       target: { type: "page", title: "Markie", url: "app://markie/index.html" },
       probe: { title: "Markie", readyState: "complete", url: "app://markie/index.html", hasEditor: true },
       validation: { ok: true, failures: [] },
+      screenshot: { fileName: "screenshot.png", contentType: "image/png", bytes: 4321 },
       generatedAt: "2026-07-05T00:00:00.000Z",
       platform: "darwin",
       arch: "arm64",
@@ -137,6 +138,7 @@ describe("desktop launch smoke", () => {
         launchMode: { mode: "host-native" },
       },
       validation: { ok: true, failures: [] },
+      screenshot: { fileName: "screenshot.png", contentType: "image/png", bytes: 4321 },
     });
   });
 });

@@ -61,5 +61,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-launch-smoke
-          path: .autoloop/runs/windows-launch-smoke-*/launch-smoke.json
+          path: |
+            .autoloop/runs/windows-launch-smoke-*/launch-smoke.json
+            .autoloop/runs/windows-launch-smoke-*/screenshot.png
           if-no-files-found: ignore

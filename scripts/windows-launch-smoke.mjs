@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const DEFAULT_PRODUCT_NAME = "Markie";
 const DEFAULT_TIMEOUT_MS = 45000;
+const SCREENSHOT_FILE_NAME = "screenshot.png";
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export function assertWindowsHost(platform = process.platform) {
@@ -62,6 +63,7 @@ export function buildWindowsLaunchSmokeArtifact({
   target,
   probe,
   validation,
+  screenshot,
   generatedAt = new Date().toISOString(),
   platform = process.platform,
   arch = process.arch,
@@ -97,6 +99,7 @@ export function buildWindowsLaunchSmokeArtifact({
     target,
     probe,
     validation: validation || null,
+    screenshot: screenshot || null,
   };
 }
 
@@ -251,6 +254,19 @@ async function probeRenderer(cdp, timeoutMs) {
   );
 }
 
+export async function capturePageScreenshot(cdp) {
+  await cdp.send("Page.bringToFront").catch(() => null);
+  const result = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+    captureBeyondViewport: false,
+  });
+  if (typeof result?.data !== "string" || result.data.length === 0) {
+    throw new Error("CDP did not return screenshot data");
+  }
+  return Buffer.from(result.data, "base64");
+}
+
 function killWindowsProcessTree(pid) {
   if (!pid) return;
   const result = spawnSync("taskkill", ["/pid", String(pid), "/t", "/f"], {
@@ -270,12 +286,23 @@ function stamp() {
   return new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 }
 
-async function writeArtifact(baseDir, artifact) {
+async function writeArtifact(baseDir, artifact, screenshotPng) {
   const artifactDir = path.join(baseDir, ".autoloop", "runs", `windows-launch-smoke-${stamp()}`);
   await mkdir(artifactDir, { recursive: true });
   const artifactPath = path.join(artifactDir, "launch-smoke.json");
-  await writeFile(artifactPath, `${JSON.stringify({ ...artifact, artifactPath }, null, 2)}\n`);
-  return artifactPath;
+  const persistedArtifact = { ...artifact, artifactPath };
+  if (screenshotPng) {
+    const screenshotPath = path.join(artifactDir, SCREENSHOT_FILE_NAME);
+    await writeFile(screenshotPath, screenshotPng);
+    persistedArtifact.screenshot = {
+      ...(artifact.screenshot || {}),
+      path: screenshotPath,
+      bytes: screenshotPng.length,
+      contentType: "image/png",
+    };
+  }
+  await writeFile(artifactPath, `${JSON.stringify(persistedArtifact, null, 2)}\n`);
+  return persistedArtifact;
 }
 
 export async function runWindowsLaunchSmoke({
@@ -328,6 +355,7 @@ export async function runWindowsLaunchSmoke({
     );
     cdp = connected.cdp;
     const renderer = await probeRenderer(cdp, timeoutMs);
+    const screenshotPng = await capturePageScreenshot(cdp);
     const artifact = buildWindowsLaunchSmokeArtifact({
       baseDir,
       distDir,
@@ -337,9 +365,13 @@ export async function runWindowsLaunchSmoke({
       target: connected.target,
       probe: renderer.probe,
       validation: renderer.validation,
+      screenshot: {
+        fileName: SCREENSHOT_FILE_NAME,
+        contentType: "image/png",
+        bytes: screenshotPng.length,
+      },
     });
-    artifact.artifactPath = await writeArtifact(baseDir, artifact);
-    return artifact;
+    return await writeArtifact(baseDir, artifact, screenshotPng);
   } finally {
     cdp?.close();
     killWindowsProcessTree(child.pid);
@@ -391,6 +423,9 @@ export async function runWindowsLaunchSmokeCli(
     console.log(`[windows:launch-smoke] launched ${path.relative(baseDir, result.executable)}`);
     console.log(`[windows:launch-smoke] renderer ok: ${result.probe.title} (${result.probe.readyState})`);
     console.log(`[windows:launch-smoke] evidence: ${path.relative(baseDir, result.artifactPath)}`);
+    if (result.screenshot?.path) {
+      console.log(`[windows:launch-smoke] screenshot: ${path.relative(baseDir, result.screenshot.path)}`);
+    }
   }
   return result;
 }

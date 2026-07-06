@@ -91,6 +91,7 @@ const REQUIRED_WINDOWS_WORKFLOW_SNIPPETS = [
   "npm run electron:smoke:win:launch",
   "actions/upload-artifact@v4",
   ".autoloop/runs/windows-launch-smoke-*/launch-smoke.json",
+  ".autoloop/runs/windows-launch-smoke-*/screenshot.png",
 ];
 
 const REQUIRED_WINDOWS_WORKFLOW_PATHS = [
@@ -134,6 +135,7 @@ const REQUIRED_RELEASE_DOC_SNIPPETS = [
   "Markie-<version>-x64.AppImage",
   "npm run electron:smoke:mac:launch",
   "npm run electron:smoke:win:launch",
+  "screenshot.png",
   "npm run release:preflight",
   "--publish never",
   "does **not** mean an artifact is\nsigned, notarized, published, uploaded, deployed, or approved",

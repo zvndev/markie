@@ -72,14 +72,16 @@ npm run electron:smoke:linux
 The macOS local package path also runs the `build/preflight.cjs` window smoke
 gate during `afterPack`; `electron:smoke:mac:launch` additionally starts
 `dist/mac-arm64/Markie.app`, connects over CDP, and writes packaged-renderer
-evidence under `.autoloop/runs/desktop-launch-smoke-*`. Apple Silicon hosts
-with Rosetta can launch-smoke the Intel macOS package through the same generic
-desktop smoke script when targeting `--arch x64`. Windows gets deterministic
-structure checks locally, then `electron:smoke:win:launch` proves
+evidence under `.autoloop/runs/desktop-launch-smoke-*`, including
+`launch-smoke.json` and `screenshot.png`. Apple Silicon hosts with Rosetta can
+launch-smoke the Intel macOS package through the same generic desktop smoke
+script when targeting `--arch x64`. Windows gets deterministic structure checks
+locally, then `electron:smoke:win:launch` proves
 `dist/win-unpacked/Markie.exe` starts and loads the packaged renderer on a
 Windows host. Its uploaded `launch-smoke.json` evidence includes the Windows
 host, package version, unpacked app path, CDP target, renderer probe, and
-validation result. The
+validation result, and its uploaded `screenshot.png` preserves the visible
+packaged window. The
 `.github/workflows/windows-launch-smoke.yml` workflow runs that sequence on
 `windows-latest` without signing, publishing, uploading, or release credentials.
 Linux currently gets deterministic structure checks locally; OS-level launch

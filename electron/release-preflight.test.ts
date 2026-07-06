@@ -87,6 +87,7 @@ describe("release preflight", () => {
         "Markie-<version>-x64.AppImage",
         "npm run electron:smoke:mac:launch",
         "npm run electron:smoke:win:launch",
+        "screenshot.png",
         "--publish never",
       ])
     );
@@ -102,6 +103,7 @@ describe("release preflight", () => {
         "npm run electron:pack:win",
         "npm run electron:smoke:win",
         "npm run electron:smoke:win:launch",
+        ".autoloop/runs/windows-launch-smoke-*/screenshot.png",
       ]),
       paths: expect.arrayContaining([
         ".github/workflows/windows-launch-smoke.yml",

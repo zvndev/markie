@@ -75,6 +75,7 @@ npm run electron:pack:mac:x64
 npm run electron:pack:win
 npm run electron:pack:linux
 npm run electron:smoke:mac:arm64
+npm run electron:smoke:mac:launch # macOS Apple Silicon host only
 npm run electron:smoke:mac:x64
 npm run electron:smoke:win
 npm run electron:smoke:win:launch # Windows host only
@@ -85,9 +86,10 @@ The local pack/build scripts use a certificate-free electron-builder wrapper and
 pass `--publish never`; `npm run electron:release` is the only Developer ID
 signing/publishing path. The Windows unpacked package also installs the matching
 Electron `better-sqlite3` Windows prebuild before `electron:smoke:win` runs.
-Native Windows launch evidence is handled by `electron:smoke:win:launch` or the
-`Windows launch smoke` workflow on `windows-latest`; it is not claimed from a
-Mac structure check.
+Native macOS and Windows launch evidence includes `launch-smoke.json` plus a
+captured `screenshot.png`. Windows launch evidence is handled by
+`electron:smoke:win:launch` or the `Windows launch smoke` workflow on
+`windows-latest`; it is not claimed from a Mac structure check.
 After cross-architecture local packaging, the wrapper restores the development
 `better-sqlite3` native module for your current Electron host. If Library or
 Files ever get stuck after packaging, run `npm run native:restore`.

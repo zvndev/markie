@@ -1,16 +1,16 @@
-# Current Task - Cross-platform launch intent hardening
+# Current Task - Platform-scoped desktop update checks
 
 ## Task
-Make Windows/mac desktop launch behavior more defensible by extracting and testing OS launch
-intent parsing and by fixing the local Windows package path that was trying to cross-rebuild
-native modules from source on macOS.
+Make packaged desktop update behavior defensible across macOS, Windows, and Linux by extracting and
+testing the update-feed policy and keeping non-macOS local packages away from the macOS production
+feed.
 
 ## Acceptance Criteria
-1. Windows/Linux argv handoff for Markie deep links and openable files is covered by side-effect-free tests.
-2. macOS-only default Markdown registration has explicit unsupported fallback coverage for Windows/Linux.
-3. `electron/main.js` uses the shared desktop intent helper for cold-start and second-instance launch inputs.
-4. `electron:pack:win` succeeds locally without native source cross-compilation and `electron:smoke:win` passes.
-5. Fresh mac packaged launch smoke and full local release preflight pass.
+1. Packaged macOS remains the only platform that can set up `electron-updater`.
+2. Packaged Windows/Linux manual update checks return an explicit unsupported-platform message.
+3. `electron/main.js` delegates update support decisions to a side-effect-free helper.
+4. Release preflight requires the update policy helper, main-process wiring, and runtime docs.
+5. Focused update-policy tests and full local release preflight pass.
 
 ## Scope Guard
 Do not push, publish, deploy, sign/notarize, change release credentials, or run production update

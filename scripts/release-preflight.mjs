@@ -37,6 +37,7 @@ const REQUIRED_FILES = [
   "scripts/windows-launch-smoke.mjs",
   ".github/workflows/windows-launch-smoke.yml",
   "electron/main.js",
+  "electron/update-policy.js",
   "electron/preload.js",
   "mcp/markie-mcp.mjs",
   "mcp/lib.mjs",
@@ -108,11 +109,14 @@ const REQUIRED_WINDOWS_WORKFLOW_PATHS = [
 ];
 
 const REQUIRED_ELECTRON_MAIN_SNIPPETS = [
+  'const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");',
   'let updateState = "idle"',
   "let manualUpdateCheck = false",
   "async function requestUpdateCheck",
   'requestUpdateCheck({ manual = false } = {})',
-  'return { ok: false, reason: "dev" }',
+  "desktopUpdatePolicy({",
+  "return { ok: false, reason: policy.reason };",
+  "shouldSetupAutoUpdate({ isDev, isPackaged: app.isPackaged, platform: process.platform })",
   "autoUpdater.checkForUpdates()",
   'buttons: ["Restart & Update", "Later"]',
   "autoUpdater.quitAndInstall()",
@@ -137,6 +141,7 @@ const REQUIRED_RELEASE_DOC_SNIPPETS = [
   "npm run electron:smoke:win:launch",
   "screenshot.png",
   "npm run release:preflight",
+  "Windows and Linux update checks are disabled",
   "--publish never",
   "does **not** mean an artifact is\nsigned, notarized, published, uploaded, deployed, or approved",
 ];

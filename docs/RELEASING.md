@@ -162,11 +162,17 @@ package.json); the app reads the feed back over public HTTPS at
 
 ## How auto-update works at runtime
 
-- On launch (+10s) and every 6h, the app checks `latest-mac.yml` on the feed.
+- Auto-update is currently enabled only for packaged macOS builds.
+  Windows and Linux update checks are disabled at runtime so local packages do
+  not read the macOS production feed.
+- On macOS launch (+10s) and every 6h, the app checks `latest-mac.yml` on the feed.
 - A newer build downloads in the background (`update-downloaded`), and the
   renderer shows a "Restart to update" toast (`UpdateToast`).
 - Squirrel.Mac swaps the app on quit; updates only install if signed+notarized,
   which is why the zip target and notarization are required.
+- Manual "Check for Updates" on Windows/Linux shows an explicit unsupported
+  platform message until signing, feed files, and public download URLs are
+  approved.
 
 ## Sharing a build manually
 

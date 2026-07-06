@@ -15,6 +15,7 @@ const url = require("url");
 const { autoUpdater } = require("electron-updater");
 const { shareBaseFromSrc } = require("./share-origin");
 const { createFileGrants } = require("./file-grants");
+const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
 const {
   OPENABLE,
   findDeepLinkArg,
@@ -585,10 +586,10 @@ ipcMain.handle("mcp-info", () => {
   };
 });
 
-// ── Auto-update (electron-updater → Squirrel.Mac) ──
-// Checks the generic feed (see package.json "publish") for a newer signed +
-// notarized build, downloads it in the background, and installs on quit. The
-// renderer is notified so it can offer a "Restart to update" prompt.
+// ── Auto-update (electron-updater → macOS feed) ──
+// The current production feed is signed + notarized macOS only. Windows and
+// Linux packages can be built and smoke-tested locally, but they must not touch
+// the macOS feed until their signing, feed files, and public URLs are approved.
 let updateState = "idle"; // idle | checking | available | downloading | ready | error
 let manualUpdateCheck = false;
 function sendUpdate(channel, payload) {
@@ -603,15 +604,20 @@ async function showUpdateMessage(options) {
 }
 
 async function requestUpdateCheck({ manual = false } = {}) {
-  if (isDev || !app.isPackaged) {
+  const policy = desktopUpdatePolicy({
+    isDev,
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+  });
+  if (!policy.supported) {
     if (manual) {
       await showUpdateMessage({
         type: "info",
-        message: "Updates are checked in packaged Markie builds.",
-        detail: "This development build cannot update itself. Build and release Markie with electron-builder to test the production update feed.",
+        message: policy.message,
+        detail: policy.detail,
       });
     }
-    return { ok: false, reason: "dev" };
+    return { ok: false, reason: policy.reason };
   }
 
   if (updateState === "ready") {
@@ -659,8 +665,9 @@ async function requestUpdateCheck({ manual = false } = {}) {
 }
 
 function setupAutoUpdate() {
-  // Only meaningful for packaged builds; in dev there's no app bundle to swap.
-  if (isDev || !app.isPackaged) return;
+  if (!shouldSetupAutoUpdate({ isDev, isPackaged: app.isPackaged, platform: process.platform })) {
+    return;
+  }
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 

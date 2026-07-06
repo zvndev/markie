@@ -958,3 +958,22 @@
 - blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
   are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
   approval remain human-gated.
+
+## 2026-07-05 21:35 EDT — terminal: progressed
+- did: Made desktop update checks platform-scoped instead of generic packaged behavior. Extracted
+  `electron/update-policy.js` so packaged macOS remains the only updater-supported platform,
+  packaged Windows/Linux manual checks return an explicit `unsupported-platform` message, and
+  `setupAutoUpdate` cannot point local non-macOS builds at the macOS production feed. Updated
+  release preflight, release docs, and the cross-platform audit checklist to require and document
+  that runtime boundary.
+- evidence: `node --check electron/main.js` passed. `node --check electron/update-policy.js`
+  passed. `npm test -- electron/update-policy.test.ts electron/release-preflight.test.ts` passed
+  2 files / 11 tests. `npm run release:preflight` passed, including renderer/Electron tests
+  25 files / 149 tests, MCP tests 19 tests, server tests 35 tests, lint, static build, Windows
+  workflow checks, Electron desktop support checks, and release docs checks.
+- next: Continue native Windows workflow execution only after the ahead commits are pushed with
+  approval, and continue signed/notarized update feed plus public release work only with explicit
+  release approval.
+- blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
+  are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
+  approval remain human-gated.

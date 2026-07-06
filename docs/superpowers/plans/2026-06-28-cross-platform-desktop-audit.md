@@ -77,9 +77,12 @@ app. The highest-impact safe path is:
       x64 `nsis` and `zip`; Linux includes x64 `AppImage` and `deb`.
 - [ ] `package.json` `build.publish` points to the `mac` release path only. Treat new publish paths
       as release/deploy work and keep them human-gated.
-- [ ] `electron-updater` comments and feed assumptions in `electron/main.js` are Mac feed oriented.
+- [x] `electron-updater` comments and feed assumptions in `electron/main.js` are Mac feed oriented.
       Cross-platform updater work should wait until platform artifact names and feed files are
       defined.
+      Completed 2026-07-05: update feed support is now centralized in `electron/update-policy.js`;
+      auto-update setup runs only for packaged macOS, and packaged Windows/Linux manual checks
+      return an explicit `unsupported-platform` message instead of touching the macOS feed.
 
 ### Docs And Download Page
 - [x] `README.md` says files live on a Mac, Browse indexes files on a Mac, install is Apple Silicon

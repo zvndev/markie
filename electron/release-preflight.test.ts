@@ -34,6 +34,7 @@ describe("release preflight", () => {
         "scripts/desktop-launch-smoke.mjs",
         "scripts/windows-launch-smoke.mjs",
         ".github/workflows/windows-launch-smoke.yml",
+        "electron/update-policy.js",
         "public/icon.icns",
         "mcp/markie-mcp.mjs",
         "server/package.json",
@@ -88,6 +89,7 @@ describe("release preflight", () => {
         "npm run electron:smoke:mac:launch",
         "npm run electron:smoke:win:launch",
         "screenshot.png",
+        "Windows and Linux update checks are disabled",
         "--publish never",
       ])
     );
@@ -119,8 +121,11 @@ describe("release preflight", () => {
   it("keeps desktop update checks user-visible and packaged menus clean", () => {
     expect(validateElectronMainDesktopSupport(rootDir)).toEqual(
       expect.arrayContaining([
+        'const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");',
         "async function requestUpdateCheck",
-        'return { ok: false, reason: "dev" }',
+        "desktopUpdatePolicy({",
+        "return { ok: false, reason: policy.reason };",
+        "shouldSetupAutoUpdate({ isDev, isPackaged: app.isPackaged, platform: process.platform })",
         "autoUpdater.checkForUpdates()",
         'buttons: ["Restart & Update", "Later"]',
         'label: "Check for Updates…"',

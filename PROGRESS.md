@@ -1067,3 +1067,25 @@
 - blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
   are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
   approval remain human-gated.
+
+## 2026-07-05 21:58 EDT — terminal: progressed
+- did: Made Share dialog permission state explicit and server-derived. Access copy now separates
+  "checking" from "unavailable", empty people/public-link copy is role-aware, and owner-only
+  handlers for invites, removals, public links, and theme pinning refuse to run unless `canManage`
+  is confirmed. This prevents the sharing UI from implying ownership or firing management actions
+  when access failed to load.
+- evidence: `npm test -- src/lib/share-access-view.test.ts` passed 1 file / 7 tests.
+  `node --experimental-strip-types --test server/src/share-access.test.ts
+  server/src/share-routes.test.ts server/src/shared-by-me.test.ts` passed 9 tests. `npm run
+  release:preflight` passed, including renderer/Electron tests 26 files / 160 tests, MCP tests 19
+  tests, server tests 35 tests, lint, static build, Windows workflow checks, Electron desktop
+  support checks, and release docs checks. `npm run visual:guard:theme` passed with zero findings
+  across shell, content, and overlay/panel samples. The live Electron app was inspected through
+  Computer Use at `app://markie/index.html`; the Library, default `~/Documents/Markie` workspace,
+  toolbar, and editor content were visible in light mode.
+- next: Continue native Windows workflow execution only after the ahead commits are pushed with
+  approval, and continue signed/notarized update feed plus public release work only with explicit
+  release approval.
+- blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
+  are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
+  approval remain human-gated.

@@ -1,16 +1,16 @@
-# Current Task - Pending invite permission scope
+# Current Task - Share dialog permission states
 
 ## Task
-Tighten sharing visibility so pending invite emails are treated as owner-only management state,
-while joined collaborators can still see the people who already have access.
+Make the Share dialog reflect server-derived permission state precisely, including the difference
+between still-checking access, loaded owner/editor/viewer roles, and unavailable access.
 
 ## Acceptance Criteria
-1. `GET /api/docs/:id/shares` still allows owners, editors, and viewers to read joined
-   collaborators for a document they can read.
-2. Pending invite rows are included only for owners.
-3. Viewers and editors cannot infer pending invite emails from the share-member list.
-4. Existing share lifecycle, public-link, access-summary, and shared-by-me tests pass.
-5. Full local release preflight passes without signing, publishing, uploading, or deploying.
+1. Share access copy distinguishes checking access from access that failed to load.
+2. Empty people/public-link copy is role-aware and does not imply ownership when access is
+   unavailable.
+3. Owner-only actions refuse to run unless `canManage` is confirmed by server access.
+4. Focused share-access view tests and server sharing tests pass.
+5. Full local release preflight passes, and the live Electron app still boots for inspection.
 
 ## Scope Guard
 Do not push, publish, deploy, sign/notarize, change release credentials, or run production update

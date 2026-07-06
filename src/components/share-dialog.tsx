@@ -14,6 +14,8 @@ import { findTheme, loadThemeStore } from "@/lib/theme";
 import {
   shareAccessLine,
   shareCapabilityView,
+  shareMembersEmptyLine,
+  sharePublicLinkUnavailableLine,
   shareRoleLabel,
 } from "@/lib/share-access-view";
 
@@ -66,6 +68,7 @@ export function ShareDialog({
   }, [load, docId]);
 
   const toggleThemePin = async () => {
+    if (!canManage) return setError("Only the owner can pin the shared theme.");
     const next = !themePinned;
     setThemePinned(next);
     const store = loadThemeStore();
@@ -85,9 +88,11 @@ export function ShareDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const accessChecking = members === null;
   const canManage = !!access?.canManage;
 
   const handleAdd = async () => {
+    if (!canManage) return setError("Only the owner can invite people.");
     const target = email.trim().toLowerCase();
     if (!target) return;
     setBusy(true);
@@ -111,6 +116,7 @@ export function ShareDialog({
 
   // idOrEmail: member user id, or the email for a pending invite
   const handleRemove = async (idOrEmail: string) => {
+    if (!canManage) return setError("Only the owner can remove access.");
     setBusy(true);
     const ok = await sharesClient.remove(docId, idOrEmail);
     setBusy(false);
@@ -121,6 +127,7 @@ export function ShareDialog({
   };
 
   const createLink = async () => {
+    if (!canManage) return setError("Only the owner can create a public link.");
     setLinkBusy(true);
     setError(null);
     const url = await sharesClient.createPublicLink(docId);
@@ -130,6 +137,7 @@ export function ShareDialog({
   };
 
   const revokeLink = async () => {
+    if (!canManage) return setError("Only the owner can revoke the public link.");
     setLinkBusy(true);
     setError(null);
     const ok = await sharesClient.revokePublicLink(docId);
@@ -173,7 +181,7 @@ export function ShareDialog({
           </button>
         </div>
         <div className="text-[11px] text-muted mb-4 truncate">{fileName}</div>
-        <ShareAccessSummary access={access} />
+        <ShareAccessSummary access={access} checking={accessChecking} />
 
         {canManage && (
           <div className="mb-4">
@@ -268,12 +276,9 @@ export function ShareDialog({
                 }
               />
             ))}
-            {members.length === 0 && !canManage && (
-              <div className="text-[12px] text-muted">Just you so far.</div>
-            )}
-            {members.length === 0 && canManage && (
+            {members.length === 0 && (
               <div className="text-[12px] text-muted">
-                Not shared with anyone yet.
+                {shareMembersEmptyLine(access)}
               </div>
             )}
           </div>
@@ -316,7 +321,7 @@ export function ShareDialog({
             </>
           ) : !canManage ? (
             <div className="text-[11px] text-muted">
-              Only the owner can create a public link.
+              {sharePublicLinkUnavailableLine(access)}
             </div>
           ) : (
             <button
@@ -333,7 +338,13 @@ export function ShareDialog({
   );
 }
 
-function ShareAccessSummary({ access }: { access: ShareAccess | null }) {
+function ShareAccessSummary({
+  access,
+  checking,
+}: {
+  access: ShareAccess | null;
+  checking: boolean;
+}) {
   const capabilities = shareCapabilityView(access);
   return (
     <div className="mb-4 rounded-md border border-border/70 bg-background/40 px-3 py-2.5">
@@ -341,7 +352,7 @@ function ShareAccessSummary({ access }: { access: ShareAccess | null }) {
         <div>
           <div className="text-[10px] uppercase tracking-wide text-muted">Your access</div>
           <div className="mt-0.5 text-[13px] font-medium text-foreground">
-            {shareRoleLabel(access)}
+            {shareRoleLabel(access, checking)}
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -360,7 +371,7 @@ function ShareAccessSummary({ access }: { access: ShareAccess | null }) {
         </div>
       </div>
       <div className="mt-1.5 text-[11px] leading-snug text-muted">
-        {shareAccessLine(access)}
+        {shareAccessLine(access, checking)}
       </div>
     </div>
   );

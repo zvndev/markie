@@ -4,6 +4,33 @@
 > evidence; do not delete history. Move completed items to Done with the verification record.
 
 ## Open
+- [ ] Document and enforce the 3-step radius scale (6/8/12px: cards `rounded-md`, popovers
+      `rounded-lg`, modals `rounded-xl`) and audit remaining one-offs.
+      type: design
+      severity: low
+      rationale: 2026-07-06 design review found radius one-offs (close buttons, mixed panel radii)
+        that read as seams between surfaces; the scale exists implicitly but is not documented.
+      acceptance_criteria: A short design-tokens note records the radius scale, and no interactive
+        surface uses a radius outside it.
+      source: product-designer design review 2026-07-06
+- [ ] Update the light-mode visual audit's injected settings mock to match the sectioned Settings
+      modal (Account/Appearance/Advanced), so its contrast samples track the real surface.
+      type: infra
+      severity: low
+      rationale: scripts/light-mode-visual-audit.mjs injects a hardcoded HTML replica of the old
+        auth-only Settings dialog (~line 470); after the 2026-07-06 Settings rebuild the mock
+        samples copy/structure that no longer exists in the app.
+      acceptance_criteria: The audit's settings sample reflects the tabbed Settings layout and the
+        guard still reports zero findings.
+      source: design-polish verification 2026-07-06
+- [ ] Bump GitHub Actions to non-deprecated majors (checkout/setup-node/upload-artifact) in
+      windows-launch-smoke.yml.
+      type: infra
+      severity: low
+      rationale: Runners annotate Node 20-targeting action versions as deprecated and force Node 24.
+      acceptance_criteria: Workflow runs clean with current action majors and no deprecation
+        annotations.
+      source: Windows launch smoke run 28813065520, 2026-07-06
 - [ ] Approve or revise the context-aware terminal API shape before implementing bundled `markie`
       CLI commands or new MCP current-document tools.
       type: product

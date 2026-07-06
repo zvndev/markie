@@ -31,6 +31,7 @@ describe("release preflight", () => {
         "scripts/local-electron-builder.mjs",
         "scripts/restore-host-native-prebuild.mjs",
         "scripts/package-smoke.mjs",
+        "scripts/desktop-launch-smoke.mjs",
         "scripts/windows-launch-smoke.mjs",
         ".github/workflows/windows-launch-smoke.yml",
         "public/icon.icns",
@@ -52,6 +53,7 @@ describe("release preflight", () => {
         "electron:build:win",
         "electron:build:linux",
         "electron:smoke:mac:arm64",
+        "electron:smoke:mac:launch",
         "electron:smoke:mac:x64",
         "electron:smoke:win",
         "electron:smoke:win:launch",
@@ -83,6 +85,7 @@ describe("release preflight", () => {
         "Markie-<version>-arm64.dmg",
         "Markie-<version>-x64.exe",
         "Markie-<version>-x64.AppImage",
+        "npm run electron:smoke:mac:launch",
         "npm run electron:smoke:win:launch",
         "--publish never",
       ])

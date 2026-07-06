@@ -37,6 +37,7 @@
     "release:preflight": "node scripts/release-preflight.mjs",
     "electron:smoke": "node scripts/package-smoke.mjs",
     "electron:smoke:mac:arm64": "node scripts/package-smoke.mjs --platform mac --arch arm64",
+    "electron:smoke:mac:launch": "node scripts/desktop-launch-smoke.mjs --platform mac --arch arm64",
     "electron:smoke:mac:x64": "node scripts/package-smoke.mjs --platform mac --arch x64",
     "electron:smoke:win": "node scripts/package-smoke.mjs --platform windows --arch x64",
     "electron:smoke:win:launch": "node scripts/windows-launch-smoke.mjs",

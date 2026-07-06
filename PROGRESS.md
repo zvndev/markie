@@ -881,3 +881,26 @@
 - blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
   are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
   approval remain human-gated.
+
+## 2026-07-05 21:19 EDT — terminal: progressed
+- did: Added a host-native packaged desktop launch smoke for mac artifacts. The script reuses the
+  package layout verifier, rejects structure-only host mismatches, launches a compatible unpacked
+  Electron app with a temporary profile and CDP port, probes the renderer for real Markie UI, and
+  writes a launch evidence artifact. Release preflight and release docs now require the mac launch
+  smoke alongside the existing Windows launch smoke path.
+- evidence: `npm test -- electron/desktop-launch-smoke.test.ts electron/package-smoke.test.ts
+  electron/release-preflight.test.ts` passed 3 files / 18 tests. `npm run
+  electron:pack:mac:arm64` built a fresh unsigned `dist/mac-arm64/Markie.app` and its afterPack
+  window smoke loaded `Markie — Markdown Viewer`. `npm run electron:smoke:mac:arm64` passed with
+  host mode `host-native`. `npm run electron:smoke:mac:launch` launched
+  `dist/mac-arm64/Markie.app/Contents/MacOS/Markie`, connected over CDP, and validated
+  `Markie — Markdown Viewer` at `document.readyState=complete` with editor content present.
+  `npm run release:preflight` passed, including renderer/Electron tests 23 files / 138 tests, MCP
+  tests 19 tests, server tests 35 tests, lint, static build, Windows workflow checks, Electron
+  desktop support checks, and release docs checks.
+- next: Continue native Windows workflow execution only after the ahead commits are pushed with
+  approval, and continue signed/notarized update feed plus public release work only with explicit
+  release approval.
+- blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
+  are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
+  approval remain human-gated.

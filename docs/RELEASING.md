@@ -24,7 +24,7 @@ still local outputs, not public releases.
 
 | Platform | Local unpacked pack command | Local artifact build command | Expected download pattern | Required verification |
 | --- | --- | --- | --- | --- |
-| macOS Apple Silicon | `npm run electron:pack:mac:arm64` | `npm run electron:build:mac` | `Markie-<version>-arm64.dmg`, `Markie-<version>-arm64.zip`, `latest-mac.yml` | `npm run electron:smoke:mac:arm64`, `spctl` after signed release only |
+| macOS Apple Silicon | `npm run electron:pack:mac:arm64` | `npm run electron:build:mac` | `Markie-<version>-arm64.dmg`, `Markie-<version>-arm64.zip`, `latest-mac.yml` | `npm run electron:smoke:mac:arm64`, then `npm run electron:smoke:mac:launch` on Apple Silicon |
 | macOS Intel | `npm run electron:pack:mac:x64` | `npm run electron:build:mac` | `Markie-<version>-x64.dmg`, `Markie-<version>-x64.zip`, future feed entry | `npm run electron:smoke:mac:x64` on a Mac host with Rosetta or Intel hardware |
 | Windows x64 | `npm run electron:pack:win` | `npm run electron:build:win` | `Markie-<version>-x64.exe`, `Markie-<version>-x64.zip`, future Windows feed entry | `npm run electron:smoke:win`, then `npm run electron:smoke:win:launch` on Windows |
 | Linux x64 | `npm run electron:pack:linux` | `npm run electron:build:linux` | `Markie-<version>-x64.AppImage`, `Markie-<version>-x64.deb`, future Linux download entry | `npm run electron:smoke:linux`, then OS-level launch on a Linux host before public release |
@@ -62,6 +62,7 @@ making any platform-readiness claim:
 
 ```sh
 npm run electron:smoke:mac:arm64
+npm run electron:smoke:mac:launch   # macOS Apple Silicon host only
 npm run electron:smoke:mac:x64
 npm run electron:smoke:win
 npm run electron:smoke:win:launch   # Windows host only
@@ -69,12 +70,16 @@ npm run electron:smoke:linux
 ```
 
 The macOS local package path also runs the `build/preflight.cjs` window smoke
-gate during `afterPack`; Apple Silicon hosts with Rosetta can launch-smoke the
-Intel macOS package. Windows gets deterministic structure checks locally, then
-`electron:smoke:win:launch` proves `dist/win-unpacked/Markie.exe` starts and
-loads the packaged renderer on a Windows host. Its uploaded `launch-smoke.json`
-evidence includes the Windows host, package version, unpacked app path, CDP
-target, renderer probe, and validation result. The
+gate during `afterPack`; `electron:smoke:mac:launch` additionally starts
+`dist/mac-arm64/Markie.app`, connects over CDP, and writes packaged-renderer
+evidence under `.autoloop/runs/desktop-launch-smoke-*`. Apple Silicon hosts
+with Rosetta can launch-smoke the Intel macOS package through the same generic
+desktop smoke script when targeting `--arch x64`. Windows gets deterministic
+structure checks locally, then `electron:smoke:win:launch` proves
+`dist/win-unpacked/Markie.exe` starts and loads the packaged renderer on a
+Windows host. Its uploaded `launch-smoke.json` evidence includes the Windows
+host, package version, unpacked app path, CDP target, renderer probe, and
+validation result. The
 `.github/workflows/windows-launch-smoke.yml` workflow runs that sequence on
 `windows-latest` without signing, publishing, uploading, or release credentials.
 Linux currently gets deterministic structure checks locally; OS-level launch

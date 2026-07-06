@@ -33,6 +33,7 @@ const REQUIRED_FILES = [
   "scripts/restore-host-native-prebuild.mjs",
   "scripts/install-win-native-prebuild.mjs",
   "scripts/package-smoke.mjs",
+  "scripts/desktop-launch-smoke.mjs",
   "scripts/windows-launch-smoke.mjs",
   ".github/workflows/windows-launch-smoke.yml",
   "electron/main.js",
@@ -73,7 +74,8 @@ const REQUIRED_SMOKE_SCRIPTS = [
 ];
 
 const REQUIRED_HOST_SMOKE_SCRIPTS = [
-  ["electron:smoke:win:launch", "scripts/windows-launch-smoke.mjs"],
+  ["electron:smoke:mac:launch", "scripts/desktop-launch-smoke.mjs", ["--platform mac", "--arch arm64"]],
+  ["electron:smoke:win:launch", "scripts/windows-launch-smoke.mjs", []],
 ];
 
 const REQUIRED_WINDOWS_WORKFLOW_SNIPPETS = [
@@ -130,6 +132,7 @@ const REQUIRED_RELEASE_DOC_SNIPPETS = [
   "Markie-<version>-arm64.dmg",
   "Markie-<version>-x64.exe",
   "Markie-<version>-x64.AppImage",
+  "npm run electron:smoke:mac:launch",
   "npm run electron:smoke:win:launch",
   "npm run release:preflight",
   "--publish never",
@@ -258,10 +261,13 @@ export function validatePackagingMatrix(rootDir) {
     assert(script.includes(platformFlag), `${name} must target ${platformFlag}`);
     assert(script.includes(archFlag), `${name} must target ${archFlag}`);
   }
-  for (const [name, scriptPath] of REQUIRED_HOST_SMOKE_SCRIPTS) {
+  for (const [name, scriptPath, requiredSnippets] of REQUIRED_HOST_SMOKE_SCRIPTS) {
     const script = scripts[name];
     assert(Boolean(script), `missing host launch smoke script: ${name}`);
     assert(script.includes(scriptPath), `${name} must use ${scriptPath}`);
+    for (const snippet of requiredSnippets) {
+      assert(script.includes(snippet), `${name} must include ${snippet}`);
+    }
   }
 
   assert(hasTarget(pkg.build?.mac, "dmg", "arm64"), "macOS matrix must include arm64 dmg");

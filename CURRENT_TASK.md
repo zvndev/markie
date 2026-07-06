@@ -1,16 +1,15 @@
-# Current Task - Packaged CSP hardening
+# Current Task - Library organization polish
 
 ## Task
-Remove the broad packaged Electron `script-src 'unsafe-inline'` allowance while preserving the
-Next static export bootstrap that Markie needs to render.
+Make the Library view organize local, cloud-only, and shared documents in a predictable order that
+surfaces actionable documents before ordinary recent files.
 
 ## Acceptance Criteria
-1. Packaged app CSP computes SHA-256 hashes for the exact inline scripts in the built `out/*.html`
-   files.
-2. `script-src` no longer includes broad `unsafe-inline`.
-3. `electron/main.js` uses the shared CSP helper for packaged app responses.
-4. Release preflight requires the CSP helper and main-process wiring.
-5. Focused CSP tests, packaged mac launch smoke, and full local release preflight pass.
+1. Library buckets are produced by a shared, tested organizer instead of ad hoc component filters.
+2. Conflict, behind, and missing local files sort ahead of ordinary documents.
+3. Ordinary documents sort by latest known activity, then by natural filename order.
+4. The Library panel shows section counts or alert counts without breaking light or dark mode.
+5. Focused Library tests, lint, build, visual theme guard, and local release preflight pass.
 
 ## Scope Guard
 Do not push, publish, deploy, sign/notarize, change release credentials, or run production update

@@ -8,7 +8,12 @@ import { SkillsView } from "@/components/skills-view";
 import { SharedView } from "@/components/shared-view";
 import type { LeftView } from "@/components/activity-bar";
 import { readLibraryStartupSnapshot } from "@/lib/library-startup";
-import { summarizeLibrary, type LibraryOverview } from "@/lib/library-overview";
+import {
+  libraryItemNeedsAttention,
+  organizeLibraryItems,
+  summarizeLibrary,
+  type LibraryOverview,
+} from "@/lib/library-overview";
 import type { WorkspaceBootstrapResult } from "@/lib/workspace-default";
 
 interface LibraryProps {
@@ -231,9 +236,7 @@ export function Library({
       if (res.error) setNotice(res.error);
     });
 
-  const localFiles = items.filter((i) => i.path);
-  const myCloudOnly = items.filter((i) => !i.path && !i.shared);
-  const sharedItems = items.filter((i) => i.shared);
+  const { localFiles, myCloudOnly, sharedItems } = organizeLibraryItems(items);
   const overview = summarizeLibrary(items);
 
   const fileRow = (item: LibraryItem) => {
@@ -417,15 +420,11 @@ export function Library({
         ) : (
           <>
             {localFiles.length > 0 && (
-              <div className="text-[9px] uppercase tracking-wide text-muted px-2 pt-2 pb-1">
-                On this device
-              </div>
+              <LibrarySectionHeader label="On this device" items={localFiles} />
             )}
             {localFiles.map(fileRow)}
             {myCloudOnly.length > 0 && (
-              <div className="text-[9px] uppercase tracking-wide text-muted px-2 pt-3 pb-1">
-                In your cloud
-              </div>
+              <LibrarySectionHeader label="In your cloud" items={myCloudOnly} />
             )}
             {myCloudOnly.map(fileRow)}
           </>
@@ -482,6 +481,31 @@ export function Library({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function LibrarySectionHeader({
+  label,
+  items,
+}: {
+  label: string;
+  items: LibraryItem[];
+}) {
+  const attention = items.filter(libraryItemNeedsAttention).length;
+
+  return (
+    <div className="flex items-center justify-between gap-2 px-2 pt-3 pb-1">
+      <span className="text-[9px] uppercase tracking-wide text-muted">{label}</span>
+      <span
+        className={`rounded border px-1 py-px text-[9px] tabular-nums ${
+          attention > 0
+            ? "border-[color:var(--status-yellow)] text-[var(--status-yellow)]"
+            : "border-border/70 text-muted"
+        }`}
+      >
+        {attention > 0 ? `${attention} alert${attention === 1 ? "" : "s"}` : items.length}
+      </span>
     </div>
   );
 }

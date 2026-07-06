@@ -1024,3 +1024,26 @@
 - blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
   are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
   approval remain human-gated.
+
+## 2026-07-05 21:49 EDT — terminal: progressed
+- did: Made the Library list organization deterministic and product-oriented. Added a shared
+  organizer that separates local, personal cloud-only, and shared documents; promotes conflict,
+  behind, and missing local files ahead of ordinary docs; then sorts by last known activity and
+  natural filename order. The Library panel now uses that organizer and shows section counts or
+  alert counts instead of exposing raw main-process order.
+- evidence: `npm test -- src/lib/library-overview.test.ts src/lib/library-startup.test.ts
+  src/lib/library-state.test.ts` passed 3 files / 11 tests. `npm run lint` passed. `npm run build`
+  passed. `npm run visual:guard:theme` passed with zero findings across shell, content, and
+  overlay/panel samples. The live Electron app was inspected through Computer Use at
+  `app://markie/index.html`: light mode showed the Library, default `~/Documents/Markie`
+  workspace, metrics, editor content, and controls; dark mode was toggled and rendered the Library
+  metrics, workspace card, editor, code block, toolbar, and rail legibly before restoring light
+  mode. `npm run release:preflight` passed, including renderer/Electron tests 26 files / 157
+  tests, MCP tests 19 tests, server tests 35 tests, lint, static build, Windows workflow checks,
+  Electron desktop support checks, and release docs checks.
+- next: Continue native Windows workflow execution only after the ahead commits are pushed with
+  approval, and continue signed/notarized update feed plus public release work only with explicit
+  release approval.
+- blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
+  are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
+  approval remain human-gated.

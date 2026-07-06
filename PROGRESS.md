@@ -927,3 +927,34 @@
 - blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
   are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
   approval remain human-gated.
+
+## 2026-07-05 21:31 EDT — terminal: progressed
+- did: Hardened cross-platform desktop launch intent handling and fixed a real local Windows
+  packaging regression. Extracted side-effect-free desktop intent helpers for Markie deep links,
+  openable file argv/file-URL inputs, and macOS-only default Markdown registration support.
+  `electron/main.js` now uses those helpers for cold-start and second-instance open handoff while
+  preserving Darwin `open-url`/`open-file` events and non-Darwin quit behavior. The local
+  electron-builder wrapper now passes `-c.npmRebuild=false` for Windows targets so macOS hosts do
+  not try to cross-compile `node-pty` from source; Windows native payload correctness remains
+  enforced by `install-win-native-prebuild.mjs` and `electron:smoke:win`.
+- evidence: `node --check electron/main.js`, `node --check electron/desktop-intents.js`, and
+  `node --check scripts/local-electron-builder.mjs` passed. `npm test --
+  electron/desktop-intents.test.ts electron/release-preflight.test.ts` passed 2 files / 13 tests.
+  `npm test -- electron/local-electron-builder.test.ts electron/desktop-intents.test.ts` passed
+  2 files / 12 tests. `npm run electron:pack:mac:arm64` built a fresh unsigned
+  `dist/mac-arm64/Markie.app` and its afterPack window smoke loaded `Markie — Markdown Viewer`.
+  `npm run electron:smoke:mac:launch` launched the packaged mac app and wrote
+  `launch-smoke.json` plus a 2560x1640 `screenshot.png`. The first retry of
+  `npm run electron:pack:win` failed because electron-builder attempted to cross-rebuild
+  `node-pty`; after adding the Windows `npmRebuild=false` guard, `npm run electron:pack:win`
+  passed, skipped dependency rebuilds, restored the host native module, and installed the Windows
+  x64 `better-sqlite3` PE prebuild. `npm run electron:smoke:win` passed against
+  `dist/win-unpacked` with structure-only host mode. `npm run release:preflight` passed, including
+  renderer/Electron tests 24 files / 145 tests, MCP tests 19 tests, server tests 35 tests, lint,
+  static build, Windows workflow checks, Electron desktop support checks, and release docs checks.
+- next: Continue native Windows workflow execution only after the ahead commits are pushed with
+  approval, and continue signed/notarized update feed plus public release work only with explicit
+  release approval.
+- blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
+  are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
+  approval remain human-gated.

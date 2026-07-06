@@ -55,8 +55,11 @@ notarization credentials. For macOS local builds it also adds
 `-c.mac.identity=null`, so these are not Developer ID signing, notarization,
 release, or upload commands. For Windows local builds it adds
 `-c.win.signAndEditExecutable=false`, so local Windows packaging does not invoke
-signtool. Apple Silicon binaries may still report an ad-hoc linker signature;
-that is not a distributable release signature.
+signtool. It also adds `-c.npmRebuild=false` for Windows so macOS hosts do not
+try to cross-compile native modules from source; the follow-up Windows native
+prebuild installer and package smoke verify the resulting PE payloads instead.
+Apple Silicon binaries may still report an ad-hoc linker signature; that is not
+a distributable release signature.
 After a local package command, smoke the unpacked artifact structure before
 making any platform-readiness claim:
 

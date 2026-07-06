@@ -1,15 +1,16 @@
-# Current Task - Visual launch smoke evidence
+# Current Task - Cross-platform launch intent hardening
 
 ## Task
-Make packaged desktop launch evidence human-reviewable by preserving a screenshot beside the JSON
-probe whenever a host-compatible packaged app launch smoke runs.
+Make Windows/mac desktop launch behavior more defensible by extracting and testing OS launch
+intent parsing and by fixing the local Windows package path that was trying to cross-rebuild
+native modules from source on macOS.
 
 ## Acceptance Criteria
-1. mac packaged launch smoke writes `launch-smoke.json` and `screenshot.png`.
-2. Windows packaged launch smoke writes the same screenshot evidence on a Windows host.
-3. The Windows workflow uploads both JSON and screenshot evidence.
-4. Release preflight enforces the screenshot evidence path in docs and workflow checks.
-5. Focused launch-smoke tests and full local release preflight pass.
+1. Windows/Linux argv handoff for Markie deep links and openable files is covered by side-effect-free tests.
+2. macOS-only default Markdown registration has explicit unsupported fallback coverage for Windows/Linux.
+3. `electron/main.js` uses the shared desktop intent helper for cold-start and second-instance launch inputs.
+4. `electron:pack:win` succeeds locally without native source cross-compilation and `electron:smoke:win` passes.
+5. Fresh mac packaged launch smoke and full local release preflight pass.
 
 ## Scope Guard
 Do not push, publish, deploy, sign/notarize, change release credentials, or run production update

@@ -43,14 +43,23 @@ app. The highest-impact safe path is:
       Windows paths and most Linux home paths will not shorten correctly.
       Completed 2026-07-03: Browse and Skills share cross-platform home-path compaction for
       `/Users`, `/home`, and Windows user homes.
-- [ ] `src/components/toolbar.tsx` correctly applies the traffic-light padding only on Darwin. Keep
+- [x] `src/components/toolbar.tsx` correctly applies the traffic-light padding only on Darwin. Keep
       this as the desktop-chrome pattern when adding Windows/Linux window controls or spacing.
-- [ ] `electron/main.js` handles Darwin `open-url`/`open-file`, Windows/Linux argv handoff, and
+      Completed 2026-07-05: the toolbar reads `getElectronAPI().platform` and applies hiddenInset
+      traffic-light padding only when the platform is `darwin`.
+- [x] `electron/main.js` handles Darwin `open-url`/`open-file`, Windows/Linux argv handoff, and
       non-Darwin `window-all-closed` quit behavior. Preserve these paths when adding packaged
       cross-platform launch tests.
-- [ ] `electron/main.js` default Markdown handler actions are explicitly Darwin-only through Swift
+      Completed 2026-07-05: `electron/desktop-intents.js` now centralizes Markie deep-link,
+      openable file argv, and file-URL detection with tests covering Windows/Linux argv handoff and
+      OS-level file URL opens. `main.js` uses that helper for cold-start and second-instance opens,
+      while retaining Darwin `open-file`/`open-url` events and non-Darwin quit behavior.
+- [x] `electron/main.js` default Markdown handler actions are explicitly Darwin-only through Swift
       and LaunchServices. For cross-platform support, either add Windows/Linux registration flows or
       keep the UI hidden/unsupported with tests proving graceful fallback.
+      Completed 2026-07-05: desktop intent tests now prove default-handler registration is exposed
+      only for packaged macOS, while Windows/Linux and dev builds get explicit unsupported fallback
+      copy.
 
 ### Packaging Config
 - [x] `package.json` describes Markie as `macOS (Apple Silicon)` and uses `macos` as a keyword.
@@ -131,6 +140,9 @@ app. The highest-impact safe path is:
       prebuild, and `npm run electron:smoke:win` verifies `Markie.exe`, critical native `.node`
       files, app bundle, and MCP resources as Windows PE payloads. Native Windows launch evidence
       remains host-gated.
+      Updated 2026-07-05: the local wrapper now passes `-c.npmRebuild=false` for Windows targets so
+      macOS hosts do not fail while cross-rebuilding `node-pty`; Windows native payload correctness
+      remains enforced by `install-win-native-prebuild.mjs` and `electron:smoke:win`.
 - [x] Windows x64 native launch evidence has a host-runner path.
       Completed 2026-07-04: `scripts/windows-launch-smoke.mjs` runs only on `win32`, launches
       `dist/win-unpacked/Markie.exe` with a temporary profile and CDP port, and verifies the

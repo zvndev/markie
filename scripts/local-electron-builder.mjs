@@ -74,6 +74,9 @@ export function localElectronBuilderArgs(argv) {
   if (targetsWindows(args) && !args.some((arg) => arg.includes("win.signAndEditExecutable"))) {
     args.push("-c.win.signAndEditExecutable=false");
   }
+  if (targetsWindows(args) && !args.some((arg) => arg.includes("npmRebuild"))) {
+    args.push("-c.npmRebuild=false");
+  }
   return args;
 }
 
@@ -96,6 +99,9 @@ export function runLocalElectronBuilder(
   }
   if (args.some((arg) => arg === "-c.win.signAndEditExecutable=false")) {
     console.log("[local-electron-builder] win.signAndEditExecutable=false; Windows signing/editing disabled");
+  }
+  if (args.some((arg) => arg === "-c.npmRebuild=false")) {
+    console.log("[local-electron-builder] npmRebuild=false; Windows native prebuilds verified after packaging");
   }
   const result = spawnSync(command, args, {
     cwd: rootDir,

@@ -15,6 +15,13 @@ const url = require("url");
 const { autoUpdater } = require("electron-updater");
 const { shareBaseFromSrc } = require("./share-origin");
 const { createFileGrants } = require("./file-grants");
+const {
+  OPENABLE,
+  findDeepLinkArg,
+  findOpenableLaunchFile,
+  markdownDefaultHandlerUnavailable,
+  supportsMarkdownDefaultHandler,
+} = require("./desktop-intents");
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -32,8 +39,6 @@ let rendererReady = false;
 let pendingFilePath = null;
 // markie:// deep link that arrived before the renderer was ready to receive it
 let pendingDeepLink = null;
-
-const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
 
 // Deliver a markie:// deep link to the renderer, or queue it if the window
 // isn't ready yet (cold start from the OAuth browser hand-off). Always raises
@@ -160,13 +165,11 @@ function readFilePayload(filePath, { grant = false } = {}) {
 }
 
 // File passed as a CLI argument (dev runs, Windows/Linux double-click)
-const argFile = process.argv
-  .slice(1)
-  .find((a) => OPENABLE.test(a) && fs.existsSync(a));
-if (argFile) pendingFilePath = path.resolve(argFile);
+const argFile = findOpenableLaunchFile(process.argv.slice(1));
+if (argFile) pendingFilePath = argFile;
 
 // markie:// deep link passed as a CLI argument (Windows/Linux cold start)
-const argDeepLink = process.argv.slice(1).find((a) => a.startsWith("markie://"));
+const argDeepLink = findDeepLinkArg(process.argv.slice(1));
 if (argDeepLink) pendingDeepLink = argDeepLink;
 
 function createWindow() {
@@ -765,7 +768,7 @@ function runSwift(src) {
 // IPC: is Markie already the default handler for Markdown? Lets the UI hide
 // the "set default" prompt when it's already set, instead of nagging.
 ipcMain.handle("default-md-status", async () => {
-  if (process.platform !== "darwin" || !app.isPackaged) {
+  if (!supportsMarkdownDefaultHandler({ platform: process.platform, isPackaged: app.isPackaged })) {
     return { supported: false, isDefault: false };
   }
   const res = await runSwift(
@@ -784,16 +787,11 @@ ipcMain.handle("default-md-status", async () => {
 });
 
 ipcMain.handle("set-default-md", async () => {
-  if (process.platform !== "darwin") {
-    return { ok: false, error: "Only available on macOS." };
-  }
-  if (!app.isPackaged) {
-    return {
-      ok: false,
-      error:
-        "Run the installed Markie app (not the dev build) to set it as the default.",
-    };
-  }
+  const unsupported = markdownDefaultHandlerUnavailable({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+  });
+  if (unsupported) return unsupported;
   const res = await runSwift(
     [
       "import Foundation",
@@ -1011,17 +1009,17 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on("second-instance", (_event, argv) => {
-    const link = argv.find((a) => a.startsWith("markie://"));
+    const link = findDeepLinkArg(argv);
     if (link) {
       deliverDeepLink(link);
       return;
     }
-    const file = argv.find((a) => OPENABLE.test(a) && fs.existsSync(a));
+    const file = findOpenableLaunchFile(argv);
     if (file && rendererReady && mainWindow && !mainWindow.isDestroyed()) {
-      const payload = readFilePayload(path.resolve(file), { grant: true });
+      const payload = readFilePayload(file, { grant: true });
       if (payload) mainWindow.webContents.send("file-opened", payload);
     } else if (file) {
-      pendingFilePath = path.resolve(file);
+      pendingFilePath = file;
     }
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();

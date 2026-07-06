@@ -55,10 +55,21 @@ describe("local electron-builder wrapper", () => {
     expect(localElectronBuilderArgs(["--linux", "--x64", "--dir", "--publish", "never"])).not.toContain(
       "-c.win.signAndEditExecutable=false"
     );
-    expect(localElectronBuilderArgs(["--win", "-c.win.signAndEditExecutable=true"])).toEqual([
-      "--win",
-      "-c.win.signAndEditExecutable=true",
-    ]);
+    expect(localElectronBuilderArgs(["--win", "-c.win.signAndEditExecutable=true"])).toEqual(
+      expect.arrayContaining(["-c.win.signAndEditExecutable=true", "-c.npmRebuild=false"])
+    );
+  });
+
+  it("disables electron-builder native rebuilds for local Windows cross-packaging", () => {
+    expect(localElectronBuilderArgs(["--win", "--x64", "--dir", "--publish", "never"])).toEqual(
+      expect.arrayContaining(["-c.npmRebuild=false"])
+    );
+    expect(localElectronBuilderArgs(["--mac", "--arm64", "--dir", "--publish", "never"])).not.toContain(
+      "-c.npmRebuild=false"
+    );
+    expect(localElectronBuilderArgs(["--win", "-c.npmRebuild=true"])).toEqual(
+      expect.arrayContaining(["-c.win.signAndEditExecutable=false", "-c.npmRebuild=true"])
+    );
   });
 
   it("restores host native modules after cross-platform or cross-arch local builds", () => {

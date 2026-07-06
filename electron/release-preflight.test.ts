@@ -16,7 +16,7 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 describe("release preflight", () => {
   it("checks release metadata and required local files without credentials", () => {
     expect(validateReleaseMetadata(rootDir)).toMatchObject({
-      version: "0.2.8",
+      version: "0.2.9",
       appId: "com.zvn.markie",
       productName: "Markie",
     });

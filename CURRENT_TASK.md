@@ -1,16 +1,15 @@
-# Current Task - Share dialog permission states
+# Current Task - Shared docs in Library Recent
 
 ## Task
-Make the Share dialog reflect server-derived permission state precisely, including the difference
-between still-checking access, loaded owner/editor/viewer roles, and unavailable access.
+Make the Library Recent view surface cloud-only documents shared with the user instead of showing
+the empty workspace card while shared documents exist.
 
 ## Acceptance Criteria
-1. Share access copy distinguishes checking access from access that failed to load.
-2. Empty people/public-link copy is role-aware and does not imply ownership when access is
-   unavailable.
-3. Owner-only actions refuse to run unless `canManage` is confirmed by server access.
-4. Focused share-access view tests and server sharing tests pass.
-5. Full local release preflight passes, and the live Electron app still boots for inspection.
+1. The shared Library organizer keeps all shared docs for the Shared rail.
+2. Shared docs without a local path are exposed as a distinct Recent section.
+3. Shared docs already present on disk are not duplicated in Recent.
+4. Focused Library organization/startup tests pass.
+5. Full local release preflight, visual theme guard, and live Electron inspection pass.
 
 ## Scope Guard
 Do not push, publish, deploy, sign/notarize, change release credentials, or run production update

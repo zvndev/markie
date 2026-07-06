@@ -156,6 +156,9 @@ describe("library overview", () => {
       "shared-local.md",
       "shared.md",
     ]);
+    expect(organized.sharedCloudOnly.map((entry) => entry.name)).toEqual([
+      "shared.md",
+    ]);
   });
 
   it("detects library items that need user attention", () => {

@@ -1089,3 +1089,23 @@
 - blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
   are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
   approval remain human-gated.
+
+## 2026-07-06 18:06 EDT — terminal: progressed
+- did: Made the Library Recent view surface cloud-only documents shared with the user instead of
+  the empty workspace card. `organizeLibraryItems` now exposes `sharedCloudOnly` (shared docs
+  without a local path) alongside the full `sharedItems` rail list, and Recent renders it as a
+  distinct "Shared with me" section. Shared docs already on disk stay in the local list, so
+  nothing duplicates. Rows reuse the existing shared open path (`docOpenShared`), badge, and
+  shared-by subline.
+- evidence: `npx vitest run src/lib/library-overview.test.ts` passed 1 file / 5 tests and
+  `src/lib/library-startup.test.ts` passed 1 file / 3 tests. Codex (gpt-5.5 high) verification run
+  passed renderer/Electron tests 26 files / 160 tests, MCP tests 19 tests, server tests 35 tests,
+  and lint; its sandbox blocked port binding, so `npm run build` and `npm run visual:guard:theme`
+  were re-run outside the sandbox and passed — build produced the static routes and the visual
+  theme guard reported zero findings with live Electron screenshots of shell, source editor,
+  Library, side panels, command palette, settings, and share/comments probes
+  (`.autoloop/runs/light-mode-audit-20260706180239/`).
+- next: Push the ahead commits to origin with approval and confirm the Windows launch smoke
+  workflow on main; signed/notarized update feed and public release work remain human-gated.
+- blockers: None for this task. Native Windows launch evidence still requires the GitHub-hosted
+  Windows workflow run after push.

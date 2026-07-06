@@ -236,7 +236,8 @@ export function Library({
       if (res.error) setNotice(res.error);
     });
 
-  const { localFiles, myCloudOnly, sharedItems } = organizeLibraryItems(items);
+  const { localFiles, myCloudOnly, sharedItems, sharedCloudOnly } =
+    organizeLibraryItems(items);
   const overview = summarizeLibrary(items);
 
   const fileRow = (item: LibraryItem) => {
@@ -411,7 +412,9 @@ export function Library({
             onOpenPath={onOpenPath}
             onNotice={setNotice}
           />
-        ) : localFiles.length === 0 && myCloudOnly.length === 0 ? (
+        ) : localFiles.length === 0 &&
+          myCloudOnly.length === 0 &&
+          sharedCloudOnly.length === 0 ? (
           <RecentEmptyState
             onOpenFile={onOpenFile}
             onShowFiles={() => pickTab("files")}
@@ -427,6 +430,10 @@ export function Library({
               <LibrarySectionHeader label="In your cloud" items={myCloudOnly} />
             )}
             {myCloudOnly.map(fileRow)}
+            {sharedCloudOnly.length > 0 && (
+              <LibrarySectionHeader label="Shared with me" items={sharedCloudOnly} />
+            )}
+            {sharedCloudOnly.map(fileRow)}
           </>
         )}
       </div>

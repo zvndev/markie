@@ -14,6 +14,7 @@ export interface OrganizedLibraryItems {
   localFiles: LibraryItem[];
   myCloudOnly: LibraryItem[];
   sharedItems: LibraryItem[];
+  sharedCloudOnly: LibraryItem[];
 }
 
 export function summarizeLibrary(items: LibraryItem[]): LibraryOverview {
@@ -43,10 +44,12 @@ export function summarizeLibrary(items: LibraryItem[]): LibraryOverview {
 }
 
 export function organizeLibraryItems(items: LibraryItem[]): OrganizedLibraryItems {
+  const sharedItems = sortLibraryItems(items.filter((item) => item.shared));
   return {
     localFiles: sortLibraryItems(items.filter((item) => item.path)),
     myCloudOnly: sortLibraryItems(items.filter((item) => !item.path && !item.shared)),
-    sharedItems: sortLibraryItems(items.filter((item) => item.shared)),
+    sharedItems,
+    sharedCloudOnly: sharedItems.filter((item) => !item.path),
   };
 }
 

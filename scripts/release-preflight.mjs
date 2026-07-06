@@ -36,6 +36,7 @@ const REQUIRED_FILES = [
   "scripts/desktop-launch-smoke.mjs",
   "scripts/windows-launch-smoke.mjs",
   ".github/workflows/windows-launch-smoke.yml",
+  "electron/csp.js",
   "electron/main.js",
   "electron/update-policy.js",
   "electron/preload.js",
@@ -109,6 +110,7 @@ const REQUIRED_WINDOWS_WORKFLOW_PATHS = [
 ];
 
 const REQUIRED_ELECTRON_MAIN_SNIPPETS = [
+  'const { buildAppCsp } = require("./csp");',
   'const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");',
   'let updateState = "idle"',
   "let manualUpdateCheck = false",
@@ -122,6 +124,7 @@ const REQUIRED_ELECTRON_MAIN_SNIPPETS = [
   "autoUpdater.quitAndInstall()",
   'ipcMain.handle("check-for-updates", () => requestUpdateCheck({ manual: true }))',
   'label: "Check for Updates…"',
+  'const csp = buildAppCsp(path.join(__dirname, "../out"));',
   "...(isDev ? [{ type: \"separator\" }, { role: \"toggleDevTools\" }] : [])",
 ];
 

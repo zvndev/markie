@@ -34,6 +34,7 @@ describe("release preflight", () => {
         "scripts/desktop-launch-smoke.mjs",
         "scripts/windows-launch-smoke.mjs",
         ".github/workflows/windows-launch-smoke.yml",
+        "electron/csp.js",
         "electron/update-policy.js",
         "public/icon.icns",
         "mcp/markie-mcp.mjs",
@@ -121,6 +122,7 @@ describe("release preflight", () => {
   it("keeps desktop update checks user-visible and packaged menus clean", () => {
     expect(validateElectronMainDesktopSupport(rootDir)).toEqual(
       expect.arrayContaining([
+        'const { buildAppCsp } = require("./csp");',
         'const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");',
         "async function requestUpdateCheck",
         "desktopUpdatePolicy({",
@@ -128,6 +130,7 @@ describe("release preflight", () => {
         "shouldSetupAutoUpdate({ isDev, isPackaged: app.isPackaged, platform: process.platform })",
         "autoUpdater.checkForUpdates()",
         'buttons: ["Restart & Update", "Later"]',
+        'const csp = buildAppCsp(path.join(__dirname, "../out"));',
         'label: "Check for Updates…"',
         "...(isDev ? [{ type: \"separator\" }, { role: \"toggleDevTools\" }] : [])",
       ])

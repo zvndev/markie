@@ -4,14 +4,6 @@
 > evidence; do not delete history. Move completed items to Done with the verification record.
 
 ## Open
-- [ ] Replace or document packaged CSP inline-script allowance.
-      type: security
-      severity: low
-      rationale: Packaged Electron CSP currently includes `script-src 'self' 'unsafe-inline'`,
-        reducing CSP value if a renderer XSS path is introduced later.
-      acceptance_criteria: Inline bootstrap requirements are replaced with hashes/nonces where
-        practical, or the exact required inline script is documented and constrained with a hash.
-      source: product-review security pass 2026-07-03
 - [ ] Approve or revise the context-aware terminal API shape before implementing bundled `markie`
       CLI commands or new MCP current-document tools.
       type: product
@@ -25,6 +17,19 @@
 ## Done
 <!-- moved here with closing evidence -->
 
+- [x] Replace packaged CSP inline-script allowance.
+      type: security
+      severity: low
+      rationale: Packaged Electron CSP included `script-src 'self' 'unsafe-inline'`, reducing CSP
+        value if a renderer XSS path is introduced later.
+      acceptance_criteria: Inline bootstrap requirements are replaced with hashes/nonces where
+        practical, or the exact required inline script is documented and constrained with a hash.
+      source: product-review security pass 2026-07-03
+      evidence: 2026-07-05 pass added `electron/csp.js` and `electron/csp.test.ts`; packaged app
+        CSP now hashes the exact inline Next static-export bootstrap scripts from built `out/*.html`
+        files and emits `script-src 'self' <sha256...>` without broad script `unsafe-inline`.
+        `npm test -- electron/csp.test.ts electron/release-preflight.test.ts` passed, and
+        `release:preflight` requires the CSP helper/main-process wiring.
 - [x] Harden privileged Electron file IPC with main-owned file grants.
       type: security
       severity: medium

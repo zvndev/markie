@@ -15,6 +15,7 @@ const url = require("url");
 const { autoUpdater } = require("electron-updater");
 const { shareBaseFromSrc } = require("./share-origin");
 const { createFileGrants } = require("./file-grants");
+const { buildAppCsp } = require("./csp");
 const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
 const {
   OPENABLE,
@@ -265,17 +266,7 @@ function registerProtocol() {
 // sanitizer. Not applied in dev (Next HMR needs a looser policy).
 function setupCSP() {
   if (isDev) return;
-  const csp = [
-    "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'", // Next static export inlines a bootstrap
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: https:",
-    "font-src 'self' data:",
-    "connect-src 'self' https://api-production-602f.up.railway.app wss://api-production-602f.up.railway.app",
-    "base-uri 'none'",
-    "object-src 'none'",
-    "frame-ancestors 'none'",
-  ].join("; ");
+  const csp = buildAppCsp(path.join(__dirname, "../out"));
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: { ...details.responseHeaders, "Content-Security-Policy": [csp] },

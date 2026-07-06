@@ -404,7 +404,7 @@ export function Library({
             refreshKey={refreshKey}
           />
         ) : loading ? (
-          <div className="px-2 py-4 text-[12px] text-muted">Loading…</div>
+          <LibrarySkeleton />
         ) : libTab === "files" ? (
           <FilesView
             activePath={activePath}
@@ -488,6 +488,27 @@ export function Library({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+const SKELETON_WIDTHS = ["72%", "54%", "80%", "46%"];
+
+function LibrarySkeleton() {
+  return (
+    <div aria-busy="true">
+      <span className="sr-only">Loading library</span>
+      <div className="animate-pulse" aria-hidden="true">
+        {SKELETON_WIDTHS.map((width, i) => (
+          <div key={i} className="rounded-md px-2 py-1.5">
+            <div className="flex items-center gap-1.5">
+              <div className="h-[13px] w-[13px] rounded bg-accent shrink-0" />
+              <div className="h-2.5 flex-1 rounded bg-accent" style={{ maxWidth: width }} />
+              <div className="h-3 w-8 rounded bg-accent shrink-0" />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

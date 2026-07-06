@@ -124,7 +124,7 @@ export function runLocalElectronBuilder(
   return status === 0 && restoreFailed ? 1 : status;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   try {
     process.exitCode = runLocalElectronBuilder();
   } catch (error) {

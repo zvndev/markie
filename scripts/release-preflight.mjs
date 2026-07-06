@@ -410,7 +410,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   return { metadata, files, matrix, windowsWorkflow, electronMain, docs, inspected };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   try {
     runReleasePreflight();
   } catch (error) {

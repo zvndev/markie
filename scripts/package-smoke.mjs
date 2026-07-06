@@ -301,7 +301,7 @@ export function runPackageSmokeCli(argv = process.argv.slice(2), rootDir = path.
   return result;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   try {
     runPackageSmokeCli();
   } catch (error) {

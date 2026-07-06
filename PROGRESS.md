@@ -1109,3 +1109,20 @@
   workflow on main; signed/notarized update feed and public release work remain human-gated.
 - blockers: None for this task. Native Windows launch evidence still requires the GitHub-hosted
   Windows workflow run after push.
+
+## 2026-07-06 18:20 EDT — terminal: progressed
+- did: Repaired the Windows launch smoke pipeline. Five build scripts guarded their CLI entry with
+  `import.meta.url === `file://${process.argv[1]}``, which never matches Windows backslash paths,
+  so `local-electron-builder.mjs`, `package-smoke.mjs`, and `install-win-native-prebuild.mjs`
+  silently no-oped on the windows-latest runner — the package was never built and the launch step
+  failed with "missing Windows executable" (run 28812608464, first run after push). Replaced all
+  five guards with the `fileURLToPath(import.meta.url) === path.resolve(process.argv[1])` pattern
+  already proven in `windows-launch-smoke.mjs`. Also fixed in `release-preflight.mjs` and
+  `restore-host-native-prebuild.mjs`, which shared the latent bug.
+- evidence: `npx vitest run electron/package-smoke.test.ts electron/release-preflight.test.ts
+  electron/local-electron-builder.test.ts` passed 3 files / 21 tests. `npm run lint` passed.
+  Direct CLI invocation prints usage; import-only probe confirms CLI bodies stay dormant.
+  Implemented via Codex (gpt-5.5 high) and reviewed.
+- next: Confirm the Windows launch smoke workflow goes green on this push and capture the launch
+  evidence artifact.
+- blockers: None; workflow result pending.

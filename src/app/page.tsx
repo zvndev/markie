@@ -11,7 +11,6 @@ import { formatMarkdownTables } from "@/lib/format-tables";
 import { csvToMarkdownTable, markdownTableToCSV } from "@/lib/csv";
 import { CommandPalette } from "@/components/command-palette";
 import { ShortcutsHelp } from "@/components/shortcuts-help";
-import { ThemeSettings } from "@/components/theme-settings";
 import { Settings } from "@/components/settings";
 import { Library } from "@/components/library";
 import { ActivityBar, type LeftView } from "@/components/activity-bar";
@@ -859,7 +858,18 @@ export default function Home() {
       {showHelp && (
         <ShortcutsHelp commands={commands} onClose={() => setShowHelp(false)} />
       )}
-      {showTheme && <ThemeSettings onClose={() => setShowTheme(false)} />}
+      {showTheme && (
+        <Settings
+          authNonce={authNonce}
+          initialSection="appearance"
+          onClose={() => {
+            setShowTheme(false);
+            setAuthNonce((n) => n + 1); // account/avatar reflects sign-in/out
+            setLibRefreshKey((k) => k + 1);
+            refreshCollab(); // sign-in/out changes live eligibility
+          }}
+        />
+      )}
       {showSettings && (
         <Settings
           authNonce={authNonce}

@@ -30,13 +30,13 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
 
   return (
     <div
-      className="markie-scrim fixed inset-0 z-[100] flex items-start justify-center pt-24"
+      className="markie-scrim overlay-scrim-enter fixed inset-0 z-[100] flex items-start justify-center pt-24"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        className="markie-overlay-panel w-[480px] max-w-[90vw] rounded-xl overflow-hidden"
+        className="markie-overlay-panel overlay-command-enter w-[480px] max-w-[90vw] rounded-xl overflow-hidden"
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import {
   authClient,
   sharesClient,
@@ -133,7 +133,7 @@ export function ShareDialog({
     const url = await sharesClient.createPublicLink(docId);
     setLinkBusy(false);
     if (url) setPublicUrl(url);
-    else setError("Couldn't create a public link");
+    else setError("Public link unavailable — check your connection and try again.");
   };
 
   const revokeLink = async () => {
@@ -159,13 +159,13 @@ export function ShareDialog({
 
   return (
     <div
-      className="markie-scrim fixed inset-0 z-[100] flex items-center justify-center"
+      className="markie-scrim overlay-scrim-enter fixed inset-0 z-[100] flex items-center justify-center"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        className="markie-overlay-panel w-[440px] max-w-[92vw] max-h-[84vh] overflow-y-auto rounded-xl p-5"
+        className="markie-overlay-panel overlay-panel-enter w-[440px] max-w-[92vw] max-h-[84vh] overflow-y-auto rounded-xl p-5"
         role="dialog"
         aria-modal="true"
         aria-labelledby="markie-share-title"
@@ -185,6 +185,7 @@ export function ShareDialog({
 
         {canManage && (
           <div className="mb-4">
+            <div className="markie-overlay-section mb-2">Invite by email</div>
             <div className="flex gap-2">
               <input
                 autoFocus
@@ -214,12 +215,8 @@ export function ShareDialog({
                 Invite
               </button>
             </div>
-            {error && (
-              <div className="text-[12px] text-[var(--status-red)] mt-2">{error}</div>
-            )}
-            {flash && (
-              <div className="text-[12px] text-[var(--status-green)] mt-2">{flash}</div>
-            )}
+            {error && <StatusRow tone="error">{error}</StatusRow>}
+            {flash && <StatusRow tone="ok">{flash}</StatusRow>}
             <div className="text-[11px] text-muted mt-2">
               Anyone with an email works — no Markie account needed to invite
               them. They get an email; the doc shows up in their Library when
@@ -284,10 +281,8 @@ export function ShareDialog({
           </div>
         )}
 
-        <div className="mt-4 pt-3 border-t border-border">
-          <div className="text-[12px] font-medium text-foreground mb-1">
-            Anyone with the link
-          </div>
+        <div className="mt-5 pt-4 border-t border-border">
+          <div className="markie-overlay-section mb-2">Anyone with the link</div>
           {publicUrl ? (
             <>
               <div className="flex items-center gap-2">
@@ -304,7 +299,7 @@ export function ShareDialog({
                   {copied ? "Copied" : "Copy"}
                 </button>
               </div>
-              <div className="flex items-center justify-between mt-1.5">
+              <div className="flex items-center justify-between gap-3 mt-2">
                 <span className="text-[11px] text-muted">
                   Anyone with this link can view &amp; download — no account needed.
                 </span>
@@ -312,7 +307,7 @@ export function ShareDialog({
                   <button
                     onClick={revokeLink}
                     disabled={linkBusy}
-                    className="text-[11px] text-[var(--status-red)] hover:opacity-80 disabled:opacity-50"
+                    className="markie-overlay-button shrink-0 text-[12px] px-3 py-1.5 rounded-md border border-border text-muted hover:text-[var(--status-red)] hover:border-[color:var(--status-red)] disabled:opacity-50"
                   >
                     Revoke
                   </button>
@@ -335,6 +330,59 @@ export function ShareDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+function StatusRow({
+  tone,
+  children,
+}: {
+  tone: "ok" | "error";
+  children: ReactNode;
+}) {
+  return (
+    <div className={`markie-status-row markie-status-row--${tone} mt-2`} role="status">
+      {tone === "ok" ? <CheckIcon /> : <AlertIcon />}
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+function AlertIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
   );
 }
 

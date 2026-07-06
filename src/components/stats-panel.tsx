@@ -32,7 +32,7 @@ export function StatsPanel({ content, onClose }: StatsPanelProps) {
 
   return (
     <div
-      className="markie-menu-panel absolute top-12 right-4 z-50 w-60 rounded-lg py-2"
+      className="markie-menu-panel overlay-popover-enter absolute top-12 right-4 z-50 w-60 rounded-lg py-2"
       role="dialog"
       aria-label="Document statistics"
     >

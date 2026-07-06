@@ -120,15 +120,32 @@ body {
 .markie-menu-panel {
   background: var(--surface-2);
   border: 1px solid var(--border);
+}
+
+/* Two shadow treatments, one per surface class:
+   modal panels get the deep committed-task shadow, popovers get a lighter one. */
+.markie-overlay-panel {
   box-shadow:
     0 18px 44px color-mix(in srgb, #000 26%, transparent),
     inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent);
 }
 
-.markie-overlay-panel:focus-within,
-.markie-menu-panel:focus-within {
+.markie-menu-panel {
+  box-shadow:
+    0 10px 24px color-mix(in srgb, #000 22%, transparent),
+    inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+.markie-overlay-panel:focus-within {
   box-shadow:
     0 18px 44px color-mix(in srgb, #000 26%, transparent),
+    inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--blue) 45%, transparent);
+}
+
+.markie-menu-panel:focus-within {
+  box-shadow:
+    0 10px 24px color-mix(in srgb, #000 22%, transparent),
     inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent),
     0 0 0 1px color-mix(in srgb, var(--blue) 45%, transparent);
 }
@@ -208,6 +225,112 @@ body {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+/* ── Overlay entrance motion ──
+   Scrim fades; committed-task panels fade+scale+rise; the top-anchored command
+   palette drops in from above; glanceable popovers use a shorter cue. */
+@keyframes markie-scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes markie-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes markie-command-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes markie-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.overlay-scrim-enter {
+  animation: markie-scrim-in 150ms ease-out both;
+}
+
+.overlay-panel-enter {
+  animation: markie-panel-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: center;
+}
+
+.overlay-command-enter {
+  animation: markie-command-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: top center;
+}
+
+.overlay-popover-enter {
+  animation: markie-popover-in 120ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: top right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay-scrim-enter,
+  .overlay-panel-enter,
+  .overlay-command-enter,
+  .overlay-popover-enter {
+    animation: none;
+  }
+}
+
+/* ── Status rows (share dialog feedback) ── */
+.markie-status-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  border-radius: 8px;
+  padding: 0.5rem 0.625rem;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--foreground);
+}
+
+.markie-status-row svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.markie-status-row--ok {
+  background: color-mix(in srgb, var(--status-green) 12%, transparent);
+}
+
+.markie-status-row--ok svg {
+  color: var(--status-green);
+}
+
+.markie-status-row--error {
+  background: color-mix(in srgb, var(--status-red) 12%, transparent);
+}
+
+.markie-status-row--error svg {
+  color: var(--status-red);
 }
 
 @media (max-width: 820px) {

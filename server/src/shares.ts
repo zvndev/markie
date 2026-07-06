@@ -150,7 +150,8 @@ shares.get("/:id/shares", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  if (!canReadLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
+  const level = accessLevel(docId, user.id);
+  if (!canReadLevel(level)) return c.json({ error: "forbidden" }, 403);
   const members = db
     .prepare(
       `SELECT s.user_id, s.role, s.created_at, u.email, u.name
@@ -158,15 +159,17 @@ shares.get("/:id/shares", async (c) => {
        WHERE s.doc_id = ?`
     )
     .all(docId) as Array<Record<string, unknown>>;
-  // Invited-but-not-yet-joined emails show as pending rows (no user_id/name).
-  const pending = listPendingForDoc(docId).map((p) => ({
-    user_id: null,
-    role: p.role,
-    created_at: p.created_at,
-    email: p.email,
-    name: null,
-    pending: true,
-  }));
+  // Pending invite emails are owner management state, not collaborator presence.
+  const pending = canManageLevel(level)
+    ? listPendingForDoc(docId).map((p) => ({
+        user_id: null,
+        role: p.role,
+        created_at: p.created_at,
+        email: p.email,
+        name: null,
+        pending: true,
+      }))
+    : [];
   return c.json({ shares: [...members, ...pending] });
 });
 

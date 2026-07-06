@@ -1047,3 +1047,23 @@
 - blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
   are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
   approval remain human-gated.
+
+## 2026-07-05 21:54 EDT — terminal: progressed
+- did: Tightened share-member visibility so pending invite emails are owner-only management state.
+  `GET /api/docs/:id/shares` still lets owners, editors, and viewers read joined collaborators for
+  a doc they can read, but only owners receive pending invite rows. This prevents viewers/editors
+  from inferring not-yet-joined invite emails while preserving the collaborator list and owner
+  management UI.
+- evidence: `node --experimental-strip-types --test server/src/share-access.test.ts
+  server/src/share-routes.test.ts server/src/shared-by-me.test.ts` passed 9 tests. `npm run
+  release:preflight` passed, including renderer/Electron tests 26 files / 157 tests, MCP tests 19
+  tests, server tests 35 tests, lint, static build, Windows workflow checks, Electron desktop
+  support checks, and release docs checks. The live Electron app was inspected through Computer Use
+  at `app://markie/index.html` after the build; the Library, default `~/Documents/Markie`
+  workspace, toolbar, and editor content were visible.
+- next: Continue native Windows workflow execution only after the ahead commits are pushed with
+  approval, and continue signed/notarized update feed plus public release work only with explicit
+  release approval.
+- blockers: Native Windows launch still needs a Windows host/workflow run after the ahead commits
+  are pushed. Signed/notarized production update feeds, public URLs, deploy, upload, and release
+  approval remain human-gated.

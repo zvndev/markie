@@ -1,15 +1,16 @@
-# Current Task - Library organization polish
+# Current Task - Pending invite permission scope
 
 ## Task
-Make the Library view organize local, cloud-only, and shared documents in a predictable order that
-surfaces actionable documents before ordinary recent files.
+Tighten sharing visibility so pending invite emails are treated as owner-only management state,
+while joined collaborators can still see the people who already have access.
 
 ## Acceptance Criteria
-1. Library buckets are produced by a shared, tested organizer instead of ad hoc component filters.
-2. Conflict, behind, and missing local files sort ahead of ordinary documents.
-3. Ordinary documents sort by latest known activity, then by natural filename order.
-4. The Library panel shows section counts or alert counts without breaking light or dark mode.
-5. Focused Library tests, lint, build, visual theme guard, and local release preflight pass.
+1. `GET /api/docs/:id/shares` still allows owners, editors, and viewers to read joined
+   collaborators for a document they can read.
+2. Pending invite rows are included only for owners.
+3. Viewers and editors cannot infer pending invite emails from the share-member list.
+4. Existing share lifecycle, public-link, access-summary, and shared-by-me tests pass.
+5. Full local release preflight passes without signing, publishing, uploading, or deploying.
 
 ## Scope Guard
 Do not push, publish, deploy, sign/notarize, change release credentials, or run production update

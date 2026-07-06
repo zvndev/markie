@@ -145,6 +145,13 @@ test("authenticated share routes cover pending invites, member removal, and scop
     ownerShares.data?.shares.some((s) => s.email === pendingEmail && s.role === "editor" && s.pending)
   );
 
+  const viewerShares = await jsonRequest<{
+    shares: Array<{ user_id: string | null; email: string; role: string; pending?: boolean }>;
+  }>("GET", `/api/docs/${docId}/shares`, bob.token);
+  assert.equal(viewerShares.status, 200);
+  assert.ok(viewerShares.data?.shares.some((s) => s.email === bob.email && s.role === "viewer"));
+  assert.ok(!viewerShares.data?.shares.some((s) => s.pending || s.email === pendingEmail));
+
   const sharedByMe = await jsonRequest<{
     docs: Array<{
       id: string;

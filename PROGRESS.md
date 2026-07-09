@@ -1152,3 +1152,18 @@
 - blockers: Local macOS cannot run the Windows executable; native launch evidence must come from
   the Windows GitHub Actions runner or a Windows host. Windows artifacts are local and unsigned,
   not public release downloads.
+
+## 2026-07-08 22:43 EDT — terminal: blocked
+- did: Pushed commit `85e5549` to `origin/main`, which triggered Windows launch-smoke run
+  28990253547. Reran the workflow once after the first immediate failure.
+- evidence: Both workflow attempts failed before checkout with no runner assigned and zero billed
+  Windows runtime. The GitHub check-run annotation says: "The job was not started because recent
+  account payments have failed or your spending limit needs to be increased. Please check the
+  'Billing & plans' section in your settings." The previous Windows launch-smoke run 28815970012
+  for commit `8601100` remains green, but this new commit still needs native Windows launch
+  confirmation after billing/spend is fixed.
+- next: Fix GitHub billing/spend limit, then rerun
+  https://github.com/zvndev/markie-dev/actions/runs/28990253547 or push another desktop-path
+  change to retrigger the Windows runner.
+- blockers: Native Windows launch evidence for `85e5549` is blocked by GitHub account billing or
+  Actions spending limit. No repo code failure was reached because the job had no steps.

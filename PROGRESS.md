@@ -1126,3 +1126,29 @@
 - next: Confirm the Windows launch smoke workflow goes green on this push and capture the launch
   evidence artifact.
 - blockers: None; workflow result pending.
+
+## 2026-07-08 22:40 EDT — terminal: progressed
+- did: Confirmed `main` was already pushed to `origin/main`, verified the public `0.2.9` macOS
+  update feed and all four macOS artifacts were live on Backblaze, pushed the missing `v0.2.9`
+  release tag, then built fresh Windows x64 artifacts. The first `electron:build:win` run exposed
+  that installer/zip builds created a Windows executable but bundled the macOS
+  `better_sqlite3.node`; moved the Windows native prebuild install into the shared
+  electron-builder `afterPack` hook so the unpacked app is repaired before zip/NSIS artifacts are
+  created.
+- evidence: `./init.sh` passed renderer/Electron tests 26 files / 160 tests, MCP tests 19 tests,
+  server tests 35 tests, lint, and static build. `npm run release:preflight` passed after the fix
+  with renderer/Electron tests 27 files / 162 tests, MCP tests 19 tests, server tests 35 tests,
+  lint, static build, Windows workflow checks, Electron desktop support checks, and release docs
+  checks. `npx vitest run electron/preflight-hook.test.ts electron/release-preflight.test.ts
+  electron/package-smoke.test.ts` passed 3 files / 17 tests. `npm run electron:build:win` produced
+  `dist/Markie-0.2.9-x64.exe`, `dist/Markie-0.2.9-x64.zip`, `dist/Markie-0.2.9-x64.exe.blockmap`,
+  and `dist/latest.yml`; `npm run electron:smoke:win` passed, and direct header checks showed
+  `dist/win-unpacked/Markie.exe`, the unpacked `better_sqlite3.node`, and the zipped
+  `better_sqlite3.node` are PE payloads (`4d5a...`). Existing GitHub Windows launch-smoke run
+  28815970012 for commit `8601100` was already green before this fix.
+- next: Push the Windows artifact fix to `main` and confirm the new GitHub Windows launch-smoke
+  workflow run on the pushed commit. Keep Windows public download/release work gated until signing,
+  feed, and distribution decisions are explicit.
+- blockers: Local macOS cannot run the Windows executable; native launch evidence must come from
+  the Windows GitHub Actions runner or a Windows host. Windows artifacts are local and unsigned,
+  not public release downloads.

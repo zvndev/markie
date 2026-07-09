@@ -89,11 +89,14 @@ packaged window. The
 `windows-latest` without signing, publishing, uploading, or release credentials.
 Linux currently gets deterministic structure checks locally; OS-level launch
 evidence still needs a matching Linux host before public release.
-For cross-packaged Windows `--dir` artifacts, `electron:pack:win` runs
-`scripts/install-win-native-prebuild.mjs` after electron-builder so the unpacked
-app contains the Electron 41 `better-sqlite3` Windows x64 prebuild instead of
-the Mac development binary. `electron:smoke:win` verifies the executable,
-critical `.node` files, app bundle, and MCP resources as Windows PE payloads.
+For cross-packaged Windows artifacts, the electron-builder `afterPack` hook runs
+`scripts/install-win-native-prebuild.mjs` before the zip/NSIS artifacts are
+created so the unpacked app, installer source, and zip contain the Electron 41
+`better-sqlite3` Windows x64 prebuild instead of the Mac development binary.
+`electron:pack:win` also runs the same installer after electron-builder as a
+direct unpacked-package repair step. `electron:smoke:win` verifies the
+executable, critical `.node` files, app bundle, and MCP resources as Windows PE
+payloads.
 Cross-platform and cross-architecture local packaging can temporarily rebuild
 root `node_modules` native packages for the target artifact. The local
 electron-builder wrapper restores the development `better-sqlite3` Electron

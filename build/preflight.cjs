@@ -14,6 +14,7 @@
 
 const { spawn, execSync } = require("node:child_process");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 const WINDOW_TIMEOUT_MS = 40000;
 const POLL_MS = 1000;
@@ -31,8 +32,33 @@ const sh = (cmd) => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = async function afterPack(context) {
-  if (context.electronPlatformName !== "darwin") {
+function preflightMode(context, env = process.env) {
+  if (context.electronPlatformName === "win32") return "windows-native-prebuild";
+  if (context.electronPlatformName !== "darwin") return "unsupported-host-smoke";
+  if (env.MARKIE_SKIP_PREFLIGHT === "1") return "skip-mac-window-smoke";
+  return "mac-window-smoke";
+}
+
+function windowsNativePrebuildScriptPath() {
+  return path.join(__dirname, "../scripts/install-win-native-prebuild.mjs");
+}
+
+async function installWindowsNativePrebuild(context) {
+  const scriptUrl = pathToFileURL(windowsNativePrebuildScriptPath()).href;
+  const { installWindowsBetterSqlitePrebuild } = await import(scriptUrl);
+  installWindowsBetterSqlitePrebuild({ appDir: context.appOutDir });
+}
+
+async function afterPack(context) {
+  const mode = preflightMode(context);
+  if (mode === "windows-native-prebuild") {
+    await installWindowsNativePrebuild(context);
+    console.log(
+      "[preflight] win32 packaged with Windows native modules; OS-level window smoke must run on Windows"
+    );
+    return;
+  }
+  if (mode === "unsupported-host-smoke") {
     console.log(
       `[preflight] ${context.electronPlatformName} packaged; OS-level window smoke is currently implemented for macOS only`
     );
@@ -98,4 +124,8 @@ module.exports = async function afterPack(context) {
   }
 
   console.log(`[preflight] ✓ window loaded (count=${lastCount}, title=${lastTitles})\n`);
-};
+}
+
+module.exports = afterPack;
+module.exports.preflightMode = preflightMode;
+module.exports.windowsNativePrebuildScriptPath = windowsNativePrebuildScriptPath;

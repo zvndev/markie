@@ -1,16 +1,17 @@
-# Current Task - Shared docs in Library Recent
+# Current Task - Windows x64 Build Artifacts
 
 ## Task
-Make the Library Recent view surface cloud-only documents shared with the user instead of showing
-the empty workspace card while shared documents exist.
+Build and verify a Windows x64 version of Markie while confirming the current macOS release and
+Git state are pushed and published.
 
 ## Acceptance Criteria
-1. The shared Library organizer keeps all shared docs for the Shared rail.
-2. Shared docs without a local path are exposed as a distinct Recent section.
-3. Shared docs already present on disk are not duplicated in Recent.
-4. Focused Library organization/startup tests pass.
-5. Full local release preflight, visual theme guard, and live Electron inspection pass.
+1. `main` is pushed to `origin`, and the current release tag exists remotely.
+2. The public macOS update feed and release artifacts for `0.2.9` are reachable.
+3. Full local release preflight passes.
+4. Windows x64 unpacked package, zip, and NSIS installer build locally with publish disabled.
+5. Windows package smoke verifies PE executable and native module payloads.
+6. Windows-host launch smoke is confirmed through the GitHub Actions workflow after push.
 
 ## Scope Guard
-Do not push, publish, deploy, sign/notarize, change release credentials, or run production update
-feeds. Windows native launch still requires a Windows host/workflow run.
+Do not publish Windows artifacts publicly, enable Windows auto-update feeds, or add Windows code
+signing without an explicit release decision.

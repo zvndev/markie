@@ -145,6 +145,7 @@ const REQUIRED_RELEASE_DOC_SNIPPETS = [
   "screenshot.png",
   "npm run release:preflight",
   "Windows and Linux update checks are disabled",
+  "before the zip/NSIS artifacts are\ncreated",
   "--publish never",
   "does **not** mean an artifact is\nsigned, notarized, published, uploaded, deployed, or approved",
 ];

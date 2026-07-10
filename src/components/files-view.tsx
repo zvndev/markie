@@ -1,8 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { getElectronAPI, type WsListing } from "@/lib/electron";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { getElectronAPI, type WsListing, type WsResult } from "@/lib/electron";
+import {
+  compactWorkspacePath,
+  pathBasename,
+  pathDirname,
+} from "@/lib/path-utils";
+import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 import { ensureDefaultWorkspaceRoot } from "@/lib/workspace-default";
+import { openedPathAfterWorkspaceEdit } from "@/lib/workspace-edit";
 
 interface FilesViewProps {
   activePath: string | null;
@@ -11,8 +23,7 @@ interface FilesViewProps {
   onNotice: (msg: string | null) => void;
 }
 
-const dirname = (p: string) => p.slice(0, p.lastIndexOf("/")) || "/";
-const basename = (p: string) => p.slice(p.lastIndexOf("/") + 1);
+const parentDirectory = (value: string) => pathDirname(value) ?? value;
 
 type Edit =
   | { kind: "new-folder" | "new-file"; parent: string; value: string }
@@ -37,6 +48,12 @@ export function FilesView({
   const [edit, setEdit] = useState<Edit>(null);
   const [dragSrc, setDragSrc] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const menuRootRef = useRef<HTMLDivElement>(null);
+  const attachMenuRoot = useCallback((node: HTMLDivElement | null) => {
+    menuRootRef.current = node;
+  }, []);
+
+  useDismissibleLayer(menuFor !== null, menuRootRef, () => setMenuFor(null));
 
   const loadDir = useCallback(
     async (p: string) => {
@@ -120,7 +137,7 @@ export function FilesView({
     const value = edit.value.trim();
     if (!value) return setEdit(null);
     setBusy(true);
-    let res: { ok?: boolean; error?: string } | undefined;
+    let res: WsResult | undefined;
     let reloadDir: string | null = null;
     if (edit.kind === "new-folder") {
       res = await api.wsMkdir(edit.parent, value);
@@ -130,12 +147,16 @@ export function FilesView({
       reloadDir = edit.parent;
     } else if (edit.kind === "rename") {
       res = await api.wsRename(edit.target, value);
-      reloadDir = dirname(edit.target);
+      reloadDir = parentDirectory(edit.target);
     }
+    const openPath = openedPathAfterWorkspaceEdit(edit.kind, res);
     setBusy(false);
     setEdit(null);
     if (res?.error) onNotice(res.error);
-    else if (reloadDir) loadDir(reloadDir);
+    else {
+      if (reloadDir) loadDir(reloadDir);
+      if (openPath) onOpenPath(openPath);
+    }
   };
 
   const startNew = (parent: string, kind: "new-folder" | "new-file") => {
@@ -148,18 +169,18 @@ export function FilesView({
     setMenuFor(null);
     const res = await api?.wsTrash?.(target);
     if (res?.error) onNotice(res.error);
-    else loadDir(dirname(target));
+    else loadDir(parentDirectory(target));
   };
 
   const onDropInto = async (folder: string) => {
     const src = dragSrc;
     setDragSrc(null);
-    if (!src || src === folder || dirname(src) === folder) return;
+    if (!src || src === folder || parentDirectory(src) === folder) return;
     const res = await api?.wsMove?.(src, folder);
     if (res?.error) onNotice(res.error);
     else {
       loadDir(folder);
-      loadDir(dirname(src));
+      loadDir(parentDirectory(src));
     }
   };
 
@@ -197,7 +218,7 @@ export function FilesView({
           disabled={busy}
           className="w-full text-[12px] py-1.5 mb-1.5 rounded-md bg-accent text-foreground hover:opacity-90 disabled:opacity-50"
         >
-          Create {defaultPath.replace(/^.*\/(Documents\/Markie)$/, "~/$1")}
+          Create {compactWorkspacePath(defaultPath)}
         </button>
         <button
           onClick={addRoot}
@@ -219,6 +240,7 @@ export function FilesView({
         {edit && edit.kind !== "rename" && edit.parent === dir && (
           <div style={pad} className="py-0.5">
             <input
+              data-workspace-new-file-input={edit.kind === "new-file" ? "true" : undefined}
               autoFocus
               value={edit.value}
               onChange={(e) => setEdit({ ...edit, value: e.target.value })}
@@ -249,6 +271,7 @@ export function FilesView({
                 onEditCancel={() => setEdit(null)}
                 onClick={() => toggle(f.path)}
                 menuOpen={menuFor === f.path}
+                attachMenuRoot={menuFor === f.path ? attachMenuRoot : undefined}
                 onMenu={() => setMenuFor(menuFor === f.path ? null : f.path)}
                 onDragStart={() => setDragSrc(f.path)}
                 onDrop={() => onDropInto(f.path)}
@@ -277,6 +300,7 @@ export function FilesView({
             onEditCancel={() => setEdit(null)}
             onClick={() => onOpenPath(file.path)}
             menuOpen={menuFor === file.path}
+            attachMenuRoot={menuFor === file.path ? attachMenuRoot : undefined}
             onMenu={() => setMenuFor(menuFor === file.path ? null : file.path)}
             onDragStart={() => setDragSrc(file.path)}
             onRename={() => { setMenuFor(null); setEdit({ kind: "rename", target: file.path, value: file.name }); }}
@@ -288,7 +312,7 @@ export function FilesView({
         {listing.folders.length === 0 && listing.files.length === 0 && depth > 0 && (
           depth === 1 ? (
             <RootEmptyState
-              rootName={basename(dir)}
+              rootName={pathBasename(dir)}
               onNewFile={() => startNew(dir, "new-file")}
               onNewFolder={() => startNew(dir, "new-folder")}
             />
@@ -317,7 +341,7 @@ export function FilesView({
             >
               <Chevron open={expanded.has(root)} />
               <span className="text-[11px] uppercase tracking-wide text-muted font-medium flex-1 truncate" title={root}>
-                {basename(root)}
+                {pathBasename(root)}
               </span>
               {isDefaultRoot && (
                 <span className="text-[9px] px-1 py-px rounded border border-border/80 text-muted shrink-0">
@@ -355,6 +379,7 @@ function RootEmptyState({
         </div>
         <div className="mt-2 flex items-center gap-1.5">
           <button
+            data-workspace-new-file
             onClick={onNewFile}
             className="rounded-md bg-accent px-2 py-1 text-[11px] text-foreground hover:opacity-90"
           >
@@ -433,6 +458,7 @@ interface RowProps {
   onEditCancel: () => void;
   onClick: () => void;
   menuOpen: boolean;
+  attachMenuRoot?: (node: HTMLDivElement | null) => void;
   onMenu: () => void;
   onDragStart: () => void;
   onDrop?: () => void;
@@ -444,55 +470,79 @@ interface RowProps {
   onCopyPath: () => void;
 }
 
-function Row(props: RowProps) {
-  const pad = { paddingLeft: `${props.depth * 12 + 8}px` };
+function Row({
+  depth,
+  isFolder,
+  isOpen,
+  name,
+  path,
+  active,
+  editing,
+  onEditChange,
+  onEditSubmit,
+  onEditCancel,
+  onClick,
+  menuOpen,
+  attachMenuRoot,
+  onMenu,
+  onDragStart,
+  onDrop,
+  onNewFolder,
+  onNewFile,
+  onRename,
+  onReveal,
+  onTrash,
+  onCopyPath,
+}: RowProps) {
+  const pad = { paddingLeft: `${depth * 12 + 8}px` };
   return (
-    <div>
+    <div ref={attachMenuRoot}>
       <div
         style={pad}
-        draggable={!props.editing}
-        onDragStart={props.onDragStart}
-        onDragOver={props.isFolder ? (e) => e.preventDefault() : undefined}
-        onDrop={props.isFolder && props.onDrop ? (e) => { e.preventDefault(); props.onDrop!(); } : undefined}
+        draggable={!editing}
+        onDragStart={onDragStart}
+        onDragOver={isFolder ? (e) => e.preventDefault() : undefined}
+        onDrop={isFolder && onDrop ? (e) => { e.preventDefault(); onDrop(); } : undefined}
         className={`group flex items-center gap-1.5 pr-2 py-1 rounded-md cursor-pointer ${
-          props.active ? "bg-accent" : "hover:bg-accent/40"
+          active ? "bg-accent" : "hover:bg-accent/40"
         }`}
-        onClick={props.editing ? undefined : props.onClick}
+        onClick={editing ? undefined : onClick}
       >
-        {props.isFolder ? <Chevron open={!!props.isOpen} /> : <span className="w-[11px] shrink-0" />}
-        {props.isFolder ? <FolderIcon /> : <FileIcon />}
-        {props.editing !== null ? (
+        {isFolder ? <Chevron open={!!isOpen} /> : <span className="w-[11px] shrink-0" />}
+        {isFolder ? <FolderIcon /> : <FileIcon />}
+        {editing !== null ? (
           <input
             autoFocus
-            value={props.editing}
+            value={editing}
             onClick={(e) => e.stopPropagation()}
-            onChange={(e) => props.onEditChange(e.target.value)}
+            onChange={(e) => onEditChange(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") props.onEditSubmit();
-              if (e.key === "Escape") props.onEditCancel();
+              if (e.key === "Enter") onEditSubmit();
+              if (e.key === "Escape") onEditCancel();
             }}
-            onBlur={props.onEditSubmit}
+            onBlur={onEditSubmit}
             className="flex-1 text-[12px] bg-background border border-border rounded px-1 py-0 text-foreground outline-none focus:border-foreground/30"
           />
         ) : (
-          <span className="text-[12.5px] text-foreground truncate flex-1" title={props.path}>{props.name}</span>
+          <span className="text-[12.5px] text-foreground truncate flex-1" title={path}>{name}</span>
         )}
         <button
-          onClick={(e) => { e.stopPropagation(); props.onMenu(); }}
+          data-file-actions-trigger
+          onClick={(e) => { e.stopPropagation(); onMenu(); }}
           className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-muted hover:text-foreground hover:bg-accent/40 shrink-0 transition"
           aria-label="Actions"
         >
           ⋯
         </button>
       </div>
-      {props.menuOpen && (
-        <div style={{ paddingLeft: `${props.depth * 12 + 26}px` }} className="flex flex-wrap gap-x-3 gap-y-1 pb-1 text-[11px]">
-          {props.isFolder && <button className="text-muted hover:text-foreground" onClick={props.onNewFile}>New file</button>}
-          {props.isFolder && <button className="text-muted hover:text-foreground" onClick={props.onNewFolder}>New folder</button>}
-          <button className="text-muted hover:text-foreground" onClick={props.onRename}>Rename</button>
-          <button className="text-muted hover:text-foreground" onClick={props.onCopyPath}>Copy path</button>
-          <button className="text-muted hover:text-foreground" onClick={props.onReveal}>Reveal</button>
-          <button className="text-[var(--status-red)] hover:underline" onClick={props.onTrash}>Trash</button>
+      {menuOpen && (
+        <div style={{ paddingLeft: `${depth * 12 + 26}px` }} className="flex flex-wrap gap-x-3 gap-y-1 pb-1 text-[11px]">
+          {isFolder && <button className="text-muted hover:text-foreground" onClick={onNewFile}>New file</button>}
+          {isFolder && <button className="text-muted hover:text-foreground" onClick={onNewFolder}>New folder</button>}
+          <button className="text-muted hover:text-foreground" onClick={onRename}>Rename</button>
+          <button className="text-muted hover:text-foreground" onClick={onCopyPath}>Copy path</button>
+          <button className="text-muted hover:text-foreground" onClick={onReveal}>Reveal</button>
+          <button className="text-[var(--status-red)] hover:underline" onClick={onTrash}>Trash</button>
         </div>
       )}
     </div>

@@ -4,7 +4,7 @@
 // screenshots, and fails when focus/selection affordances are not visible.
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -253,9 +253,16 @@ async function runForMode(cdp, mode) {
 
   await clickCenter(cdp, 'button[aria-label="PDF export menu"]');
   await waitFor("PDF menu", () => cdp.ev("!![...document.querySelectorAll('button')].find((button) => button.textContent.includes('Export Dark'))"));
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape" });
+  await waitFor("PDF menu dismissed by Escape", () => cdp.ev("![...document.querySelectorAll('button')].some((button) => button.textContent.includes('Export Dark'))"));
+
+  await clickCenter(cdp, 'button[aria-label="PDF export menu"]');
+  await waitFor("PDF menu reopened", () => cdp.ev("!![...document.querySelectorAll('button')].find((button) => button.textContent.includes('Export Dark'))"));
   metrics.push(await collectFocusMetric(cdp, `${mode} PDF menu item focus`, "button.markie-menu-item"));
   screenshots[`${mode}PdfMenu`] = await capture(cdp, `${mode}-01-pdf-menu`);
-  await cdp.ev("window.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))");
+  await clickCenter(cdp, "[data-markie-document-area]");
+  await waitFor("PDF menu dismissed by outside click", () => cdp.ev("![...document.querySelectorAll('button')].some((button) => button.textContent.includes('Export Dark'))"));
 
   await cdp.ev("document.querySelector('button')?.focus()");
   await openPalette(cdp);
@@ -297,14 +304,20 @@ async function runForMode(cdp, mode) {
   await waitFor("settings overlay", () => cdp.ev("!!document.querySelector('#markie-settings-title')"));
   metrics.push(await collectFocusMetric(cdp, `${mode} settings close focus`, "button[aria-label='Close settings']"));
   screenshots[`${mode}Settings`] = await capture(cdp, `${mode}-03-settings`);
-  await closeOverlay(cdp);
+  await clickCenter(cdp, "button[aria-label='Close settings']");
+  await waitFor("settings overlay closed", () => cdp.ev("!document.querySelector('#markie-settings-title')"));
 
   await clickCenter(cdp, 'button[aria-label="Theme presets"]');
-  await waitFor("theme settings overlay", () => cdp.ev("!!document.querySelector('#markie-theme-title')"));
+  await waitFor("theme settings overlay", () => cdp.ev(`(() => {
+    const appearance = [...document.querySelectorAll('[role="tab"]')]
+      .find((tab) => tab.textContent === 'Appearance');
+    return !!document.querySelector('#markie-settings-title') && appearance?.getAttribute('aria-selected') === 'true';
+  })()`));
   metrics.push(await collectFocusMetric(cdp, `${mode} theme preset focus`, ".markie-overlay-button"));
   metrics.push(await collectFocusMetric(cdp, `${mode} theme color field focus`, "input[type='color']"));
   screenshots[`${mode}ThemeSettings`] = await capture(cdp, `${mode}-04-theme-settings`);
-  await closeOverlay(cdp);
+  await clickCenter(cdp, "button[aria-label='Close settings']");
+  await waitFor("theme settings overlay closed", () => cdp.ev("!document.querySelector('#markie-settings-title')"));
 
   await openPalette(cdp);
   await cdp.ev(`(() => {
@@ -321,9 +334,73 @@ async function runForMode(cdp, mode) {
   await waitFor("stats overlay", () => cdp.ev("!!document.querySelector('[aria-label=\"Document statistics\"]')"));
   metrics.push(await collectFocusMetric(cdp, `${mode} stats close focus`, "button[aria-label='Close statistics']"));
   screenshots[`${mode}Stats`] = await capture(cdp, `${mode}-05-stats`);
-  await closeOverlay(cdp);
+  await clickCenter(cdp, "button[aria-label='Close statistics']");
+  await waitFor("stats overlay closed", () => cdp.ev("!document.querySelector('[aria-label=\"Document statistics\"]')"));
 
   return { screenshots, metrics };
+}
+
+async function verifyWorkspaceFlow(cdp, homeDir) {
+  await clickCenter(cdp, 'button[aria-label="Library — recent & files (⌘L)"]');
+  await waitFor("Library panel", () => cdp.ev("!!document.querySelector('.markie-side-panel')"));
+  await clickCenter(cdp, 'button[data-library-tab="files"]');
+  await waitFor("default workspace new file action", () =>
+    cdp.ev("!!document.querySelector('[data-workspace-new-file]')")
+  );
+  await clickCenter(cdp, "[data-workspace-new-file]");
+  await waitFor("new file name input", () =>
+    cdp.ev("!!document.querySelector('[data-workspace-new-file-input]')")
+  );
+  await cdp.ev(`(() => {
+    const input = document.querySelector('[data-workspace-new-file-input]');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, 'window-flow.md');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter" });
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter" });
+  await waitFor("new workspace file opened", () =>
+    cdp.ev("document.title.startsWith('window-flow.md') && !document.querySelector('.markie-side-panel')")
+  );
+  const openedScreenshot = await capture(cdp, "workspace-01-created-file-open");
+
+  const createdPath = path.join(homeDir, "Documents", "Markie", "window-flow.md");
+  const createdContent = await readFile(createdPath, "utf8");
+
+  await clickCenter(cdp, 'button[aria-label="Library — recent & files (⌘L)"]');
+  await waitFor("Library panel reopened", () => cdp.ev("!!document.querySelector('.markie-side-panel')"));
+  await clickCenter(cdp, 'button[data-library-tab="files"]');
+  await waitFor("workspace file action", () =>
+    cdp.ev("!!document.querySelector('[data-file-actions-trigger]')")
+  );
+  await clickCenter(cdp, "[data-file-actions-trigger]");
+  await waitFor("workspace action menu", () =>
+    cdp.ev("[...document.querySelectorAll('button')].some((button) => button.textContent === 'Copy path')")
+  );
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape" });
+  await waitFor("workspace action menu dismissed", () =>
+    cdp.ev("![...document.querySelectorAll('button')].some((button) => button.textContent === 'Copy path')")
+  );
+
+  await clickCenter(cdp, "[data-file-actions-trigger]");
+  await waitFor("workspace action menu reopened", () =>
+    cdp.ev("[...document.querySelectorAll('button')].some((button) => button.textContent === 'Copy path')")
+  );
+  await clickCenter(cdp, 'button[aria-label="Browse all markdown"]');
+  await waitFor("Browse navigation", () =>
+    cdp.ev("document.querySelector('.markie-side-panel')?.textContent.includes('Browse') && ![...document.querySelectorAll('button')].some((button) => button.textContent === 'Copy path')")
+  );
+  const navigationScreenshot = await capture(cdp, "workspace-02-browse-navigation");
+  await clickCenter(cdp, 'button[aria-label="Browse all markdown"]');
+  await waitFor("side panel collapsed", () => cdp.ev("!document.querySelector('.markie-side-panel')"));
+
+  return {
+    createdPath,
+    createdContentLength: createdContent.length,
+    openedTitle: await cdp.ev("document.title"),
+    screenshots: { openedScreenshot, navigationScreenshot },
+  };
 }
 
 function metricFailures(metrics) {
@@ -350,7 +427,8 @@ async function main() {
   devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
   const userDataDir = await mkdtemp(path.join(tmpdir(), "markie-overlay-check-"));
-  tempPaths.push(userDataDir);
+  const homeDir = await mkdtemp(path.join(tmpdir(), "markie-overlay-home-"));
+  tempPaths.push(userDataDir, homeDir);
 
   start("npm", ["run", "dev", "--", "--port", String(devPort)], { log: logPath("next") });
   await waitFor("Next dev renderer", async () => {
@@ -360,7 +438,7 @@ async function main() {
 
   const electronBin = path.join(root, "node_modules", ".bin", "electron");
   start(electronBin, [".", `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`], {
-    env: { ...process.env, NODE_ENV: "development", MARKIE_E2E: "1" },
+    env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1" },
     log: logPath("electron"),
   });
 
@@ -370,6 +448,42 @@ async function main() {
   await cdp.send("Page.navigate", { url: devOrigin });
   await waitFor("renderer boot", () => cdp.ev("document.readyState === 'complete' && !!document.body"), 30000);
   await waitFor("toolbar boot", () => cdp.ev("!!document.querySelector('button[aria-label=\"Theme presets\"]')"), 30000);
+
+  const dragRegions = await cdp.ev(`(() => {
+    const rect = (selector) => {
+      const el = document.querySelector(selector);
+      if (!el) return null;
+      const box = el.getBoundingClientRect();
+      return {
+        left: box.left,
+        right: box.right,
+        width: box.width,
+        region: getComputedStyle(el).webkitAppRegion,
+      };
+    };
+    const toolbar = rect('[data-window-drag-surface]');
+    const handle = rect('[data-window-drag-handle]');
+    const file = rect('[data-window-control-region="file"]');
+    const mode = rect('[data-window-control-region="mode"]');
+    const documentControls = rect('[data-window-control-region="document"]');
+    const dragGap = file && mode && documentControls
+      ? Math.max(0, mode.left - file.right) + Math.max(0, documentControls.left - mode.right)
+      : 0;
+    return { toolbar, handle, file, mode, documentControls, dragGap };
+  })()`);
+  if (
+    !dragRegions?.toolbar ||
+    dragRegions.toolbar.region !== "drag" ||
+    dragRegions.handle?.region !== "drag" ||
+    dragRegions.file?.region !== "no-drag" ||
+    dragRegions.mode?.region !== "no-drag" ||
+    dragRegions.documentControls?.region !== "no-drag" ||
+    dragRegions.dragGap < 80
+  ) {
+    throw new Error(`window drag region check failed: ${JSON.stringify(dragRegions)}`);
+  }
+
+  const workspaceFlow = await verifyWorkspaceFlow(cdp, homeDir);
 
   const light = await runForMode(cdp, "light");
   const dark = await runForMode(cdp, "dark");
@@ -381,6 +495,8 @@ async function main() {
     generatedAt: new Date().toISOString(),
     artifactDir,
     screenshots,
+    dragRegions,
+    workspaceFlow,
     metrics,
     failures,
   };

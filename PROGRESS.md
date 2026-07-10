@@ -1167,3 +1167,24 @@
   change to retrigger the Windows runner.
 - blockers: Native Windows launch evidence for `85e5549` is blocked by GitHub account billing or
   Actions spending limit. No repo code failure was reached because the job had no steps.
+
+## 2026-07-10 16:45 EDT — terminal: progressed
+- did: Repaired the desktop interaction regressions and hardened the Windows renderer path. Files
+  created from the workspace now open immediately, document navigation dismisses stale panels and
+  overlays, row/PDF menus dismiss on Escape and outside navigation, and File > New File now reaches
+  the renderer. Replaced slash-only path parsing with macOS/Windows-safe helpers, including terminal
+  working-directory resolution. Reshaped the toolbar so the Markie handle and 650px of unused top
+  bar are native drag regions while file, mode, and document controls remain clickable no-drag
+  islands.
+- evidence: `npm run release:preflight` passed renderer/Electron tests 28 files / 166 tests, MCP 19,
+  server 35, lint, and static build. `npm run visual:check:overlays` passed an isolated real Electron
+  flow that created and opened `window-flow.md`, collapsed the Files panel, dismissed action/PDF
+  menus with Escape/outside click, navigated to Browse without a stale menu, verified light/dark
+  overlays, and measured a 649.7px drag gap. `npm run electron:build:win` rebuilt the x64 NSIS and
+  zip artifacts; `npm run electron:smoke:win` passed. The unpacked executable and SQLite native
+  module, plus the zipped native module, all have PE `4d5a` headers.
+- next: Push the hardening commit and require a native Windows launch-smoke result for that exact
+  commit. If the repository billing gate still prevents runner allocation, use an approved alternate
+  Windows runner or private validation mirror rather than treating the billing failure as app proof.
+- blockers: Native Windows execution remains pending until a Windows runner accepts the final pushed
+  commit. Windows artifacts remain unsigned local outputs and are not public release downloads.

@@ -1,16 +1,17 @@
-# Current Task - Windows x64 Build Artifacts
+# Current Task - Desktop Release Hardening
 
 ## Task
-Build and verify a Windows x64 version of Markie while confirming the current macOS release and
-Git state are pushed and published.
+Finish the Windows x64 app and repair the desktop interaction regressions that block normal file
+creation, navigation, menu dismissal, and window movement.
 
 ## Acceptance Criteria
-1. `main` is pushed to `origin`, and the current release tag exists remotely.
-2. The public macOS update feed and release artifacts for `0.2.9` are reachable.
-3. Full local release preflight passes.
-4. Windows x64 unpacked package, zip, and NSIS installer build locally with publish disabled.
-5. Windows package smoke verifies PE executable and native module payloads.
-6. Windows-host launch smoke is confirmed through the GitHub Actions workflow after push.
+1. Creating a file in the workspace opens it immediately in the editor.
+2. Opening or creating a document exits stale panels and overlays so the document is visible.
+3. Action and export menus dismiss on Escape, outside click, and navigation changes.
+4. macOS and Windows paths resolve their parent folders and base names correctly.
+5. The toolbar exposes a broad native drag surface without making controls unclickable.
+6. Full local release preflight and Windows x64 package smoke pass.
+7. A native Windows launch is confirmed on the final pushed commit.
 
 ## Scope Guard
 Do not publish Windows artifacts publicly, enable Windows auto-update feeds, or add Windows code

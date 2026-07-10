@@ -868,6 +868,11 @@ const template = [
     label: "File",
     submenu: [
       {
+        label: "New File",
+        accelerator: "CmdOrCtrl+N",
+        click: () => mainWindow?.webContents.send("menu-new-file"),
+      },
+      {
         label: "Open…",
         accelerator: "CmdOrCtrl+O",
         click: () => mainWindow?.webContents.send("menu-open-file"),

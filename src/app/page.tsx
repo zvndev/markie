@@ -51,6 +51,7 @@ import {
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI, type FilePayload } from "@/lib/electron";
 import { renderMarkdownHTML } from "@/lib/markdown-html";
+import { pathDirname } from "@/lib/path-utils";
 
 const SAMPLE = `# Northstar Sprint Brief
 
@@ -247,15 +248,28 @@ export default function Home() {
     setLeftView(v);
   }, []);
 
+  const dismissDocumentUI = useCallback(() => {
+    setShowStats(false);
+    setShowPalette(false);
+    setShowHelp(false);
+    setShowTheme(false);
+    setShowSettings(false);
+    setShowLibrary(false);
+    setShowShare(false);
+    setManageShare(null);
+    setShowAgents(false);
+  }, []);
+
   // Start a fresh, unsaved markdown doc.
   const handleNewFile = useCallback(() => {
+    dismissDocumentUI();
     setContent("");
     setSavedContent("");
     setFileName(null);
     setFilePath(null);
     setCloudId(null);
     setCanShare(false);
-  }, []);
+  }, [dismissDocumentUI]);
 
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
@@ -265,6 +279,7 @@ export default function Home() {
 
   const loadFile = useCallback(
     (data: { name: string; content: string; path: string | null }) => {
+      dismissDocumentUI();
       const md = fromDisk(data.name, data.content);
       setContent(md);
       setFileName(data.name);
@@ -279,7 +294,7 @@ export default function Home() {
       }
       setLibRefreshKey((k) => k + 1);
     },
-    []
+    [dismissDocumentUI]
   );
 
   const openPath = useCallback(
@@ -558,6 +573,7 @@ export default function Home() {
   // Latest handlers, readable from once-registered IPC listeners
   const handlersRef = useRef({
     openFile: handleOpenFile,
+    newFile: handleNewFile,
     exportPDF: handleExportPDF,
     save: handleSave,
     saveAs: handleSaveAs,
@@ -567,6 +583,7 @@ export default function Home() {
   });
   useEffect(() => {
     handlersRef.current.openFile = handleOpenFile;
+    handlersRef.current.newFile = handleNewFile;
     handlersRef.current.exportPDF = handleExportPDF;
     handlersRef.current.save = handleSave;
     handlersRef.current.saveAs = handleSaveAs;
@@ -574,6 +591,7 @@ export default function Home() {
     handlersRef.current.exportHTML = handleExportHTML;
   }, [
     handleOpenFile,
+    handleNewFile,
     handleExportPDF,
     handleSave,
     handleSaveAs,
@@ -629,6 +647,7 @@ export default function Home() {
     if (!api) return;
     const offs = [
       api.onMenuOpenFile?.(() => handlersRef.current.openFile()),
+      api.onMenuNewFile?.(() => handlersRef.current.newFile()),
       api.onMenuExportPDF?.((theme) =>
         handlersRef.current.exportPDF(theme ?? "dark")
       ),
@@ -768,6 +787,7 @@ export default function Home() {
         {/* Docked side panel (Library / Browse / Shared / Skills) */}
         {showLibrary && (
           <Library
+            key={leftView}
             view={leftView}
             onClose={() => setShowLibrary(false)}
             onOpenPath={openPath}
@@ -841,7 +861,7 @@ export default function Home() {
       {TERMINAL_ENABLED && showTerminal && (
         <TerminalPanel
           context={{
-            cwd: filePath ? filePath.slice(0, filePath.lastIndexOf("/")) || null : null,
+            cwd: filePath ? pathDirname(filePath) : null,
             filePath,
           }}
           onClose={() => setShowTerminal(false)}

@@ -10,6 +10,7 @@ import {
   applyColorMode,
   type ColorMode,
 } from "@/lib/color-mode";
+import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 
 type ViewMode = "edit" | "preview" | "split";
 
@@ -80,122 +81,134 @@ export function Toolbar({
     () => false
   );
 
-  useEffect(() => {
-    if (!showPDFMenu) return;
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setShowPDFMenu(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [showPDFMenu]);
+  useDismissibleLayer(showPDFMenu, menuRef, () => setShowPDFMenu(false));
 
   return (
     <div
+      data-window-drag-surface
       className={`markie-toolbar h-10 border-b border-border bg-surface grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 pr-3 sm:pr-4 select-none shrink-0 ${
         trafficLightPad ? "pl-[82px]" : "pl-3 sm:pl-4"
       }`}
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
     >
       {/* Left: App name + file + export */}
-      <div className="min-w-0 flex items-center gap-2.5" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
-        <span className="shrink-0 text-[13px] font-semibold tracking-tight text-foreground/90">
-          Markie
-        </span>
-        <div className="w-px h-4 bg-border" />
-        <button
-          onClick={onOpenFile}
-          className="shrink-0 text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
+      <div
+        data-window-left-section
+        className="min-w-0 w-fit max-w-full justify-self-start flex items-center gap-2.5"
+      >
+        <div
+          data-window-drag-handle
+          title="Move window"
+          className="h-10 -my-2.5 shrink-0 flex items-center gap-1.5 pr-0.5 text-foreground/90"
+          style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
         >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-            <polyline points="13 2 13 9 20 9" />
+          <svg width="9" height="14" viewBox="0 0 9 14" fill="currentColor" className="text-muted/60" aria-hidden="true">
+            <circle cx="2" cy="2" r="1" /><circle cx="7" cy="2" r="1" />
+            <circle cx="2" cy="7" r="1" /><circle cx="7" cy="7" r="1" />
+            <circle cx="2" cy="12" r="1" /><circle cx="7" cy="12" r="1" />
           </svg>
-          {fileName ? "Open" : "Open file…"}
-        </button>
-        {fileName &&
-          (renaming ? (
-            <input
-              autoFocus
-              value={draftName}
-              onChange={(e) => setDraftName(e.target.value)}
-              onBlur={() => setRenaming(false)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  onRename(draftName);
-                  setRenaming(false);
-                } else if (e.key === "Escape") {
-                  setRenaming(false);
-                }
-              }}
-              className="text-[12px] bg-background border border-border rounded px-1.5 py-0.5 w-44 text-foreground outline-none"
-            />
-          ) : (
-            <button
-              onClick={() => {
-                if (!canRename) return;
-                setDraftName(fileName);
-                setRenaming(true);
-              }}
-              title={canRename ? "Click to rename" : undefined}
-              className="min-w-0 max-w-[min(18rem,28vw)] truncate text-[12px] text-foreground/80 hover:text-foreground transition-colors"
-            >
-              {fileName}
-              {isDirty && <span className="text-muted ml-1.5">•</span>}
-            </button>
-          ))}
-        <div className="w-px h-4 bg-border shrink-0" />
-        <div className="relative" ref={menuRef}>
+          <span className="text-[13px] font-semibold tracking-tight">Markie</span>
+        </div>
+        <div className="w-px h-4 bg-border" />
+        <div
+          data-window-control-region="file"
+          className="min-w-0 flex items-center gap-2.5"
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        >
           <button
-            onClick={() => setShowPDFMenu(!showPDFMenu)}
-            aria-label="PDF export menu"
-            className="text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
+            onClick={onOpenFile}
+            className="shrink-0 text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="12" y1="18" x2="12" y2="12" />
-              <polyline points="9 15 12 18 15 15" />
+              <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+              <polyline points="13 2 13 9 20 9" />
             </svg>
-            PDF
-            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
+            {fileName ? "Open" : "Open file…"}
           </button>
+          {fileName &&
+            (renaming ? (
+              <input
+                autoFocus
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                onBlur={() => setRenaming(false)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    onRename(draftName);
+                    setRenaming(false);
+                  } else if (e.key === "Escape") {
+                    setRenaming(false);
+                  }
+                }}
+                className="text-[12px] bg-background border border-border rounded px-1.5 py-0.5 w-44 text-foreground outline-none"
+              />
+            ) : (
+              <button
+                onClick={() => {
+                  if (!canRename) return;
+                  setDraftName(fileName);
+                  setRenaming(true);
+                }}
+                title={canRename ? "Click to rename" : undefined}
+                className="min-w-0 max-w-[min(18rem,28vw)] truncate text-[12px] text-foreground/80 hover:text-foreground transition-colors"
+              >
+                {fileName}
+                {isDirty && <span className="text-muted ml-1.5">•</span>}
+              </button>
+            ))}
+          <div className="w-px h-4 bg-border shrink-0" />
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setShowPDFMenu(!showPDFMenu)}
+              aria-label="PDF export menu"
+              className="text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="12" y1="18" x2="12" y2="12" />
+                <polyline points="9 15 12 18 15 15" />
+              </svg>
+              PDF
+              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
 
-          {showPDFMenu && (
-            <div className="markie-menu-panel absolute top-full left-0 mt-1.5 rounded-lg py-1.5 min-w-[152px] z-50">
-              <button
-                onClick={() => { onExportPDF("dark"); setShowPDFMenu(false); }}
-                className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                Export Dark
-              </button>
-              <button
-                onClick={() => { onExportPDF("light"); setShowPDFMenu(false); }}
-                className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                Export Light
-              </button>
-            </div>
-          )}
+            {showPDFMenu && (
+              <div className="markie-menu-panel absolute top-full left-0 mt-1.5 rounded-lg py-1.5 min-w-[152px] z-50">
+                <button
+                  onClick={() => { onExportPDF("dark"); setShowPDFMenu(false); }}
+                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Export Dark
+                </button>
+                <button
+                  onClick={() => { onExportPDF("light"); setShowPDFMenu(false); }}
+                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Export Light
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Center: Mode toggle — View is primary, Edit/Split are icons */}
       <div
-        className="flex items-center bg-background rounded-md p-0.5 gap-0.5"
+        data-window-control-region="mode"
+        className="w-fit justify-self-center flex items-center bg-background rounded-md p-0.5 gap-0.5"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
         <button
@@ -242,7 +255,8 @@ export function Toolbar({
 
       {/* Right: theme/mode + presence + share */}
       <div
-        className="min-w-0 flex items-center justify-end gap-2"
+        data-window-control-region="document"
+        className="min-w-0 w-fit max-w-full justify-self-end flex items-center justify-end gap-2"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
         {themeLocked && (

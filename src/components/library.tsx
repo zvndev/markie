@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState, type DragEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+} from "react";
 import { getElectronAPI, type LibraryItem } from "@/lib/electron";
 import { FilesView } from "@/components/files-view";
 import { BrowseView } from "@/components/browse-view";
@@ -15,6 +21,7 @@ import {
   type LibraryOverview,
 } from "@/lib/library-overview";
 import type { WorkspaceBootstrapResult } from "@/lib/workspace-default";
+import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 
 interface LibraryProps {
   // which view the left rail selected (library | browse | shared | skills)
@@ -90,6 +97,7 @@ export function Library({
   const [notice, setNotice] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceBootstrapResult | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const menuRootRef = useRef<HTMLDivElement>(null);
   const [dropping, setDropping] = useState(false);
   const [libTab, setLibTab] = useState<LibTab>(() => {
     try {
@@ -99,6 +107,7 @@ export function Library({
     }
   });
   const pickTab = (t: LibTab) => {
+    setMenuFor(null);
     setLibTab(t);
     try {
       localStorage.setItem(TAB_KEY, t);
@@ -106,6 +115,9 @@ export function Library({
       // storage unavailable
     }
   };
+
+  useDismissibleLayer(menuFor !== null, menuRootRef, () => setMenuFor(null));
+
   const [defaultMsg, setDefaultMsg] = useState<string | null>(null);
   const [settingDefault, setSettingDefault] = useState(false);
   // null = unknown/checking; show the prompt only when we know it's NOT default.
@@ -249,7 +261,9 @@ export function Library({
       : BADGE[item.state];
     const api = getElectronAPI()!;
     const isActive = activePath && item.path === activePath;
+    const itemKey = item.path ?? item.cloudId;
     const open = () => {
+      setMenuFor(null);
       if (item.path && item.exists) {
         onOpenPath(item.path);
       } else if (item.shared && item.cloudId && api.docOpenShared) {
@@ -261,7 +275,8 @@ export function Library({
     };
     return (
       <div
-        key={item.path ?? item.cloudId}
+        key={itemKey}
+        ref={menuFor === itemKey ? menuRootRef : undefined}
         className={`group rounded-md px-2 py-1.5 cursor-pointer ${
           isActive ? "bg-accent" : "hover:bg-accent/40"
         }`}
@@ -279,7 +294,7 @@ export function Library({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                setMenuFor(menuFor === (item.path ?? item.cloudId) ? null : item.path ?? item.cloudId);
+                setMenuFor(menuFor === itemKey ? null : itemKey);
               }}
               className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-muted hover:text-foreground hover:bg-accent/40 shrink-0 transition"
               aria-label="Actions"
@@ -298,7 +313,7 @@ export function Library({
           </div>
         )}
 
-        {menuFor === (item.path ?? item.cloudId) && (
+        {menuFor === itemKey && (
           <div className="flex flex-wrap gap-x-3 gap-y-1 pl-5 pt-1.5 text-[11px]" onClick={(e) => e.stopPropagation()}>
             {item.path && (
               <button className="text-muted hover:text-foreground" onClick={() => copyPath(item.path!)}>Copy path</button>
@@ -374,6 +389,7 @@ export function Library({
             {(["recent", "files"] as LibTab[]).map((t) => (
               <button
                 key={t}
+                data-library-tab={t}
                 onClick={() => pickTab(t)}
                 className={`flex-1 text-[11px] py-1 rounded-md capitalize transition-colors ${
                   libTab === t

@@ -60,6 +60,7 @@ export interface ElectronAPI {
   renameFile(args: { oldPath: string; newName: string }): Promise<SaveResult>;
   // Each onX subscribes and returns an unsubscribe function.
   onMenuOpenFile(cb: () => void): Unsubscribe;
+  onMenuNewFile(cb: () => void): Unsubscribe;
   onMenuExportPDF(cb: (theme: "dark" | "light") => void): Unsubscribe;
   onMenuExportHTML(cb: () => void): Unsubscribe;
   onMenuSave(cb: () => void): Unsubscribe;

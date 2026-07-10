@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   saveFileAs: (args) => ipcRenderer.invoke("save-file-as", args),
   renameFile: (args) => ipcRenderer.invoke("rename-file", args),
   onMenuOpenFile: (callback) => subscribe("menu-open-file", callback),
+  onMenuNewFile: (callback) => subscribe("menu-new-file", callback),
   onMenuExportPDF: (callback) =>
     subscribe("menu-export-pdf", callback, (theme) => theme),
   onMenuExportHTML: (callback) => subscribe("menu-export-html", callback),

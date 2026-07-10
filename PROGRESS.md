@@ -1188,3 +1188,19 @@
   Windows runner or private validation mirror rather than treating the billing failure as app proof.
 - blockers: Native Windows execution remains pending until a Windows runner accepts the final pushed
   commit. Windows artifacts remain unsigned local outputs and are not public release downloads.
+
+## 2026-07-10 16:47 EDT — terminal: blocked
+- did: Pushed desktop hardening commit `c245ab6` to `origin/main`, which triggered Windows
+  launch-smoke run `29122498553`. Audited local bypasses after the run failed: Microsoft Windows App
+  has no configured Devices or Apps, no Wine/UTM/Parallels/VMware/VirtualBox runtime is installed,
+  no self-hosted GitHub runner exists, and no authenticated Azure/AWS/GCP or mesh Windows host is
+  available from this Mac.
+- evidence: Run `29122498553` failed in three seconds with no runner name and no workflow steps. Its
+  sole check annotation says the job was not started because recent account payments failed or the
+  Actions spending limit must be increased. The final commit remains locally verified by release
+  preflight, isolated Electron interaction QA, a fresh Windows installer/zip build, package smoke,
+  and PE payload checks.
+- next: Either repair Actions billing for `zvndev/markie-dev`, provide a Windows host, or explicitly
+  choose an alternate authenticated GitHub owner for a private validation mirror. Do not copy the
+  private repository into other GitHub accounts configured on this machine without that explicit choice.
+- blockers: Native Windows launch proof for `c245ab6` is externally blocked before runner allocation.

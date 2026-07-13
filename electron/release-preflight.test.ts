@@ -17,7 +17,7 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 describe("release preflight", () => {
   it("checks release metadata and required local files without credentials", () => {
     expect(validateReleaseMetadata(rootDir)).toMatchObject({
-      version: "0.2.9",
+      version: expect.stringMatching(/^\d+\.\d+\.\d+$/),
       appId: "com.zvn.markie",
       productName: "Markie",
     });
@@ -104,7 +104,7 @@ describe("release preflight", () => {
         "npm run electron:smoke:win:launch",
         "screenshot.png",
         "npm run release:prepare:mac",
-        "npm run release:verify:public -- --version=0.2.10 --deep",
+        'npm run release:verify:public -- --version="$MARKIE_RELEASE_VERSION" --deep',
         "https://markie.zvndev.com/download/latest.json",
         "Check for Updates",
         "Windows and Linux update checks are disabled",

@@ -101,7 +101,8 @@ stale website version means the server route must be deployed before publishing 
 ### 2. Set the version once
 
 ```sh
-npm run release:version -- 0.2.10
+export MARKIE_RELEASE_VERSION=0.2.10
+npm run release:version -- "$MARKIE_RELEASE_VERSION"
 ```
 
 This updates `package.json`, the root entries in `package-lock.json`, and `mcp/package.json`. Do not
@@ -142,7 +143,7 @@ npm run release:verify:mac
 Only after explicit approval:
 
 ```sh
-npm run release:publish:mac -- --confirm-public-release=0.2.10
+npm run release:publish:mac -- --confirm-public-release="$MARKIE_RELEASE_VERSION"
 ```
 
 The runner rechecks clean pushed `main`, credentials, exact-commit evidence, signatures,
@@ -181,9 +182,9 @@ release evidence.
 After public and updater verification:
 
 ```sh
-npm run release:verify:public -- --version=0.2.10 --deep
-git tag -a v0.2.10 -m "Markie 0.2.10"
-git push origin v0.2.10
+npm run release:verify:public -- --version="$MARKIE_RELEASE_VERSION" --deep
+git tag -a "v$MARKIE_RELEASE_VERSION" -m "Markie $MARKIE_RELEASE_VERSION"
+git push origin "v$MARKIE_RELEASE_VERSION"
 ```
 
 Create the GitHub release from that tag and attach or link the release notes. Do not attach unsigned
@@ -194,7 +195,7 @@ or unverified Windows/Linux artifacts.
 If the newly published feed must be withdrawn, explicitly approve rollback and run:
 
 ```sh
-npm run release:rollback:mac -- --confirm-rollback=0.2.10
+npm run release:rollback:mac -- --confirm-rollback="$MARKIE_RELEASE_VERSION"
 ```
 
 This restores the exact previous `latest-mac.yml` saved before publication and verifies the previous

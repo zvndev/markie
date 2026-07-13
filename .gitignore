@@ -49,6 +49,7 @@ next-env.d.ts
 # electron
 /dist/
 *.dmg
+/.release/
 
 # local dev artifacts
 /.playwright-mcp/

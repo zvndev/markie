@@ -1204,3 +1204,33 @@
   choose an alternate authenticated GitHub owner for a private validation mirror. Do not copy the
   private repository into other GitHub accounts configured on this machine without that explicit choice.
 - blockers: Native Windows launch proof for `c245ab6` is externally blocked before runner allocation.
+
+## 2026-07-12 20:27 EDT — terminal: complete
+- did: Made the stable desktop release process repo-owned and two-phase. The server download
+  manifest now owns the canonical site, Backblaze storage, updater feed path, publication status,
+  and permanent download routes; Electron Builder reads the same manifest. Added a guarded release
+  runner for one-command version updates, exact-commit signed/notarized preparation, local evidence,
+  artifact-first/feed-last publication, full public SHA-512 verification, stable website checks,
+  and previous-feed rollback. Added `/download/latest.json` and `/download/latest`, moved website
+  and share-email install CTAs to stable routes, documented the full release and updater-notice
+  procedure in `AGENTS.md` and `docs/RELEASING.md`, and fixed the server image so it includes the
+  manifest and boots with its default `/data` database path.
+- evidence: `npm run release:preflight` passed under Node 22 with 29 renderer/Electron test files / 175
+  tests, MCP 19 tests, server 40 tests, lint, and static build. Focused release/package tests passed
+  3 files / 24 tests. `npm run electron:pack:mac:arm64` loaded
+  `electron-builder.config.cjs`, built the unpacked app, and passed the packaged-window preflight;
+  `npm run electron:smoke:mac:arm64` passed. A production-shaped Node 22 Docker image built, booted
+  without a mounted data volume, and returned stable-channel `0.2.9` data from
+  `/download/latest.json`. Public-feed verification confirmed all four `0.2.9` macOS feed entries
+  and the primary DMG. `npm run electron:build:win` loaded the same canonical config and rebuilt the
+  x64 ZIP/NSIS artifacts; `npm run electron:smoke:win` passed package and PE-native-module checks.
+  Two review passes closed findings for untracked build inputs, evidence/artifact binding, remote
+  blockmap verification, rollback cache convergence, and production URL/feed drift; the final
+  review reported no findings.
+- next: Deploy the server route before the next app release, then use `npm run release:version --
+  <semver>`, commit/push, `npm run release:prepare:mac`, and the explicitly approved
+  `npm run release:publish:mac -- --confirm-public-release=<semver>` flow. Finish with a real updater
+  notice/install smoke from the previous public app version.
+- blockers: Windows publication remains gated on exact-commit native Windows launch evidence and
+  production Authenticode signing. The existing GitHub-hosted Windows runner remains blocked by
+  account billing before job allocation.

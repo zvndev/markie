@@ -10,35 +10,51 @@ import {
 } from "./render.ts";
 import {
   artifactDownloadUrl,
+  downloadHref,
+  downloadManifest,
+  downloadPlatforms,
   feedForPlatform,
   findDownloadPlatform,
+  markieSiteUrl,
   parseArtifactName,
+  parseFeedVersion,
+  primaryDownloadPlatform,
   type DownloadPlatform,
 } from "./downloads.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
-const MARKIE_SITE = process.env.MARKIE_SITE_URL ?? "https://markie.zvndev.com";
+const MARKIE_SITE = markieSiteUrl();
 
 // Cache resolved artifact URLs so a "Get Markie" click does not hit B2 every time.
-const downloadCache = new Map<string, { url: string; at: number }>();
+type ResolvedRelease = {
+  version: string;
+  artifactName: string;
+  artifactUrl: string;
+};
+
+const downloadCache = new Map<string, { release: ResolvedRelease; at: number }>();
 const DMG_TTL_MS = 5 * 60 * 1000;
 
-async function resolveDownloadUrl(platform: DownloadPlatform): Promise<string | null> {
+async function resolvePlatformRelease(platform: DownloadPlatform): Promise<ResolvedRelease | null> {
   const cached = downloadCache.get(platform.id);
-  if (cached && Date.now() - cached.at < DMG_TTL_MS) return cached.url;
+  if (cached && Date.now() - cached.at < DMG_TTL_MS) return cached.release;
   const feed = feedForPlatform(platform);
   if (!feed) return null;
   try {
     const res = await fetch(feed.url);
     if (!res.ok) throw new Error(`feed ${res.status}`);
-    const artifactName = parseArtifactName(await res.text(), platform);
+    const feedText = await res.text();
+    const version = parseFeedVersion(feedText);
+    const artifactName = parseArtifactName(feedText, platform);
+    if (!version) throw new Error(`no version for ${platform.id} in feed`);
     if (!artifactName) throw new Error(`no artifact for ${platform.id} in feed`);
-    const url = artifactDownloadUrl(platform, artifactName);
-    if (!url) throw new Error(`no artifact base for ${platform.id}`);
-    downloadCache.set(platform.id, { url, at: Date.now() });
-    return url;
+    const artifactUrl = artifactDownloadUrl(platform, artifactName);
+    if (!artifactUrl) throw new Error(`no artifact base for ${platform.id}`);
+    const release = { version, artifactName, artifactUrl };
+    downloadCache.set(platform.id, { release, at: Date.now() });
+    return release;
   } catch {
-    return cached?.url ?? null; // serve a stale value through a transient blip
+    return cached?.release ?? null; // serve a stale value through a transient blip
   }
 }
 
@@ -65,15 +81,45 @@ publicShare.get("/download", (c) => {
   return c.html(renderDownloadPage({ siteUrl: MARKIE_SITE }));
 });
 
+publicShare.get(downloadManifest.latestManifestRoute, async (c) => {
+  const platforms = downloadPlatforms().filter((platform) => platform.status === "public");
+  const releases = await Promise.all(
+    platforms.map(async (platform) => ({ platform, release: await resolvePlatformRelease(platform) }))
+  );
+  const primary = primaryDownloadPlatform();
+  const primaryRelease = releases.find(({ platform }) => platform.id === primary.id)?.release ?? null;
+  c.header("Cache-Control", "public, max-age=300");
+  return c.json({
+    schemaVersion: downloadManifest.schemaVersion,
+    channel: downloadManifest.channel,
+    version: primaryRelease?.version ?? null,
+    primaryPlatformId: primary.id,
+    downloadPageUrl: `${MARKIE_SITE}/download`,
+    platforms: releases.map(({ platform, release }) => ({
+      id: platform.id,
+      label: platform.label,
+      os: platform.os,
+      arch: platform.arch,
+      version: release?.version ?? null,
+      downloadUrl: `${MARKIE_SITE}${downloadHref(platform)}`,
+      artifactUrl: release?.artifactUrl ?? null,
+    })),
+  });
+});
+
+publicShare.get("/download/latest", (c) => {
+  return c.redirect(downloadHref(primaryDownloadPlatform()), 307);
+});
+
 publicShare.get("/download/:platform", async (c) => {
   const platform = findDownloadPlatform(c.req.path) ?? findDownloadPlatform(c.req.param("platform"));
   if (!platform) return c.html(renderDownloadPage({ siteUrl: MARKIE_SITE, status: "missing" }), 404);
   if (platform.status !== "public") {
     return c.html(renderDownloadPage({ siteUrl: MARKIE_SITE, selectedPlatform: platform }), 404);
   }
-  const url = await resolveDownloadUrl(platform);
-  if (!url) return c.redirect(MARKIE_SITE, 302); // last-resort if B2 is down
-  return c.redirect(url, 302);
+  const release = await resolvePlatformRelease(platform);
+  if (!release) return c.redirect(`${MARKIE_SITE}/download`, 302); // last-resort if B2 is down
+  return c.redirect(release.artifactUrl, 302);
 });
 
 publicShare.get("/s/:token", (c) => {

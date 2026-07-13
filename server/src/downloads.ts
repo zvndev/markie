@@ -4,6 +4,10 @@ export type DownloadStatus = "public" | "planned";
 
 export type DownloadFeed = {
   type: "electron-builder-mac-yml";
+  path: string;
+};
+
+export type ResolvedDownloadFeed = DownloadFeed & {
   url: string;
   artifactBaseUrl: string;
 };
@@ -22,7 +26,17 @@ export type DownloadPlatform = {
 };
 
 export type DownloadManifest = {
-  version: number;
+  schemaVersion: number;
+  channel: "stable";
+  siteUrl: string;
+  latestManifestRoute: string;
+  storage: {
+    provider: "s3";
+    bucket: string;
+    endpoint: string;
+    region: string;
+    publicBaseUrl: string;
+  };
   primaryPlatformId: string;
   platforms: DownloadPlatform[];
 };
@@ -30,11 +44,21 @@ export type DownloadManifest = {
 export const DOWNLOAD_MANIFEST_URL = new URL("../download-manifest.json", import.meta.url);
 
 const stripTrailingSlash = (value: string) => value.replace(/\/+$/, "");
+const stripLeadingSlash = (value: string) => value.replace(/^\/+/, "");
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const loadManifest = (): DownloadManifest => {
   const manifest = JSON.parse(readFileSync(DOWNLOAD_MANIFEST_URL, "utf8")) as DownloadManifest;
+  if (manifest.schemaVersion !== 2) throw new Error("download manifest schemaVersion must be 2");
+  if (manifest.channel !== "stable") throw new Error("download manifest channel must be stable");
+  if (!manifest.siteUrl.startsWith("https://")) throw new Error("download manifest siteUrl must use HTTPS");
+  if (manifest.latestManifestRoute !== "/download/latest.json") {
+    throw new Error("download manifest latest route must stay /download/latest.json");
+  }
+  if (!manifest.storage?.publicBaseUrl.startsWith("https://")) {
+    throw new Error("download manifest storage needs a public HTTPS base URL");
+  }
   if (!Array.isArray(manifest.platforms) || manifest.platforms.length === 0) {
     throw new Error("download manifest must define at least one platform");
   }
@@ -50,6 +74,9 @@ const loadManifest = (): DownloadManifest => {
     if (platform.status === "public" && !platform.feed) {
       throw new Error(`public download platform ${platform.id} needs a feed`);
     }
+    if (platform.feed?.path.startsWith("/") || platform.feed?.path.includes("..")) {
+      throw new Error(`invalid download feed path: ${platform.feed.path}`);
+    }
     ids.add(platform.id);
     routes.add(platform.route);
   }
@@ -60,6 +87,18 @@ const loadManifest = (): DownloadManifest => {
 };
 
 export const downloadManifest = loadManifest();
+
+export function markieSiteUrl(
+  envValue = process.env.MARKIE_SITE_URL,
+  nodeEnv = process.env.NODE_ENV
+): string {
+  const canonical = stripTrailingSlash(downloadManifest.siteUrl);
+  const override = envValue ? stripTrailingSlash(envValue) : null;
+  if (nodeEnv === "production" && override && override !== canonical) {
+    throw new Error(`MARKIE_SITE_URL must match the stable release manifest in production: ${canonical}`);
+  }
+  return override ?? canonical;
+}
 
 export function downloadPlatforms(): DownloadPlatform[] {
   return downloadManifest.platforms;
@@ -101,17 +140,34 @@ export function primaryDownloadCta(siteUrl = ""): { href: string; label: string;
 
 export function feedForPlatform(
   platform: DownloadPlatform,
-  envBase = process.env.MARKIE_DOWNLOAD_BASE
-): DownloadFeed | null {
-  if (platform.id === "mac-arm64" && envBase) {
+  envBase = process.env.MARKIE_DOWNLOAD_BASE,
+  nodeEnv = process.env.NODE_ENV
+): ResolvedDownloadFeed | null {
+  if (!platform.feed) return null;
+  if (envBase) {
+    if (nodeEnv === "production") {
+      throw new Error("MARKIE_DOWNLOAD_BASE cannot override the stable release manifest in production");
+    }
     const base = stripTrailingSlash(envBase);
+    const feedName = platform.feed.path.split("/").at(-1);
     return {
-      type: "electron-builder-mac-yml",
-      url: `${base}/latest-mac.yml`,
+      ...platform.feed,
+      url: `${base}/${feedName}`,
       artifactBaseUrl: base,
     };
   }
-  return platform.feed ?? null;
+  const publicBase = stripTrailingSlash(downloadManifest.storage.publicBaseUrl);
+  const feedPath = stripLeadingSlash(platform.feed.path);
+  const artifactPath = feedPath.split("/").slice(0, -1).join("/");
+  return {
+    ...platform.feed,
+    url: `${publicBase}/${feedPath}`,
+    artifactBaseUrl: artifactPath ? `${publicBase}/${artifactPath}` : publicBase,
+  };
+}
+
+export function parseFeedVersion(feedText: string): string | null {
+  return feedText.match(/^version:\s*['"]?([^\s'"]+)['"]?\s*$/m)?.[1] ?? null;
 }
 
 export function parseArtifactName(feedText: string, platform: DownloadPlatform): string | null {

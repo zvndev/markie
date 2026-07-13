@@ -8,8 +8,11 @@ import { join } from "node:path";
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-pub-")), "t.db");
 const {
   downloadPlatforms,
+  feedForPlatform,
   findDownloadPlatform,
+  markieSiteUrl,
   parseDmgName,
+  parseFeedVersion,
   primaryDownloadCta,
 } = await import("./downloads.ts");
 const { clearDownloadCacheForTests, publicShare } = await import("./public.ts");
@@ -40,6 +43,33 @@ test("parseDmgName works across version bumps", () => {
 
 test("parseDmgName returns null when no dmg is present", () => {
   assert.equal(parseDmgName("files:\n  - url: Markie-0.2.3-arm64-mac.zip\n"), null);
+});
+
+test("parseFeedVersion reads the stable feed version", () => {
+  assert.equal(parseFeedVersion(SAMPLE_YML), "0.2.3");
+  assert.equal(parseFeedVersion("files: []\n"), null);
+});
+
+test("production site URLs cannot drift from the stable release manifest", () => {
+  assert.equal(markieSiteUrl(undefined, "production"), "https://markie.zvndev.com");
+  assert.equal(markieSiteUrl("https://markie.test/", "test"), "https://markie.test");
+  assert.throws(
+    () => markieSiteUrl("https://stale.example.com", "production"),
+    /must match the stable release manifest/
+  );
+});
+
+test("production download feeds cannot drift from the stable release manifest", () => {
+  const platform = findDownloadPlatform("mac-arm64");
+  assert(platform);
+  assert.throws(
+    () => feedForPlatform(platform, "https://stale.example.com/mac", "production"),
+    /cannot override the stable release manifest/
+  );
+  assert.equal(
+    feedForPlatform(platform, "https://markie.test/mac", "test")?.url,
+    "https://markie.test/mac/latest-mac.yml"
+  );
 });
 
 test("download manifest covers public and planned desktop targets", () => {
@@ -111,6 +141,47 @@ test("published download route redirects to the manifest artifact", async (t) =>
     res.headers.get("location"),
     "https://f005.backblazeb2.com/file/markie-releases/mac/Markie-0.2.3-arm64.dmg"
   );
+});
+
+test("latest release JSON is a stable machine-readable source for sites and emails", async (t) => {
+  const previousFetch = globalThis.fetch;
+  clearDownloadCacheForTests();
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+    clearDownloadCacheForTests();
+  });
+  globalThis.fetch = async () => new Response(SAMPLE_YML, { status: 200 });
+
+  const res = await publicShare.request("/download/latest.json");
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("cache-control"), "public, max-age=300");
+  assert.deepEqual(body, {
+    schemaVersion: 2,
+    channel: "stable",
+    version: "0.2.3",
+    primaryPlatformId: "mac-arm64",
+    downloadPageUrl: "https://markie.zvndev.com/download",
+    platforms: [
+      {
+        id: "mac-arm64",
+        label: "macOS Apple Silicon",
+        os: "macos",
+        arch: "arm64",
+        version: "0.2.3",
+        downloadUrl: "https://markie.zvndev.com/download/mac",
+        artifactUrl:
+          "https://f005.backblazeb2.com/file/markie-releases/mac/Markie-0.2.3-arm64.dmg",
+      },
+    ],
+  });
+});
+
+test("latest human download route stays versionless", async () => {
+  const res = await publicShare.request("/download/latest");
+  assert.equal(res.status, 307);
+  assert.equal(res.headers.get("location"), "/download/mac");
 });
 
 test("planned download routes render an honest unavailable page", async () => {

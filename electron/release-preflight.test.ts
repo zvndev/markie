@@ -6,6 +6,7 @@ import {
   validatePackagingMatrix,
   validateElectronMainDesktopSupport,
   validateReleaseDocs,
+  validateReleaseManifest,
   validateReleaseMetadata,
   validateRequiredFiles,
   validateWindowsLaunchWorkflow,
@@ -27,12 +28,14 @@ describe("release preflight", () => {
         "build/entitlements.mac.plist",
         "build/icon.ico",
         "build/icons/256x256.png",
+        "electron-builder.config.cjs",
         "scripts/install-win-native-prebuild.mjs",
         "scripts/local-electron-builder.mjs",
         "scripts/restore-host-native-prebuild.mjs",
         "scripts/package-smoke.mjs",
         "scripts/desktop-launch-smoke.mjs",
         "scripts/windows-launch-smoke.mjs",
+        "scripts/release.mjs",
         ".github/workflows/windows-launch-smoke.yml",
         "electron/csp.js",
         "electron/update-policy.js",
@@ -42,6 +45,16 @@ describe("release preflight", () => {
         "server/download-manifest.json",
       ])
     );
+  });
+
+  it("keeps storage, updater feeds, and stable download routes in one manifest", () => {
+    expect(validateReleaseManifest(rootDir)).toEqual({
+      channel: "stable",
+      siteUrl: "https://markie.zvndev.com",
+      latestManifestRoute: "/download/latest.json",
+      feedPath: "mac/latest-mac.yml",
+      bucket: "markie-releases",
+    });
   });
 
   it("validates the local desktop packaging matrix without publishing", () => {
@@ -90,6 +103,10 @@ describe("release preflight", () => {
         "npm run electron:smoke:mac:launch",
         "npm run electron:smoke:win:launch",
         "screenshot.png",
+        "npm run release:prepare:mac",
+        "npm run release:verify:public -- --version=0.2.10 --deep",
+        "https://markie.zvndev.com/download/latest.json",
+        "Check for Updates",
         "Windows and Linux update checks are disabled",
         "--publish never",
       ])

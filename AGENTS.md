@@ -39,6 +39,24 @@ Not-tested: <known gaps in verification>
 
 Use only trailers that add real decision context.
 
+## Release Protocol
+
+- `docs/RELEASING.md` is the authoritative full-release runbook.
+- `server/download-manifest.json` is the sole stable-channel source for storage, updater feed paths,
+  platform publication status, and permanent website/email routes. Electron Builder consumes it
+  through `electron-builder.config.cjs`.
+- Use `npm run release:version -- <semver>`; do not hand-edit version files independently.
+- Prepare with `npm run release:prepare:mac`. It must pass full preflight, dual-architecture native
+  launch smoke, signing, notarization, stapling, feed, size, and SHA-512 checks before upload.
+- Publishing is a human checkpoint. After explicit approval, use
+  `npm run release:publish:mac -- --confirm-public-release=<semver>`. Never call Electron Builder
+  with `--publish always` directly, and never use its standalone `publish` command as a dry run.
+- A release is not complete until `npm run release:verify:public -- --version=<semver> --deep`
+  passes and the previous app version visibly receives, downloads, installs, and relaunches through
+  **Check for Updates**.
+- Websites and emails link to `https://markie.zvndev.com/download` or a stable manifest route,
+  never a versioned artifact URL.
+
 ## The Loop Protocol
 This project is driven by the `long-agent-loop` skill. Each wakeup, in order:
 1. Re-ground on `VISION.md`, `CONSTITUTION.md`, the tail of `PROGRESS.md`, and `git log`; run

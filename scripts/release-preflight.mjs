@@ -1,7 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+
+const require = createRequire(import.meta.url);
 
 const FORBIDDEN_ACTIONS = [
   /\belectron-builder\b/i,
@@ -23,6 +26,7 @@ const REQUIRED_FILES = [
   "README.md",
   "LICENSE",
   "docs/RELEASING.md",
+  "electron-builder.config.cjs",
   "build/preflight.cjs",
   "build/entitlements.mac.plist",
   "build/icon.ico",
@@ -35,6 +39,7 @@ const REQUIRED_FILES = [
   "scripts/package-smoke.mjs",
   "scripts/desktop-launch-smoke.mjs",
   "scripts/windows-launch-smoke.mjs",
+  "scripts/release.mjs",
   ".github/workflows/windows-launch-smoke.yml",
   "electron/csp.js",
   "electron/main.js",
@@ -144,14 +149,27 @@ const REQUIRED_RELEASE_DOC_SNIPPETS = [
   "npm run electron:smoke:win:launch",
   "screenshot.png",
   "npm run release:preflight",
+  "npm run release:version -- 0.2.10",
+  "npm run release:prepare:mac",
+  "npm run release:publish:mac -- --confirm-public-release=0.2.10",
+  "npm run release:verify:public -- --version=0.2.10 --deep",
+  "npm run release:rollback:mac -- --confirm-rollback=0.2.10",
+  "https://markie.zvndev.com/download/latest.json",
+  "uploads `latest-mac.yml` last",
+  "Check for Updates",
   "Windows and Linux update checks are disabled",
-  "before the zip/NSIS artifacts are\ncreated",
   "--publish never",
-  "does **not** mean an artifact is\nsigned, notarized, published, uploaded, deployed, or approved",
+  "does **not** mean an artifact is signed, notarized, published",
 ];
 
 const readJson = (rootDir, relativePath) =>
   JSON.parse(readFileSync(path.join(rootDir, relativePath), "utf8"));
+
+const readBuilderConfig = (rootDir) => {
+  const configPath = path.join(rootDir, "electron-builder.config.cjs");
+  delete require.cache[require.resolve(configPath)];
+  return require(configPath);
+};
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -187,6 +205,7 @@ export function validateReleaseMetadata(rootDir) {
   const lock = readJson(rootDir, "package-lock.json");
   const mcp = readJson(rootDir, "mcp/package.json");
   const server = readJson(rootDir, "server/package.json");
+  const builder = readBuilderConfig(rootDir);
 
   assert(pkg.name === "markie", "package.json name must be markie");
   assert(/^\d+\.\d+\.\d+$/.test(pkg.version), "package.json version must be semver-like");
@@ -200,23 +219,63 @@ export function validateReleaseMetadata(rootDir) {
   assert(Boolean(pkg.homepage), "package.json homepage is required");
   assert(Boolean(pkg.repository?.url), "package.json repository.url is required");
   assert(pkg.main === "electron/main.js", "package.json main must point at Electron main");
-  assert(pkg.build?.appId === "com.zvn.markie", "electron-builder appId must be com.zvn.markie");
-  assert(pkg.build?.productName === "Markie", "electron-builder productName must be Markie");
-  assert(pkg.build?.afterPack === "build/preflight.cjs", "electron-builder afterPack must keep the app smoke gate");
-  assert(pkg.build?.mac?.notarize === true, "release config must keep notarization enabled");
-  assert(pkg.build?.win?.icon === "build/icon.ico", "Windows build config must use the generated .ico icon");
-  assert(pkg.build?.linux?.icon === "build/icons", "Linux build config must use the generated PNG icon set");
-  assert(Array.isArray(pkg.build?.publish) && pkg.build.publish.length > 0, "release config must define a publish target");
+  assert(builder.appId === "com.zvn.markie", "electron-builder appId must be com.zvn.markie");
+  assert(builder.productName === "Markie", "electron-builder productName must be Markie");
+  assert(builder.afterPack === "build/preflight.cjs", "electron-builder afterPack must keep the app smoke gate");
+  assert(builder.mac?.notarize === true, "release config must keep notarization enabled");
+  assert(builder.win?.icon === "build/icon.ico", "Windows build config must use the generated .ico icon");
+  assert(builder.linux?.icon === "build/icons", "Linux build config must use the generated PNG icon set");
+  assert(Array.isArray(builder.publish) && builder.publish.length > 0, "release config must define a publish target");
   assert(mcp.version === pkg.version, "mcp/package.json version must match package.json");
   assert(mcp.private === true, "MCP package must stay private in this repo");
   assert(server.private === true, "server package must stay private");
-  assert(Boolean(pkg.scripts?.["electron:release"]?.includes("--publish always")), "electron:release must remain the explicit publishing command");
+  assert(pkg.scripts?.["electron:release"] === "node scripts/release.mjs publish mac", "electron:release must use the guarded release runner");
   assert(Boolean(pkg.scripts?.["release:preflight"]), "release:preflight script must be documented in package.json");
+  assert(Boolean(pkg.scripts?.["release:prepare:mac"]), "release:prepare:mac script is required");
+  assert(Boolean(pkg.scripts?.["release:publish:mac"]), "release:publish:mac script is required");
 
   return {
     version: pkg.version,
-    appId: pkg.build.appId,
-    productName: pkg.build.productName,
+    appId: builder.appId,
+    productName: builder.productName,
+  };
+}
+
+export function validateReleaseManifest(rootDir) {
+  const manifest = readJson(rootDir, "server/download-manifest.json");
+  const builder = readBuilderConfig(rootDir);
+  const publicSource = readFileSync(path.join(rootDir, "server/src/public.ts"), "utf8");
+  const dockerfile = readFileSync(path.join(rootDir, "server/Dockerfile"), "utf8");
+  const mac = manifest.platforms?.find(
+    (platform) => platform.id === "mac-arm64" && platform.status === "public"
+  );
+  const publish = builder.publish?.[0];
+
+  assert(manifest.schemaVersion === 2, "release manifest schemaVersion must be 2");
+  assert(manifest.channel === "stable", "release manifest channel must be stable");
+  assert(manifest.siteUrl === "https://markie.zvndev.com", "release manifest must own the canonical site URL");
+  assert(manifest.latestManifestRoute === "/download/latest.json", "release manifest must own the latest JSON route");
+  assert(manifest.storage?.provider === "s3", "release storage provider must be s3");
+  assert(Boolean(manifest.storage?.bucket), "release storage bucket is required");
+  assert(Boolean(manifest.storage?.endpoint), "release storage endpoint is required");
+  assert(Boolean(manifest.storage?.region), "release storage region is required");
+  assert(Boolean(manifest.storage?.publicBaseUrl), "release public storage base is required");
+  assert(mac?.feed?.path === "mac/latest-mac.yml", "public macOS feed path must remain canonical");
+  assert(publish?.provider === manifest.storage.provider, "builder provider must come from the release manifest");
+  assert(publish?.bucket === manifest.storage.bucket, "builder bucket must come from the release manifest");
+  assert(publish?.endpoint === manifest.storage.endpoint, "builder endpoint must come from the release manifest");
+  assert(publish?.region === manifest.storage.region, "builder region must come from the release manifest");
+  assert(publish?.path === "mac", "builder publish path must match the macOS feed directory");
+  assert(publicSource.includes("downloadManifest.latestManifestRoute"), "server must expose the manifest-backed latest JSON route");
+  assert(publicSource.includes('publicShare.get("/download/latest"'), "server must expose the stable latest human route");
+  assert(dockerfile.includes("COPY download-manifest.json ./download-manifest.json"), "server image must include the release manifest");
+
+  return {
+    channel: manifest.channel,
+    siteUrl: manifest.siteUrl,
+    latestManifestRoute: manifest.latestManifestRoute,
+    feedPath: mac.feed.path,
+    bucket: manifest.storage.bucket,
   };
 }
 
@@ -247,12 +306,14 @@ function hasTarget(platformConfig, target, arch) {
 
 export function validatePackagingMatrix(rootDir) {
   const pkg = readJson(rootDir, "package.json");
+  const builder = readBuilderConfig(rootDir);
   const scripts = pkg.scripts ?? {};
 
   for (const name of REQUIRED_PACK_SCRIPTS) {
     const script = scripts[name];
     assert(Boolean(script), `missing local packaging script: ${name}`);
     assert(script.includes("scripts/local-electron-builder.mjs"), `${name} must use unsigned local electron-builder wrapper`);
+    assert(script.includes("--config electron-builder.config.cjs"), `${name} must use the canonical builder config`);
     assert(script.includes("--dir"), `${name} must be a local unpacked packaging script`);
     assert(script.includes("--publish never"), `${name} must disable publishing`);
     if (name === "electron:pack:win") {
@@ -263,6 +324,7 @@ export function validatePackagingMatrix(rootDir) {
     const script = scripts[name];
     assert(Boolean(script), `missing local build script: ${name}`);
     assert(script.includes("scripts/local-electron-builder.mjs"), `${name} must use unsigned local electron-builder wrapper`);
+    assert(script.includes("--config electron-builder.config.cjs"), `${name} must use the canonical builder config`);
     assert(script.includes("--publish never"), `${name} must disable publishing`);
   }
   for (const [name, platformFlag, archFlag] of REQUIRED_SMOKE_SCRIPTS) {
@@ -281,19 +343,19 @@ export function validatePackagingMatrix(rootDir) {
     }
   }
 
-  assert(hasTarget(pkg.build?.mac, "dmg", "arm64"), "macOS matrix must include arm64 dmg");
-  assert(hasTarget(pkg.build?.mac, "zip", "arm64"), "macOS matrix must include arm64 zip");
-  assert(hasTarget(pkg.build?.mac, "dmg", "x64"), "macOS matrix must include Intel x64 dmg");
-  assert(hasTarget(pkg.build?.mac, "zip", "x64"), "macOS matrix must include Intel x64 zip");
-  assert(hasTarget(pkg.build?.win, "nsis", "x64"), "Windows matrix must include x64 nsis");
-  assert(hasTarget(pkg.build?.win, "zip", "x64"), "Windows matrix must include x64 zip");
-  assert(hasTarget(pkg.build?.linux, "AppImage", "x64"), "Linux matrix must include x64 AppImage");
-  assert(hasTarget(pkg.build?.linux, "deb", "x64"), "Linux matrix must include x64 deb");
+  assert(hasTarget(builder.mac, "dmg", "arm64"), "macOS matrix must include arm64 dmg");
+  assert(hasTarget(builder.mac, "zip", "arm64"), "macOS matrix must include arm64 zip");
+  assert(hasTarget(builder.mac, "dmg", "x64"), "macOS matrix must include Intel x64 dmg");
+  assert(hasTarget(builder.mac, "zip", "x64"), "macOS matrix must include Intel x64 zip");
+  assert(hasTarget(builder.win, "nsis", "x64"), "Windows matrix must include x64 nsis");
+  assert(hasTarget(builder.win, "zip", "x64"), "Windows matrix must include x64 zip");
+  assert(hasTarget(builder.linux, "AppImage", "x64"), "Linux matrix must include x64 AppImage");
+  assert(hasTarget(builder.linux, "deb", "x64"), "Linux matrix must include x64 deb");
 
   return {
-    mac: listTargetEntries(pkg.build.mac),
-    win: listTargetEntries(pkg.build.win),
-    linux: listTargetEntries(pkg.build.linux),
+    mac: listTargetEntries(builder.mac),
+    win: listTargetEntries(builder.win),
+    linux: listTargetEntries(builder.linux),
     scripts: [
       ...REQUIRED_PACK_SCRIPTS,
       ...REQUIRED_BUILD_SCRIPTS,
@@ -384,6 +446,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   console.log("[release:preflight] no signing, notarization, upload, publish, deploy, or credential checks will run");
 
   const metadata = validateReleaseMetadata(resolvedRoot);
+  const manifest = validateReleaseManifest(resolvedRoot);
   const files = validateRequiredFiles(resolvedRoot);
   const matrix = validatePackagingMatrix(resolvedRoot);
   const windowsWorkflow = validateWindowsLaunchWorkflow(resolvedRoot);
@@ -392,6 +455,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   const inspected = assertLocalOnlyChecks(resolvedRoot);
 
   console.log(`[release:preflight] metadata ok: Markie ${metadata.version} (${metadata.appId})`);
+  console.log(`[release:preflight] stable channel ok: ${manifest.siteUrl}${manifest.latestManifestRoute}`);
   console.log(`[release:preflight] required files ok: ${files.length} files`);
   console.log(
     `[release:preflight] packaging matrix ok: mac=${matrix.mac.length} win=${matrix.win.length} linux=${matrix.linux.length}`
@@ -408,7 +472,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   }
 
   console.log("[release:preflight] passed; stop here before any credentialed release action");
-  return { metadata, files, matrix, windowsWorkflow, electronMain, docs, inspected };
+  return { metadata, manifest, files, matrix, windowsWorkflow, electronMain, docs, inspected };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

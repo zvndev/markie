@@ -8,12 +8,12 @@ import {
   getPublicLinkToken,
   revokePublicLink,
 } from "./public-links.ts";
-import { primaryDownloadCta } from "./downloads.ts";
+import { markieSiteUrl, primaryDownloadCta } from "./downloads.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
 
-// Where "Get Markie" buttons point until the marketing domain is live.
-const MARKIE_SITE = process.env.MARKIE_SITE_URL ?? "https://markie.zvndev.com";
+// Share emails use the stable release-manifest domain and versionless download routes.
+const MARKIE_SITE = markieSiteUrl();
 
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"]/g, (ch) =>

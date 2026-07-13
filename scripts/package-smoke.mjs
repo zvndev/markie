@@ -1,9 +1,11 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_PRODUCT_NAME = "Markie";
+const require = createRequire(import.meta.url);
 
 const PLATFORM_ALIASES = new Map([
   ["darwin", "mac"],
@@ -49,8 +51,9 @@ function executableMode(pathname) {
 
 function readProductName(rootDir) {
   try {
-    const pkg = JSON.parse(readFileSync(path.join(rootDir, "package.json"), "utf8"));
-    return pkg.build?.productName || DEFAULT_PRODUCT_NAME;
+    const configPath = path.join(rootDir, "electron-builder.config.cjs");
+    delete require.cache[require.resolve(configPath)];
+    return require(configPath).productName || DEFAULT_PRODUCT_NAME;
   } catch {
     return DEFAULT_PRODUCT_NAME;
   }

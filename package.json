@@ -35,6 +35,13 @@
     "icons:generate": "node scripts/generate-icons.mjs",
     "native:restore": "node scripts/restore-host-native-prebuild.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
+    "release:status": "node scripts/release.mjs status",
+    "release:version": "node scripts/release.mjs version",
+    "release:prepare:mac": "node scripts/release.mjs prepare mac",
+    "release:verify:mac": "node scripts/release.mjs verify-local mac",
+    "release:publish:mac": "node scripts/release.mjs publish mac",
+    "release:verify:public": "node scripts/release.mjs verify-public mac",
+    "release:rollback:mac": "node scripts/release.mjs rollback mac",
     "electron:smoke": "node scripts/package-smoke.mjs",
     "electron:smoke:mac:arm64": "node scripts/package-smoke.mjs --platform mac --arch arm64",
     "electron:smoke:mac:launch": "node scripts/desktop-launch-smoke.mjs --platform mac --arch arm64",
@@ -43,136 +50,17 @@
     "electron:smoke:win:launch": "node scripts/windows-launch-smoke.mjs",
     "electron:smoke:linux": "node scripts/package-smoke.mjs --platform linux --arch x64",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && NODE_ENV=development electron .\"",
-    "electron:build": "npm run build && node scripts/local-electron-builder.mjs --mac --publish never",
-    "electron:build:mac": "npm run build && node scripts/local-electron-builder.mjs --mac --publish never",
-    "electron:build:win": "npm run build && node scripts/local-electron-builder.mjs --win --publish never",
-    "electron:build:linux": "npm run build && node scripts/local-electron-builder.mjs --linux --publish never",
+    "electron:build": "npm run build && node scripts/local-electron-builder.mjs --config electron-builder.config.cjs --mac --publish never",
+    "electron:build:mac": "npm run build && node scripts/local-electron-builder.mjs --config electron-builder.config.cjs --mac --publish never",
+    "electron:build:win": "npm run build && node scripts/local-electron-builder.mjs --config electron-builder.config.cjs --win --publish never",
+    "electron:build:linux": "npm run build && node scripts/local-electron-builder.mjs --config electron-builder.config.cjs --linux --publish never",
     "electron:pack": "npm run electron:pack:mac",
-    "electron:pack:mac": "npm run build && node scripts/local-electron-builder.mjs --mac --dir --publish never",
-    "electron:pack:mac:arm64": "npm run build && node scripts/local-electron-builder.mjs --mac --arm64 --dir --publish never",
-    "electron:pack:mac:x64": "npm run build && node scripts/local-electron-builder.mjs --mac --x64 --dir --publish never",
-    "electron:pack:win": "npm run build && node scripts/local-electron-builder.mjs --win --x64 --dir --publish never && node scripts/install-win-native-prebuild.mjs",
-    "electron:pack:linux": "npm run build && node scripts/local-electron-builder.mjs --linux --x64 --dir --publish never",
-    "electron:release": "npm run build && electron-builder --mac --publish always"
-  },
-  "build": {
-    "appId": "com.zvn.markie",
-    "productName": "Markie",
-    "afterPack": "build/preflight.cjs",
-    "mac": {
-      "category": "public.app-category.developer-tools",
-      "icon": "public/icon.icns",
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        }
-      ],
-      "darkModeSupport": true,
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": true
-    },
-    "win": {
-      "icon": "build/icon.ico",
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "linux": {
-      "icon": "build/icons",
-      "category": "Office",
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "target": [
-        {
-          "target": "AppImage",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "deb",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "publish": [
-      {
-        "provider": "s3",
-        "bucket": "markie-releases",
-        "endpoint": "https://s3.us-east-005.backblazeb2.com",
-        "region": "us-east-005",
-        "path": "mac"
-      }
-    ],
-    "files": [
-      "electron/**/*",
-      "out/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "mcp",
-        "to": "mcp",
-        "filter": [
-          "markie-mcp.mjs",
-          "lib.mjs",
-          "scan.mjs",
-          "package.json"
-        ]
-      }
-    ],
-    "directories": {
-      "output": "dist"
-    },
-    "fileAssociations": [
-      {
-        "ext": "md",
-        "name": "Markdown",
-        "role": "Editor"
-      },
-      {
-        "ext": "markdown",
-        "name": "Markdown",
-        "role": "Editor"
-      },
-      {
-        "ext": "mdx",
-        "name": "MDX",
-        "role": "Editor"
-      },
-      {
-        "ext": "csv",
-        "name": "CSV",
-        "role": "Editor"
-      }
-    ]
+    "electron:pack:mac": "npm run build && node scripts/local-electron-builder.mjs --config electron-builder.config.cjs --mac --dir --publish never",
+    "electron:pack:mac:arm64": "npm run build && node scripts/local-electron-builder.mjs --config electron-builder.config.cjs --mac --arm64 --dir --publish never",
+    "electron:pack:mac:x64": "npm run build && node scripts/local-electron-builder.mjs --config electron-builder.config.cjs --mac --x64 --dir --publish never",
+    "electron:pack:win": "npm run build && node scripts/local-electron-builder.mjs --config electron-builder.config.cjs --win --x64 --dir --publish never && node scripts/install-win-native-prebuild.mjs",
+    "electron:pack:linux": "npm run build && node scripts/local-electron-builder.mjs --config electron-builder.config.cjs --linux --x64 --dir --publish never",
+    "electron:release": "node scripts/release.mjs publish mac"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",

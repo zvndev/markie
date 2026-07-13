@@ -67,10 +67,10 @@ test("renderPublicPage's Open in Markie deep link carries the token + source", (
   assert.match(page, /class="btn primary"[^>]*>Open in Markie/);
 });
 
-test("renderNotFoundPage returns a 404 body with a site link", () => {
+test("renderNotFoundPage keeps its install CTA on the stable download route", () => {
   const page = renderNotFoundPage("https://markie.example.com");
   assert.match(page, /not found|no longer|expired/i);
-  assert.match(page, /https:\/\/markie\.example\.com/);
+  assert.match(page, /href="https:\/\/markie\.example\.com\/download\/mac"/);
 });
 
 test("renderMarkdownHTML drops javascript: link hrefs", () => {

@@ -254,6 +254,7 @@ export function renderDownloadPage(opts: {
 }
 
 export function renderNotFoundPage(siteUrl: string): string {
+  const download = primaryDownloadCta(siteUrl);
   return `<!doctype html>
 <html lang="en"><head>
   <meta charset="utf-8">
@@ -265,7 +266,7 @@ export function renderNotFoundPage(siteUrl: string): string {
     <div style="font-size:40px;font-weight:800;color:var(--accent-strong)">M</div>
     <h1>This link is no longer available</h1>
     <p style="color:var(--muted)">The doc was unshared, or the link expired.</p>
-    <p><a class="btn primary" href="${esc(siteUrl)}">Get Markie</a></p>
+    <p><a class="btn primary" href="${esc(download.href)}">${esc(download.label)}</a></p>
   </main>
 </body></html>`;
 }

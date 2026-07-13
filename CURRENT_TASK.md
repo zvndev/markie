@@ -1,18 +1,24 @@
-# Current Task - Desktop Release Hardening
+# Current Task - Repeatable Full Release Workflow
 
 ## Task
-Finish the Windows x64 app and repair the desktop interaction regressions that block normal file
-creation, navigation, menu dismissal, and window movement.
+Make Markie's full desktop release process repo-owned, auditable, and difficult to publish
+incorrectly. Use one canonical stable-channel manifest for Electron Builder, updater feeds,
+website downloads, and email links.
 
 ## Acceptance Criteria
-1. Creating a file in the workspace opens it immediately in the editor.
-2. Opening or creating a document exits stale panels and overlays so the document is visible.
-3. Action and export menus dismiss on Escape, outside click, and navigation changes.
-4. macOS and Windows paths resolve their parent folders and base names correctly.
-5. The toolbar exposes a broad native drag surface without making controls unclickable.
-6. Full local release preflight and Windows x64 package smoke pass.
-7. A native Windows launch is confirmed on the final pushed commit.
+1. One committed manifest defines storage, updater feed paths, platform publication status, and
+   stable public download routes.
+2. Electron Builder and the server both consume that manifest.
+3. Version bumps update every versioned package file through one command.
+4. Signed release preparation is separate from public upload and produces durable evidence.
+5. Public upload publishes immutable artifacts before the mutable updater feed.
+6. Public verification proves feed version, artifact integrity, stable website redirects, and the
+   machine-readable latest-release route.
+7. Release docs and `AGENTS.md` tell future agents exactly how to prepare, approve, publish,
+   verify, finalize, and recover a release.
+8. Full preflight and focused release/server regression tests pass.
 
 ## Scope Guard
-Do not publish Windows artifacts publicly, enable Windows auto-update feeds, or add Windows code
-signing without an explicit release decision.
+Do not publish a production feed while implementing or testing this workflow. Windows remains a
+prepared-but-private target until code signing and exact-commit native Windows launch evidence are
+available.

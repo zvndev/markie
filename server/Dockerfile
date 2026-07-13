@@ -13,9 +13,10 @@ RUN ARCH=$(uname -m) && case "$ARCH" in \
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY src ./src
+COPY download-manifest.json ./download-manifest.json
 COPY litestream.yml /etc/litestream.yml
 COPY docker-entrypoint.sh ./
-RUN chmod +x docker-entrypoint.sh
+RUN chmod +x docker-entrypoint.sh && mkdir -p /data
 
 ENV NODE_ENV=production
 ENV DB_PATH=/data/markie.db

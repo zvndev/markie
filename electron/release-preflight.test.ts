@@ -104,6 +104,7 @@ describe("release preflight", () => {
         "npm run electron:smoke:win:launch",
         "screenshot.png",
         "npm run release:prepare:mac",
+        "regenerates DMG blockmaps and updater hashes after stapling",
         'npm run release:verify:public -- --version="$MARKIE_RELEASE_VERSION" --deep',
         "https://markie.zvndev.com/download/latest.json",
         "Check for Updates",

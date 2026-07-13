@@ -151,6 +151,7 @@ const REQUIRED_RELEASE_DOC_SNIPPETS = [
   "npm run release:preflight",
   'npm run release:version -- "$MARKIE_RELEASE_VERSION"',
   "npm run release:prepare:mac",
+  "regenerates DMG blockmaps and updater hashes after stapling",
   'npm run release:publish:mac -- --confirm-public-release="$MARKIE_RELEASE_VERSION"',
   'npm run release:verify:public -- --version="$MARKIE_RELEASE_VERSION" --deep',
   'npm run release:rollback:mac -- --confirm-rollback="$MARKIE_RELEASE_VERSION"',
@@ -223,6 +224,7 @@ export function validateReleaseMetadata(rootDir) {
   assert(builder.productName === "Markie", "electron-builder productName must be Markie");
   assert(builder.afterPack === "build/preflight.cjs", "electron-builder afterPack must keep the app smoke gate");
   assert(builder.mac?.notarize === true, "release config must keep notarization enabled");
+  assert(builder.dmg?.sign === true, "release config must sign DMG containers before notarization");
   assert(builder.win?.icon === "build/icon.ico", "Windows build config must use the generated .ico icon");
   assert(builder.linux?.icon === "build/icons", "Linux build config must use the generated PNG icon set");
   assert(Array.isArray(builder.publish) && builder.publish.length > 0, "release config must define a publish target");

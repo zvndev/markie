@@ -123,10 +123,11 @@ This command:
 1. runs `npm run release:preflight` for renderer/Electron tests, MCP tests, server tests, lint, and
    the static build;
 2. deletes only generated `dist/` output;
-3. builds both macOS architectures with signing and notarization, but with `--publish never`;
+3. builds both macOS architectures, signs and notarizes the app bundles, then signs, notarizes, and
+   staples the DMG containers, all with `--publish never`;
 4. runs package and native launch smoke checks for Apple Silicon and Intel/Rosetta;
-5. verifies `codesign`, Gatekeeper acceptance, DMG stapling, sizes, updater-feed contents, blockmaps,
-   and SHA-512 hashes;
+5. regenerates DMG blockmaps and updater hashes after stapling, then verifies `codesign`, Gatekeeper
+   acceptance, DMG stapling, sizes, updater-feed contents, blockmaps, and SHA-512 hashes;
 6. writes ignored evidence to `.release/<version>/local.json` for the exact commit.
 
 Passing `release:preflight` alone does **not** mean an artifact is signed, notarized, published,

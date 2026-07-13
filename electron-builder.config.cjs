@@ -34,6 +34,9 @@ module.exports = {
     entitlementsInherit: "build/entitlements.mac.plist",
     notarize: true,
   },
+  dmg: {
+    sign: true,
+  },
   win: {
     icon: "build/icon.ico",
     artifactName: "${productName}-${version}-${arch}.${ext}",

@@ -7,6 +7,8 @@ import {
   assertEvidenceMatchesArtifacts,
   compareVersions,
   parseElectronBuilderFeed,
+  notarytoolSubmitPlan,
+  refreshMacFeedIntegrity,
   releaseUrls,
   setReleaseVersion,
   unsafeUntrackedFiles,
@@ -98,6 +100,50 @@ describe("release workflow", () => {
     expect(compareVersions("0.2.10", "0.2.9")).toBe(1);
     expect(compareVersions("0.2.10", "0.2.10")).toBe(0);
     expect(compareVersions("0.2.9", "0.2.10")).toBe(-1);
+  });
+
+  it("keeps notarization credentials out of release logs", () => {
+    const plan = notarytoolSubmitPlan("/tmp/Markie.dmg", {
+      APPLE_ID: "release@example.com",
+      APPLE_APP_SPECIFIC_PASSWORD: "top-secret",
+      APPLE_TEAM_ID: "TEAM123",
+    });
+
+    expect(plan.args).toContain("top-secret");
+    expect(plan.displayArgs.join(" ")).not.toContain("release@example.com");
+    expect(plan.displayArgs.join(" ")).not.toContain("top-secret");
+    expect(plan.displayArgs.join(" ")).not.toContain("TEAM123");
+  });
+
+  it("refreshes updater sizes and hashes after DMG stapling", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "markie-release-feed-"));
+    const dist = path.join(root, "dist");
+    mkdirSync(dist);
+    const names = [
+      "Markie-0.2.10-arm64.zip",
+      "Markie-0.2.10-x64.zip",
+      "Markie-0.2.10-arm64.dmg",
+      "Markie-0.2.10-x64.dmg",
+    ];
+    for (const name of names) writeFileSync(path.join(dist, name), `artifact:${name}`);
+    writeFileSync(
+      path.join(dist, "latest-mac.yml"),
+      `version: 0.2.10\nfiles:\n${names
+        .map((name) => `  - url: ${name}\n    sha512: stale\n    size: 1`)
+        .join("\n")}\npath: Markie-0.2.10-arm64.zip\nsha512: stale\n`
+    );
+
+    await refreshMacFeedIntegrity("0.2.10", root);
+
+    const feedText = readFileSync(path.join(dist, "latest-mac.yml"), "utf8");
+    const feed = parseElectronBuilderFeed(feedText);
+    expect(feed.files).toHaveLength(4);
+    for (const entry of feed.files) {
+      expect(entry.size).toBe(Buffer.byteLength(`artifact:${entry.url}`));
+      expect(entry.sha512).not.toBe("stale");
+    }
+    const legacySha = feedText.match(/^sha512:\s*(.+)$/m)?.[1];
+    expect(legacySha).toBe(feed.files.find((entry) => entry.url.endsWith("arm64.zip"))?.sha512);
   });
 
   it("rejects untracked build inputs while allowing non-packaged audit evidence", () => {

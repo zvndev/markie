@@ -13,6 +13,7 @@ import {
 import path from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import yaml from "js-yaml";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const builderConfigPath = path.join(rootDir, "electron-builder.config.cjs");
@@ -96,7 +97,7 @@ async function hashReadable(readable) {
 const hashFile = (file) => hashReadable(createReadStream(file));
 
 function run(command, args, options = {}) {
-  console.log(`[release] ${command} ${args.join(" ")}`);
+  console.log(`[release] ${command} ${(options.displayArgs ?? args).join(" ")}`);
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? rootDir,
     env: options.env ?? process.env,
@@ -162,6 +163,78 @@ function expectedMacArtifacts(version) {
   ];
 }
 
+function macDiskImages(version, root = rootDir) {
+  return expectedMacArtifacts(version)
+    .filter((name) => name.endsWith(".dmg"))
+    .map((name) => path.join(root, "dist", name));
+}
+
+export function notarytoolSubmitPlan(file, credentials = process.env) {
+  const appleId = credentials.APPLE_ID;
+  const password = credentials.APPLE_APP_SPECIFIC_PASSWORD;
+  const teamId = credentials.APPLE_TEAM_ID;
+  assert(appleId, "missing APPLE_ID");
+  assert(password, "missing APPLE_APP_SPECIFIC_PASSWORD");
+  assert(teamId, "missing APPLE_TEAM_ID");
+  const suffix = ["--wait", "--output-format", "json"];
+  return {
+    args: [
+      "notarytool",
+      "submit",
+      file,
+      "--apple-id",
+      appleId,
+      "--password",
+      password,
+      "--team-id",
+      teamId,
+      ...suffix,
+    ],
+    displayArgs: [
+      "notarytool",
+      "submit",
+      file,
+      "--apple-id",
+      "<redacted>",
+      "--password",
+      "<redacted>",
+      "--team-id",
+      "<redacted>",
+      ...suffix,
+    ],
+  };
+}
+
+export async function refreshMacFeedIntegrity(version, root = rootDir) {
+  assertVersion(version);
+  const dist = path.join(root, "dist");
+  const feedPath = path.join(dist, "latest-mac.yml");
+  const feed = yaml.load(readFileSync(feedPath, "utf8"), { schema: yaml.JSON_SCHEMA });
+  assert(feed && typeof feed === "object", "latest-mac.yml must contain an object");
+  assert(Array.isArray(feed.files), "latest-mac.yml must contain files");
+  const expectedNames = new Set(expectedMacArtifacts(version));
+  const updated = new Map();
+  for (const entry of feed.files) {
+    const name = decodeURIComponent(entry.url ?? "");
+    assert(expectedNames.has(name), `unexpected macOS feed artifact: ${name || "missing"}`);
+    const file = path.join(dist, name);
+    assert(existsSync(file), `missing local artifact while refreshing feed: ${name}`);
+    entry.size = statSync(file).size;
+    entry.sha512 = await hashFile(file);
+    updated.set(name, entry);
+  }
+  assert(updated.size === expectedNames.size, "latest-mac.yml does not cover every macOS artifact");
+  const legacyName = decodeURIComponent(feed.path ?? "");
+  const legacyEntry = updated.get(legacyName);
+  assert(legacyEntry, "latest-mac.yml legacy path must reference a release artifact");
+  feed.sha512 = legacyEntry.sha512;
+  writeFileSync(
+    feedPath,
+    yaml.dump(feed, { schema: yaml.JSON_SCHEMA, noRefs: true, lineWidth: -1, quotingType: "'" })
+  );
+  return feedPath;
+}
+
 export async function verifyLocalMacArtifacts({ root = rootDir, verifyTrust = false } = {}) {
   const version = assertVersion(readJson(path.join(root, "package.json")).version);
   const dist = path.join(root, "dist");
@@ -217,9 +290,12 @@ export async function verifyLocalMacArtifacts({ root = rootDir, verifyTrust = fa
       }
       run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
       run("spctl", ["-a", "-vvv", "-t", "install", appPath]);
+      run("xcrun", ["stapler", "validate", appPath]);
     }
-    for (const name of expectedMacArtifacts(version).filter((name) => name.endsWith(".dmg"))) {
-      run("xcrun", ["stapler", "validate", path.join(dist, name)]);
+    for (const file of macDiskImages(version, root)) {
+      run("codesign", ["--verify", "--verbose=2", file]);
+      run("spctl", ["-a", "-vv", "-t", "open", "--context", "context:primary-signature", file]);
+      run("xcrun", ["stapler", "validate", file]);
     }
   }
 
@@ -290,6 +366,29 @@ function builderBin() {
   return local;
 }
 
+function appBuilderBin() {
+  const name = process.arch === "arm64" ? "app-builder_arm64" : "app-builder_amd64";
+  const local = path.join(rootDir, "node_modules/app-builder-bin/mac", name);
+  assert(existsSync(local), "app-builder is not installed; run npm ci");
+  return local;
+}
+
+async function notarizeMacDiskImages(version) {
+  for (const file of macDiskImages(version)) {
+    assert(existsSync(file), `missing disk image for notarization: ${path.basename(file)}`);
+    const submission = notarytoolSubmitPlan(file);
+    run("xcrun", submission.args, { displayArgs: submission.displayArgs });
+    run("xcrun", ["stapler", "staple", file]);
+    run("xcrun", ["stapler", "validate", file]);
+    run("codesign", ["--verify", "--verbose=2", file]);
+    run("spctl", ["-a", "-vv", "-t", "open", "--context", "context:primary-signature", file]);
+    const blockmap = `${file}.blockmap`;
+    rmSync(blockmap, { force: true });
+    run(appBuilderBin(), ["blockmap", "--input", file, "--output", blockmap], { capture: true });
+  }
+  await refreshMacFeedIntegrity(version);
+}
+
 async function prepareMac() {
   assert(process.platform === "darwin", "macOS releases must be prepared on macOS");
   const commit = assertReleaseGitState();
@@ -301,6 +400,8 @@ async function prepareMac() {
   } finally {
     run("npm", ["run", "native:restore"]);
   }
+  const version = packageJson().version;
+  await notarizeMacDiskImages(version);
   run("npm", ["run", "electron:smoke:mac:arm64"]);
   run("npm", ["run", "electron:smoke:mac:x64"]);
   run("npm", ["run", "electron:smoke:mac:launch"]);
@@ -313,7 +414,7 @@ async function prepareMac() {
     commit,
     preparedAt: new Date().toISOString(),
     files: verified.files,
-    checks: ["preflight", "package-smoke", "native-launch", "updater-config", "codesign", "gatekeeper", "stapler", "sha512"],
+    checks: ["preflight", "package-smoke", "native-launch", "updater-config", "codesign", "gatekeeper", "dmg-notarization", "stapler", "feed-refresh", "sha512"],
   });
   console.log(`[release] prepared and verified Markie ${verified.version}; nothing was uploaded`);
 }

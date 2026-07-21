@@ -168,6 +168,9 @@ async function resolve(filePath, strategy) {
 
 // Merged local + remote view for the Library.
 async function libraryState() {
+  // vanished local-only files (deleted agent worktrees, temp scratch docs)
+  // leave the registry here instead of piling up as "Missing on disk" rows
+  registry.pruneMissing();
   const local = registry.list();
   let remote = [];
   if (isConfigured()) {

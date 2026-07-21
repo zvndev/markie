@@ -33,6 +33,9 @@ interface LibraryProps {
   onSignIn: () => void;
   // open the share dialog to manage people on a doc I own
   onManageShare: (docId: string, name: string) => void;
+  // a library action may have changed this device's sync state (sync on/off,
+  // pull) — lets the page recompute share/collab eligibility for the open doc
+  onSyncChanged?: () => void;
   activePath: string | null;
   // bump to force a refresh (file opened/saved/sync changed)
   refreshKey: number;
@@ -84,6 +87,7 @@ export function Library({
   onAddPaths,
   onSignIn,
   onManageShare,
+  onSyncChanged,
   activePath,
   refreshKey,
 }: LibraryProps) {
@@ -206,6 +210,7 @@ export function Library({
     await fn();
     setMenuFor(null);
     refresh();
+    onSyncChanged?.();
   };
 
   const flash = (msg: string) => {

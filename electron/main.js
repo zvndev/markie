@@ -192,6 +192,8 @@ function createWindow() {
   });
 
   mainWindow.once("ready-to-show", () => {
+    // E2E drivers keep the window hidden so runs don't steal focus
+    if (process.env.MARKIE_E2E === "1") return;
     mainWindow?.show();
   });
 
@@ -216,8 +218,10 @@ function createWindow() {
   });
 
   if (isDev) {
-    mainWindow.loadURL("http://localhost:3000");
-    mainWindow.webContents.openDevTools({ mode: "detach" });
+    mainWindow.loadURL(process.env.MARKIE_DEV_URL || "http://localhost:3000");
+    if (process.env.MARKIE_E2E !== "1") {
+      mainWindow.webContents.openDevTools({ mode: "detach" });
+    }
   } else {
     mainWindow.loadURL("app://markie/index.html");
   }
@@ -829,8 +833,22 @@ ipcMain.handle("get-initial-file", () => {
 });
 
 // IPC: Open file from a path already granted by a dialog, OS event, drop, or workspace root.
+// A path the app itself advertised to the renderer — a Library/Recent registry
+// entry or a Browse/Skills index hit — is the user's own listed markdown, so
+// clicking it must open. Grant those; everything else still needs a prior
+// grant (open dialog, drag-drop, deep link) or a workspace root.
+function isAdvertisedPath(p) {
+  try {
+    if (registry.get(p)) return true;
+  } catch {
+    // registry unavailable — fall through to the index
+  }
+  const cached = mdindex.getCached();
+  return !!cached?.files?.some((f) => f.path === p);
+}
+
 ipcMain.handle("open-file-path", async (_event, filePath) => {
-  return readFilePayload(filePath);
+  return readFilePayload(filePath, { grant: isAdvertisedPath(filePath) });
 });
 
 // Synchronous so preload can grant a dropped/selected File before renderer code

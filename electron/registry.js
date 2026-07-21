@@ -1,5 +1,6 @@
 // Local file registry — tracks every file Markie opens, plus its sync state.
 // Lives in the main process; files themselves never move.
+const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { app } = require("electron");
@@ -105,6 +106,26 @@ function get(filePath) {
   return getDB().prepare("SELECT * FROM files WHERE path = ?").get(filePath);
 }
 
+// Drop local-only rows whose file no longer exists on disk. Agent worktrees
+// and other scratch locations create files that get opened here and then
+// deleted; without this the Library fills with permanent "Missing on disk"
+// rows. Cloud-linked rows are kept — they still carry the cloud copy.
+// Returns the number of rows removed.
+function pruneMissing(fileExists = fs.existsSync) {
+  const rows = getDB()
+    .prepare("SELECT path FROM files WHERE cloud_doc_id IS NULL")
+    .all();
+  const gone = rows.map((r) => r.path).filter((p) => !fileExists(p));
+  if (gone.length) {
+    const del = getDB().prepare("DELETE FROM files WHERE path = ?");
+    const tx = getDB().transaction((paths) => {
+      for (const p of paths) del.run(p);
+    });
+    tx(gone);
+  }
+  return gone.length;
+}
+
 function list() {
   return getDB()
     .prepare("SELECT * FROM files ORDER BY last_opened_at DESC")
@@ -196,6 +217,7 @@ module.exports = {
   track,
   get,
   list,
+  pruneMissing,
   update,
   hashContent,
   close,

@@ -52,6 +52,7 @@ import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI, type FilePayload } from "@/lib/electron";
 import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { pathDirname } from "@/lib/path-utils";
+import { shareActionFor } from "@/lib/share-flow";
 
 const SAMPLE = `# Northstar Sprint Brief
 
@@ -221,21 +222,36 @@ export default function Home() {
   }, [refreshCollab]);
 
   // Share entry point that works from anywhere: open the dialog if the doc is
-  // already shareable, otherwise guide the user through the prerequisites
-  // (sign in, then sync this file to the cloud).
+  // shareable, otherwise guide the user through the prerequisites (sign in,
+  // then sync this file to the cloud). The doc may have been synced since
+  // `canShare` was computed, so re-read the registry at click time.
   const handleShareClick = useCallback(() => {
     if (canShare) {
       setShowShare(true);
       return;
     }
-    if (!getAuthToken()) {
-      setShowSettings(true); // need to sign in first
-      return;
-    }
-    // signed in — open the Library so they can sync this file, then share
-    setLeftView("library");
-    setShowLibrary(true);
-  }, [canShare]);
+    const api = getElectronAPI();
+    const entryPromise =
+      api?.registryGet && filePath
+        ? api.registryGet(filePath)
+        : Promise.resolve(null);
+    entryPromise.then((entry) => {
+      const action = shareActionFor({
+        cloudDocId: entry?.cloud_doc_id,
+        signedIn: !!getAuthToken(),
+      });
+      if (action === "sign-in") {
+        setShowSettings(true);
+      } else if (action === "open-dialog") {
+        refreshCollab(); // pick up the cloud id so the dialog can render
+        setShowShare(true);
+      } else {
+        // open the Library so they can sync this file, then share
+        setLeftView("library");
+        setShowLibrary(true);
+      }
+    });
+  }, [canShare, filePath, refreshCollab]);
 
   // Open the share dialog to manage people on a doc I own (Shared → "by me").
   const handleManageShare = useCallback((docId: string, name: string) => {
@@ -248,13 +264,15 @@ export default function Home() {
     setLeftView(v);
   }, []);
 
+  // Close transient overlays (modals, palette) when a new document lands.
+  // The docked side panel is persistent navigation chrome, not an overlay:
+  // it stays open so browsing file-to-file doesn't slam it shut.
   const dismissDocumentUI = useCallback(() => {
     setShowStats(false);
     setShowPalette(false);
     setShowHelp(false);
     setShowTheme(false);
     setShowSettings(false);
-    setShowLibrary(false);
     setShowShare(false);
     setManageShare(null);
     setShowAgents(false);
@@ -795,6 +813,7 @@ export default function Home() {
             onAddPaths={addPaths}
             onSignIn={() => setShowSettings(true)}
             onManageShare={handleManageShare}
+            onSyncChanged={refreshCollab}
             activePath={filePath}
             refreshKey={libRefreshKey}
           />

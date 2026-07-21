@@ -1,6 +1,6 @@
 {
   "name": "markie-mcp",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "private": true,
   "type": "module",
   "description": "Local markdown-workspace MCP server bundled in Markie (dependency-free).",
@@ -10,7 +10,9 @@
     "type": "git",
     "url": "https://github.com/zvndev/markie.git"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node markie-mcp.mjs",
     "test": "node --test lib.test.mjs"

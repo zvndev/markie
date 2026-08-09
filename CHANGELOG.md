@@ -29,6 +29,19 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Share works from everywhere, and explains itself.** It used to answer three
+  different situations with three unrelated surfaces: signed out opened
+  Settings, an unsynced file silently opened the Library, and a synced file
+  opened the real dialog only if a background check happened to finish. When
+  that check failed, Share stopped responding entirely until you restarted.
+  There is now one "Share this document" dialog that says what is missing and
+  offers the button that fixes it, including "Sync and share" in one step.
+  `Share…` also stays in the command palette instead of disappearing exactly
+  when you go looking for it.
+- **The Recent list stops rearranging itself.** Opening a file used to send it
+  to the top, so every other row shifted the moment you clicked. The order now
+  holds still while the panel is open, and files that appear while you are
+  looking are added at the top. Recent also has a filter box.
 - **Saving no longer overwrites changes made by something else.** If a file
   changed on disk since you opened it, which happens constantly when an agent is
   working in the same folder, Markie now asks whether to reload it or overwrite

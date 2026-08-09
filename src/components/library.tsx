@@ -3,10 +3,12 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type DragEvent,
 } from "react";
+import { matchesFilter, stableOrder } from "@/lib/stable-order";
 import { getElectronAPI, type LibraryItem } from "@/lib/electron";
 import { FilesView } from "@/components/files-view";
 import { BrowseView } from "@/components/browse-view";
@@ -55,6 +57,9 @@ const VIEW_TITLE: Record<LeftView, string> = {
   skills: "Skills",
 };
 
+// Local files are identified by path; cloud-only rows have no path yet.
+const itemKey = (i: LibraryItem) => i.path ?? i.cloudId ?? i.name;
+
 const BADGE: Record<LibraryItem["state"], [string, string]> = {
   "local-only": ["Local", "text-muted border-border"],
   synced: [
@@ -99,6 +104,10 @@ export function Library({
   );
   const [confirmOff, setConfirmOff] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  // Freeze the row order for as long as the panel stays open, so opening a file
+  // does not send it to the top and shuffle everything you were reading.
+  const [frozenOrder, setFrozenOrder] = useState<string[]>([]);
   const [workspace, setWorkspace] = useState<WorkspaceBootstrapResult | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const menuRootRef = useRef<HTMLDivElement>(null);
@@ -182,6 +191,8 @@ export function Library({
     if (!api?.libraryState) return Promise.resolve();
     return readLibraryStartupSnapshot(api).then((s) => {
       setItems(s.items);
+      // First rows to arrive define the order the panel keeps while open.
+      setFrozenOrder((prev) => (prev.length ? prev : s.items.map(itemKey)));
       setSignedIn(s.signedIn);
       setWorkspace(s.workspace);
       setLoading(false);
@@ -196,6 +207,8 @@ export function Library({
     readLibraryStartupSnapshot(api).then((s) => {
       if (!alive) return;
       setItems(s.items);
+      // First rows to arrive define the order the panel keeps while open.
+      setFrozenOrder((prev) => (prev.length ? prev : s.items.map(itemKey)));
       setSignedIn(s.signedIn);
       setWorkspace(s.workspace);
       setLoading(false);
@@ -253,8 +266,18 @@ export function Library({
       if (res.error) setNotice(res.error);
     });
 
+  const orderedItems = useMemo(
+    () => stableOrder(items, itemKey, frozenOrder),
+    [items, frozenOrder]
+  );
+
+  const visibleItems = useMemo(
+    () => orderedItems.filter((i) => matchesFilter(i, filter)),
+    [orderedItems, filter]
+  );
+
   const { localFiles, myCloudOnly, sharedItems, sharedCloudOnly } =
-    organizeLibraryItems(items);
+    organizeLibraryItems(visibleItems);
   const overview = summarizeLibrary(items);
 
   const fileRow = (item: LibraryItem) => {
@@ -406,6 +429,23 @@ export function Library({
               </button>
             ))}
           </div>
+          {!loading && libTab === "recent" && items.length > 0 && (
+            <div className="px-2 pb-1.5 shrink-0">
+              <input
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape" && filter) {
+                    e.stopPropagation();
+                    setFilter("");
+                  }
+                }}
+                placeholder="Filter by name or folder"
+                aria-label="Filter documents"
+                className="markie-overlay-field w-full text-[11.5px] px-2 py-1"
+              />
+            </div>
+          )}
           {!loading && libTab === "recent" && <LibraryOverviewBand overview={overview} />}
         </>
       )}

@@ -352,7 +352,7 @@ export function Toolbar({
         <div className="w-px h-4 bg-border" />
         <button
           onClick={onShare}
-          title={canShare ? "Share this document" : "Share — sign in and sync this file first"}
+          title={canShare ? "Share this document" : "Share this document (Markie will walk you through it)"}
           className={`text-[12px] transition-colors flex items-center gap-1.5 ${
             canShare ? "text-foreground hover:opacity-80" : "text-muted hover:text-foreground"
           }`}

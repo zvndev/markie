@@ -15,6 +15,7 @@ import { Settings } from "@/components/settings";
 import { Library } from "@/components/library";
 import { ActivityBar, type LeftView } from "@/components/activity-bar";
 import { ShareDialog } from "@/components/share-dialog";
+import { ShareGate } from "@/components/share-gate";
 import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
 import { TerminalPanel } from "@/components/terminal-panel";
@@ -53,7 +54,6 @@ import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI, type FilePayload } from "@/lib/electron";
 import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { pathDirname } from "@/lib/path-utils";
-import { shareActionFor } from "@/lib/share-flow";
 
 const SAMPLE = `# Northstar Sprint Brief
 
@@ -152,7 +152,6 @@ export default function Home() {
   // bumps to refresh the Library panel (file opened/saved, sync changed)
   const [libRefreshKey, setLibRefreshKey] = useState(0);
   const [showShare, setShowShare] = useState(false);
-  const [cloudId, setCloudId] = useState<string | null>(null);
   const [canShare, setCanShare] = useState(false);
   // Manage sharing on an arbitrary owned doc (from the Shared → "by me" tab),
   // independent of whichever doc is currently open.
@@ -191,7 +190,6 @@ export default function Home() {
     entryPromise.then(async (entry) => {
       const cid = entry?.cloud_doc_id ?? null;
       const token = getAuthToken();
-      setCloudId(cid);
       setCanShare(!!cid && !!token);
       if (!cid || !token) {
         setCollabCfg(null);
@@ -242,37 +240,12 @@ export default function Home() {
     refreshCollabRef.current = refreshCollab;
   }, [refreshCollab]);
 
-  // Share entry point that works from anywhere: open the dialog if the doc is
-  // shareable, otherwise guide the user through the prerequisites (sign in,
-  // then sync this file to the cloud). The doc may have been synced since
-  // `canShare` was computed, so re-read the registry at click time.
+  // Just open. ShareGate resolves the prerequisites and offers the action that
+  // clears each one, so a click can no longer resolve into a different surface
+  // (Settings, the Library) or into nothing at all.
   const handleShareClick = useCallback(() => {
-    if (canShare) {
-      setShowShare(true);
-      return;
-    }
-    const api = getElectronAPI();
-    const entryPromise =
-      api?.registryGet && filePath
-        ? api.registryGet(filePath)
-        : Promise.resolve(null);
-    entryPromise.then((entry) => {
-      const action = shareActionFor({
-        cloudDocId: entry?.cloud_doc_id,
-        signedIn: !!getAuthToken(),
-      });
-      if (action === "sign-in") {
-        setShowSettings(true);
-      } else if (action === "open-dialog") {
-        refreshCollab(); // pick up the cloud id so the dialog can render
-        setShowShare(true);
-      } else {
-        // open the Library so they can sync this file, then share
-        setLeftView("library");
-        setShowLibrary(true);
-      }
-    });
-  }, [canShare, filePath, refreshCollab]);
+    setShowShare(true);
+  }, []);
 
   // Open the share dialog to manage people on a doc I own (Shared → "by me").
   const handleManageShare = useCallback((docId: string, name: string) => {
@@ -306,7 +279,6 @@ export default function Home() {
     setSavedContent("");
     setFileName(null);
     setFilePath(null);
-    setCloudId(null);
     setCanShare(false);
   }, [dismissDocumentUI]);
 
@@ -787,9 +759,10 @@ export default function Home() {
       { id: "browse", title: "Browse all markdown…", group: "File", keywords: "all files device skills index find", run: () => selectView("browse") },
       { id: "skills", title: "Skills & agent files…", group: "File", keywords: "claude agents codex gemini cursor instructions", run: () => selectView("skills") },
       { id: "new-file", title: "New file", group: "File", shortcut: "⌘N", keywords: "blank create empty document", run: handleNewFile },
-      ...(canShare
-        ? [{ id: "share", title: "Share…", group: "File" as const, keywords: "collaborate invite live people", run: () => setShowShare(true) }]
-        : []),
+      // Ungated on purpose: this used to vanish from the palette exactly when
+      // the user could not work out how to share, which is when they search for
+      // it. ShareGate explains whatever is missing.
+      { id: "share", title: "Share…", group: "File", keywords: "collaborate invite live people sync cloud link", run: () => setShowShare(true) },
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
     ],
     [
@@ -801,7 +774,6 @@ export default function Home() {
       handleExportHTML,
       handleNewFile,
       selectView,
-      canShare,
     ]
   );
 
@@ -962,13 +934,17 @@ export default function Home() {
           }}
         />
       )}
-      {showShare && cloudId && (
-        <ShareDialog
-          key={cloudId}
-          docId={cloudId}
-          fileName={fileName ?? "Untitled"}
+      {showShare && (
+        <ShareGate
+          filePath={filePath}
+          fileName={fileName}
+          content={toDisk(fileName, content)}
           onClose={() => setShowShare(false)}
           onChanged={refreshCollab}
+          onSignIn={() => {
+            setShowShare(false);
+            setShowSettings(true);
+          }}
         />
       )}
       {manageShare && (

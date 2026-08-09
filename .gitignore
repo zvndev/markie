@@ -60,3 +60,8 @@ server/node_modules/
 server/markie.db*
 server/.env
 mcp/node_modules/
+
+# agent-loop run artifacts (logs + screenshots of a real library) stay local:
+# they are machine noise and can capture private file names
+/.autoloop/runs/
+/.autoloop/scratch/

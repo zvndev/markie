@@ -2,7 +2,7 @@
 // agent-file classification. Kept dependency-light and side-effect-free so they
 // can be unit-tested in isolation (node --test lib.test.mjs).
 import { resolve, join, sep, dirname, basename } from "node:path";
-import { realpathSync } from "node:fs";
+import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 // Self-contained scan rules (no ../electron dependency — see scan.mjs header).
 import { isExcludedDir, allowlist } from "./scan.mjs";
 
@@ -39,15 +39,37 @@ function allowRootFor(full, home) {
 // the non-existent tail. This resolves any symlink in the path (file OR dir) so
 // the caller's checks run against the real on-disk location, not the lexical
 // string. New files (whose parents may not exist yet) still resolve correctly.
+// Guards against a symlink cycle made of links that all dangle, which realpath
+// would report as ELOOP but our manual walk cannot see.
+const MAX_LINK_HOPS = 40;
+
 function canonicalize(full) {
   let existing = full;
   const tail = [];
+  let hops = 0;
   while (true) {
     try {
       const real = realpathSync(existing);
       return tail.length ? join(real, ...tail.slice().reverse()) : real;
     } catch (e) {
       if (e.code !== "ENOENT") throw e; // ELOOP/EACCES/… → caller rejects
+
+      // SECURITY: a symlink whose target does not exist yet still fails
+      // realpath with ENOENT. Treating it as a plain new file would let a
+      // dangling link inside home resolve to any path anywhere, so follow it
+      // by hand. A cloned repo can carry such a link as ordinary content.
+      let target = null;
+      try {
+        if (lstatSync(existing).isSymbolicLink()) target = readlinkSync(existing);
+      } catch {
+        // not a link, or it vanished between the two calls
+      }
+      if (target !== null) {
+        if (++hops > MAX_LINK_HOPS) throw new Error("too many symbolic links");
+        existing = resolve(dirname(existing), target);
+        continue;
+      }
+
       const parent = dirname(existing);
       if (parent === existing) return full; // hit the root; nothing existed
       tail.push(basename(existing));

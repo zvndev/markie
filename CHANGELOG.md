@@ -10,6 +10,11 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- An AI agent writing through the MCP server can no longer be redirected out of
+  your home folder by a symbolic link. A link pointing at a file that did not
+  exist yet was treated as an ordinary new document, which allowed a write to
+  any path, under any file extension, while reporting the harmless path back.
+  Cloning an untrusted repository into your home folder was enough to set one up.
 - Signing in with Google now verifies that the sign-in came from your copy of
   Markie. The app mints a single-use code before opening your browser and only
   accepts the account that comes back carrying it, so a web page cannot hand
@@ -18,6 +23,11 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Opening a file no longer rewrites it.** Markie used to re-serialize every
+  document the moment it loaded, which quietly mangled YAML front matter, raw
+  HTML, footnotes, and math, and marked the file as edited before you touched
+  it. `SKILL.md`, `CLAUDE.md`, and `AGENTS.md` files were hit hardest. Files now
+  open byte for byte as they are on disk.
 - Pressing `⌘/` with the cursor in the source editor no longer comments out the
   current line. It used to open the shortcuts dialog *and* silently wrap your
   text in `<!-- -->`, so edits happened without you noticing.

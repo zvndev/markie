@@ -51,6 +51,9 @@ export function RichView({
   // identical and must not re-parse (which would reset the cursor).
   const lastEmitted = useRef<string | null>(null);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True while we are pushing an external value into the editor, so onUpdate
+  // can tell "the file changed underneath me" from "the user typed".
+  const applyingExternal = useRef(false);
   const valueRef = useRef(value);
   useEffect(() => {
     valueRef.current = value;
@@ -108,6 +111,10 @@ export function RichView({
     // In collab mode the Yjs doc is the source of truth from the first sync
     content: session ? undefined : value,
     onUpdate: ({ editor }) => {
+      // Belt and braces alongside emitUpdate:false — an update raised while we
+      // are loading an external value is never the user's edit, and echoing it
+      // back would overwrite the file with the serializer's approximation.
+      if (applyingExternal.current) return;
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       debounceTimer.current = setTimeout(() => {
         const raw = (
@@ -186,11 +193,22 @@ export function RichView({
 
   // External value changes (CodeMirror edits, file opens) re-parse into the
   // editor — solo mode only; in collab the room is authoritative.
+  //
+  // `emitUpdate: false` is load-bearing. TipTap emits an update from setContent
+  // by default, which ran onUpdate and serialized the freshly-parsed doc back
+  // over the file the user just opened. Anything the markdown round trip cannot
+  // preserve (YAML front matter, raw HTML, footnotes, math) was silently
+  // rewritten, and the document was marked dirty without a keystroke.
   useEffect(() => {
     if (!editor || session) return;
     if (value === lastEmitted.current) return;
     lastEmitted.current = value;
-    editor.commands.setContent(value);
+    applyingExternal.current = true;
+    try {
+      editor.commands.setContent(value, { emitUpdate: false });
+    } finally {
+      applyingExternal.current = false;
+    }
   }, [value, editor, session]);
 
   useEffect(() => {

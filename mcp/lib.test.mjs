@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { guardPath, matchQuery, classifyAgentFile, groupSkills, markieOpenCommand } from "./lib.mjs";
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, realpathSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { dirname as pdirname, join as pjoin } from "node:path";
@@ -244,6 +244,54 @@ test("guardPath denies writing through a symlinked directory (write escape)", ()
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+// The two symlink tests above both point at something that already exists, so
+// realpath resolves them. A link whose target does NOT exist yet fails realpath
+// with ENOENT, which used to read as "an ordinary new file inside home" and let
+// a write land anywhere, under any extension. A cloned repo can carry one.
+test("guardPath denies a DANGLING symlink that points outside home", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const outside = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-out-")));
+  try {
+    const target = pjoin(outside, "not-created-yet.plist");
+    symlinkSync(target, pjoin(home, "notes.md"));
+    assert.equal(existsSync(target), false, "target must not exist for this test");
+
+    const w = guardPath(pjoin(home, "notes.md"), home, { mode: "write" });
+    assert.equal(w.ok, false, "write through a dangling escape link must be denied");
+
+    const r = guardPath(pjoin(home, "notes.md"), home);
+    assert.equal(r.ok, false, "read through a dangling escape link must be denied");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("guardPath resolves a dangling symlink that stays inside home", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  try {
+    mkdirSync(pjoin(home, "notes"));
+    symlinkSync(pjoin(home, "notes", "real.md"), pjoin(home, "alias.md"));
+    const r = guardPath(pjoin(home, "alias.md"), home, { mode: "write" });
+    assert.equal(r.ok, true, "an in-home dangling link is legitimate");
+    assert.equal(r.path, pjoin(home, "notes", "real.md"), "it resolves to its target");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("guardPath survives a cycle of dangling symlinks", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  try {
+    symlinkSync(pjoin(home, "b.md"), pjoin(home, "a.md"));
+    symlinkSync(pjoin(home, "a.md"), pjoin(home, "b.md"));
+    const r = guardPath(pjoin(home, "a.md"), home);
+    assert.equal(r.ok, false, "a link cycle must be refused, not hang");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

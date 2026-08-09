@@ -9,7 +9,8 @@
 //
 // Register with Claude Code:
 //   claude mcp add markie -- node /path/to/markie-mcp.mjs
-import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
+import { readFile, mkdir, open, stat } from "node:fs/promises";
+import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { spawn } from "node:child_process";
@@ -114,7 +115,19 @@ async function runTool(name, args) {
       // The guard already vetted every ancestor segment (under home, no excluded
       // dirs), so creating missing parents stays inside an allowed tree.
       await mkdir(dirname(g.path), { recursive: true });
-      await writeFile(g.path, body, "utf8");
+      // O_NOFOLLOW so a symlink planted between the guard and this write cannot
+      // redirect it. g.path is already fully resolved, so a legitimate link in
+      // the requested path was followed before we got here.
+      const fh = await open(
+        g.path,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+        0o644
+      );
+      try {
+        await fh.writeFile(body, "utf8");
+      } finally {
+        await fh.close();
+      }
       _scan = null; // new file should show up in the next find
       return `Wrote ${Buffer.byteLength(body)} bytes to ${g.path}`;
     }

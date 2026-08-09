@@ -10,6 +10,10 @@ export interface SaveResult {
   path?: string;
   name?: string;
   error?: string;
+  // "reloaded": the file changed on disk since Markie read it and the user
+  // chose the disk copy over their own edits. `content` carries that copy.
+  code?: "reloaded";
+  content?: string;
 }
 
 export type ViewMode = "edit" | "preview" | "split";

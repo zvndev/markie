@@ -233,52 +233,38 @@ export function Toolbar({
         </div>
       </div>
 
-      {/* Center: Mode toggle — View is primary, Edit/Split are icons */}
+      {/* Center: mode toggle. Three equal labelled segments — the old
+          "View / pencil / split" implied one was a mode and the others were
+          buttons, and called the WYSIWYG editor "View" when it edits. */}
       <div
         data-window-control-region="mode"
+        role="group"
+        aria-label="Editing mode"
         className="w-fit justify-self-center flex items-center bg-background rounded-md p-0.5 gap-0.5"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
-        <button
-          onClick={() => onModeChange("preview")}
-          title="View (⌘1)"
-          className={`px-3 py-1 text-[11px] font-medium rounded transition-all ${
-            mode === "preview"
-              ? "bg-accent text-foreground"
-              : "text-muted hover:text-foreground"
-          }`}
-        >
-          View
-        </button>
-        <button
-          onClick={() => onModeChange("edit")}
-          title="Edit (⌘2)"
-          aria-label="Edit mode"
-          className={`px-2 py-1 rounded transition-all ${
-            mode === "edit"
-              ? "bg-accent text-foreground"
-              : "text-muted hover:text-foreground"
-          }`}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-          </svg>
-        </button>
-        <button
-          onClick={() => onModeChange("split")}
-          title="Split (⌘3)"
-          aria-label="Split mode"
-          className={`px-2 py-1 rounded transition-all ${
-            mode === "split"
-              ? "bg-accent text-foreground"
-              : "text-muted hover:text-foreground"
-          }`}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <line x1="12" y1="3" x2="12" y2="21" />
-          </svg>
-        </button>
+        {(
+          [
+            ["preview", "Rich", "⌘1"],
+            ["edit", "Source", "⌘2"],
+            ["split", "Split", "⌘3"],
+          ] as const
+        ).map(([value, label, shortcut]) => (
+          <button
+            key={value}
+            onClick={() => onModeChange(value)}
+            title={`${label} (${shortcut})`}
+            aria-label={`${label} mode (${shortcut})`}
+            aria-pressed={mode === value}
+            className={`px-3 py-1 text-[11px] font-medium rounded transition-all ${
+              mode === value
+                ? "bg-accent text-foreground"
+                : "text-muted hover:text-foreground"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Right: theme/mode + presence + share */}

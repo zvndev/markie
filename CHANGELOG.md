@@ -21,8 +21,18 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Markie an account you did not ask for. Sign-in codes are good for ten minutes
   and cannot be reused.
 
+### Changed
+
+- The editing modes are now **Rich**, **Source**, and **Split**. The mode called
+  "View" was a full editor, so the name was telling you the opposite of what it
+  did. `⌘1`, `⌘2`, and `⌘3` are unchanged.
+
 ### Fixed
 
+- **Saving no longer overwrites changes made by something else.** If a file
+  changed on disk since you opened it, which happens constantly when an agent is
+  working in the same folder, Markie now asks whether to reload it or overwrite
+  it. It used to write straight over the newer file with no warning.
 - **Opening a file no longer rewrites it.** Markie used to re-serialize every
   document the moment it loaded, which quietly mangled YAML front matter, raw
   HTML, footnotes, and math, and marked the file as edited before you touched

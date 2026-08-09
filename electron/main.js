@@ -11,6 +11,7 @@ const {
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const url = require("url");
 const { autoUpdater } = require("electron-updater");
 const { shareBaseFromSrc } = require("./share-origin");
@@ -152,13 +153,43 @@ async function openSharedFromDeepLink(link) {
   }
 }
 
+// What Markie last saw on disk for a path. A save compares against this so we
+// can tell "nothing moved underneath me" from "something rewrote this file
+// while it was open" — which is the normal case when an agent is working in the
+// same repo. Without it, saving blind-writes the buffer over the newer file.
+const lastSeenOnDisk = new Map();
+
+function hashOf(content) {
+  return crypto.createHash("sha256").update(content, "utf8").digest("hex");
+}
+
+function rememberDisk(filePath, content) {
+  lastSeenOnDisk.set(filePath, hashOf(content));
+}
+
+// Returns the current on-disk content when it differs from what we last saw,
+// or null when it matches, is unknown to us, or cannot be read.
+function diskChangedSince(filePath) {
+  const known = lastSeenOnDisk.get(filePath);
+  if (!known) return null; // never read it here; nothing to compare against
+  let current;
+  try {
+    current = fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return null; // gone or unreadable; the write itself will report the failure
+  }
+  return hashOf(current) === known ? null : current;
+}
+
 function readFilePayload(filePath, { grant = false } = {}) {
   try {
     const access = grant ? fileGrants.grantFile(filePath) : fileGrants.canRead(filePath);
     if (!access.ok) return null;
+    const content = fs.readFileSync(access.path, "utf-8");
+    rememberDisk(access.path, content);
     return {
       name: path.basename(access.path),
-      content: fs.readFileSync(access.path, "utf-8"),
+      content,
       path: access.path,
     };
   } catch {
@@ -347,7 +378,31 @@ ipcMain.handle("save-file", async (_event, { filePath, content }) => {
   try {
     const access = fileGrants.canWrite(filePath);
     if (!access.ok) return { success: false, error: access.error };
+
+    // Someone changed this file since Markie read it. Writing now would throw
+    // their work away with no trace, so ask instead of guessing.
+    const newer = diskChangedSince(access.path);
+    if (newer !== null) {
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: "warning",
+        buttons: ["Reload from disk", "Overwrite", "Cancel"],
+        defaultId: 0,
+        cancelId: 2,
+        message: `"${path.basename(access.path)}" changed on disk since you opened it.`,
+        detail:
+          "Something else edited this file, most likely an agent or another editor. " +
+          "Reloading discards your unsaved edits. Overwriting discards theirs.",
+      });
+      if (response === 2) return { success: false, canceled: true };
+      if (response === 0) {
+        rememberDisk(access.path, newer);
+        return { success: false, code: "reloaded", path: access.path, content: newer };
+      }
+      // response === 1: the user chose to overwrite, so fall through.
+    }
+
     fs.writeFileSync(access.path, content, "utf-8");
+    rememberDisk(access.path, content);
     return { success: true, path: access.path };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -962,12 +1017,12 @@ const template = [
     label: "View",
     submenu: [
       {
-        label: "View",
+        label: "Rich Text",
         accelerator: "CmdOrCtrl+1",
         click: () => mainWindow?.webContents.send("set-mode", "preview"),
       },
       {
-        label: "Edit",
+        label: "Markdown Source",
         accelerator: "CmdOrCtrl+2",
         click: () => mainWindow?.webContents.send("set-mode", "edit"),
       },

@@ -440,6 +440,14 @@ export default function Home() {
     }
     const diskContent = toDisk(fileName, content);
     const res = await api.saveFile({ filePath, content: diskContent });
+    // The file changed underneath us and the user chose to take the disk copy
+    // rather than overwrite it. Load it in place of what they had.
+    if (res.code === "reloaded" && typeof res.content === "string") {
+      const reloaded = fromDisk(fileName, res.content);
+      setContent(reloaded);
+      setSavedContent(reloaded);
+      return;
+    }
     if (res.success) {
       setSavedContent(content);
       // Push the snapshot if this file is cloud-synced — except during a live
@@ -743,9 +751,9 @@ export default function Home() {
       { id: "export-pdf-dark", title: "Export PDF (Dark)", group: "File", shortcut: "⇧⌘E", keywords: "print", run: () => handleExportPDF("dark") },
       { id: "export-pdf-light", title: "Export PDF (Light)", group: "File", keywords: "print", run: () => handleExportPDF("light") },
       { id: "export-html", title: "Export HTML", group: "File", run: handleExportHTML },
-      { id: "mode-view", title: "View Mode", group: "View", shortcut: "⌘1", keywords: "preview rich", run: () => setMode("preview") },
-      { id: "mode-edit", title: "Edit Mode", group: "View", shortcut: "⌘2", keywords: "source raw markdown", run: () => setMode("edit") },
-      { id: "mode-split", title: "Split Mode", group: "View", shortcut: "⌘3", run: () => setMode("split") },
+      { id: "mode-view", title: "Rich Mode", group: "View", shortcut: "⌘1", keywords: "preview rich wysiwyg formatted view", run: () => setMode("preview") },
+      { id: "mode-edit", title: "Source Mode", group: "View", shortcut: "⌘2", keywords: "source raw markdown edit", run: () => setMode("edit") },
+      { id: "mode-split", title: "Split Mode", group: "View", shortcut: "⌘3", keywords: "both side by side", run: () => setMode("split") },
       { id: "stats", title: "Statistics", group: "View", shortcut: "⇧⌘I", keywords: "words count reading", run: () => setShowStats((v) => !v) },
       { id: "palette", title: "Command Palette", group: "View", shortcut: "⌘K", run: () => setShowPalette((v) => !v) },
       // Find lives in the source editor (CodeMirror owns ⌘F there). Surface it
@@ -871,7 +879,7 @@ export default function Home() {
             >
               {collabCfg && (
                 <div className="px-3 py-1 text-[11px] text-muted bg-surface border-b border-border shrink-0">
-                  Live session — source is read-only, edit in View
+                  Live session. Edit in Rich; the Markdown source is locked while others are editing.
                 </div>
               )}
               <div className="flex-1 min-h-0 overflow-hidden">

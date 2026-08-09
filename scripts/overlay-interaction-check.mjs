@@ -251,18 +251,18 @@ async function runForMode(cdp, mode) {
 
   await switchMode(cdp, mode);
 
-  await clickCenter(cdp, 'button[aria-label="PDF export menu"]');
-  await waitFor("PDF menu", () => cdp.ev("!![...document.querySelectorAll('button')].find((button) => button.textContent.includes('Export Dark'))"));
+  await clickCenter(cdp, 'button[aria-label="Export menu"]');
+  await waitFor("PDF menu", () => cdp.ev("!![...document.querySelectorAll('button')].find((button) => button.textContent.includes('PDF (Dark)'))"));
   await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
   await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape" });
-  await waitFor("PDF menu dismissed by Escape", () => cdp.ev("![...document.querySelectorAll('button')].some((button) => button.textContent.includes('Export Dark'))"));
+  await waitFor("PDF menu dismissed by Escape", () => cdp.ev("![...document.querySelectorAll('button')].some((button) => button.textContent.includes('PDF (Dark)'))"));
 
-  await clickCenter(cdp, 'button[aria-label="PDF export menu"]');
-  await waitFor("PDF menu reopened", () => cdp.ev("!![...document.querySelectorAll('button')].find((button) => button.textContent.includes('Export Dark'))"));
+  await clickCenter(cdp, 'button[aria-label="Export menu"]');
+  await waitFor("PDF menu reopened", () => cdp.ev("!![...document.querySelectorAll('button')].find((button) => button.textContent.includes('PDF (Dark)'))"));
   metrics.push(await collectFocusMetric(cdp, `${mode} PDF menu item focus`, "button.markie-menu-item"));
   screenshots[`${mode}PdfMenu`] = await capture(cdp, `${mode}-01-pdf-menu`);
   await clickCenter(cdp, "[data-markie-document-area]");
-  await waitFor("PDF menu dismissed by outside click", () => cdp.ev("![...document.querySelectorAll('button')].some((button) => button.textContent.includes('Export Dark'))"));
+  await waitFor("PDF menu dismissed by outside click", () => cdp.ev("![...document.querySelectorAll('button')].some((button) => button.textContent.includes('PDF (Dark)'))"));
 
   await cdp.ev("document.querySelector('button')?.focus()");
   await openPalette(cdp);

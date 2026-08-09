@@ -229,6 +229,13 @@ export function validateReleaseMetadata(rootDir) {
   assert(builder.linux?.icon === "build/icons", "Linux build config must use the generated PNG icon set");
   assert(Array.isArray(builder.publish) && builder.publish.length > 0, "release config must define a publish target");
   assert(mcp.version === pkg.version, "mcp/package.json version must match package.json");
+  const plugin = readJson(rootDir, "mcp/.claude-plugin/plugin.json");
+  assert(plugin.version === pkg.version, "mcp/.claude-plugin/plugin.json version must match package.json");
+  const mcpSource = readFileSync(path.join(rootDir, "mcp/markie-mcp.mjs"), "utf8");
+  assert(
+    !/serverInfo:\s*\{[^}]*version:\s*"/.test(mcpSource),
+    "mcp/markie-mcp.mjs must read its version from package.json, not hardcode it"
+  );
   assert(mcp.private === true, "MCP package must stay private in this repo");
   assert(server.private === true, "server package must stay private");
   assert(pkg.scripts?.["electron:release"] === "node scripts/release.mjs publish mac", "electron:release must use the guarded release runner");

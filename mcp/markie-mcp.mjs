@@ -16,6 +16,11 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { guardPath, matchQuery, groupSkills, markieOpenCommand } from "./lib.mjs";
 import { walk } from "./scan.mjs";
+import { createRequire } from "node:module";
+
+// Read the version from package.json so the MCP handshake can never drift from
+// the released version (it was pinned at 0.2.9 while the app shipped 0.2.11).
+const SERVER_VERSION = createRequire(import.meta.url)("./package.json").version;
 
 const HOME = homedir();
 
@@ -164,7 +169,7 @@ rl.on("line", async (line) => {
         result: {
           protocolVersion: params?.protocolVersion ?? "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "markie-mcp", version: "0.2.9" },
+          serverInfo: { name: "markie-mcp", version: SERVER_VERSION },
         },
       });
     } else if (method === "notifications/initialized") {

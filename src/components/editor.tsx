@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
+import { Prec } from "@codemirror/state";
+import { conflictingShortcuts } from "@/lib/editor-keymap";
 import {
   editorThemeForTokens,
   findTheme,
@@ -12,6 +14,13 @@ import {
   THEME_APPLIED_EVENT,
   type ThemeTokens,
 } from "@/lib/theme";
+
+// Swallow the shortcuts the app owns so CodeMirror's own binding never runs.
+// Returning true marks the key handled here; the event still bubbles to the
+// app's window listener, so the app action itself is unaffected.
+const appShortcutGuard = Prec.highest(
+  keymap.of(conflictingShortcuts().map((key) => ({ key, run: () => true })))
+);
 
 const theme = EditorView.theme({
   "&": { height: "100%" },
@@ -60,6 +69,7 @@ export function Editor({ value, onChange, readOnly = false }: EditorProps) {
       onChange={onChange}
       readOnly={readOnly}
       extensions={[
+        appShortcutGuard,
         markdown({ base: markdownLanguage, codeLanguages: languages }),
         theme,
         EditorView.lineWrapping,

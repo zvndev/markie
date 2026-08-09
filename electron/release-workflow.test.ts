@@ -73,13 +73,19 @@ describe("release workflow", () => {
 
   it("updates every app-owned version file through one command", () => {
     const root = mkdtempSync(path.join(tmpdir(), "markie-release-version-"));
-    mkdirSync(path.join(root, "mcp"));
+    mkdirSync(path.join(root, "mcp/.claude-plugin"), { recursive: true });
     writeFileSync(path.join(root, "package.json"), '{"version":"0.2.9"}\n');
     writeFileSync(
       path.join(root, "package-lock.json"),
       '{"version":"0.2.9","packages":{"":{"version":"0.2.9"}}}\n'
     );
     writeFileSync(path.join(root, "mcp/package.json"), '{"version":"0.2.9"}\n');
+    // the Claude Code plugin manifest is user-visible on install and drifted
+    // to a stale version once, so it must move with the release too
+    writeFileSync(
+      path.join(root, "mcp/.claude-plugin/plugin.json"),
+      '{"name":"markie","version":"0.2.9"}\n'
+    );
 
     setReleaseVersion("0.2.10", root);
 
@@ -89,6 +95,9 @@ describe("release workflow", () => {
       packages: { "": { version: "0.2.10" } },
     });
     expect(JSON.parse(readFileSync(path.join(root, "mcp/package.json"), "utf8")).version).toBe("0.2.10");
+    expect(
+      JSON.parse(readFileSync(path.join(root, "mcp/.claude-plugin/plugin.json"), "utf8")).version
+    ).toBe("0.2.10");
   });
 
   it("rejects non-release versions", () => {

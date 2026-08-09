@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Supersede in-flight runs for the same ref instead of queueing them.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Renderer + Electron unit tests. --ignore-scripts skips the node-gyp build of
+  # node-pty (it ships no Linux prebuild); nothing in this suite loads a native
+  # module, so the tests run unchanged.
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx vitest run
+
+  # Lint plus the static export. `next build` is also the only type-check in the
+  # repo, so this job is the TypeScript gate as well.
+  lint-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npm run build
+      - name: Check renderer bundle budget
+        run: |
+          BYTES=$(du -sk out | cut -f1)
+          BUDGET=$((12 * 1024))   # out/ is ~6.5MB today
+          echo "renderer export: $((BYTES / 1024)) MB (budget $((BUDGET / 1024)) MB)"
+          echo "### Renderer export: $((BYTES / 1024)) MB" >> "$GITHUB_STEP_SUMMARY"
+          test "$BYTES" -le "$BUDGET" || { echo "::error::renderer export exceeded budget"; exit 1; }
+
+  # Hono/SQLite server. Needs real native modules; better-sqlite3 has a
+  # linux-x64 prebuild, so this stays fast.
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+        working-directory: server
+      - run: npm test
+        working-directory: server
+
+  # Dependency-free MCP server: no install step at all. These tests cover the
+  # filesystem sandbox an AI agent writes through, so they matter most.
+  mcp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: node --test mcp/lib.test.mjs
+
+  # Every file carrying the release version must agree. Catches the drift that
+  # left the MCP handshake and plugin manifest advertising a stale version.
+  version-consistency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Assert every versioned file agrees
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const j = (p) => JSON.parse(fs.readFileSync(p, "utf8"));
+            const v = j("package.json").version;
+            const checks = [
+              ["package-lock.json (root)", j("package-lock.json").version],
+              ["package-lock.json (packages)", j("package-lock.json").packages[""].version],
+              ["mcp/package.json", j("mcp/package.json").version],
+              ["mcp/.claude-plugin/plugin.json", j("mcp/.claude-plugin/plugin.json").version],
+            ];
+            let bad = 0;
+            for (const [what, got] of checks) {
+              if (got !== v) { console.error(`::error::${what} is ${got}, expected ${v}`); bad++; }
+            }
+            const mcpSource = fs.readFileSync("mcp/markie-mcp.mjs", "utf8");
+            if (/serverInfo:\s*\{[^}]*version:\s*"/.test(mcpSource)) {
+              console.error("::error::mcp/markie-mcp.mjs hardcodes serverInfo.version; read it from package.json");
+              bad++;
+            }
+            if (bad) process.exit(1);
+            console.log(`all version references agree: ${v}`);
+          '

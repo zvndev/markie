@@ -74,7 +74,7 @@ Expected: installs the new packages, exits 0, `node_modules/unified` etc. presen
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/macbookpro-kirby/Desktop/Coding/ZVN/markdown-viewer-zvn
+cd <repo-root>
 git add server/package.json server/package-lock.json
 git commit -m "build(server): add markdown renderer deps for public share pages"
 ```
@@ -685,7 +685,7 @@ In `src/lib/auth-client.ts`, inside the `sharesClient` object, after the `remove
 
 - [ ] **Step 2: Type-check**
 
-Run: `cd /Users/macbookpro-kirby/Desktop/Coding/ZVN/markdown-viewer-zvn && npx tsc --noEmit -p tsconfig.json`
+Run: `cd <repo-root> && npx tsc --noEmit -p tsconfig.json`
 Expected: no errors.
 
 - [ ] **Step 3: Commit**
@@ -799,7 +799,7 @@ In the dialog body, after the members list block and before the closing wrapper 
 
 - [ ] **Step 4: Type-check + lint**
 
-Run: `cd /Users/macbookpro-kirby/Desktop/Coding/ZVN/markdown-viewer-zvn && npx tsc --noEmit -p tsconfig.json && npm run lint`
+Run: `cd <repo-root> && npx tsc --noEmit -p tsconfig.json && npm run lint`
 Expected: no errors.
 
 - [ ] **Step 5: Commit**

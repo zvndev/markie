@@ -43,7 +43,7 @@
 
 Run:
 ```bash
-cd /Users/macbookpro-kirby/Desktop/Coding/ZVN/markdown-viewer-zvn
+cd <repo-root>
 git checkout -b feat/launch-phase1-hardening
 git config user.name && git config user.email   # verify ZVN DEV identity
 ```
@@ -743,7 +743,7 @@ Run only at the Phase 4 flip — defined here so it isn't improvised.
 
 1. Build the curated tree into a sibling dir:
 ```bash
-SRC=/Users/macbookpro-kirby/Desktop/Coding/ZVN/markdown-viewer-zvn
+SRC=<repo-root>
 DST=/tmp/markie-public
 rm -rf "$DST" && mkdir -p "$DST"
 rsync -a \

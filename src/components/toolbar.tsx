@@ -19,6 +19,10 @@ interface ToolbarProps {
   onModeChange: (mode: ViewMode) => void;
   onOpenFile: () => void;
   onExportPDF: (theme: PDFTheme) => void;
+  // "Save a Copy" writes the markdown itself somewhere else; Export HTML and
+  // PDF render it. All three live in the one visible Export menu.
+  onSaveAs: () => void;
+  onExportHTML: () => void;
   fileName: string | null;
   isDirty: boolean;
   canRename: boolean;
@@ -41,6 +45,8 @@ export function Toolbar({
   onModeChange,
   onOpenFile,
   onExportPDF,
+  onSaveAs,
+  onExportHTML,
   fileName,
   isDirty,
   canRename,
@@ -160,7 +166,7 @@ export function Toolbar({
           <div className="relative" ref={menuRef}>
             <button
               onClick={() => setShowPDFMenu(!showPDFMenu)}
-              aria-label="PDF export menu"
+              aria-label="Export menu"
               className="text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -169,7 +175,7 @@ export function Toolbar({
                 <line x1="12" y1="18" x2="12" y2="12" />
                 <polyline points="9 15 12 18 15 15" />
               </svg>
-              PDF
+              Export
               <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="6 9 12 15 18 9" />
               </svg>
@@ -177,6 +183,28 @@ export function Toolbar({
 
             {showPDFMenu && (
               <div className="markie-menu-panel absolute top-full left-0 mt-1.5 rounded-lg py-1.5 min-w-[152px] z-50">
+                <button
+                  onClick={() => { onSaveAs(); setShowPDFMenu(false); }}
+                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                    <polyline points="17 21 17 13 7 13 7 21" />
+                    <polyline points="7 3 7 8 15 8" />
+                  </svg>
+                  Save a Copy…
+                </button>
+                <button
+                  onClick={() => { onExportHTML(); setShowPDFMenu(false); }}
+                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
+                    <polyline points="16 18 22 12 16 6" />
+                    <polyline points="8 6 2 12 8 18" />
+                  </svg>
+                  Export HTML
+                </button>
+                <div className="h-px bg-border my-1" />
                 <button
                   onClick={() => { onExportPDF("dark"); setShowPDFMenu(false); }}
                   className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
@@ -186,7 +214,7 @@ export function Toolbar({
                     <polyline points="7 10 12 15 17 10" />
                     <line x1="12" y1="15" x2="12" y2="3" />
                   </svg>
-                  Export Dark
+                  PDF (Dark)
                 </button>
                 <button
                   onClick={() => { onExportPDF("light"); setShowPDFMenu(false); }}
@@ -197,7 +225,7 @@ export function Toolbar({
                     <polyline points="7 10 12 15 17 10" />
                     <line x1="12" y1="15" x2="12" y2="3" />
                   </svg>
-                  Export Light
+                  PDF (Light)
                 </button>
               </div>
             )}

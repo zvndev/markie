@@ -317,7 +317,7 @@ async function main() {
   screenshots.shell = await capture(cdp, "01-shell-light");
 
   await cdp.ev("[...document.querySelectorAll('button')].find((b) => b.textContent.includes('PDF'))?.click()");
-  await waitFor("PDF menu", () => cdp.ev("document.body.innerText.includes('Export Dark')"));
+  await waitFor("PDF menu", () => cdp.ev("document.body.innerText.includes('PDF (Dark)')"));
   screenshots.toolbarPdfMenu = await capture(cdp, "02-toolbar-pdf-menu");
 
   await cdp.ev("document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))");
@@ -710,8 +710,8 @@ async function main() {
     const samples = [
       ['toolbar', [...document.querySelectorAll('span')].find((el) => text(el) === 'Markie')],
       ['toolbar file control', [...document.querySelectorAll('button')].find((el) => text(el).includes('Open file'))],
-      ['toolbar PDF menu dark option', [...document.querySelectorAll('[data-audit-surface="pdf-menu-probe"] button')].find((el) => text(el).includes('Export Dark'))],
-      ['toolbar PDF menu light option', [...document.querySelectorAll('[data-audit-surface="pdf-menu-probe"] button')].find((el) => text(el).includes('Export Light'))],
+      ['toolbar PDF menu dark option', [...document.querySelectorAll('[data-audit-surface="pdf-menu-probe"] button')].find((el) => text(el).includes('PDF (Dark)'))],
+      ['toolbar PDF menu light option', [...document.querySelectorAll('[data-audit-surface="pdf-menu-probe"] button')].find((el) => text(el).includes('PDF (Light)'))],
       ['left rail library button', document.querySelector('button[aria-label^="Library"]')],
       ['left rail sign-in button', document.querySelector('button[aria-label="Sign in"]')],
       ['library heading', document.querySelector('[data-audit-sample="library-heading"]')],

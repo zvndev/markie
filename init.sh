@@ -5,11 +5,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-if [[ -x "$HOME/.nvm/versions/node/v22.13.1/bin/node" ]]; then
-  export PATH="$HOME/.nvm/versions/node/v22.13.1/bin:$PATH"
-elif [[ -x "$HOME/.nvm/versions/node/v22.17.0/bin/node" ]]; then
-  export PATH="$HOME/.nvm/versions/node/v22.17.0/bin:$PATH"
-else
+# Prefer whatever node is already on PATH; fall back to common install roots so
+# a bare shell (cron, an agent runner) still finds one.
+if ! command -v node >/dev/null 2>&1; then
   export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 fi
 
@@ -18,9 +16,11 @@ if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
   exit 127
 fi
 
+# Match package.json engines: Node 22+. Pinning an exact major locked out
+# contributors on newer LTS releases for no reason.
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
-if [[ "$NODE_MAJOR" != "22" ]]; then
-  echo "init.sh: Node 22 is required for this repo's native dependencies; found $(node -v)" >&2
+if (( NODE_MAJOR < 22 )); then
+  echo "init.sh: Node 22 or newer is required; found $(node -v)" >&2
   exit 127
 fi
 

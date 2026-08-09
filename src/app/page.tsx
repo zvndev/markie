@@ -107,6 +107,26 @@ const fromDisk = (name: string | null, raw: string) =>
 const toDisk = (name: string | null, md: string) =>
   isCSVName(name) ? markdownTableToCSV(md) : md;
 
+// Focus the source editor and open its find panel. CodeMirror owns ⌘F inside
+// the editor; this lets the command palette reach it from any view mode.
+function focusEditorFind(): void {
+  requestAnimationFrame(() => {
+    const editor = document.querySelector<HTMLElement>(".cm-content");
+    if (!editor) return;
+    editor.focus();
+    editor.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "f",
+        code: "KeyF",
+        metaKey: true,
+        ctrlKey: false,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+  });
+}
+
 export default function Home() {
   const [content, setContent] = useState("");
   const [booted, setBooted] = useState(false);
@@ -720,6 +740,10 @@ export default function Home() {
       { id: "mode-split", title: "Split Mode", group: "View", shortcut: "⌘3", run: () => setMode("split") },
       { id: "stats", title: "Statistics", group: "View", shortcut: "⇧⌘I", keywords: "words count reading", run: () => setShowStats((v) => !v) },
       { id: "palette", title: "Command Palette", group: "View", shortcut: "⌘K", run: () => setShowPalette((v) => !v) },
+      // Find lives in the source editor (CodeMirror owns ⌘F there). Surface it
+      // as a command so it is discoverable from View mode, and say where it
+      // lands rather than silently changing the view.
+      { id: "find", title: "Find in Source…", group: "View", shortcut: "⌘F", keywords: "search find replace text", run: () => { setMode((m) => (m === "preview" ? "split" : m)); focusEditorFind(); } },
       ...(TERMINAL_ENABLED ? [{ id: "terminal", title: "Toggle Terminal", group: "View", shortcut: "⌃`", keywords: "shell console zsh bash powershell cmd", run: () => setShowTerminal((v) => !v) }] as AppCommand[] : []),
       { id: "copy-path", title: "Copy File Path", group: "File", keywords: "link location terminal clipboard", run: () => { const p = docRef.current.filePath; if (p) navigator.clipboard.writeText(p); } },
       { id: "copy-content", title: "Copy Document Contents", group: "File", keywords: "clipboard markdown text", run: () => navigator.clipboard.writeText(docRef.current.content) },
@@ -776,6 +800,8 @@ export default function Home() {
         onModeChange={setMode}
         onOpenFile={handleOpenFile}
         onExportPDF={handleExportPDF}
+        onSaveAs={() => handleSaveAs()}
+        onExportHTML={handleExportHTML}
         fileName={fileName}
         isDirty={isDirty}
         canRename={filePath !== null}

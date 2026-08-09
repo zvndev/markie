@@ -10,6 +10,9 @@
     "type": "git",
     "url": "https://github.com/zvndev/markie.git"
   },
+  "bugs": {
+    "url": "https://github.com/zvndev/markie/issues"
+  },
   "keywords": [
     "markdown",
     "editor",
@@ -114,5 +117,8 @@
     "typescript": "^5",
     "vitest": "^4.1.8",
     "wait-on": "^9.0.4"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

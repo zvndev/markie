@@ -566,7 +566,7 @@
   arm64`. Focused tests `npm test -- electron/local-electron-builder.test.ts
   electron/release-preflight.test.ts src/lib/library-state.test.ts src/lib/workspace-default.test.ts`
   passed 4 files / 15 tests. Live Electron/CDP then showed `libraryState` returning
-  `{ signedIn:false, items:[] }`, `wsCreateDefault` returning `/Users/macbookpro-kirby/Documents/Markie`,
+  `{ signedIn:false, items:[] }`, `wsCreateDefault` returning `~/Documents/Markie`,
   `wsRoots` containing that default path, and the real Files tab displaying `MARKIE`, `empty`, and no
   `Loading...`.
 - next: Run full verification and commit this bugfix. Continue toward Windows-host launch evidence,
@@ -794,7 +794,7 @@
   passed. `npm run visual:guard:theme` passed with zero findings and wrote
   `.autoloop/runs/light-mode-audit-20260705024544/audit.json`. Live Electron/CDP against the real
   desktop app wrote `.autoloop/runs/library-startup-check-20260704224634/actual-check.json` with
-  `ok: true`, `roots: ["/Users/macbookpro-kirby/Documents/Markie"]`, and dark/light screenshots
+  `ok: true`, `roots: ["~/Documents/Markie"]`, and dark/light screenshots
   showing `Workspace ready`. A detached built Electron preview remains open at `app://markie/index.html`
   with the Library panel visible.
 - next: Continue native Windows workflow execution after the branch is published, authenticated

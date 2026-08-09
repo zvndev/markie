@@ -133,18 +133,24 @@ export function setReleaseVersion(version, root = rootDir) {
   const packagePath = path.join(root, "package.json");
   const lockPath = path.join(root, "package-lock.json");
   const mcpPath = path.join(root, "mcp/package.json");
+  // The Claude Code plugin manifest is user-visible on install, so it has to
+  // move with the release or the marketplace advertises a stale version.
+  const pluginPath = path.join(root, "mcp/.claude-plugin/plugin.json");
   const pkg = readJson(packagePath);
   const lock = readJson(lockPath);
   const mcp = readJson(mcpPath);
+  const plugin = readJson(pluginPath);
   pkg.version = version;
   lock.version = version;
   assert(lock.packages?.[""], "package-lock.json is missing the root package entry");
   lock.packages[""].version = version;
   mcp.version = version;
+  plugin.version = version;
   writeJson(packagePath, pkg);
   writeJson(lockPath, lock);
   writeJson(mcpPath, mcp);
-  return [packagePath, lockPath, mcpPath];
+  writeJson(pluginPath, plugin);
+  return [packagePath, lockPath, mcpPath, pluginPath];
 }
 
 function macAppPaths() {

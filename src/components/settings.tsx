@@ -303,7 +303,14 @@ export function Settings({ onClose, authNonce, initialSection = "account" }: Set
                   className="markie-overlay-button w-full text-[13px] py-2 rounded-md border border-border text-foreground/90 hover:bg-accent/40"
                   onClick={() => {
                     setError(null);
+                    // Null means we couldn't mint the state nonce that proves the
+                    // returning deep link belongs to this sign-in. Starting anyway
+                    // would just fail at the other end, so say so here.
                     const url = authClient.googleSignInURL();
+                    if (!url) {
+                      setError("Couldn't start Google sign-in on this machine. Use an email code instead.");
+                      return;
+                    }
                     const api = getElectronAPI();
                     if (api?.openExternal) api.openExternal(url);
                     else window.open(url, "_blank");

@@ -98,6 +98,14 @@ npm run release:status
 Confirm the package version, current commit, public feed version, and website version. A missing or
 stale website version means the server route must be deployed before publishing a new app feed.
 
+**Deploy the server before shipping an app build whose sign-in changed.** The desktop Google flow is
+split across both: the app mints a `state` nonce and refuses any `markie://auth` deep link that does
+not carry it back, and only a deployed server echoes that nonce. Ship the app first and Google
+sign-in fails for everyone who updates, with no way to recover from inside the app. `release:status`
+does not catch this, so check it by hand whenever `server/src/desktop-auth.ts`,
+`src/lib/auth-state.ts`, or the bridge routes in `server/src/index.ts` have changed since the last
+deploy.
+
 ### 2. Set the version once
 
 ```sh

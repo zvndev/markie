@@ -8,6 +8,14 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Signing in with Google now verifies that the sign-in came from your copy of
+  Markie. The app mints a single-use code before opening your browser and only
+  accepts the account that comes back carrying it, so a web page cannot hand
+  Markie an account you did not ask for. Sign-in codes are good for ten minutes
+  and cannot be reused.
+
 ### Fixed
 
 - Pressing `⌘/` with the cursor in the source editor no longer comments out the

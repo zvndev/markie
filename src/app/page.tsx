@@ -33,6 +33,7 @@ import {
   pushSyncConfig,
   sharesClient,
 } from "@/lib/auth-client";
+import { consumeAuthState } from "@/lib/auth-state";
 import { colorForName, type CollabConfig, type PeerUser } from "@/lib/collab";
 import {
   pullCloudThemes,
@@ -697,11 +698,18 @@ export default function Home() {
       api.onMenuSettings?.(() => setShowSettings((v) => !v)),
       api.onMenuLibrary?.(() => selectView("library")),
       api.onDeepLink?.((url) => {
-        // markie://auth?token=... — Google sign-in returning via the bridge
+        // markie://auth?token=…&state=… — Google sign-in returning via the
+        // bridge. Anything on the machine can fire this deep link, so the token
+        // is only adopted when it carries the single-use nonce minted when we
+        // opened the browser. See src/lib/auth-state.ts.
         try {
           const u = new URL(url);
           const token = u.searchParams.get("token");
           if (u.host === "auth" && token) {
+            if (!consumeAuthState(u.searchParams.get("state"))) {
+              console.error("markie://auth rejected: no matching sign-in was pending");
+              return;
+            }
             adoptAuthToken(token);
             refreshCollabRef.current();
             setAuthNonce((n) => n + 1); // re-render Settings/account state

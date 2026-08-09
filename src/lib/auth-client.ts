@@ -2,6 +2,7 @@
 // Sessions use bearer tokens; the token is mirrored to the Electron main
 // process (sync engine) whenever it changes.
 import { getElectronAPI } from "@/lib/electron";
+import { createAuthState } from "@/lib/auth-state";
 
 export interface MarkieUser {
   id: string;
@@ -139,7 +140,15 @@ export const authClient = {
   // better-auth's OAuth state cookie is present on the callback, so we just
   // open a server route that starts the flow and redirects to Google. After
   // consent, the server's desktop bridge deep-links the session back in.
-  googleSignInURL: (): string => `${getServerURL()}/auth/google-start`,
+  //
+  // The `state` nonce rides along so the deep link that comes back can prove it
+  // belongs to this sign-in. Returns null when we can't mint one, which the
+  // caller must surface rather than starting an unverifiable flow.
+  googleSignInURL: (): string | null => {
+    const state = createAuthState();
+    if (!state) return null;
+    return `${getServerURL()}/auth/google-start?state=${encodeURIComponent(state)}`;
+  },
 };
 
 export interface ShareMember {

@@ -8,6 +8,7 @@ import { comments } from "./comments.ts";
 import { themes } from "./themes.ts";
 import { publicShare } from "./public.ts";
 import { attachCollab } from "./collab.ts";
+import { desktopAuthDeepLink, desktopAuthState } from "./desktop-auth.ts";
 
 const app = new Hono();
 
@@ -36,11 +37,15 @@ const AUTH_BASE =
 
 app.get("/auth/google-start", async (c) => {
   try {
+    const state = desktopAuthState(c.req.query("state"));
+    const bridge = state
+      ? `${AUTH_BASE}/auth/desktop-bridge?state=${encodeURIComponent(state)}`
+      : `${AUTH_BASE}/auth/desktop-bridge`;
     const res = await auth.api.signInSocial({
       body: {
         provider: "google",
-        callbackURL: `${AUTH_BASE}/auth/desktop-bridge`,
-        errorCallbackURL: `${AUTH_BASE}/auth/desktop-bridge`,
+        callbackURL: bridge,
+        errorCallbackURL: bridge,
       },
       asResponse: true,
     });
@@ -79,10 +84,13 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
   if (!token) {
     return page("Sign-in didn't complete", "Head back to Markie and try again.");
   }
+  // Carry the app's nonce back so it can verify this deep link is the answer to
+  // a sign-in it started. Without it the app rejects the token.
+  const state = desktopAuthState(c.req.query("state"));
   return page(
     "You're signed in",
     "Returning you to Markie…",
-    `markie://auth?token=${encodeURIComponent(token)}`
+    desktopAuthDeepLink(token, state)
   );
 });
 

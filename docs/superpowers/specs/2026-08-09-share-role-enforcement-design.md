@@ -71,7 +71,27 @@ disagree with the Rich pane in the first place.
   live session and viewers cannot type anywhere.
 - The value is derived from `roleFor(...)` rather than computed inline.
 
-### 3. Source pane joins the shared document (`y-codemirror.next`)
+### 3. Source pane during a live session: live, read-only
+
+**Decided against `y-codemirror.next`.** TipTap's `Collaboration` binds
+`ydoc.getXmlFragment("default")` (`extension-collaboration/dist/index.js:146`);
+`y-codemirror.next` binds a `Y.Text`. A single Yjs document can hold both, but
+they are independent CRDTs that never share state, so keeping the panes in step
+would mean serializing XmlFragment to markdown to Y.Text and back on every
+keystroke. That is exactly the lossy round trip that destroyed front matter, raw
+HTML, footnotes and math, fixed in `3c439f7`, and running it continuously across
+users would be strictly worse than the bug that was fixed.
+
+So the rich pane owns the shared document. While a live session is active the
+Source pane is a **live read-only mirror**: it keeps updating as other people
+type, and it carries a banner saying `Live session. Edit in Rich.` Outside a live
+session all three modes are fully editable as today.
+
+This is close to the current behaviour, but the current behaviour is right for
+the wrong reason (`readOnly={!!collabCfg}` ignores the role entirely). The role
+still has to drive the rich pane, which is where the actual gap is.
+
+### 3b. Superseded: Source pane joins the shared document (`y-codemirror.next`)
 
 Making Source editable during a live session means its edits have to reach the
 same Yjs document, or the two panes diverge and last-writer-wins silently

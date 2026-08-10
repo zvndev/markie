@@ -9,6 +9,7 @@ import {
   docsSharedByMe,
 } from "./shares.ts";
 import { claimPendingInvites } from "./pending.ts";
+import { closeRoom } from "./collab.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
 
@@ -150,11 +151,15 @@ docs.put("/:id", async (c) => {
 docs.delete("/:id", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
+  const docId = c.req.param("id");
   const res = db
     .prepare(
       "UPDATE docs SET deleted_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL"
     )
-    .run(new Date().toISOString(), c.req.param("id"), user.id);
+    .run(new Date().toISOString(), docId, user.id);
   if (res.changes === 0) return c.json({ error: "not found" }, 404);
+  // The delete revokes access for every member at once, so nobody keeps a live
+  // socket on the room.
+  closeRoom(docId);
   return c.json({ ok: true });
 });

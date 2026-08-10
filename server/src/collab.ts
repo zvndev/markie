@@ -10,7 +10,12 @@ import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import Database from "better-sqlite3";
 import { auth } from "./auth.ts";
-import { accessLevel, canEditLevel, canReadLevel } from "./shares.ts";
+import {
+  accessLevel,
+  canEditLevel,
+  canReadLevel,
+  type ShareAccessLevel,
+} from "./shares.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
 
@@ -26,6 +31,21 @@ db.exec(`
 const MESSAGE_SYNC = 0;
 const MESSAGE_AWARENESS = 1;
 const COMPACT_THRESHOLD = 500;
+// 4000-4999 is the application-private close range; the client treats it as a
+// permanent "don't reconnect" answer rather than a dropped connection.
+const CLOSE_ACCESS_REVOKED = 4403;
+
+// A share can be revoked while a socket is open, and the desktop app keeps its
+// socket for as long as the doc is open, so the level resolved at upgrade time
+// is not safe to trust for the life of the connection. Every inbound message
+// re-reads it: that path is paced by human typing and the read is two indexed
+// queries against a local SQLite file, so correctness is worth far more than
+// the microseconds. The fan-out is the one genuinely hot path (recipients x
+// updates), so it reuses a level read within the last ACCESS_CACHE_MS instead
+// of querying per recipient per keystroke. Revocation through the API calls
+// disconnectUser()/closeRoom() and hangs up immediately, so this window only
+// ever bounds a revocation that reached the database some other way.
+export const ACCESS_CACHE_MS = 1000;
 
 function loadUpdates(docId: string, ydoc: Y.Doc): void {
   const rows = db
@@ -58,13 +78,33 @@ function appendUpdate(docId: string, update: Uint8Array): void {
   }
 }
 
+interface Conn {
+  userId: string;
+  identity: PresenceIdentity; // what this socket is allowed to claim it is
+  controlled: Set<number>; // awareness client ids this socket controls
+  level: ShareAccessLevel; // last level read for this user on this doc
+  checkedAt: number; // when that read happened
+}
+
 interface Room {
+  docId: string;
   ydoc: Y.Doc;
   awareness: awarenessProtocol.Awareness;
-  conns: Map<WebSocket, Set<number>>; // ws -> controlled awareness client ids
+  conns: Map<WebSocket, Conn>;
 }
 
 const rooms = new Map<string, Room>();
+
+function readLevel(docId: string, conn: Conn): ShareAccessLevel {
+  conn.level = accessLevel(docId, conn.userId);
+  conn.checkedAt = Date.now();
+  return conn.level;
+}
+
+function cachedLevel(docId: string, conn: Conn): ShareAccessLevel {
+  if (Date.now() - conn.checkedAt >= ACCESS_CACHE_MS) return readLevel(docId, conn);
+  return conn.level;
+}
 
 function getRoom(docId: string): Room {
   let room = rooms.get(docId);
@@ -73,7 +113,7 @@ function getRoom(docId: string): Room {
   loadUpdates(docId, ydoc);
   const awareness = new awarenessProtocol.Awareness(ydoc);
   awareness.setLocalState(null);
-  room = { ydoc, awareness, conns: new Map() };
+  room = { docId, ydoc, awareness, conns: new Map() };
   rooms.set(docId, room);
 
   ydoc.on("update", (update: Uint8Array) => {
@@ -95,7 +135,9 @@ function getRoom(docId: string): Room {
       origin: unknown
     ) => {
       // remember which awareness client ids each connection controls
-      const controlled = origin ? room!.conns.get(origin as WebSocket) : null;
+      const controlled = origin
+        ? room!.conns.get(origin as WebSocket)?.controlled
+        : null;
       if (controlled) {
         for (const id of added) controlled.add(id);
         for (const id of removed) controlled.delete(id);
@@ -114,9 +156,78 @@ function getRoom(docId: string): Room {
 }
 
 function broadcast(room: Room, message: Uint8Array): void {
-  for (const conn of room.conns.keys()) {
-    if (conn.readyState === conn.OPEN) conn.send(message);
+  for (const [ws, conn] of room.conns) {
+    if (ws.readyState !== ws.OPEN) continue;
+    // Losing access has to stop the reading too, not just the writing: a
+    // removed collaborator was still being fed every keystroke. Hang up rather
+    // than silently starve the socket, so the client knows it is out.
+    if (!canReadLevel(cachedLevel(room.docId, conn))) {
+      ws.close(CLOSE_ACCESS_REVOKED, "access revoked");
+      continue;
+    }
+    ws.send(message);
   }
+}
+
+// Hang up on a collaborator whose share just went away. This is the mechanism
+// that makes revocation immediate; the per-message check in handleConnection is
+// the backstop for revocations that never reach this call.
+export function disconnectUser(docId: string, userId: string): void {
+  const room = rooms.get(docId);
+  if (!room) return;
+  for (const [ws, conn] of room.conns) {
+    if (conn.userId === userId) ws.close(CLOSE_ACCESS_REVOKED, "access revoked");
+  }
+}
+
+// A soft-deleted doc revokes access for everyone at once, owner included.
+export function closeRoom(docId: string): void {
+  const room = rooms.get(docId);
+  if (!room) return;
+  for (const ws of room.conns.keys()) ws.close(CLOSE_ACCESS_REVOKED, "doc deleted");
+}
+
+export interface PresenceIdentity {
+  name: string;
+  color: string;
+}
+
+// Mirrors colorForName in the renderer's src/lib/collab.ts so that stamping
+// presence server-side is invisible to an honest client.
+const PEER_COLORS = [
+  "#f59e0b",
+  "#10b981",
+  "#3b82f6",
+  "#8b5cf6",
+  "#ec4899",
+  "#ef4444",
+  "#14b8a6",
+  "#eab308",
+];
+
+export function presenceIdentity(user: {
+  name?: string | null;
+  email?: string | null;
+}): PresenceIdentity {
+  const name = user.name || user.email || "Someone";
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  }
+  return { name, color: PEER_COLORS[Math.abs(hash) % PEER_COLORS.length] };
+}
+
+// Awareness is relayed verbatim to every peer, so the identity inside it must
+// be the session's rather than whatever the client typed: otherwise any
+// collaborator, viewers included, can put words in another user's mouth. The
+// cursor and everything else stays the client's own.
+export function stampPresenceIdentity(
+  update: Uint8Array,
+  identity: PresenceIdentity
+): Uint8Array {
+  return awarenessProtocol.modifyAwarenessUpdate(update, (state) =>
+    state && typeof state === "object" ? { ...state, user: identity } : state
+  );
 }
 
 export function readAccessControlledSyncMessage(
@@ -142,13 +253,31 @@ export function readAccessControlledSyncMessage(
   return messageType;
 }
 
-function handleConnection(conn: WebSocket, docId: string, canEdit: boolean): void {
+function handleConnection(
+  conn: WebSocket,
+  docId: string,
+  user: { id: string; name?: string | null; email?: string | null },
+  level: ShareAccessLevel
+): void {
   const room = getRoom(docId);
-  room.conns.set(conn, new Set());
+  const state: Conn = {
+    userId: user.id,
+    identity: presenceIdentity(user),
+    controlled: new Set(),
+    level,
+    checkedAt: Date.now(),
+  };
+  room.conns.set(conn, state);
   conn.binaryType = "arraybuffer";
 
   conn.on("message", (data: ArrayBuffer | Buffer) => {
     try {
+      // Never trust the level captured at upgrade time (see ACCESS_CACHE_MS).
+      const current = readLevel(docId, state);
+      if (!canReadLevel(current)) {
+        conn.close(CLOSE_ACCESS_REVOKED, "access revoked");
+        return;
+      }
       const message = new Uint8Array(data as ArrayBuffer);
       const decoder = decoding.createDecoder(message);
       const messageType = decoding.readVarUint(decoder);
@@ -160,7 +289,7 @@ function handleConnection(conn: WebSocket, docId: string, canEdit: boolean): voi
           encoder,
           room.ydoc,
           conn,
-          canEdit
+          canEditLevel(current)
         );
         if (encoding.length(encoder) > 1) {
           conn.send(encoding.toUint8Array(encoder));
@@ -168,7 +297,10 @@ function handleConnection(conn: WebSocket, docId: string, canEdit: boolean): voi
       } else if (messageType === MESSAGE_AWARENESS) {
         awarenessProtocol.applyAwarenessUpdate(
           room.awareness,
-          decoding.readVarUint8Array(decoder),
+          stampPresenceIdentity(
+            decoding.readVarUint8Array(decoder),
+            state.identity
+          ),
           conn
         );
       }
@@ -178,7 +310,7 @@ function handleConnection(conn: WebSocket, docId: string, canEdit: boolean): voi
   });
 
   conn.on("close", () => {
-    const controlled = room.conns.get(conn);
+    const controlled = room.conns.get(conn)?.controlled;
     room.conns.delete(conn);
     if (controlled && controlled.size > 0) {
       awarenessProtocol.removeAwarenessStates(room.awareness, [...controlled], null);
@@ -234,9 +366,9 @@ export function attachCollab(server: Server): void {
         socket.destroy();
         return;
       }
-      const canEdit = canEditLevel(level);
+      const user = session.user;
       wss.handleUpgrade(req, socket, head, (conn) => {
-        handleConnection(conn, docId, canEdit);
+        handleConnection(conn, docId, user, level);
       });
     } catch (err) {
       console.error("collab upgrade error:", err);

@@ -9,6 +9,7 @@ import {
   revokePublicLink,
 } from "./public-links.ts";
 import { markieSiteUrl, primaryDownloadCta } from "./downloads.ts";
+import { disconnectUser } from "./collab.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
 
@@ -244,6 +245,9 @@ shares.delete("/:id/shares/:idOrEmail", async (c) => {
   const removedMember = db
     .prepare("DELETE FROM shares WHERE doc_id = ? AND user_id = ?")
     .run(docId, target).changes > 0;
+  // Removing the row is not enough on its own: a live collaboration socket
+  // outlives it, so hang up on the socket too.
+  if (removedMember) disconnectUser(docId, target);
   const removedPending = target.includes("@")
     ? removePending(docId, target)
     : false;

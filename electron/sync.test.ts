@@ -352,6 +352,138 @@ describe("syncOff", () => {
   });
 });
 
+describe("viewer access", () => {
+  const sharedRow = (p = "/docs/a.md") =>
+    seedRow({
+      path: p,
+      sync_state: "synced",
+      cloud_doc_id: "cloud-1",
+      cloud_version: 4,
+      content_hash: "hash:old",
+    });
+
+  it("refuses to push a doc the user can only view", async () => {
+    const row = sharedRow();
+    sync.setDocRole("cloud-1", "viewer");
+    const calls = respondWith();
+
+    const res = await sync.push("/docs/a.md", "a.md", "new");
+
+    // The server answers this request with 403. Sending it anyway and relaying
+    // the status told the user their backup failed, not that it was never
+    // theirs to make.
+    expect(calls).toHaveLength(0);
+    expect(res.error).toMatch(/view-only/);
+    expect(res.ok).toBeUndefined();
+    // Still on disk, still not in the cloud: the row must not claim otherwise.
+    expect(row.sync_state).toBe("unpushed");
+  });
+
+  it("refuses to turn sync on for a doc the user can only view", async () => {
+    const row = sharedRow();
+    sync.setDocRole("cloud-1", "viewer");
+    const calls = respondWith();
+
+    const res = await sync.syncOn("/docs/a.md", "a.md", "new");
+
+    expect(calls).toHaveLength(0);
+    expect(res.error).toMatch(/view-only/);
+    expect(row.sync_state).toBe("unpushed");
+  });
+
+  it("still pushes for an editor", async () => {
+    const row = sharedRow();
+    sync.setDocRole("cloud-1", "editor");
+    respondWith({ status: 200, body: { version: 5 } });
+
+    expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
+      ok: true,
+      version: 5,
+    });
+    expect(row.sync_state).toBe("synced");
+  });
+
+  it("still pushes for an owner", async () => {
+    const row = sharedRow();
+    sync.setDocRole("cloud-1", "owner");
+    respondWith({ status: 200, body: { version: 5 } });
+
+    expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
+      ok: true,
+      version: 5,
+    });
+    expect(row.sync_state).toBe("synced");
+  });
+
+  it("pushes when no role has been reported for the doc", async () => {
+    // Unknown is not viewer. The server is still the one enforcing access, so
+    // an unreported doc has to keep working exactly as before.
+    sharedRow();
+    respondWith({ status: 200, body: { version: 5 } });
+
+    expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
+      ok: true,
+      version: 5,
+    });
+  });
+
+  it("forgets roles when the account changes", async () => {
+    sharedRow();
+    sync.setDocRole("cloud-1", "viewer");
+    sync.setConfig({ token: "someone-else", serverURL: SERVER });
+    respondWith({ status: 200, body: { version: 5 } });
+
+    // The previous user's viewer grant says nothing about this one.
+    expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
+      ok: true,
+      version: 5,
+    });
+  });
+
+  it("learns the role from the library list rather than asking again", async () => {
+    sharedRow();
+    respondWith({
+      status: 200,
+      body: { docs: [{ id: "cloud-1", version: 4, shared: true, role: "viewer" }] },
+    });
+    await sync.libraryState();
+
+    const calls = respondWith();
+    const res = await sync.push("/docs/a.md", "a.md", "new");
+
+    expect(res.error).toMatch(/view-only/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("treats a shared doc whose role is missing from the list as view-only", async () => {
+    sharedRow();
+    respondWith({
+      status: 200,
+      body: { docs: [{ id: "cloud-1", version: 4, shared: true }] },
+    });
+    await sync.libraryState();
+
+    const calls = respondWith();
+    const res = await sync.push("/docs/a.md", "a.md", "new");
+
+    expect(res.error).toMatch(/view-only/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("keeps pushing docs the library list shows as owned", async () => {
+    sharedRow();
+    respondWith({ status: 200, body: { docs: [{ id: "cloud-1", version: 4 }] } });
+    await sync.libraryState();
+
+    respondWith({ status: 200, body: { version: 5 } });
+
+    expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
+      ok: true,
+      version: 5,
+    });
+  });
+});
+
 describe("libraryState", () => {
   const syncedRow = () =>
     seedRow({

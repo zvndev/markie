@@ -79,12 +79,20 @@ export interface ElectronAPI {
   onDeepLink(cb: (url: string) => void): Unsubscribe;
   openExternal(url: string): Promise<void>;
   syncConfig(cfg: { token: string | null; serverURL: string }): Promise<void>;
+  // Hand the sync engine the share role the renderer resolved for a cloud doc,
+  // so a push it cannot land is refused here instead of coming back as a 403.
+  syncDocRole?(args: {
+    cloudId: string;
+    role: "owner" | "editor" | "viewer";
+  }): Promise<void>;
   registryTrack(args: {
     path: string;
     name: string;
     content?: string;
   }): Promise<{ ok?: boolean; error?: string }>;
   registryGet(path: string): Promise<RegistryEntry | null>;
+  // Remember a server-confirmed share role so an offline launch can honour it.
+  registrySetRole?(args: { path: string; role: "owner" | "editor" | "viewer" }): Promise<{ ok?: boolean; error?: string }>;
   libraryState(): Promise<{ signedIn: boolean; items: LibraryItem[] }>;
   docSyncOn(args: {
     path: string;
@@ -179,6 +187,8 @@ export interface RegistryEntry {
   sync_state: string | null;
   last_opened_at: string | null;
   last_synced_at: string | null;
+  // Last role the server confirmed; used when the server is unreachable.
+  share_role?: "owner" | "editor" | "viewer" | null;
 }
 
 export interface LibraryItem {

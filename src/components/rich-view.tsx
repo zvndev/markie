@@ -30,6 +30,10 @@ interface RichViewProps {
   // When set, the document lives in a shared Yjs room instead of the value
   // prop. The parent must remount this component (key) when collab changes.
   collab?: CollabConfig | null;
+  // The share role the page resolved. It also covers the window before a role
+  // resolves, which the collab config cannot: that is null until membership
+  // comes back, and a null config used to read as "editable".
+  readOnly?: boolean;
   onPeersChange?: (peers: PeerUser[]) => void;
   onCollabStatus?: (status: "connecting" | "connected" | "disconnected") => void;
 }
@@ -44,9 +48,11 @@ export function RichView({
   onChange,
   onEditorReady,
   collab,
+  readOnly = false,
   onPeersChange,
   onCollabStatus,
 }: RichViewProps) {
+  const locked = readOnly || !!collab?.readonly;
   // Guards the echo loop: rich edits → onChange(md) → value prop comes back
   // identical and must not re-parse (which would reset the cursor).
   const lastEmitted = useRef<string | null>(null);
@@ -82,7 +88,7 @@ export function RichView({
 
   const editor = useEditor({
     immediatelyRender: false,
-    editable: !collab?.readonly,
+    editable: !locked,
     extensions: [
       // Collaboration replaces local undo history with the shared Yjs one
       StarterKit.configure(session ? { undoRedo: false } : {}),
@@ -129,6 +135,15 @@ export function RichView({
       }, 250);
     },
   });
+
+  // useEditor re-applies changed options on every render but deliberately keeps
+  // whatever `editable` the editor already had (@tiptap/react's
+  // EditorInstanceManager.onRender), so a role that resolves after mount only
+  // takes effect if it is applied by hand.
+  useEffect(() => {
+    const shouldEdit = !locked;
+    if (editor && editor.isEditable !== shouldEdit) editor.setEditable(shouldEdit);
+  }, [editor, locked]);
 
   useEffect(() => {
     onEditorReady?.(editor);
@@ -227,7 +242,7 @@ export function RichView({
 
   return (
     <div className="h-full relative">
-      {editor && inTable && !collab?.readonly && <TableBar editor={editor} />}
+      {editor && inTable && !locked && <TableBar editor={editor} />}
       <div ref={setScrollEl} className="markie-document-scroll h-full overflow-y-auto relative">
         <article
           data-markie-rich-canvas
@@ -244,7 +259,7 @@ export function RichView({
             editor={editor}
             ydoc={session.ydoc}
             docId={collab.docId}
-            readonly={collab.readonly}
+            readonly={locked}
             container={scrollEl}
           />
         )}

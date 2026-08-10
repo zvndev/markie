@@ -39,6 +39,19 @@ function getDB() {
       mtime_ms REAL NOT NULL
     );
   `);
+
+  // Markie is local-first, so being offline is an ordinary state, not an error.
+  // Without a remembered role, an unreachable server means we cannot prove the
+  // right to edit, and failing closed would lock every synced document the user
+  // owns behind a "view only" banner the moment their wifi drops. Remembering
+  // the last role the server confirmed lets us keep honouring it while offline
+  // and fail closed only for a document whose role we have never learned.
+  // Added after the initial schema, so existing databases need the column too.
+  const fileCols = db.prepare("PRAGMA table_info(files)").all();
+  if (!fileCols.some((c) => c.name === "share_role")) {
+    db.exec("ALTER TABLE files ADD COLUMN share_role TEXT");
+  }
+
   return db;
 }
 
@@ -140,6 +153,9 @@ function update(filePath, fields) {
     "cloud_version",
     "sync_state",
     "last_synced_at",
+    // Last role the server confirmed for this doc, so an offline session can
+    // keep honouring it instead of locking the owner out of their own file.
+    "share_role",
   ];
   const sets = [];
   const values = [];

@@ -527,6 +527,11 @@ ipcMain.handle("term-external-apps", () => terminal.externalApps());
 ipcMain.handle("term-open-external", (_e, { app, cwd }) => terminal.openExternal(app, cwd));
 
 ipcMain.handle("sync-config", (_event, cfg) => sync.setConfig(cfg));
+// The renderer resolved this doc's share role against the server; the sync
+// engine needs it so a save can refuse a push the server would only 403.
+ipcMain.handle("sync-doc-role", (_event, { cloudId, role }) =>
+  sync.setDocRole(cloudId, role)
+);
 ipcMain.handle("registry-track", (_event, { path: p, name, content }) => {
   try {
     const access = fileGrants.canRead(p);
@@ -537,6 +542,18 @@ ipcMain.handle("registry-track", (_event, { path: p, name, content }) => {
     return { error: String(err) };
   }
 });
+// Remember the role the server confirmed for a file, so a later offline
+// session can honour it instead of locking the owner out of their own document.
+ipcMain.handle("registry-set-role", (_event, { path: p, role }) => {
+  try {
+    if (!["owner", "editor", "viewer"].includes(role)) return { error: "bad role" };
+    registry.update(p, { share_role: role });
+    return { ok: true };
+  } catch (err) {
+    return { error: String(err) };
+  }
+});
+
 ipcMain.handle("registry-get", (_event, p) => {
   try {
     return registry.get(p) ?? null;

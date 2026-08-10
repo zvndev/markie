@@ -8,6 +8,18 @@ const { isAllowedServerOrigin } = require("./share-origin");
 
 let config = { token: null, serverURL: null };
 
+// What the signed-in user may do with each cloud doc, keyed by cloud doc id.
+// The renderer resolves the role once (src/lib/share-role.ts) and reports it
+// here; libraryState fills in the rest from the doc list it already fetches.
+// Nothing is inferred locally, so an unreported doc stays unknown.
+const docRoles = new Map();
+
+function setDocRole(cloudId, role) {
+  if (!cloudId) return;
+  if (role) docRoles.set(cloudId, role);
+  else docRoles.delete(cloudId);
+}
+
 function setConfig(next) {
   const serverURL = next.serverURL ?? null;
   // SECURITY: only forward the bearer token to an allowlisted origin so a future
@@ -16,6 +28,9 @@ function setConfig(next) {
     allowDev: process.env.NODE_ENV === "development",
   });
   config = { token: next.token ?? null, serverURL: allowed ? serverURL : null };
+  // Roles belong to whoever was signed in. Another account's grants on the same
+  // doc are a different answer entirely.
+  docRoles.clear();
 }
 
 function isConfigured() {
@@ -55,10 +70,27 @@ function failure(verb, res) {
     : `${verb} failed (${res.status})`;
 }
 
+// A viewer can read a shared doc and nothing else, so a snapshot push is a
+// request the server only ever answers with 403. Refusing it here says what is
+// actually wrong instead of reporting a failed backup. The server check stays:
+// this is about not lying to the user, not about security.
+function viewerRefusal(filePath, cloudId) {
+  if (!cloudId || docRoles.get(cloudId) !== "viewer") return null;
+  // The snapshot is on local disk and is never going to reach the cloud, so the
+  // row must not keep telling the Library it is backed up.
+  registry.update(filePath, { sync_state: "unpushed" });
+  return {
+    error:
+      "You have view-only access to this shared document. Make a copy to keep your changes.",
+  };
+}
+
 // Turn syncing on for a file: create the cloud doc (or push a new snapshot).
 async function syncOn(filePath, name, content) {
   if (!isConfigured()) return { error: "not signed in" };
   const row = registry.get(filePath);
+  const refused = viewerRefusal(filePath, row?.cloud_doc_id);
+  if (refused) return refused;
   const cloudId = row?.cloud_doc_id ?? crypto.randomUUID();
   const hash = registry.hashContent(content);
   const baseVersion = row?.cloud_doc_id ? (row.cloud_version ?? 0) : 0;
@@ -99,6 +131,8 @@ async function push(filePath, name, content) {
   if (!row || !pushable || !row.cloud_doc_id) {
     return { skipped: "not synced" };
   }
+  const refused = viewerRefusal(filePath, row.cloud_doc_id);
+  if (refused) return refused;
   const hash = registry.hashContent(content);
   const res = await api("PUT", `/api/docs/${row.cloud_doc_id}`, {
     name,
@@ -227,6 +261,12 @@ async function libraryState() {
       remoteLoaded = true;
     }
   }
+  // The list already says what this user may do with each doc, so record it and
+  // a later push can refuse without asking the server a second time. A doc that
+  // is shared but arrives without a role reads as view-only, not as an editor.
+  for (const d of remote) {
+    setDocRole(d.id, d.shared ? d.role ?? "viewer" : "owner");
+  }
   const byCloudId = new Map(local.filter((f) => f.cloud_doc_id).map((f) => [f.cloud_doc_id, f]));
   const items = local.map((f) => {
     const r = f.cloud_doc_id ? remote.find((d) => d.id === f.cloud_doc_id) : null;
@@ -275,6 +315,7 @@ async function libraryState() {
 
 module.exports = {
   setConfig,
+  setDocRole,
   syncOn,
   syncOff,
   push,

@@ -16,6 +16,7 @@ import { Library } from "@/components/library";
 import { ActivityBar, type LeftView } from "@/components/activity-bar";
 import { ShareDialog } from "@/components/share-dialog";
 import { ShareGate } from "@/components/share-gate";
+import { ShareBanner, LiveSourceBanner } from "@/components/share-banner";
 import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
 import { TerminalPanel } from "@/components/terminal-panel";
@@ -37,6 +38,13 @@ import {
 import { consumeAuthState } from "@/lib/auth-state";
 import { colorForName, type CollabConfig, type PeerUser } from "@/lib/collab";
 import {
+  canEditDocument,
+  isReadOnlyShare,
+  roleFor,
+  shareBannerFor,
+  type ShareRoleState,
+} from "@/lib/share-role";
+import {
   pullCloudThemes,
   pushCloudThemes,
   getDocTheme,
@@ -51,7 +59,7 @@ import {
   BUILT_IN_THEMES,
 } from "@/lib/theme";
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
-import { getElectronAPI, type FilePayload } from "@/lib/electron";
+import { getElectronAPI, type FilePayload, type SaveResult } from "@/lib/electron";
 import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { pathDirname } from "@/lib/path-utils";
 
@@ -158,6 +166,13 @@ export default function Home() {
   const [manageShare, setManageShare] = useState<{ docId: string; name: string } | null>(null);
   const [showAgents, setShowAgents] = useState(false);
   const [collabCfg, setCollabCfg] = useState<CollabConfig | null>(null);
+  // What the server says this user may do with the open document, plus who
+  // shared it. "local" until a cloud copy is found, "checking" until the server
+  // answers. Everything that can write to the document reads this.
+  const [roleState, setRoleState] = useState<ShareRoleState>("local");
+  const [sharedBy, setSharedBy] = useState<string | null>(null);
+  // A copy that could not be written. Shown on the banner; there is no toast.
+  const [forkError, setForkError] = useState<string | null>(null);
   const [peers, setPeers] = useState<PeerUser[]>([]);
   const [liveStatus, setLiveStatus] = useState<
     "connecting" | "connected" | "disconnected"
@@ -178,56 +193,133 @@ export default function Home() {
     docRef.current = { filePath, content };
   }, [filePath, content]);
 
-  // A doc goes live when it's cloud-synced, we're signed in, and at least one
-  // other person has been invited. Re-checked on file open, sign-in changes,
-  // sync changes, and share-list changes.
+  // Only the newest resolution may write state. Role now decides whether the
+  // document can be edited, so a slow answer for the previous file landing on
+  // this one would be worse than stale: it could unlock a doc it never read.
+  const collabRunRef = useRef(0);
+
+  // Resolve the open doc's share role, and with it whether the doc goes live: a
+  // doc is live when it's cloud-synced, we're signed in, and at least one other
+  // person has been invited. Re-checked on file open, sign-in changes, sync
+  // changes, and share-list changes.
   const refreshCollab = useCallback(() => {
     const api = getElectronAPI();
+    const run = ++collabRunRef.current;
+    const superseded = () => run !== collabRunRef.current;
     const entryPromise =
       api?.registryGet && filePath
         ? api.registryGet(filePath)
         : Promise.resolve(null);
-    entryPromise.then(async (entry) => {
-      const cid = entry?.cloud_doc_id ?? null;
-      const token = getAuthToken();
-      setCanShare(!!cid && !!token);
-      if (!cid || !token) {
+    entryPromise
+      .then(async (entry) => {
+        const cid = entry?.cloud_doc_id ?? null;
+        const token = getAuthToken();
+        if (superseded()) return;
+        setCanShare(!!cid && !!token);
+        if (!cid || !token) {
+          // No cloud copy: a plain local file, with nothing to enforce.
+          setRoleState("local");
+          setSharedBy(null);
+          setCollabCfg(null);
+          setEnforcedTheme(null);
+          return;
+        }
+        // There is a cloud copy, so the server owns the answer to "may I edit
+        // this". The document stays read-only until it answers: assuming yes is
+        // how a viewer got to type into a doc their edits could never reach.
+        setRoleState("checking");
+        const me = await authClient.me();
+        const [access, members] = me
+          ? await Promise.all([sharesClient.access(cid), sharesClient.list(cid)])
+          : [null, null];
+        if (superseded()) return;
+        // Owners are deliberately absent from the member list, so ownership
+        // comes from the access summary the server computes for us.
+        const ownerId = access?.role === "owner" ? me?.id ?? null : null;
+        const role = roleFor(members, me?.id ?? null, ownerId);
+        setRoleState(role);
+        // Remember it: Markie is local-first, so the next launch may have no
+        // network, and a role we already proved should survive that.
+        if (filePath) void api?.registrySetRole?.({ path: filePath, role });
+        // Same answer, same doc: the sync engine can now refuse a push the
+        // server would only reject.
+        api?.syncDocRole?.({ cloudId: cid, role });
+        // Members read with the owner's pinned theme when one is set;
+        // the owner always keeps their own live theme
+        if (members?.some((m) => m.user_id === me?.id)) {
+          getDocTheme(cid).then((theme) => {
+            if (!superseded()) setEnforcedTheme(theme);
+          });
+        } else {
+          setEnforcedTheme(null);
+        }
+        // Only a viewer sees the banner, so only a viewer needs the name on it.
+        if (isReadOnlyShare(role)) {
+          api
+            ?.libraryState?.()
+            .then((state) => {
+              if (superseded()) return;
+              setSharedBy(
+                state.items.find((i) => i.cloudId === cid)?.sharedBy ?? null
+              );
+            })
+            // A missing name costs the banner one clause; it must not cost the
+            // banner itself.
+            .catch(() => {});
+        } else {
+          setSharedBy(null);
+        }
+        if (!me || !members || members.length === 0) {
+          setCollabCfg(null);
+          return;
+        }
+        const readonly = isReadOnlyShare(role);
+        const display = me.name || me.email;
+        setCollabCfg((prev) =>
+          prev &&
+          prev.docId === cid &&
+          prev.readonly === readonly &&
+          prev.token === token
+            ? prev
+            : {
+                docId: cid,
+                wsBase: collabWsBase(),
+                token,
+                user: { name: display, color: colorForName(display) },
+                readonly,
+              }
+        );
+      })
+      .catch(async () => {
+        if (superseded()) return;
+        // We could not reach the server. Carrying the *previous document's*
+        // answer over would hand someone else's edit rights to this file, so
+        // that is never an option. But a role this document already proved is
+        // still the best evidence we have, and being offline is an ordinary
+        // state for a local-first app: without this, a dropped connection locks
+        // every synced document the user owns behind a view-only banner.
+        const remembered = filePath
+          ? await getElectronAPI()?.registryGet?.(filePath).catch(() => null)
+          : null;
+        if (superseded()) return;
+        const known = remembered?.share_role;
+        const trusted =
+          known === "owner" || known === "editor" || known === "viewer"
+            ? known
+            : null;
+        setRoleState(trusted ?? "unreachable");
+        // The sync engine needs the same answer, or a remembered viewer would
+        // keep queueing pushes offline that the server only rejects later.
+        if (trusted && remembered?.cloud_doc_id) {
+          getElectronAPI()?.syncDocRole?.({
+            cloudId: remembered.cloud_doc_id,
+            role: trusted,
+          });
+        }
+        setSharedBy(null);
         setCollabCfg(null);
         setEnforcedTheme(null);
-        return;
-      }
-      const me = await authClient.me();
-      const members = me ? await sharesClient.list(cid) : null;
-      if (!me || !members || members.length === 0) {
-        setCollabCfg(null);
-        setEnforcedTheme(null);
-        return;
-      }
-      const mine = members.find((m) => m.user_id === me.id);
-      // Members read with the owner's pinned theme when one is set;
-      // the owner always keeps their own live theme
-      if (mine) {
-        getDocTheme(cid).then(setEnforcedTheme);
-      } else {
-        setEnforcedTheme(null);
-      }
-      const readonly = mine?.role === "viewer";
-      const display = me.name || me.email;
-      setCollabCfg((prev) =>
-        prev &&
-        prev.docId === cid &&
-        prev.readonly === readonly &&
-        prev.token === token
-          ? prev
-          : {
-              docId: cid,
-              wsBase: collabWsBase(),
-              token,
-              user: { name: display, color: colorForName(display) },
-              readonly,
-            }
-      );
-    });
+      });
   }, [filePath]);
 
   useEffect(() => {
@@ -239,6 +331,15 @@ export default function Home() {
   useEffect(() => {
     refreshCollabRef.current = refreshCollab;
   }, [refreshCollab]);
+
+  // A document that is being swapped out must not leave its access behind for
+  // the next one to inherit; refreshCollab re-resolves it against the server.
+  // Docs with no cloud copy stay "local" so opening a plain file never flashes
+  // an access banner at someone nobody has shared anything with.
+  const resetDocAccess = useCallback(() => {
+    setRoleState((prev) => (prev === "local" ? "local" : "checking"));
+    setSharedBy(null);
+  }, []);
 
   // Just open. ShareGate resolves the prerequisites and offers the action that
   // clears each one, so a click can no longer resolve into a different surface
@@ -270,17 +371,19 @@ export default function Home() {
     setShowShare(false);
     setManageShare(null);
     setShowAgents(false);
+    setForkError(null);
   }, []);
 
   // Start a fresh, unsaved markdown doc.
   const handleNewFile = useCallback(() => {
     dismissDocumentUI();
+    resetDocAccess();
     setContent("");
     setSavedContent("");
     setFileName(null);
     setFilePath(null);
     setCanShare(false);
-  }, [dismissDocumentUI]);
+  }, [dismissDocumentUI, resetDocAccess]);
 
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
@@ -291,6 +394,7 @@ export default function Home() {
   const loadFile = useCallback(
     (data: { name: string; content: string; path: string | null }) => {
       dismissDocumentUI();
+      resetDocAccess();
       const md = fromDisk(data.name, data.content);
       setContent(md);
       setFileName(data.name);
@@ -305,7 +409,7 @@ export default function Home() {
       }
       setLibRefreshKey((k) => k + 1);
     },
-    [dismissDocumentUI]
+    [dismissDocumentUI, resetDocAccess]
   );
 
   const openPath = useCallback(
@@ -388,20 +492,31 @@ export default function Home() {
     };
   }, [getPreviewHTML]);
 
-  const handleSaveAs = useCallback(async (defaultName?: string) => {
+  const handleSaveAs = useCallback(async (defaultName?: string): Promise<SaveResult | null> => {
     const api = getElectronAPI();
-    if (!api) return;
+    if (!api) return null;
     const name = defaultName ?? fileName ?? "untitled.md";
-    const res = await api.saveFileAs({
-      defaultName: name,
-      content: toDisk(name, content),
-    });
+    const diskContent = toDisk(name, content);
+    const res = await api.saveFileAs({ defaultName: name, content: diskContent });
     if (res.success && res.path && res.name) {
+      // A different file is open now, so whatever access the last one carried
+      // stops applying here.
+      resetDocAccess();
       setFilePath(res.path);
       setFileName(res.name);
       setSavedContent(content);
+      // A file Markie wrote and now has open belongs in the registry like any
+      // file it opens. A fresh row is local-only with no cloud doc, which is
+      // exactly what a copy has to stay.
+      await api.registryTrack?.({
+        path: res.path,
+        name: res.name,
+        content: diskContent,
+      });
+      setLibRefreshKey((k) => k + 1);
     }
-  }, [fileName, content]);
+    return res;
+  }, [fileName, content, resetDocAccess]);
 
   // Resolves to an error message when the save landed on disk but not in the
   // cloud, and to null otherwise.
@@ -442,13 +557,32 @@ export default function Home() {
     return null;
   }, [filePath, fileName, content, handleSaveAs, collabCfg]);
 
-  const handleFork = useCallback(async () => {
+  // Resolves to an error message when the copy could not be made, null when it
+  // was made or the user backed out of the dialog.
+  const handleFork = useCallback(async (): Promise<string | null> => {
     const base = fileName ?? "untitled.md";
     const forkName = base.includes(".")
       ? base.replace(/(\.[^.]+)$/, " copy$1")
       : `${base} copy`;
-    await handleSaveAs(forkName);
+    const res = await handleSaveAs(forkName);
+    if (!res || res.canceled) return null;
+    if (!res.success || !res.path) return res?.error ?? "Couldn't write the copy.";
+    // A copy is how someone leaves a document they can only read, so it must not
+    // be a second window onto that same document. Saving over a file that is
+    // already cloud-linked keeps that file's link, so read the row back rather
+    // than trusting the new name made it local.
+    const row = await getElectronAPI()?.registryGet?.(res.path);
+    if (row?.cloud_doc_id) {
+      return "That copy is still linked to a synced document. Save it under a name that isn't already in your Library.";
+    }
+    return null;
   }, [fileName, handleSaveAs]);
+
+  // Every route to "Make a copy" reports through the banner: the menu, the
+  // command palette, and the banner's own button.
+  const handleMakeCopy = useCallback(async () => {
+    setForkError(await handleFork());
+  }, [handleFork]);
 
   const handleExportHTML = useCallback(async () => {
     const api = getElectronAPI();
@@ -603,7 +737,7 @@ export default function Home() {
     exportPDF: handleExportPDF,
     save: handleSave,
     saveAs: handleSaveAs,
-    fork: handleFork,
+    fork: handleMakeCopy,
     exportHTML: handleExportHTML,
     fileOpened: (data: FilePayload) => loadFile(data),
   });
@@ -613,7 +747,7 @@ export default function Home() {
     handlersRef.current.exportPDF = handleExportPDF;
     handlersRef.current.save = handleSave;
     handlersRef.current.saveAs = handleSaveAs;
-    handlersRef.current.fork = handleFork;
+    handlersRef.current.fork = handleMakeCopy;
     handlersRef.current.exportHTML = handleExportHTML;
   }, [
     handleOpenFile,
@@ -621,7 +755,7 @@ export default function Home() {
     handleExportPDF,
     handleSave,
     handleSaveAs,
-    handleFork,
+    handleMakeCopy,
     handleExportHTML,
   ]);
 
@@ -726,7 +860,7 @@ export default function Home() {
       { id: "open", title: "Open File…", group: "File", shortcut: "⌘O", run: handleOpenFile },
       { id: "save", title: "Save", group: "File", shortcut: "⌘S", run: handleSave },
       { id: "save-as", title: "Save As…", group: "File", shortcut: "⇧⌘S", run: () => handleSaveAs() },
-      { id: "fork", title: "Duplicate (Fork)", group: "File", shortcut: "⇧⌘D", keywords: "copy fork duplicate", run: handleFork },
+      { id: "fork", title: "Duplicate (Fork)", group: "File", shortcut: "⇧⌘D", keywords: "copy fork duplicate", run: handleMakeCopy },
       { id: "export-pdf-dark", title: "Export PDF (Dark)", group: "File", shortcut: "⇧⌘E", keywords: "print", run: () => handleExportPDF("dark") },
       { id: "export-pdf-light", title: "Export PDF (Light)", group: "File", keywords: "print", run: () => handleExportPDF("light") },
       { id: "export-html", title: "Export HTML", group: "File", run: handleExportHTML },
@@ -776,7 +910,7 @@ export default function Home() {
       handleOpenFile,
       handleSave,
       handleSaveAs,
-      handleFork,
+      handleMakeCopy,
       handleExportPDF,
       handleExportHTML,
       handleNewFile,
@@ -787,6 +921,11 @@ export default function Home() {
   if (!booted) {
     return <div className="h-screen bg-background" />;
   }
+
+  // One resolution, every consumer: the banner, the rich pane, and the source
+  // pane all read the same answer instead of each deciding for itself.
+  const shareBanner = shareBannerFor(roleState, sharedBy);
+  const docEditable = canEditDocument(roleState);
 
   return (
     <div className="markie-shell h-screen flex flex-col bg-background relative">
@@ -840,61 +979,71 @@ export default function Home() {
           />
         )}
 
-        <div
-          data-markie-document-area
-          className={`markie-document-area flex-1 min-w-0 overflow-hidden ${
-            mode === "split"
-              ? "markie-document-area--split grid grid-cols-[minmax(0,0.96fr)_minmax(0,1.04fr)] max-[820px]:grid-cols-[minmax(0,0.94fr)_minmax(0,1.06fr)]"
-              : "markie-document-area--single flex"
-          }`}
-        >
-          {/* Editor pane */}
-          {(mode === "edit" || mode === "split") && (
-            <div
-              data-markie-source-pane
-              className={`${
-                mode === "split" ? "markie-pane-divider" : ""
-              } markie-source-pane h-full min-w-0 w-full flex-1 overflow-hidden flex flex-col`}
-            >
-              {collabCfg && (
-                <div className="px-3 py-1 text-[11px] text-muted bg-surface border-b border-border shrink-0">
-                  Live session. Edit in Rich; the Markdown source is locked while others are editing.
-                </div>
-              )}
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <Editor
-                  value={content}
-                  onChange={setContent}
-                  readOnly={!!collabCfg}
-                />
-              </div>
-            </div>
-          )}
+        {/* Document column: the access strip sits above both panes, because it
+            explains something about the document, not about one view of it. */}
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          <ShareBanner
+            view={shareBanner}
+            error={forkError}
+            onMakeCopy={handleMakeCopy}
+          />
 
-          {/* Rich View pane with format rail */}
-          {(mode === "preview" || mode === "split") && (
-            <div
-              data-markie-rich-pane
-              className="markie-rich-pane h-full min-w-0 w-full flex-1 overflow-hidden flex"
-            >
-              <FormatRail editor={richEditor} />
-              <div className="flex-1 min-w-0 h-full overflow-hidden">
-                <RichView
-                  key={
-                    collabCfg
-                      ? `live:${collabCfg.docId}:${collabCfg.readonly}`
-                      : "solo"
-                  }
-                  value={content}
-                  onChange={setContent}
-                  onEditorReady={setRichEditor}
-                  collab={collabCfg}
-                  onPeersChange={handlePeersChange}
-                  onCollabStatus={handleCollabStatus}
-                />
+          <div
+            data-markie-document-area
+            className={`markie-document-area flex-1 min-h-0 min-w-0 overflow-hidden ${
+              mode === "split"
+                ? "markie-document-area--split grid grid-cols-[minmax(0,0.96fr)_minmax(0,1.04fr)] max-[820px]:grid-cols-[minmax(0,0.94fr)_minmax(0,1.06fr)]"
+                : "markie-document-area--single flex"
+            }`}
+          >
+            {/* Editor pane */}
+            {(mode === "edit" || mode === "split") && (
+              <div
+                data-markie-source-pane
+                className={`${
+                  mode === "split" ? "markie-pane-divider" : ""
+                } markie-source-pane h-full min-w-0 w-full flex-1 overflow-hidden flex flex-col`}
+              >
+                {collabCfg && <LiveSourceBanner />}
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <Editor
+                    value={content}
+                    onChange={setContent}
+                    // Read-only for two separate reasons: the rich pane owns the
+                    // shared document while a session is live, and a viewer may
+                    // not edit at all.
+                    readOnly={!!collabCfg || !docEditable}
+                  />
+                </div>
               </div>
-            </div>
-          )}
+            )}
+
+            {/* Rich View pane with format rail */}
+            {(mode === "preview" || mode === "split") && (
+              <div
+                data-markie-rich-pane
+                className="markie-rich-pane h-full min-w-0 w-full flex-1 overflow-hidden flex"
+              >
+                <FormatRail editor={richEditor} />
+                <div className="flex-1 min-w-0 h-full overflow-hidden">
+                  <RichView
+                    key={
+                      collabCfg
+                        ? `live:${collabCfg.docId}:${collabCfg.readonly}`
+                        : "solo"
+                    }
+                    value={content}
+                    onChange={setContent}
+                    onEditorReady={setRichEditor}
+                    collab={collabCfg}
+                    readOnly={!docEditable}
+                    onPeersChange={handlePeersChange}
+                    onCollabStatus={handleCollabStatus}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

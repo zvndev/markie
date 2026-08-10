@@ -26,7 +26,7 @@ export function summarizeLibrary(items: LibraryItem[]): LibraryOverview {
       if (item.shared) summary.shared += 1;
       if (item.state === "cloud-only") summary.cloudOnly += 1;
       if (item.path && !item.exists) summary.missing += 1;
-      if (item.state === "behind" || item.state === "conflict" || (item.path && !item.exists)) {
+      if (libraryItemNeedsAttention(item)) {
         summary.needsAttention += 1;
       }
       return summary;
@@ -54,7 +54,12 @@ export function organizeLibraryItems(items: LibraryItem[]): OrganizedLibraryItem
 }
 
 export function libraryItemNeedsAttention(item: LibraryItem): boolean {
-  return item.state === "conflict" || item.state === "behind" || !!(item.path && !item.exists);
+  return (
+    item.state === "unpushed" ||
+    item.state === "conflict" ||
+    item.state === "behind" ||
+    !!(item.path && !item.exists)
+  );
 }
 
 function sortLibraryItems(items: LibraryItem[]): LibraryItem[] {
@@ -73,6 +78,9 @@ function sortLibraryItems(items: LibraryItem[]): LibraryItem[] {
 }
 
 function attentionRank(item: LibraryItem): number {
+  // "unpushed" outranks the rest: it is the only state where an edit exists in
+  // exactly one place, so it is the one the user should see first.
+  if (item.state === "unpushed") return 4;
   if (item.state === "conflict") return 3;
   if (item.state === "behind") return 2;
   if (item.path && !item.exists) return 1;

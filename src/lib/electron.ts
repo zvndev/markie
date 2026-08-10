@@ -189,6 +189,8 @@ export interface LibraryItem {
   state:
     | "local-only"
     | "synced"
+    // saved to disk, but the server rejected or never received the snapshot
+    | "unpushed"
     | "paused"
     | "conflict"
     | "behind"

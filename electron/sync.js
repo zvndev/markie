@@ -22,20 +22,37 @@ function isConfigured() {
   return !!(config.token && config.serverURL);
 }
 
+// Status for a request that never reached the server (offline, DNS failure,
+// timeout). fetch throws in those cases, and a throw escaping from here used to
+// abort the caller before it could record the failure, leaving the registry
+// claiming a push had succeeded. Every caller now sees a status it must handle.
+const NO_RESPONSE = 0;
+
 async function api(method, p, body) {
   // Abort a hung request so the renderer's invoke() can't pend forever
   // (e.g. an unreachable server would otherwise freeze the save indicator).
-  const res = await fetch(`${config.serverURL}${p}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.token}`,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(15000),
-  });
-  const data = await res.json().catch(() => null);
-  return { status: res.status, data };
+  try {
+    const res = await fetch(`${config.serverURL}${p}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.token}`,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json().catch(() => null);
+    return { status: res.status, data };
+  } catch {
+    return { status: NO_RESPONSE, data: null };
+  }
+}
+
+// "offline" reads as something the user can act on; a bare 0 does not.
+function failure(verb, res) {
+  return res.status === NO_RESPONSE
+    ? `${verb} failed (offline)`
+    : `${verb} failed (${res.status})`;
 }
 
 // Turn syncing on for a file: create the cloud doc (or push a new snapshot).
@@ -65,14 +82,21 @@ async function syncOn(filePath, name, content) {
     registry.update(filePath, { sync_state: "conflict" });
     return { conflict: true, serverVersion: res.data?.serverVersion };
   }
-  return { error: `push failed (${res.status})` };
+  // The server did not take the snapshot, so nothing is backed up. Leaving the
+  // row on its previous state would tell the user otherwise.
+  registry.update(filePath, { sync_state: "unpushed" });
+  return { error: failure("push", res) };
 }
 
-// Push after save — only when tracked, synced, and content actually changed.
+// Push after save, only when tracked, cloud-linked, and content actually
+// changed. "unpushed" is pushable on purpose: a row that failed its last push
+// has to stay retryable or the local edit would never reach the server again.
 async function push(filePath, name, content) {
   if (!isConfigured()) return { skipped: "not signed in" };
   const row = registry.get(filePath);
-  if (!row || row.sync_state !== "synced" || !row.cloud_doc_id) {
+  const pushable =
+    row?.sync_state === "synced" || row?.sync_state === "unpushed";
+  if (!row || !pushable || !row.cloud_doc_id) {
     return { skipped: "not synced" };
   }
   const hash = registry.hashContent(content);
@@ -86,6 +110,8 @@ async function push(filePath, name, content) {
     registry.update(filePath, {
       cloud_version: res.data.version,
       content_hash: hash,
+      // Clears "unpushed" when a retry finally lands.
+      sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
     return { ok: true, version: res.data.version };
@@ -94,14 +120,24 @@ async function push(filePath, name, content) {
     registry.update(filePath, { sync_state: "conflict" });
     return { conflict: true };
   }
-  return { error: `push failed (${res.status})` };
+  // This snapshot exists only on local disk. A row left on "synced" would tell
+  // the user the edit is in the cloud and put "Take cloud" one click away from
+  // overwriting it with an older copy the server never replaced.
+  registry.update(filePath, { sync_state: "unpushed" });
+  return { error: failure("push", res) };
 }
 
 // Turn syncing off; optionally delete the cloud copy.
 async function syncOff(filePath, deleteRemote) {
   const row = registry.get(filePath);
   if (row?.cloud_doc_id && deleteRemote && isConfigured()) {
-    await api("DELETE", `/api/docs/${row.cloud_doc_id}`);
+    const res = await api("DELETE", `/api/docs/${row.cloud_doc_id}`);
+    // 404 is the outcome we wanted: it is already gone. On anything else the
+    // cloud copy is still live and still served to everyone it was shared with,
+    // so keep cloud_doc_id: it is the only handle left to retry the delete.
+    if (res.status !== 200 && res.status !== 404) {
+      return { error: failure("delete", res) };
+    }
     registry.update(filePath, {
       sync_state: "local-only",
       cloud_doc_id: null,
@@ -135,8 +171,16 @@ async function resolve(filePath, strategy) {
   const row = registry.get(filePath);
   if (!row?.cloud_doc_id || !isConfigured()) return { error: "not resolvable" };
   if (strategy === "cloud") {
+    // The server never received this file's latest edit, so the cloud copy is
+    // strictly older and overwriting would destroy the only copy that exists.
+    if (row.sync_state === "unpushed") {
+      return {
+        error:
+          "This file has changes that never reached the cloud. Taking the cloud copy would delete them. Save again to retry the backup first.",
+      };
+    }
     const res = await api("GET", `/api/docs/${row.cloud_doc_id}`);
-    if (res.status !== 200) return { error: `fetch failed (${res.status})` };
+    if (res.status !== 200) return { error: failure("fetch", res) };
     fs.writeFileSync(filePath, res.data.doc.content, "utf-8");
     registry.update(filePath, {
       cloud_version: res.data.doc.version,
@@ -173,9 +217,15 @@ async function libraryState() {
   registry.pruneMissing();
   const local = registry.list();
   let remote = [];
+  // A list request that failed is not the same as a server with no docs. Without
+  // this flag one transient error relabels every synced row as deleted remotely.
+  let remoteLoaded = false;
   if (isConfigured()) {
     const res = await api("GET", "/api/docs");
-    if (res.status === 200) remote = res.data.docs;
+    if (res.status === 200 && Array.isArray(res.data?.docs)) {
+      remote = res.data.docs;
+      remoteLoaded = true;
+    }
   }
   const byCloudId = new Map(local.filter((f) => f.cloud_doc_id).map((f) => [f.cloud_doc_id, f]));
   const items = local.map((f) => {
@@ -184,7 +234,8 @@ async function libraryState() {
     if (state === "synced" && r && r.version > (f.cloud_version ?? 0)) {
       state = "behind"; // newer snapshot exists on the server (other device)
     }
-    if (state === "synced" && f.cloud_doc_id && !r) {
+    // Only infer a remote deletion from a list we actually received.
+    if (remoteLoaded && state === "synced" && f.cloud_doc_id && !r) {
       state = "paused"; // deleted remotely
     }
     return {

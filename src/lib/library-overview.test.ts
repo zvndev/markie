@@ -57,6 +57,15 @@ describe("library overview", () => {
     });
   });
 
+  it("counts an unpushed doc as needing attention and not as synced", () => {
+    expect(
+      summarizeLibrary([
+        item({ path: "/docs/synced.md", name: "synced.md", state: "synced", cloudId: "doc-1" }),
+        item({ path: "/docs/unpushed.md", name: "unpushed.md", state: "unpushed", cloudId: "doc-2" }),
+      ])
+    ).toMatchObject({ total: 2, synced: 1, needsAttention: 1 });
+  });
+
   it("returns zeroes for an empty library", () => {
     expect(summarizeLibrary([])).toEqual({
       total: 0,
@@ -161,7 +170,24 @@ describe("library overview", () => {
     ]);
   });
 
+  it("sorts an unpushed doc above every other attention state", () => {
+    // It is the only state where the newest copy of the edit exists in exactly
+    // one place, so it has to be the first row the user sees.
+    const organized = organizeLibraryItems([
+      item({ path: "/docs/conflict.md", name: "conflict.md", state: "conflict" }),
+      item({ path: "/docs/unpushed.md", name: "unpushed.md", state: "unpushed" }),
+      item({ path: "/docs/behind.md", name: "behind.md", state: "behind" }),
+    ]);
+
+    expect(organized.localFiles.map((entry) => entry.name)).toEqual([
+      "unpushed.md",
+      "conflict.md",
+      "behind.md",
+    ]);
+  });
+
   it("detects library items that need user attention", () => {
+    expect(libraryItemNeedsAttention(item({ state: "unpushed" }))).toBe(true);
     expect(libraryItemNeedsAttention(item({ state: "conflict" }))).toBe(true);
     expect(libraryItemNeedsAttention(item({ state: "behind" }))).toBe(true);
     expect(libraryItemNeedsAttention(item({ exists: false }))).toBe(true);

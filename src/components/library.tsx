@@ -66,6 +66,10 @@ const BADGE: Record<LibraryItem["state"], [string, string]> = {
     "Synced",
     "text-[var(--status-green)] border-[color:var(--status-green)]",
   ],
+  unpushed: [
+    "Not backed up",
+    "text-[var(--status-yellow)] border-[color:var(--status-yellow)]",
+  ],
   paused: [
     "Paused",
     "text-[var(--status-yellow)] border-[color:var(--status-yellow)]",

@@ -403,12 +403,14 @@ export default function Home() {
     }
   }, [fileName, content]);
 
-  const handleSave = useCallback(async () => {
+  // Resolves to an error message when the save landed on disk but not in the
+  // cloud, and to null otherwise.
+  const handleSave = useCallback(async (): Promise<string | null> => {
     const api = getElectronAPI();
-    if (!api) return;
+    if (!api) return null;
     if (!filePath) {
       await handleSaveAs();
-      return;
+      return null;
     }
     const diskContent = toDisk(fileName, content);
     const res = await api.saveFile({ filePath, content: diskContent });
@@ -418,7 +420,7 @@ export default function Home() {
       const reloaded = fromDisk(fileName, res.content);
       setContent(reloaded);
       setSavedContent(reloaded);
-      return;
+      return null;
     }
     if (res.success) {
       setSavedContent(content);
@@ -426,13 +428,18 @@ export default function Home() {
       // session, where peers saving would race the version counter into fake
       // conflicts; the Yjs update log is the source of truth while live.
       if (!collabCfg) {
-        api.docPush?.({
+        const push = await api.docPush?.({
           path: filePath,
           name: fileName ?? "untitled.md",
           content: diskContent,
         });
+        // The file is on disk but not in the cloud. The Library now shows the
+        // row as "Not backed up"; the caller gets the reason so it can say so.
+        // TODO(toast): surface this failure as a toast once the toast system lands.
+        if (push?.error) return push.error;
       }
     }
+    return null;
   }, [filePath, fileName, content, handleSaveAs, collabCfg]);
 
   const handleFork = useCallback(async () => {

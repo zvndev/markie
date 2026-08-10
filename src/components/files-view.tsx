@@ -46,6 +46,10 @@ export function FilesView({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [edit, setEdit] = useState<Edit>(null);
+  // Marks the current edit session finished, so whichever of cancel/submit
+  // runs second (Escape unmounts a focused input, which still fires blur)
+  // does nothing.
+  const settled = useRef(true);
   const [dragSrc, setDragSrc] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const menuRootRef = useRef<HTMLDivElement>(null);
@@ -132,10 +136,27 @@ export function FilesView({
     else if (res?.ok) loadRoots();
   };
 
+  // Escape unmounts the focused input, and removing a focused element still
+  // fires React's delegated blur, which used to run submitEdit with the very
+  // edit the user had just cancelled: Escape renamed the file anyway. Enter had
+  // the mirror problem, committing once itself and once more on the unmount
+  // blur, so a rename or create fired twice. `settled` marks the edit session
+  // finished, and whichever of cancel/submit runs second does nothing.
+  const beginEdit = (next: Edit) => {
+    settled.current = false;
+    setEdit(next);
+  };
+  const cancelEdit = () => {
+    settled.current = true;
+    setEdit(null);
+  };
+
   const submitEdit = async () => {
-    if (!edit || !api) return setEdit(null);
+    if (settled.current) return;
+    if (!edit || !api) return cancelEdit();
     const value = edit.value.trim();
-    if (!value) return setEdit(null);
+    if (!value) return cancelEdit();
+    settled.current = true;
     setBusy(true);
     let res: WsResult | undefined;
     let reloadDir: string | null = null;
@@ -162,7 +183,7 @@ export function FilesView({
   const startNew = (parent: string, kind: "new-folder" | "new-file") => {
     setMenuFor(null);
     if (!expanded.has(parent)) toggle(parent);
-    setEdit({ kind, parent, value: "" });
+    beginEdit({ kind, parent, value: "" });
   };
 
   const trash = async (target: string) => {
@@ -246,7 +267,7 @@ export function FilesView({
               onChange={(e) => setEdit({ ...edit, value: e.target.value })}
               onKeyDown={(e) => {
                 if (e.key === "Enter") submitEdit();
-                if (e.key === "Escape") setEdit(null);
+                if (e.key === "Escape") cancelEdit();
               }}
               onBlur={submitEdit}
               placeholder={edit.kind === "new-folder" ? "New folder" : "untitled.md"}
@@ -268,7 +289,7 @@ export function FilesView({
                 editing={edit?.kind === "rename" && edit.target === f.path ? edit.value : null}
                 onEditChange={(v) => edit && setEdit({ ...edit, value: v })}
                 onEditSubmit={submitEdit}
-                onEditCancel={() => setEdit(null)}
+                onEditCancel={cancelEdit}
                 onClick={() => toggle(f.path)}
                 menuOpen={menuFor === f.path}
                 attachMenuRoot={menuFor === f.path ? attachMenuRoot : undefined}
@@ -277,7 +298,7 @@ export function FilesView({
                 onDrop={() => onDropInto(f.path)}
                 onNewFolder={() => startNew(f.path, "new-folder")}
                 onNewFile={() => startNew(f.path, "new-file")}
-                onRename={() => { setMenuFor(null); setEdit({ kind: "rename", target: f.path, value: f.name }); }}
+                onRename={() => { setMenuFor(null); beginEdit({ kind: "rename", target: f.path, value: f.name }); }}
                 onReveal={() => { setMenuFor(null); api.wsReveal(f.path); }}
                 onTrash={() => trash(f.path)}
                 onCopyPath={async () => { setMenuFor(null); try { await navigator.clipboard.writeText(f.path); onNotice("Path copied."); } catch { onNotice("Couldn't copy."); } }}
@@ -297,13 +318,13 @@ export function FilesView({
             editing={edit?.kind === "rename" && edit.target === file.path ? edit.value : null}
             onEditChange={(v) => edit && setEdit({ ...edit, value: v })}
             onEditSubmit={submitEdit}
-            onEditCancel={() => setEdit(null)}
+            onEditCancel={cancelEdit}
             onClick={() => onOpenPath(file.path)}
             menuOpen={menuFor === file.path}
             attachMenuRoot={menuFor === file.path ? attachMenuRoot : undefined}
             onMenu={() => setMenuFor(menuFor === file.path ? null : file.path)}
             onDragStart={() => setDragSrc(file.path)}
-            onRename={() => { setMenuFor(null); setEdit({ kind: "rename", target: file.path, value: file.name }); }}
+            onRename={() => { setMenuFor(null); beginEdit({ kind: "rename", target: file.path, value: file.name }); }}
             onReveal={() => { setMenuFor(null); api.wsReveal(file.path); }}
             onTrash={() => trash(file.path)}
             onCopyPath={async () => { setMenuFor(null); try { await navigator.clipboard.writeText(file.path); onNotice("Path copied."); } catch { onNotice("Couldn't copy."); } }}

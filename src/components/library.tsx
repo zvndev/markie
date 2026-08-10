@@ -365,11 +365,17 @@ export function Library({
             {signedIn && item.state === "behind" && (
               <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docResolve({ path: item.path!, strategy: "cloud" }))}>Pull latest</button>
             )}
-            {signedIn && item.state === "conflict" && (
-              <>
-                <button className="text-muted hover:text-foreground" onClick={() => act(() => api.docResolve({ path: item.path!, strategy: "local" }))}>Keep local</button>
-                <button className="text-muted hover:text-foreground" onClick={() => act(() => api.docResolve({ path: item.path!, strategy: "cloud" }))}>Take cloud</button>
-              </>
+            {/* "Take cloud" sat here as an unlabelled button that silently
+                destroyed every local line the server never received. Opening
+                the document puts the choice where the counts are, so nobody
+                picks it without being told what it costs. */}
+            {signedIn && item.state === "conflict" && item.path && (
+              <button
+                className="text-[var(--status-blue)] hover:underline"
+                onClick={() => onOpenPath(item.path!)}
+              >
+                Review changes…
+              </button>
             )}
             {item.state === "cloud-only" && signedIn && (
               <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name }))}>Download…</button>

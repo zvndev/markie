@@ -116,6 +116,16 @@ export interface ElectronAPI {
     cloudId: string;
     suggestedName: string;
   }): Promise<SyncResult>;
+  // Which tracked files the server is ahead of. One request for all of them.
+  docCheckUpdates?(): Promise<{ updates: DocUpdate[] }>;
+  // The server's copy, for costing a pull before making it.
+  docRemoteContent?(args: {
+    path: string;
+  }): Promise<{ ok?: boolean; error?: string; content?: string; version?: number }>;
+  // Save the local version beside the original, then take the server's.
+  // `content` is the editor buffer: the unsaved text is what the user means by
+  // their version, and what the dialog counted.
+  docKeepBoth?(args: { path: string; content?: string }): Promise<SyncResult>;
   // open a shared cloud doc by saving it to ~/Downloads and opening it (no dialog)
   docOpenShared?(args: {
     cloudId: string;
@@ -227,6 +237,23 @@ export interface SyncResult {
   version?: number;
   path?: string;
   name?: string;
+  // The content that landed on disk, so an open buffer can follow a pull
+  // instead of pushing the replaced text back on the next save.
+  content?: string;
+  // Where "keep both" put the local copy.
+  keptAt?: string;
+}
+
+// A tracked file the server has a newer snapshot of.
+export interface DocUpdate {
+  path: string;
+  cloudId: string;
+  name: string;
+  localVersion: number;
+  remoteVersion: number;
+  // "conflict" and "unpushed" mean the file on disk holds changes the server
+  // never took. A clean buffer does not make those safe to overwrite.
+  syncState: string;
 }
 
 export function getElectronAPI(): ElectronAPI | null {

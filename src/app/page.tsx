@@ -16,7 +16,12 @@ import { Library } from "@/components/library";
 import { ActivityBar, type LeftView } from "@/components/activity-bar";
 import { ShareDialog } from "@/components/share-dialog";
 import { ShareGate } from "@/components/share-gate";
-import { ShareBanner, LiveSourceBanner } from "@/components/share-banner";
+import {
+  ShareBanner,
+  LiveSourceBanner,
+  UpdateStrip,
+} from "@/components/share-banner";
+import { ConflictDialog } from "@/components/conflict-dialog";
 import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
 import { TerminalPanel } from "@/components/terminal-panel";
@@ -59,7 +64,12 @@ import {
   BUILT_IN_THEMES,
 } from "@/lib/theme";
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
-import { getElectronAPI, type FilePayload, type SaveResult } from "@/lib/electron";
+import {
+  getElectronAPI,
+  type DocUpdate,
+  type FilePayload,
+  type SaveResult,
+} from "@/lib/electron";
 import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { pathDirname } from "@/lib/path-utils";
 
@@ -173,6 +183,11 @@ export default function Home() {
   const [sharedBy, setSharedBy] = useState<string | null>(null);
   // A copy that could not be written. Shown on the banner; there is no toast.
   const [forkError, setForkError] = useState<string | null>(null);
+  // The server has a newer snapshot of the open document. Null when it does not.
+  const [updateWaiting, setUpdateWaiting] = useState<DocUpdate | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [showConflict, setShowConflict] = useState(false);
   const [peers, setPeers] = useState<PeerUser[]>([]);
   const [liveStatus, setLiveStatus] = useState<
     "connecting" | "connected" | "disconnected"
@@ -331,6 +346,102 @@ export default function Home() {
   useEffect(() => {
     refreshCollabRef.current = refreshCollab;
   }, [refreshCollab]);
+
+  // ── Sync down ────────────────────────────────────────────────────────────
+  // Markie already knew when the server was ahead: libraryState computes
+  // "behind". It just never told anyone unless they happened to open the
+  // Library. This asks on its own and puts the answer above the document.
+  //
+  // A live collab session is excluded on purpose: there the Yjs room is the
+  // transport, updates arrive continuously, and the snapshot version moving is
+  // not news anyone needs a strip about.
+  const checkUpdates = useCallback(() => {
+    const api = getElectronAPI();
+    if (!api?.docCheckUpdates || !filePath || collabCfg) {
+      setUpdateWaiting(null);
+      return;
+    }
+    api
+      .docCheckUpdates()
+      .then(({ updates }) => {
+        setUpdateWaiting(updates.find((u) => u.path === filePath) ?? null);
+      })
+      // A background check that fails means no strip appears, which is exactly
+      // the state before the check ran. It must never interrupt writing.
+      .catch(() => {});
+  }, [filePath, collabCfg]);
+
+  useEffect(() => {
+    setUpdateWaiting(null);
+    setUpdateError(null);
+    checkUpdates();
+  }, [checkUpdates]);
+
+  // On focus and on a timer, but only while the window is focused: the answer
+  // is only ever acted on by someone looking at the screen, so a backgrounded
+  // Markie should make no requests at all.
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer) return;
+      timer = setInterval(checkUpdates, 60_000);
+    };
+    const stop = () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+    };
+    const onFocus = () => {
+      checkUpdates();
+      start();
+    };
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", stop);
+    if (document.hasFocus()) start();
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", stop);
+      stop();
+    };
+  }, [checkUpdates]);
+
+  // The clean case: nothing local is at risk, so this finishes in one click.
+  const handlePullUpdate = useCallback(async () => {
+    const api = getElectronAPI();
+    if (!api?.docResolve || !filePath) return;
+    setUpdateBusy(true);
+    setUpdateError(null);
+    try {
+      const res = await api.docResolve({ path: filePath, strategy: "cloud" });
+      if (res.error) {
+        setUpdateError(res.error);
+        return;
+      }
+      if (typeof res.content === "string") {
+        // What came back is what is now on disk, and a CSV on disk is CSV.
+        const pulled = fromDisk(fileName, res.content);
+        setContent(pulled);
+        setSavedContent(pulled);
+      }
+      setUpdateWaiting(null);
+      setLibRefreshKey((k) => k + 1);
+    } catch {
+      setUpdateError("Couldn't reach the server.");
+    } finally {
+      setUpdateBusy(false);
+    }
+  }, [filePath, fileName]);
+
+  // Whatever the dialog did, the file on disk now holds this content.
+  const handleConflictResolved = useCallback(
+    (next: string) => {
+      const pulled = fromDisk(fileName, next);
+      setContent(pulled);
+      setSavedContent(pulled);
+      setUpdateWaiting(null);
+      setUpdateError(null);
+    },
+    [fileName]
+  );
 
   // A document that is being swapped out must not leave its access behind for
   // the next one to inherit; refreshCollab re-resolves it against the server.
@@ -987,6 +1098,25 @@ export default function Home() {
             error={forkError}
             onMakeCopy={handleMakeCopy}
           />
+          {updateWaiting && (
+            <UpdateStrip
+              // "Clean" has to mean nothing is at risk, not merely that the
+              // buffer looks saved. A file whose push was rejected holds
+              // changes the server never took, and opening it produces a clean
+              // buffer over exactly the content a one-click pull would destroy.
+              kind={
+                isDirty ||
+                updateWaiting.syncState === "conflict" ||
+                updateWaiting.syncState === "unpushed"
+                  ? "dirty"
+                  : "clean"
+              }
+              busy={updateBusy}
+              error={updateError}
+              onUpdate={handlePullUpdate}
+              onReview={() => setShowConflict(true)}
+            />
+          )}
 
           <div
             data-markie-document-area
@@ -1101,6 +1231,18 @@ export default function Home() {
             setShowShare(false);
             setShowSettings(true);
           }}
+        />
+      )}
+      {showConflict && filePath && (
+        <ConflictDialog
+          filePath={filePath}
+          fileName={fileName ?? "this document"}
+          // The buffer, not the file on disk: unsaved text is what a pull would
+          // actually cost, so it is what gets counted.
+          localContent={toDisk(fileName, content)}
+          onClose={() => setShowConflict(false)}
+          onResolved={handleConflictResolved}
+          onChanged={() => setLibRefreshKey((k) => k + 1)}
         />
       )}
       {manageShare && (

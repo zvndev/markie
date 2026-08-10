@@ -29,6 +29,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "sync:check": "node scripts/sync-down-check.mjs",
     "comments:verify": "node scripts/comments-verify-local.mjs",
     "comments:verify:e2e": "node scripts/comments-verify-local.mjs --with-e2e",
     "visual:audit:light": "node scripts/light-mode-visual-audit.mjs",

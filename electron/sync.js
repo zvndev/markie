@@ -222,7 +222,14 @@ async function resolve(filePath, strategy) {
       sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
-    return { ok: true, reloaded: true };
+    // The renderer may have this file open, and a buffer still holding the
+    // replaced content would push it straight back on the next save.
+    return {
+      ok: true,
+      reloaded: true,
+      content: res.data.doc.content,
+      version: res.data.doc.version,
+    };
   }
   // keep local: re-read server version, push on top of it
   const remote = await api("GET", `/api/docs/${row.cloud_doc_id}`);
@@ -242,6 +249,144 @@ async function resolve(filePath, strategy) {
     last_synced_at: new Date().toISOString(),
   });
   return { ok: true, pushed: true };
+}
+
+// Which tracked files the server has a newer snapshot of.
+//
+// One GET covers every file, so polling costs the same whether the library has
+// three documents or three hundred, and no document content is fetched: the
+// content only matters once someone opens the prompt, and fetching it here
+// would mean downloading every out-of-date document on a timer.
+async function checkUpdates() {
+  if (!isConfigured()) return { updates: [] };
+  const res = await api("GET", "/api/docs");
+  // A list we never received says nothing about who is ahead. Reporting
+  // "no updates" is right: it is the same as the state before the check, and
+  // the alternative is a background failure interrupting someone's writing.
+  if (res.status !== 200 || !Array.isArray(res.data?.docs)) return { updates: [] };
+  const remote = new Map(res.data.docs.map((d) => [d.id, d]));
+  const updates = [];
+  for (const row of registry.list()) {
+    if (!row.cloud_doc_id) continue;
+    const r = remote.get(row.cloud_doc_id);
+    // Absent from the list means deleted or revoked, which libraryState reports
+    // as "paused". It is not an update to pull.
+    if (!r) continue;
+    const localVersion = row.cloud_version ?? 0;
+    if (r.version > localVersion) {
+      updates.push({
+        path: row.path,
+        cloudId: row.cloud_doc_id,
+        name: row.name,
+        localVersion,
+        remoteVersion: r.version,
+        // A clean buffer does not mean nothing is at risk. "conflict" and
+        // "unpushed" both mean the file on disk holds changes the server never
+        // took, so pulling over it destroys them even though nothing looks
+        // unsaved. The caller cannot tell from the buffer alone.
+        syncState: row.sync_state,
+      });
+    }
+  }
+  return { updates };
+}
+
+// The server's copy of a doc, for showing what a pull would cost before it
+// happens. Read-only: nothing on disk or in the registry is touched.
+async function remoteContent(filePath) {
+  const row = registry.get(filePath);
+  if (!row?.cloud_doc_id) return { error: "not synced" };
+  if (!isConfigured()) return { error: "not signed in" };
+  const res = await api("GET", `/api/docs/${row.cloud_doc_id}`);
+  if (res.status !== 200) return { error: failure("fetch", res) };
+  return {
+    ok: true,
+    content: res.data.doc.content,
+    version: res.data.doc.version,
+    name: res.data.doc.name,
+  };
+}
+
+// A path like "notes (my version).md" that does not already exist. Suffixes
+// rather than overwrites: this function exists to stop work being destroyed,
+// so it must not destroy a previous rescue on the way.
+function keepBothPath(filePath, exists = fs.existsSync) {
+  const dir = path.dirname(filePath);
+  const base = path.basename(filePath);
+  const dot = base.lastIndexOf(".");
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const ext = dot > 0 ? base.slice(dot) : "";
+  for (let n = 0; n < 1000; n++) {
+    const suffix = n === 0 ? " (my version)" : ` (my version ${n + 1})`;
+    const candidate = path.join(dir, `${stem}${suffix}${ext}`);
+    if (!exists(candidate)) return candidate;
+  }
+  return null;
+}
+
+// Keep both copies: the local one moves to its own file, then the server copy
+// takes over the original path.
+//
+// The order is the entire point. The local copy is on disk and tracked before
+// anything overwrites the original, so a failure at any earlier step leaves the
+// user with exactly what they had.
+// localContent is the caller's version of "mine". The renderer passes its
+// editor buffer, which is what the user means by their version and what the
+// dialog counted the lines of; reading the file instead would rescue the last
+// saved copy and drop every unsaved edit, in the one feature whose entire job
+// is not losing them. Falls back to disk for callers with no buffer.
+async function resolveKeepBoth(filePath, localContent) {
+  const row = registry.get(filePath);
+  if (!row?.cloud_doc_id) return { error: "not synced" };
+  if (!isConfigured()) return { error: "not signed in" };
+
+  let local;
+  if (typeof localContent === "string") {
+    local = localContent;
+  } else {
+    try {
+      local = fs.readFileSync(filePath, "utf-8");
+    } catch (e) {
+      return { error: `Couldn't read the local file: ${e.message}` };
+    }
+  }
+
+  // Fetch before writing anything: an unreachable server must not leave a
+  // stray copy behind for a resolution that never happened.
+  const res = await api("GET", `/api/docs/${row.cloud_doc_id}`);
+  if (res.status !== 200) return { error: failure("fetch", res) };
+  const doc = res.data.doc;
+
+  const copyPath = keepBothPath(filePath);
+  if (!copyPath) return { error: "Couldn't find an unused name for the copy." };
+  try {
+    fs.writeFileSync(copyPath, local, "utf-8");
+  } catch (e) {
+    return { error: `Couldn't write the copy: ${e.message}` };
+  }
+  // local-only with no cloud_doc_id: a rescued copy must never become a second
+  // window onto the document it was rescued from.
+  registry.track(copyPath, path.basename(copyPath), local);
+  registry.update(copyPath, {
+    cloud_doc_id: null,
+    cloud_version: 0,
+    sync_state: "local-only",
+    share_role: null,
+  });
+
+  try {
+    fs.writeFileSync(filePath, doc.content, "utf-8");
+  } catch (e) {
+    // The copy survives, so nothing was lost; say where it went.
+    return { error: `Saved your version to ${copyPath}, but couldn't overwrite the original: ${e.message}` };
+  }
+  registry.update(filePath, {
+    cloud_version: doc.version,
+    content_hash: registry.hashContent(doc.content),
+    sync_state: "synced",
+    last_synced_at: new Date().toISOString(),
+  });
+  return { ok: true, keptAt: copyPath, content: doc.content, version: doc.version };
 }
 
 // Merged local + remote view for the Library.
@@ -321,5 +466,9 @@ module.exports = {
   push,
   pull,
   resolve,
+  checkUpdates,
+  remoteContent,
+  resolveKeepBoth,
+  keepBothPath,
   libraryState,
 };

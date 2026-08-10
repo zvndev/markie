@@ -275,7 +275,7 @@ describe("resolve", () => {
 
     const res = await sync.resolve(filePath, "cloud");
 
-    expect(res).toEqual({ ok: true, reloaded: true });
+    expect(res).toMatchObject({ ok: true, reloaded: true });
     expect(fs.readFileSync(filePath, "utf-8")).toBe("from cloud");
     expect(row.sync_state).toBe("synced");
     expect(row.cloud_version).toBe(9);
@@ -552,5 +552,285 @@ describe("libraryState", () => {
     const state = await sync.libraryState();
 
     expect(state.items[0].state).toBe("unpushed");
+  });
+});
+
+describe("checkUpdates", () => {
+  it("reports only the rows the server is ahead of", async () => {
+    seedRow({ path: "/docs/behind.md", sync_state: "synced", cloud_doc_id: "c1", cloud_version: 4 });
+    seedRow({ path: "/docs/current.md", sync_state: "synced", cloud_doc_id: "c2", cloud_version: 7 });
+    respondWith({
+      status: 200,
+      body: { docs: [{ id: "c1", version: 9 }, { id: "c2", version: 7 }] },
+    });
+
+    const { updates } = await sync.checkUpdates();
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      path: "/docs/behind.md",
+      cloudId: "c1",
+      localVersion: 4,
+      remoteVersion: 9,
+    });
+  });
+
+  it("costs one request no matter how many files are tracked", async () => {
+    for (let i = 0; i < 20; i++) {
+      seedRow({ path: `/docs/${i}.md`, sync_state: "synced", cloud_doc_id: `c${i}`, cloud_version: 1 });
+    }
+    const calls = respondWith({
+      status: 200,
+      body: { docs: Array.from({ length: 20 }, (_, i) => ({ id: `c${i}`, version: 2 })) },
+    });
+
+    const { updates } = await sync.checkUpdates();
+
+    expect(updates).toHaveLength(20);
+    expect(calls).toHaveLength(1);
+  });
+
+  // A clean buffer does not mean nothing is at risk: a file whose push was
+  // rejected holds changes the server never took, and opening it looks saved.
+  // The caller cannot tell that apart without the row's state.
+  it("reports the sync state, so a one-click pull can refuse to be one", async () => {
+    seedRow({ path: "/docs/c.md", sync_state: "conflict", cloud_doc_id: "c1", cloud_version: 4 });
+    seedRow({ path: "/docs/s.md", sync_state: "synced", cloud_doc_id: "c2", cloud_version: 4 });
+    respondWith({
+      status: 200,
+      body: { docs: [{ id: "c1", version: 9 }, { id: "c2", version: 9 }] },
+    });
+
+    const { updates } = await sync.checkUpdates();
+    const byPath = Object.fromEntries(updates.map((u: { path: string; syncState: string }) => [u.path, u.syncState]));
+
+    expect(byPath["/docs/c.md"]).toBe("conflict");
+    expect(byPath["/docs/s.md"]).toBe("synced");
+  });
+
+  it("ignores local-only files, which have nothing to be behind", async () => {
+    seedRow({ path: "/docs/local.md", sync_state: "local-only" });
+    respondWith({ status: 200, body: { docs: [] } });
+
+    expect((await sync.checkUpdates()).updates).toEqual([]);
+  });
+
+  // Absent from the list means deleted or revoked. libraryState reports that as
+  // "paused"; offering to pull a document that is gone would fail on click.
+  it("does not offer to pull a document that is no longer on the server", async () => {
+    seedRow({ path: "/docs/a.md", sync_state: "synced", cloud_doc_id: "c1", cloud_version: 4 });
+    respondWith({ status: 200, body: { docs: [] } });
+
+    expect((await sync.checkUpdates()).updates).toEqual([]);
+  });
+
+  // The P0 shape this mirrors: a failed list request once relabelled every
+  // synced row. Here it must not claim every document has an update waiting.
+  it("reports nothing when the list request fails", async () => {
+    seedRow({ path: "/docs/a.md", sync_state: "synced", cloud_doc_id: "c1", cloud_version: 4 });
+    respondWith(new Error("offline"));
+
+    expect((await sync.checkUpdates()).updates).toEqual([]);
+  });
+
+  it("reports nothing when signed out, without calling the server", async () => {
+    seedRow({ path: "/docs/a.md", sync_state: "synced", cloud_doc_id: "c1", cloud_version: 4 });
+    sync.setConfig({ token: null, serverURL: null });
+    const calls = respondWith();
+
+    expect((await sync.checkUpdates()).updates).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("keepBothPath", () => {
+  it("names the copy after the original", () => {
+    expect(sync.keepBothPath("/docs/notes.md", () => false)).toBe(
+      "/docs/notes (my version).md"
+    );
+  });
+
+  // This function exists to stop work being destroyed, so it must not destroy a
+  // previous rescue to do it.
+  it("suffixes rather than overwriting an earlier rescue", () => {
+    const taken = new Set(["/docs/notes (my version).md"]);
+    expect(sync.keepBothPath("/docs/notes.md", (p: string) => taken.has(p))).toBe(
+      "/docs/notes (my version 2).md"
+    );
+  });
+
+  it("handles a name with no extension", () => {
+    expect(sync.keepBothPath("/docs/README", () => false)).toBe(
+      "/docs/README (my version)"
+    );
+  });
+
+  it("does not treat a dotfile's leading dot as an extension", () => {
+    expect(sync.keepBothPath("/docs/.env", () => false)).toBe(
+      "/docs/.env (my version)"
+    );
+  });
+});
+
+describe("resolveKeepBoth", () => {
+  const seedOnDisk = (name: string, content: string) => {
+    const p = path.join(tmpDir, name);
+    fs.writeFileSync(p, content, "utf-8");
+    seedRow({
+      path: p,
+      name,
+      sync_state: "conflict",
+      cloud_doc_id: "cloud-1",
+      cloud_version: 4,
+    });
+    return p;
+  };
+
+  it("writes the local copy and then takes the server's", async () => {
+    const p = seedOnDisk("notes.md", "mine\n");
+    respondWith({ status: 200, body: { doc: { content: "theirs\n", version: 9, name: "notes.md" } } });
+
+    const res = await sync.resolveKeepBoth(p);
+
+    expect(res.ok).toBe(true);
+    expect(fs.readFileSync(res.keptAt, "utf-8")).toBe("mine\n");
+    expect(fs.readFileSync(p, "utf-8")).toBe("theirs\n");
+    expect(rows.get(p)!.sync_state).toBe("synced");
+    expect(rows.get(p)!.cloud_version).toBe(9);
+  });
+
+  // Caught by the end-to-end run, not by inspection: the dialog counts the
+  // buffer's lines and promises to save "your version", but this rescued the
+  // last saved file, dropping every unsaved edit in the one feature whose whole
+  // job is not losing them.
+  it("rescues the caller's buffer, not the stale copy on disk", async () => {
+    const p = seedOnDisk("notes.md", "saved earlier\n");
+
+    respondWith({ status: 200, body: { doc: { content: "theirs\n", version: 9, name: "notes.md" } } });
+
+    const res = await sync.resolveKeepBoth(p, "saved earlier\nMY UNSAVED LINE\n");
+
+    expect(fs.readFileSync(res.keptAt, "utf-8")).toBe("saved earlier\nMY UNSAVED LINE\n");
+    expect(fs.readFileSync(res.keptAt, "utf-8")).toContain("MY UNSAVED LINE");
+  });
+
+  it("falls back to the file on disk when the caller has no buffer", async () => {
+    const p = seedOnDisk("notes.md", "only on disk\n");
+    respondWith({ status: 200, body: { doc: { content: "theirs\n", version: 9, name: "notes.md" } } });
+
+    const res = await sync.resolveKeepBoth(p);
+
+    expect(fs.readFileSync(res.keptAt, "utf-8")).toBe("only on disk\n");
+  });
+
+  it("returns the pulled content so an open buffer can follow it", async () => {
+    const p = seedOnDisk("notes.md", "mine\n");
+    respondWith({ status: 200, body: { doc: { content: "theirs\n", version: 9, name: "notes.md" } } });
+
+    const res = await sync.resolveKeepBoth(p);
+
+    expect(res.content).toBe("theirs\n");
+    expect(res.version).toBe(9);
+  });
+
+  // The rescued copy must never become a second window onto the document it was
+  // rescued from, or the next save pushes it straight back over the server.
+  it("tracks the copy as local-only with no cloud link", async () => {
+    const p = seedOnDisk("notes.md", "mine\n");
+    const tracked: Array<[string, string]> = [];
+    registry.track = (tp: string, tn: string) => {
+      tracked.push([tp, tn]);
+      seedRow({ path: tp, name: tn, cloud_doc_id: "SHOULD-BE-CLEARED", cloud_version: 4 });
+    };
+    respondWith({ status: 200, body: { doc: { content: "theirs\n", version: 9, name: "notes.md" } } });
+
+    const res = await sync.resolveKeepBoth(p);
+
+    expect(tracked).toHaveLength(1);
+    expect(rows.get(res.keptAt)!.cloud_doc_id).toBeNull();
+    expect(rows.get(res.keptAt)!.cloud_version).toBe(0);
+    expect(rows.get(res.keptAt)!.sync_state).toBe("local-only");
+  });
+
+  it("leaves the original untouched when the server cannot be reached", async () => {
+    const p = seedOnDisk("notes.md", "mine\n");
+    respondWith(new Error("offline"));
+
+    const res = await sync.resolveKeepBoth(p);
+
+    expect(res.error).toBe("fetch failed (offline)");
+    expect(fs.readFileSync(p, "utf-8")).toBe("mine\n");
+    expect(rows.get(p)!.sync_state).toBe("conflict");
+    // No stray rescue file for a resolution that never happened.
+    expect(fs.readdirSync(tmpDir)).toEqual(["notes.md"]);
+  });
+
+  it("leaves the original untouched when the copy cannot be written", async () => {
+    const p = seedOnDisk("notes.md", "mine\n");
+    respondWith({ status: 200, body: { doc: { content: "theirs\n", version: 9, name: "notes.md" } } });
+    const realWrite = fs.writeFileSync;
+    const spy = vi.spyOn(fs, "writeFileSync").mockImplementation(((
+      target: string,
+      data: string,
+      enc: string
+    ) => {
+      if (String(target).includes("(my version)")) throw new Error("EACCES");
+      return realWrite(target, data, enc as never);
+    }) as typeof fs.writeFileSync);
+
+    const res = await sync.resolveKeepBoth(p);
+
+    expect(res.error).toContain("Couldn't write the copy");
+    expect(res.ok).toBeUndefined();
+    expect(fs.readFileSync(p, "utf-8")).toBe("mine\n");
+    expect(rows.get(p)!.sync_state).toBe("conflict");
+    spy.mockRestore();
+  });
+
+  it("says where the rescued copy went if the original cannot be overwritten", async () => {
+    const p = seedOnDisk("notes.md", "mine\n");
+    respondWith({ status: 200, body: { doc: { content: "theirs\n", version: 9, name: "notes.md" } } });
+    const realWrite = fs.writeFileSync;
+    const spy = vi.spyOn(fs, "writeFileSync").mockImplementation(((
+      target: string,
+      data: string,
+      enc: string
+    ) => {
+      if (String(target) === p) throw new Error("EROFS");
+      return realWrite(target, data, enc as never);
+    }) as typeof fs.writeFileSync);
+
+    const res = await sync.resolveKeepBoth(p);
+
+    expect(res.error).toContain("(my version)");
+    expect(res.error).toContain("couldn't overwrite the original");
+    expect(fs.readFileSync(p, "utf-8")).toBe("mine\n");
+    spy.mockRestore();
+  });
+
+  it("refuses a file with no cloud copy", async () => {
+    const p = path.join(tmpDir, "local.md");
+    fs.writeFileSync(p, "mine\n");
+    seedRow({ path: p, sync_state: "local-only" });
+    const calls = respondWith();
+
+    expect((await sync.resolveKeepBoth(p)).error).toBe("not synced");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("resolve('cloud')", () => {
+  it("hands back the content it wrote so an open buffer can follow it", async () => {
+    const p = path.join(tmpDir, "notes.md");
+    fs.writeFileSync(p, "mine\n");
+    seedRow({ path: p, sync_state: "behind", cloud_doc_id: "cloud-1", cloud_version: 4 });
+    respondWith({ status: 200, body: { doc: { content: "theirs\n", version: 9 } } });
+
+    const res = await sync.resolve(p, "cloud");
+
+    expect(res.ok).toBe(true);
+    expect(res.content).toBe("theirs\n");
+    expect(res.version).toBe(9);
+    expect(fs.readFileSync(p, "utf-8")).toBe("theirs\n");
   });
 });

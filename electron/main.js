@@ -574,6 +574,16 @@ ipcMain.handle("doc-push", (_event, { path: p, name, content }) =>
 ipcMain.handle("doc-resolve", (_event, { path: p, strategy }) =>
   sync.resolve(p, strategy)
 );
+// Which tracked files the server is ahead of. One request for the whole
+// library, called on focus and on a timer, so it has to stay cheap and quiet.
+ipcMain.handle("doc-check-updates", () => sync.checkUpdates());
+// The server's copy, for showing what a pull would cost before doing it.
+ipcMain.handle("doc-remote-content", (_event, { path: p }) =>
+  sync.remoteContent(p)
+);
+ipcMain.handle("doc-keep-both", (_event, { path: p, content }) =>
+  sync.resolveKeepBoth(p, content)
+);
 ipcMain.handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: suggestedName || "document.md",

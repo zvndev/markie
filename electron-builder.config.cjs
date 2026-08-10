@@ -63,7 +63,15 @@ module.exports = {
       path: publishPath,
     },
   ],
-  files: ["electron/**/*", "out/**/*"],
+  // electron/ and out/ are the whole shipped app. Note that `files` does NOT
+  // control node_modules: electron-builder resolves production dependencies
+  // from package.json separately and copies them in on top of this list, which
+  // is why every renderer-only package lives in devDependencies (the renderer
+  // is already bundled into out/ by `next build`).
+  //
+  // The negation drops electron/*.test.ts, which sits next to the modules it
+  // covers and has no business inside a user's app bundle.
+  files: ["electron/**/*", "out/**/*", "!electron/**/*.test.*"],
   extraResources: [
     {
       from: "mcp",

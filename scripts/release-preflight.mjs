@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -133,6 +133,25 @@ const REQUIRED_ELECTRON_MAIN_SNIPPETS = [
   "...(isDev ? [{ type: \"separator\" }, { role: \"toggleDevTools\" }] : [])",
 ];
 
+// electron-builder copies every *production* dependency into the app bundle,
+// and it works that out from package.json, not from the `files` glob. So this
+// list is the app's real payload budget: only modules the Electron main process
+// require()s at runtime belong in `dependencies`. Everything the renderer
+// imports is already inlined into out/ by `next build`, so listing it here
+// ships a second raw copy of it. That mistake is what made the macOS DMG 209MB
+// for a 6.5MB renderer.
+const MAIN_PROCESS_RUNTIME_DEPENDENCIES = ["better-sqlite3", "electron-updater", "node-pty"];
+
+// Packaged .app layouts electron-builder writes for macOS, checked when they
+// happen to be present. Preflight never packages anything itself.
+const PACKAGED_APP_DIRS = ["dist/mac-arm64/Markie.app", "dist/mac/Markie.app"];
+
+// The arm64 .app measures 286 MiB once only the main-process runtime ships, and
+// 270 MiB of that is the Electron framework itself. 330 MiB leaves room for an
+// Electron upgrade while still catching a renderer package sneaking back into
+// `dependencies`: that regression cost 305 MiB on its own.
+const PACKAGED_APP_BUDGET_BYTES = 330 * 1024 * 1024;
+
 const REQUIRED_RELEASE_DOC_SNIPPETS = [
   "Per-platform local artifact contract",
   "npm run electron:pack:mac:arm64",
@@ -175,6 +194,8 @@ const readBuilderConfig = (rootDir) => {
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
 };
+
+const mib = (bytes) => (bytes / 1024 / 1024).toFixed(1);
 
 const scriptValue = (rootDir, check) => {
   if (!check.script) return `${check.command} ${check.args.join(" ")}`;
@@ -374,6 +395,91 @@ export function validatePackagingMatrix(rootDir) {
   };
 }
 
+export function validateRuntimeDependencies(rootDir, options = {}) {
+  const dependencies =
+    options.dependencies ?? readJson(rootDir, "package.json").dependencies ?? {};
+  const runtime = [...(options.runtime ?? MAIN_PROCESS_RUNTIME_DEPENDENCIES)].sort();
+  const declared = Object.keys(dependencies).sort();
+
+  const unexpected = declared.filter((name) => !runtime.includes(name));
+  assert(
+    unexpected.length === 0,
+    `package.json dependencies must stay limited to the Electron main-process runtime ` +
+      `(${runtime.join(", ")}), but also lists ${unexpected.join(", ")}. ` +
+      `electron-builder copies every production dependency into the shipped app on top of the ` +
+      `files glob, so a renderer package here ships as raw node_modules alongside the copy ` +
+      `next build already inlined into out/. Move it to devDependencies.`
+  );
+
+  const missing = runtime.filter((name) => !declared.includes(name));
+  assert(
+    missing.length === 0,
+    `package.json dependencies is missing main-process runtime module(s): ${missing.join(", ")}. ` +
+      `electron/*.js require()s them at runtime and electron-builder only bundles production ` +
+      `dependencies, so a demoted module ships a broken app that crashes on launch.`
+  );
+
+  return { runtime, declared };
+}
+
+export function validateShippedFileGlobs(rootDir, files) {
+  const globs = files ?? readBuilderConfig(rootDir).files;
+  assert(Array.isArray(globs), "electron-builder config must declare a files array");
+  assert(
+    globs.some((glob) => glob.startsWith("!") && glob.includes(".test.")),
+    `electron-builder files must exclude test files from the shipped app; ` +
+      `electron/*.test.ts sits beside the modules it covers and "electron/**/*" ships it ` +
+      `verbatim into a user's app bundle. Add a "!electron/**/*.test.*" negation.`
+  );
+  return globs;
+}
+
+// Walks without following symlinks: an .app bundle points Frameworks/*/Versions/Current
+// at Versions/A, so following links counts the Electron framework three times over.
+export function measureDirectoryBytes(dir) {
+  let total = 0;
+  const stack = [dir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) stack.push(full);
+      else total += statSync(full).size;
+    }
+  }
+  return total;
+}
+
+export function validatePackagedAppSize(rootDir, options = {}) {
+  const appDirs = options.appDirs ?? PACKAGED_APP_DIRS;
+  const budgetBytes = options.budgetBytes ?? PACKAGED_APP_BUDGET_BYTES;
+  const measure = options.measure ?? measureDirectoryBytes;
+
+  const apps = appDirs
+    .filter((appDir) => existsSync(path.join(rootDir, appDir)))
+    .map((appDir) => ({ appDir, bytes: measure(path.join(rootDir, appDir)) }));
+
+  const oversized = apps.filter((app) => app.bytes > budgetBytes);
+  assert(
+    oversized.length === 0,
+    oversized
+      .map(
+        (app) =>
+          `${app.appDir} is ${mib(app.bytes)} MiB, which exceeds the packaged app size budget ` +
+          `of ${mib(budgetBytes)} MiB.`
+      )
+      .join(" ") +
+      ` Look at package.json "dependencies" first: electron-builder ships every production ` +
+      `dependency into Contents/Resources/app.asar (and app.asar.unpacked for native ones), ` +
+      `so one renderer package pulls its whole tree in. Break the bundle down with ` +
+      `du -sh <app>/Contents/Resources/*. If the growth is really Electron itself, raise ` +
+      `PACKAGED_APP_BUDGET_BYTES in scripts/release-preflight.mjs deliberately.`
+  );
+
+  return { checked: apps.length > 0, apps, budgetBytes };
+}
+
 export function validateRequiredFiles(rootDir, files = REQUIRED_FILES) {
   const missing = files.filter((file) => !existsSync(path.join(rootDir, file)));
   assert(missing.length === 0, `missing release prerequisite files: ${missing.join(", ")}`);
@@ -457,6 +563,9 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   const metadata = validateReleaseMetadata(resolvedRoot);
   const manifest = validateReleaseManifest(resolvedRoot);
   const files = validateRequiredFiles(resolvedRoot);
+  const runtimeDependencies = validateRuntimeDependencies(resolvedRoot);
+  const shippedGlobs = validateShippedFileGlobs(resolvedRoot);
+  const packagedSize = validatePackagedAppSize(resolvedRoot);
   const matrix = validatePackagingMatrix(resolvedRoot);
   const windowsWorkflow = validateWindowsLaunchWorkflow(resolvedRoot);
   const electronMain = validateElectronMainDesktopSupport(resolvedRoot);
@@ -466,6 +575,24 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   console.log(`[release:preflight] metadata ok: Markie ${metadata.version} (${metadata.appId})`);
   console.log(`[release:preflight] stable channel ok: ${manifest.siteUrl}${manifest.latestManifestRoute}`);
   console.log(`[release:preflight] required files ok: ${files.length} files`);
+  console.log(
+    `[release:preflight] app payload ok: dependencies=${runtimeDependencies.declared.join(", ")}; ` +
+      `shipped globs=${shippedGlobs.join(" ")}`
+  );
+  if (packagedSize.checked) {
+    for (const app of packagedSize.apps) {
+      console.log(
+        `[release:preflight] packaged size ok: ${app.appDir} ${mib(app.bytes)} MiB ` +
+          `(budget ${mib(packagedSize.budgetBytes)} MiB)`
+      );
+    }
+  } else {
+    console.log(
+      `[release:preflight] packaged size not checked: no packed app in dist/ ` +
+        `(run npm run electron:pack:mac:arm64 to measure against the ` +
+        `${mib(packagedSize.budgetBytes)} MiB budget)`
+    );
+  }
   console.log(
     `[release:preflight] packaging matrix ok: mac=${matrix.mac.length} win=${matrix.win.length} linux=${matrix.linux.length}`
   );
@@ -481,7 +608,19 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   }
 
   console.log("[release:preflight] passed; stop here before any credentialed release action");
-  return { metadata, manifest, files, matrix, windowsWorkflow, electronMain, docs, inspected };
+  return {
+    metadata,
+    manifest,
+    files,
+    runtimeDependencies,
+    shippedGlobs,
+    packagedSize,
+    matrix,
+    windowsWorkflow,
+    electronMain,
+    docs,
+    inspected,
+  };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

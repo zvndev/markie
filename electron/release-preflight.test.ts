@@ -3,12 +3,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertLocalOnlyChecks,
+  validatePackagedAppSize,
   validatePackagingMatrix,
   validateElectronMainDesktopSupport,
   validateReleaseDocs,
   validateReleaseManifest,
   validateReleaseMetadata,
   validateRequiredFiles,
+  validateRuntimeDependencies,
+  validateShippedFileGlobs,
   validateWindowsLaunchWorkflow,
 } from "../scripts/release-preflight.mjs";
 
@@ -152,6 +155,70 @@ describe("release preflight", () => {
         'label: "Check for Updates…"',
         "...(isDev ? [{ type: \"separator\" }, { role: \"toggleDevTools\" }] : [])",
       ])
+    );
+  });
+
+  it("ships only the Electron main process runtime as production dependencies", () => {
+    expect(validateRuntimeDependencies(rootDir)).toEqual({
+      runtime: ["better-sqlite3", "electron-updater", "node-pty"],
+      declared: ["better-sqlite3", "electron-updater", "node-pty"],
+    });
+  });
+
+  it("rejects a renderer-only package that leaks back into dependencies", () => {
+    expect(() =>
+      validateRuntimeDependencies(rootDir, {
+        dependencies: {
+          "better-sqlite3": "^12.10.0",
+          "electron-updater": "^6.8.9",
+          "node-pty": "^1.1.0",
+          next: "16.1.7",
+          react: "19.2.3",
+        },
+      })
+    ).toThrow(/next, react/);
+  });
+
+  it("rejects a main-process runtime module demoted out of dependencies", () => {
+    expect(() =>
+      validateRuntimeDependencies(rootDir, {
+        dependencies: { "electron-updater": "^6.8.9", "node-pty": "^1.1.0" },
+      })
+    ).toThrow(/better-sqlite3/);
+  });
+
+  it("skips the packaged size budget when nothing has been packaged yet", () => {
+    expect(validatePackagedAppSize(rootDir, { appDirs: ["dist/nothing-packaged-here.app"] })).toEqual({
+      checked: false,
+      budgetBytes: expect.any(Number),
+      apps: [],
+    });
+  });
+
+  it("measures a packaged bundle against the size budget", () => {
+    expect(
+      validatePackagedAppSize(rootDir, { appDirs: ["electron"], budgetBytes: 64 * 1024 * 1024 })
+    ).toMatchObject({
+      checked: true,
+      apps: [{ appDir: "electron", bytes: expect.any(Number) }],
+    });
+  });
+
+  it("fails a packaged bundle that blows the size budget", () => {
+    expect(() =>
+      validatePackagedAppSize(rootDir, { appDirs: ["electron"], budgetBytes: 1024 })
+    ).toThrow(/exceeds the packaged app size budget/);
+  });
+
+  it("keeps test files out of the shipped app bundle", () => {
+    expect(validateShippedFileGlobs(rootDir)).toEqual(
+      expect.arrayContaining(["electron/**/*", "out/**/*", "!electron/**/*.test.*"])
+    );
+  });
+
+  it("rejects a files glob that would ship electron test files", () => {
+    expect(() => validateShippedFileGlobs(rootDir, ["electron/**/*", "out/**/*"])).toThrow(
+      /test files/
     );
   });
 

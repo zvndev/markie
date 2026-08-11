@@ -3,12 +3,17 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { app } = require("electron");
 
 let db = null;
 
 function getDB() {
   if (db) return db;
+  // Both of these are required lazily, and for the same reason: requiring
+  // "electron" from plain Node throws unless the binary has been downloaded,
+  // and CI installs with --ignore-scripts. Anything that pulls this module in
+  // for its pure functions would fail at import time. Nothing here touches the
+  // database until a caller actually asks for it.
+  const { app } = require("electron");
   const Database = require("better-sqlite3");
   db = new Database(path.join(app.getPath("userData"), "registry.db"));
   // WAL survives an abrupt quit better and lets reads not block writes.

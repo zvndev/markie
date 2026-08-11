@@ -270,3 +270,71 @@ export function renderNotFoundPage(siteUrl: string): string {
   </main>
 </body></html>`;
 }
+
+// A document rendered for someone who is entitled to read it. Unlike the
+// public page there is no shareable token in the markup: the URL that reached
+// here belongs to one person, so nothing on the page invites passing it on.
+export function renderSharedDocPage(opts: {
+  title: string;
+  markdown: string;
+  docId: string;
+  siteUrl: string;
+  sharedBy?: string | null;
+  canEdit: boolean;
+}): string {
+  const { title, markdown, docId, siteUrl, sharedBy, canEdit } = opts;
+  const content = renderMarkdownHTML(markdown);
+  const safeTitle = esc(title);
+  const download = primaryDownloadCta(siteUrl);
+  const openInMarkie = `markie://doc?id=${encodeURIComponent(docId)}&src=${encodeURIComponent(siteUrl)}`;
+  return `<!doctype html>
+<html lang="en"><head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src * data: https:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; base-uri 'none'; form-action 'none'">
+  <title>${safeTitle} · Markie</title>
+  ${HEAD_CSS}
+  <style>${PAGE_CSS}</style>
+</head><body>
+  <div class="bar">
+    <span class="brand">M</span>
+    <span class="title">${safeTitle}</span>
+    <a class="btn primary" href="${esc(openInMarkie)}">Open in Markie</a>
+    <a class="btn ghost" href="${esc(download.href)}">${esc(download.label)}</a>
+    <a class="btn ghost" href="/d/${esc(docId)}/raw">Download .md</a>
+  </div>
+  <main>${content}</main>
+  <div class="cta">
+    ${sharedBy ? `${esc(sharedBy)} shared this with you. ` : ""}${
+      canEdit
+        ? "Open it in Markie to edit it with them, live."
+        : "You have view access. Open it in Markie to keep a copy of your own."
+    }
+  </div>
+</body></html>`;
+}
+
+// Shown to anyone whose link does not carry access: a stranger guessing at a
+// document id, or someone whose access was removed. It names no document and
+// does not distinguish "no such document" from "not yours", so the page cannot
+// be used to find out which document ids exist.
+export function renderAccessRequiredPage(siteUrl: string): string {
+  const download = primaryDownloadCta(siteUrl);
+  return `<!doctype html>
+<html lang="en"><head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Sign in to read this · Markie</title>
+  <style>${PAGE_CSS}</style>
+</head><body>
+  <main style="text-align:center;padding-top:80px">
+    <div style="font-size:40px;font-weight:800;color:var(--accent-strong)">M</div>
+    <h1>You need access to this document</h1>
+    <p style="color:var(--muted)">Markie documents are never public. Open the link from your invite email, or open the document in Markie with the account it was shared with.</p>
+    <p><a class="btn primary" href="${esc(download.href)}">${esc(download.label)}</a></p>
+  </main>
+</body></html>`;
+}

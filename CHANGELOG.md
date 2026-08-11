@@ -8,6 +8,34 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- **Sharing a document no longer makes it publicly readable.** Inviting someone
+  who did not have a Markie account created a public link for the document as a
+  side effect, and that link kept working for anyone who had the URL even after
+  you removed the person. Invites now carry a link addressed to one recipient.
+  It opens one document, it is checked against that person's access every time
+  it is used, and it stops working the moment you remove them. Public links are
+  still available, but only when you deliberately create one.
+
+### Fixed
+
+- **Share emails now contain something to click.** Sharing with someone who
+  already had an account sent them a note saying they were "in", with no link
+  to the document and nothing to do but go and look for it. The email now has
+  two buttons: read it on the web, or open it straight in Markie, where it
+  arrives in the Library synced and live rather than as a detached copy.
+- **Every share link that was emailed pointed at a page that did not exist.**
+  The website served nothing at the address the links used, so "Read it right
+  now" answered with a 404. The link and the page agree now.
+
+### Added
+
+- **Reveal in Finder** (`⌥⌘R`), in the File menu and the command palette, opens
+  the folder containing the document you are reading with the file selected, so
+  you can drag it into another app. Called "Show in Explorer" on Windows and
+  "Show in File Manager" on Linux.
+
 ## [0.3.0] - 2026-08-11
 
 ### Security

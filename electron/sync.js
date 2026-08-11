@@ -459,6 +459,7 @@ async function libraryState() {
 }
 
 module.exports = {
+  isConfigured,
   setConfig,
   setDocRole,
   syncOn,

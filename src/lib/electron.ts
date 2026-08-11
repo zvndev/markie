@@ -62,6 +62,7 @@ export interface ElectronAPI {
   saveFile(args: { filePath: string; content: string }): Promise<SaveResult>;
   saveFileAs(args: { defaultName: string; content: string }): Promise<SaveResult>;
   renameFile(args: { oldPath: string; newName: string }): Promise<SaveResult>;
+  revealFile(path: string): Promise<{ ok?: boolean; error?: string }>;
   // Each onX subscribes and returns an unsubscribe function.
   onMenuOpenFile(cb: () => void): Unsubscribe;
   onMenuNewFile(cb: () => void): Unsubscribe;
@@ -70,6 +71,7 @@ export interface ElectronAPI {
   onMenuSave(cb: () => void): Unsubscribe;
   onMenuSaveAs(cb: () => void): Unsubscribe;
   onMenuFork(cb: () => void): Unsubscribe;
+  onMenuReveal(cb: () => void): Unsubscribe;
   onMenuFormatTables(cb: () => void): Unsubscribe;
   onMenuCommandPalette(cb: () => void): Unsubscribe;
   onMenuShortcuts(cb: () => void): Unsubscribe;

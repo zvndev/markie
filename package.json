@@ -64,7 +64,9 @@
     "electron:pack:mac:x64": "npm run build && node scripts/local-electron-builder.mjs --config electron-builder.config.cjs --mac --x64 --dir --publish never",
     "electron:pack:win": "npm run build && node scripts/local-electron-builder.mjs --config electron-builder.config.cjs --win --x64 --dir --publish never && node scripts/install-win-native-prebuild.mjs",
     "electron:pack:linux": "npm run build && node scripts/local-electron-builder.mjs --config electron-builder.config.cjs --linux --x64 --dir --publish never",
-    "electron:release": "node scripts/release.mjs publish mac"
+    "electron:release": "node scripts/release.mjs publish mac",
+    "share:check": "node scripts/share-link-check.mjs",
+    "reveal:check": "node scripts/reveal-check.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

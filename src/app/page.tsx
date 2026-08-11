@@ -695,6 +695,32 @@ export default function Home() {
     setForkError(await handleFork());
   }, [handleFork]);
 
+  // Named for the file manager the reader actually has, so the palette entry
+  // matches the File menu and the word they would search for.
+  const revealLabel = useMemo(() => {
+    const platform = getElectronAPI()?.platform;
+    if (platform === "win32") return "Show in Explorer";
+    if (platform === "linux") return "Show in File Manager";
+    return "Reveal in Finder";
+  }, []);
+
+  // Show the open document in Finder, so it can be dragged into another app.
+  // A document that has never been saved has no file to point at, so save it
+  // first rather than opening a window onto nowhere.
+  const handleReveal = useCallback(async () => {
+    const api = getElectronAPI();
+    if (!api) return;
+    const current = docRef.current.filePath;
+    if (!current) {
+      await handlersRef.current.saveAs();
+      const saved = docRef.current.filePath;
+      if (!saved) return;
+      await api.revealFile?.(saved);
+      return;
+    }
+    await api.revealFile?.(current);
+  }, []);
+
   const handleExportHTML = useCallback(async () => {
     const api = getElectronAPI();
     if (!api) return;
@@ -849,6 +875,7 @@ export default function Home() {
     save: handleSave,
     saveAs: handleSaveAs,
     fork: handleMakeCopy,
+    reveal: handleReveal,
     exportHTML: handleExportHTML,
     fileOpened: (data: FilePayload) => loadFile(data),
   });
@@ -859,6 +886,7 @@ export default function Home() {
     handlersRef.current.save = handleSave;
     handlersRef.current.saveAs = handleSaveAs;
     handlersRef.current.fork = handleMakeCopy;
+    handlersRef.current.reveal = handleReveal;
     handlersRef.current.exportHTML = handleExportHTML;
   }, [
     handleOpenFile,
@@ -867,6 +895,7 @@ export default function Home() {
     handleSave,
     handleSaveAs,
     handleMakeCopy,
+    handleReveal,
     handleExportHTML,
   ]);
 
@@ -960,6 +989,7 @@ export default function Home() {
       api.onMenuSave?.(() => handlersRef.current.save()),
       api.onMenuSaveAs?.(() => handlersRef.current.saveAs()),
       api.onMenuFork?.(() => handlersRef.current.fork()),
+      api.onMenuReveal?.(() => handlersRef.current.reveal()),
       api.onMenuExportHTML?.(() => handlersRef.current.exportHTML()),
       api.onFileOpened?.((data) => handlersRef.current.fileOpened(data)),
     ];
@@ -972,6 +1002,7 @@ export default function Home() {
       { id: "save", title: "Save", group: "File", shortcut: "⌘S", run: handleSave },
       { id: "save-as", title: "Save As…", group: "File", shortcut: "⇧⌘S", run: () => handleSaveAs() },
       { id: "fork", title: "Duplicate (Fork)", group: "File", shortcut: "⇧⌘D", keywords: "copy fork duplicate", run: handleMakeCopy },
+      { id: "reveal", title: revealLabel, group: "File", shortcut: "⌥⌘R", keywords: "finder explorer folder show reveal drag locate", run: handleReveal },
       { id: "export-pdf-dark", title: "Export PDF (Dark)", group: "File", shortcut: "⇧⌘E", keywords: "print", run: () => handleExportPDF("dark") },
       { id: "export-pdf-light", title: "Export PDF (Light)", group: "File", keywords: "print", run: () => handleExportPDF("light") },
       { id: "export-html", title: "Export HTML", group: "File", run: handleExportHTML },
@@ -1022,6 +1053,8 @@ export default function Home() {
       handleSave,
       handleSaveAs,
       handleMakeCopy,
+      handleReveal,
+      revealLabel,
       handleExportPDF,
       handleExportHTML,
       handleNewFile,

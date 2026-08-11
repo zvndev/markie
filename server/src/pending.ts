@@ -17,6 +17,7 @@ db.exec(`
     PRIMARY KEY (doc_id, email)
   );
   CREATE INDEX IF NOT EXISTS idx_pending_email ON pending_shares(email);
+  CREATE INDEX IF NOT EXISTS idx_pending_token ON pending_shares(token);
 `);
 
 const norm = (email: string) => email.toLowerCase().trim();
@@ -44,6 +45,23 @@ export function listPendingForDoc(docId: string) {
     .all(docId) as Array<{ email: string; role: string; created_at: string }>;
 }
 
+// Who an invite token was addressed to, for someone who has not made an
+// account yet. The row existing is the authorization: withdraw the invite and
+// the link they were emailed stops opening the document.
+export function pendingForToken(
+  token: string
+): { docId: string; email: string; role: "viewer" | "editor" } | null {
+  if (!token) return null;
+  const row = db
+    .prepare(
+      "SELECT doc_id, email, role FROM pending_shares WHERE token = ?"
+    )
+    .get(token) as
+    | { doc_id: string; email: string; role: "viewer" | "editor" }
+    | undefined;
+  return row ? { docId: row.doc_id, email: row.email, role: row.role } : null;
+}
+
 export function removePending(docId: string, email: string): boolean {
   const res = db
     .prepare("DELETE FROM pending_shares WHERE doc_id = ? AND email = ?")
@@ -57,9 +75,14 @@ export function claimPendingInvites(email: string, userId: string): number {
   const e = norm(email);
   const pending = db
     .prepare(
-      "SELECT doc_id, role, invited_by FROM pending_shares WHERE email = ?"
+      "SELECT doc_id, role, invited_by, token FROM pending_shares WHERE email = ?"
     )
-    .all(e) as Array<{ doc_id: string; role: string; invited_by: string }>;
+    .all(e) as Array<{
+    doc_id: string;
+    role: string;
+    invited_by: string;
+    token: string;
+  }>;
   if (pending.length === 0) return 0;
 
   const claim = db.transaction(() => {
@@ -70,11 +93,17 @@ export function claimPendingInvites(email: string, userId: string): number {
         .prepare("SELECT 1 FROM docs WHERE id = ? AND owner_id = ?")
         .get(p.doc_id, userId);
       if (!owns) {
+        // The invite token moves onto the share row. The link already sent to
+        // this person keeps working after they make an account, instead of
+        // dying at the exact moment they finally act on it. Claiming twice
+        // must not mint a second token, so an existing one is left alone.
         db.prepare(
-          `INSERT INTO shares (doc_id, user_id, role, invited_by, created_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(doc_id, user_id) DO UPDATE SET role = excluded.role`
-        ).run(p.doc_id, userId, p.role, p.invited_by, now);
+          `INSERT INTO shares (doc_id, user_id, role, invited_by, created_at, token)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(doc_id, user_id) DO UPDATE SET
+             role = excluded.role,
+             token = COALESCE(shares.token, excluded.token)`
+        ).run(p.doc_id, userId, p.role, p.invited_by, now, p.token);
       }
       db.prepare(
         "DELETE FROM pending_shares WHERE doc_id = ? AND email = ?"

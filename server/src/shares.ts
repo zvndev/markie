@@ -10,6 +10,7 @@ import {
 } from "./public-links.ts";
 import { markieSiteUrl, primaryDownloadCta } from "./downloads.ts";
 import { disconnectUser } from "./collab.ts";
+import { newLinkToken } from "./link-token.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
 
@@ -31,6 +32,45 @@ db.exec(`
     PRIMARY KEY (doc_id, user_id)
   );
 `);
+
+// `shares` predates per-recipient links, so the column is added in place.
+// Checked through PRAGMA rather than by swallowing a duplicate-column error,
+// so a genuine migration failure still surfaces instead of being hidden.
+const shareColumns = db.prepare("PRAGMA table_info(shares)").all() as Array<{
+  name: string;
+}>;
+if (!shareColumns.some((c) => c.name === "token")) {
+  db.exec("ALTER TABLE shares ADD COLUMN token TEXT");
+}
+db.exec("CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token)");
+
+// The link token for one member of one document, minted on first use. Kept on
+// the share row so that deleting the row deletes the link.
+export function ensureShareToken(docId: string, userId: string): string {
+  const row = db
+    .prepare("SELECT token FROM shares WHERE doc_id = ? AND user_id = ?")
+    .get(docId, userId) as { token: string | null } | undefined;
+  if (row?.token) return row.token;
+  const token = newLinkToken();
+  db.prepare(
+    "UPDATE shares SET token = ? WHERE doc_id = ? AND user_id = ?"
+  ).run(token, docId, userId);
+  return token;
+}
+
+// Who a link token belongs to. Deliberately says nothing about whether they
+// may read the document: the caller re-derives that from accessLevel, so a
+// token that outlives someone's access resolves to a person who now fails the
+// check rather than to a document.
+export function memberForToken(
+  token: string
+): { docId: string; userId: string } | null {
+  if (!token) return null;
+  const row = db
+    .prepare("SELECT doc_id, user_id FROM shares WHERE token = ?")
+    .get(token) as { doc_id: string; user_id: string } | undefined;
+  return row ? { docId: row.doc_id, userId: row.user_id } : null;
+}
 
 async function requireUser(c: { req: { raw: Request } }) {
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
@@ -212,25 +252,32 @@ shares.post("/:id/shares", async (c) => {
        ON CONFLICT(doc_id, user_id) DO UPDATE SET role = excluded.role`
     ).run(docId, recipient.id, role, user.id, new Date().toISOString());
 
+    // Their own link to their own copy. Scoped to this person and this
+    // document, and re-checked against their share row on every open, so
+    // removing them from the document kills it.
+    const link = docLink(docId, ensureShareToken(docId, recipient.id));
     await sendEmail({
       to: recipient.email,
-      subject: `You're in: “${doc.name}”`,
-      text: `${inviter} added you to "${doc.name}" as ${
+      subject: `${inviter} shared “${doc.name}” with you`,
+      text: `${inviter} shared "${doc.name}" with you on Markie as ${
         role === "editor" ? "an editor" : "a viewer"
-      }. It's waiting in your Library — open Markie and press ⌘L.`,
-      html: addedHtml(inviter, doc.name, role),
+      }.\n\nRead it here: ${link}\n\nOr open it straight in Markie: ${appLink(docId)}\n\nThis link is yours alone and only works for your account.`,
+      html: addedHtml(inviter, doc.name, role, link, appLink(docId)),
     });
     return c.json({ ok: true, status: "member", userId: recipient.id, role });
   }
 
-  // Unknown email → pending invite + a friendly nudge to join.
-  addPending(docId, cleanEmail, role, user.id);
-  const previewUrl = `${MARKIE_SITE}/s/${createOrGetPublicLink(docId, user.id)}`;
+  // Unknown email → pending invite + a friendly nudge to join. The invite's
+  // own token is the link; this used to mint a public link, which made the
+  // document readable by anyone holding the URL and kept working after the
+  // invite was withdrawn.
+  const inviteToken = addPending(docId, cleanEmail, role, user.id);
+  const previewUrl = docLink(docId, inviteToken);
   await sendEmail({
     to: cleanEmail,
     subject: `📄 ${inviter} tossed you a doc`,
-    text: `${inviter} shared "${doc.name}" with you on Markie.\n\nRead it right now (no account needed): ${previewUrl}\n\nReading raw markdown in a browser is a small tragedy — Markie fixes that. Make an account with this email and "${doc.name}" will be waiting in your Library.`,
-    html: inviteHtml(inviter, doc.name, previewUrl),
+    text: `${inviter} shared "${doc.name}" with you on Markie.\n\nRead it right now (no account needed): ${previewUrl}\n\nReading raw markdown in a browser is a small tragedy — Markie fixes that. Make an account with this email and "${doc.name}" will be waiting in your Library.\n\nThis link was sent to you alone. Don't forward it.`,
+    html: inviteHtml(inviter, doc.name, previewUrl, docRawLink(docId, inviteToken)),
   });
   return c.json({ ok: true, status: "invited", email: cleanEmail, role });
 });
@@ -287,11 +334,28 @@ shares.delete("/:id/public-link", async (c) => {
   return c.json({ ok: true });
 });
 
+// A recipient's personal link to one document on the web.
+function docLink(docId: string, token: string): string {
+  return `${MARKIE_SITE}/d/${encodeURIComponent(docId)}?k=${encodeURIComponent(token)}`;
+}
+
+function docRawLink(docId: string, token: string): string {
+  return `${MARKIE_SITE}/d/${encodeURIComponent(docId)}/raw?k=${encodeURIComponent(token)}`;
+}
+
+// Opens the document in the desktop app, in the reader's own Library, synced
+// and live. No token: the app is already signed in, so it fetches the document
+// with the reader's own credentials rather than the email's.
+function appLink(docId: string): string {
+  return `markie://doc?id=${encodeURIComponent(docId)}&src=${encodeURIComponent(MARKIE_SITE)}`;
+}
+
 // ── playful invite email bodies ──
 function inviteHtml(
   inviter: string,
   docName: string,
-  previewUrl: string
+  previewUrl: string,
+  rawUrl: string
 ): string {
   const download = primaryDownloadCta(MARKIE_SITE);
   return `<div style="font-family:system-ui,-apple-system,sans-serif;max-width:460px;margin:0 auto;color:#18181b">
@@ -302,19 +366,27 @@ function inviteHtml(
   <p style="margin:20px 0">
     <a href="${escapeHtml(previewUrl)}" style="background:#f59e0b;color:#000;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;display:inline-block">Open it →</a>
   </p>
-  <p style="font-size:13px;line-height:1.7;color:#3f3f46">Or get the app: <a href="${escapeHtml(download.href)}" style="color:#b45309;font-weight:600">${escapeHtml(download.label)}</a> · <a href="markie://open" style="color:#b45309">Open in Markie</a> · <a href="${escapeHtml(previewUrl)}/raw" style="color:#b45309">Download the .md</a></p>
+  <p style="font-size:13px;line-height:1.7;color:#3f3f46">Or get the app: <a href="${escapeHtml(download.href)}" style="color:#b45309;font-weight:600">${escapeHtml(download.label)}</a> · <a href="${escapeHtml(rawUrl)}" style="color:#b45309">Download the .md</a></p>
   <p style="font-size:13px;color:#3f3f46">Make an account with this email to keep <strong>${escapeHtml(docName)}</strong> in your Library — your markdown will thank you.</p>
+  <p style="font-size:12px;line-height:1.6;color:#71717a">This link was sent to you alone and opens nothing else. Please don't forward it.</p>
 </div>`;
 }
 
 function addedHtml(
   inviter: string,
   docName: string,
-  role: "viewer" | "editor"
+  role: "viewer" | "editor",
+  webUrl: string,
+  appUrl: string
 ): string {
   return `<div style="font-family:system-ui,-apple-system,sans-serif;max-width:460px;margin:0 auto;color:#18181b">
   <div style="font-size:32px;font-weight:800;color:#f59e0b">M</div>
-  <h2 style="font-size:19px;margin:8px 0 4px">You're in: ${escapeHtml(docName)}</h2>
-  <p style="font-size:14px;line-height:1.5;color:#3f3f46">${escapeHtml(inviter)} added you as ${role === "editor" ? "an <strong>editor</strong>" : "a <strong>viewer</strong>"}. It's waiting in your Library — open Markie and press ⌘L${role === "editor" ? ", and you're both editing live." : "."}</p>
+  <h2 style="font-size:19px;margin:8px 0 4px">${escapeHtml(inviter)} shared ${escapeHtml(docName)} with you</h2>
+  <p style="font-size:14px;line-height:1.5;color:#3f3f46">You have ${role === "editor" ? "<strong>edit</strong> access, so you can work on it together, live." : "<strong>view</strong> access."}</p>
+  <p style="margin:20px 0">
+    <a href="${escapeHtml(webUrl)}" style="background:#f59e0b;color:#000;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;display:inline-block">Read it →</a>
+    <a href="${escapeHtml(appUrl)}" style="color:#b45309;font-weight:600;font-size:14px;padding:10px 14px;display:inline-block">Open in Markie</a>
+  </p>
+  <p style="font-size:12px;line-height:1.6;color:#71717a">This link is yours alone. It only opens ${escapeHtml(docName)}, and it stops working if your access is removed.</p>
 </div>`;
 }

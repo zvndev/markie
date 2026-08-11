@@ -7,6 +7,7 @@ import { shares } from "./shares.ts";
 import { comments } from "./comments.ts";
 import { themes } from "./themes.ts";
 import { publicShare } from "./public.ts";
+import { docView } from "./doc-view.ts";
 import { attachCollab } from "./collab.ts";
 import { desktopAuthDeepLink, desktopAuthState } from "./desktop-auth.ts";
 
@@ -98,6 +99,7 @@ app.route("/api/docs", docs);
 app.route("/api/docs", shares);
 app.route("/api/docs", comments);
 app.route("/api", themes);
+app.route("/", docView);
 app.route("/", publicShare);
 
 app.get("/api/me", async (c) => {

@@ -15,6 +15,7 @@ const crypto = require("crypto");
 const url = require("url");
 const { autoUpdater } = require("electron-updater");
 const { shareBaseFromSrc } = require("./share-origin");
+const { classifyDeepLink, cloudDocId } = require("./deep-links");
 const { createFileGrants } = require("./file-grants");
 const { buildAppCsp } = require("./csp");
 const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
@@ -47,11 +48,19 @@ let pendingDeepLink = null;
 // isn't ready yet (cold start from the OAuth browser hand-off). Always raises
 // the window so the user lands back in Markie focused.
 function deliverDeepLink(link) {
-  if (!link || !link.startsWith("markie://")) return;
-  // markie://open?token=…&src=… — a shared doc opened from the public link /
-  // email. Fetch it and open it locally (no account needed); handled in main.
-  if (link.startsWith("markie://open")) {
+  const kind = classifyDeepLink(link);
+  if (kind === "ignore") return;
+  // A public link: fetch it with the token the link carries and open a copy
+  // locally, no account needed.
+  if (kind === "shared-token") {
     openSharedFromDeepLink(link);
+    return;
+  }
+  // A document shared with this account. The link carries no token: the app
+  // fetches it with the signed-in user's own credentials, so it lands in their
+  // Library synced and live rather than as a detached copy.
+  if (kind === "cloud-doc") {
+    openCloudDocFromDeepLink(link);
     return;
   }
   if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
@@ -151,6 +160,85 @@ async function openSharedFromDeepLink(link) {
       });
     }
   }
+}
+
+// markie://doc?id=… — open a document that is shared with the signed-in
+// account. The link carries no credential of its own, so a stranger who gets
+// hold of it opens nothing: the fetch uses this app's own session, and the
+// server decides whether this account may read that document.
+//
+// On a cold start the link usually arrives before the renderer has handed the
+// sync engine its token, so "not signed in" is the normal first answer rather
+// than the truth. Wait for the renderer to sign in before believing it.
+async function openCloudDocFromDeepLink(link) {
+  if (!app.isReady()) {
+    app.whenReady().then(() => openCloudDocFromDeepLink(link));
+    return;
+  }
+  const cloudId = cloudDocId(link);
+  if (!cloudId) return;
+  if (!mainWindow) createWindow();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+
+  const signedIn = await waitForSignIn(15000);
+  if (!signedIn) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      dialog.showMessageBox(mainWindow, {
+        type: "info",
+        message: "Sign in to open this document",
+        detail: "This document was shared with your Markie account. Sign in, then open the link from your email again.",
+      });
+    }
+    return;
+  }
+
+  const res = await sync.pull(cloudId, downloadsUniquePath("Shared document.md"));
+  if (res && res.error) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      dialog.showMessageBox(mainWindow, {
+        type: "warning",
+        message: "Couldn't open the shared document",
+        detail: "It may have been unshared, or you're signed in with a different account than it was shared with.",
+      });
+    }
+    return;
+  }
+  // pull() writes under a placeholder name because the real one only comes back
+  // with the document. Rename before opening so the Library shows what the
+  // sender called it, not "Shared document".
+  let finalPath = res.path;
+  if (res.name) {
+    const preferred = downloadsUniquePath(res.name);
+    try {
+      fs.renameSync(res.path, preferred);
+      registry.movePath(res.path, preferred);
+      finalPath = preferred;
+    } catch { /* keep the placeholder name rather than lose the file */ }
+  }
+  fileGrants.grantFile(finalPath);
+  openLocalFile(finalPath);
+}
+
+// Resolve once the renderer has configured the sync engine with a session, or
+// give up so the caller can say something useful instead of hanging.
+function waitForSignIn(timeoutMs) {
+  return new Promise((resolve) => {
+    if (sync.isConfigured()) return resolve(true);
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (sync.isConfigured()) {
+        clearInterval(timer);
+        resolve(true);
+      } else if (Date.now() - started >= timeoutMs) {
+        clearInterval(timer);
+        resolve(false);
+      }
+    }, 250);
+  });
 }
 
 // What Markie last saw on disk for a path. A save compares against this so we
@@ -577,6 +665,32 @@ ipcMain.handle("doc-push", (_event, { path: p, name, content }) =>
 // with a badge and no way out, because the update strip only appears when the
 // *server* is ahead, which is exactly what an unpushed file usually is not.
 // Same grant rule as open-file-path: a path the app itself advertised.
+// Show the open document in the OS file manager, selected and ready to drag
+// somewhere else. Deliberately not ws-reveal: that one refuses anything outside
+// a workspace root, and the document you are looking at is usually somewhere
+// else entirely. A file Markie already has a read grant for is one the user
+// opened, so pointing at it in Finder gives away nothing new.
+ipcMain.handle("reveal-file", (_event, p) => {
+  const access = isAdvertisedPath(p)
+    ? fileGrants.grantFile(p)
+    : fileGrants.canRead(p);
+  if (!access.ok) return { error: access.error };
+  if (!fs.existsSync(access.path)) {
+    // Say so rather than opening a Finder window onto nothing, which reads as
+    // the feature being broken.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      dialog.showMessageBox(mainWindow, {
+        type: "warning",
+        message: "That file isn't on disk anymore",
+        detail: "It was moved or deleted since you opened it. Save it somewhere to get it back.",
+      });
+    }
+    return { error: "missing" };
+  }
+  shell.showItemInFolder(access.path);
+  return { ok: true };
+});
+
 ipcMain.handle("doc-retry-push", (_event, { path: p }) => {
   const access = isAdvertisedPath(p)
     ? fileGrants.grantFile(p)
@@ -1018,6 +1132,16 @@ const template = [
         label: "Duplicate (Fork)",
         accelerator: "CmdOrCtrl+Shift+D",
         click: () => mainWindow?.webContents.send("menu-fork"),
+      },
+      {
+        label:
+          process.platform === "darwin"
+            ? "Reveal in Finder"
+            : process.platform === "win32"
+              ? "Show in Explorer"
+              : "Show in File Manager",
+        accelerator: "CmdOrCtrl+Alt+R",
+        click: () => mainWindow?.webContents.send("menu-reveal"),
       },
       { type: "separator" },
       {

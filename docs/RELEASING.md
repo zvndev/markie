@@ -106,6 +106,27 @@ does not catch this, so check it by hand whenever `server/src/desktop-auth.ts`,
 `src/lib/auth-state.ts`, or the bridge routes in `server/src/index.ts` have changed since the last
 deploy.
 
+The service has no GitHub connection, so nothing deploys on push. Compare the last successful
+deployment against the server commits, and deploy if anything is behind:
+
+```sh
+railway status                                   # expect project markie / production / api
+railway deployment list | head -3                # last SUCCESS date
+git log --oneline --since=<that date> -- server/ # anything here is not deployed
+railway up server --path-as-root --service api --environment production --ci
+```
+
+`--path-as-root` is required: the service builds with `dockerfilePath: /Dockerfile` and no root
+directory set, so the archive root must be `server/` or the build cannot find the Dockerfile. The
+upload honours `.gitignore`, which is what keeps `server/node_modules` and the local `markie.db` out
+of it.
+
+Then confirm the running container, not just the build. `railway logs --deployment` should show
+`database already exists, skipping` (the volume survived), `auth schema up to date` (the migration on
+boot is idempotent), Litestream replicating, and `markie-api listening`. `curl <api>/health` should
+return 200. Schema changes deserve a closer look: the entrypoint migrates on every boot, so a bad
+migration takes the service down at start rather than failing loudly beforehand.
+
 ### 2. Set the version once
 
 ```sh

@@ -54,7 +54,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The editing modes are now **Rich**, **Source**, and **Split**. The mode called
   "View" was a full editor, so the name was telling you the opposite of what it
   did. `⌘1`, `⌘2`, and `⌘3` are unchanged.
-- **The download is less than half the size**, down from 590.7 MB to 285.7 MB.
+- **Markie takes up less than half the space it used to.** The installed app is
+  down from 590.7 MB to 285.7 MB, and the download from 209.2 MB to 123.0 MB.
   The app was shipping its entire build toolchain, which nothing at runtime ever
   loaded.
 - The MCP server now reports the shipped version during the handshake instead of

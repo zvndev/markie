@@ -372,6 +372,21 @@ async function main() {
     !(await cdp.ev(`window.__markieEditor.getText().includes("MY OWN UNSAVED LINE")`))
   );
 
+  // Retry backup: the Library's only exit from "unpushed". It runs entirely in
+  // the main process (grant check, read from disk, push), so nothing but a real
+  // run exercises it. Last, because a successful push bumps the server version
+  // and every earlier step depends on that sequence.
+  const retried = JSON.parse(
+    await cdp.ev(
+      `window.electronAPI.docRetryPush({ path: ${JSON.stringify(docPath)} }).then(JSON.stringify)`
+    )
+  );
+  check(
+    "Retry backup pushes a tracked file the renderer never opened for it",
+    retried?.ok === true,
+    JSON.stringify(retried)
+  );
+
   cdp.close();
 }
 

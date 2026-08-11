@@ -20,12 +20,43 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   accepts the account that comes back carrying it, so a web page cannot hand
   Markie an account you did not ask for. Sign-in codes are good for ten minutes
   and cannot be reused.
+- **Read-only shares are now read-only everywhere.** Someone given view-only
+  access could still type into a shared document, in either editing pane, with
+  nothing on screen explaining that their edits would never reach you. The panes
+  also disagreed with each other: the Source pane locked for everyone during a
+  live session, including the people who were allowed to edit. Access is now
+  resolved once, from the server, and every pane obeys it. Viewers see a strip
+  saying who shared the document, with "Make a copy" to work on their own.
+- **Removing someone from a shared document takes effect immediately.** Their
+  live connection is closed as soon as you revoke access. It used to be checked
+  only when they first connected, so an open session kept working.
+
+### Added
+
+- **Markie tells you when a document has changed somewhere else.** If another
+  device or another person has moved a document on, a line appears above it
+  offering to bring the change down. When nothing of yours is at stake that is
+  one click. When both copies changed, you get a choice that says what it costs
+  first, in lines: "Pulling replaces 8 lines of yours and brings in 12 from the
+  server." You can keep both, which saves your version beside the original under
+  its own name and then takes theirs, or pull and overwrite. Keep both is the
+  default, because it is the only one that cannot lose work.
+- Documents are checked for updates when you open one, when you come back to the
+  window, and once a minute while you are looking at it. Nothing is checked while
+  Markie is in the background.
+- A **Retry backup** button on any document whose last upload failed. That state
+  was visible in your Library but there was no way to act on it.
 
 ### Changed
 
 - The editing modes are now **Rich**, **Source**, and **Split**. The mode called
   "View" was a full editor, so the name was telling you the opposite of what it
   did. `⌘1`, `⌘2`, and `⌘3` are unchanged.
+- **The download is less than half the size**, down from 590.7 MB to 285.7 MB.
+  The app was shipping its entire build toolchain, which nothing at runtime ever
+  loaded.
+- The MCP server now reports the shipped version during the handshake instead of
+  a hardcoded one, and the Claude Code plugin manifest moves with each release.
 
 ### Fixed
 
@@ -51,14 +82,16 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   HTML, footnotes, and math, and marked the file as edited before you touched
   it. `SKILL.md`, `CLAUDE.md`, and `AGENTS.md` files were hit hardest. Files now
   open byte for byte as they are on disk.
+- **Markie no longer claims a document is backed up when it is not.** A failed
+  upload left the Library still reporting "Synced", which also put "Take cloud"
+  one click away from replacing your work with an older copy the server never
+  accepted. Failed uploads are now marked, and taking the cloud copy is refused
+  while local changes have not reached it.
 - Pressing `⌘/` with the cursor in the source editor no longer comments out the
   current line. It used to open the shortcuts dialog *and* silently wrap your
   text in `<!-- -->`, so edits happened without you noticing.
-
-### Changed
-
-- The MCP server now reports the shipped version during the handshake instead of
-  a hardcoded one, and the Claude Code plugin manifest moves with each release.
+- Pressing Escape while renaming a file no longer performs the rename it was
+  meant to cancel.
 
 ## [0.2.11] - 2026-07-21
 

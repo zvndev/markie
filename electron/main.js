@@ -571,6 +571,26 @@ ipcMain.handle("doc-sync-off", (_event, { path: p, deleteRemote }) =>
 ipcMain.handle("doc-push", (_event, { path: p, name, content }) =>
   sync.push(p, name, content)
 );
+// Retry a push that failed, for a file the Library is showing but the renderer
+// has not opened and so has no content for. "Unpushed" was added so the Library
+// stops claiming a file is backed up when it is not; without this it is a state
+// with a badge and no way out, because the update strip only appears when the
+// *server* is ahead, which is exactly what an unpushed file usually is not.
+// Same grant rule as open-file-path: a path the app itself advertised.
+ipcMain.handle("doc-retry-push", (_event, { path: p }) => {
+  const access = isAdvertisedPath(p)
+    ? fileGrants.grantFile(p)
+    : fileGrants.canRead(p);
+  if (!access.ok) return { error: access.error };
+  let content;
+  try {
+    content = fs.readFileSync(access.path, "utf-8");
+  } catch (err) {
+    return { error: `Couldn't read the file: ${err.message}` };
+  }
+  rememberDisk(access.path, content);
+  return sync.push(access.path, path.basename(access.path), content);
+});
 ipcMain.handle("doc-resolve", (_event, { path: p, strategy }) =>
   sync.resolve(p, strategy)
 );

@@ -116,6 +116,9 @@ export interface ElectronAPI {
     cloudId: string;
     suggestedName: string;
   }): Promise<SyncResult>;
+  // Retry a failed push for a tracked file the renderer has not opened, so
+  // "unpushed" is not a state with a badge and no way out.
+  docRetryPush?(args: { path: string }): Promise<SyncResult>;
   // Which tracked files the server is ahead of. One request for all of them.
   docCheckUpdates?(): Promise<{ updates: DocUpdate[] }>;
   // The server's copy, for costing a pull before making it.

@@ -353,6 +353,18 @@ export function Library({
             {item.path && item.exists && (
               <button className="text-muted hover:text-foreground" onClick={() => copyContents(item)}>Copy contents</button>
             )}
+            {/* "Unpushed" means the snapshot never reached the cloud. It had a
+                badge and no way out: the update strip only appears when the
+                server is ahead, which this usually is not, so the only recovery
+                was to open the file and save it again with nothing saying so. */}
+            {signedIn && item.state === "unpushed" && item.exists && item.path && (
+              <button
+                className="text-[var(--status-blue)] hover:underline"
+                onClick={() => act(() => api.docRetryPush!({ path: item.path! }))}
+              >
+                Retry backup
+              </button>
+            )}
             {signedIn && item.state === "local-only" && item.exists && (
               <button className="text-muted hover:text-foreground" onClick={() => syncOn(item)}>Sync to cloud</button>
             )}

@@ -8,6 +8,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-11
+
 ### Security
 
 - **Sharing a document no longer makes it publicly readable.** Inviting someone
@@ -152,7 +154,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Desktop navigation made dependable across platforms, and Windows installers
   carry the correct native modules.
 
-[Unreleased]: https://github.com/zvndev/markie/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/zvndev/markie/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/zvndev/markie/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/zvndev/markie/compare/v0.2.11...v0.3.0
 [0.2.11]: https://github.com/zvndev/markie/compare/v0.2.9...v0.2.11
 [0.2.10]: https://github.com/zvndev/markie/compare/v0.2.9...v0.2.10

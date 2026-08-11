@@ -1,6 +1,6 @@
 {
   "name": "markie-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "description": "Local markdown-workspace MCP server bundled in Markie (dependency-free).",

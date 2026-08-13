@@ -25,7 +25,7 @@ export interface TerminalContext {
 
 export interface ElectronAPI {
   platform: string;
-  openFile(): Promise<FilePayload | null>;
+  openFile(args?: { near?: string | null }): Promise<FilePayload | null>;
   openFilePath(path: string): Promise<FilePayload | null>;
   // resolve a dropped File to its on-disk path (Electron webUtils)
   pathForFile(file: File): string | null;

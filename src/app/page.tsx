@@ -559,7 +559,8 @@ export default function Home() {
   const handleOpenFile = useCallback(() => {
     const api = getElectronAPI();
     if (api) {
-      api.openFile().then((result) => {
+      // Start the picker beside the document already open.
+      api.openFile({ near: docRef.current.filePath }).then((result) => {
         if (result) loadFile(result);
       });
       return;

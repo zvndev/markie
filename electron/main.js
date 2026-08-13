@@ -16,6 +16,7 @@ const url = require("url");
 const { autoUpdater } = require("electron-updater");
 const { shareBaseFromSrc } = require("./share-origin");
 const { classifyDeepLink, cloudDocId } = require("./deep-links");
+const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
 const { buildAppCsp } = require("./csp");
 const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
@@ -398,9 +399,11 @@ function setupCSP() {
 }
 
 // IPC: Open file dialog
-ipcMain.handle("open-file", async () => {
+ipcMain.handle("open-file", async (_event, args) => {
+  const startDir = dialogStartDir(args?.near);
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ["openFile"],
+    ...(startDir ? { defaultPath: startDir } : {}),
     filters: [
       { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
       { name: "CSV", extensions: ["csv"] },
@@ -665,6 +668,11 @@ ipcMain.handle("doc-push", (_event, { path: p, name, content }) =>
 // with a badge and no way out, because the update strip only appears when the
 // *server* is ahead, which is exactly what an unpushed file usually is not.
 // Same grant rule as open-file-path: a path the app itself advertised.
+// Open the file manager with the file selected.
+function revealInFileManager(target) {
+  shell.showItemInFolder(target);
+}
+
 // Show the open document in the OS file manager, selected and ready to drag
 // somewhere else. Deliberately not ws-reveal: that one refuses anything outside
 // a workspace root, and the document you are looking at is usually somewhere
@@ -687,7 +695,7 @@ ipcMain.handle("reveal-file", (_event, p) => {
     }
     return { error: "missing" };
   }
-  shell.showItemInFolder(access.path);
+  revealInFileManager(access.path);
   return { ok: true };
 });
 

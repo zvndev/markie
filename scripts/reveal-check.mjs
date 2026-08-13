@@ -138,6 +138,53 @@ async function cdpConnect() {
   return { send, ev, close: () => ws.close() };
 }
 
+// Ask Finder what it is actually showing. This is the only way to tell
+// "revealed the document" from "brought Finder to the front", which look
+// identical from inside the app.
+function osascript(script) {
+  return new Promise((resolve) => {
+    const child = spawn("osascript", ["-e", script]);
+    let out = "";
+    child.stdout.on("data", (d) => (out += d.toString()));
+    child.stderr.on("data", (d) => (out += d.toString()));
+    child.on("close", () => resolve(out.trim()));
+  });
+}
+
+async function closeFinderWindows() {
+  await osascript('tell application "Finder" to close every window');
+}
+
+async function finderState() {
+  const raw = await osascript(`
+    tell application "Finder"
+      set sel to "-"
+      set win to "-"
+      try
+        if (count of selection) > 0 then set sel to POSIX path of (item 1 of selection as alias)
+      end try
+      try
+        if (count of windows) > 0 then set win to POSIX path of (target of front Finder window as alias)
+      end try
+      return sel & "|" & win
+    end tell
+  `);
+  const [selection, frontWindow] = raw.split("|");
+  return {
+    selection: selection === "-" ? null : selection,
+    frontWindow: frontWindow === "-" ? null : frontWindow,
+  };
+}
+
+// Finder reports resolved paths with a trailing slash on folders; /tmp is a
+// symlink to /private/tmp. Compare what the user would call the same place.
+function samePath(a, b) {
+  if (!a || !b) return false;
+  const norm = (p) =>
+    p.replace(/\/+$/, "").replace(/^\/private\/tmp\//, "/tmp/");
+  return norm(a) === norm(b);
+}
+
 async function main() {
   const workDir = await mkdtemp(path.join(tmpdir(), "markie-reveal-"));
   const userDataDir = await mkdtemp(path.join(tmpdir(), "markie-reveal-profile-"));
@@ -210,6 +257,13 @@ async function main() {
   );
 
   // The document Markie has open: revealing it is the whole point.
+  //
+  // Asserting the return value alone proves nothing here. showItemInFolder
+  // returns void, so {ok:true} only says the IPC ran; it says nothing about
+  // where Finder ended up. An earlier version of this check stopped there and
+  // passed while the feature was, from the user's side, opening a Finder window
+  // onto the wrong place. Ask Finder instead.
+  await closeFinderWindows();
   const opened = await cdp.ev(
     `window.electronAPI.revealFile(${JSON.stringify(docPath)})`
   );
@@ -217,6 +271,29 @@ async function main() {
     "revealing the open document succeeds",
     opened?.ok === true,
     JSON.stringify(opened)
+  );
+
+  // Finder opens the window and applies the selection asynchronously, so poll
+  // rather than reading once and calling a slow reveal a broken one.
+  let state = await finderState();
+  for (let i = 0; i < 15 && !samePath(state.selection, docPath); i += 1) {
+    await new Promise((r) => setTimeout(r, 400));
+    state = await finderState();
+  }
+
+  check(
+    "Finder opens the folder the document is in",
+    samePath(state.frontWindow, path.dirname(docPath)),
+    `front window ${state.frontWindow ?? "(none)"}`
+  );
+
+  // Reported, not asserted. Finder's `selection` returns empty for a window it
+  // has just created, whether the reveal came from Electron or from `open -R`,
+  // and the same sequence run twice does not always agree. That is a limit of
+  // reading Finder over AppleScript, not a statement about what is on screen,
+  // so gating on it would only produce a test that fails at random.
+  console.log(
+    `  note  Finder reports selection: ${state.selection ?? "(none — see comment)"}`
   );
 
   // A file this window was never given must be refused, or "reveal" becomes a

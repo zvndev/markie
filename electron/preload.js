@@ -13,7 +13,7 @@ function subscribe(channel, callback, map) {
 
 contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
-  openFile: () => ipcRenderer.invoke("open-file"),
+  openFile: (args) => ipcRenderer.invoke("open-file", args),
   openFilePath: (path) => ipcRenderer.invoke("open-file-path", path),
   // Electron 32+ removed File.path; resolve a dropped File to its disk path.
   pathForFile: (file) => {

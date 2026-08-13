@@ -8,6 +8,14 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Open now starts in the folder you are already working in.** Pressing Open
+  while reading a document dropped you wherever a file dialog was last used,
+  which was usually somewhere unrelated, so finding the file next to the one on
+  screen meant navigating back every time. The picker now opens beside the
+  current document.
+
 ## [0.3.1] - 2026-08-11
 
 ### Security

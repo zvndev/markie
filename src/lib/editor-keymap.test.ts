@@ -33,10 +33,19 @@ describe("editor / app keybinding conflicts", () => {
     expect(conflictingShortcuts(["Mod-9"], ["Mod-/"])).toEqual([]);
   });
 
-  it("keeps editor-only bindings such as Mod-f available", () => {
-    // Find/replace inside the source editor is CodeMirror's and must survive:
-    // the app deliberately does not bind Mod-f.
-    expect(APP_OWNED_SHORTCUTS).not.toContain("Mod-f");
-    expect(conflictingShortcuts()).not.toContain("Mod-f");
+  it("takes the find keys away from CodeMirror", () => {
+    // Find is the app's. Both panes search through one bar, and CodeMirror's
+    // own panel opening on top of it would give the source pane a second
+    // search box with its own options and its own match count.
+    for (const key of ["Mod-f", "Mod-g", "Mod-Shift-g"]) {
+      expect(APP_OWNED_SHORTCUTS).toContain(key);
+      expect(conflictingShortcuts()).toContain(key);
+    }
+  });
+
+  it("keeps editor-only bindings the app has no opinion about", () => {
+    // Undo belongs to whichever editor has focus; the app must not take it.
+    expect(APP_OWNED_SHORTCUTS).not.toContain("Mod-z");
+    expect(conflictingShortcuts()).not.toContain("Mod-z");
   });
 });

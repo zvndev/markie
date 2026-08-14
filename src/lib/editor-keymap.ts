@@ -19,6 +19,12 @@ export const APP_OWNED_SHORTCUTS = [
   "Mod-/",
   "Mod-Shift-e",
   "Mod-Alt-t",
+  // Find is the app's, not CodeMirror's. Both panes search through one bar, so
+  // the editor's own search panel must never open: two search UIs with two
+  // option sets and two match counts is worse than either alone.
+  "Mod-f",
+  "Mod-g",
+  "Mod-Shift-g",
 ] as const;
 
 // Keys bound by @codemirror/commands (defaultKeymap, historyKeymap) and
@@ -48,6 +54,7 @@ export const CODEMIRROR_BOUND_KEYS = [
   "Mod-d",
   "Mod-f",
   "Mod-g",
+  "Mod-Shift-g",
   "Mod-Shift-l",
   "Mod-Alt-g",
 ] as const;

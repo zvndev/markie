@@ -22,6 +22,7 @@ import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import type { CollabConfig, PeerUser } from "@/lib/collab";
 import { CommentLayer } from "@/components/comments";
+import { findHighlightPlugin, findPluginKey } from "@/lib/rich-find";
 
 interface RichViewProps {
   value: string; // canonical markdown
@@ -135,6 +136,18 @@ export function RichView({
       }, 250);
     },
   });
+
+  // Search highlights are a plugin, not marks in the document, so nothing about
+  // finding text can be serialized into the file. Registered after the fact
+  // rather than as an extension because it holds no configuration and the
+  // editor is rebuilt whenever collab changes.
+  useEffect(() => {
+    if (!editor) return;
+    editor.registerPlugin(findHighlightPlugin());
+    return () => {
+      if (!editor.isDestroyed) editor.unregisterPlugin(findPluginKey);
+    };
+  }, [editor]);
 
   // useEditor re-applies changed options on every render but deliberately keeps
   // whatever `editable` the editor already had (@tiptap/react's

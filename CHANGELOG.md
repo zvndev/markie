@@ -8,6 +8,23 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Find and replace** (`⌘F`, and `⌥⌘F` to replace), in the Edit menu and the
+  command palette. `⌘F` used to do nothing at all in Rich, which is the mode
+  Markie opens in: find existed, but only inside the Markdown Source editor,
+  behind its own separate search box. There is now one bar, and it works in
+  whichever pane you are reading. `⏎` and `⇧⏎` step through the matches, `⌘G`
+  steps from anywhere, and the count tells you where you are. Match case and
+  whole word are both there, and the search text is taken literally, so looking
+  for `a.b` or `$5 (approx)` finds exactly that.
+- Replace changes one match, and Replace All changes the rest, each in a single
+  undo. Read-only shares can be searched but not rewritten.
+- Searching the Rich pane finds phrases that run through formatting. "quick
+  brown" is found even when only "quick" is bold, which is one document to you
+  and two pieces of text to the editor. Each pane searches what it is actually
+  showing: the heading marker `#` is real text in Source and is not in Rich.
+
 ### Fixed
 
 - **Open now starts in the folder you are already working in.** Pressing Open

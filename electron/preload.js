@@ -66,6 +66,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onMenuFork: (callback) => subscribe("menu-fork", callback),
   onMenuReveal: (callback) => subscribe("menu-reveal", callback),
   onMenuFormatTables: (callback) => subscribe("menu-format-tables", callback),
+  onMenuFind: (callback) => subscribe("menu-find", callback),
+  onMenuFindReplace: (callback) => subscribe("menu-find-replace", callback),
   onMenuCommandPalette: (callback) =>
     subscribe("menu-command-palette", callback),
   onMenuShortcuts: (callback) => subscribe("menu-shortcuts", callback),

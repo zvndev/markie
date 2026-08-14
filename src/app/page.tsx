@@ -24,6 +24,10 @@ import {
 import { ConflictDialog } from "@/components/conflict-dialog";
 import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
+import { FindBar } from "@/components/find-bar";
+import { richFindTarget } from "@/lib/rich-find";
+import { sourceFindTarget } from "@/lib/source-find";
+import type { EditorView as SourceView } from "@codemirror/view";
 import { TerminalPanel } from "@/components/terminal-panel";
 import { TERMINAL_ENABLED } from "@/lib/features";
 import {
@@ -126,26 +130,6 @@ const fromDisk = (name: string | null, raw: string) =>
 const toDisk = (name: string | null, md: string) =>
   isCSVName(name) ? markdownTableToCSV(md) : md;
 
-// Focus the source editor and open its find panel. CodeMirror owns ⌘F inside
-// the editor; this lets the command palette reach it from any view mode.
-function focusEditorFind(): void {
-  requestAnimationFrame(() => {
-    const editor = document.querySelector<HTMLElement>(".cm-content");
-    if (!editor) return;
-    editor.focus();
-    editor.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "f",
-        code: "KeyF",
-        metaKey: true,
-        ctrlKey: false,
-        bubbles: true,
-        cancelable: true,
-      })
-    );
-  });
-}
-
 export default function Home() {
   const [content, setContent] = useState("");
   const [booted, setBooted] = useState(false);
@@ -165,6 +149,12 @@ export default function Home() {
   const leftViewRef = useRef<LeftView>("library");
   const [showTerminal, setShowTerminal] = useState(false);
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
+  const [sourceView, setSourceView] = useState<SourceView | null>(null);
+  const [showFind, setShowFind] = useState(false);
+  const [findWithReplace, setFindWithReplace] = useState(false);
+  // In Split both panes are on screen, so find follows the one you last
+  // touched. In the single-pane modes there is nothing to choose between.
+  const [lastPane, setLastPane] = useState<"rich" | "source">("rich");
   // bumps when auth changes out-of-band (deep-link sign-in) so account UI refreshes
   const [authNonce, setAuthNonce] = useState(0);
   // bumps to refresh the Library panel (file opened/saved, sync changed)
@@ -808,6 +798,23 @@ export default function Home() {
         return;
       }
       if (e.metaKey || e.ctrlKey) {
+        // Matched on e.code, not e.key: holding Option on macOS turns "f" into
+        // "ƒ", so ⌥⌘F would never be recognised by name.
+        //
+        // ⌘F finds, ⌥⌘F finds and replaces. ⌘G steps, and opens the bar on the
+        // last search when it is closed; the bar owns which match is current,
+        // so it is the one that handles the step.
+        if (e.code === "KeyF") {
+          e.preventDefault();
+          setFindWithReplace(e.altKey);
+          setShowFind(true);
+          return;
+        }
+        if (e.code === "KeyG") {
+          e.preventDefault();
+          setShowFind(true);
+          return;
+        }
         switch (e.key) {
           case "o":
             e.preventDefault();
@@ -987,6 +994,14 @@ export default function Home() {
       api.onMenuFormatTables?.(() =>
         setContent((prev) => formatMarkdownTables(prev))
       ),
+      api.onMenuFind?.(() => {
+        setFindWithReplace(false);
+        setShowFind(true);
+      }),
+      api.onMenuFindReplace?.(() => {
+        setFindWithReplace(true);
+        setShowFind(true);
+      }),
       api.onMenuSave?.(() => handlersRef.current.save()),
       api.onMenuSaveAs?.(() => handlersRef.current.saveAs()),
       api.onMenuFork?.(() => handlersRef.current.fork()),
@@ -1015,7 +1030,10 @@ export default function Home() {
       // Find lives in the source editor (CodeMirror owns ⌘F there). Surface it
       // as a command so it is discoverable from View mode, and say where it
       // lands rather than silently changing the view.
-      { id: "find", title: "Find in Source…", group: "View", shortcut: "⌘F", keywords: "search find replace text", run: () => { setMode((m) => (m === "preview" ? "split" : m)); focusEditorFind(); } },
+      // No longer "Find in Source": find works in whichever pane you are in,
+      // so it no longer drags you into Split to reach the source editor.
+      { id: "find", title: "Find…", group: "View", shortcut: "⌘F", keywords: "search find text", run: () => { setFindWithReplace(false); setShowFind(true); } },
+      { id: "find-replace", title: "Find and Replace…", group: "View", shortcut: "⌥⌘F", keywords: "search find replace all substitute", run: () => { setFindWithReplace(true); setShowFind(true); } },
       ...(TERMINAL_ENABLED ? [{ id: "terminal", title: "Toggle Terminal", group: "View", shortcut: "⌃`", keywords: "shell console zsh bash powershell cmd", run: () => setShowTerminal((v) => !v) }] as AppCommand[] : []),
       { id: "copy-path", title: "Copy File Path", group: "File", keywords: "link location terminal clipboard", run: () => { const p = docRef.current.filePath; if (p) navigator.clipboard.writeText(p); } },
       { id: "copy-content", title: "Copy Document Contents", group: "File", keywords: "clipboard markdown text", run: () => navigator.clipboard.writeText(docRef.current.content) },
@@ -1062,6 +1080,19 @@ export default function Home() {
       selectView,
     ]
   );
+
+  // Which pane the find bar searches. Rebuilt whenever the pane behind it
+  // changes so it can never address an editor that has been torn down.
+  const findPane: "rich" | "source" =
+    mode === "edit" ? "source" : mode === "preview" ? "rich" : lastPane;
+  const findTarget = useMemo(() => {
+    if (findPane === "source") {
+      return sourceView ? sourceFindTarget(sourceView) : null;
+    }
+    return richEditor ? richFindTarget(richEditor) : null;
+  }, [findPane, sourceView, richEditor]);
+
+  const closeFind = useCallback(() => setShowFind(false), []);
 
   if (!booted) {
     return <div className="h-screen bg-background" />;
@@ -1154,16 +1185,30 @@ export default function Home() {
 
           <div
             data-markie-document-area
-            className={`markie-document-area flex-1 min-h-0 min-w-0 overflow-hidden ${
+            className={`markie-document-area relative flex-1 min-h-0 min-w-0 overflow-hidden ${
               mode === "split"
                 ? "markie-document-area--split grid grid-cols-[minmax(0,0.96fr)_minmax(0,1.04fr)] max-[820px]:grid-cols-[minmax(0,0.94fr)_minmax(0,1.06fr)]"
                 : "markie-document-area--single flex"
             }`}
           >
+            <FindBar
+              open={showFind}
+              withReplace={findWithReplace}
+              target={findTarget}
+              // The source pane is also locked during a live session, because
+              // shared edits have to travel through the rich pane's Yjs doc.
+              canReplace={
+                docEditable && !(findPane === "source" && !!collabCfg)
+              }
+              revision={content}
+              onClose={closeFind}
+            />
+
             {/* Editor pane */}
             {(mode === "edit" || mode === "split") && (
               <div
                 data-markie-source-pane
+                onFocusCapture={() => setLastPane("source")}
                 className={`${
                   mode === "split" ? "markie-pane-divider" : ""
                 } markie-source-pane h-full min-w-0 w-full flex-1 overflow-hidden flex flex-col`}
@@ -1173,6 +1218,7 @@ export default function Home() {
                   <Editor
                     value={content}
                     onChange={setContent}
+                    onViewReady={setSourceView}
                     // Read-only for two separate reasons: the rich pane owns the
                     // shared document while a session is live, and a viewer may
                     // not edit at all.
@@ -1186,6 +1232,7 @@ export default function Home() {
             {(mode === "preview" || mode === "split") && (
               <div
                 data-markie-rich-pane
+                onFocusCapture={() => setLastPane("rich")}
                 className="markie-rich-pane h-full min-w-0 w-full flex-1 overflow-hidden flex"
               >
                 <FormatRail editor={richEditor} />

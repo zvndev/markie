@@ -73,6 +73,8 @@ export interface ElectronAPI {
   onMenuFork(cb: () => void): Unsubscribe;
   onMenuReveal(cb: () => void): Unsubscribe;
   onMenuFormatTables(cb: () => void): Unsubscribe;
+  onMenuFind(cb: () => void): Unsubscribe;
+  onMenuFindReplace(cb: () => void): Unsubscribe;
   onMenuCommandPalette(cb: () => void): Unsubscribe;
   onMenuShortcuts(cb: () => void): Unsubscribe;
   onMenuTheme(cb: () => void): Unsubscribe;

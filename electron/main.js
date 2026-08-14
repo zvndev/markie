@@ -1185,6 +1185,22 @@ const template = [
       { role: "paste" },
       { role: "selectAll" },
       { type: "separator" },
+      // Find lives in the Edit menu because that is where people look for it,
+      // and the accelerators have to be declared here: a menu accelerator
+      // consumes the key before the page sees it, so leaving Find out of the
+      // menu is not neutral, it is the only reason ⌘F ever reached the
+      // renderer.
+      {
+        label: "Find…",
+        accelerator: "CmdOrCtrl+F",
+        click: () => mainWindow?.webContents.send("menu-find"),
+      },
+      {
+        label: "Find and Replace…",
+        accelerator: "CmdOrCtrl+Alt+F",
+        click: () => mainWindow?.webContents.send("menu-find-replace"),
+      },
+      { type: "separator" },
       {
         label: "Format Tables",
         accelerator: "CmdOrCtrl+Alt+T",

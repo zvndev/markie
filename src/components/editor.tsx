@@ -7,6 +7,7 @@ import { languages } from "@codemirror/language-data";
 import { EditorView, keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
 import { conflictingShortcuts } from "@/lib/editor-keymap";
+import { findHighlightField } from "@/lib/source-find";
 import {
   editorThemeForTokens,
   findTheme,
@@ -33,6 +34,9 @@ interface EditorProps {
   // Live sessions lock the source pane — edits must flow through the
   // collaborative View so they reach the shared Yjs doc
   readOnly?: boolean;
+  // Hands the underlying view to the page so the find bar can search this
+  // pane. Called with null on unmount so nothing holds a destroyed view.
+  onViewReady?: (view: EditorView | null) => void;
 }
 
 function currentEditorTheme(): "light" | "dark" {
@@ -40,7 +44,12 @@ function currentEditorTheme(): "light" | "dark" {
   return editorThemeForTokens(findTheme(store, store.activeId).tokens);
 }
 
-export function Editor({ value, onChange, readOnly = false }: EditorProps) {
+export function Editor({
+  value,
+  onChange,
+  readOnly = false,
+  onViewReady,
+}: EditorProps) {
   const [codeTheme, setCodeTheme] = useState<"light" | "dark">(
     currentEditorTheme
   );
@@ -63,14 +72,21 @@ export function Editor({ value, onChange, readOnly = false }: EditorProps) {
     return () => window.removeEventListener(THEME_APPLIED_EVENT, onTheme);
   }, []);
 
+  // @uiw/react-codemirror announces creation but not teardown, and this pane is
+  // unmounted every time the view mode changes. Without this the find bar would
+  // keep searching a destroyed view.
+  useEffect(() => () => onViewReady?.(null), [onViewReady]);
+
   return (
     <CodeMirror
       value={value}
       onChange={onChange}
       readOnly={readOnly}
+      onCreateEditor={(view) => onViewReady?.(view)}
       extensions={[
         appShortcutGuard,
         markdown({ base: markdownLanguage, codeLanguages: languages }),
+        findHighlightField,
         theme,
         EditorView.lineWrapping,
       ]}

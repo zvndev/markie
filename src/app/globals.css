@@ -784,3 +784,17 @@ body {
   user-select: none;
   pointer-events: none;
 }
+
+/* Find-bar highlights. One rule for both panes, because a match should look
+   the same whether you are reading the rendered document or the markdown.
+   Colours are literal rather than themed: the highlight has to stay legible
+   over every theme's text colour, including the light ones. */
+.markie-find-hit {
+  background: rgba(250, 204, 21, 0.32);
+  border-radius: 2px;
+}
+
+.markie-find-hit--current {
+  background: rgba(251, 146, 60, 0.65);
+  box-shadow: 0 0 0 1px rgba(251, 146, 60, 0.9);
+}

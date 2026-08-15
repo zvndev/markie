@@ -11,6 +11,7 @@ export function UpdateToast() {
   const [version, setVersion] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
 
   useEffect(() => {
     const api = getElectronAPI();
@@ -22,12 +23,35 @@ export function UpdateToast() {
     return () => off?.();
   }, []);
 
+  // Still here means it did not quit. Restarting cannot take this long when it
+  // works, and saying nothing leaves the button reading "Restarting…" forever,
+  // which is what it did: an error in the main process blocked the quit and the
+  // notice sat there with no way forward.
+  useEffect(() => {
+    if (!installing) return;
+    const timer = setTimeout(() => {
+      setInstalling(false);
+      setFailed(
+        "Markie is still running, so the update did not install. Try again, or download the latest version from markie.zvndev.com."
+      );
+    }, 20_000);
+    return () => clearTimeout(timer);
+  }, [installing]);
+
   if (version === null) return null;
 
-  const install = () => {
+  const install = async () => {
     setInstalling(true);
+    setFailed(null);
     // Quits, swaps the .app bundle in place, and relaunches — no duplicate app.
-    getElectronAPI()?.quitAndInstall();
+    // A successful call never comes back: the process is gone before it can.
+    const result = (await getElectronAPI()?.quitAndInstall()) as
+      | { ok?: boolean; error?: string }
+      | undefined;
+    if (result && result.ok === false) {
+      setInstalling(false);
+      setFailed(result.error ?? "Markie could not install the update.");
+    }
   };
 
   // Collapsed: a persistent pill that nudges without covering content. It does
@@ -55,7 +79,7 @@ export function UpdateToast() {
         Update ready{version ? ` (${version})` : ""}
       </div>
       <div className="text-[12px] text-muted mb-3 leading-snug">
-        A new version of Markie has downloaded. Restart to install it.
+        {failed ?? "A new version of Markie has downloaded. Restart to install it."}
       </div>
       <div className="flex items-center gap-2">
         <button
@@ -63,7 +87,7 @@ export function UpdateToast() {
           disabled={installing}
           className="flex-1 text-[12px] py-1.5 rounded-md bg-accent text-foreground hover:opacity-90 transition-opacity disabled:opacity-60"
         >
-          {installing ? "Restarting…" : "Restart & update"}
+          {installing ? "Restarting…" : failed ? "Try again" : "Restart & update"}
         </button>
         <button
           onClick={() => setCollapsed(true)}

@@ -144,7 +144,11 @@ export interface ElectronAPI {
   // Auto-update
   checkForUpdates(): Promise<{ ok: boolean; reason?: string }>;
   updateStatus(): Promise<string>;
-  quitAndInstall(): Promise<void>;
+  // Resolves only when the install did *not* happen; a successful call takes
+  // the process down before it can return.
+  quitAndInstall(): Promise<
+    { ok: boolean; reason?: string; error?: string } | void
+  >;
   onUpdateAvailable(cb: (info: { version?: string }) => void): Unsubscribe;
   onUpdateProgress(cb: (info: { percent: number }) => void): Unsubscribe;
   onUpdateReady(cb: (info: { version?: string }) => void): Unsubscribe;

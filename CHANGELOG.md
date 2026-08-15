@@ -8,6 +8,20 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **An update that fails to install now says so.** "Restart & update" could sit
+  on "Restarting…" forever with nothing to click and no explanation, because an
+  error while quitting stopped Markie from quitting at all: the installer then
+  waited on an app that was never going to close, and the update silently never
+  landed. Markie now reports the failure, offers "Try again", and notices when
+  the restart has not happened.
+- **A logging failure can no longer take down the main process.** The update
+  system wrote its progress through a channel that can fail, and a failed write
+  raised an error big enough to put a JavaScript error dialog on screen mid
+  install. Log writes are now allowed to fail quietly, and an unexpected error
+  is recorded instead of interrupting you with a stack trace.
+
 ## [0.3.2] - 2026-08-14
 
 ### Added

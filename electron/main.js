@@ -20,6 +20,26 @@ const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
 const { buildAppCsp } = require("./csp");
 const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
+const { guardedLogger } = require("./updater-logging");
+
+// Electron answers an uncaught exception in the main process with a modal
+// dialog containing a raw stack trace. That is alarming on its own, and it is
+// blocking: one thrown during quitAndInstall keeps the app alive, so Squirrel
+// waits on a process that never exits and the update silently never lands.
+// Log it and stay up instead.
+//
+// The write is wrapped because this handler exists partly to survive a console
+// that is failing: logging an EPIPE to a broken stdout throws another one and
+// takes the process down anyway.
+for (const signal of ["uncaughtException", "unhandledRejection"]) {
+  process.on(signal, (error) => {
+    try {
+      console.error(`${signal}:`, error);
+    } catch {
+      // The thing we would report it to is the thing that broke.
+    }
+  });
+}
 const {
   OPENABLE,
   findDeepLinkArg,
@@ -887,6 +907,12 @@ function setupAutoUpdate() {
   if (!shouldSetupAutoUpdate({ isDev, isPackaged: app.isPackaged, platform: process.platform })) {
     return;
   }
+  // Before anything else: electron-updater logs through console, and a console
+  // write can throw (EPIPE on a closed stdout). An unguarded debug line during
+  // quitAndInstall becomes an uncaught exception, which becomes a modal dialog,
+  // which stops the app from quitting — so Squirrel waits forever and the
+  // update never installs.
+  autoUpdater.logger = guardedLogger(console);
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
@@ -947,9 +973,24 @@ function setupAutoUpdate() {
 // IPC: renderer asks for the latest known update status / triggers a check
 ipcMain.handle("update-status", () => updateState);
 ipcMain.handle("check-for-updates", () => requestUpdateCheck({ manual: true }));
-// IPC: user accepted the update — quit and install the downloaded version
+// IPC: user accepted the update — quit and install the downloaded version.
+//
+// Answers the renderer instead of returning nothing, because a failure here is
+// invisible from the other side: the button says "Restarting…" and waits for a
+// quit that is never coming. On success this call does not return at all.
 ipcMain.handle("quit-and-install", () => {
-  if (updateState === "ready") autoUpdater.quitAndInstall();
+  if (updateState !== "ready") return { ok: false, reason: "not-ready" };
+  try {
+    autoUpdater.quitAndInstall();
+    return { ok: true };
+  } catch (err) {
+    updateState = "error";
+    return {
+      ok: false,
+      reason: "error",
+      error: String(err?.message ?? err ?? "Unknown updater error"),
+    };
+  }
 });
 
 // IPC: make Markie the default app for Markdown files (macOS).

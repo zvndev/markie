@@ -194,8 +194,22 @@ standalone publish command uploads the supplied files even when passed `--policy
 
 ### 5. Verify the updater notice as a user
 
-After publication, launch the previous public Markie version with a clean profile. Choose
-**Markie > Check for Updates** and confirm:
+Most of this is now automated:
+
+```sh
+npm run update:check
+```
+
+It downloads the **previous** public release from the same URL a user would, checks it still
+passes Gatekeeper, launches it with a throwaway profile against the **live** feed, and waits for
+the app to find, download, and offer the update on its own — no prompting, no stubs. It asserts the
+notice names the new version and that the install button is offered. The version to update from is
+read from `.release/<version>/previous-latest-mac.yml`; override with `--from <version>`.
+
+What it deliberately does not do is click **Restart & Update**: the staged update is discarded with
+the temporary profile, so the swap-and-relaunch is still verified by hand. After publication, launch
+the previous public Markie version with a clean profile, choose **Markie > Check for Updates**, and
+confirm:
 
 1. the new version is found;
 2. download completes;

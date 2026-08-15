@@ -67,7 +67,8 @@
     "electron:release": "node scripts/release.mjs publish mac",
     "share:check": "node scripts/share-link-check.mjs",
     "reveal:check": "node scripts/reveal-check.mjs",
-    "find:check": "node scripts/find-check.mjs"
+    "find:check": "node scripts/find-check.mjs",
+    "update:check": "node scripts/update-flow-check.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

@@ -8,6 +8,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-14
+
 ### Added
 
 - **Find and replace** (`⌘F`, and `⌥⌘F` to replace), in the Edit menu and the
@@ -179,7 +181,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Desktop navigation made dependable across platforms, and Windows installers
   carry the correct native modules.
 
-[Unreleased]: https://github.com/zvndev/markie/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/zvndev/markie/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/zvndev/markie/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/zvndev/markie/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/zvndev/markie/compare/v0.2.11...v0.3.0
 [0.2.11]: https://github.com/zvndev/markie/compare/v0.2.9...v0.2.11

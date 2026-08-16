@@ -18,6 +18,14 @@ import {
   sharePublicLinkUnavailableLine,
   shareRoleLabel,
 } from "@/lib/share-access-view";
+import {
+  generalAccessFor,
+  generalAccessLine,
+  publishWarning,
+  revokeWarning,
+  roleDescription,
+} from "@/lib/general-access";
+import { getElectronAPI } from "@/lib/electron";
 
 interface ShareDialogProps {
   docId: string;
@@ -45,6 +53,10 @@ export function ShareDialog({
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [linkBusy, setLinkBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Which person's role is mid-change, so only their row shows it.
+  const [roleBusy, setRoleBusy] = useState<string | null>(null);
+  // Publishing asks once before it happens.
+  const [confirmingPublish, setConfirmingPublish] = useState(false);
 
   const load = useCallback(() => {
     return Promise.all([
@@ -126,14 +138,50 @@ export function ShareDialog({
     }
   };
 
+  // Changing somebody's role reuses the invite call, which upserts. Kept as its
+  // own function so the row can show which person is mid-change.
+  const changeRole = async (
+    target: string,
+    nextRole: "viewer" | "editor"
+  ) => {
+    if (!canManage) return setError("Only the owner can change what people can do.");
+    setRoleBusy(target);
+    setError(null);
+    const res = await sharesClient.add(docId, target, nextRole);
+    setRoleBusy(null);
+    if (!res.ok) {
+      setError(res.error ?? "Couldn't change their access");
+      return;
+    }
+    await load();
+    onChanged();
+  };
+
+  // Publishing is the one action here that cannot be taken back for anyone who
+  // already has the URL, so it asks first and says what it means in the file's
+  // own name. Everything else in this dialog is reversible.
   const createLink = async () => {
     if (!canManage) return setError("Only the owner can create a public link.");
+    if (!confirmingPublish) {
+      setConfirmingPublish(true);
+      return;
+    }
+    setConfirmingPublish(false);
     setLinkBusy(true);
     setError(null);
     const url = await sharesClient.createPublicLink(docId);
     setLinkBusy(false);
     if (url) setPublicUrl(url);
     else setError("Public link unavailable — check your connection and try again.");
+  };
+
+  // Seeing the page a stranger sees is the only way to be sure what is exposed.
+  // Reading the URL is not the same as looking at it.
+  const viewPublicPage = () => {
+    if (!publicUrl) return;
+    const api = getElectronAPI();
+    if (api?.openExternal) api.openExternal(publicUrl);
+    else window.open(publicUrl, "_blank", "noopener");
   };
 
   const revokeLink = async () => {
@@ -182,6 +230,20 @@ export function ShareDialog({
         </div>
         <div className="text-[11px] text-muted mb-4 truncate">{fileName}</div>
         <ShareAccessSummary access={access} checking={accessChecking} />
+
+        {/* The standing answer to "who can see this". Above the controls,
+            because it is the thing you came here to find out, and loudest when
+            the answer is "anyone". */}
+        {members !== null && (
+          <WhoCanSeeThis
+            line={generalAccessLine({
+              general: generalAccessFor(publicUrl),
+              namedCount: members.filter((m) => !m.pending).length,
+              invitedCount: members.filter((m) => m.pending).length,
+            })}
+            isPublic={!!publicUrl}
+          />
+        )}
 
         {canManage && (
           <div className="mb-4">
@@ -250,7 +312,7 @@ export function ShareDialog({
               <MemberRow
                 name={me.name || me.email}
                 email={me.email}
-                roleLabel="Owner"
+                role="owner"
               />
             )}
             {members.map((m) => (
@@ -258,14 +320,14 @@ export function ShareDialog({
                 key={m.user_id ?? m.email}
                 name={m.name || m.email}
                 email={m.email}
-                roleLabel={
-                  m.pending
-                    ? `Invited · ${m.role === "editor" ? "Editor" : "Viewer"}`
-                    : m.role === "editor"
-                      ? "Editor"
-                      : "Viewer"
-                }
+                role={m.role === "editor" ? "editor" : "viewer"}
                 pending={m.pending}
+                busy={roleBusy === (m.pending ? m.email : m.user_id)}
+                onRoleChange={
+                  canManage
+                    ? (next) => changeRole(m.email, next)
+                    : undefined
+                }
                 onRemove={
                   canManage
                     ? () => handleRemove(m.pending ? m.email : (m.user_id as string))
@@ -281,51 +343,99 @@ export function ShareDialog({
           </div>
         )}
 
-        <div className="mt-5 pt-4 border-t border-border">
-          <div className="markie-overlay-section mb-2">Anyone with the link</div>
-          {publicUrl ? (
-            <>
-              <div className="flex items-center gap-2">
-                <input
-                  readOnly
-                  value={publicUrl}
-                  onFocus={(e) => e.currentTarget.select()}
-                  className="markie-overlay-field flex-1 text-[12px] px-2 py-1.5 text-muted"
-                />
-                <button
-                  onClick={copyLink}
-                  className="markie-overlay-button text-[12px] px-3 py-1.5 rounded-md bg-accent text-foreground hover:opacity-90"
-                >
-                  {copied ? "Copied" : "Copy"}
-                </button>
-              </div>
-              <div className="flex items-center justify-between gap-3 mt-2">
-                <span className="text-[11px] text-muted">
-                  Anyone with this link can view &amp; download — no account needed.
-                </span>
-                {canManage && (
-                  <button
-                    onClick={revokeLink}
-                    disabled={linkBusy}
-                    className="markie-overlay-button shrink-0 text-[12px] px-3 py-1.5 rounded-md border border-border text-muted hover:text-[var(--status-red)] hover:border-[color:var(--status-red)] disabled:opacity-50"
-                  >
-                    Revoke
-                  </button>
-                )}
-              </div>
-            </>
-          ) : !canManage ? (
+        {/* General access. Presented as the document's current state with two
+            settings, not as a button that makes a feature appear: "Restricted"
+            has to be visible as a live choice, or nobody ever learns it was
+            the alternative. */}
+        <div data-markie-general-access className="mt-5 pt-4 border-t border-border">
+          <div className="markie-overlay-section mb-2">General access</div>
+
+          {!canManage ? (
             <div className="text-[11px] text-muted">
               {sharePublicLinkUnavailableLine(access)}
             </div>
           ) : (
-            <button
-              onClick={createLink}
-              disabled={linkBusy}
-              className="markie-overlay-button text-[12px] px-3 py-1.5 rounded-md border border-border text-muted hover:text-foreground disabled:opacity-50"
-            >
-              {linkBusy ? "Creating…" : "Create a public link"}
-            </button>
+            <>
+              <div className="flex items-center gap-2">
+                <span aria-hidden="true" className="text-[13px]">
+                  {publicUrl ? "🌐" : "🔒"}
+                </span>
+                <select
+                  value={publicUrl ? "link" : "restricted"}
+                  disabled={linkBusy}
+                  onChange={(e) => {
+                    setConfirmingPublish(false);
+                    if (e.target.value === "link") createLink();
+                    else revokeLink();
+                  }}
+                  aria-label="General access"
+                  className="markie-overlay-field text-[12px] px-2 py-1.5 disabled:opacity-50"
+                >
+                  <option value="restricted">Restricted</option>
+                  <option value="link">Anyone with the link</option>
+                </select>
+                {linkBusy && <span className="text-[11px] text-muted">Working…</span>}
+              </div>
+
+              <div className="text-[11px] text-muted mt-2 leading-snug">
+                {publicUrl
+                  ? revokeWarning()
+                  : "Only people you add above can open it. Backing the document up to the cloud does not publish it."}
+              </div>
+
+              {/* Publishing asks once. It is the only control in this dialog
+                  whose effect survives being undone. */}
+              {confirmingPublish && !publicUrl && (
+                <div className="mt-2 rounded-md border border-[color:var(--status-yellow)] px-3 py-2">
+                  <div className="text-[11px] leading-snug text-[var(--status-yellow)]">
+                    {publishWarning(fileName)}
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <button
+                      onClick={createLink}
+                      disabled={linkBusy}
+                      className="markie-overlay-button text-[12px] px-3 py-1.5 rounded-md bg-accent text-foreground hover:opacity-90 disabled:opacity-50"
+                    >
+                      Publish it
+                    </button>
+                    <button
+                      onClick={() => setConfirmingPublish(false)}
+                      className="markie-overlay-button text-[12px] px-3 py-1.5 text-muted hover:text-foreground"
+                    >
+                      Keep it private
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {publicUrl && (
+                <div className="mt-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      readOnly
+                      value={publicUrl}
+                      onFocus={(e) => e.currentTarget.select()}
+                      aria-label="Public link"
+                      className="markie-overlay-field flex-1 text-[12px] px-2 py-1.5 text-muted"
+                    />
+                    <button
+                      onClick={copyLink}
+                      className="markie-overlay-button text-[12px] px-3 py-1.5 rounded-md bg-accent text-foreground hover:opacity-90"
+                    >
+                      {copied ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  {/* Reading a URL is not the same as looking at the page.
+                      Seeing it is the only way to know what is exposed. */}
+                  <button
+                    onClick={viewPublicPage}
+                    className="markie-overlay-button text-[12px] mt-2 px-3 py-1.5 rounded-md border border-border text-muted hover:text-foreground"
+                  >
+                    See what a stranger sees ↗
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -425,17 +535,45 @@ function ShareAccessSummary({
   );
 }
 
+// The sentence that says what the document's exposure actually is. Styled by
+// state rather than uniformly: "anyone on the internet" should not look the
+// same as "only you".
+function WhoCanSeeThis({ line, isPublic }: { line: string; isPublic: boolean }) {
+  return (
+    <div
+      data-markie-access-line
+      data-public={isPublic ? "true" : "false"}
+      role="status"
+      className={`mb-4 rounded-md border px-3 py-2 text-[12px] leading-snug ${
+        isPublic
+          ? "border-[color:var(--status-yellow)] text-[var(--status-yellow)]"
+          : "border-border/70 text-muted"
+      }`}
+      style={isPublic ? { background: "rgba(250,204,21,0.07)" } : undefined}
+    >
+      {isPublic && <span aria-hidden="true">⚠ </span>}
+      {line}
+    </div>
+  );
+}
+
 function MemberRow({
   name,
   email,
-  roleLabel,
+  role,
   pending,
+  busy,
+  onRoleChange,
   onRemove,
 }: {
   name: string;
   email: string;
-  roleLabel: string;
+  // "owner" is not a role anyone can be moved to or from, so it renders as a
+  // label rather than a choice.
+  role: "viewer" | "editor" | "owner";
   pending?: boolean;
+  busy?: boolean;
+  onRoleChange?: (next: "viewer" | "editor") => void;
   onRemove?: () => void;
 }) {
   return (
@@ -450,13 +588,34 @@ function MemberRow({
       </span>
       <div className="flex-1 min-w-0">
         <div className="text-[13px] text-foreground truncate">{name}</div>
-        <div className="text-[11px] text-muted truncate">{email}</div>
+        {/* An invited person has no access at all until they sign up. Saying
+            "Viewer" alone reads as though they already have it. */}
+        <div className="text-[11px] text-muted truncate">
+          {pending ? "Invited, not joined yet" : email}
+        </div>
       </div>
-      <span className="text-[11px] text-muted">{roleLabel}</span>
+      {onRoleChange && role !== "owner" ? (
+        <select
+          value={role}
+          disabled={busy}
+          onChange={(e) => onRoleChange(e.target.value as "viewer" | "editor")}
+          aria-label={`What ${name} can do`}
+          title={roleDescription(role)}
+          className="markie-overlay-field text-[11px] px-1.5 py-1 disabled:opacity-50"
+        >
+          <option value="viewer">Can view</option>
+          <option value="editor">Can edit</option>
+        </select>
+      ) : (
+        <span className="text-[11px] text-muted" title={roleDescription(role)}>
+          {role === "owner" ? "Owner" : role === "editor" ? "Can edit" : "Can view"}
+        </span>
+      )}
       {onRemove && (
         <button
           onClick={onRemove}
           aria-label={`Remove ${name}`}
+          title={`Remove ${name} — takes effect immediately`}
           className="markie-overlay-close hover:text-[var(--status-red)] text-[13px]"
         >
           ×

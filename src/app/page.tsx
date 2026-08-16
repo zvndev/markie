@@ -5,6 +5,14 @@ import { Toolbar } from "@/components/toolbar";
 import { Editor } from "@/components/editor";
 import { RichView } from "@/components/rich-view";
 import { FormatRail } from "@/components/format-rail";
+import { DocToolbar } from "@/components/doc-toolbar";
+import {
+  appearanceKey,
+  appearanceVars,
+  DEFAULT_APPEARANCE,
+  normalizeAppearance,
+  type DocAppearance,
+} from "@/lib/doc-appearance";
 import { StatsPanel } from "@/components/stats-panel";
 import type { Editor as TipTapEditor } from "@tiptap/react";
 import { formatMarkdownTables } from "@/lib/format-tables";
@@ -155,6 +163,10 @@ export default function Home() {
   // In Split both panes are on screen, so find follows the one you last
   // touched. In the single-pane modes there is nothing to choose between.
   const [lastPane, setLastPane] = useState<"rich" | "source">("rich");
+  // How this document is displayed. Never written to the file — markdown has no
+  // way to say "Charter at 17px", and inventing one would mean putting HTML in
+  // somebody's notes.
+  const [appearance, setAppearance] = useState<DocAppearance>(DEFAULT_APPEARANCE);
   // bumps when auth changes out-of-band (deep-link sign-in) so account UI refreshes
   const [authNonce, setAuthNonce] = useState(0);
   // bumps to refresh the Library panel (file opened/saved, sync changed)
@@ -1094,6 +1106,37 @@ export default function Home() {
 
   const closeFind = useCallback(() => setShowFind(false), []);
 
+  // Appearance follows the document, so opening a different file does not
+  // inherit the last one's font. Keyed by path where there is one, since that
+  // survives a re-sync.
+  const appearanceStore = appearanceKey(filePath ?? fileName);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(appearanceStore);
+      setAppearance(normalizeAppearance(raw ? JSON.parse(raw) : null));
+    } catch {
+      // Unreadable or absent: the default is a perfectly good answer.
+      setAppearance(DEFAULT_APPEARANCE);
+    }
+  }, [appearanceStore]);
+
+  const changeAppearance = useCallback(
+    (next: DocAppearance) => {
+      const clean = normalizeAppearance(next);
+      setAppearance(clean);
+      try {
+        window.localStorage.setItem(appearanceStore, JSON.stringify(clean));
+      } catch {
+        // Out of quota or private mode: it still applies for this session.
+      }
+    },
+    [appearanceStore]
+  );
+
+  // Printing goes through the browser, which already knows how to paginate the
+  // rendered document.
+  const handlePrint = useCallback(() => window.print(), []);
+
   if (!booted) {
     return <div className="h-screen bg-background" />;
   }
@@ -1183,8 +1226,19 @@ export default function Home() {
             />
           )}
 
+          {/* The formatting row, above the document and below the app chrome,
+              where every editor puts it. */}
+          <DocToolbar
+            editor={richEditor}
+            appearance={appearance}
+            onAppearance={changeAppearance}
+            onPrint={handlePrint}
+            canEdit={docEditable}
+          />
+
           <div
             data-markie-document-area
+            style={appearanceVars(appearance) as React.CSSProperties}
             className={`markie-document-area relative flex-1 min-h-0 min-w-0 overflow-hidden ${
               mode === "split"
                 ? "markie-document-area--split grid grid-cols-[minmax(0,0.96fr)_minmax(0,1.04fr)] max-[820px]:grid-cols-[minmax(0,0.94fr)_minmax(0,1.06fr)]"

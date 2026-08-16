@@ -263,6 +263,9 @@ export function RichView({
           style={{
             width: "min(100%, var(--doc-width, 768px))",
             fontSize: "var(--doc-font-size, 16px)",
+            // Set per document by the toolbar; falls through to the theme's
+            // font when the document has no preference of its own.
+            fontFamily: "var(--doc-font-family, inherit)",
           }}
         >
           <EditorContent editor={editor} />

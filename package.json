@@ -68,7 +68,8 @@
     "share:check": "node scripts/share-link-check.mjs",
     "reveal:check": "node scripts/reveal-check.mjs",
     "find:check": "node scripts/find-check.mjs",
-    "update:check": "node scripts/update-flow-check.mjs"
+    "update:check": "node scripts/update-flow-check.mjs",
+    "ui:check": "node scripts/ui-check.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

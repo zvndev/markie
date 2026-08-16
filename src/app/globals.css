@@ -798,3 +798,40 @@ body {
   background: rgba(251, 146, 60, 0.65);
   box-shadow: 0 0 0 1px rgba(251, 146, 60, 0.9);
 }
+
+/* Another person's selection. y-tiptap paints the colour inline at ~44% alpha
+   and gives it this class; the shape is ours. Rounded and given a little
+   breathing room so a selection reads as a highlight over the sentence rather
+   than a solid block that has replaced it. */
+.markdown-body .ProseMirror-yjs-selection {
+  border-radius: 2px;
+  padding-block: 1px;
+}
+
+/* The name tag over a remote caret. Google Docs shows it when somebody moves
+   and then gets out of the way; a tag per peer parked permanently over the text
+   is unreadable the moment there are three of them. */
+.markdown-body .collaboration-carets__label {
+  opacity: 0;
+  transition: opacity 140ms ease-out;
+  animation: markie-caret-label 2.4s ease-out forwards;
+}
+
+/* Hovering a caret is a deliberate "who is that?", so answer it. */
+.markdown-body .collaboration-carets__caret:hover .collaboration-carets__label {
+  opacity: 1;
+  animation: none;
+  transition: opacity 90ms ease-out;
+}
+
+@keyframes markie-caret-label {
+  0%, 62% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markdown-body .collaboration-carets__label {
+    animation: none;
+    opacity: 1;
+  }
+}

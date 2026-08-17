@@ -23,7 +23,6 @@ import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { Settings } from "@/components/settings";
 import { Library } from "@/components/library";
 import { ActivityBar } from "@/components/activity-bar";
-import { windowTitle } from "@/lib/window-title";
 import {
   formatRailDisabled,
   isPanelView,
@@ -770,7 +769,9 @@ export default function Home() {
 
   // Window title tracks the open file and dirty state
   useEffect(() => {
-    document.title = windowTitle(fileName, isDirty);
+    document.title = fileName
+      ? `${isDirty ? "• " : ""}${fileName} — Markie`
+      : "Markie";
   }, [fileName, isDirty]);
 
   // Drag and drop

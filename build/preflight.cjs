@@ -13,15 +13,22 @@
 // scripts never set it).
 
 const { spawn, execSync } = require("node:child_process");
+const { existsSync, mkdtempSync, rmSync } = require("node:fs");
+const { tmpdir } = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
 const WINDOW_TIMEOUT_MS = 40000;
 const POLL_MS = 1000;
-// The renderer sets <title>Markie — Markdown Viewer</title>; requiring this
-// distinctive substring proves the HTML actually loaded, not just that some
-// empty BrowserWindow exists.
+// The static HTML title. Its presence proves the page loaded — an Electron
+// window with no page reports the application name instead — but no more than
+// that: it is Next's metadata, and it survives even if React throws on mount.
 const TITLE_NEEDLE = "Markdown Viewer";
+
+// So the window check is only half of it. The app writes this file into its
+// profile directory from the IPC handshake the renderer makes on mount, which
+// is the part a loaded-but-crashed renderer cannot fake.
+const READY_FILE = "preflight-ready";
 
 const sh = (cmd) => {
   try {
@@ -72,70 +79,60 @@ async function afterPack(context) {
   const appName = context.packager.appInfo.productFilename; // "Markie"
   const appPath = path.join(context.appOutDir, `${appName}.app`);
   const bin = path.join(appPath, "Contents", "MacOS", appName);
-  // Any Markie bundle, not just one named exactly Markie.app. A copy sitting
-  // at Markie-demo.app runs the same executable name, holds the same
-  // single-instance lock, and answers to the same AppleScript process name.
-  const procPat = `/Contents/MacOS/${appName}`;
+
 
   console.log(`\n[preflight] release gate: smoke-testing ${appPath}`);
 
-  // Clear any instance holding the single-instance lock (it would make our
-  // smoke launch quit immediately → false failure).
-  sh(`pkill -9 -f "${procPat}"`);
-  await sleep(800);
-  const strays = sh(`pgrep -f "${procPat}"`);
-  if (strays) {
-    throw new Error(
-      `[preflight] HARD STOP — could not clear running ${appName} instances (pids ${strays.split("\n").join(", ")}).\n` +
-        `  They hold the single-instance lock, so the packed app would quit on launch\n` +
-        `  and this gate would read the wrong window. Quit them and re-run.`
-    );
-  }
+  // Its own profile directory, which is what the single-instance lock is keyed
+  // on. The gate therefore does not care whether Markie is already running:
+  // it gets its own lock instead of quitting into somebody else's window, and
+  // the smoke is a genuine first run rather than a replay of whatever state
+  // this machine happened to be in. Killing the developer's running copy was
+  // the alternative, and it is not the gate's business to close their unsaved
+  // documents.
+  const profileDir = mkdtempSync(path.join(tmpdir(), "markie-preflight-"));
 
   // MARKIE_PREFLIGHT stops the app opening a document at launch. Without it
   // macOS restores whatever was last open, the window takes that file's name,
   // and this gate reads a title it was never going to match — which is exactly
   // how it aborted a release on a build that was fine.
-  const child = spawn(bin, [], {
+  const child = spawn(bin, [`--user-data-dir=${profileDir}`], {
     detached: true,
     stdio: "ignore",
     env: { ...process.env, MARKIE_PREFLIGHT: "1" },
   });
   child.unref();
 
-  const countWindows = () =>
-    Number(
-      sh(`osascript -e 'tell application "System Events" to tell process "${appName}" to count windows'`) || "0"
-    );
-  const windowTitles = () =>
-    sh(`osascript -e 'tell application "System Events" to tell process "${appName}" to get name of windows'`);
+  // Addressed by pid, never by name.
+  //
+  // `process "Markie"` returns the *first* process with that name, so with the
+  // developer's own copy running it can never be made to mean the app this
+  // gate just launched — it answered for a stale demo copy once and aborted a
+  // release on a build that was fine. Worse, the same confusion would have
+  // passed a build that never started, on a stray window's good title.
+  const ours = `(first process whose unix id is ${child.pid})`;
+  const ask = (what) =>
+    sh(`osascript -e 'tell application "System Events" to tell ${ours} to ${what}'`);
 
-  // The pid AppleScript is answering for. Without this the gate reads whatever
-  // process happens to be called "Markie" — which is how it once judged a
-  // freshly packed build by a stale demo copy's window, and would just as
-  // happily have passed a broken build on a good stray window.
-  const scriptedPid = () =>
-    Number(
-      sh(`osascript -e 'tell application "System Events" to tell process "${appName}" to get unix id'`) || "0"
-    );
+  const countWindows = () => Number(ask("count windows") || "0");
+  const windowTitles = () => ask("get name of windows");
 
   let ok = false;
   let lastCount = 0;
   let lastTitles = "";
   let lastPid = 0;
+  let mounted = false;
   const started = Date.now();
   while (Date.now() - started < WINDOW_TIMEOUT_MS) {
     await sleep(POLL_MS);
-    const alive = sh(`pgrep -f "${procPat}"`) !== "";
-    lastPid = scriptedPid();
+    const alive = (() => {
+      try { process.kill(child.pid, 0); return true; } catch { return false; }
+    })();
+    lastPid = child.pid;
     lastCount = countWindows();
     lastTitles = windowTitles();
-    if (lastPid !== child.pid) {
-      // Some other Markie answered. Keep waiting for ours rather than
-      // believing what this one says about itself.
-      continue;
-    }
-    if (lastCount >= 1 && lastTitles.includes(TITLE_NEEDLE)) {
+    mounted = existsSync(path.join(profileDir, READY_FILE));
+    if (lastCount >= 1 && lastTitles.includes(TITLE_NEEDLE) && mounted) {
       ok = true;
       break;
     }
@@ -146,7 +143,8 @@ async function afterPack(context) {
     }
   }
 
-  sh(`pkill -9 -f "${procPat}"`);
+  try { process.kill(-child.pid, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch {} }
+  rmSync(profileDir, { recursive: true, force: true });
 
   if (!ok) {
     throw new Error(
@@ -154,12 +152,13 @@ async function afterPack(context) {
         `  ${appName} did not present a loaded window within ${WINDOW_TIMEOUT_MS / 1000}s.\n` +
         `  last window count: ${lastCount}; last titles: ${lastTitles || "(none)"}\n` +
         `  launched pid ${child.pid}; the window belonged to pid ${lastPid || "(none)"}\n` +
+        `  renderer mounted: ${mounted ? "yes" : "no"}\n` +
         `  A main-process crash (e.g. a missing module) or a renderer that never\n` +
         `  loads will trip this. Fix and re-run the release; nothing was published.`
     );
   }
 
-  console.log(`[preflight] ✓ window loaded (count=${lastCount}, title=${lastTitles})\n`);
+  console.log(`[preflight] ✓ renderer mounted (count=${lastCount}, title=${lastTitles})\n`);
 }
 
 module.exports = afterPack;

@@ -1088,6 +1088,17 @@ ipcMain.handle("set-default-md", async () => {
 // IPC: renderer signals it has mounted and asks for any queued file
 ipcMain.handle("get-initial-file", () => {
   rendererReady = true;
+  // The packaging gate watches for this. It is written from the handshake the
+  // renderer only makes once React has mounted, which is the thing the gate is
+  // actually trying to establish — a window whose HTML parsed but whose app
+  // crashed on mount looks identical from the outside.
+  if (preflightMode) {
+    try {
+      fs.writeFileSync(path.join(app.getPath("userData"), "preflight-ready"), "1");
+    } catch {
+      // The gate times out and says so; nothing here is worth crashing for.
+    }
+  }
   // Flush a deep link that landed during cold start (OAuth browser hand-off).
   if (pendingDeepLink) {
     const link = pendingDeepLink;

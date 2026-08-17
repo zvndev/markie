@@ -124,9 +124,17 @@ function filenameFromDisposition(cd) {
   return plain ? path.basename(plain[1].trim()) : null;
 }
 
+// The packaging gate launches the packed app to check the renderer loads. It
+// reads the window title to decide, so a document restored by macOS at launch
+// would rename the window out from under it. In that mode the app opens empty.
+const preflightMode = process.env.MARKIE_PREFLIGHT === "1";
+
 // Open a markdown file that already exists on disk in the editor window,
 // creating/showing the window and bridging cold start via pendingFilePath.
 function openLocalFile(filePath) {
+  // macOS reopens the last document by sending open-file at launch, which is
+  // the path that renamed the window during the packaging gate.
+  if (preflightMode) return;
   if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
     const payload = readFilePayload(filePath, { grant: true });
     if (payload) mainWindow.webContents.send("file-opened", payload);
@@ -307,7 +315,7 @@ function readFilePayload(filePath, { grant = false } = {}) {
 }
 
 // File passed as a CLI argument (dev runs, Windows/Linux double-click)
-const argFile = findOpenableLaunchFile(process.argv.slice(1));
+const argFile = preflightMode ? null : findOpenableLaunchFile(process.argv.slice(1));
 if (argFile) pendingFilePath = argFile;
 
 // markie:// deep link passed as a CLI argument (Windows/Linux cold start)

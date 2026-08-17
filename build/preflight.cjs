@@ -72,7 +72,10 @@ async function afterPack(context) {
   const appName = context.packager.appInfo.productFilename; // "Markie"
   const appPath = path.join(context.appOutDir, `${appName}.app`);
   const bin = path.join(appPath, "Contents", "MacOS", appName);
-  const procPat = `${appName}.app/Contents/MacOS/${appName}`;
+  // Any Markie bundle, not just one named exactly Markie.app. A copy sitting
+  // at Markie-demo.app runs the same executable name, holds the same
+  // single-instance lock, and answers to the same AppleScript process name.
+  const procPat = `/Contents/MacOS/${appName}`;
 
   console.log(`\n[preflight] release gate: smoke-testing ${appPath}`);
 
@@ -80,8 +83,24 @@ async function afterPack(context) {
   // smoke launch quit immediately → false failure).
   sh(`pkill -9 -f "${procPat}"`);
   await sleep(800);
+  const strays = sh(`pgrep -f "${procPat}"`);
+  if (strays) {
+    throw new Error(
+      `[preflight] HARD STOP — could not clear running ${appName} instances (pids ${strays.split("\n").join(", ")}).\n` +
+        `  They hold the single-instance lock, so the packed app would quit on launch\n` +
+        `  and this gate would read the wrong window. Quit them and re-run.`
+    );
+  }
 
-  const child = spawn(bin, [], { detached: true, stdio: "ignore" });
+  // MARKIE_PREFLIGHT stops the app opening a document at launch. Without it
+  // macOS restores whatever was last open, the window takes that file's name,
+  // and this gate reads a title it was never going to match — which is exactly
+  // how it aborted a release on a build that was fine.
+  const child = spawn(bin, [], {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, MARKIE_PREFLIGHT: "1" },
+  });
   child.unref();
 
   const countWindows = () =>
@@ -91,15 +110,31 @@ async function afterPack(context) {
   const windowTitles = () =>
     sh(`osascript -e 'tell application "System Events" to tell process "${appName}" to get name of windows'`);
 
+  // The pid AppleScript is answering for. Without this the gate reads whatever
+  // process happens to be called "Markie" — which is how it once judged a
+  // freshly packed build by a stale demo copy's window, and would just as
+  // happily have passed a broken build on a good stray window.
+  const scriptedPid = () =>
+    Number(
+      sh(`osascript -e 'tell application "System Events" to tell process "${appName}" to get unix id'`) || "0"
+    );
+
   let ok = false;
   let lastCount = 0;
   let lastTitles = "";
+  let lastPid = 0;
   const started = Date.now();
   while (Date.now() - started < WINDOW_TIMEOUT_MS) {
     await sleep(POLL_MS);
     const alive = sh(`pgrep -f "${procPat}"`) !== "";
+    lastPid = scriptedPid();
     lastCount = countWindows();
     lastTitles = windowTitles();
+    if (lastPid !== child.pid) {
+      // Some other Markie answered. Keep waiting for ours rather than
+      // believing what this one says about itself.
+      continue;
+    }
     if (lastCount >= 1 && lastTitles.includes(TITLE_NEEDLE)) {
       ok = true;
       break;
@@ -118,6 +153,7 @@ async function afterPack(context) {
       `[preflight] HARD STOP — release aborted.\n` +
         `  ${appName} did not present a loaded window within ${WINDOW_TIMEOUT_MS / 1000}s.\n` +
         `  last window count: ${lastCount}; last titles: ${lastTitles || "(none)"}\n` +
+        `  launched pid ${child.pid}; the window belonged to pid ${lastPid || "(none)"}\n` +
         `  A main-process crash (e.g. a missing module) or a renderer that never\n` +
         `  loads will trip this. Fix and re-run the release; nothing was published.`
     );

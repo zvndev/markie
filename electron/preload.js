@@ -67,6 +67,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onMenuReveal: (callback) => subscribe("menu-reveal", callback),
   onMenuFormatTables: (callback) => subscribe("menu-format-tables", callback),
   onMenuFind: (callback) => subscribe("menu-find", callback),
+  onMenuPrint: (callback) => subscribe("menu-print", callback),
+  onMenuZoom: (callback) => subscribe("menu-zoom", callback, (step) => step),
+  onMenuUndo: (callback) => subscribe("menu-undo", callback),
+  onMenuRedo: (callback) => subscribe("menu-redo", callback),
   onMenuFindReplace: (callback) => subscribe("menu-find-replace", callback),
   onMenuCommandPalette: (callback) =>
     subscribe("menu-command-palette", callback),

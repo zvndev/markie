@@ -1194,11 +1194,15 @@ const template = [
       },
       { type: "separator" },
       {
+        label: "Print…",
+        accelerator: "CmdOrCtrl+P",
+        click: () => mainWindow?.webContents.send("menu-print"),
+      },
+      {
         label: "Export",
         submenu: [
           {
             label: "PDF (Dark)…",
-            accelerator: "CmdOrCtrl+Shift+E",
             click: () => mainWindow?.webContents.send("menu-export-pdf", "dark"),
           },
           {
@@ -1218,8 +1222,24 @@ const template = [
   {
     label: "Edit",
     submenu: [
-      { role: "undo" },
-      { role: "redo" },
+      // Not { role: "undo" }. The native role runs the webContents' own undo,
+      // which knows about form fields and nothing else: in a ProseMirror or
+      // CodeMirror document it either does nothing or undoes something the
+      // editor's history has no record of. ⌘Z has to reach whichever editor has
+      // focus, so the renderer decides.
+      {
+        label: "Undo",
+        accelerator: "CmdOrCtrl+Z",
+        click: () => mainWindow?.webContents.send("menu-undo"),
+      },
+      {
+        label: "Redo",
+        // Shift+Cmd+Z on macOS, and Ctrl+Y is the Windows habit. Both are
+        // registered; Electron takes the first and the renderer handles the
+        // other through its own key handler.
+        accelerator: process.platform === "darwin" ? "Shift+CmdOrCtrl+Z" : "CmdOrCtrl+Y",
+        click: () => mainWindow?.webContents.send("menu-redo"),
+      },
       { type: "separator" },
       { role: "cut" },
       { role: "copy" },
@@ -1266,6 +1286,22 @@ const template = [
         label: "Split",
         accelerator: "CmdOrCtrl+3",
         click: () => mainWindow?.webContents.send("set-mode", "split"),
+      },
+      { type: "separator" },
+      {
+        label: "Zoom In",
+        accelerator: "CmdOrCtrl+=",
+        click: () => mainWindow?.webContents.send("menu-zoom", 1),
+      },
+      {
+        label: "Zoom Out",
+        accelerator: "CmdOrCtrl+-",
+        click: () => mainWindow?.webContents.send("menu-zoom", -1),
+      },
+      {
+        label: "Actual Size",
+        accelerator: "CmdOrCtrl+0",
+        click: () => mainWindow?.webContents.send("menu-zoom", 0),
       },
       { type: "separator" },
       {

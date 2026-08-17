@@ -74,6 +74,11 @@ export interface ElectronAPI {
   onMenuReveal(cb: () => void): Unsubscribe;
   onMenuFormatTables(cb: () => void): Unsubscribe;
   onMenuFind(cb: () => void): Unsubscribe;
+  onMenuPrint(cb: () => void): Unsubscribe;
+  // -1 out, +1 in, 0 back to 100%
+  onMenuZoom(cb: (step: number) => void): Unsubscribe;
+  onMenuUndo(cb: () => void): Unsubscribe;
+  onMenuRedo(cb: () => void): Unsubscribe;
   onMenuFindReplace(cb: () => void): Unsubscribe;
   onMenuCommandPalette(cb: () => void): Unsubscribe;
   onMenuShortcuts(cb: () => void): Unsubscribe;

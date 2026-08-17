@@ -11,6 +11,7 @@ import {
   appearanceVars,
   DEFAULT_APPEARANCE,
   normalizeAppearance,
+  stepZoom,
   type DocAppearance,
 } from "@/lib/doc-appearance";
 import { StatsPanel } from "@/components/stats-panel";
@@ -36,6 +37,8 @@ import { FindBar } from "@/components/find-bar";
 import { richFindTarget } from "@/lib/rich-find";
 import { sourceFindTarget } from "@/lib/source-find";
 import type { EditorView as SourceView } from "@codemirror/view";
+import { undo as cmUndo, redo as cmRedo } from "@codemirror/commands";
+import { undoTargetFor } from "@/lib/undo-target";
 import { TerminalPanel } from "@/components/terminal-panel";
 import { TERMINAL_ENABLED } from "@/lib/features";
 import {
@@ -869,10 +872,6 @@ export default function Home() {
             setShowHelp((v) => !v);
             break;
         }
-        if (e.shiftKey && (e.key === "e" || e.key === "E")) {
-          e.preventDefault();
-          handleExportPDF("dark");
-        }
       }
     };
 
@@ -880,7 +879,6 @@ export default function Home() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     handleOpenFile,
-    handleExportPDF,
     handleSave,
     handleSaveAs,
     handleNewFile,
@@ -888,6 +886,27 @@ export default function Home() {
   ]);
 
   // Latest handlers, readable from once-registered IPC listeners
+  // ⌘Z has to reach whichever editor the caret is in. Each keeps its own
+  // history and none can undo the others, so the target is decided from focus.
+  const runUndoRedo = useCallback(
+    (direction: "undo" | "redo") => {
+      const target = undoTargetFor(document.activeElement, {
+        hasRich: !!richEditor,
+        hasSource: !!sourceView,
+      });
+      if (target === "rich" && richEditor) {
+        richEditor.chain().focus()[direction]().run();
+      } else if (target === "source" && sourceView) {
+        (direction === "undo" ? cmUndo : cmRedo)(sourceView);
+        sourceView.focus();
+      } else if (target === "native") {
+        // A plain field: let the platform do what it already does well.
+        document.execCommand(direction);
+      }
+    },
+    [richEditor, sourceView]
+  );
+
   const handlersRef = useRef({
     openFile: handleOpenFile,
     newFile: handleNewFile,
@@ -898,8 +917,16 @@ export default function Home() {
     reveal: handleReveal,
     exportHTML: handleExportHTML,
     fileOpened: (data: FilePayload) => loadFile(data),
+    undoRedo: (d: "undo" | "redo") => runUndoRedo(d),
+    print: () => window.print(),
+    zoom: (step: number) => {
+      void step;
+    },
   });
   useEffect(() => {
+    // Kept current so the once-registered IPC listeners always call the latest
+    // closures rather than the ones captured on first render.
+    handlersRef.current.undoRedo = runUndoRedo;
     handlersRef.current.openFile = handleOpenFile;
     handlersRef.current.newFile = handleNewFile;
     handlersRef.current.exportPDF = handleExportPDF;
@@ -917,6 +944,7 @@ export default function Home() {
     handleMakeCopy,
     handleReveal,
     handleExportHTML,
+    runUndoRedo,
   ]);
 
   // Apply the chosen color mode (system/light/dark) before first paint, and
@@ -1010,6 +1038,10 @@ export default function Home() {
         setFindWithReplace(false);
         setShowFind(true);
       }),
+      api.onMenuPrint?.(() => handlersRef.current.print()),
+      api.onMenuZoom?.((step) => handlersRef.current.zoom(step)),
+      api.onMenuUndo?.(() => handlersRef.current.undoRedo("undo")),
+      api.onMenuRedo?.(() => handlersRef.current.undoRedo("redo")),
       api.onMenuFindReplace?.(() => {
         setFindWithReplace(true);
         setShowFind(true);
@@ -1136,6 +1168,39 @@ export default function Home() {
   // Printing goes through the browser, which already knows how to paginate the
   // rendered document.
   const handlePrint = useCallback(() => window.print(), []);
+
+  // ⌘+ / ⌘- / ⌘0 are the same document zoom the toolbar shows a percentage
+  // for, so the menu and the toolbar always report one number. Deliberately
+  // not Electron's { role: "zoomIn" }, which scales the entire interface.
+  const handleZoom = useCallback(
+    (step: number) => {
+      // 0 means "actual size"; anything else is one step in that direction.
+      setAppearance((prev) => {
+        const next = normalizeAppearance({
+          ...prev,
+          zoom:
+            step === 0
+              ? DEFAULT_APPEARANCE.zoom
+              : stepZoom(prev.zoom, step > 0 ? 1 : -1),
+        });
+        try {
+          window.localStorage.setItem(appearanceStore, JSON.stringify(next));
+        } catch {
+          // Out of quota or private mode: it still applies for this session.
+        }
+        return next;
+      });
+    },
+    [appearanceStore]
+  );
+
+  // These two IPC handlers are registered once, above, before the callbacks
+  // they run have been declared. Kept current here.
+  useEffect(() => {
+    handlersRef.current.print = handlePrint;
+    handlersRef.current.zoom = handleZoom;
+  }, [handlePrint, handleZoom]);
+
 
   if (!booted) {
     return <div className="h-screen bg-background" />;

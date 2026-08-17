@@ -25,18 +25,29 @@ const check = (name, passed, detail = "") => {
   process.stdout.write(`${passed ? "  ok  " : "  FAIL"} ${name}${detail ? `\n         ${detail}` : ""}\n`);
 };
 
+// detached gives each child its own process group, so killing -pid takes the
+// whole tree. Without it `npm run dev` dies and the `next dev` it spawned is
+// orphaned, keeps .next/dev/lock, and every later run fails to start.
 function start(command, args, options = {}) {
   const fd = options.log ? openSync(options.log, "a") : "ignore";
-  const child = spawn(command, args, { cwd: root, env: options.env ?? process.env, stdio: ["ignore", fd, fd] });
+  const child = spawn(command, args, { cwd: root, env: options.env ?? process.env, stdio: ["ignore", fd, fd], detached: true });
   children.push(child);
   if (typeof fd === "number") child.on("exit", () => closeSync(fd));
   return child;
 }
+
+function killTree(child) {
+  if (child.exitCode !== null) return;
+  try { process.kill(-child.pid, "SIGKILL"); } catch { try { process.kill(child.pid, "SIGKILL"); } catch {} }
+}
 async function cleanup() {
-  for (const c of children) { try { if (c.exitCode === null) process.kill(c.pid, "SIGKILL"); } catch {} }
+  for (const c of children) killTree(c);
   await Promise.all(tempPaths.map((p) => rm(p, { recursive: true, force: true }).catch(() => {})));
 }
-process.on("exit", () => { for (const c of children) { try { if (c.exitCode === null) process.kill(c.pid, "SIGKILL"); } catch {} } });
+process.on("exit", () => { for (const c of children) killTree(c); });
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(signal, () => { for (const c of children) killTree(c); process.exit(1); });
+}
 
 async function waitFor(label, fn, timeoutMs = 40000) {
   const started = Date.now();
@@ -87,19 +98,45 @@ async function main() {
   await waitFor("editor", () => cdp.ev("!!window.__markieEditor"), 40000);
   await waitFor("doc", () => cdp.ev(`window.__markieEditor.getText().includes("Plain sentence")`), 30000);
 
+  // Real key events, not command calls. Dispatching the chord is the only way
+  // to prove anything is listening for it, which is the entire question here:
+  // several of these were advertised in a tooltip while a menu accelerator
+  // quietly ate them first.
+  const META = 4, SHIFT = 8;
+  const press = async (key, code, keyCode, modifiers = 0) => {
+    for (const type of ["rawKeyDown", "keyUp"]) {
+      await cdp.send("Input.dispatchKeyEvent", {
+        type, key, code, modifiers,
+        windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode,
+      });
+    }
+    await new Promise((r) => setTimeout(r, 220));
+  };
+
   check("the formatting toolbar renders above the document",
     await cdp.ev("!!document.querySelector('[data-markie-doc-toolbar]')"));
 
   const btn = (label) => `document.querySelector('[data-markie-doc-toolbar] [aria-label=${JSON.stringify(label)}]')`;
 
-  // The controls markdown cannot express must be genuinely disabled, not just
-  // styled to look it — a greyed button that still fires would write HTML.
-  for (const label of ["Underline (unavailable)", "Text colour (unavailable)", "Highlight (unavailable)", "Alignment (unavailable)"]) {
-    const state = await cdp.ev(`(() => { const b = ${btn(label)}; return b ? { disabled: b.disabled, title: b.title } : null; })()`);
-    check(`${label.replace(" (unavailable)", "")} is disabled and says why`,
-      state?.disabled === true && /Markdown has no syntax/.test(state?.title ?? ""),
-      state ? `title: ${state.title.slice(0, 60)}…` : "button missing");
+  // Every control names itself and carries its shortcut. A toolbar of unlabelled
+  // glyphs is the thing this replaced.
+  for (const label of ["Undo", "Redo", "Print", "Bold", "Italic", "Underline", "Align left", "Align centre", "Align right"]) {
+    const state = await cdp.ev(`(() => { const b = ${btn(label)}; return b ? { title: b.title } : null; })()`);
+    check(`${label} has a tooltip`, !!state?.title, state ? `"${state.title}"` : "button missing");
   }
+
+  // Underline is real now, and must survive being written out. A mark that
+  // renders and is dropped on save is worse than one that was never offered.
+  await cdp.ev(`window.__markieEditor.chain().focus().selectAll().toggleUnderline().run(), true`);
+  await new Promise((r) => setTimeout(r, 300));
+  const underlined = await cdp.ev(`window.__markieEditor.storage.markdown.getMarkdown()`);
+  check("underline survives being serialized to the file", /<u>|<span/.test(underlined),
+    underlined.split("\n").find((l) => l.includes("<")) ?? underlined.slice(0, 70));
+  await cdp.ev(`window.__markieEditor.chain().focus().selectAll().toggleUnderline().run(), true`);
+  await new Promise((r) => setTimeout(r, 300));
+  const cleaned = await cdp.ev(`window.__markieEditor.storage.markdown.getMarkdown()`);
+  check("removing it leaves the markdown clean again", !/<u>/.test(cleaned),
+    cleaned.split("\n").find((l) => l.trim()) ?? "");
 
   // Bold must actually reach the document.
   await cdp.ev(`window.__markieEditor.chain().focus().selectAll().run(), true`);
@@ -108,8 +145,23 @@ async function main() {
   const md = await cdp.ev(`window.__markieEditor.storage.markdown.getMarkdown()`);
   check("Bold from the toolbar reaches the document", /\*\*/.test(md), md.split("\n").find((l) => l.includes("**")) ?? md.slice(0, 60));
 
-  // Appearance is a view setting: it must change the rendering and leave the
-  // markdown alone.
+  // Font and size mean two different things depending on the selection, and
+  // both have to be right.
+  //
+  // With text selected they style that text, which necessarily writes HTML.
+  await cdp.ev(`window.__markieEditor.chain().focus().selectAll().run(), true`);
+  await new Promise((r) => setTimeout(r, 250));
+  await cdp.ev(`${btn("Increase font size")}.click(), true`);
+  await new Promise((r) => setTimeout(r, 400));
+  const sized = await cdp.ev(`window.__markieEditor.storage.markdown.getMarkdown()`);
+  check("with a selection, size applies to the selected text only",
+    /font-size/.test(sized), sized.split("\n").find((l) => l.includes("font-size"))?.slice(0, 70) ?? sized.slice(0, 70));
+  await cdp.ev(`window.__markieEditor.chain().focus().selectAll().unsetFontSize().run(), true`);
+  await new Promise((r) => setTimeout(r, 300));
+
+  // With nothing selected it is a view setting, and must leave the file alone.
+  await cdp.ev(`window.__markieEditor.chain().focus().setTextSelection(1).run(), true`);
+  await new Promise((r) => setTimeout(r, 250));
   const before = await cdp.ev(`window.__markieEditor.storage.markdown.getMarkdown()`);
   await cdp.ev(`${btn("Increase font size")}.click(), true`);
   await cdp.ev(`${btn("Zoom in")}.click(), true`);
@@ -117,7 +169,49 @@ async function main() {
   const cssSize = await cdp.ev(`getComputedStyle(document.querySelector('[data-markie-document-area]')).getPropertyValue('--doc-font-size')`);
   const after = await cdp.ev(`window.__markieEditor.storage.markdown.getMarkdown()`);
   check("font size and zoom change how the document renders", !!cssSize && cssSize.trim() !== "", `--doc-font-size: ${cssSize.trim()}`);
-  check("changing appearance does not change the markdown", before === after,
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────
+  // Everything below runs through the real Electron window, so the application
+  // menu's accelerators are live and get first refusal on every chord.
+  await cdp.ev(`window.__markieEditor.chain().focus().selectAll().unsetAllMarks().run(), true`);
+  await new Promise((r) => setTimeout(r, 250));
+
+  await cdp.ev(`window.__markieEditor.chain().focus().selectAll().run(), true`);
+  await press("u", "KeyU", 85, META);
+  check("⌘U underlines from the keyboard",
+    await cdp.ev(`window.__markieEditor.isActive("underline")`));
+  await press("u", "KeyU", 85, META);
+
+  await cdp.ev(`window.__markieEditor.chain().focus().selectAll().run(), true`);
+  await press("X", "KeyX", 88, META | SHIFT);
+  check("⌘⇧X strikes through, the chord ⌘⇧S could not have (Save As owns it)",
+    await cdp.ev(`window.__markieEditor.isActive("strike")`));
+  await press("X", "KeyX", 88, META | SHIFT);
+
+  // ⌘⇧E used to be Export PDF, so the universal align-centre chord opened a
+  // save dialog. This proves the editor binding exists; it cannot prove the
+  // menu released the chord, because CDP injects keys into the web contents
+  // and a menu accelerator is consumed upstream of that. The menu half is
+  // covered by src/lib/menu-accelerators.test.ts, which reads main.js.
+  await cdp.ev(`window.__markieEditor.chain().focus().selectAll().run(), true`);
+  await press("E", "KeyE", 69, META | SHIFT);
+  check("⌘⇧E centres the paragraph",
+    await cdp.ev(`window.__markieEditor.isActive({ textAlign: "center" })`));
+  await press("L", "KeyL", 76, META | SHIFT);
+
+  // ⌘Z has to reach the pane the caret is in. Type, undo, and the typing goes.
+  await cdp.ev(`window.__markieEditor.chain().focus().setTextSelection(3).insertContent("ZZQ").run(), true`);
+  await new Promise((r) => setTimeout(r, 300));
+  const typed = await cdp.ev(`window.__markieEditor.getText().includes("ZZQ")`);
+  await press("z", "KeyZ", 90, META);
+  const undone = await cdp.ev(`!window.__markieEditor.getText().includes("ZZQ")`);
+  check("⌘Z undoes in the rich editor", typed && undone,
+    typed ? (undone ? "typed then undone" : "typed but ⌘Z did nothing") : "insert never landed");
+  await press("Z", "KeyZ", 90, META | SHIFT);
+  check("⇧⌘Z redoes it",
+    await cdp.ev(`window.__markieEditor.getText().includes("ZZQ")`));
+  await press("z", "KeyZ", 90, META);
+
+  check("with no selection, appearance leaves the markdown untouched", before === after,
     before === after ? "markdown identical" : "THE FILE CHANGED");
 
   const fontVar = await cdp.ev(`getComputedStyle(document.querySelector('[data-markie-document-area]')).getPropertyValue('--doc-font-family')`);

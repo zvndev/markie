@@ -17,7 +17,6 @@ export const APP_OWNED_SHORTCUTS = [
   "Mod-l",
   "Mod-n",
   "Mod-/",
-  "Mod-Shift-e",
   "Mod-Alt-t",
   // Find is the app's, not CodeMirror's. Both panes search through one bar, so
   // the editor's own search panel must never open: two search UIs with two

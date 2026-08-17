@@ -22,7 +22,15 @@ import { CommandPalette } from "@/components/command-palette";
 import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { Settings } from "@/components/settings";
 import { Library } from "@/components/library";
-import { ActivityBar, type LeftView } from "@/components/activity-bar";
+import { ActivityBar } from "@/components/activity-bar";
+import {
+  formatRailDisabled,
+  isPanelView,
+  selectLeftView,
+  showFormatRail,
+  showSidePanel,
+  type LeftView,
+} from "@/lib/left-rail";
 import { ShareDialog } from "@/components/share-dialog";
 import { ShareGate } from "@/components/share-gate";
 import {
@@ -470,9 +478,20 @@ export default function Home() {
   }, []);
 
   // Left rail: select a side-panel view. Clicking the active view closes it.
+  // The panel a click on the pencil comes back to, so clicking it twice is not
+  // a dead end.
+  const lastPanelRef = useRef<LeftView>("library");
   const selectView = useCallback((v: LeftView) => {
-    setShowLibrary((open) => !(open && leftViewRef.current === v));
-    setLeftView(v);
+    setShowLibrary((open) => {
+      const next = selectLeftView(
+        { view: leftViewRef.current, panelOpen: open, richVisible: true, canEdit: true },
+        v,
+        lastPanelRef.current
+      );
+      if (next.view !== "edit") lastPanelRef.current = next.view;
+      setLeftView(next.view);
+      return next.panelOpen;
+    });
   }, []);
 
   // Close transient overlays (modals, palette) when a new document lands.
@@ -1211,6 +1230,15 @@ export default function Home() {
   const shareBanner = shareBannerFor(roleState, sharedBy);
   const docEditable = canEditDocument(roleState);
 
+  // One answer for what the left edge is showing, read by the panel, the
+  // formatting rail and the activity bar alike.
+  const leftState = {
+    view: leftView,
+    panelOpen: showLibrary,
+    richVisible: mode === "preview" || mode === "split",
+    canEdit: docEditable,
+  };
+
   return (
     <div className="markie-shell h-screen flex flex-col bg-background relative">
       <Toolbar
@@ -1239,6 +1267,7 @@ export default function Home() {
           activeView={leftView}
           panelOpen={showLibrary}
           onSelectView={selectView}
+          canFormat={mode === "preview" || mode === "split"}
           onNewFile={handleNewFile}
           onAgents={() => setShowAgents(true)}
           onShortcuts={() => setShowHelp((v) => !v)}
@@ -1247,7 +1276,7 @@ export default function Home() {
         />
 
         {/* Docked side panel (Library / Browse / Shared / Skills) */}
-        {showLibrary && (
+        {showSidePanel(leftState) && isPanelView(leftView) && (
           <Library
             key={leftView}
             view={leftView}
@@ -1354,7 +1383,9 @@ export default function Home() {
                 onFocusCapture={() => setLastPane("rich")}
                 className="markie-rich-pane h-full min-w-0 w-full flex-1 overflow-hidden flex"
               >
-                <FormatRail editor={richEditor} />
+                {showFormatRail(leftState) && (
+                  <FormatRail editor={richEditor} disabled={formatRailDisabled(leftState)} />
+                )}
                 <div className="flex-1 min-w-0 h-full overflow-hidden">
                   <RichView
                     key={

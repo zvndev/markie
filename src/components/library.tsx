@@ -14,7 +14,9 @@ import { FilesView } from "@/components/files-view";
 import { BrowseView } from "@/components/browse-view";
 import { SkillsView } from "@/components/skills-view";
 import { SharedView } from "@/components/shared-view";
-import type { LeftView } from "@/components/activity-bar";
+// The panel never renders for "edit" (the formatting rail has no panel), so
+// it takes the narrower type rather than inventing a title for one.
+import type { PanelView } from "@/lib/left-rail";
 import { readLibraryStartupSnapshot } from "@/lib/library-startup";
 import {
   libraryItemNeedsAttention,
@@ -27,7 +29,7 @@ import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 
 interface LibraryProps {
   // which view the left rail selected (library | browse | shared | skills)
-  view: LeftView;
+  view: PanelView;
   onClose: () => void;
   onOpenPath: (path: string) => void;
   onOpenFile: () => void;
@@ -50,7 +52,7 @@ const TAB_KEY = "markie.libtab.v1";
 // the left rail and have no sub-tabs.
 type LibTab = "recent" | "files";
 
-const VIEW_TITLE: Record<LeftView, string> = {
+const VIEW_TITLE: Record<PanelView, string> = {
   library: "Library",
   browse: "Browse",
   shared: "Shared",

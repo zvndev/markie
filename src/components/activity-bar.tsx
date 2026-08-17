@@ -4,13 +4,17 @@ import { useEffect, useState } from "react";
 import { authClient, type MarkieUser } from "@/lib/auth-client";
 import { colorForName, initials } from "@/lib/collab";
 
-export type LeftView = "library" | "browse" | "shared" | "skills";
+export type { LeftView } from "@/lib/left-rail";
+import type { LeftView } from "@/lib/left-rail";
 
 interface ActivityBarProps {
   // which side-panel view is selected, and whether the panel is open
   activeView: LeftView;
   panelOpen: boolean;
   onSelectView: (v: LeftView) => void;
+  // The pencil is off entirely in source-only mode, where there is no rich
+  // editor for the rail to act on.
+  canFormat: boolean;
   onNewFile: () => void;
   onAgents: () => void;
   onShortcuts: () => void;
@@ -23,6 +27,7 @@ export function ActivityBar({
   activeView,
   panelOpen,
   onSelectView,
+  canFormat,
   onNewFile,
   onAgents,
   onShortcuts,
@@ -41,7 +46,8 @@ export function ActivityBar({
     };
   }, [authNonce]);
 
-  const isActive = (v: LeftView) => panelOpen && activeView === v;
+  const isActive = (v: LeftView) =>
+    v === "edit" ? activeView === "edit" : panelOpen && activeView === v;
 
   return (
     <div className="markie-activity-bar w-[48px] shrink-0 h-full flex flex-col items-center py-1.5 gap-0.5 border-r border-border bg-surface">
@@ -76,6 +82,18 @@ export function ActivityBar({
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z" />
           <path d="M19 15l.7 1.8L21.5 17.5l-1.8.7L19 20l-.7-1.8L16.5 17.5l1.8-.7z" />
+        </svg>
+      </NavButton>
+      <div className="w-6 h-px bg-border my-1" />
+      <NavButton
+        label="Formatting tools"
+        active={isActive("edit")}
+        disabled={!canFormat}
+        onClick={() => onSelectView("edit")}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
         </svg>
       </NavButton>
 
@@ -126,24 +144,27 @@ export function ActivityBar({
 function NavButton({
   label,
   active = false,
+  disabled = false,
   onClick,
   children,
 }: {
   label: string;
   active?: boolean;
+  disabled?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       title={label}
       aria-label={label}
       className={`relative w-8 h-8 rounded-md flex items-center justify-center transition-colors ${
         active
           ? "bg-accent text-foreground"
           : "text-muted hover:text-foreground hover:bg-accent/40"
-      }`}
+      } disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted`}
     >
       {active && <span className="absolute left-[-6px] top-1.5 bottom-1.5 w-0.5 rounded-full bg-foreground" />}
       {children}

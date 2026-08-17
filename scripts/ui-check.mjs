@@ -215,6 +215,38 @@ async function main() {
     before === after ? "markdown identical" : "THE FILE CHANGED");
 
   const fontVar = await cdp.ev(`getComputedStyle(document.querySelector('[data-markie-document-area]')).getPropertyValue('--doc-font-family')`);
+  // ── The formatting rail ─────────────────────────────────────────────────
+  // It used to be on whenever the rich pane was, so a column of H1/H2/B stood
+  // beside the file browser while you were choosing a file.
+  const rail = `document.querySelector('[data-markie-format-rail]')`;
+  const panel = `document.querySelector('.markie-side-panel')`;
+  const nav = (label) => `document.querySelector('.markie-activity-bar [aria-label=${JSON.stringify(label)}]')`;
+
+  // Open a panel first, so "the rail is away" is a real result and not just
+  // whatever the app happened to boot into.
+  await cdp.ev(`${nav("Browse all markdown")}.click(), true`);
+  await new Promise((r) => setTimeout(r, 400));
+  check("with a panel open, the rail is away",
+    (await cdp.ev(`!!${panel}`)) && !(await cdp.ev(`!!${rail}`)),
+    `panel=${await cdp.ev(`!!${panel}`)} rail=${await cdp.ev(`!!${rail}`)}`);
+
+  await cdp.ev(`${nav("Formatting tools")}.click(), true`);
+  await new Promise((r) => setTimeout(r, 400));
+  check("the pencil brings the rail up and closes the panel",
+    (await cdp.ev(`!!${rail}`)) && !(await cdp.ev(`!!${panel}`)),
+    `panel=${await cdp.ev(`!!${panel}`)} rail=${await cdp.ev(`!!${rail}`)}`);
+
+  await cdp.ev(`${nav("Browse all markdown")}.click(), true`);
+  await new Promise((r) => setTimeout(r, 400));
+  check("choosing a panel puts the rail away again",
+    (await cdp.ev(`!!${panel}`)) && !(await cdp.ev(`!!${rail}`)),
+    `panel=${await cdp.ev(`!!${panel}`)} rail=${await cdp.ev(`!!${rail}`)}`);
+
+  await cdp.ev(`${nav("Formatting tools")}.click(), true`);
+  await new Promise((r) => setTimeout(r, 400));
+  check("the rail's buttons are live on a document you can edit",
+    await cdp.ev(`${rail} && !${rail}.querySelector('button').disabled`));
+
   check("a document font is applied as a CSS variable", !!fontVar && fontVar.trim().length > 0, `--doc-font-family: ${fontVar.trim().slice(0, 40)}`);
 
   cdp.close();

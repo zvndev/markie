@@ -5,6 +5,9 @@ import { useEditorState, type Editor } from "@tiptap/react";
 
 interface FormatRailProps {
   editor: Editor | null;
+  // Read-only document: the rail stays visible but inert, so it is clear the
+  // document is not yours to change rather than that the tools went missing.
+  disabled?: boolean;
 }
 
 interface RailButton {
@@ -69,7 +72,7 @@ const ADVANCED: RailButton[] = [
   { key: "clear", label: <RailIcon><path d="m16 16 5-5" /><path d="m21 16-5-5" /><path d="m3 19 6.5-6.5" /><path d="m13 3 8 8" /><path d="m9.5 12.5 4-4" /><path d="M3 19h8" /></RailIcon>, title: "Clear formatting", run: (e) => e.chain().focus().unsetAllMarks().clearNodes().run() },
 ];
 
-export function FormatRail({ editor }: FormatRailProps) {
+export function FormatRail({ editor, disabled = false }: FormatRailProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   // Link/image insertion uses a centered modal (not an inline rail popover,
   // which got clipped/scrolled inside the 44px rail). `modal` picks the form.
@@ -108,7 +111,7 @@ export function FormatRail({ editor }: FormatRailProps) {
       active
         ? "bg-accent text-foreground shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--foreground)_12%,transparent)]"
         : "text-muted hover:text-foreground hover:bg-accent/45"
-    }`;
+    } disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted`;
 
   const closeModal = () => {
     setModal(null);
@@ -177,7 +180,12 @@ export function FormatRail({ editor }: FormatRailProps) {
   };
 
   return (
-    <div className="w-11 shrink-0 border-r border-border bg-surface relative">
+    <div
+      data-markie-format-rail
+      data-disabled={disabled ? "true" : undefined}
+      className="w-11 shrink-0 border-r border-border bg-surface relative"
+      title={disabled ? "You have read-only access to this document" : undefined}
+    >
       {/* Scroll lives on this inner column so the URL popover (a sibling
           below) can overflow the 44px rail without being clipped. Putting
           overflow-y on the rail itself forces overflow-x:auto too, which
@@ -189,6 +197,7 @@ export function FormatRail({ editor }: FormatRailProps) {
           title={b.title}
           aria-label={b.title}
           onClick={() => b.run(editor)}
+          disabled={disabled}
           className={btnClass(b.active ? !!(states && b.active(states)) : false)}
         >
           {b.label}
@@ -200,6 +209,7 @@ export function FormatRail({ editor }: FormatRailProps) {
         title={states?.link ? "Remove link" : "Link"}
         aria-label={states?.link ? "Remove link" : "Insert link"}
         onClick={openLink}
+        disabled={disabled}
         className={btnClass(!!states?.link)}
       >
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -207,7 +217,7 @@ export function FormatRail({ editor }: FormatRailProps) {
           <path d="M15 12a4 4 0 0 0-6 0L6.5 14.5a4 4 0 0 0 5.5 5.5L13 19" />
         </svg>
       </button>
-      <button title="Image" aria-label="Insert image" onClick={openImage} className={btnClass(false)}>
+      <button title="Image" aria-label="Insert image" onClick={openImage} disabled={disabled} className={btnClass(false)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
           <rect x="3" y="3" width="18" height="18" rx="2.5" />
           <circle cx="8.5" cy="8.5" r="1.6" />
@@ -221,6 +231,7 @@ export function FormatRail({ editor }: FormatRailProps) {
         title={showAdvanced ? "Hide advanced tools" : "Advanced tools"}
         aria-label={showAdvanced ? "Hide advanced tools" : "Advanced tools"}
         onClick={() => setShowAdvanced((v) => !v)}
+        disabled={disabled}
         className={btnClass(showAdvanced)}
       >
         <RailIcon><path d="M5 12h.01" /><path d="M12 12h.01" /><path d="M19 12h.01" /></RailIcon>
@@ -232,6 +243,7 @@ export function FormatRail({ editor }: FormatRailProps) {
             title={b.title}
             aria-label={b.title}
             onClick={() => b.run(editor)}
+            disabled={disabled}
             className={btnClass(false)}
           >
             {b.label}

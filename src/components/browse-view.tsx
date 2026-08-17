@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getElectronAPI, type MdRow, type MdStar } from "@/lib/electron";
 import { compactHomePath, inferHomePath } from "@/lib/path-display";
+import { buildFolderTree, countNodes, pathsToFiles, type FolderNode } from "@/lib/folder-tree";
 
 interface BrowseViewProps {
   onOpenPath: (path: string) => void;
@@ -14,6 +15,101 @@ const MODE_KEY = "markie.browse.mode.v1";
 const STAR_KEY = "markie.browse.starred.v1";
 const FULL_KEY = "markie.browse.fullpath.v1";
 const FLAT_CAP = 300;
+
+// Module scope so the recursive tree rows can use it too. It was defined
+// inside BrowseView, which also meant a fresh component identity every render.
+function Star({ on, onClick }: { on: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      title={on ? "Unstar" : "Star"}
+      className={`shrink-0 px-1 text-[12px] ${
+        on ? "text-[var(--status-yellow)]" : "text-muted hover:text-foreground"
+      }`}
+    >
+      {on ? "★" : "☆"}
+    </button>
+  );
+}
+
+function FolderRow({
+  node,
+  depth,
+  label,
+  open,
+  forcedOpen,
+  onToggle,
+  stars,
+  onToggleStar,
+  onOpenPath,
+  activePath,
+}: {
+  node: FolderNode;
+  depth: number;
+  label?: string;
+  open: Set<string>;
+  // Set while a filter is active: the tree opens to its matches rather than
+  // hiding them behind rows the user would have to guess at.
+  forcedOpen: Set<string> | null;
+  onToggle: (path: string) => void;
+  stars: Set<string>;
+  onToggleStar: (path: string, kind: "folder" | "file") => void;
+  onOpenPath: (path: string) => void;
+  activePath: string | null;
+}) {
+  const isOpen = forcedOpen ? forcedOpen.has(node.path) : open.has(node.path);
+  const indent = 8 + depth * 12;
+  return (
+    <div data-markie-folder-node={node.path}>
+      <div
+        onClick={() => onToggle(node.path)}
+        style={{ paddingLeft: indent }}
+        className="group flex items-center gap-1 pr-2 py-1 cursor-pointer hover:bg-accent/30 text-[12px]"
+      >
+        <span className="text-muted w-3 shrink-0">{isOpen ? "▾" : "▸"}</span>
+        <span className="truncate flex-1 text-foreground/90" title={node.path}>
+          {label ?? node.label}
+        </span>
+        <span className="text-[9px] text-muted shrink-0">{node.total}</span>
+        <Star on={stars.has(node.path)} onClick={() => onToggleStar(node.path, "folder")} />
+      </div>
+      {isOpen && (
+        <>
+          {node.files.map((f) => (
+            <div
+              key={f.path}
+              onClick={() => onOpenPath(f.path)}
+              style={{ paddingLeft: indent + 16 }}
+              className={`flex items-center gap-1 pr-2 py-1 cursor-pointer hover:bg-accent/30 text-[12px] ${
+                activePath === f.path ? "bg-accent/40" : ""
+              }`}
+            >
+              <span className="truncate flex-1">{f.name}</span>
+              <Star on={stars.has(f.path)} onClick={() => onToggleStar(f.path, "file")} />
+            </div>
+          ))}
+          {node.children.map((child) => (
+            <FolderRow
+              key={child.path}
+              node={child}
+              depth={depth + 1}
+              open={open}
+              forcedOpen={forcedOpen}
+              onToggle={onToggle}
+              stars={stars}
+              onToggleStar={onToggleStar}
+              onOpenPath={onOpenPath}
+              activePath={activePath}
+            />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
 
 export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   const api = getElectronAPI();
@@ -89,21 +185,24 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
     [rows, q]
   );
 
-  const folders = useMemo(() => {
-    const map = new Map<string, MdRow[]>();
-    for (const r of filtered) {
-      const arr = map.get(r.dir);
-      if (arr) arr.push(r);
-      else map.set(r.dir, [r]);
-    }
-    let entries = Array.from(map.entries());
-    if (starredOnly)
-      entries = entries.filter(
-        ([dir, files]) => stars.has(dir) || files.some((f) => stars.has(f.path))
-      );
-    entries.sort((a, b) => a[0].localeCompare(b[0]));
-    return entries;
+  // A tree, not one row per directory. Ten subfolders under one project used
+  // to be ten sibling rows all reprinting the same prefix.
+  const tree = useMemo(() => {
+    const list = starredOnly
+      ? filtered.filter((r) => stars.has(r.path) || stars.has(r.dir))
+      : filtered;
+    return buildFolderTree(list);
   }, [filtered, starredOnly, stars]);
+
+  // Filtering is a search: leaving the answers behind collapsed rows would
+  // make it useless. Capped so a filter that matches everything does not
+  // expand thousands of folders at once.
+  const AUTO_OPEN_CAP = 200;
+  const forcedOpen = useMemo(() => {
+    if (!q) return null;
+    if (countNodes(tree) > AUTO_OPEN_CAP) return null;
+    return new Set(pathsToFiles(tree));
+  }, [q, tree]);
 
   const flat = useMemo(() => {
     let list = filtered;
@@ -118,20 +217,6 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
       </div>
     );
 
-  const Star = ({ on, onClick }: { on: boolean; onClick: () => void }) => (
-    <button
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
-      title={on ? "Unstar" : "Star"}
-      className={`shrink-0 px-1 text-[12px] ${
-        on ? "text-[var(--status-yellow)]" : "text-muted hover:text-foreground"
-      }`}
-    >
-      {on ? "★" : "☆"}
-    </button>
-  );
 
   return (
     <div className="flex flex-col h-full">
@@ -208,49 +293,35 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
         {loading ? (
           <div className="p-4 text-[12px] text-muted">Scanning your markdown…</div>
         ) : mode === "folders" ? (
-          folders.length === 0 ? (
+          tree.length === 0 ? (
             <div className="p-4 text-[12px] text-muted">
               No markdown found{q ? " for this filter" : ""}.
             </div>
           ) : (
-            folders.map(([dir, files]) => {
-              const isOpen = open.has(dir);
-              return (
-                <div key={dir}>
-                  <div
-                    onClick={() =>
-                      setOpen((s) => {
-                        const n = new Set(s);
-                        if (n.has(dir)) n.delete(dir);
-                        else n.add(dir);
-                        return n;
-                      })
-                    }
-                    className="group flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-accent/30 text-[12px]"
-                  >
-                    <span className="text-muted w-3">{isOpen ? "▾" : "▸"}</span>
-                    <span className="truncate flex-1 text-foreground/90">
-                      {compactHomePath(dir, home, fullPath)}
-                    </span>
-                    <span className="text-[9px] text-muted">{files.length}</span>
-                    <Star on={stars.has(dir)} onClick={() => toggleStar(dir, "folder")} />
-                  </div>
-                  {isOpen &&
-                    files.map((f) => (
-                      <div
-                        key={f.path}
-                        onClick={() => onOpenPath(f.path)}
-                        className={`flex items-center gap-1 pl-7 pr-2 py-1 cursor-pointer hover:bg-accent/30 text-[12px] ${
-                          activePath === f.path ? "bg-accent/40" : ""
-                        }`}
-                      >
-                        <span className="truncate flex-1">{f.name}</span>
-                        <Star on={stars.has(f.path)} onClick={() => toggleStar(f.path, "file")} />
-                      </div>
-                    ))}
-                </div>
-              );
-            })
+            tree.map((node) => (
+              <FolderRow
+                key={node.path}
+                node={node}
+                depth={0}
+                // The root prints as a path so you can tell where it is; every
+                // level below it is already located by the row above.
+                label={compactHomePath(node.path, home, fullPath)}
+                open={open}
+                forcedOpen={forcedOpen}
+                onToggle={(path) =>
+                  setOpen((s) => {
+                    const n = new Set(s);
+                    if (n.has(path)) n.delete(path);
+                    else n.add(path);
+                    return n;
+                  })
+                }
+                stars={stars}
+                onToggleStar={toggleStar}
+                onOpenPath={onOpenPath}
+                activePath={activePath}
+              />
+            ))
           )
         ) : flat.length === 0 ? (
           <div className="p-4 text-[12px] text-muted">

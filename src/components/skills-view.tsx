@@ -2,7 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getElectronAPI, type MdRow, type MdStar } from "@/lib/electron";
-import { classifyAgentFile, AGENT_TOOLS, type AgentTool } from "@/lib/agent-files";
+import {
+  AGENT_KINDS,
+  AGENT_TOOLS,
+  agentFileKind,
+  agentFileLabel,
+  classifyAgentFile,
+  collapseSkills,
+  type AgentKind,
+  type AgentTool,
+} from "@/lib/agent-files";
 import { compactHomePath, inferHomePath } from "@/lib/path-display";
 
 interface SkillsViewProps {
@@ -18,6 +27,8 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
   const [stars, setStars] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(!!api?.mdIndexScan);
   const [filter, setFilter] = useState("");
+  // Sections the user has flipped away from their default state.
+  const [closed, setClosed] = useState<Set<string>>(new Set());
   const [fullPath, setFullPath] = useState(
     () => localStorage.getItem(FULL_KEY) === "1"
   );
@@ -53,22 +64,46 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
   const toggleStar = (p: string) =>
     api?.mdIndexToggleStar?.(p, "file").then(() => loadStars());
 
-  // Classify into agent tools, then group by tool in display order.
+  // Grouped by tool, then by what the file is for. One flat list per tool put
+  // a skill, a subagent definition and a saved session note in the same run of
+  // rows, which is what made this panel hard to read. Cached copies are
+  // dropped by classifyAgentFile before they reach here.
   const grouped = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    const byTool = new Map<AgentTool, MdRow[]>();
+    const byTool = new Map<AgentTool, Map<AgentKind, MdRow[]>>();
     for (const r of rows) {
       const tool = classifyAgentFile(r.path, r.name);
       if (!tool) continue;
       if (q && !r.path.toLowerCase().includes(q)) continue;
-      const arr = byTool.get(tool);
+      const kind = agentFileKind(r.path, r.name);
+      const kinds = byTool.get(tool) ?? new Map<AgentKind, MdRow[]>();
+      byTool.set(tool, kinds);
+      const arr = kinds.get(kind);
       if (arr) arr.push(r);
-      else byTool.set(tool, [r]);
+      else kinds.set(kind, [r]);
     }
-    return AGENT_TOOLS.map((t) => ({
-      tool: t,
-      files: (byTool.get(t.id) ?? []).sort((a, b) => a.path.localeCompare(b.path)),
-    })).filter((g) => g.files.length > 0);
+    return AGENT_TOOLS.map((t) => {
+      const kinds = byTool.get(t.id);
+      return {
+        tool: t,
+        total: kinds ? [...kinds.values()].reduce((n, f) => n + f.length, 0) : 0,
+        sections: AGENT_KINDS.map((k) => {
+          const files = kinds?.get(k.id) ?? [];
+          // A skill is a folder: one row for it, not one per reference doc.
+          const rows =
+            k.id === "skill"
+              ? collapseSkills(files)
+              : files
+                  .map((f) => ({
+                    file: f,
+                    label: agentFileLabel(f.path, f.name),
+                    contains: 1,
+                  }))
+                  .sort((a, b) => a.label.localeCompare(b.label));
+          return { kind: k, rows };
+        }).filter((sec) => sec.rows.length > 0),
+      };
+    }).filter((g) => g.total > 0);
   }, [rows, filter]);
 
   if (!api?.mdIndexScan)
@@ -78,7 +113,7 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
       </div>
     );
 
-  const total = grouped.reduce((n, g) => n + g.files.length, 0);
+  const total = grouped.reduce((n, g) => n + g.total, 0);
 
   return (
     <div className="flex flex-col h-full">
@@ -116,35 +151,75 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
         ) : (
           grouped.map((g) => (
             <div key={g.tool.id}>
-              <div className="text-[9px] uppercase tracking-wide text-muted px-2 pt-3 pb-1">
+              <div className="text-[9px] uppercase tracking-wide text-muted px-2 pt-3 pb-1 border-b border-border/60 sticky top-0 bg-surface">
                 {g.tool.label}
-                <span className="ml-1 text-muted">{g.files.length}</span>
+                <span className="ml-1 text-muted">{g.total}</span>
               </div>
-              {g.files.map((f) => (
-                <div
-                  key={f.path}
-                  onClick={() => onOpenPath(f.path)}
-                  className={`flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-accent/30 ${
-                    activePath === f.path ? "bg-accent/40" : ""
-                  }`}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[12px] text-foreground/90">{f.name}</div>
-                    <div className="truncate text-[10px] text-muted">
-                      {compactHomePath(f.dir, home, fullPath)}
-                    </div>
-                  </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); toggleStar(f.path); }}
-                    title={stars.has(f.path) ? "Unstar" : "Star"}
-                    className={`shrink-0 px-1 text-[12px] ${
-                      stars.has(f.path) ? "text-[var(--status-yellow)]" : "text-muted hover:text-foreground"
-                    }`}
+              {g.sections.map((sec) => {
+                const key = `${g.tool.id}:${sec.kind.id}`;
+                // A filter is a search, so it overrides the fold: hiding the
+                // matches behind a closed section would defeat the filter.
+                const isOpen = filter
+                  ? true
+                  : closed.has(key)
+                    ? false
+                    : !sec.kind.collapsed;
+                return (
+                <div key={sec.kind.id}>
+                  <div
+                    onClick={() =>
+                      setClosed((s) => {
+                        const n = new Set(s);
+                        // Stored as "not in its default state", so a section
+                        // opened by hand stays open and one closed by hand
+                        // stays closed.
+                        if (n.has(key)) n.delete(key);
+                        else n.add(key);
+                        return n;
+                      })
+                    }
+                    className="text-[10px] text-muted/80 px-2 pt-2 pb-0.5 flex items-center gap-1 cursor-pointer hover:text-foreground"
                   >
-                    {stars.has(f.path) ? "★" : "☆"}
-                  </button>
+                    <span className="w-2.5">{isOpen ? "▾" : "▸"}</span>
+                    {sec.kind.label}
+                    <span className="ml-1">{sec.rows.length}</span>
+                  </div>
+                  {isOpen && sec.rows.map(({ file: f, label, contains }) => (
+                    <div
+                      key={f.path}
+                      onClick={() => onOpenPath(f.path)}
+                      title={f.path}
+                      className={`flex items-center gap-1 pl-4 pr-2 py-1 cursor-pointer hover:bg-accent/30 ${
+                        activePath === f.path ? "bg-accent/40" : ""
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[12px] text-foreground/90">
+                          {label}
+                          {contains > 1 && (
+                            <span className="ml-1 text-[9px] text-muted">
+                              +{contains - 1}
+                            </span>
+                          )}
+                        </div>
+                        <div className="truncate text-[10px] text-muted">
+                          {compactHomePath(f.dir, home, fullPath)}
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleStar(f.path); }}
+                        title={stars.has(f.path) ? "Unstar" : "Star"}
+                        className={`shrink-0 px-1 text-[12px] ${
+                          stars.has(f.path) ? "text-[var(--status-yellow)]" : "text-muted hover:text-foreground"
+                        }`}
+                      >
+                        {stars.has(f.path) ? "★" : "☆"}
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              ))}
+                );
+              })}
             </div>
           ))
         )}

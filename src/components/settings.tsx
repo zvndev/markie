@@ -1,15 +1,12 @@
-"use client";
-
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  authClient,
   getServerURL,
   setServerURL,
   getSyncEnabled,
   setSyncEnabled,
-  type MarkieUser,
 } from "@/lib/auth-client";
-import { getElectronAPI } from "@/lib/electron";
+import { authStore, useAuth } from "@/lib/auth-store";
+import { SignInForm } from "@/components/sign-in";
 import {
   allThemes,
   applyTheme,
@@ -25,13 +22,9 @@ type SettingsSection = "account" | "appearance" | "advanced";
 
 interface SettingsProps {
   onClose: () => void;
-  // bumps when auth changes out-of-band (e.g. Google deep-link sign-in)
-  authNonce: number;
   // which section to open on mount (Theme quick-access opens "appearance")
   initialSection?: SettingsSection;
 }
-
-type AuthView = "password" | "otp-email" | "otp-code";
 
 const SECTIONS: Array<[SettingsSection, string]> = [
   ["account", "Account"],
@@ -39,54 +32,14 @@ const SECTIONS: Array<[SettingsSection, string]> = [
   ["advanced", "Advanced"],
 ];
 
-export function Settings({ onClose, authNonce, initialSection = "account" }: SettingsProps) {
+export function Settings({ onClose, initialSection = "account" }: SettingsProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
-  const [user, setUser] = useState<MarkieUser | null>(null);
-  const [checking, setChecking] = useState(true);
-  const [authView, setAuthView] = useState<AuthView>("password");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [otp, setOtp] = useState("");
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  // The store owns the session, so Settings no longer probes /api/me itself and
+  // no longer needs an authNonce poked at it from page.tsx when a Google
+  // deep-link signs the user in behind this dialog.
+  const { user, status } = useAuth();
   const [sync, setSync] = useState(getSyncEnabled);
   const [server, setServer] = useState(getServerURL);
-
-  const refresh = useCallback(async () => {
-    const u = await authClient.me();
-    setUser(u);
-    setChecking(false);
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-    authClient.me().then((u) => {
-      if (!alive) return;
-      setUser(u);
-      setChecking(false);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // Re-check the session when auth changes out-of-band (Google deep-link
-  // sign-in lands a token via markie://). Without this the open modal stays
-  // stuck on the sign-in form after the browser hands the session back.
-  useEffect(() => {
-    if (authNonce === 0) return;
-    let alive = true;
-    authClient.me().then((u) => {
-      if (!alive) return;
-      setUser(u);
-      setChecking(false);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [authNonce]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -96,46 +49,7 @@ export function Settings({ onClose, authNonce, initialSection = "account" }: Set
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const run = async (fn: () => Promise<{ ok: boolean; status: number }>) => {
-    setBusy(true);
-    setError(null);
-    const res = await fn();
-    setBusy(false);
-    if (!res.ok) {
-      setError(
-        res.status === 0
-          ? "Can't reach the Markie server."
-          : res.status === 401
-            ? "Invalid credentials."
-            : `Request failed (${res.status}).`
-      );
-      return false;
-    }
-    return true;
-  };
-
-  const submitPassword = async () => {
-    const ok = await run(() =>
-      isSignUp
-        ? authClient.signUpEmail(email, password, name || email.split("@")[0])
-        : authClient.signInEmail(email, password)
-    );
-    if (ok) refresh();
-  };
-
-  const submitOTPEmail = async () => {
-    const ok = await run(() => authClient.sendOTP(email));
-    if (ok) setAuthView("otp-code");
-  };
-
-  const submitOTPCode = async () => {
-    const ok = await run(() => authClient.verifyOTP(email, otp));
-    if (ok) refresh();
-  };
-
   const inputClass = "markie-overlay-field w-full text-[13px] px-3 py-2";
-  const buttonClass =
-    "markie-overlay-button w-full text-[13px] py-2 rounded-md bg-accent text-foreground hover:opacity-90 disabled:opacity-50";
 
   return (
     <div
@@ -179,7 +93,7 @@ export function Settings({ onClose, authNonce, initialSection = "account" }: Set
 
         {section === "account" && (
           <>
-            {checking ? (
+            {status === "checking" ? (
               <div className="text-[12px] text-muted">Checking session…</div>
             ) : user ? (
               <div>
@@ -189,10 +103,7 @@ export function Settings({ onClose, authNonce, initialSection = "account" }: Set
                     <div className="text-[11px] text-muted">{user.email}</div>
                   </div>
                   <button
-                    onClick={async () => {
-                      await authClient.signOut();
-                      refresh();
-                    }}
+                    onClick={() => authStore.signOut()}
                     className="markie-overlay-button text-[12px] text-muted hover:text-foreground border border-border rounded-md px-3 py-1.5"
                   >
                     Sign out
@@ -211,115 +122,7 @@ export function Settings({ onClose, authNonce, initialSection = "account" }: Set
                 </label>
               </div>
             ) : (
-              <div className="space-y-2">
-                <div className="mb-3">
-                  <div className="text-[14px] font-semibold text-foreground">Sign in to Markie</div>
-                  <div className="text-[12px] text-muted mt-0.5">
-                    Sync and share across your devices.
-                  </div>
-                </div>
-                {authView === "password" && (
-                  <>
-                    {isSignUp && (
-                      <input
-                        className={inputClass}
-                        placeholder="Name"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                      />
-                    )}
-                    <input
-                      className={inputClass}
-                      placeholder="Email"
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                    />
-                    <input
-                      className={inputClass}
-                      placeholder="Password"
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && submitPassword()}
-                    />
-                    <button className={buttonClass} disabled={busy || !email || !password} onClick={submitPassword}>
-                      {isSignUp ? "Create account" : "Sign in"}
-                    </button>
-                    <div className="flex items-center justify-between text-[11px] text-muted">
-                      <button className="hover:text-foreground" onClick={() => setIsSignUp((v) => !v)}>
-                        {isSignUp ? "Have an account? Sign in" : "New here? Create account"}
-                      </button>
-                      <button className="hover:text-foreground" onClick={() => setAuthView("otp-email")}>
-                        Email me a code instead
-                      </button>
-                    </div>
-                  </>
-                )}
-                {authView === "otp-email" && (
-                  <>
-                    <input
-                      className={inputClass}
-                      placeholder="Email"
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && submitOTPEmail()}
-                    />
-                    <button className={buttonClass} disabled={busy || !email} onClick={submitOTPEmail}>
-                      Send sign-in code
-                    </button>
-                    <button
-                      className="text-[11px] text-muted hover:text-foreground"
-                      onClick={() => setAuthView("password")}
-                    >
-                      Back to password
-                    </button>
-                  </>
-                )}
-                {authView === "otp-code" && (
-                  <>
-                    <div className="text-[12px] text-muted">Code sent to {email}</div>
-                    <input
-                      className={inputClass}
-                      placeholder="6-digit code"
-                      inputMode="numeric"
-                      value={otp}
-                      onChange={(e) => setOtp(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && submitOTPCode()}
-                    />
-                    <button className={buttonClass} disabled={busy || otp.length < 6} onClick={submitOTPCode}>
-                      Verify
-                    </button>
-                    <button
-                      className="text-[11px] text-muted hover:text-foreground"
-                      onClick={() => setAuthView("otp-email")}
-                    >
-                      Resend code
-                    </button>
-                  </>
-                )}
-                <button
-                  className="markie-overlay-button w-full text-[13px] py-2 rounded-md border border-border text-foreground/90 hover:bg-accent/40"
-                  onClick={() => {
-                    setError(null);
-                    // Null means we couldn't mint the state nonce that proves the
-                    // returning deep link belongs to this sign-in. Starting anyway
-                    // would just fail at the other end, so say so here.
-                    const url = authClient.googleSignInURL();
-                    if (!url) {
-                      setError("Couldn't start Google sign-in on this machine. Use an email code instead.");
-                      return;
-                    }
-                    const api = getElectronAPI();
-                    if (api?.openExternal) api.openExternal(url);
-                    else window.open(url, "_blank");
-                  }}
-                >
-                  Continue with Google
-                </button>
-                {error && <div className="text-[12px] text-[var(--status-red)]">{error}</div>}
-              </div>
+              <SignInForm reason="account" />
             )}
           </>
         )}
@@ -336,7 +139,9 @@ export function Settings({ onClose, authNonce, initialSection = "account" }: Set
               onChange={(e) => setServer(e.target.value)}
               onBlur={() => {
                 setServerURL(server);
-                refresh();
+                // A different server means a different session, so re-probe
+                // rather than keep showing the account from the old one.
+                void authStore.refresh();
               }}
             />
             <div className="text-[11px] text-muted mt-2">

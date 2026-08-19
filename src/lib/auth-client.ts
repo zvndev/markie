@@ -127,6 +127,22 @@ export const authClient = {
       body: JSON.stringify({ email, otp }),
     }),
 
+  // Forgotten passwords are recovered with a code, not a reset link. A link
+  // has to land somewhere, and the only somewhere a desktop app owns is a
+  // hosted web page plus a second deep-link hop back into the app. The OTP
+  // plugin already does this in two requests without leaving Markie.
+  requestPasswordReset: (email: string) =>
+    api<{ success: boolean }>("/api/auth/forget-password/email-otp", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+
+  resetPassword: (email: string, otp: string, password: string) =>
+    api<{ success: boolean }>("/api/auth/email-otp/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ email, otp, password }),
+    }),
+
   signOut: async () => {
     const res = await api<{ success: boolean }>("/api/auth/sign-out", {
       method: "POST",

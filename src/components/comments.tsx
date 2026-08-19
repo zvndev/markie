@@ -9,7 +9,8 @@ import {
   anchorToAbsolute,
   type CommentThread,
 } from "@/lib/comments";
-import { authClient, type MarkieUser } from "@/lib/auth-client";
+import type { MarkieUser } from "@/lib/auth-client";
+import { useAuth } from "@/lib/auth-store";
 import { colorForName, initials } from "@/lib/collab";
 
 const POLL_MS = 15000;
@@ -42,7 +43,7 @@ export function CommentLayer({
   container,
 }: CommentLayerProps) {
   const [threads, setThreads] = useState<CommentThread[] | null>(null);
-  const [me, setMe] = useState<MarkieUser | null>(null);
+  const { user: me } = useAuth();
   const [openThreadId, setOpenThreadId] = useState<string | null>(null);
   const [composing, setComposing] = useState<{ from: number; to: number } | null>(null);
   const [pendingSel, setPendingSel] = useState<{ from: number; to: number } | null>(null);
@@ -60,7 +61,6 @@ export function CommentLayer({
 
   useEffect(() => {
     refresh();
-    authClient.me().then(setMe);
     // Poll for new comments, but pause while the window is hidden so a doc
     // left open overnight doesn't hammer the API thousands of times.
     let interval: ReturnType<typeof setInterval> | null = null;

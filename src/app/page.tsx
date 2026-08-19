@@ -57,13 +57,15 @@ import {
 } from "@/lib/color-mode";
 import {
   adoptAuthToken,
-  authClient,
   collabWsBase,
   getAuthToken,
   pushSyncConfig,
   sharesClient,
 } from "@/lib/auth-client";
 import { consumeAuthState } from "@/lib/auth-state";
+import { authStore } from "@/lib/auth-store";
+import { SignInDialog } from "@/components/sign-in";
+import type { SignInReason } from "@/lib/auth-errors";
 import { colorForName, type CollabConfig, type PeerUser } from "@/lib/collab";
 import {
   canEditDocument,
@@ -162,6 +164,9 @@ export default function Home() {
   const [showHelp, setShowHelp] = useState(false);
   const [showTheme, setShowTheme] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  // Non-null while a gated surface is asking for a session; the value is what
+  // it wants the session for, which is what the dialog puts at the top.
+  const [signInReason, setSignInReason] = useState<SignInReason | null>(null);
   const [showLibrary, setShowLibrary] = useState(false);
   // which side-panel view the left rail has selected
   const [leftView, setLeftView] = useState<LeftView>("library");
@@ -179,7 +184,6 @@ export default function Home() {
   // somebody's notes.
   const [appearance, setAppearance] = useState<DocAppearance>(DEFAULT_APPEARANCE);
   // bumps when auth changes out-of-band (deep-link sign-in) so account UI refreshes
-  const [authNonce, setAuthNonce] = useState(0);
   // bumps to refresh the Library panel (file opened/saved, sync changed)
   const [libRefreshKey, setLibRefreshKey] = useState(0);
   const [showShare, setShowShare] = useState(false);
@@ -256,7 +260,7 @@ export default function Home() {
         // this". The document stays read-only until it answers: assuming yes is
         // how a viewer got to type into a doc their edits could never reach.
         setRoleState("checking");
-        const me = await authClient.me();
+        const { user: me } = await authStore.ready();
         const [access, members] = me
           ? await Promise.all([sharesClient.access(cid), sharesClient.list(cid)])
           : [null, null];
@@ -1040,7 +1044,7 @@ export default function Home() {
             }
             adoptAuthToken(token);
             refreshCollabRef.current();
-            setAuthNonce((n) => n + 1); // re-render Settings/account state
+            void authStore.refresh(); // every auth-aware surface updates at once
             setShowSettings(false); // dismiss the sign-in modal — we're in now
             setLibRefreshKey((k) => k + 1); // Library can show cloud files now
             return;
@@ -1272,7 +1276,6 @@ export default function Home() {
           onAgents={() => setShowAgents(true)}
           onShortcuts={() => setShowHelp((v) => !v)}
           onAccount={() => setShowSettings(true)}
-          authNonce={authNonce}
         />
 
         {/* Docked side panel (Library / Browse / Shared / Skills) */}
@@ -1284,7 +1287,7 @@ export default function Home() {
             onOpenPath={openPath}
             onOpenFile={handleOpenFile}
             onAddPaths={addPaths}
-            onSignIn={() => setShowSettings(true)}
+            onSignIn={() => setSignInReason("sync")}
             onManageShare={handleManageShare}
             onSyncChanged={refreshCollab}
             activePath={filePath}
@@ -1430,11 +1433,9 @@ export default function Home() {
       )}
       {showTheme && (
         <Settings
-          authNonce={authNonce}
           initialSection="appearance"
           onClose={() => {
             setShowTheme(false);
-            setAuthNonce((n) => n + 1); // account/avatar reflects sign-in/out
             setLibRefreshKey((k) => k + 1);
             refreshCollab(); // sign-in/out changes live eligibility
           }}
@@ -1442,12 +1443,20 @@ export default function Home() {
       )}
       {showSettings && (
         <Settings
-          authNonce={authNonce}
           onClose={() => {
             setShowSettings(false);
-            setAuthNonce((n) => n + 1); // account/avatar reflects sign-in/out
             setLibRefreshKey((k) => k + 1);
             refreshCollab(); // sign-in/out changes live eligibility
+          }}
+        />
+      )}
+      {signInReason && (
+        <SignInDialog
+          reason={signInReason}
+          onClose={() => setSignInReason(null)}
+          onDone={() => {
+            setLibRefreshKey((k) => k + 1); // cloud files can be listed now
+            refreshCollab(); // sign-in changes live eligibility
           }}
         />
       )}
@@ -1458,10 +1467,6 @@ export default function Home() {
           content={toDisk(fileName, content)}
           onClose={() => setShowShare(false)}
           onChanged={refreshCollab}
-          onSignIn={() => {
-            setShowShare(false);
-            setShowSettings(true);
-          }}
         />
       )}
       {showConflict && filePath && (

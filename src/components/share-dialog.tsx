@@ -2,12 +2,11 @@
 
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import {
-  authClient,
   sharesClient,
-  type MarkieUser,
   type ShareAccess,
   type ShareMember,
 } from "@/lib/auth-client";
+import { useAuth } from "@/lib/auth-store";
 import { colorForName, initials } from "@/lib/collab";
 import { getDocTheme, setDocTheme } from "@/lib/theme-sync";
 import { findTheme, loadThemeStore } from "@/lib/theme";
@@ -41,7 +40,7 @@ export function ShareDialog({
   onClose,
   onChanged,
 }: ShareDialogProps) {
-  const [me, setMe] = useState<MarkieUser | null>(null);
+  const { user: me } = useAuth();
   const [access, setAccess] = useState<ShareAccess | null>(null);
   const [members, setMembers] = useState<ShareMember[] | null>(null);
   const [email, setEmail] = useState("");
@@ -60,18 +59,14 @@ export function ShareDialog({
 
   const load = useCallback(() => {
     return Promise.all([
-      authClient.me(),
       sharesClient.access(docId),
       sharesClient.list(docId),
       sharesClient.getPublicLink(docId),
-    ]).then(
-      ([user, nextAccess, list, url]) => {
-        setMe(user);
-        setAccess(nextAccess);
-        setMembers(list ?? []);
-        setPublicUrl(url);
-      }
-    );
+    ]).then(([nextAccess, list, url]) => {
+      setAccess(nextAccess);
+      setMembers(list ?? []);
+      setPublicUrl(url);
+    });
   }, [docId]);
 
   useEffect(() => {

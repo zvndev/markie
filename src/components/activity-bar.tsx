@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { authClient, type MarkieUser } from "@/lib/auth-client";
+import { useAuth } from "@/lib/auth-store";
 import { colorForName, initials } from "@/lib/collab";
 
 export type { LeftView } from "@/lib/left-rail";
@@ -19,8 +18,6 @@ interface ActivityBarProps {
   onAgents: () => void;
   onShortcuts: () => void;
   onAccount: () => void;
-  // bumps when auth changes elsewhere (deep-link sign-in, sign-out)
-  authNonce: number;
 }
 
 export function ActivityBar({
@@ -32,19 +29,8 @@ export function ActivityBar({
   onAgents,
   onShortcuts,
   onAccount,
-  authNonce,
 }: ActivityBarProps) {
-  const [user, setUser] = useState<MarkieUser | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    authClient.me().then((u) => {
-      if (alive) setUser(u);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [authNonce]);
+  const { user } = useAuth();
 
   const isActive = (v: LeftView) =>
     v === "edit" ? activeView === "edit" : panelOpen && activeView === v;

@@ -148,6 +148,12 @@ export interface ElectronAPI {
   onFileOpened(cb: (data: FilePayload) => void): Unsubscribe;
   // Auto-update
   checkForUpdates(): Promise<{ ok: boolean; reason?: string }>;
+  /** Hand a crash to the main process, which owns the local crash log. */
+  crashReport(record: unknown): Promise<{ saved: boolean }>;
+  /** Everything in the local crash log, oldest first. */
+  crashLogRead(): Promise<unknown[]>;
+  /** Reveal the crash log in Finder, for sending it on. */
+  crashLogReveal(): Promise<{ ok: boolean }>;
   updateStatus(): Promise<string>;
   /** Whether this install follows the opt-in beta update channel. */
   updateChannelGet(): Promise<{ optedIn: boolean; currentVersion: string }>;

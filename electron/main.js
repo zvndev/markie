@@ -21,6 +21,7 @@ const { createFileGrants } = require("./file-grants");
 const { buildAppCsp } = require("./csp");
 const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
 const { guardedLogger } = require("./updater-logging");
+const { appendCrash, logPath, readCrashes } = require("./crash-log");
 const {
   readBetaOptIn,
   updaterSettingsFor,
@@ -998,6 +999,75 @@ function applyUpdateChannel() {
   autoUpdater.allowDowngrade = allowDowngrade;
   return { optedIn, channel, allowDowngrade };
 }
+
+// ── Crash reporting ──
+// Everything stays on this machine. Markie is local-first and a crash record
+// carries file paths, so shipping these anywhere is a product decision, not a
+// detail this file gets to make.
+function recordCrash(record) {
+  try {
+    // Version and platform are stamped here rather than trusted from the
+    // renderer. The renderer only knows a build-time env var (which reads
+    // "dev") and navigator.platform (which says "MacIntel" on Apple Silicon),
+    // and "which build, on what" is the first question asked of any crash.
+    return appendCrash(app.getPath("userData"), {
+      ...record,
+      version: app.getVersion(),
+      platform: `${process.platform}/${process.arch}`,
+    });
+  } catch {
+    // Reporting a crash must never cause one.
+    return false;
+  }
+}
+
+ipcMain.handle("crash-report", (_e, record) => ({ saved: recordCrash(record) }));
+ipcMain.handle("crash-log-read", () => {
+  try {
+    return readCrashes(app.getPath("userData"));
+  } catch {
+    return [];
+  }
+});
+ipcMain.handle("crash-log-reveal", () => {
+  try {
+    shell.showItemInFolder(logPath(app.getPath("userData")));
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+});
+
+// The renderer dying takes the error boundary with it, so the main process has
+// to be the one that writes this down. Without it, the single most severe
+// failure mode — the window going away entirely — left no trace at all.
+app.on("render-process-gone", (_event, _contents, details) => {
+  recordCrash({
+    at: new Date().toISOString(),
+    source: "main",
+    message: `Renderer process gone: ${details?.reason ?? "unknown"}`,
+    stack: `exitCode=${details?.exitCode ?? "?"}`,
+  });
+});
+
+app.on("child-process-gone", (_event, details) => {
+  recordCrash({
+    at: new Date().toISOString(),
+    source: "main",
+    message: `Child process gone: ${details?.type ?? "unknown"} (${details?.reason ?? "unknown"})`,
+    stack: `exitCode=${details?.exitCode ?? "?"}`,
+  });
+});
+
+process.on("uncaughtException", (err) => {
+  recordCrash({
+    at: new Date().toISOString(),
+    source: "main",
+    message: String(err?.message ?? err ?? "Unknown main-process error"),
+    stack: String(err?.stack ?? ""),
+  });
+  console.error("uncaught exception in main:", err);
+});
 
 // IPC: renderer asks for the latest known update status / triggers a check
 ipcMain.handle("update-status", () => updateState);

@@ -112,6 +112,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   termOpenExternal: (app, cwd) => ipcRenderer.invoke("term-open-external", { app, cwd }),
   // Auto-update
   checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
+  crashReport: (record) => ipcRenderer.invoke("crash-report", record),
+  crashLogRead: () => ipcRenderer.invoke("crash-log-read"),
+  crashLogReveal: () => ipcRenderer.invoke("crash-log-reveal"),
   updateStatus: () => ipcRenderer.invoke("update-status"),
   updateChannelGet: () => ipcRenderer.invoke("update-channel-get"),
   updateChannelSet: (optedIn) => ipcRenderer.invoke("update-channel-set", optedIn),

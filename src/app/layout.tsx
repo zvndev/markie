@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { AppErrorBoundary } from "@/components/app-error-boundary";
 
 export const metadata: Metadata = {
   title: "Markie — Markdown Viewer",
@@ -13,7 +14,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        {/* Wraps everything: a render error anywhere below used to unmount the
+            whole tree and leave a blank window with nothing written down. */}
+        <AppErrorBoundary>{children}</AppErrorBoundary>
+      </body>
     </html>
   );
 }

@@ -141,6 +141,32 @@ describe("release workflow", () => {
     ).toBe("0.2.10");
   });
 
+  it("bumps every version file to a beta prerelease too", () => {
+    // release:version is the only supported way to move versions, so a beta
+    // that it refuses is a beta that cannot be cut at all.
+    const root = mkdtempSync(path.join(tmpdir(), "markie-release-beta-"));
+    mkdirSync(path.join(root, "mcp/.claude-plugin"), { recursive: true });
+    writeFileSync(path.join(root, "package.json"), '{"version":"0.4.0"}\n');
+    writeFileSync(
+      path.join(root, "package-lock.json"),
+      '{"version":"0.4.0","packages":{"":{"version":"0.4.0"}}}\n'
+    );
+    writeFileSync(path.join(root, "mcp/package.json"), '{"version":"0.4.0"}\n');
+    writeFileSync(
+      path.join(root, "mcp/.claude-plugin/plugin.json"),
+      '{"name":"markie","version":"0.4.0"}\n'
+    );
+
+    setReleaseVersion("0.5.0-beta.1", root);
+
+    expect(JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version).toBe(
+      "0.5.0-beta.1"
+    );
+    expect(
+      JSON.parse(readFileSync(path.join(root, "mcp/.claude-plugin/plugin.json"), "utf8")).version
+    ).toBe("0.5.0-beta.1");
+  });
+
   it("rejects non-release versions", () => {
     expect(() => assertVersion("0.2")).toThrow(/invalid release version/);
     expect(() => assertVersion("v0.2.10")).toThrow(/invalid release version/);

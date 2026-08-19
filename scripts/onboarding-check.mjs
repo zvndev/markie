@@ -281,6 +281,88 @@ async function main() {
   const betaOut = await cdp.ev("window.electronAPI.updateChannelGet().then((s) => s.optedIn)");
   check("opting back out persists", betaOut === false, `optedIn=${betaOut}`);
 
+  // ── Sidebar resize ─────────────────────────────────────────────────────
+  // Close Settings first, then open the Library panel the handle belongs to.
+  await cdp.ev(`document.querySelector('[aria-label="Close settings"]')?.click(), true`);
+  await cdp.ev(`document.querySelector('[aria-label^="Library"]').click(), true`);
+  await waitFor("library panel", () => cdp.ev(`!!document.querySelector('.markie-side-panel')`), 10000);
+
+  const panelWidth = `document.querySelector('.markie-side-panel')?.getBoundingClientRect().width ?? 0`;
+  const handle = `document.querySelector('.markie-panel-resizer')`;
+  check("the panel has a grab handle", await cdp.ev(`!!${handle}`));
+  check(
+    "the handle announces itself as a resizer",
+    await cdp.ev(`${handle}.getAttribute('role') === 'separator'`)
+  );
+
+  // Drag with real pointer events through pointer capture, which is the whole
+  // mechanism: a synthetic width set in JS would prove nothing about the drag.
+  //
+  // Targets are expressed as the width we want, not a viewport x. The panel
+  // starts after the 48px activity bar, so conflating the two silently asks for
+  // a panel 48px narrower than intended — which is how the first version of
+  // this check "failed" on correct behaviour.
+  const panelLeft = async () =>
+    cdp.ev(`document.querySelector('.markie-side-panel').getBoundingClientRect().left`);
+
+  const dragToWidth = async (targetWidth) => {
+    const left = await panelLeft();
+    const y = await cdp.ev(`(() => { const r = ${handle}.getBoundingClientRect();
+      return r.y + Math.min(200, r.height / 2); })()`);
+    const startX = await cdp.ev(`(() => { const r = ${handle}.getBoundingClientRect();
+      return r.x + r.width / 2; })()`);
+    const endX = left + targetWidth;
+    for (const [type, cx] of [["mousePressed", startX], ["mouseMoved", endX], ["mouseReleased", endX]]) {
+      await cdp.send("Input.dispatchMouseEvent", {
+        type, x: cx, y, button: "left", buttons: 1, clickCount: 1, pointerType: "mouse",
+      });
+      await new Promise((r) => setTimeout(r, 90));
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  };
+
+  await dragToWidth(420);
+  const widened = await cdp.ev(panelWidth);
+  check("dragging right widens the panel", Math.round(widened) === 420, `width=${Math.round(widened)}`);
+
+  // Past half the window it must stop, however far the pointer goes.
+  const half = await cdp.ev("Math.floor(window.innerWidth * 0.5)");
+  await dragToWidth(await cdp.ev("window.innerWidth"));
+  const maxed = await cdp.ev(panelWidth);
+  check(
+    "the panel never passes half the app width",
+    Math.round(maxed) === half,
+    `width=${Math.round(maxed)} half=${half}`
+  );
+
+  // Between the minimum and the snap point it resists rather than shrinking
+  // into an unreadable sliver.
+  await dragToWidth(165);
+  const held = await cdp.ev(panelWidth);
+  check(
+    "dragging thin holds at the minimum instead of going unusable",
+    Math.round(held) === 180,
+    `width=${Math.round(held)}`
+  );
+
+  await shoot(cdp, "05-sidebar-resized");
+
+  // Past the snap point it stops resisting and closes.
+  await dragToWidth(120);
+  await waitFor("collapsed", async () => !(await cdp.ev(`!!document.querySelector('.markie-side-panel')`)), 8000);
+  check("dragging past the snap point collapses the panel", true);
+
+  // Reopening restores the width it had, not the default.
+  await cdp.ev(`document.querySelector('[aria-label^="Library"]').click(), true`);
+  await waitFor("reopened", () => cdp.ev(`!!document.querySelector('.markie-side-panel')`), 10000);
+  const restored = await cdp.ev(panelWidth);
+  check(
+    "reopening restores the remembered width",
+    Math.round(restored) === 180,
+    `width=${Math.round(restored)}`
+  );
+  await shoot(cdp, "05-sidebar-resized");
+
   // ── Second run ─────────────────────────────────────────────────────────
   // Same origin and same user-data directory, so the seen flag is the real one.
   await cdp.send("Page.navigate", { url: devOrigin });

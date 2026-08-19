@@ -26,6 +26,8 @@ import {
 } from "@/lib/library-overview";
 import type { WorkspaceBootstrapResult } from "@/lib/workspace-default";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
+import { PanelResizer } from "@/components/panel-resizer";
+import { loadPanelWidth, panelSizeFor, savePanelWidth } from "@/lib/panel-resize";
 
 interface LibraryProps {
   // which view the left rail selected (library | browse | shared | skills)
@@ -104,6 +106,29 @@ export function Library({
 }: LibraryProps) {
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [signedIn, setSignedIn] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(loadPanelWidth);
+
+  const resizePanel = useCallback((next: number) => {
+    setPanelWidth(next);
+    savePanelWidth(next);
+  }, []);
+
+  // A width that was reasonable in a wide window can be more than half a narrow
+  // one, and nothing else re-checks it. Shrinking the app must not leave the
+  // document with no room.
+  useEffect(() => {
+    const onResize = () => {
+      setPanelWidth((current) => {
+        const size = panelSizeFor(current, window.innerWidth);
+        // Deliberately not auto-closing here: a window resize is not a request
+        // to dismiss the panel, so it clamps to the narrowest legal width and
+        // leaves closing to the user.
+        return size.collapsed ? current : size.width;
+      });
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   // only "loading" when there's actually a main-process library to query
   const [loading, setLoading] = useState(
     () => !!getElectronAPI()?.libraryState
@@ -402,7 +427,8 @@ export function Library({
 
   return (
     <div
-      className={`markie-side-panel relative w-[252px] shrink-0 h-full flex flex-col border-r bg-surface ${
+      style={{ width: panelWidth }}
+      className={`markie-side-panel relative shrink-0 h-full flex flex-col border-r bg-surface ${
         dropping ? "border-foreground/40" : "border-border"
       }`}
       onDragOver={(e) => {
@@ -417,6 +443,9 @@ export function Library({
       }}
       onDrop={onDrop}
     >
+      {/* Collapsing is the panel's existing closed state (onClose), not a
+          second notion of "collapsed" to keep in step with the activity bar. */}
+      <PanelResizer width={panelWidth} onResize={resizePanel} onCollapse={onClose} />
       {dropping && (
         <div className="absolute inset-0 z-10 m-1.5 rounded-lg border-2 border-dashed border-foreground/40 bg-surface/80 flex items-center justify-center pointer-events-none">
           <span className="text-[12px] text-foreground/80">Drop to add to your library</span>

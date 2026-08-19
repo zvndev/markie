@@ -143,6 +143,36 @@ body {
     inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent);
 }
 
+/* The side-panel grab handle. Invisible until you reach for it: a permanent
+   vertical bar next to a border the panel already has reads as clutter, but a
+   handle with no feedback at all reads as a dead edge. */
+.markie-panel-resizer::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--blue);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.markie-panel-resizer:hover::after,
+.markie-panel-resizer:focus-visible::after {
+  opacity: 0.7;
+}
+
+.markie-panel-resizer:focus-visible {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markie-panel-resizer::after {
+    transition: none;
+  }
+}
+
 .markie-overlay-panel:focus-within {
   box-shadow:
     0 18px 44px color-mix(in srgb, #000 26%, transparent),

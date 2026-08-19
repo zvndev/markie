@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   renderDownloadPage,
   renderMarkdownHTML,
+  renderSharedDocPage,
   renderPublicPage,
   renderNotFoundPage,
 } from "./render.ts";
@@ -92,4 +93,47 @@ test("renderPublicPage sets a Content-Security-Policy", () => {
   const page = renderPublicPage({ title: "T", markdown: "# H", token: "tok", siteUrl: "https://x.test" });
   assert.match(page, /Content-Security-Policy/);
   assert.match(page, /default-src 'none'/);
+});
+
+const SHARED = {
+  title: "Q3 Roadmap",
+  markdown: "# Q3\n\nplan",
+  docId: "doc123",
+  siteUrl: "https://markie.test",
+  sharedBy: "Dana",
+  canEdit: false,
+};
+
+test("an invited newcomer is told which address claims the document", () => {
+  // claimPendingInvites already delivers the doc on signup; until now nothing
+  // told the reader that, so the obvious move was to copy the text out by hand.
+  const page = renderSharedDocPage({ ...SHARED, invitedEmail: "alice@example.com" });
+  assert.match(page, /alice@example\.com/);
+  assert.match(page, /already be[\s\S]*in your Library/);
+});
+
+test("a reader with no pending invite gets no invite instructions", () => {
+  // Members and owners already have it; telling them to sign up would be noise.
+  const page = renderSharedDocPage({ ...SHARED, invitedEmail: null });
+  assert.doesNotMatch(page, /in your Library/);
+});
+
+test("an invited address is escaped into the page", () => {
+  // The address comes from whatever the sharer typed into the invite box.
+  const page = renderSharedDocPage({
+    ...SHARED,
+    invitedEmail: '"><script>alert(1)</script>',
+  });
+  assert.doesNotMatch(page, /<script>alert/);
+});
+
+test("the shared doc page always offers a way to get Markie", () => {
+  const page = renderSharedDocPage({ ...SHARED, invitedEmail: null });
+  assert.match(page, /Get Markie/);
+});
+
+test("the shared doc page links downloads through the stable site route", () => {
+  // Release protocol: never a versioned artifact URL in a page or an email.
+  const page = renderSharedDocPage({ ...SHARED, invitedEmail: "alice@example.com" });
+  assert.doesNotMatch(page, /Markie-\d+\.\d+\.\d+/);
 });

@@ -58,6 +58,12 @@ function inviterName(userId: string): string | null {
 
 export interface DocViewer {
   canEdit: boolean;
+  /**
+   * The address an unclaimed invite was sent to, when that invite is what
+   * granted this read. Absent for members and for signed-in owners, who already
+   * have the document in their Library.
+   */
+  invitedEmail?: string;
 }
 
 // Decide whether this request may read this document. Every path ends in a
@@ -79,7 +85,7 @@ export async function resolveViewer(
     // A pending invite has no user to check, so the row's own existence is the
     // authorization. Withdrawing the invite deletes it.
     if (pending && pending.docId === docId) {
-      return { canEdit: pending.role === "editor" };
+      return { canEdit: pending.role === "editor", invitedEmail: pending.email };
     }
   }
 
@@ -123,6 +129,7 @@ docView.get("/d/:id", async (c) => {
       siteUrl: MARKIE_SITE,
       sharedBy: inviterName(doc.owner_id),
       canEdit: viewer.canEdit,
+      invitedEmail: viewer.invitedEmail ?? null,
     })
   );
 });

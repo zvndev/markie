@@ -7,6 +7,7 @@ import {
 } from "@/lib/auth-client";
 import { authStore, useAuth } from "@/lib/auth-store";
 import { SignInForm } from "@/components/sign-in";
+import { getElectronAPI } from "@/lib/electron";
 import {
   allThemes,
   applyTheme,
@@ -131,6 +132,8 @@ export function Settings({ onClose, initialSection = "account" }: SettingsProps)
 
         {section === "advanced" && (
           <div>
+            <BetaChannelSetting />
+
             <div className="markie-overlay-section mb-2">Server &amp; sync settings</div>
             <label className="text-[11px] text-muted block mb-1">Markie server URL</label>
             <input
@@ -150,6 +153,75 @@ export function Settings({ onClose, initialSection = "account" }: SettingsProps)
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// The only way into the beta channel. Deliberately lives here and nowhere else:
+// an unlisted channel you can only join from inside the app is what makes a
+// beta release withdrawable without anything public to retract.
+function BetaChannelSetting() {
+  const [optedIn, setOptedIn] = useState<boolean | null>(null);
+  const [version, setVersion] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    getElectronAPI()
+      ?.updateChannelGet?.()
+      .then((s) => {
+        if (!alive) return;
+        setOptedIn(s.optedIn);
+        setVersion(s.currentVersion);
+      })
+      .catch(() => alive && setOptedIn(false));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Nothing to offer in a browser or an unpackaged dev window.
+  if (optedIn === null || !getElectronAPI()?.updateChannelSet) return null;
+
+  const toggle = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    const res = await getElectronAPI()!.updateChannelSet!(next);
+    setBusy(false);
+    if (!res.ok) {
+      // Don't move the switch on a write that didn't stick, or the UI claims a
+      // preference the updater will not honour on the next launch.
+      setError(res.error ?? "Couldn't change the update channel.");
+      return;
+    }
+    setOptedIn(next);
+  };
+
+  return (
+    <div className="mb-5">
+      <div className="markie-overlay-section mb-2">Updates</div>
+      <label className="flex items-start justify-between gap-3 text-[12px] text-muted py-1">
+        <span>
+          Receive beta updates
+          <span className="block text-[11px] text-muted/80 mt-0.5 leading-relaxed">
+            Early builds, before they are released to everyone. Expect rough edges.
+            Turning this off moves you back to the current stable build.
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          checked={optedIn}
+          disabled={busy}
+          onChange={(e) => toggle(e.target.checked)}
+        />
+      </label>
+      {version && (
+        <div className="text-[11px] text-muted mt-1">
+          You are running Markie {version}.
+        </div>
+      )}
+      {error && <div className="text-[11px] text-[var(--status-red)] mt-1">{error}</div>}
     </div>
   );
 }

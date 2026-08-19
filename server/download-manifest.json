@@ -1,6 +1,14 @@
 {
   "schemaVersion": 2,
   "channel": "stable",
+  "betaChannel": {
+    "note": "Opt-in only, from Settings inside the app. Never listed publicly: this is not a platforms entry, so the website and share emails cannot surface it.",
+    "versionPattern": "X.Y.Z-beta.N",
+    "feed": {
+      "type": "electron-builder-mac-yml",
+      "path": "mac/beta-mac.yml"
+    }
+  },
   "siteUrl": "https://markie.zvndev.com",
   "latestManifestRoute": "/download/latest.json",
   "storage": {

@@ -149,6 +149,15 @@ export interface ElectronAPI {
   // Auto-update
   checkForUpdates(): Promise<{ ok: boolean; reason?: string }>;
   updateStatus(): Promise<string>;
+  /** Whether this install follows the opt-in beta update channel. */
+  updateChannelGet(): Promise<{ optedIn: boolean; currentVersion: string }>;
+  updateChannelSet(optedIn: boolean): Promise<{
+    ok: boolean;
+    error?: string;
+    optedIn?: boolean;
+    channel?: string;
+    allowDowngrade?: boolean;
+  }>;
   // Resolves only when the install did *not* happen; a successful call takes
   // the process down before it can return.
   quitAndInstall(): Promise<

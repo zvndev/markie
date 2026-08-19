@@ -18,6 +18,12 @@ import {
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("release preflight", () => {
+  it("keeps the beta channel out of the public platform list", () => {
+    // validateReleaseManifest reads the real manifest, so this fails if anyone
+    // ever promotes beta to something the download page can render.
+    expect(() => validateReleaseManifest(rootDir)).not.toThrow();
+  });
+
   it("checks release metadata and required local files without credentials", () => {
     expect(validateReleaseMetadata(rootDir)).toMatchObject({
       version: expect.stringMatching(/^\d+\.\d+\.\d+$/),

@@ -21,6 +21,11 @@ const { createFileGrants } = require("./file-grants");
 const { buildAppCsp } = require("./csp");
 const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
 const { guardedLogger } = require("./updater-logging");
+const {
+  readBetaOptIn,
+  updaterSettingsFor,
+  writeBetaOptIn,
+} = require("./update-channel");
 
 // Electron answers an uncaught exception in the main process with a modal
 // dialog containing a raw stack trace. That is alarming on its own, and it is
@@ -923,6 +928,7 @@ function setupAutoUpdate() {
   autoUpdater.logger = guardedLogger(console);
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  applyUpdateChannel();
 
   autoUpdater.on("checking-for-update", () => {
     updateState = "checking";
@@ -978,8 +984,38 @@ function setupAutoUpdate() {
   setInterval(check, 6 * 60 * 60 * 1000);
 }
 
+// Point the updater at the channel this install follows. Called at setup and
+// again whenever the user flips the Settings toggle, so the change takes effect
+// without a relaunch.
+function applyUpdateChannel() {
+  const optedIn = readBetaOptIn(app.getPath("userData"));
+  const { channel, allowDowngrade } = updaterSettingsFor({
+    optedIn,
+    currentVersion: app.getVersion(),
+  });
+  autoUpdater.channel = channel;
+  // Leaving beta means walking back down to stable; see update-channel.js.
+  autoUpdater.allowDowngrade = allowDowngrade;
+  return { optedIn, channel, allowDowngrade };
+}
+
 // IPC: renderer asks for the latest known update status / triggers a check
 ipcMain.handle("update-status", () => updateState);
+// IPC: the beta-channel opt-in. Reachable only from inside the app, which is
+// what keeps the channel unlisted — nothing on the website can enrol anyone.
+ipcMain.handle("update-channel-get", () => ({
+  optedIn: readBetaOptIn(app.getPath("userData")),
+  currentVersion: app.getVersion(),
+}));
+ipcMain.handle("update-channel-set", async (_e, optedIn) => {
+  const saved = writeBetaOptIn(app.getPath("userData"), optedIn === true);
+  if (!saved) return { ok: false, error: "Couldn't save that preference." };
+  const applied = applyUpdateChannel();
+  // Check straight away: opting in should find the beta now, and opting out
+  // should start the walk back to stable rather than waiting up to six hours.
+  requestUpdateCheck().catch(() => {});
+  return { ok: true, ...applied };
+});
 ipcMain.handle("check-for-updates", () => requestUpdateCheck({ manual: true }));
 // IPC: user accepted the update — quit and install the downloaded version.
 //

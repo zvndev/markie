@@ -291,6 +291,22 @@ export function validateReleaseManifest(rootDir) {
   assert(Boolean(manifest.storage?.region), "release storage region is required");
   assert(Boolean(manifest.storage?.publicBaseUrl), "release public storage base is required");
   assert(mac?.feed?.path === "mac/latest-mac.yml", "public macOS feed path must remain canonical");
+  // The beta channel is opt-in from inside the app and must stay unlisted. The
+  // website and the share emails render from `platforms`, so a beta entry
+  // appearing there is the exact failure this guards: a build we intend to be
+  // able to withdraw becoming something the public was told to download.
+  assert(
+    !manifest.platforms?.some((platform) => String(platform.id).includes("beta")),
+    "beta builds must never appear as a platform entry"
+  );
+  assert(
+    manifest.betaChannel?.feed?.path === "mac/beta-mac.yml",
+    "beta feed path must remain canonical"
+  );
+  assert(
+    manifest.betaChannel?.feed?.path !== mac?.feed?.path,
+    "beta and stable must not share a feed file"
+  );
   assert(publish?.provider === manifest.storage.provider, "builder provider must come from the release manifest");
   assert(publish?.bucket === manifest.storage.bucket, "builder bucket must come from the release manifest");
   assert(publish?.endpoint === manifest.storage.endpoint, "builder endpoint must come from the release manifest");

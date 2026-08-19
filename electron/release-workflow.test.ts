@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   assertVersion,
+  macFeedFile,
+  releaseChannel,
   assertEvidenceMatchesArtifacts,
   compareVersions,
   parseElectronBuilderFeed,
@@ -71,6 +73,45 @@ describe("release workflow", () => {
     });
   });
 
+  it("points a beta release at its own feed, beside stable in the same bucket", () => {
+    const manifest = {
+      schemaVersion: 2,
+      channel: "stable",
+      siteUrl: "https://markie.example.com",
+      latestManifestRoute: "/download/latest.json",
+      storage: {
+        provider: "s3",
+        bucket: "markie-releases",
+        endpoint: "https://s3.example.com",
+        region: "test",
+        publicBaseUrl: "https://cdn.example.com/markie-releases",
+      },
+      primaryPlatformId: "mac-arm64",
+      platforms: [
+        {
+          id: "mac-arm64",
+          route: "/download/mac",
+          status: "public",
+          feed: { path: "stable/mac/latest-mac.yml" },
+        },
+      ],
+    };
+
+    const beta = releaseUrls(manifest, "0.5.0-beta.1");
+    expect(beta.feedUrl).toBe(
+      "https://cdn.example.com/markie-releases/stable/mac/beta-mac.yml"
+    );
+    // Same directory, so artifacts and bucket are shared and there is no second
+    // manifest entry to drift.
+    expect(beta.artifactBaseUrl).toBe("https://cdn.example.com/markie-releases/stable/mac");
+    // And the public, human-facing routes stay pointed at stable: a beta is
+    // never something the website can offer.
+    expect(beta.downloadUrl).toBe("https://markie.example.com/download/mac");
+    expect(releaseUrls(manifest, "0.5.0").feedUrl).toBe(
+      "https://cdn.example.com/markie-releases/stable/mac/latest-mac.yml"
+    );
+  });
+
   it("updates every app-owned version file through one command", () => {
     const root = mkdtempSync(path.join(tmpdir(), "markie-release-version-"));
     mkdirSync(path.join(root, "mcp/.claude-plugin"), { recursive: true });
@@ -103,6 +144,38 @@ describe("release workflow", () => {
   it("rejects non-release versions", () => {
     expect(() => assertVersion("0.2")).toThrow(/invalid release version/);
     expect(() => assertVersion("v0.2.10")).toThrow(/invalid release version/);
+  });
+
+  it("accepts a beta prerelease but not arbitrary prerelease tags", () => {
+    // Only the tag the beta channel actually publishes is a release version.
+    // Anything else would silently pick a feed name nothing writes to.
+    expect(assertVersion("0.5.0-beta.1")).toBe("0.5.0-beta.1");
+    expect(() => assertVersion("0.5.0-alpha.1")).toThrow(/invalid release version/);
+    expect(() => assertVersion("0.5.0-beta")).toThrow(/invalid release version/);
+    expect(() => assertVersion("0.5.0-beta.1.2")).toThrow(/invalid release version/);
+  });
+
+  it("routes each version to its own channel and feed file", () => {
+    expect(releaseChannel("0.5.0")).toBe("latest");
+    expect(releaseChannel("0.5.0-beta.1")).toBe("beta");
+    expect(macFeedFile("0.5.0")).toBe("latest-mac.yml");
+    expect(macFeedFile("0.5.0-beta.1")).toBe("beta-mac.yml");
+  });
+
+  it("never lets a beta publish resolve to the stable feed file", () => {
+    // The entire safety property of the beta channel is that publishing one
+    // cannot rewrite the feed every stable user follows.
+    expect(macFeedFile("0.5.0-beta.1")).not.toBe(macFeedFile("0.5.0"));
+  });
+
+  it("orders a beta below the release it leads to", () => {
+    // 0.5.0-beta.1 must not read as newer than 0.5.0, or shipping stable after
+    // a beta would look like a downgrade and be refused.
+    expect(compareVersions("0.5.0", "0.5.0-beta.1")).toBe(1);
+    expect(compareVersions("0.5.0-beta.1", "0.5.0")).toBe(-1);
+    expect(compareVersions("0.5.0-beta.2", "0.5.0-beta.1")).toBe(1);
+    expect(compareVersions("0.5.0-beta.1", "0.5.0-beta.1")).toBe(0);
+    expect(compareVersions("0.5.0-beta.1", "0.4.0")).toBe(1);
   });
 
   it("requires a release to be newer than the public feed", () => {

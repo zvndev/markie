@@ -39,6 +39,8 @@ import {
   UpdateStrip,
 } from "@/components/share-banner";
 import { ConflictDialog } from "@/components/conflict-dialog";
+import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
+import { diskChangeKind } from "@/lib/disk-change";
 import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
 import { FindBar } from "@/components/find-bar";
@@ -207,6 +209,10 @@ export default function Home() {
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [showConflict, setShowConflict] = useState(false);
+  // Set when something else edited the open file. Holds the new on-disk text so
+  // a reload does not have to go back to the filesystem and race the next edit.
+  const [diskChange, setDiskChange] = useState<string | null>(null);
+  const [showDiskConflict, setShowDiskConflict] = useState(false);
   const [peers, setPeers] = useState<PeerUser[]>([]);
   const [liveStatus, setLiveStatus] = useState<
     "connecting" | "connected" | "disconnected"
@@ -662,7 +668,11 @@ export default function Home() {
 
   // Resolves to an error message when the save landed on disk but not in the
   // cloud, and to null otherwise.
-  const handleSave = useCallback(async (): Promise<string | null> => {
+  const handleSave = useCallback(async (
+    // Set when the user has already resolved a disk conflict in the app, so
+    // main does not put the same question a second time in a native dialog.
+    { force = false }: { force?: boolean } = {}
+  ): Promise<string | null> => {
     const api = getElectronAPI();
     if (!api) return null;
     if (!filePath) {
@@ -670,7 +680,7 @@ export default function Home() {
       return null;
     }
     const diskContent = toDisk(fileName, content);
-    const res = await api.saveFile({ filePath, content: diskContent });
+    const res = await api.saveFile({ filePath, content: diskContent, force });
     // The file changed underneath us and the user chose to take the disk copy
     // rather than overwrite it. Load it in place of what they had.
     if (res.code === "reloaded" && typeof res.content === "string") {
@@ -932,6 +942,42 @@ export default function Home() {
     [richEditor, sourceView]
   );
 
+  // The IPC subscriptions below are installed once, so anything they compare
+  // against has to be read through a ref rather than captured.
+  const filePathRef = useRef<string | null>(null);
+  useEffect(() => {
+    filePathRef.current = filePath;
+    // Follow the document that is actually open: Save As and Fork move it, and
+    // a watcher left on the old path reports edits to a file nobody is reading.
+    void getElectronAPI()?.watchFile?.(filePath);
+    // A different document cannot inherit the previous one's conflict.
+    setDiskChange(null);
+    setShowDiskConflict(false);
+  }, [filePath]);
+
+  // Take what is on disk, dropping the buffer. Used by the strip (where there
+  // is nothing to drop) and by the dialog's explicit "discard mine".
+  const reloadFromDisk = useCallback(() => {
+    if (diskChange === null) return;
+    setContent(diskChange);
+    setSavedContent(diskChange);
+    setDiskChange(null);
+    setShowDiskConflict(false);
+  }, [diskChange]);
+
+  // Keep both: save the buffer under a new name and leave the changed file
+  // alone. The only resolution that destroys nothing.
+  const saveCopyOfMine = useCallback(
+    async (suggestedName: string) => {
+      const saved = await handleSaveAs(suggestedName);
+      if (!saved) return; // cancelled the save sheet; the conflict still stands
+      // Save As re-points the document, and the effect on filePath clears the
+      // conflict and re-aims the watcher at the copy.
+      setShowDiskConflict(false);
+    },
+    [handleSaveAs]
+  );
+
   const handlersRef = useRef({
     openFile: handleOpenFile,
     newFile: handleNewFile,
@@ -1084,6 +1130,12 @@ export default function Home() {
       api.onMenuReveal?.(() => handlersRef.current.reveal()),
       api.onMenuExportHTML?.(() => handlersRef.current.exportHTML()),
       api.onFileOpened?.((data) => handlersRef.current.fileOpened(data)),
+      api.onFileChangedOnDisk?.((data) => {
+        // Ignore a change to a file we are no longer showing: the watcher can
+        // fire once more between opening a new document and re-pointing.
+        if (data.path !== filePathRef.current) return;
+        setDiskChange(data.content);
+      }),
     ];
     return () => offs.forEach((off) => off?.());
   }, [selectView]);
@@ -1332,6 +1384,20 @@ export default function Home() {
             />
           )}
 
+          {/* Something else edited this file. With a clean buffer the reload
+              cannot cost anything, so it is a strip; with unsaved work it is a
+              real decision and opens the dialog. */}
+          {diskChange !== null && (
+            <DiskChangeStrip
+              fileName={fileName ?? "This document"}
+              onReload={() =>
+                diskChangeKind(isDirty) === "clean"
+                  ? reloadFromDisk()
+                  : setShowDiskConflict(true)
+              }
+            />
+          )}
+
           {/* The formatting row, above the document and below the app chrome,
               where every editor puts it. */}
           <DocToolbar
@@ -1476,6 +1542,24 @@ export default function Home() {
           content={toDisk(fileName, content)}
           onClose={() => setShowShare(false)}
           onChanged={refreshCollab}
+        />
+      )}
+      {showDiskConflict && diskChange !== null && (
+        <DiskConflictDialog
+          fileName={fileName ?? "This document"}
+          localContent={content}
+          diskContent={diskChange}
+          onClose={() => setShowDiskConflict(false)}
+          onSaveCopy={saveCopyOfMine}
+          onOverwrite={() => {
+            // Keep the buffer and let the normal save run. The save-time check
+            // in main compares against what we last read, so adopting the disk
+            // content as "seen" first is what stops it asking again.
+            setDiskChange(null);
+            setShowDiskConflict(false);
+            void handlersRef.current.save({ force: true });
+          }}
+          onDiscardMine={reloadFromDisk}
         />
       )}
       {showConflict && filePath && (

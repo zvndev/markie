@@ -304,12 +304,61 @@ function diskChangedSince(filePath) {
   return hashOf(current) === known ? null : current;
 }
 
+// ── Watching the open document ──
+// Markie already knew a file had changed underneath the user, but only at the
+// moment they pressed save — after they had been typing into a stale document
+// for however long, with nothing left but "discard theirs" or "discard yours".
+//
+// Polling via fs.watchFile rather than fs.watch: editors and agents routinely
+// save by writing a temp file and renaming it over the original, which severs
+// an inode-based watch silently. Polling survives that, and the interval is
+// irrelevant for a single open document.
+let watchedPath = null;
+const WATCH_INTERVAL_MS = 1000;
+
+function stopWatchingOpenFile() {
+  if (!watchedPath) return;
+  try {
+    fs.unwatchFile(watchedPath);
+  } catch {
+    // Already gone; nothing to detach.
+  }
+  watchedPath = null;
+}
+
+function watchOpenFile(filePath) {
+  if (watchedPath === filePath) return;
+  stopWatchingOpenFile();
+  if (!filePath) return;
+  watchedPath = filePath;
+  try {
+    fs.watchFile(filePath, { interval: WATCH_INTERVAL_MS }, () => {
+      // stat changing is only a hint. diskChangedSince compares content
+      // hashes, so a touch, a no-op rewrite, or Markie's own save does not
+      // interrupt the user with a conflict that does not exist.
+      const changed = diskChangedSince(filePath);
+      if (changed === null) return;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("file-changed-on-disk", {
+          path: filePath,
+          content: changed,
+        });
+      }
+    });
+  } catch {
+    // Watching is an improvement, not a requirement: the save-time check still
+    // catches the same conflict later.
+    watchedPath = null;
+  }
+}
+
 function readFilePayload(filePath, { grant = false } = {}) {
   try {
     const access = grant ? fileGrants.grantFile(filePath) : fileGrants.canRead(filePath);
     if (!access.ok) return null;
     const content = fs.readFileSync(access.path, "utf-8");
     rememberDisk(access.path, content);
+    watchOpenFile(access.path);
     return {
       name: path.basename(access.path),
       content,
@@ -499,14 +548,18 @@ ipcMain.handle("export-pdf", async (_event, html) => {
 });
 
 // IPC: write content to a known path
-ipcMain.handle("save-file", async (_event, { filePath, content }) => {
+ipcMain.handle("save-file", async (_event, { filePath, content, force = false }) => {
   try {
     const access = fileGrants.canWrite(filePath);
     if (!access.ok) return { success: false, error: access.error };
 
     // Someone changed this file since Markie read it. Writing now would throw
     // their work away with no trace, so ask instead of guessing.
-    const newer = diskChangedSince(access.path);
+    //
+    // `force` means the renderer already put that decision to the user — the
+    // in-app conflict dialog — and they chose to overwrite. Asking again here
+    // would be a second, native prompt for a question already answered.
+    const newer = force ? null : diskChangedSince(access.path);
     if (newer !== null) {
       const { response } = await dialog.showMessageBox(mainWindow, {
         type: "warning",
@@ -1020,6 +1073,13 @@ function recordCrash(record) {
     return false;
   }
 }
+
+// The renderer owns which document is open (Save As moves it), so it says
+// which path to follow rather than main trying to infer every path change.
+ipcMain.handle("watch-file", (_e, filePath) => {
+  if (filePath) watchOpenFile(filePath);
+  else stopWatchingOpenFile();
+});
 
 ipcMain.handle("crash-report", (_e, record) => ({ saved: recordCrash(record) }));
 ipcMain.handle("crash-log-read", () => {

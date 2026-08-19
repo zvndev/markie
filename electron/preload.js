@@ -100,6 +100,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onToggleStats: (callback) => subscribe("toggle-stats", callback),
   onFileOpened: (callback) =>
     subscribe("file-opened", callback, (data) => data),
+  onFileChangedOnDisk: (callback) =>
+    subscribe("file-changed-on-disk", callback, (data) => data),
+  watchFile: (filePath) => ipcRenderer.invoke("watch-file", filePath),
   // Terminal
   termAvailable: () => ipcRenderer.invoke("term-available"),
   termCreate: (context) => ipcRenderer.invoke("term-create", context),

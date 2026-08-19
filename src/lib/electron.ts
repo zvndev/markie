@@ -59,7 +59,12 @@ export interface ElectronAPI {
   getInitialFile(): Promise<FilePayload | null>;
   exportPDF(html: string): Promise<{ success: boolean; path?: string }>;
   exportHTML(args: { defaultName: string; html: string }): Promise<SaveResult>;
-  saveFile(args: { filePath: string; content: string }): Promise<SaveResult>;
+  saveFile(args: {
+    filePath: string;
+    content: string;
+    /** The user already resolved a disk conflict; do not ask them again. */
+    force?: boolean;
+  }): Promise<SaveResult>;
   saveFileAs(args: { defaultName: string; content: string }): Promise<SaveResult>;
   renameFile(args: { oldPath: string; newName: string }): Promise<SaveResult>;
   revealFile(path: string): Promise<{ ok?: boolean; error?: string }>;
@@ -146,6 +151,12 @@ export interface ElectronAPI {
   onSetMode(cb: (mode: ViewMode) => void): Unsubscribe;
   onToggleStats(cb: () => void): Unsubscribe;
   onFileOpened(cb: (data: FilePayload) => void): Unsubscribe;
+  /** Something else edited the open document. Carries the new on-disk text. */
+  onFileChangedOnDisk(
+    cb: (data: { path: string; content: string }) => void
+  ): Unsubscribe;
+  /** Follow this path for external edits (after Save As, or a new document). */
+  watchFile(filePath: string | null): Promise<void>;
   // Auto-update
   checkForUpdates(): Promise<{ ok: boolean; reason?: string }>;
   /** Hand a crash to the main process, which owns the local crash log. */

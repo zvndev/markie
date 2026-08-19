@@ -4,6 +4,19 @@
 > evidence; do not delete history. Move completed items to Done with the verification record.
 
 ## Open
+- [ ] Decide what a returning cold launch should open instead of the fake "Northstar Sprint Brief"
+      sample (candidates: the last opened document, a blank buffer, or the Library).
+      type: product
+      severity: low
+      rationale: first run now opens the real welcome doc, but a launch with no file on any later
+        run still paints a fictional sprint brief the user never asked for. Left unchanged in the
+        2026-08-19 onboarding pass to keep that diff to onboarding; note that
+        scripts/light-mode-visual-audit.mjs and scripts/document-canvas-layout-check.mjs sample
+        `.markdown-body th/td` and `pre`/`table` from whatever this launch paints, so a blank
+        buffer would need those scripts updated first.
+      acceptance_criteria: A cold launch with no file opens something the user chose or created,
+        and both visual scripts still report zero findings.
+      source: onboarding + auth pass 2026-08-19
 - [ ] Document and enforce the 3-step radius scale (6/8/12px: cards `rounded-md`, popovers
       `rounded-lg`, modals `rounded-xl`) and audit remaining one-offs.
       type: design

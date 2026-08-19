@@ -64,6 +64,8 @@ import {
 } from "@/lib/auth-client";
 import { consumeAuthState } from "@/lib/auth-state";
 import { authStore } from "@/lib/auth-store";
+import { markWelcomeSeen, shouldShowWelcome } from "@/lib/first-run";
+import { WELCOME_DOC } from "@/lib/welcome-doc";
 import { SignInDialog } from "@/components/sign-in";
 import type { SignInReason } from "@/lib/auth-errors";
 import { colorForName, type CollabConfig, type PeerUser } from "@/lib/collab";
@@ -995,14 +997,21 @@ export default function Home() {
     }
   }, [enforcedTheme]);
 
-  // Boot: decide the first painted document — the OS-opened file or the
-  // welcome sample — before rendering anything, so the wrong doc never flashes
+  // Boot: decide the first painted document — the OS-opened file, the welcome
+  // doc, or the sample — before rendering anything, so the wrong doc never
+  // flashes.
   useEffect(() => {
     const pending =
       getElectronAPI()?.getInitialFile?.() ?? Promise.resolve(null);
     pending.then((file) => {
       if (file) {
+        // Markie is the default .md handler, so this is the common launch. The
+        // user asked for this file; onboarding does not get to interrupt it.
         loadFile(file);
+      } else if (shouldShowWelcome({ openedFile: false })) {
+        setContent(WELCOME_DOC);
+        setSavedContent(WELCOME_DOC);
+        markWelcomeSeen();
       } else {
         setContent(SAMPLE);
         setSavedContent(SAMPLE);

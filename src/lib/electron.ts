@@ -165,6 +165,16 @@ export interface ElectronAPI {
   crashLogRead(): Promise<unknown[]>;
   /** Reveal the crash log in Finder, for sending it on. */
   crashLogReveal(): Promise<{ ok: boolean }>;
+  /**
+   * Whether crashes are sent to Markie's error tracking, and whether this build
+   * has anywhere to send them (no DSN means the setting is not offered).
+   */
+  crashConsentGet(): Promise<{ enabled: boolean; available: boolean }>;
+  crashConsentSet(enabled: boolean): Promise<{
+    ok: boolean;
+    enabled?: boolean;
+    error?: string;
+  }>;
   updateStatus(): Promise<string>;
   /** Whether this install follows the opt-in beta update channel. */
   updateChannelGet(): Promise<{ optedIn: boolean; currentVersion: string }>;

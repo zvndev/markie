@@ -118,6 +118,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   crashReport: (record) => ipcRenderer.invoke("crash-report", record),
   crashLogRead: () => ipcRenderer.invoke("crash-log-read"),
   crashLogReveal: () => ipcRenderer.invoke("crash-log-reveal"),
+  crashConsentGet: () => ipcRenderer.invoke("crash-consent-get"),
+  crashConsentSet: (enabled) => ipcRenderer.invoke("crash-consent-set", enabled),
   updateStatus: () => ipcRenderer.invoke("update-status"),
   updateChannelGet: () => ipcRenderer.invoke("update-channel-get"),
   updateChannelSet: (optedIn) => ipcRenderer.invoke("update-channel-set", optedIn),

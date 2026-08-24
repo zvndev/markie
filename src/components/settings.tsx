@@ -133,6 +133,7 @@ export function Settings({ onClose, initialSection = "account" }: SettingsProps)
         {section === "advanced" && (
           <div>
             <BetaChannelSetting />
+            <CrashReportingSetting />
 
             <div className="markie-overlay-section mb-2">Server &amp; sync settings</div>
             <label className="text-[11px] text-muted block mb-1">Markie server URL</label>
@@ -221,6 +222,71 @@ function BetaChannelSetting() {
           You are running Markie {version}.
         </div>
       )}
+      {error && <div className="text-[11px] text-[var(--status-red)] mt-1">{error}</div>}
+    </div>
+  );
+}
+
+// Opt-in error reporting. Off by default and only reachable from inside the
+// app: Markie tells a new user on first run that their files stay on this Mac,
+// and telemetry that turns itself on would make that a lie.
+function CrashReportingSetting() {
+  const [state, setState] = useState<{ enabled: boolean; available: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    getElectronAPI()
+      ?.crashConsentGet?.()
+      .then((s) => alive && setState(s))
+      .catch(() => alive && setState(null));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // No DSN in this build means there is nowhere to report to, so offering the
+  // switch would be offering nothing.
+  if (!state?.available || !getElectronAPI()?.crashConsentSet) return null;
+
+  const toggle = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    const res = await getElectronAPI()!.crashConsentSet!(next);
+    setBusy(false);
+    if (!res.ok) {
+      setError(res.error ?? "Couldn't change that setting.");
+      return;
+    }
+    setState({ ...state, enabled: next });
+  };
+
+  return (
+    <div className="mb-5">
+      <div className="markie-overlay-section mb-2">Error reporting</div>
+      <label className="flex items-start justify-between gap-3 text-[12px] text-muted py-1">
+        <span>
+          Send crash reports
+          <span className="block text-[11px] text-muted/80 mt-0.5 leading-relaxed">
+            Off by default. When on, Markie sends the error and where in the code it
+            happened, so crashes get fixed. Never your documents, their contents, or
+            their file paths.
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          checked={state.enabled}
+          disabled={busy}
+          onChange={(e) => toggle(e.target.checked)}
+        />
+      </label>
+      <button
+        className="text-[11px] text-muted hover:text-foreground mt-1"
+        onClick={() => getElectronAPI()?.crashLogReveal?.()}
+      >
+        Show the crash log
+      </button>
       {error && <div className="text-[11px] text-[var(--status-red)] mt-1">{error}</div>}
     </div>
   );

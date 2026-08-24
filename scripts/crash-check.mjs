@@ -10,6 +10,7 @@ import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
+import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -133,6 +134,23 @@ async function main() {
   const userDataDir = await mkdtemp(path.join(tmpdir(), "markie-crash-profile-"));
   tempPaths.push(userDataDir);
 
+  // Stand in for Sentry's ingest endpoint, so "what actually leaves the
+  // machine" is something this check can read rather than assume.
+  const ingest = [];
+  const ingestPort = await pickPort();
+  const ingestServer = createHttpServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      ingest.push({ url: req.url, auth: req.headers["x-sentry-auth"], body });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end("{}");
+    });
+  });
+  await new Promise((r) => ingestServer.listen(ingestPort, "127.0.0.1", r));
+  children.push({ pid: -1, exitCode: null, kill: () => ingestServer.close() });
+  const dsn = `http://testkey@127.0.0.1:${ingestPort}/4242`;
+
   const devPort = await pickPort();
   const debugPort = await pickPort();
   const devOrigin = `http://localhost:${devPort}`;
@@ -147,7 +165,12 @@ async function main() {
     path.join(root, "node_modules", ".bin", "electron"),
     [".", `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],
     {
-      env: { ...process.env, NODE_ENV: "development", MARKIE_E2E: "1" },
+      env: {
+        ...process.env,
+        NODE_ENV: "development",
+        MARKIE_E2E: "1",
+        MARKIE_SENTRY_DSN: dsn,
+      },
       log: path.join(artifactDir, "electron.log"),
     }
   );
@@ -221,6 +244,54 @@ async function main() {
     "the crash log holds no document content",
     !/documentContent|\\"content\\":/.test(JSON.stringify(afterRender))
   );
+
+  // ── Opt-in reporting ───────────────────────────────────────────────────
+  // The whole privacy posture rests on the default. Everything above already
+  // crashed the app several times; none of it may have left the machine.
+  check(
+    "nothing is sent anywhere while reporting is off",
+    ingest.length === 0,
+    `${ingest.length} request(s) to the ingest endpoint`
+  );
+  const consent = await cdp.ev(`window.electronAPI.crashConsentGet().then(JSON.stringify)`);
+  check("reporting is off by default", JSON.parse(consent).enabled === false, consent);
+  check("a configured build offers the setting", JSON.parse(consent).available === true);
+
+  await cdp.ev(`window.electronAPI.crashConsentSet(true)`);
+  const afterOptIn = await cdp.ev(`window.electronAPI.crashConsentGet().then(JSON.stringify)`);
+  check("opting in persists", JSON.parse(afterOptIn).enabled === true);
+
+  // Crash again, this time with the user's real home directory in the message,
+  // which is what a filesystem error actually looks like.
+  await cdp.ev(`window.dispatchEvent(new ErrorEvent("error", {
+    error: new Error("ENOENT: " + ${JSON.stringify(process.env.HOME)} + "/Desktop/Q3 salary review.md"),
+    message: "probe with a path" })), true`);
+  await waitFor("upload", () => ingest.length > 0, 10000);
+
+  check("an opted-in crash reaches the endpoint", ingest.length > 0);
+  const sent = ingest[ingest.length - 1];
+  check("it posts to the project's envelope route", sent.url === "/api/4242/envelope/", sent.url);
+  check("it authenticates with the DSN public key", /sentry_key=testkey/.test(sent.auth ?? ""));
+
+  check(
+    "the user's home directory never leaves the machine",
+    !sent.body.includes(process.env.HOME ?? "__no_home__"),
+  );
+  check(
+    "the document's folder never leaves the machine",
+    !sent.body.includes("Desktop"),
+  );
+  const event = JSON.parse(sent.body.trim().split("\n")[2]);
+  check("the report names the build", !!event.release, `release=${event.release}`);
+  check("the report carries frames Sentry can group on", Array.isArray(event.exception?.values?.[0]?.stacktrace?.frames));
+
+  // And turning it back off must actually stop it.
+  await cdp.ev(`window.electronAPI.crashConsentSet(false)`);
+  const before = ingest.length;
+  await cdp.ev(`window.dispatchEvent(new ErrorEvent("error", {
+    error: new Error("probe: after opting out"), message: "after opting out" })), true`);
+  await new Promise((r) => setTimeout(r, 1500));
+  check("opting back out stops the sending", ingest.length === before, `${ingest.length - before} extra`);
 
   // ── Recovery ───────────────────────────────────────────────────────────
   await cdp.ev(clickReload());

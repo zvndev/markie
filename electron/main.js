@@ -23,6 +23,12 @@ const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy"
 const { guardedLogger } = require("./updater-logging");
 const { appendCrash, logPath, readCrashes } = require("./crash-log");
 const {
+  crashDsn,
+  readCrashConsent,
+  sendCrash,
+  writeCrashConsent,
+} = require("./crash-reporting");
+const {
   readBetaOptIn,
   updaterSettingsFor,
   writeBetaOptIn,
@@ -1063,14 +1069,38 @@ function recordCrash(record) {
     // renderer. The renderer only knows a build-time env var (which reads
     // "dev") and navigator.platform (which says "MacIntel" on Apple Silicon),
     // and "which build, on what" is the first question asked of any crash.
-    return appendCrash(app.getPath("userData"), {
+    const stamped = {
       ...record,
       version: app.getVersion(),
       platform: `${process.platform}/${process.arch}`,
-    });
+    };
+    const saved = appendCrash(app.getPath("userData"), stamped);
+    // The local log is unconditional; uploading is not. Three things must all
+    // be true before anything leaves: the user opted in, this build has a DSN,
+    // and the payload survives scrubbing (see sentry-envelope.js).
+    uploadCrash(stamped);
+    return saved;
   } catch {
     // Reporting a crash must never cause one.
     return false;
+  }
+}
+
+// Fire-and-forget: a crash report is never worth blocking on, and the local log
+// already holds it if the upload fails.
+function uploadCrash(record) {
+  try {
+    if (!readCrashConsent(app.getPath("userData"))) return;
+    const dsn = crashDsn();
+    if (!dsn) return;
+    void sendCrash(record, {
+      dsn,
+      home: app.getPath("home"),
+      environment: app.isPackaged ? "production" : "development",
+      clientVersion: app.getVersion(),
+    });
+  } catch {
+    // Never let reporting a crash cause one.
   }
 }
 
@@ -1082,6 +1112,18 @@ ipcMain.handle("watch-file", (_e, filePath) => {
 });
 
 ipcMain.handle("crash-report", (_e, record) => ({ saved: recordCrash(record) }));
+// Crash reporting is opt-in and only reachable from inside the app, which is
+// what keeps it consistent with the local-first promise on first run.
+ipcMain.handle("crash-consent-get", () => ({
+  enabled: readCrashConsent(app.getPath("userData")),
+  // No DSN means this build has no project to report to, so the UI offers
+  // nothing rather than a switch that does nothing.
+  available: Boolean(crashDsn()),
+}));
+ipcMain.handle("crash-consent-set", (_e, enabled) => {
+  const saved = writeCrashConsent(app.getPath("userData"), enabled === true);
+  return saved ? { ok: true, enabled: enabled === true } : { ok: false, error: "Couldn't save that preference." };
+});
 ipcMain.handle("crash-log-read", () => {
   try {
     return readCrashes(app.getPath("userData"));

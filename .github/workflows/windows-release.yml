@@ -108,9 +108,16 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      # npmRebuild=false is not an optimisation. node-pty and better-sqlite3 both
+      # ship prebuilt binaries, but @electron/rebuild ignores node-pty's and
+      # falls through to node-gyp, which needs a Visual Studio install the
+      # runner does not have. node-pty's prebuild is N-API, so it loads under
+      # Electron unchanged; better-sqlite3's is not, and the afterPack hook
+      # replaces that one with the Electron build. Every other Windows build in
+      # this repo already goes through the same wrapper for the same reason.
       - name: Build unsigned installer
         if: inputs.signing == 'none'
-        run: npx electron-builder --config electron-builder.config.cjs --win --x64 --publish never --config.win.forceCodeSigning=false
+        run: npx electron-builder --config electron-builder.config.cjs --win --x64 --publish never --config.npmRebuild=false --config.win.forceCodeSigning=false
 
       - name: Build signed installer
         if: inputs.signing == 'azure'
@@ -122,6 +129,7 @@ jobs:
           MARKIE_WINDOWS_PUBLISHER_NAME: ${{ vars.MARKIE_WINDOWS_PUBLISHER_NAME }}
         run: |
           npx electron-builder --config electron-builder.config.cjs --win --x64 --publish never `
+            --config.npmRebuild=false `
             --config.win.azureSignOptions.publisherName="$env:MARKIE_WINDOWS_PUBLISHER_NAME" `
             --config.win.azureSignOptions.endpoint="$env:AZURE_ARTIFACT_SIGNING_ENDPOINT" `
             --config.win.azureSignOptions.certificateProfileName="$env:AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME" `
@@ -251,6 +259,8 @@ jobs:
           path: |
             dist/Markie-*-x64.exe
             dist/Markie-*-x64.zip
+            dist/*.blockmap
+            dist/latest.yml
           if-no-files-found: warn
 
       # Actions artifacts are billed against a quota that can silently fill, and
@@ -271,6 +281,7 @@ jobs:
               --title "Windows (signed)" \
               --notes "Rolling signed Windows installer, replaced on every signed build. Signed by ZVN DEV LLC through Azure Artifact Signing, so it does not trip SmartScreen."
           fi
-          gh release upload windows-signed dist/Markie-*-x64.exe dist/Markie-*-x64.zip \
+          gh release upload windows-signed \
+            dist/Markie-*-x64.exe dist/Markie-*-x64.zip dist/*.blockmap dist/latest.yml \
             --repo "$GITHUB_REPOSITORY" --clobber
           echo "published Markie ${MARKIE_VERSION} to the windows-signed tag"

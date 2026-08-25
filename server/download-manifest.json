@@ -63,6 +63,10 @@
       "feed": {
         "type": "electron-builder-win-yml",
         "path": "windows/latest.yml"
+      },
+      "codeSigning": {
+        "authority": "azure-artifact-signing",
+        "subject": "CN=ZVN DEV LLC, O=ZVN DEV LLC, L=Lincoln, S=Rhode Island, C=US"
       }
     },
     {

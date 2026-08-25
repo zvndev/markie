@@ -770,6 +770,301 @@ async function status() {
   console.log(JSON.stringify(result, null, 2));
 }
 
+// ---------------------------------------------------------------------------
+// Windows
+//
+// The Windows build cannot be produced here. It is signed by Azure Artifact
+// Signing from CI, because no certificate exists on this machine and putting
+// one here is not the goal. So the local half of a Windows release is not
+// "build and upload" but "fetch what CI signed, prove it is what it claims to
+// be, and publish that" — which is why every check below runs against the
+// downloaded bytes rather than against anything CI reported about them.
+// ---------------------------------------------------------------------------
+
+const WINDOWS_RELEASE_TAG = "windows-signed";
+
+function windowsDistDir(root = rootDir) {
+  // Deliberately not dist/. The macOS prepare deletes dist/ wholesale, and a
+  // Windows artifact set that disappears halfway through a release is a very
+  // confusing thing to debug.
+  return path.join(root, "dist-windows");
+}
+
+function windowsPlatform(manifest = releaseManifest()) {
+  const platform = manifest.platforms.find((entry) => entry.id === "windows-x64");
+  assert(platform?.feed?.path, "release manifest needs a Windows updater feed path");
+  assert(platform.codeSigning?.subject, "release manifest needs the expected Windows signer subject");
+  return platform;
+}
+
+function windowsFeedFile(version) {
+  return releaseChannel(version) === "beta" ? "beta.yml" : "latest.yml";
+}
+
+export function expectedWindowsArtifacts(version) {
+  return [`Markie-${version}-x64.exe`, `Markie-${version}-x64.zip`];
+}
+
+// A distinguished name, compared as a set of components rather than as a
+// string, because the two sides spell the same name differently. openssl prints
+// `CN = ZVN DEV LLC, C = US` with spaces around each equals and calls the state
+// ST=; Windows prints `CN=ZVN DEV LLC, C=US` and calls it S=. Component order
+// is not guaranteed to survive the round trip either. Comparing the raw strings
+// rejects the correct certificate, which is a failure that looks exactly like
+// the wrong certificate.
+export function normalizeDistinguishedName(value) {
+  return (value ?? "")
+    .replace(/^subject\s*=\s*/i, "")
+    .split(/,\s*(?=[A-Za-z]+\s*=)/)
+    .map((part) => part.trim().replace(/\s*=\s*/, "=").replace(/^ST=/i, "S="))
+    .filter(Boolean)
+    .sort()
+    .join(", ");
+}
+
+// The Authenticode signature lives in the PE's certificate table, which is the
+// fifth entry of the optional header's data directory. Everything here is
+// offsets into a file format, so it reads badly, but the alternative is
+// shipping on CI's say-so.
+export function extractAuthenticodeDer(buffer) {
+  assert(buffer.length > 0x40 && buffer.readUInt16LE(0) === 0x5a4d, "not a PE binary (no MZ header)");
+  const peOffset = buffer.readUInt32LE(0x3c);
+  assert(buffer.readUInt32LE(peOffset) === 0x00004550, "not a PE binary (no PE signature)");
+  const optionalHeader = peOffset + 24;
+  const magic = buffer.readUInt16LE(optionalHeader);
+  assert(magic === 0x10b || magic === 0x20b, `unknown PE optional header magic 0x${magic.toString(16)}`);
+  // PE32+ widens four fields before the data directory; PE32 also carries an
+  // extra BaseOfData. This is the only difference that matters here.
+  const dataDirectory = optionalHeader + (magic === 0x20b ? 112 : 96);
+  const certificateEntry = dataDirectory + 4 * 8;
+  const address = buffer.readUInt32LE(certificateEntry);
+  const size = buffer.readUInt32LE(certificateEntry + 4);
+  assert(address > 0 && size > 0, "binary carries no Authenticode certificate table — it is not signed");
+  assert(address + size <= buffer.length, "certificate table runs past the end of the file");
+  // WIN_CERTIFICATE: dwLength, wRevision, wCertificateType, then the blob.
+  const declaredLength = buffer.readUInt32LE(address);
+  const certificateType = buffer.readUInt16LE(address + 6);
+  assert(certificateType === 0x0002, `unexpected certificate type 0x${certificateType.toString(16)}, expected PKCS#7`);
+  return buffer.subarray(address + 8, address + Math.min(declaredLength, size));
+}
+
+export function authenticodeSubjects(der, openssl = "openssl") {
+  const result = spawnSync(openssl, ["pkcs7", "-inform", "DER", "-print_certs", "-noout"], {
+    input: der,
+    encoding: "utf8",
+  });
+  if (result.error) throw result.error;
+  assert(result.status === 0, `openssl could not read the Authenticode signature: ${result.stderr?.trim()}`);
+  return result.stdout
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("subject="))
+    .map((line) => line.slice("subject=".length).trim());
+}
+
+function assertWindowsSignature(file, expectedSubject) {
+  const subjects = authenticodeSubjects(extractAuthenticodeDer(readFileSync(file)));
+  const expected = normalizeDistinguishedName(expectedSubject);
+  const matched = subjects.some((subject) => normalizeDistinguishedName(subject) === expected);
+  assert(
+    matched,
+    `${path.basename(file)} is signed by ${subjects.join(" | ") || "nobody"}, expected ${expectedSubject}`
+  );
+}
+
+async function verifyLocalWindowsArtifacts({ root = rootDir } = {}) {
+  const version = assertVersion(readJson(path.join(root, "package.json")).version);
+  const dist = windowsDistDir(root);
+  const platform = windowsPlatform();
+  const feedName = windowsFeedFile(version);
+  const feedPath = path.join(dist, feedName);
+  assert(existsSync(feedPath), `missing ${path.relative(root, feedPath)}; run release:prepare:win first`);
+  const feed = parseElectronBuilderFeed(readFileSync(feedPath, "utf8"));
+  assert(feed.version === version, `Windows feed version ${feed.version ?? "missing"} does not match ${version}`);
+  const feedNames = new Set(feed.files.map((file) => decodeURIComponent(file.url)));
+  for (const name of expectedWindowsArtifacts(version)) {
+    assert(feedNames.has(name), `Windows updater feed is missing ${name}`);
+  }
+
+  const files = [];
+  for (const entry of feed.files) {
+    const name = decodeURIComponent(entry.url);
+    assert(!name.includes("/") && !name.includes(".."), `unsafe artifact name in feed: ${name}`);
+    assert(name.includes(`-${version}-`), `artifact does not contain release version ${version}: ${name}`);
+    const file = path.join(dist, name);
+    assert(existsSync(file), `missing local artifact: ${name}`);
+    const size = statSync(file).size;
+    assert(size === entry.size, `${name} size ${size} does not match feed size ${entry.size}`);
+    const sha512 = await hashFile(file);
+    assert(sha512 === entry.sha512, `${name} SHA-512 does not match ${feedName}`);
+    // The installer is the thing SmartScreen judges, so it is the thing whose
+    // signature has to be proven here rather than assumed from the CI log.
+    if (name.endsWith(".exe")) assertWindowsSignature(file, platform.codeSigning.subject);
+    const record = { name, size, sha512 };
+    const blockmap = `${file}.blockmap`;
+    if (existsSync(blockmap)) {
+      record.blockmap = path.basename(blockmap);
+      record.blockmapSize = statSync(blockmap).size;
+      record.blockmapSha512 = await hashFile(blockmap);
+    }
+    files.push(record);
+  }
+  return { version, files, feedPath, feedName, signerSubject: platform.codeSigning.subject };
+}
+
+function downloadSignedWindowsRelease(version) {
+  const dist = windowsDistDir();
+  rmSync(dist, { recursive: true, force: true });
+  mkdirSync(dist, { recursive: true });
+  // Named patterns, not a bare download of everything on the tag. The tag is a
+  // rolling one, so a stale asset from an earlier version would otherwise be
+  // downloaded alongside this one and quietly widen what gets published.
+  const patterns = [
+    ...expectedWindowsArtifacts(version).flatMap((name) => [name, `${name}.blockmap`]),
+    windowsFeedFile(version),
+  ];
+  run("gh", [
+    "release",
+    "download",
+    WINDOWS_RELEASE_TAG,
+    "--repo",
+    "zvndev/markie",
+    "--dir",
+    dist,
+    "--clobber",
+    ...patterns.flatMap((pattern) => ["--pattern", pattern]),
+  ]);
+}
+
+async function prepareWindows() {
+  const commit = assertReleaseGitState();
+  const version = packageJson().version;
+  downloadSignedWindowsRelease(version);
+  const verified = await verifyLocalWindowsArtifacts();
+  writeEvidence(verified.version, "local-windows.json", {
+    schemaVersion: 1,
+    version: verified.version,
+    platform: "windows",
+    commit,
+    preparedAt: new Date().toISOString(),
+    signerSubject: verified.signerSubject,
+    files: verified.files,
+    checks: ["feed-version", "artifact-sha512", "authenticode-subject"],
+  });
+  console.log(
+    `[release] fetched and verified signed Windows artifacts for Markie ${verified.version}; nothing was uploaded`
+  );
+  console.log(`[release] installer is signed by ${verified.signerSubject}`);
+}
+
+// electron-builder's `publish` command reads the top-level publish block, which
+// points at the macOS directory. Rather than override it on the command line —
+// where a typo silently uploads Windows artifacts over the macOS feed — the
+// Windows publish gets a config file of its own, generated from the manifest.
+function windowsPublishConfigPath() {
+  const platform = windowsPlatform();
+  const manifest = releaseManifest();
+  const file = path.join(windowsDistDir(), "publish-windows.json");
+  writeJson(file, {
+    appId: "com.zvn.markie",
+    productName: "Markie",
+    publish: [
+      {
+        provider: manifest.storage.provider,
+        bucket: manifest.storage.bucket,
+        endpoint: manifest.storage.endpoint,
+        region: manifest.storage.region,
+        path: path.posix.dirname(platform.feed.path),
+      },
+    ],
+  });
+  return file;
+}
+
+function publishWindowsFiles(files, version) {
+  run(builderBin(), [
+    "publish",
+    "--config",
+    windowsPublishConfigPath(),
+    "--files",
+    ...files,
+    "--version",
+    version,
+    "--policy",
+    "always",
+  ]);
+}
+
+async function publishWindows(confirmVersion) {
+  const version = packageJson().version;
+  assert(confirmVersion === version, `pass --confirm-public-release=${version} to publish production`);
+  const commit = assertReleaseGitState();
+  assertPublishCredentials();
+  const evidence = assertWindowsEvidence(version, commit);
+  const local = await verifyLocalWindowsArtifacts();
+  assertEvidenceMatchesArtifacts(evidence.files, local.files);
+
+  const dist = windowsDistDir();
+  const publicBase = releaseManifest().storage.publicBaseUrl.replace(/\/+$/, "");
+  const artifactBaseUrl = `${publicBase}/${path.posix.dirname(windowsPlatform().feed.path)}`;
+  const artifactFiles = local.files.flatMap((file) =>
+    file.blockmap ? [path.join(dist, file.name), path.join(dist, file.blockmap)] : [path.join(dist, file.name)]
+  );
+  publishWindowsFiles(artifactFiles, version);
+  for (const file of local.files) {
+    await verifyRemoteFile(`${artifactBaseUrl}/${encodeURIComponent(file.name)}`, file, true);
+    if (!file.blockmap) continue;
+    await verifyRemoteFile(
+      `${artifactBaseUrl}/${encodeURIComponent(file.blockmap)}`,
+      { url: file.blockmap, size: file.blockmapSize, sha512: file.blockmapSha512 },
+      true
+    );
+  }
+  // The feed goes last, exactly as it does for macOS: it is the pointer, and a
+  // pointer published before what it points at is a broken update for everyone
+  // who checks in between.
+  publishWindowsFiles([local.feedPath], version);
+  writeEvidence(version, "public-windows.json", {
+    schemaVersion: 1,
+    version,
+    platform: "windows",
+    commit,
+    publishedAt: new Date().toISOString(),
+    feedUrl: `${artifactBaseUrl}/${local.feedName}`,
+    signerSubject: local.signerSubject,
+    files: local.files,
+    checks: ["remote-size", "remote-sha512", "authenticode-subject"],
+  });
+  console.log(`[release] Markie ${version} Windows artifacts are public at ${artifactBaseUrl}`);
+}
+
+function assertWindowsEvidence(version, commit) {
+  const file = evidencePath(version, "local-windows.json");
+  assert(existsSync(file), `missing ${path.relative(rootDir, file)}; run release:prepare:win`);
+  const evidence = readJson(file);
+  assert(evidence.version === version, "local Windows release evidence version is stale");
+  assert(evidence.commit === commit, "local Windows release evidence was produced for a different commit");
+  return evidence;
+}
+
+export async function verifyPublicWindows({ expectedVersion, deep = false } = {}) {
+  const version = assertVersion(expectedVersion ?? packageJson().version);
+  const platform = windowsPlatform();
+  const publicBase = releaseManifest().storage.publicBaseUrl.replace(/\/+$/, "");
+  const artifactBaseUrl = `${publicBase}/${path.posix.dirname(platform.feed.path)}`;
+  const feedUrl = `${publicBase}/${platform.feed.path}`;
+  const response = await fetchRequired(`${feedUrl}?release-check=${Date.now()}`, { cache: "no-store" });
+  const feed = parseElectronBuilderFeed(await response.text());
+  assert(feed.version === version, `public Windows feed is ${feed.version ?? "missing"}, expected ${version}`);
+  for (const name of expectedWindowsArtifacts(version)) {
+    assert(feed.files.some((file) => decodeURIComponent(file.url) === name), `public Windows feed is missing ${name}`);
+  }
+  for (const entry of feed.files) {
+    const name = decodeURIComponent(entry.url);
+    await verifyRemoteFile(`${artifactBaseUrl}/${encodeURIComponent(name)}`, entry, deep);
+  }
+  return { version, feedUrl, artifactBaseUrl };
+}
+
 function flagValue(args, name) {
   const prefix = `--${name}=`;
   return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
@@ -785,7 +1080,38 @@ export async function runReleaseCli(args = process.argv.slice(2)) {
     console.log(`[release] set Markie ${version} in ${files.map((file) => path.relative(rootDir, file)).join(", ")}`);
     return;
   }
-  assert(target === "mac", "supported release target: mac");
+  assert(target === "mac" || target === "win", "supported release targets: mac, win");
+
+  if (target === "win") {
+    // Windows has no rollback command. The macOS one restores a previous feed
+    // captured during publish, and there is no previous Windows feed to
+    // restore yet. Inventing one that pretends otherwise is worse than not
+    // having the command.
+    if (command === "prepare") return prepareWindows();
+    if (command === "verify-local") {
+      const verified = await verifyLocalWindowsArtifacts();
+      console.log(
+        `[release] local Markie ${verified.version} Windows artifacts match the feed and are signed by ${verified.signerSubject}`
+      );
+      return;
+    }
+    if (command === "publish") return publishWindows(flagValue(flags, "confirm-public-release"));
+    if (command === "verify-public") {
+      const verified = await verifyPublicWindows({
+        expectedVersion: flagValue(flags, "version") ?? packageJson().version,
+        deep: flags.includes("--deep"),
+      });
+      console.log(
+        `[release] public Markie ${verified.version} Windows release is valid${flags.includes("--deep") ? " with full SHA-512 checks" : ""}`
+      );
+      return;
+    }
+    throw new Error(
+      "usage: release.mjs prepare win | verify-local win | " +
+        "publish win --confirm-public-release=<semver> | verify-public win [--version=<semver>] [--deep]"
+    );
+  }
+
   if (command === "prepare") return prepareMac();
   if (command === "verify-local") {
     const verified = await verifyLocalMacArtifacts({ verifyTrust: true });
@@ -805,7 +1131,8 @@ export async function runReleaseCli(args = process.argv.slice(2)) {
   throw new Error(
     "usage: release.mjs status | version <semver> | prepare mac | verify-local mac | " +
       "publish mac --confirm-public-release=<semver> | verify-public mac [--version=<semver>] [--deep] | " +
-      "rollback mac --confirm-rollback=<semver>"
+      "rollback mac --confirm-rollback=<semver> | prepare win | verify-local win | " +
+      "publish win --confirm-public-release=<semver> | verify-public win [--version=<semver>] [--deep]"
   );
 }
 

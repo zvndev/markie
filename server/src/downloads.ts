@@ -27,6 +27,11 @@ export type DownloadPlatform = {
   description: string;
   artifactPattern?: string;
   feed?: DownloadFeed;
+  // Who is expected to have signed this platform's artifacts. It lives here so
+  // the CI job that signs and the release runner that publishes read the same
+  // string; when they each held their own copy, nothing would have noticed them
+  // drifting apart except a user's SmartScreen warning.
+  codeSigning?: { authority: string; subject: string };
 };
 
 export type DownloadManifest = {

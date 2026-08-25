@@ -141,5 +141,14 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.10.0": true,
+    "electron@41.0.2": true,
+    "electron-winstaller@5.4.0": true,
+    "fsevents@2.3.3": true,
+    "node-pty@1.1.0": true,
+    "sharp@0.34.5": true,
+    "unrs-resolver@1.11.1": true
   }
 }

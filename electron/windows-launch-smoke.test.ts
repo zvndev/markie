@@ -13,6 +13,30 @@ import {
 
 const tempDirs: string[] = [];
 
+// `buildDesktopLaunchSmokeArtifact` and friends default their options from
+// `process.*`, so TypeScript infers Node's own types for them. A fixture only
+// ever supplies the handful of fields the artifact reads, and the profile
+// names ("mac", "win") are electron-builder's, not NodeJS.Platform's.
+// Same story as the desktop builder: `app`, `target`, `probe` and the rest
+// carry no defaults, so they are absent from the inferred options type.
+type WinArtifactOptions = NonNullable<
+  Parameters<typeof buildWindowsLaunchSmokeArtifact>[0]
+>;
+interface WinArtifactFixture extends WinArtifactOptions {
+  app: ReturnType<typeof resolveWindowsApp>;
+  debugOrigin: string;
+  target: unknown;
+  probe: unknown;
+  validation: { ok: boolean; failures: string[] };
+  screenshot: { fileName: string; contentType: string; bytes: number };
+}
+const winArtifactOptions = (o: WinArtifactFixture): WinArtifactOptions => o;
+
+const hostVersions = (
+  v: Pick<NodeJS.ProcessVersions, "node" | "electron" | "chrome">
+): NodeJS.ProcessVersions => v as NodeJS.ProcessVersions;
+
+
 function makeTempDir() {
   const dir = mkdtempSync(path.join(os.tmpdir(), "markie-win-launch-smoke-"));
   tempDirs.push(dir);
@@ -75,7 +99,7 @@ describe("Windows launch smoke", () => {
       hasEditor: true,
     };
 
-    const artifact = buildWindowsLaunchSmokeArtifact({
+    const artifact = buildWindowsLaunchSmokeArtifact(winArtifactOptions({
       baseDir: rootDir,
       distDir: "dist",
       productName: "Markie",
@@ -88,8 +112,8 @@ describe("Windows launch smoke", () => {
       generatedAt: "2026-07-04T20:00:00.000Z",
       platform: "win32",
       arch: "x64",
-      versions: { node: "22.13.1", electron: "41.0.2", chrome: "142.0.0.0" },
-    });
+      versions: hostVersions({ node: "22.13.1", electron: "41.0.2", chrome: "142.0.0.0" }),
+    }));
 
     expect(artifact).toMatchObject({
       ok: true,

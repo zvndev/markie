@@ -72,6 +72,19 @@ module.exports = {
   // The negation drops electron/*.test.ts, which sits next to the modules it
   // covers and has no business inside a user's app bundle.
   files: ["electron/**/*", "out/**/*", "!electron/**/*.test.*"],
+  // Native modules cannot be loaded from inside the asar archive. Electron
+  // Builder unpacks *.node on its own, which is not enough: node-pty also ships
+  // winpty.dll, winpty-agent.exe and the conpty helpers on Windows, and those
+  // stayed inside the archive, so the in-app terminal failed to start there.
+  // Unpacking both modules wholesale keeps every sidecar next to its binding.
+  asarUnpack: [
+    "node_modules/node-pty/**",
+    "node_modules/better-sqlite3/**",
+  ],
+  // Registers markie:// with the OS at install time — and, just as importantly,
+  // lets the Windows uninstaller remove the registration again instead of
+  // leaving a scheme pointing at a deleted executable.
+  protocols: [{ name: "Markie", schemes: ["markie"] }],
   extraResources: [
     {
       from: "mcp",

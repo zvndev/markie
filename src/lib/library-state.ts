@@ -17,6 +17,16 @@ export function libraryLoadErrorMessage(error: unknown): string {
 export async function readLibrarySnapshot(api: LibraryAPI): Promise<LibrarySnapshot> {
   try {
     const state = await api.libraryState();
+    // Main answers `{ signedIn: false, items: [], error }` when the library
+    // cannot be read, and safeApi folds a rejected invoke into `{ error }`.
+    // Either way there is no list here, and callers map over `items`.
+    if (!state || state.error || !Array.isArray(state.items)) {
+      return {
+        signedIn: false,
+        items: [],
+        error: libraryLoadErrorMessage(state?.error ?? "Unknown error"),
+      };
+    }
     return { signedIn: state.signedIn, items: state.items, error: null };
   } catch (error) {
     return { signedIn: false, items: [], error: libraryLoadErrorMessage(error) };

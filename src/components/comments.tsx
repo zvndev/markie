@@ -9,7 +9,8 @@ import {
   anchorToAbsolute,
   type CommentThread,
 } from "@/lib/comments";
-import { authClient, type MarkieUser } from "@/lib/auth-client";
+import type { MarkieUser } from "@/lib/auth-client";
+import { useAuth } from "@/lib/auth-store";
 import { colorForName, initials } from "@/lib/collab";
 
 const POLL_MS = 15000;
@@ -29,7 +30,14 @@ interface CommentLayerProps {
   editor: Editor;
   ydoc: Y.Doc;
   docId: string;
+  // The document cannot be edited: hides resolve/reopen, never commenting.
   readonly: boolean;
+  /** The current user owns the document, so may delete anyone's comment (the
+   *  server already allows it; this surfaces it in the UI). */
+  canModerate?: boolean;
+  // Whether this seat may write comments at all. Viewers may, so this
+  // defaults to true; pass false only when access is gone entirely.
+  canComment?: boolean;
   // The scroll container of the View pane; the overlay scrolls with it
   container: HTMLDivElement | null;
 }
@@ -39,10 +47,12 @@ export function CommentLayer({
   ydoc,
   docId,
   readonly,
+  canComment = true,
+  canModerate = false,
   container,
 }: CommentLayerProps) {
   const [threads, setThreads] = useState<CommentThread[] | null>(null);
-  const [me, setMe] = useState<MarkieUser | null>(null);
+  const { user: me } = useAuth();
   const [openThreadId, setOpenThreadId] = useState<string | null>(null);
   const [composing, setComposing] = useState<{ from: number; to: number } | null>(null);
   const [pendingSel, setPendingSel] = useState<{ from: number; to: number } | null>(null);
@@ -60,7 +70,6 @@ export function CommentLayer({
 
   useEffect(() => {
     refresh();
-    authClient.me().then(setMe);
     // Poll for new comments, but pause while the window is hidden so a doc
     // left open overnight doesn't hammer the API thousands of times.
     let interval: ReturnType<typeof setInterval> | null = null;
@@ -107,13 +116,13 @@ export function CommentLayer({
   useEffect(() => {
     const onSel = () => {
       const { from, to, empty } = editor.state.selection;
-      setPendingSel(empty || readonly ? null : { from, to });
+      setPendingSel(empty || !canComment ? null : { from, to });
     };
     editor.on("selectionUpdate", onSel);
     return () => {
       editor.off("selectionUpdate", onSel);
     };
-  }, [editor, readonly]);
+  }, [editor, canComment]);
 
   const topFor = (pos: number): number | null => {
     if (!container) return null;
@@ -193,6 +202,8 @@ export function CommentLayer({
                   me={me}
                   docId={docId}
                   readonly={readonly}
+                  canComment={canComment}
+                  canModerate={canModerate}
                   onChanged={refresh}
                   onClose={() => setShowResolved(false)}
                 />
@@ -259,6 +270,8 @@ export function CommentLayer({
             me={me}
             docId={docId}
             readonly={readonly}
+            canComment={canComment}
+            canModerate={canModerate}
             onChanged={refresh}
             onClose={() => setOpenThreadId(null)}
           />
@@ -273,6 +286,8 @@ function ThreadCard({
   me,
   docId,
   readonly,
+  canComment,
+  canModerate,
   onChanged,
   onClose,
 }: {
@@ -280,6 +295,8 @@ function ThreadCard({
   me: MarkieUser | null;
   docId: string;
   readonly: boolean;
+  canComment: boolean;
+  canModerate: boolean;
   onChanged: () => void;
   onClose: () => void;
 }) {
@@ -352,7 +369,7 @@ function ThreadCard({
               {c.body}
             </div>
           </div>
-          {me?.id === c.author_id && (
+          {(me?.id === c.author_id || canModerate) && (
             <button
               onClick={() => remove(c.id)}
               aria-label="Delete comment"
@@ -364,7 +381,7 @@ function ThreadCard({
         </div>
       ))}
 
-      {!readonly && thread.status === "open" && (
+      {canComment && thread.status === "open" && (
         <Composer placeholder="Reply…" onSubmit={submitReply} />
       )}
     </div>

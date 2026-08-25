@@ -17,6 +17,11 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+
+// A real window on a real machine is a deliberate act; see the helper.
+requireElectronConsent("sync-down-check", import.meta.url);
+
 
 const root = path.resolve(new URL("..", import.meta.url).pathname);
 const serverDir = path.join(root, "server");

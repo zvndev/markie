@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth.ts";
 import { docs } from "./docs.ts";
 import { shares } from "./shares.ts";
@@ -102,6 +103,36 @@ app.route("/api", themes);
 app.route("/", docView);
 app.route("/", publicShare);
 
+// Every API route answers in JSON, including its failures. The desktop sync
+// client parses the body of a non-2xx response to decide what to tell the user;
+// Hono's defaults hand back text/plain, which reads as an unexplained failure.
+// The HTML routes (/s/:token, /d/:id, /download*) build their own 403/404
+// responses and never reach these.
+app.onError((err, c) => {
+  console.error(`${c.req.method} ${c.req.path} failed:`, err);
+  // A route that threw an HTTPException already decided its own status and
+  // body (a 429 from a rate limiter, a 401 from better-auth). Flattening those
+  // into a generic 500 loses both the status the client branches on and the
+  // sentence it was meant to show.
+  if (err instanceof HTTPException) return err.getResponse();
+  return c.json(
+    {
+      error: "internal error",
+      // A stack in the response body is a gift to an attacker in production and
+      // the only useful thing on screen in development.
+      detail:
+        process.env.NODE_ENV === "production"
+          ? undefined
+          : err instanceof Error
+            ? err.message
+            : String(err),
+    },
+    500
+  );
+});
+
+app.notFound((c) => c.json({ error: "not found" }, 404));
+
 app.get("/api/me", async (c) => {
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   if (!session) return c.json({ user: null });
@@ -114,7 +145,13 @@ app.get("/api/me", async (c) => {
   });
 });
 
-const port = Number(process.env.PORT ?? 8787);
-const server = serve({ fetch: app.fetch, port });
-attachCollab(server as Parameters<typeof attachCollab>[0]);
-console.log(`markie-api listening on :${port}`);
+export { app };
+
+// Importing this module in a test must not bind a port or open a websocket
+// server; `npm start` leaves the variable unset and listens as usual.
+if (process.env.MARKIE_NO_LISTEN !== "1") {
+  const port = Number(process.env.PORT ?? 8787);
+  const server = serve({ fetch: app.fetch, port });
+  attachCollab(server as Parameters<typeof attachCollab>[0]);
+  console.log(`markie-api listening on :${port}`);
+}

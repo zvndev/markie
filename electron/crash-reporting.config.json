@@ -1,0 +1,4 @@
+{
+  "_comment": "Sentry DSN for crash reporting. Empty means reporting is inert: no toggle is offered and nothing is ever sent. A DSN public key is designed to be embedded in clients and is not a secret. Override with MARKIE_SENTRY_DSN for testing.",
+  "dsn": ""
+}

@@ -6,6 +6,11 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+
+// A real window on a real machine is a deliberate act; see the helper.
+requireElectronConsent("windows-launch-smoke", import.meta.url);
+
 
 const DEFAULT_PRODUCT_NAME = "Markie";
 const DEFAULT_TIMEOUT_MS = 45000;

@@ -25,7 +25,7 @@ Permanent links:
 | --- | --- | --- |
 | Websites, docs, campaigns, and generic email CTAs | `https://markie.zvndev.com/download` | Human-facing current download page |
 | Apple Silicon direct CTA | `https://markie.zvndev.com/download/mac` | Redirects to the newest public DMG |
-| Intel Mac direct CTA | `https://markie.zvndev.com/download/mac-intel` | Becomes live only when manifest status is `public` |
+| Intel Mac direct CTA | `https://markie.zvndev.com/download/mac-intel` | Redirects to the newest public x64 DMG from the same `latest-mac.yml` |
 | Windows direct CTA | `https://markie.zvndev.com/download/windows` | Becomes live only when manifest status is `public` |
 | Integrations and release checks | `https://markie.zvndev.com/download/latest.json` | Current version, routes, and resolved artifacts |
 
@@ -39,6 +39,54 @@ Preparing and verifying a release is safe to run autonomously. Publishing, rolli
 creating a GitHub release, and deploying the production server are external-production actions.
 An agent must get an explicit release instruction before running them. The publish command still
 requires the exact version in `--confirm-public-release=<version>`.
+
+## Beta channel
+
+The beta channel exists so a release can be tried on people who volunteered and withdrawn if we
+do not like it. Three properties make that safe, and all three are enforced rather than remembered:
+
+1. **Opt-in only.** The default is stable. The single way in is the "Receive beta updates" toggle
+   in Settings, Advanced, which writes `update-channel.json` in userData. `channelFor()` treats
+   anything that is not literally `true` as stable, so a corrupted or hand-edited file fails safe.
+2. **Unlisted.** The beta feed is recorded in `betaChannel` in `server/download-manifest.json` and
+   is deliberately **not** a `platforms` entry. The website and the share emails render from
+   `platforms`, so nothing public can point at a beta. `release:preflight` fails if a beta platform
+   entry ever appears.
+3. **Reversible.** Beta and stable are separate feed files in the same directory
+   (`mac/beta-mac.yml` and `mac/latest-mac.yml`), so publishing a beta cannot rewrite the feed
+   stable users follow.
+
+### Cutting a beta
+
+```sh
+npm run release:version -- 0.5.0-beta.1
+npm run release:prepare:mac
+npm run release:verify:mac
+npm run release:publish:mac -- --confirm-public-release=0.5.0-beta.1
+```
+
+Version format is `X.Y.Z-beta.N` and nothing else; `assertVersion` rejects any other prerelease tag
+so a build cannot upload into a channel with no readers. Electron Builder derives the channel from
+the prerelease tag and writes `beta-mac.yml`, which the release script selects through
+`macFeedFile()`. `0.5.0-beta.1` sorts **below** `0.5.0`, so shipping stable afterwards is not read
+as a downgrade.
+
+A beta release does not update the website, `latest.json`, or any download route. Those are stable
+routes and stay pointed at the last stable build.
+
+### Backing out a beta
+
+Restore the previous `beta-mac.yml`:
+
+```sh
+npm run release:rollback:mac -- --confirm-rollback=<beta-version>
+```
+
+Testers who turn the toggle off are moved back to current stable on the next check: leaving the
+channel sets `allowDowngrade`, because a beta carries a higher version than stable and the user
+would otherwise sit on the build we withdrew forever.
+
+Withdrawing a beta needs no public retraction, because nothing public ever advertised it.
 
 ## Desktop artifact matrix
 

@@ -9,6 +9,11 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+
+// A real window on a real machine is a deliberate act; see the helper.
+requireElectronConsent("overlay-interaction-check", import.meta.url);
+
 
 const root = path.resolve(new URL("..", import.meta.url).pathname);
 const require = createRequire(path.join(root, "server", "package.json"));
@@ -359,16 +364,19 @@ async function verifyWorkspaceFlow(cdp, homeDir) {
   })()`);
   await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter" });
   await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter" });
-  await waitFor("new workspace file opened", () =>
-    cdp.ev("document.title.startsWith('window-flow.md') && !document.querySelector('.markie-side-panel')")
+  // The docked panel is navigation chrome, not an overlay: page.tsx keeps it
+  // open across a document swap on purpose, so browsing file-to-file does not
+  // slam it shut. The check asserts that, not the old close-on-open.
+  await waitFor("new workspace file opened with the panel still docked", () =>
+    cdp.ev("document.title.startsWith('window-flow.md') && !!document.querySelector('.markie-side-panel')")
   );
   const openedScreenshot = await capture(cdp, "workspace-01-created-file-open");
 
   const createdPath = path.join(homeDir, "Documents", "Markie", "window-flow.md");
   const createdContent = await readFile(createdPath, "utf8");
 
-  await clickCenter(cdp, 'button[aria-label="Library — recent & files (⌘L)"]');
-  await waitFor("Library panel reopened", () => cdp.ev("!!document.querySelector('.markie-side-panel')"));
+  // No reopen click: the panel never closed. Clicking the rail button here
+  // would collapse it instead.
   await clickCenter(cdp, 'button[data-library-tab="files"]');
   await waitFor("workspace file action", () =>
     cdp.ev("!!document.querySelector('[data-file-actions-trigger]')")

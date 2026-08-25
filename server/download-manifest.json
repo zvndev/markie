@@ -1,6 +1,14 @@
 {
   "schemaVersion": 2,
   "channel": "stable",
+  "betaChannel": {
+    "note": "Opt-in only, from Settings inside the app. Never listed publicly: this is not a platforms entry, so the website and share emails cannot surface it.",
+    "versionPattern": "X.Y.Z-beta.N",
+    "feed": {
+      "type": "electron-builder-mac-yml",
+      "path": "mac/beta-mac.yml"
+    }
+  },
   "siteUrl": "https://markie.zvndev.com",
   "latestManifestRoute": "/download/latest.json",
   "storage": {
@@ -34,9 +42,13 @@
       "ctaLabel": "Get Markie for Intel Mac",
       "os": "macos",
       "arch": "x64",
-      "status": "planned",
-      "description": "Local packaging is configured; public notarized artifacts are not published yet.",
-      "artifactPattern": "Markie-*-x64.dmg"
+      "status": "public",
+      "description": "Current signed public download.",
+      "artifactPattern": "Markie-*-x64.dmg",
+      "feed": {
+        "type": "electron-builder-mac-yml",
+        "path": "mac/latest-mac.yml"
+      }
     },
     {
       "id": "windows-x64",

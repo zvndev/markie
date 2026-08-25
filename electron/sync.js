@@ -5,6 +5,9 @@ const path = require("path");
 const crypto = require("crypto");
 const registry = require("./registry");
 const { isAllowedServerOrigin } = require("./share-origin");
+// Every write below lands on a file the user owns, so none of them may leave a
+// truncated document behind if the process dies mid-write.
+const { writeFileAtomic } = require("./atomic-write");
 
 let config = { token: null, serverURL: null };
 
@@ -56,7 +59,14 @@ async function api(method, p, body) {
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(15000),
     });
+    // A 2xx whose body is not JSON — an HTML error page from a proxy, a
+    // text/plain response from a server with no JSON notFound handler — is not
+    // a success: every caller below reads fields out of `data`, and reading
+    // them off null is how a shared-doc open used to take the window down.
     const data = await res.json().catch(() => null);
+    if (res.status >= 200 && res.status < 300 && data === null) {
+      return { status: res.status, data: null, unreadable: true };
+    }
     return { status: res.status, data };
   } catch {
     return { status: NO_RESPONSE, data: null };
@@ -68,6 +78,28 @@ function failure(verb, res) {
   return res.status === NO_RESPONSE
     ? `${verb} failed (offline)`
     : `${verb} failed (${res.status})`;
+}
+
+// What the user is told when the server answered, but with something this
+// client cannot use. Distinct from a transport failure on purpose: retrying
+// is not the fix, and pretending the doc is empty would be worse.
+const UNREADABLE = "The server sent an unreadable copy of this document.";
+
+// The doc from a GET response, or null when the body was not the shape this
+// client expects. Callers write `doc.content` to disk, so a non-string content
+// has to fail here rather than truncate the file to "undefined".
+function readDoc(res) {
+  const doc = res.data && res.data.doc;
+  if (!doc || typeof doc.content !== "string") return null;
+  return doc;
+}
+
+// The version from a PUT response, or null when the body was unusable. A
+// missing version would be recorded as the local base version and make every
+// later push look like a conflict.
+function readVersion(res) {
+  const v = res.data && res.data.version;
+  return typeof v === "number" ? v : null;
 }
 
 // A viewer can read a shared doc and nothing else, so a snapshot push is a
@@ -101,14 +133,24 @@ async function syncOn(filePath, name, content) {
     baseVersion,
   });
   if (res.status === 200) {
+    const version = readVersion(res);
+    if (version === null) {
+      // The server took the snapshot — we just cannot read what version it gave
+      // it. Remembering the id it was stored under (and only the id) keeps the
+      // next attempt a retry of the *same* cloud doc; without it every retry
+      // minted a fresh uuid and left an orphan copy behind. No cloud_version is
+      // recorded, so the row stays unpushed and the next push re-sends from 0.
+      registry.update(filePath, { cloud_doc_id: cloudId, sync_state: "unpushed" });
+      return { error: UNREADABLE };
+    }
     registry.update(filePath, {
       cloud_doc_id: cloudId,
-      cloud_version: res.data.version,
+      cloud_version: version,
       content_hash: hash,
       sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
-    return { ok: true, version: res.data.version };
+    return { ok: true, version };
   }
   if (res.status === 409) {
     registry.update(filePath, { sync_state: "conflict" });
@@ -141,14 +183,19 @@ async function push(filePath, name, content) {
     baseVersion: row.cloud_version ?? 0,
   });
   if (res.status === 200) {
+    const version = readVersion(res);
+    if (version === null) {
+      registry.update(filePath, { sync_state: "unpushed" });
+      return { error: UNREADABLE };
+    }
     registry.update(filePath, {
-      cloud_version: res.data.version,
+      cloud_version: version,
       content_hash: hash,
       // Clears "unpushed" when a retry finally lands.
       sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
-    return { ok: true, version: res.data.version };
+    return { ok: true, version };
   }
   if (res.status === 409) {
     registry.update(filePath, { sync_state: "conflict" });
@@ -188,16 +235,22 @@ async function pull(cloudId, targetPath) {
   if (!isConfigured()) return { error: "not signed in" };
   const res = await api("GET", `/api/docs/${cloudId}`);
   if (res.status !== 200) return { error: `fetch failed (${res.status})` };
-  const doc = res.data.doc;
-  fs.writeFileSync(targetPath, doc.content, "utf-8");
-  registry.track(targetPath, doc.name, doc.content);
+  const doc = readDoc(res);
+  if (!doc) return { error: UNREADABLE };
+  const name = typeof doc.name === "string" && doc.name ? doc.name : path.basename(targetPath);
+  try {
+    writeFileAtomic(targetPath, doc.content);
+  } catch (e) {
+    return { error: `Couldn't write ${targetPath}: ${e.message}` };
+  }
+  registry.track(targetPath, name, doc.content);
   registry.update(targetPath, {
     cloud_doc_id: cloudId,
-    cloud_version: doc.version,
+    cloud_version: typeof doc.version === "number" ? doc.version : 0,
     sync_state: "synced",
     last_synced_at: new Date().toISOString(),
   });
-  return { ok: true, path: targetPath, name: doc.name };
+  return { ok: true, path: targetPath, name };
 }
 
 // Resolve a conflict: "local" force-pushes the local file, "cloud" overwrites it.
@@ -215,10 +268,17 @@ async function resolve(filePath, strategy) {
     }
     const res = await api("GET", `/api/docs/${row.cloud_doc_id}`);
     if (res.status !== 200) return { error: failure("fetch", res) };
-    fs.writeFileSync(filePath, res.data.doc.content, "utf-8");
+    const doc = readDoc(res);
+    if (!doc) return { error: UNREADABLE };
+    try {
+      writeFileAtomic(filePath, doc.content);
+    } catch (e) {
+      return { error: `Couldn't write ${filePath}: ${e.message}` };
+    }
+    const version = typeof doc.version === "number" ? doc.version : 0;
     registry.update(filePath, {
-      cloud_version: res.data.doc.version,
-      content_hash: registry.hashContent(res.data.doc.content),
+      cloud_version: version,
+      content_hash: registry.hashContent(doc.content),
       sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
@@ -227,14 +287,21 @@ async function resolve(filePath, strategy) {
     return {
       ok: true,
       reloaded: true,
-      content: res.data.doc.content,
-      version: res.data.doc.version,
+      content: doc.content,
+      version,
     };
   }
   // keep local: re-read server version, push on top of it
   const remote = await api("GET", `/api/docs/${row.cloud_doc_id}`);
-  const baseVersion = remote.status === 200 ? remote.data.doc.version : 0;
-  const content = fs.readFileSync(filePath, "utf-8");
+  const remoteDoc = remote.status === 200 ? readDoc(remote) : null;
+  const baseVersion =
+    remoteDoc && typeof remoteDoc.version === "number" ? remoteDoc.version : 0;
+  let content;
+  try {
+    content = fs.readFileSync(filePath, "utf-8");
+  } catch (e) {
+    return { error: `Couldn't read the local file: ${e.message}` };
+  }
   const res = await api("PUT", `/api/docs/${row.cloud_doc_id}`, {
     name: row.name,
     content,
@@ -242,8 +309,10 @@ async function resolve(filePath, strategy) {
     baseVersion,
   });
   if (res.status !== 200) return { error: `push failed (${res.status})` };
+  const pushedVersion = readVersion(res);
+  if (pushedVersion === null) return { error: UNREADABLE };
   registry.update(filePath, {
-    cloud_version: res.data.version,
+    cloud_version: pushedVersion,
     content_hash: registry.hashContent(content),
     sync_state: "synced",
     last_synced_at: new Date().toISOString(),
@@ -299,11 +368,13 @@ async function remoteContent(filePath) {
   if (!isConfigured()) return { error: "not signed in" };
   const res = await api("GET", `/api/docs/${row.cloud_doc_id}`);
   if (res.status !== 200) return { error: failure("fetch", res) };
+  const doc = readDoc(res);
+  if (!doc) return { error: UNREADABLE };
   return {
     ok: true,
-    content: res.data.doc.content,
-    version: res.data.doc.version,
-    name: res.data.doc.name,
+    content: doc.content,
+    version: doc.version,
+    name: doc.name,
   };
 }
 
@@ -355,12 +426,13 @@ async function resolveKeepBoth(filePath, localContent) {
   // stray copy behind for a resolution that never happened.
   const res = await api("GET", `/api/docs/${row.cloud_doc_id}`);
   if (res.status !== 200) return { error: failure("fetch", res) };
-  const doc = res.data.doc;
+  const doc = readDoc(res);
+  if (!doc) return { error: UNREADABLE };
 
   const copyPath = keepBothPath(filePath);
   if (!copyPath) return { error: "Couldn't find an unused name for the copy." };
   try {
-    fs.writeFileSync(copyPath, local, "utf-8");
+    writeFileAtomic(copyPath, local);
   } catch (e) {
     return { error: `Couldn't write the copy: ${e.message}` };
   }
@@ -375,7 +447,7 @@ async function resolveKeepBoth(filePath, localContent) {
   });
 
   try {
-    fs.writeFileSync(filePath, doc.content, "utf-8");
+    writeFileAtomic(filePath, doc.content);
   } catch (e) {
     // The copy survives, so nothing was lost; say where it went.
     return { error: `Saved your version to ${copyPath}, but couldn't overwrite the original: ${e.message}` };

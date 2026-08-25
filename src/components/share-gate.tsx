@@ -12,8 +12,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ShareDialog } from "@/components/share-dialog";
+import { SignInForm } from "@/components/sign-in";
 import { getElectronAPI } from "@/lib/electron";
-import { getAuthToken } from "@/lib/auth-client";
+import { useAuth } from "@/lib/auth-store";
 
 type Stage =
   | { kind: "loading" }
@@ -30,8 +31,6 @@ interface ShareGateProps {
   content: string;
   onClose: () => void;
   onChanged: () => void;
-  /** Hand off to the account UI; the gate closes itself first. */
-  onSignIn: () => void;
 }
 
 export function ShareGate({
@@ -40,8 +39,10 @@ export function ShareGate({
   content,
   onClose,
   onChanged,
-  onSignIn,
 }: ShareGateProps) {
+  // The gate reacts to the session rather than sampling a token once, so
+  // signing in below re-resolves it in place instead of leaving a dead dialog.
+  const { status } = useAuth();
   const [stage, setStage] = useState<Stage>({ kind: "loading" });
   const [busy, setBusy] = useState(false);
   // Guards against a resolve that lands after the dialog closed or the file
@@ -55,7 +56,11 @@ export function ShareGate({
       setStage({ kind: "unsaved" });
       return;
     }
-    if (!getAuthToken()) {
+    if (status === "checking") {
+      setStage({ kind: "loading" });
+      return;
+    }
+    if (status === "out") {
       setStage({ kind: "signed-out" });
       return;
     }
@@ -83,7 +88,7 @@ export function ShareGate({
           message: "Couldn't check whether this file is synced. Try again.",
         });
       });
-  }, [filePath]);
+  }, [filePath, status]);
 
   useEffect(() => {
     resolve();
@@ -128,6 +133,36 @@ export function ShareGate({
     }
   }, [filePath, fileName, content, onChanged, resolve]);
 
+  // Signing in is a prerequisite the gate can clear itself. Sending the user to
+  // Settings instead threw away the thing they actually asked for, and they had
+  // to find their way back to Share and click it a second time.
+  if (stage.kind === "signed-out") {
+    return (
+      <div
+        className="markie-scrim overlay-scrim-enter fixed inset-0 z-[100] flex items-center justify-center"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        <div
+          className="markie-overlay-panel overlay-panel-enter w-[400px] max-w-[92vw] rounded-xl p-5"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Sign in to share"
+        >
+          <div className="flex justify-end -mt-1 -mr-1">
+            <button className="markie-overlay-close" onClick={onClose} aria-label="Close">
+              ×
+            </button>
+          </div>
+          {/* onDone is not needed: the store publishes the new session, the
+              `status` subscription fires, and resolve() runs with it. */}
+          <SignInForm reason="share" />
+        </div>
+      </div>
+    );
+  }
+
   // Once the prerequisites are met the real dialog takes over entirely.
   if (stage.kind === "ready") {
     return (
@@ -149,11 +184,6 @@ export function ShareGate({
         return {
           line: "Save this document to a file before you share it.",
           action: null,
-        };
-      case "signed-out":
-        return {
-          line: "Sign in to share. Your file stays on this Mac.",
-          action: { label: "Sign in", onClick: onSignIn },
         };
       case "local":
         return {

@@ -53,6 +53,10 @@ export function SharedView({
   };
 
   const [byMe, setByMe] = useState<SharedByMeDoc[] | null>(null);
+  const [byMeError, setByMeError] = useState(false);
+  // Lets the error state offer a retry without the parent having to bump
+  // refreshKey for something only this panel knows went wrong.
+  const [byMeNonce, setByMeNonce] = useState(0);
 
   // Fetch "shared by me" whenever the panel mounts, the tab opens, or something
   // changed (refreshKey). Cheap metadata-only call. When signed out the render
@@ -60,13 +64,25 @@ export function SharedView({
   useEffect(() => {
     if (!signedIn) return;
     let alive = true;
-    sharesClient.sharedByMe().then((docs) => {
-      if (alive) setByMe(docs);
-    });
+    sharesClient
+      .sharedByMe()
+      .then((docs) => {
+        if (!alive) return;
+        // null is a failed request, not an empty account.
+        if (docs === null) {
+          setByMeError(true);
+          return;
+        }
+        setByMeError(false);
+        setByMe(docs);
+      })
+      .catch(() => {
+        if (alive) setByMeError(true);
+      });
     return () => {
       alive = false;
     };
-  }, [signedIn, refreshKey, tab]);
+  }, [signedIn, refreshKey, tab, byMeNonce]);
 
   return (
     <div className="flex flex-col h-full">
@@ -105,6 +121,19 @@ export function SharedView({
             icon={<PeopleIcon />}
             title="Sign in to manage sharing"
             body="See and manage the docs you've shared with people."
+          />
+        ) : byMeError ? (
+          <SharedEmptyState
+            icon={<PeopleIcon />}
+            title="Couldn't load your shared docs"
+            body="The server didn't answer. Your shares are unchanged."
+            action={{
+              label: "Try again",
+              onClick: () => {
+                setByMeError(false);
+                setByMeNonce((n) => n + 1);
+              },
+            }}
           />
         ) : byMe === null ? (
           <SharedSkeleton label="Loading documents you've shared" />
@@ -167,10 +196,12 @@ function SharedEmptyState({
   icon,
   title,
   body,
+  action,
 }: {
   icon: ReactNode;
   title: string;
   body: string;
+  action?: { label: string; onClick: () => void };
 }) {
   return (
     <div className="px-2 py-3">
@@ -180,6 +211,14 @@ function SharedEmptyState({
           <div>
             <div className="text-[12px] font-medium text-foreground">{title}</div>
             <div className="mt-0.5 text-[11px] text-muted leading-snug">{body}</div>
+            {action && (
+              <button
+                onClick={action.onClick}
+                className="mt-1.5 text-[11px] text-foreground underline underline-offset-2 hover:opacity-80"
+              >
+                {action.label}
+              </button>
+            )}
           </div>
         </div>
       </div>

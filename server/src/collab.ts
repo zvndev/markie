@@ -78,6 +78,22 @@ function appendUpdate(docId: string, update: Uint8Array): void {
   }
 }
 
+// The seed lock (below) only exists for rooms whose doc has something to seed
+// *from*. The docs table belongs to docs.ts and is created there, so a process
+// that only ever imports collab.ts may not have it at all; that case simply
+// means "nothing to seed" rather than an error.
+function docHasContent(docId: string): boolean {
+  try {
+    const row = db
+      .prepare("SELECT content FROM docs WHERE id = ? AND deleted_at IS NULL")
+      .get(docId) as { content: string } | undefined;
+    return !!row && row.content.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+
 interface Conn {
   userId: string;
   identity: PresenceIdentity; // what this socket is allowed to claim it is
@@ -91,6 +107,16 @@ interface Room {
   ydoc: Y.Doc;
   awareness: awarenessProtocol.Awareness;
   conns: Map<WebSocket, Conn>;
+  // Snapshots (docs.content) and Yjs updates (doc_updates) are stored
+  // independently, so a doc shared as a snapshot opens into an empty room and
+  // some client has to convert the markdown into the shared document. The
+  // client guard alone ("seed if the fragment is empty after sync") still lets
+  // two editors seed at the same instant and interleave two copies of the file,
+  // and seeding server-side would mean running the TipTap schema on the server.
+  // So the room elects one seeder instead: while seedPending is true only
+  // `seeder` may write, everyone else is answered exactly like a viewer.
+  seedPending: boolean;
+  seeder: WebSocket | null;
 }
 
 const rooms = new Map<string, Room>();
@@ -113,11 +139,32 @@ function getRoom(docId: string): Room {
   loadUpdates(docId, ydoc);
   const awareness = new awarenessProtocol.Awareness(ydoc);
   awareness.setLocalState(null);
-  room = { docId, ydoc, awareness, conns: new Map() };
+  room = {
+    docId,
+    ydoc,
+    awareness,
+    conns: new Map(),
+    // Evaluated once, when the room is born: a non-empty snapshot whose room
+    // still renders empty is the only situation that needs seeding at all.
+    // The fragment is checked rather than the update count because a stored
+    // update may carry only metadata (a schema stamp) and no document.
+    seedPending:
+      docHasContent(docId) && ydoc.getXmlFragment("default").length === 0,
+    seeder: null,
+  };
   rooms.set(docId, room);
 
   ydoc.on("update", (update: Uint8Array) => {
     appendUpdate(docId, update);
+    // Release the lock only once the room holds document content. An update
+    // carrying nothing but metadata must not open it: a racing editor could
+    // then seed alongside the real one, and a seeder who disconnected after
+    // the stamp but before the text would leave the room recorded as seeded
+    // while it still shows nothing.
+    if (room!.seedPending && room!.ydoc.getXmlFragment("default").length > 0) {
+      room!.seedPending = false;
+      room!.seeder = null;
+    }
     const encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, MESSAGE_SYNC);
     syncProtocol.writeUpdate(encoder, update);
@@ -153,6 +200,41 @@ function getRoom(docId: string): Room {
     }
   );
   return room;
+}
+
+// The first editor-level connection to turn up claims the seed. Viewers never
+// do: a read-only client is not an author, and several viewers opening the same
+// empty room would each write their own copy of the file into it.
+function claimSeeder(room: Room, ws: WebSocket, level: ShareAccessLevel): void {
+  if (!room.seedPending || room.seeder) return;
+  if (!canEditLevel(level)) return;
+  room.seeder = ws;
+}
+
+// The seeder left before it wrote anything. Hand the seed to another editor
+// that is already here; if there is none, the next editor to join claims it.
+function reelectSeeder(room: Room): void {
+  room.seeder = null;
+  if (!room.seedPending) return;
+  for (const [ws, conn] of room.conns) {
+    if (ws.readyState !== ws.OPEN) continue;
+    if (canEditLevel(cachedLevel(room.docId, conn))) {
+      room.seeder = ws;
+      return;
+    }
+  }
+}
+
+// Test hook: the seed lock lives entirely inside a room object that nothing
+// else can see, and "the seeder left, has the lock moved yet?" is otherwise
+// only observable by writing and hoping.
+export function seedLockState(
+  docId: string
+): { seedPending: boolean; seeder: string | null } | null {
+  const room = rooms.get(docId);
+  if (!room) return null;
+  const seeder = room.seeder ? room.conns.get(room.seeder)?.userId ?? null : null;
+  return { seedPending: room.seedPending, seeder };
 }
 
 function broadcast(room: Room, message: Uint8Array): void {
@@ -268,6 +350,7 @@ function handleConnection(
     checkedAt: Date.now(),
   };
   room.conns.set(conn, state);
+  claimSeeder(room, conn, level);
   conn.binaryType = "arraybuffer";
 
   conn.on("message", (data: ArrayBuffer | Buffer) => {
@@ -282,15 +365,33 @@ function handleConnection(
       const decoder = decoding.createDecoder(message);
       const messageType = decoding.readVarUint(decoder);
       if (messageType === MESSAGE_SYNC) {
+        const canEdit = canEditLevel(current);
+        // Covers the connection that was a viewer on join and has since been
+        // promoted, and the room that had no editor at all when it was born.
+        if (canEdit) claimSeeder(room, conn, current);
+        // Everyone but the elected seeder is answered like a viewer while the
+        // seed is pending: step 1 still gets a reply, updates go nowhere.
+        const seedBlocked = room.seedPending && room.seeder !== conn;
         const encoder = encoding.createEncoder();
         encoding.writeVarUint(encoder, MESSAGE_SYNC);
-        readAccessControlledSyncMessage(
+        const syncType = readAccessControlledSyncMessage(
           decoder,
           encoder,
           room.ydoc,
           conn,
-          canEditLevel(current)
+          canEdit && !seedBlocked
         );
+        if (
+          canEdit &&
+          seedBlocked &&
+          (syncType === syncProtocol.messageYjsUpdate ||
+            syncType === syncProtocol.messageYjsSyncStep2)
+        ) {
+          console.log(
+            `collab: dropped update from ${state.userId} in room ${docId}: ` +
+              "another editor holds the seed lock for this empty room"
+          );
+        }
         if (encoding.length(encoder) > 1) {
           conn.send(encoding.toUint8Array(encoder));
         }
@@ -312,6 +413,7 @@ function handleConnection(
   conn.on("close", () => {
     const controlled = room.conns.get(conn)?.controlled;
     room.conns.delete(conn);
+    if (room.seeder === conn) reelectSeeder(room);
     if (controlled && controlled.size > 0) {
       awarenessProtocol.removeAwarenessStates(room.awareness, [...controlled], null);
     }

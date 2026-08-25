@@ -52,11 +52,47 @@ function publicMacPlatform(manifest = releaseManifest()) {
   return platform;
 }
 
-export function releaseUrls(manifest = releaseManifest()) {
+// "Markie-*-arm64.dmg" is a filename glob, not a regex. Escape everything the
+// regex engine would read as syntax, then let `*` mean "the version".
+export function artifactPatternRegExp(pattern) {
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replaceAll("\\*", ".+");
+  return new RegExp(`^${escaped}$`);
+}
+
+// Every platform the manifest publishes, not just the primary one. The Intel
+// route shipped on the download page from the same manifest, so a release that
+// only verified Apple Silicon could hand Intel users a stale or missing build
+// and nothing in the pipeline would notice.
+export function publicDownloadRoutes(manifest = releaseManifest()) {
+  const siteUrl = manifest.siteUrl.replace(/\/+$/, "");
+  const platforms = (manifest.platforms ?? []).filter((entry) => entry.status === "public");
+  assert(platforms.length > 0, "stable manifest needs at least one public platform");
+  return platforms.map((platform) => {
+    assert(platform.route, `public platform ${platform.id} needs a download route`);
+    assert(platform.artifactPattern, `public platform ${platform.id} needs an artifactPattern`);
+    return {
+      id: platform.id,
+      url: `${siteUrl}${platform.route}`,
+      artifactPattern: platform.artifactPattern,
+    };
+  });
+}
+
+// `version` selects the channel's feed. It defaults to stable so every existing
+// caller keeps pointing at latest-mac.yml; only a beta release asks for its own.
+/** @param {object} [manifest] @param {string | null} [version] */
+export function releaseUrls(manifest = releaseManifest(), version = null) {
   const platform = publicMacPlatform(manifest);
   const publicBase = manifest.storage.publicBaseUrl.replace(/\/+$/, "");
-  const feedPath = platform.feed.path.replace(/^\/+/, "");
-  const artifactPath = feedPath.split("/").slice(0, -1).join("/");
+  const stableFeedPath = platform.feed.path.replace(/^\/+/, "");
+  // The beta feed is a sibling of stable in the same directory, so it inherits
+  // the bucket and the artifact base without a second manifest entry to keep in
+  // step. It is deliberately not a public platform: the website reads the
+  // manifest, and an unlisted channel is one nothing public can point at.
+  const feedPath = version
+    ? [...stableFeedPath.split("/").slice(0, -1), macFeedFile(version)].join("/")
+    : stableFeedPath;
+  const artifactPath = stableFeedPath.split("/").slice(0, -1).join("/");
   const artifactBaseUrl = artifactPath ? `${publicBase}/${artifactPath}` : publicBase;
   const siteUrl = manifest.siteUrl.replace(/\/+$/, "");
   return {
@@ -114,18 +150,54 @@ function gitOutput(args) {
   return run("git", args, { capture: true });
 }
 
+// A release version is either a stable X.Y.Z or a beta prerelease X.Y.Z-beta.N.
+// Only the tag the beta channel actually publishes is accepted: any other
+// prerelease label would resolve to a feed file nothing ever writes, so the
+// build would upload into a channel with no readers.
+const RELEASE_VERSION = /^\d+\.\d+\.\d+(?:-beta\.\d+)?$/;
+
 export function assertVersion(value) {
-  assert(/^\d+\.\d+\.\d+$/.test(value ?? ""), `invalid release version: ${value ?? "missing"}`);
+  assert(RELEASE_VERSION.test(value ?? ""), `invalid release version: ${value ?? "missing"}`);
   return value;
 }
 
+/** Which updater channel a version belongs to. */
+export function releaseChannel(version) {
+  return assertVersion(version).includes("-") ? "beta" : "latest";
+}
+
+/**
+ * The Electron Builder mac feed file for a version. Beta and stable are
+ * separate objects in the same bucket, which is what makes a beta publish
+ * incapable of rewriting the feed stable users follow — and what makes
+ * withdrawing a beta a matter of restoring one file.
+ */
+export function macFeedFile(version) {
+  return releaseChannel(version) === "beta" ? "beta-mac.yml" : "latest-mac.yml";
+}
+
+function versionParts(value) {
+  const [core, pre] = assertVersion(value).split("-");
+  return {
+    nums: core.split(".").map(Number),
+    // null for a stable release, which sorts above every prerelease of the
+    // same X.Y.Z so that shipping stable after a beta is not read as a
+    // downgrade and refused.
+    pre: pre ? Number(pre.split(".")[1]) : null,
+  };
+}
+
 export function compareVersions(left, right) {
-  const a = assertVersion(left).split(".").map(Number);
-  const b = assertVersion(right).split(".").map(Number);
+  const { nums: a, pre: aPre } = versionParts(left);
+  const { nums: b, pre: bPre } = versionParts(right);
   for (let index = 0; index < 3; index += 1) {
     if (a[index] !== b[index]) return a[index] > b[index] ? 1 : -1;
   }
-  return 0;
+  // Same X.Y.Z: a prerelease is older than the release it leads to.
+  if (aPre === bPre) return 0;
+  if (aPre === null) return 1;
+  if (bPre === null) return -1;
+  return aPre > bPre ? 1 : -1;
 }
 
 export function setReleaseVersion(version, root = rootDir) {
@@ -214,10 +286,11 @@ export function notarytoolSubmitPlan(file, credentials = process.env) {
 export async function refreshMacFeedIntegrity(version, root = rootDir) {
   assertVersion(version);
   const dist = path.join(root, "dist");
-  const feedPath = path.join(dist, "latest-mac.yml");
+  const feedName = macFeedFile(version);
+  const feedPath = path.join(dist, feedName);
   const feed = yaml.load(readFileSync(feedPath, "utf8"), { schema: yaml.JSON_SCHEMA });
-  assert(feed && typeof feed === "object", "latest-mac.yml must contain an object");
-  assert(Array.isArray(feed.files), "latest-mac.yml must contain files");
+  assert(feed && typeof feed === "object", `${feedName} must contain an object`);
+  assert(Array.isArray(feed.files), `${feedName} must contain files`);
   const expectedNames = new Set(expectedMacArtifacts(version));
   const updated = new Map();
   for (const entry of feed.files) {
@@ -229,10 +302,10 @@ export async function refreshMacFeedIntegrity(version, root = rootDir) {
     entry.sha512 = await hashFile(file);
     updated.set(name, entry);
   }
-  assert(updated.size === expectedNames.size, "latest-mac.yml does not cover every macOS artifact");
+  assert(updated.size === expectedNames.size, `${feedName} does not cover every macOS artifact`);
   const legacyName = decodeURIComponent(feed.path ?? "");
   const legacyEntry = updated.get(legacyName);
-  assert(legacyEntry, "latest-mac.yml legacy path must reference a release artifact");
+  assert(legacyEntry, `${feedName} legacy path must reference a release artifact`);
   feed.sha512 = legacyEntry.sha512;
   writeFileSync(
     feedPath,
@@ -244,8 +317,9 @@ export async function refreshMacFeedIntegrity(version, root = rootDir) {
 export async function verifyLocalMacArtifacts({ root = rootDir, verifyTrust = false } = {}) {
   const version = assertVersion(readJson(path.join(root, "package.json")).version);
   const dist = path.join(root, "dist");
-  const feedPath = path.join(dist, "latest-mac.yml");
-  assert(existsSync(feedPath), "missing dist/latest-mac.yml; run release:prepare:mac first");
+  const feedName = macFeedFile(version);
+  const feedPath = path.join(dist, feedName);
+  assert(existsSync(feedPath), `missing dist/${feedName}; run release:prepare:mac first`);
   const feed = parseElectronBuilderFeed(readFileSync(feedPath, "utf8"));
   assert(feed.version === version, `local feed version ${feed.version ?? "missing"} does not match ${version}`);
   const feedNames = new Set(feed.files.map((file) => decodeURIComponent(file.url)));
@@ -263,7 +337,7 @@ export async function verifyLocalMacArtifacts({ root = rootDir, verifyTrust = fa
     const size = statSync(file).size;
     assert(size === entry.size, `${name} size ${size} does not match feed size ${entry.size}`);
     const sha512 = await hashFile(file);
-    assert(sha512 === entry.sha512, `${name} SHA-512 does not match latest-mac.yml`);
+    assert(sha512 === entry.sha512, `${name} SHA-512 does not match ${feedName}`);
     const blockmap = `${file}.blockmap`;
     assert(existsSync(blockmap), `missing differential update blockmap: ${path.basename(blockmap)}`);
     files.push({
@@ -461,10 +535,31 @@ async function verifyWebsiteContract({ expectedVersion, expectedArtifactUrl, all
 
   const page = await fetchRequired(urls.downloadPageUrl, { redirect: "follow" });
   assert((page.headers.get("content-type") ?? "").includes("text/html"), "download page is not HTML");
-  const download = await fetch(urls.downloadUrl, { redirect: "manual" });
-  assert([301, 302, 307, 308].includes(download.status), `stable download route returned ${download.status}`);
-  if (!allowVersionMismatch) {
-    assert(download.headers.get("location") === expectedArtifactUrl, "stable download route points at a stale artifact");
+
+  // Every public platform, not only the primary: an Intel user follows
+  // /download/mac-intel, and that route has to redirect to an Intel artifact.
+  for (const route of publicDownloadRoutes()) {
+    const listed = body.platforms?.find((platform) => platform.id === route.id);
+    assert(listed, `latest release JSON has no ${route.id} platform`);
+    assert(
+      listed.downloadUrl === route.url,
+      `latest release JSON has the wrong ${route.id} download URL`
+    );
+    const download = await fetch(route.url, { redirect: "manual" });
+    assert(
+      [301, 302, 307, 308].includes(download.status),
+      `${route.id} download route returned ${download.status}`
+    );
+    const location = download.headers.get("location");
+    assert(location, `${route.id} download route sent no redirect target`);
+    const name = decodeURIComponent(location.split("?")[0].split("/").pop() ?? "");
+    assert(
+      artifactPatternRegExp(route.artifactPattern).test(name),
+      `${route.id} download route points at ${name || "nothing"}, expected ${route.artifactPattern}`
+    );
+    if (!allowVersionMismatch && route.url === urls.downloadUrl) {
+      assert(location === expectedArtifactUrl, "stable download route points at a stale artifact");
+    }
   }
 }
 
@@ -482,10 +577,9 @@ export async function verifyPublicMac({ expectedVersion, deep = false, verifyWeb
     await verifyRemoteFile(artifactUrl, entry, deep);
   }
   const primary = publicMacPlatform();
-  const primaryEntry = feed.files.find((entry) => {
-    const pattern = primary.artifactPattern.replaceAll("*", ".+");
-    return new RegExp(`^${pattern}$`).test(decodeURIComponent(entry.url));
-  });
+  const primaryEntry = feed.files.find((entry) =>
+    artifactPatternRegExp(primary.artifactPattern).test(decodeURIComponent(entry.url))
+  );
   assert(primaryEntry, "public feed has no primary macOS download artifact");
   const primaryUrl = `${urls.artifactBaseUrl}/${encodeURIComponent(decodeURIComponent(primaryEntry.url))}`;
   if (verifyWebsite) {
@@ -633,7 +727,7 @@ async function rollbackMac(confirmVersion) {
   assert(existsSync(previous), `missing ${path.relative(rootDir, previous)}`);
   const rollbackDir = path.join(evidenceDir(version), "rollback");
   mkdirSync(rollbackDir, { recursive: true });
-  const rollbackFeed = path.join(rollbackDir, "latest-mac.yml");
+  const rollbackFeed = path.join(rollbackDir, macFeedFile(version));
   copyFileSync(previous, rollbackFeed);
   const previousVersion = parseElectronBuilderFeed(readFileSync(previous, "utf8")).version;
   assertVersion(previousVersion);

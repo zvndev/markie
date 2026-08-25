@@ -7,9 +7,17 @@ import {
   shouldRestoreHostNativePrebuild,
 } from "../scripts/local-electron-builder.mjs";
 
+// The wrapper takes and returns a process.env-shaped object, but the spread
+// inside it loses the index signature on the way out, so both ends are named
+// here rather than at each call.
+// NODE_ENV is required on ProcessEnv here, and a fixture that only cares
+// about signing credentials has no business declaring one.
+const builderEnv = (base: Partial<NodeJS.ProcessEnv>): NodeJS.ProcessEnv =>
+  localElectronBuilderEnv(base as NodeJS.ProcessEnv);
+
 describe("local electron-builder wrapper", () => {
   it("disables signing identity discovery and strips signing credentials", () => {
-    const env = localElectronBuilderEnv({
+    const env = builderEnv({
       PATH: "/bin",
       CSC_LINK: "secret-cert",
       CSC_KEY_PASSWORD: "secret-password",
@@ -73,7 +81,10 @@ describe("local electron-builder wrapper", () => {
   });
 
   it("restores host native modules after cross-platform or cross-arch local builds", () => {
-    const appleSilicon = { platform: "darwin", arch: "arm64" };
+    const appleSilicon: { platform: NodeJS.Platform; arch: NodeJS.Architecture } = {
+      platform: "darwin",
+      arch: "arm64",
+    };
 
     expect(shouldRestoreHostNativePrebuild(["--mac", "--arm64"], appleSilicon)).toBe(false);
     expect(shouldRestoreHostNativePrebuild(["--mac", "--x64"], appleSilicon)).toBe(true);

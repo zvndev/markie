@@ -4,6 +4,7 @@ import {
   serializeCSV,
   csvToMarkdownTable,
   markdownTableToCSV,
+  csvDropsContent,
 } from "./csv";
 
 describe("parseCSV", () => {
@@ -67,5 +68,50 @@ describe("csv ↔ markdown table", () => {
     const md = csvToMarkdownTable(original);
     const back = markdownTableToCSV(md);
     expect(parseCSV(back)).toEqual(parseCSV(original));
+  });
+});
+
+describe("csvDropsContent", () => {
+  it("reports no loss for a document that is only a table", () => {
+    const md = "| a | b |\n|---|---|\n| 1 | 2 |\n";
+    expect(csvDropsContent(md)).toEqual({
+      drops: false,
+      droppedLines: 0,
+      hasTable: true,
+    });
+  });
+
+  it("counts prose before and after the table", () => {
+    const md = "# Notes\n\nIntro line.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nTrailing note.\n";
+    const res = csvDropsContent(md);
+    expect(res.drops).toBe(true);
+    expect(res.hasTable).toBe(true);
+    expect(res.droppedLines).toBe(3);
+  });
+
+  it("counts a second table as dropped content", () => {
+    const md = "| a |\n|---|\n| 1 |\n\n| b |\n|---|\n| 2 |\n";
+    const res = csvDropsContent(md);
+    expect(res.drops).toBe(true);
+    expect(res.droppedLines).toBe(3);
+  });
+
+  it("reports everything dropped when there is no table at all", () => {
+    const res = csvDropsContent("# Title\n\nJust prose.\n");
+    expect(res).toEqual({ drops: true, droppedLines: 2, hasTable: false });
+  });
+
+  it("treats an empty document as lossless", () => {
+    expect(csvDropsContent("")).toEqual({
+      drops: false,
+      droppedLines: 0,
+      hasTable: false,
+    });
+  });
+
+  it("agrees with what markdownTableToCSV actually keeps", () => {
+    const md = "Intro.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nOutro.\n";
+    expect(csvDropsContent(md).drops).toBe(true);
+    expect(markdownTableToCSV(md)).toBe("a,b\n1,2\n");
   });
 });

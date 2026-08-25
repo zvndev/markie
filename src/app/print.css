@@ -1,0 +1,127 @@
+/* Print rules for ⌘P / window.print().
+ *
+ * The app is a fixed-height, overflow-hidden desktop shell, so printing it
+ * straight used to emit the chrome (activity bar, toolbars, terminal) around a
+ * single clipped page of the document. These rules strip the shell down to the
+ * document canvas and let the page flow.
+ *
+ * Kept out of globals.css deliberately: this is a separate concern with a
+ * separate import in layout.tsx, and it must not participate in the Tailwind
+ * theme layer. */
+
+@media print {
+  /* The app theme is dark by default, and a user theme can be anything at all.
+     On paper that is a wall of ink around light text, or worse, light text on
+     the white the printer gives you regardless. Force the whole token set to a
+     print palette here: every rule under .markdown-body reads these, so
+     overriding the tokens is what makes headings, code, borders and tables
+     legible without restating a single one of those rules. */
+  :root {
+    --foreground: #000 !important;
+    --background: #fff !important;
+    --surface: #f6f6f6 !important;
+    --surface-2: #f0f0f0 !important;
+    --border: #d4d4d8 !important;
+    --muted: #52525b !important;
+    --accent: #e4e4e7 !important;
+    --blue: #1d4ed8 !important;
+    --green: #15803d !important;
+    --purple: #6d28d9 !important;
+    --orange: #c2410c !important;
+    --yellow: #a16207 !important;
+    --status-green: #15803d !important;
+    --status-yellow: #a16207 !important;
+    --status-red: #b91c1c !important;
+    --status-blue: #1d4ed8 !important;
+    --status-purple: #6d28d9 !important;
+  }
+
+  /* Browsers drop background fills when printing unless asked not to. Code
+     blocks, inline code and table headers are shapes, not decoration: without
+     their fill a fenced block is indistinguishable from the prose around it. */
+  .markdown-body pre,
+  .markdown-body code,
+  .markdown-body table {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Let the document flow across pages instead of being clipped to the window. */
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* App chrome: nothing here belongs on paper. */
+  .markie-activity-bar,
+  .markie-side-panel,
+  .markie-toolbar,
+  .markie-doc-toolbar,
+  .markie-pane-divider,
+  .markie-banner,
+  .markie-status-row,
+  .markie-scrim,
+  .markie-scrim-strong,
+  .markie-overlay-panel,
+  .markie-menu-panel,
+  /* These never had a class of that name — the components carry data
+     attributes and an id. The old selectors matched nothing, which is why the
+     find bar and the format rail printed. */
+  [data-markie-find-bar],
+  [data-markie-format-rail],
+  [data-markie-share-banner],
+  [data-markie-update-strip],
+  #markie-command-palette-list {
+    display: none !important;
+  }
+
+  /* terminal-panel.tsx has no class hook of its own, so it is matched by shape:
+     panel > tab strip + body > tab > xterm surface. If that component ever gains
+     a real class, replace this selector with it. */
+  div:has(> div > div > .xterm),
+  .xterm {
+    display: none !important;
+  }
+
+  /* When both panes are up, print the rendered document, not the raw source. */
+  .markie-document-area--split > .markie-source-pane {
+    display: none !important;
+  }
+
+  /* The document canvas takes the full printable width and stops scrolling. */
+  .markie-shell,
+  .markie-workspace,
+  .markie-document-area,
+  .markie-document-scroll,
+  .markie-source-pane,
+  .markie-rich-pane,
+  .markie-rich-canvas {
+    display: block !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  .markie-document-area--split {
+    grid-template-columns: 1fr !important;
+  }
+
+  .markie-document-scroll {
+    padding: 0 !important;
+  }
+
+  .markie-document-canvas {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+  }
+
+  @page {
+    margin: 2cm 2.2cm;
+  }
+}

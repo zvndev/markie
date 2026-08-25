@@ -17,10 +17,15 @@ function fixture() {
   return { root, workspace, outside };
 }
 
+// createFileGrants declares its option as `workspaceRoots = () => []`, so its
+// inferred return type is `never[]`. Real roots are handed over through this,
+// rather than every call site repeating the same cast.
+const rootsAre = (list: string[]) => (() => list) as unknown as () => never[];
+
 describe("Electron file grants", () => {
   it("refuses ungranted paths outside workspace roots", () => {
     const { workspace, outside } = fixture();
-    const grants = createFileGrants({ workspaceRoots: () => [workspace] });
+    const grants = createFileGrants({ workspaceRoots: rootsAre([workspace]) });
 
     expect(grants.canRead(path.join(outside, "loose.md"))).toMatchObject({
       ok: false,
@@ -49,7 +54,7 @@ describe("Electron file grants", () => {
 
   it("allows markdown, text, and CSV under workspace roots", () => {
     const { workspace } = fixture();
-    const grants = createFileGrants({ workspaceRoots: () => [workspace] });
+    const grants = createFileGrants({ workspaceRoots: rootsAre([workspace]) });
     const inside = path.join(workspace, "inside.md");
     const next = path.join(workspace, "next.csv");
 
@@ -59,7 +64,7 @@ describe("Electron file grants", () => {
 
   it("rejects unsupported extensions even inside a workspace", () => {
     const { workspace } = fixture();
-    const grants = createFileGrants({ workspaceRoots: () => [workspace] });
+    const grants = createFileGrants({ workspaceRoots: rootsAre([workspace]) });
     const binary = path.join(workspace, "state.db");
     fs.writeFileSync(binary, "x");
 
@@ -71,7 +76,7 @@ describe("Electron file grants", () => {
 
   it("rejects symlink escapes from a workspace root", () => {
     const { workspace, outside } = fixture();
-    const grants = createFileGrants({ workspaceRoots: () => [workspace] });
+    const grants = createFileGrants({ workspaceRoots: rootsAre([workspace]) });
     const link = path.join(workspace, "linked.md");
     fs.symlinkSync(path.join(outside, "loose.md"), link);
 

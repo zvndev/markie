@@ -128,6 +128,18 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   );
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+  // A failed star is a one-line complaint, not an error page over the list.
+  const [starNotice, setStarNotice] = useState<string | null>(null);
+  // A scan that stopped early (budget or depth cap) indexed a *subset* of the
+  // device. Without saying so, "No markdown found" and a short list both read
+  // as the whole truth.
+  const [truncatedReason, setTruncatedReason] = useState<string | null>(null);
+
+  // `truncated` is optional and older mains never send it, so absence means
+  // "the scan was complete", not "unknown".
+  const noteTruncation = (res: { truncated?: boolean; truncatedReason?: string | null } | null | undefined) =>
+    setTruncatedReason(res?.truncated ? res.truncatedReason || "the scan stopped early" : null);
 
   // Derive home from indexed paths. Avoids an IPC call and works across desktop platforms.
   const home = useMemo(() => {
@@ -135,21 +147,67 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   }, [rows]);
 
   const loadStars = () =>
-    api?.mdIndexStars?.().then((s: MdStar[]) => setStars(new Set(s.map((x) => x.path))));
+    api?.mdIndexStars?.()
+      .then((s: MdStar[]) =>
+        // A failed channel answers `{ error }`, not a list.
+        setStars(new Set((Array.isArray(s) ? s : []).map((x) => x.path)))
+      )
+      // Stars are decoration: losing them must not take the panel down with it.
+      .catch(() => {});
 
   useEffect(() => {
     if (!api?.mdIndexScan) return;
     let alive = true;
-    api.mdIndexScan().then((res) => {
-      if (!alive) return;
-      setRows(res.files);
-      setLoading(false);
-    });
-    loadStars();
-    const off = api.onMdIndexUpdated?.(() => {
-      api.mdIndexRefresh?.().then((res) => {
-        if (alive) setRows(res.files);
+    api.mdIndexScan()
+      .then((res) => {
+        if (!alive) return;
+        // The scan can fail without rejecting: main answers the same shape
+        // with an empty list and an `error`. Reading `res.files` blindly is
+        // what used to crash this panel on a flatMap of undefined.
+        if (!Array.isArray(res?.files)) {
+          setError(res?.error ?? "Couldn't read your markdown files.");
+          setLoading(false);
+          return;
+        }
+        setRows(res.files);
+        noteTruncation(res);
+        setError(null);
+        setLoading(false);
+      })
+      // Without this the panel sat on "Scanning your markdown…" forever.
+      .catch(() => {
+        if (!alive) return;
+        setError("Couldn't read your markdown files.");
+        setLoading(false);
       });
+    loadStars();
+    // The broadcast now carries the scan result. Asking for a fresh scan in
+    // response to being told about one meant two full device walks per event.
+    const off = api.onMdIndexUpdated?.((payload) => {
+      if (!alive) return;
+      if (payload?.files) {
+        setRows(payload.files);
+        noteTruncation(payload);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+      api.mdIndexRefresh?.()
+        .then((res) => {
+          if (!alive) return;
+          if (!Array.isArray(res?.files)) {
+            setError(res?.error ?? "Couldn't refresh the index.");
+            setLoading(false);
+            return;
+          }
+          setRows(res.files);
+          noteTruncation(res);
+          setError(null);
+          setLoading(false);
+        })
+        .catch(() => {
+          if (alive) setError("Couldn't refresh the index.");
+        });
     });
     return () => {
       alive = false;
@@ -169,14 +227,31 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   const refresh = () => {
     if (!api?.mdIndexRefresh) return;
     setRefreshing(true);
-    api.mdIndexRefresh().then((res) => {
-      setRows(res.files);
-      setRefreshing(false);
-    });
+    api.mdIndexRefresh()
+      .then((res) => {
+        if (!Array.isArray(res?.files)) {
+          setError(res?.error ?? "Rescan failed.");
+          return;
+        }
+        setRows(res.files);
+        noteTruncation(res);
+        setError(null);
+      })
+      .catch(() => setError("Rescan failed."))
+      // Always: the spinner used to stay lit forever on a failed rescan.
+      .finally(() => setRefreshing(false));
   };
 
+  // A star is decoration. Routing its failure through `error` replaced the
+  // whole file list with an error page, so the user lost the panel over a
+  // bookmark that didn't stick. Say so in the header instead.
   const toggleStar = (p: string, kind: "folder" | "file") => {
-    api?.mdIndexToggleStar?.(p, kind).then(() => loadStars());
+    api?.mdIndexToggleStar?.(p, kind)
+      .then(() => {
+        setStarNotice(null);
+        return loadStars();
+      })
+      .catch(() => setStarNotice("Couldn't save that star."));
   };
 
   const q = filter.trim().toLowerCase();
@@ -288,9 +363,32 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
         </div>
       </div>
 
+      {starNotice && (
+        <div className="px-3 py-1.5 text-[11px] text-[var(--status-red)] border-b border-border">
+          {starNotice}
+        </div>
+      )}
+
+      {truncatedReason && !error && !loading && (
+        <div
+          data-markie-index-truncated
+          role="status"
+          className="px-3 py-1.5 text-[11px] text-[var(--status-yellow)] border-b border-border"
+        >
+          Index is incomplete: {truncatedReason}
+        </div>
+      )}
+
       {/* body */}
       <div className="flex-1 overflow-y-auto">
-        {loading ? (
+        {error ? (
+          <div className="p-4 text-[12px] text-[var(--status-red)]">
+            {error}{" "}
+            <button onClick={refresh} className="underline hover:no-underline">
+              Try again
+            </button>
+          </div>
+        ) : loading ? (
           <div className="p-4 text-[12px] text-muted">Scanning your markdown…</div>
         ) : mode === "folders" ? (
           tree.length === 0 ? (

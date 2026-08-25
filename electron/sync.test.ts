@@ -239,6 +239,27 @@ describe("syncOn", () => {
     expect(row.sync_state).toBe("synced");
     expect(row.cloud_doc_id).toBeTruthy();
   });
+
+  it("remembers the cloud id when the accepted PUT comes back unreadable", async () => {
+    const row = seedRow({ path: "/docs/a.md", sync_state: "local-only" });
+    respondWith({ status: 200, body: { ok: true } });
+
+    const first = await sync.syncOn("/docs/a.md", "a.md", "hello");
+
+    expect(first.error).toMatch(/unreadable/i);
+    // The server stored the doc; only the version was unreadable. Keeping the
+    // id makes the retry a retry, not a second copy in the cloud.
+    expect(row.cloud_doc_id).toBeTruthy();
+    expect(row.cloud_version ?? 0).toBe(0);
+    expect(row.sync_state).toBe("unpushed");
+
+    const minted = row.cloud_doc_id;
+    respondWith({ status: 200, body: { version: 2 } });
+    const second = await sync.syncOn("/docs/a.md", "a.md", "hello");
+
+    expect(second).toEqual({ ok: true, version: 2 });
+    expect(row.cloud_doc_id).toBe(minted);
+  });
 });
 
 describe("resolve", () => {
@@ -796,7 +817,9 @@ describe("resolveKeepBoth", () => {
       data: string,
       enc: string
     ) => {
-      if (String(target) === p) throw new Error("EROFS");
+      // Atomic writes land on `<target>.markie-<id>.tmp` first, so an
+      // unwritable destination has to fail on the temp file beside it.
+      if (String(target).startsWith(p)) throw new Error("EROFS");
       return realWrite(target, data, enc as never);
     }) as typeof fs.writeFileSync);
 
@@ -832,5 +855,158 @@ describe("resolve('cloud')", () => {
     expect(res.content).toBe("theirs\n");
     expect(res.version).toBe(9);
     expect(fs.readFileSync(p, "utf-8")).toBe("theirs\n");
+  });
+});
+
+// The server masks a revoked or deleted doc as a 404, and a proxy in front of
+// it can answer 2xx with an HTML error page. Both used to reach `res.data.doc`
+// and throw out of the ipcMain handler, which took the window with it.
+describe("pull", () => {
+  it("writes the server's copy and tracks it as synced", async () => {
+    const p = path.join(tmpDir, "pulled.md");
+    respondWith({
+      status: 200,
+      body: { doc: { content: "cloud text\n", name: "pulled.md", version: 3 } },
+    });
+
+    const res = await sync.pull("cloud-1", p);
+
+    expect(res.ok).toBe(true);
+    expect(res.name).toBe("pulled.md");
+    expect(fs.readFileSync(p, "utf-8")).toBe("cloud text\n");
+  });
+
+  it("reports a revoked doc instead of throwing", async () => {
+    const p = path.join(tmpDir, "gone.md");
+    respondWith({ status: 404 });
+
+    const res = await sync.pull("cloud-1", p);
+
+    expect(res.error).toBe("fetch failed (404)");
+    expect(fs.existsSync(p)).toBe(false);
+  });
+
+  it("reports a 200 whose body is not a document", async () => {
+    const p = path.join(tmpDir, "unreadable.md");
+    respondWith({ status: 200, body: null });
+
+    const res = await sync.pull("cloud-1", p);
+
+    expect(res.error).toMatch(/unreadable/i);
+    expect(fs.existsSync(p)).toBe(false);
+  });
+
+  it("reports a 200 whose doc has no content string", async () => {
+    const p = path.join(tmpDir, "shape.md");
+    respondWith({ status: 200, body: { doc: { name: "shape.md", version: 1 } } });
+
+    expect((await sync.pull("cloud-1", p)).error).toMatch(/unreadable/i);
+    expect(fs.existsSync(p)).toBe(false);
+  });
+
+  it("reports an unwritable target instead of throwing", async () => {
+    const p = path.join(tmpDir, "no-such-dir", "notes.md");
+    respondWith({
+      status: 200,
+      body: { doc: { content: "hi\n", name: "notes.md", version: 1 } },
+    });
+
+    const res = await sync.pull("cloud-1", p);
+
+    expect(res.error).toContain("Couldn't write");
+  });
+
+  it("refuses when signed out without touching the network", async () => {
+    sync.setConfig({ token: null, serverURL: SERVER });
+    const calls = respondWith();
+
+    expect((await sync.pull("cloud-1", path.join(tmpDir, "x.md"))).error).toBe(
+      "not signed in"
+    );
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("remoteContent", () => {
+  const syncedRow = (p: string) =>
+    seedRow({
+      path: p,
+      sync_state: "synced",
+      cloud_doc_id: "cloud-1",
+      cloud_version: 2,
+    });
+
+  it("returns the server's copy", async () => {
+    const p = path.join(tmpDir, "notes.md");
+    syncedRow(p);
+    respondWith({
+      status: 200,
+      body: { doc: { content: "theirs\n", name: "notes.md", version: 7 } },
+    });
+
+    const res = await sync.remoteContent(p);
+
+    expect(res.ok).toBe(true);
+    expect(res.content).toBe("theirs\n");
+    expect(res.version).toBe(7);
+  });
+
+  it("reports a revoked share as a failed fetch", async () => {
+    const p = path.join(tmpDir, "notes.md");
+    syncedRow(p);
+    respondWith({ status: 403 });
+
+    expect((await sync.remoteContent(p)).error).toBe("fetch failed (403)");
+  });
+
+  it("reports an unreadable 200 body", async () => {
+    const p = path.join(tmpDir, "notes.md");
+    syncedRow(p);
+    respondWith({ status: 200, body: null });
+
+    expect((await sync.remoteContent(p)).error).toMatch(/unreadable/i);
+  });
+
+  it("reports being offline", async () => {
+    const p = path.join(tmpDir, "notes.md");
+    syncedRow(p);
+    respondWith(new Error("network down"));
+
+    expect((await sync.remoteContent(p)).error).toBe("fetch failed (offline)");
+  });
+
+  it("refuses a file with no cloud copy", async () => {
+    const p = path.join(tmpDir, "local.md");
+    seedRow({ path: p, sync_state: "local-only" });
+    const calls = respondWith();
+
+    expect((await sync.remoteContent(p)).error).toBe("not synced");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("resolve('local')", () => {
+  it("reports a missing local file instead of throwing", async () => {
+    const p = path.join(tmpDir, "vanished.md");
+    seedRow({ path: p, sync_state: "conflict", cloud_doc_id: "cloud-1", cloud_version: 2 });
+    respondWith({ status: 200, body: { doc: { content: "theirs\n", version: 5 } } });
+
+    const res = await sync.resolve(p, "local");
+
+    expect(res.error).toContain("Couldn't read the local file");
+  });
+});
+
+describe("resolve('cloud') failures", () => {
+  it("leaves the local file alone when the body is unreadable", async () => {
+    const p = path.join(tmpDir, "notes.md");
+    fs.writeFileSync(p, "mine\n");
+    seedRow({ path: p, sync_state: "behind", cloud_doc_id: "cloud-1", cloud_version: 4 });
+    respondWith({ status: 200, body: { ok: true } });
+
+    const res = await sync.resolve(p, "cloud");
+
+    expect(res.error).toMatch(/unreadable/i);
+    expect(fs.readFileSync(p, "utf-8")).toBe("mine\n");
   });
 });

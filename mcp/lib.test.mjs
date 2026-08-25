@@ -191,18 +191,38 @@ test("markieOpenCommand uses the Markie app on macOS", () => {
   });
 });
 
-test("markieOpenCommand uses a Windows file association opener without a Unix command", () => {
-  assert.deepEqual(markieOpenCommand("C:\\Users\\u\\Notes\\a.md", "win32"), {
-    ok: true,
-    command: "powershell.exe",
-    args: [
-      "-NoProfile",
-      "-Command",
-      "Start-Process -LiteralPath $args[0]",
-      "C:\\Users\\u\\Notes\\a.md",
-    ],
-    message: "Opening C:\\Users\\u\\Notes\\a.md with your system Markdown handler",
-  });
+test("markieOpenCommand launches the installed Markie executable on Windows", () => {
+  const exe = "C:\\Users\\u\\AppData\\Local\\Programs\\Markie\\Markie.exe";
+  assert.deepEqual(
+    markieOpenCommand("C:\\Users\\u\\Notes\\a.md", "win32", {
+      env: { LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local" },
+      exists: (p) => p === exe,
+    }),
+    {
+      ok: true,
+      command: exe,
+      args: ["C:\\Users\\u\\Notes\\a.md"],
+      message: "Opening C:\\Users\\u\\Notes\\a.md in Markie",
+    }
+  );
+});
+
+test("markieOpenCommand falls back to explorer.exe, never a shell", () => {
+  // The old powershell -Command form appended the path to the script text
+  // instead of binding it, so nothing opened at all. `cmd.exe /c start` was
+  // rejected because a filename containing `&` would be executed by cmd.
+  assert.deepEqual(
+    markieOpenCommand("C:\\Users\\u\\Notes\\a&calc&.md", "win32", {
+      env: { SystemRoot: "C:\\Windows" },
+      exists: () => false,
+    }),
+    {
+      ok: true,
+      command: "C:\\Windows\\explorer.exe",
+      args: ["C:\\Users\\u\\Notes\\a&calc&.md"],
+      message: "Opening C:\\Users\\u\\Notes\\a&calc&.md with your system Markdown handler",
+    }
+  );
 });
 
 test("markieOpenCommand uses xdg-open on Linux", () => {
@@ -361,4 +381,21 @@ test("MCP stdio write/read keeps markdown writes fenced to safe home paths", asy
     rmSync(home, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
   }
+});
+
+// mcp/scan.mjs is a deliberate copy of electron/mdindex.js's exclusion rules:
+// the MCP server ships as an extraResource and must never reach into the app's
+// asar. A copy only stays correct if something notices when the original moves.
+test("scan.mjs exclusion rules stay in sync with electron/mdindex.js", async () => {
+  const { EXCLUDED_NAMES, BUNDLE_RE } = await import("./scan.mjs");
+  const { createRequire } = await import("node:module");
+  const mdindex = createRequire(import.meta.url)("../electron/mdindex.js");
+
+  assert.deepEqual(
+    [...EXCLUDED_NAMES].sort(),
+    [...mdindex.EXCLUDED_NAMES].sort(),
+    "EXCLUDED_NAMES drifted; copy the list from electron/mdindex.js"
+  );
+  assert.equal(BUNDLE_RE.source, mdindex.BUNDLE_RE.source, "BUNDLE_RE drifted");
+  assert.equal(BUNDLE_RE.flags, mdindex.BUNDLE_RE.flags, "BUNDLE_RE flags drifted");
 });

@@ -8,6 +8,39 @@ import {
 } from "../scripts/desktop-launch-smoke.mjs";
 
 const tempDirs: string[] = [];
+
+// `buildDesktopLaunchSmokeArtifact` and friends default their options from
+// `process.*`, so TypeScript infers Node's own types for them. A fixture only
+// ever supplies the handful of fields the artifact reads, and the profile
+// names ("mac", "win") are electron-builder's, not NodeJS.Platform's.
+const hostVersions = (
+  v: Pick<NodeJS.ProcessVersions, "node" | "electron" | "chrome">
+): NodeJS.ProcessVersions => v as NodeJS.ProcessVersions;
+
+// The builder destructures `app`, `target`, `probe` and the rest without
+// defaults, so they never appear in the options type TypeScript infers from
+// the .mjs. Spell the fixture's shape out and hand it over as the builder's
+// own type, which is what the runtime already accepts.
+type SmokeArtifactOptions = NonNullable<
+  Parameters<typeof buildDesktopLaunchSmokeArtifact>[0]
+>;
+interface SmokeArtifactFixture extends SmokeArtifactOptions {
+  app: ReturnType<typeof resolveDesktopLaunchApp>;
+  debugOrigin: string;
+  target: { type: string; title: string; url: string };
+  probe: { title: string; readyState: string; url: string; hasEditor: boolean };
+  validation: { ok: boolean; failures: string[] };
+  screenshot: { fileName: string; contentType: string; bytes: number };
+}
+const smokeArtifactOptions = (o: SmokeArtifactFixture): SmokeArtifactOptions => o;
+
+type LaunchOptions = Parameters<typeof resolveDesktopLaunchApp>[1];
+const launchOptions = (o: {
+  platform: string;
+  arch: string;
+  host: { platform: string; arch: string };
+}): LaunchOptions => o as unknown as LaunchOptions;
+
 const machoHeader = Buffer.from("cffaedfe00000000", "hex");
 
 function makeTempDir() {
@@ -68,11 +101,11 @@ describe("desktop launch smoke", () => {
     const appDir = path.join("dist", "mac-arm64", "Markie.app");
     writeMacFixture(rootDir, appDir);
 
-    const app = resolveDesktopLaunchApp(rootDir, {
+    const app = resolveDesktopLaunchApp(rootDir, launchOptions({
       platform: "mac",
       arch: "arm64",
       host: { platform: "darwin", arch: "arm64" },
-    });
+    }));
 
     expect(app).toMatchObject({
       profile: { id: "mac-arm64", platform: "mac", arch: "arm64" },
@@ -88,11 +121,11 @@ describe("desktop launch smoke", () => {
     writeMacFixture(rootDir, appDir);
 
     expect(() =>
-      resolveDesktopLaunchApp(rootDir, {
+      resolveDesktopLaunchApp(rootDir, launchOptions({
         platform: "mac",
         arch: "arm64",
         host: { platform: "win32", arch: "x64" },
-      })
+      }))
     ).toThrow(/OS-level launch must run on mac\/arm64/);
   });
 
@@ -100,13 +133,13 @@ describe("desktop launch smoke", () => {
     const rootDir = makeTempDir();
     const appDir = path.join("dist", "mac-arm64", "Markie.app");
     writeMacFixture(rootDir, appDir);
-    const app = resolveDesktopLaunchApp(rootDir, {
+    const app = resolveDesktopLaunchApp(rootDir, launchOptions({
       platform: "mac",
       arch: "arm64",
       host: { platform: "darwin", arch: "arm64" },
-    });
+    }));
 
-    const artifact = buildDesktopLaunchSmokeArtifact({
+    const artifact = buildDesktopLaunchSmokeArtifact(smokeArtifactOptions({
       baseDir: rootDir,
       app,
       debugOrigin: "http://127.0.0.1:9224",
@@ -117,8 +150,8 @@ describe("desktop launch smoke", () => {
       generatedAt: "2026-07-05T00:00:00.000Z",
       platform: "darwin",
       arch: "arm64",
-      versions: { node: "22.13.1", electron: "41.0.0", chrome: "140.0.0" },
-    });
+      versions: hostVersions({ node: "22.13.1", electron: "41.0.0", chrome: "140.0.0" }),
+    }));
 
     expect(artifact).toMatchObject({
       ok: true,

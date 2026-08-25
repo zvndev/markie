@@ -16,6 +16,12 @@ try {
 const sessions = new Map(); // id -> ptyProcess
 let counter = 0;
 
+// A hard ceiling on live shells. Every session is a real login shell holding a
+// file descriptor pair and, on macOS, its own process group; a renderer bug
+// that creates tabs in a loop used to leave dozens of orphaned `zsh -l`
+// processes behind. Twelve is far more than anyone opens on purpose.
+const MAX_SESSIONS = 12;
+
 function nearestWorkspace(filePath, workspaceRoots = []) {
   if (!filePath) return null;
   const resolved = path.resolve(filePath);
@@ -72,13 +78,30 @@ function resolveShell(platform = process.platform, baseEnv = process.env) {
   };
 }
 
-function create(context, onData, onExit) {
-  if (!pty) return null;
+// `spawnPty` is injected only by tests — the real one is node-pty, which cannot
+// be spawned a dozen times in a unit test just to prove the ceiling holds.
+// Returns the new session id (a string) on success, or a `{ error }` object
+// explaining why not. It used to return null for both refusals, which left the
+// renderer with nothing to tell the user apart from a tab that never appeared.
+function create(context, onData, onExit, { spawnPty = pty ? pty.spawn.bind(pty) : null } = {}) {
+  if (!spawnPty) {
+    return {
+      error: "unavailable",
+      message: "The built-in terminal isn't available in this build of Markie.",
+    };
+  }
+  if (sessions.size >= MAX_SESSIONS) {
+    return {
+      error: "limit",
+      limit: MAX_SESSIONS,
+      message: `Markie keeps at most ${MAX_SESSIONS} terminals open at once. Close one to open another.`,
+    };
+  }
   const id = `t${++counter}`;
   const shell = resolveShell(process.platform, process.env);
   const home = os.homedir();
   const dir = context?.cwd && fs.existsSync(context.cwd) ? context.cwd : home;
-  const p = pty.spawn(shell.command, shell.args, {
+  const p = spawnPty(shell.command, shell.args, {
     name: "xterm-256color",
     cols: 80,
     rows: 24,
@@ -331,6 +354,8 @@ function terminalLabel(platform = process.platform, baseEnv = process.env) {
 
 module.exports = {
   available: () => !!pty,
+  MAX_SESSIONS,
+  sessionCount: () => sessions.size,
   create,
   write,
   resize,

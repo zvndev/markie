@@ -38,6 +38,11 @@ export function ConflictDialog({
 }: ConflictDialogProps) {
   const [stage, setStage] = useState<Stage>({ kind: "loading" });
   const [busy, setBusy] = useState(false);
+  // The buffer as it stood when the dialog opened. Keeping it in state rather
+  // than reading the prop is what stops a keystroke behind the dialog from
+  // re-running the comparison — and from making the line counts the user is
+  // reading disagree with the copy "keep both" would actually rescue.
+  const [frozenLocal] = useState(localContent);
   // Invalidates a fetch that lands after the dialog closed or the file changed.
   const run = useRef(0);
   const keepBothRef = useRef<HTMLButtonElement>(null);
@@ -60,7 +65,7 @@ export function ConflictDialog({
           });
           return;
         }
-        const d = lineDiff(localContent, res.content);
+        const d = lineDiff(frozenLocal, res.content);
         setStage({
           kind: "ready",
           summary: describeDiff(d),
@@ -78,7 +83,7 @@ export function ConflictDialog({
       // Invalidate a comparison still in flight for the previous file.
       token.current++;
     };
-  }, [filePath, localContent]);
+  }, [filePath, frozenLocal]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -101,7 +106,7 @@ export function ConflictDialog({
       try {
         const res =
           which === "keep-both"
-            ? await api?.docKeepBoth?.({ path: filePath, content: localContent })
+            ? await api?.docKeepBoth?.({ path: filePath, content: frozenLocal })
             : await api?.docResolve?.({ path: filePath, strategy: "cloud" });
         if (!res || res.error) {
           setStage({
@@ -121,7 +126,7 @@ export function ConflictDialog({
         setBusy(false);
       }
     },
-    [filePath, localContent, onResolved, onChanged, onClose]
+    [filePath, frozenLocal, onResolved, onChanged, onClose]
   );
 
   return (

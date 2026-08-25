@@ -1,14 +1,48 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
+import type { PathLike } from "node:fs";
 import {
+  MAX_SESSIONS,
   buildEnv,
   commandExists,
+  create,
   externalApps,
   isKnownApp,
+  killAll,
   openExternal,
   resolveContext,
   resolveShell,
+  sessionCount,
   terminalLabel,
 } from "./terminal.js";
+
+
+// NODE_ENV is required on ProcessEnv here, and a terminal fixture only ever
+// sets the variables under test.
+const fakeEnv = (vars: Partial<NodeJS.ProcessEnv>): NodeJS.ProcessEnv =>
+  vars as NodeJS.ProcessEnv;
+
+// The detectors default to fs.existsSync, so what they hand a fixture is a
+// PathLike, not a plain string.
+const fakeExists =
+  (match: (candidate: string) => boolean) =>
+  (candidate: PathLike): boolean =>
+    match(String(candidate));
+
+// commandExists, externalApps and openExternal share one option bag. spawnFn
+// defaults to child_process.spawn, whose overload set is far wider than the
+// three-argument call the launcher actually makes.
+type TerminalDeps = NonNullable<Parameters<typeof openExternal>[2]>;
+const fakeDeps = (o: {
+  platform?: string;
+  env?: NodeJS.ProcessEnv;
+  existsSync?: (candidate: PathLike) => boolean;
+  home?: string;
+  spawnFn?: (
+    command: string,
+    args: string[],
+    options: Record<string, unknown>
+  ) => { unref(): void };
+}): TerminalDeps => o as unknown as TerminalDeps;
 
 describe("isKnownApp", () => {
   it("accepts detected terminal ids and names", () => {
@@ -59,7 +93,7 @@ describe("terminal Markie context", () => {
         dir: "/Users/me/Docs/Markie/project/notes",
         workspace: "/Users/me/Docs/Markie",
       },
-      { PATH: "/usr/bin", MARKIE_FILE: "stale.md" }
+      fakeEnv({ PATH: "/usr/bin", MARKIE_FILE: "stale.md" })
     );
 
     expect(env).toMatchObject({
@@ -77,7 +111,7 @@ describe("terminal Markie context", () => {
       { filePath: "/Users/me/Docs/Markie/project/notes/a.md" },
       workspaceRoots
     );
-    const firstShellEnv = buildEnv(documentA, { PATH: "/usr/bin" });
+    const firstShellEnv = buildEnv(documentA, fakeEnv({ PATH: "/usr/bin" }));
 
     const documentB = resolveContext(
       { filePath: "/Users/me/Docs/Markie/project/drafts/b.md" },
@@ -96,35 +130,35 @@ describe("terminal Markie context", () => {
 
 describe("resolveShell", () => {
   it("uses the user's login shell on macOS", () => {
-    expect(resolveShell("darwin", { SHELL: "/bin/fish" })).toEqual({
+    expect(resolveShell("darwin", fakeEnv({ SHELL: "/bin/fish" }))).toEqual({
       command: "/bin/fish",
       args: ["-l"],
     });
   });
 
   it("falls back to zsh on macOS when SHELL is missing", () => {
-    expect(resolveShell("darwin", {})).toEqual({
+    expect(resolveShell("darwin", fakeEnv({}))).toEqual({
       command: "/bin/zsh",
       args: ["-l"],
     });
   });
 
   it("uses bash as the Linux fallback instead of a macOS-only shell", () => {
-    expect(resolveShell("linux", {})).toEqual({
+    expect(resolveShell("linux", fakeEnv({}))).toEqual({
       command: "/bin/bash",
       args: ["-l"],
     });
   });
 
   it("uses ComSpec on Windows without Unix login-shell args", () => {
-    expect(resolveShell("win32", { ComSpec: "C:\\Windows\\System32\\cmd.exe" })).toEqual({
+    expect(resolveShell("win32", fakeEnv({ ComSpec: "C:\\Windows\\System32\\cmd.exe" }))).toEqual({
       command: "C:\\Windows\\System32\\cmd.exe",
       args: [],
     });
   });
 
   it("falls back to PowerShell on Windows when ComSpec is missing", () => {
-    expect(resolveShell("win32", {})).toEqual({
+    expect(resolveShell("win32", fakeEnv({}))).toEqual({
       command: "powershell.exe",
       args: [],
     });
@@ -136,16 +170,16 @@ describe("external terminal launchers", () => {
     expect(
       commandExists("wt.exe", {
         platform: "win32",
-        env: { PATH: "C:\\Tools", PATHEXT: ".EXE;.CMD" },
-        existsSync: (p: string) => p.endsWith("wt.exe"),
+        env: fakeEnv({ PATH: "C:\\Tools", PATHEXT: ".EXE;.CMD" }),
+        existsSync: fakeExists((p) => p.endsWith("wt.exe")),
       })
     ).toBe(true);
 
     expect(
       commandExists("gnome-terminal", {
         platform: "linux",
-        env: { PATH: "/usr/local/bin:/usr/bin" },
-        existsSync: (p: string) => p === "/usr/bin/gnome-terminal",
+        env: fakeEnv({ PATH: "/usr/local/bin:/usr/bin" }),
+        existsSync: fakeExists((p) => p === "/usr/bin/gnome-terminal"),
       })
     ).toBe(true);
   });
@@ -153,8 +187,8 @@ describe("external terminal launchers", () => {
   it("returns safe Windows terminal choices instead of macOS-only emptiness", () => {
     const apps = externalApps({
       platform: "win32",
-      env: { PATH: "C:\\Tools", PATHEXT: ".EXE;.CMD" },
-      existsSync: (p: string) => p.endsWith("wt.exe"),
+      env: fakeEnv({ PATH: "C:\\Tools", PATHEXT: ".EXE;.CMD" }),
+      existsSync: fakeExists((p) => p.endsWith("wt.exe")),
     });
 
     expect(apps).toEqual([
@@ -167,8 +201,8 @@ describe("external terminal launchers", () => {
   it("returns Linux terminal choices from TERMINAL and common detected emulators", () => {
     const apps = externalApps({
       platform: "linux",
-      env: { TERMINAL: "alacritty", PATH: "/usr/bin" },
-      existsSync: (p: string) => p === "/usr/bin/alacritty" || p === "/usr/bin/konsole",
+      env: fakeEnv({ TERMINAL: "alacritty", PATH: "/usr/bin" }),
+      existsSync: fakeExists((p) => p === "/usr/bin/alacritty" || p === "/usr/bin/konsole"),
     });
 
     expect(apps).toEqual([
@@ -179,15 +213,15 @@ describe("external terminal launchers", () => {
 
   it("launches PowerShell in the requested folder without using a shell string", () => {
     const calls: Array<{ command: string; args: string[]; options: Record<string, unknown> }> = [];
-    const result = openExternal("PowerShell", "C:\\Users\\me\\Documents\\Markie", {
+    const result = openExternal("PowerShell", "C:\\Users\\me\\Documents\\Markie", fakeDeps({
       platform: "win32",
-      existsSync: (p: string) => p === "C:\\Users\\me\\Documents\\Markie",
+      existsSync: fakeExists((p) => p === "C:\\Users\\me\\Documents\\Markie"),
       home: "C:\\Users\\me",
       spawnFn: (command: string, args: string[], options: Record<string, unknown>) => {
         calls.push({ command, args, options });
         return { unref() {} };
       },
-    });
+    }));
 
     expect(result).toEqual({ ok: true });
     expect(calls).toEqual([
@@ -204,16 +238,16 @@ describe("external terminal launchers", () => {
 
   it("launches detected Linux terminals in the requested folder", () => {
     const calls: Array<{ command: string; args: string[]; options: Record<string, unknown> }> = [];
-    const result = openExternal("GNOME Terminal", "/home/me/notes", {
+    const result = openExternal("GNOME Terminal", "/home/me/notes", fakeDeps({
       platform: "linux",
-      env: { PATH: "/usr/bin" },
-      existsSync: (p: string) => p === "/home/me/notes" || p === "/usr/bin/gnome-terminal",
+      env: fakeEnv({ PATH: "/usr/bin" }),
+      existsSync: fakeExists((p) => p === "/home/me/notes" || p === "/usr/bin/gnome-terminal"),
       home: "/home/me",
       spawnFn: (command: string, args: string[], options: Record<string, unknown>) => {
         calls.push({ command, args, options });
         return { unref() {} };
       },
-    });
+    }));
 
     expect(result).toEqual({ ok: true });
     expect(calls).toEqual([
@@ -235,7 +269,7 @@ describe("external terminal launchers", () => {
     expect(
       openExternal("GNOME Terminal", "/tmp", {
         platform: "linux",
-        env: { PATH: "/usr/bin" },
+        env: fakeEnv({ PATH: "/usr/bin" }),
         existsSync: () => false,
       })
     ).toEqual({ error: "terminal app unavailable" });
@@ -243,8 +277,77 @@ describe("external terminal launchers", () => {
   });
 
   it("uses a neutral shell label across desktop platforms", () => {
-    expect(terminalLabel("darwin", { SHELL: "/bin/zsh" })).toBe("zsh");
-    expect(terminalLabel("linux", {})).toBe("bash");
-    expect(terminalLabel("win32", {})).toBe("powershell");
+    expect(terminalLabel("darwin", fakeEnv({ SHELL: "/bin/zsh" }))).toBe("zsh");
+    expect(terminalLabel("linux", fakeEnv({}))).toBe("bash");
+    expect(terminalLabel("win32", fakeEnv({}))).toBe("powershell");
+  });
+});
+
+
+describe("session ceiling", () => {
+  afterEach(() => killAll());
+
+  // Each session is a real login shell. A renderer that keeps asking for tabs
+  // used to get them forever, leaving orphaned shells behind the app.
+  const fakePty = () => {
+    const spawned: Array<{ killed: boolean }> = [];
+    const spawnPty = () => {
+      const p = {
+        killed: false,
+        onData() {},
+        onExit() {},
+        kill() {
+          p.killed = true;
+        },
+        write() {},
+        resize() {},
+      };
+      spawned.push(p);
+      return p;
+    };
+    return { spawned, spawnPty };
+  };
+
+  it("refuses to open more than MAX_SESSIONS shells, and says why", () => {
+    const { spawned, spawnPty } = fakePty();
+    const results: Array<string | { error: string; limit?: number; message?: string }> = [];
+    for (let i = 0; i < MAX_SESSIONS + 5; i += 1) {
+      results.push(create({}, () => {}, () => {}, { spawnPty }));
+    }
+    expect(results.filter((r) => typeof r === "string")).toHaveLength(MAX_SESSIONS);
+    for (const refused of results.slice(MAX_SESSIONS)) {
+      // A bare null told the renderer nothing; the cap has to be nameable.
+      expect(typeof refused).toBe("object");
+      expect((refused as { error: string }).error).toBe("limit");
+      expect((refused as { limit: number }).limit).toBe(MAX_SESSIONS);
+      expect((refused as { message: string }).message).toMatch(/Close one/);
+    }
+    expect(spawned).toHaveLength(MAX_SESSIONS);
+    expect(sessionCount()).toBe(MAX_SESSIONS);
+  });
+
+  it("says the terminal is unavailable when there is no pty to spawn", () => {
+    expect(create({}, () => {}, () => {}, { spawnPty: null })).toEqual({
+      error: "unavailable",
+      message: "The built-in terminal isn't available in this build of Markie.",
+    });
+  });
+
+  it("lets a new shell open once one is killed", () => {
+    const { spawnPty } = fakePty();
+    for (let i = 0; i < MAX_SESSIONS; i += 1) create({}, () => {}, () => {}, { spawnPty });
+    expect(create({}, () => {}, () => {}, { spawnPty })).toMatchObject({ error: "limit" });
+    killAll();
+    expect(sessionCount()).toBe(0);
+    expect(create({}, () => {}, () => {}, { spawnPty })).toBeTruthy();
+  });
+
+  it("kills every live shell on killAll", () => {
+    const { spawned, spawnPty } = fakePty();
+    create({}, () => {}, () => {}, { spawnPty });
+    create({}, () => {}, () => {}, { spawnPty });
+    killAll();
+    expect(spawned.every((p) => p.killed)).toBe(true);
+    expect(sessionCount()).toBe(0);
   });
 });

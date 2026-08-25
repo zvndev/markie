@@ -8,8 +8,136 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Resize the library panel.** Drag its right edge to make the Files, Browse,
+  Shared, and Skills panel wider or narrower (200–520px); Markie remembers
+  your width between launches. Double-click the edge to reset it, or focus it
+  and use the arrow keys (Shift for bigger steps, Home/End for the limits).
+- **Intel Mac download.** The notarized Intel build has shipped in every
+  release alongside Apple Silicon but was never linked; `/download/mac-intel`
+  now redirects to it and `/download/latest.json` lists both. Windows and
+  Linux remain packaging-only.
+- **Crash log.** Every crash, hung window, or failed background action is
+  written to a log you can open from Help → Reveal Crash Log and attach to a
+  bug report.
+- **Snapshots and Revert.** Every save over an existing file first keeps a
+  copy of what was there (20 per file, 200 MB total, oldest pruned). File →
+  Revert to Snapshot… opens that file's snapshot folder; picking one loads it
+  into the window as unsaved changes, so nothing touches the disk until you
+  decide to save.
+- **A real welcome document on first launch.** First run opens a short
+  markdown file that explains Markie in its own format and never asks for an
+  account, instead of a fictional sample document. Double-clicking a `.md`
+  file still goes straight to that file.
+- **Sign in where it matters.** The sign-in surfaces (Google, an emailed
+  code, or a password) now live in one place with a reason for the prompt,
+  and appear inline where you hit them: the Share dialog and the Library's
+  sync prompt sign you in without bouncing you through Settings. Forgot your
+  password? A code resets it.
+- **Opt-in crash reports.** Off by default. When you turn it on in Settings →
+  Advanced, a crash sends a scrubbed report (paths, your home folder, and
+  document names are stripped before anything leaves the machine); turning it
+  back off stops it immediately.
+- **Beta update channel.** Settings → Advanced can opt this install into beta
+  releases and back out again; leaving beta walks you back down to the current
+  stable build. The channel is in-app only and unlisted.
+
+### Changed
+
+- **Viewers can comment.** Anyone who can read a shared document can now
+  start a comment thread and reply. Resolving and reopening threads stays
+  with editors, and deleting someone else's comment stays with the owner. A
+  viewer whose access is revoked mid-session loses the comment box instead
+  of keeping one that silently fails.
+
 ### Fixed
 
+- **A locked-out user and an invited stranger can get back in.** A forgotten
+  password is recovered with an emailed code, and the reset and code requests
+  are rate limited. An invite link now names the address it was sent to, so
+  the reader knows which account claims the document.
+- **A crash in one part of the app no longer blanks the whole window.** Markie
+  shows what went wrong, with Reload and Copy details buttons; a renderer that
+  dies is caught by the main process and offered a reload. Your file on disk is
+  never touched.
+- **Markie stopped re-scanning your whole home folder every twenty seconds.**
+  Once Browse had been opened, every return to the window triggered two full
+  walks of `~` — including iCloud-synced Desktop & Documents, Dropbox, Google
+  Drive, OneDrive, photo and music libraries, and app bundles. That load is the
+  most likely cause of the Finder and system slowdowns seen while Markie was
+  open. Markie now skips cloud-synced and bundle folders (folders you add as
+  workspace roots are always indexed), scans only while the Browse or Skills
+  panel has asked for it and at most once every five minutes, caps each scan,
+  and never triggers a second scan for an answer it already had.
+- **Opening a shared document whose access changed no longer does nothing.**
+  A revoked share, a deleted document, an expired session, or a proxy error
+  page used to be swallowed: the click did nothing, or the menu stuck open, or
+  the window went blank. Markie now says what happened, always closes the
+  menu, and the server answers JSON on every API route so the app can show a
+  reason.
+- **Opening a second document while a live session was running no longer
+  leaves the first document's session attached.** The previous file's text
+  could be saved into the new file's path.
+- **A shared document whose access is removed mid-session now says so** and
+  stops reconnecting, instead of retrying several times a second forever. A
+  viewer no longer seeds an empty room with their local copy.
+- **PDF export was rebuilt.** Large documents no longer produce a blank file
+  or take the app down; the export waits for fonts and layout to finish
+  instead of guessing; it gives up with a clear message instead of hanging; a
+  second export can't start on top of the first; and failures are reported
+  instead of silently doing nothing. Math in exported PDFs and HTML now renders
+  correctly — the KaTeX stylesheet and fonts are embedded.
+- **Exporting or saving immediately after typing writes what's on screen**,
+  not the version from a moment earlier.
+- **Save As writes the format the name you chose promises**, even when you
+  change the extension in the dialog, and warns before a CSV save would leave
+  content outside the first table out of the file.
+- **A malformed document can no longer take down the preview or an export.**
+  If markdown fails to render, Markie shows the source text instead.
+- **Printing (⌘P) no longer prints the sidebars, toolbars, terminal, and find
+  bar** around a clipped page; the document prints full-width. ⌘P now goes
+  through the same pipeline as PDF export, so long documents print every page
+  with their images, and dismissing the system print dialog cancels cleanly.
+- **A crash mid-save can no longer destroy a file.** Every write to one of
+  your files lands in a temporary file beside it first and replaces the
+  original only after the data is fully on disk. Finder tags and other
+  metadata survive on macOS. Known tradeoff: a file that is a hard link
+  becomes an independent copy on save.
+- **Exports carry the document's images.** Images referenced by relative
+  paths are embedded into PDF and HTML exports (10 MB per image, 30 MB
+  total; only files inside the document's own folder are read).
+- **Two people opening the same shared document can no longer double its
+  content.** The server lets only one connection seed an empty room, and the
+  app waits for the first sync before seeding at all. Documents record a
+  schema version so a future format change is detected instead of silently
+  mixing.
+- **Closing the terminal panel now closes its shells** instead of leaving them
+  running in the background; open shells are capped.
+- **Markie no longer launches to a blank window** when the file it was asked
+  to open can't be read, and a `markie://` link that can't be opened shows a
+  message instead of nothing.
+- **The conflict dialog no longer re-compares the document on every keystroke
+  behind it**, and "Keep both" rescues exactly the copy it counted.
+- **"Shared by me" shows an error with a retry** instead of claiming you
+  haven't shared anything when the request fails. Browse and Skills do the
+  same instead of spinning forever.
+- **Renaming or moving a folder whose name contains `_` or `%`** no longer
+  repoints unrelated files in the library.
+- **Markie degrades with a clear message instead of crashing** when its local
+  database can't load; checking whether Markie is your default Markdown app is
+  cached and can no longer hang.
+- **Exported HTML no longer carries `javascript:` links.** The export pipeline
+  now runs the same sanitizer the web share pages use, while keeping code
+  highlighting and math markup intact.
+- **Hiding the terminal no longer kills its shells** — the panel is hidden,
+  not torn down; shells are closed only when the window closes.
+- **Windows:** Markie uses your real Documents folder (including OneDrive),
+  accepts folder and file names Windows can store, treats differently-cased
+  paths as the same file, no longer draws a second title bar over its own,
+  hides macOS-only menu items, unpacks the terminal's support files correctly,
+  registers and removes the `markie://` handler on install/uninstall, and the
+  "open in Markie" MCP action actually opens Markie.
 - **An update that fails to install now says so.** "Restart & update" could sit
   on "Restarting…" forever with nothing to click and no explanation, because an
   error while quitting stopped Markie from quitting at all: the installer then

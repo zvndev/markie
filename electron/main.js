@@ -1,6 +1,7 @@
 const {
   app,
   BrowserWindow,
+  crashReporter,
   dialog,
   ipcMain,
   Menu,
@@ -21,6 +22,22 @@ const { createFileGrants } = require("./file-grants");
 const { buildAppCsp } = require("./csp");
 const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
 const { guardedLogger } = require("./updater-logging");
+const {
+  readBetaOptIn,
+  updaterSettingsFor,
+  writeBetaOptIn,
+} = require("./update-channel");
+const {
+  crashDsn,
+  readCrashConsent,
+  sendCrash,
+  writeCrashConsent,
+} = require("./crash-reporting");
+const { createCrashLog } = require("./crash-log");
+const { createPdfExporter, ensureExtension } = require("./export-pdf");
+const { createIpcHandler, errorMessage } = require("./ipc-result");
+const { writeFileAtomic } = require("./atomic-write");
+const { createSnapshots } = require("./snapshots");
 
 // Electron answers an uncaught exception in the main process with a modal
 // dialog containing a raw stack trace. That is alarming on its own, and it is
@@ -31,15 +48,129 @@ const { guardedLogger } = require("./updater-logging");
 // The write is wrapped because this handler exists partly to survive a console
 // that is failing: logging an EPIPE to a broken stdout throws another one and
 // takes the process down anyway.
+//
+// The same failures are also appended to userData/markie-crash.log, because a
+// console line in a packaged app is a console line nobody will ever read. The
+// Help menu reveals that file so a bug report can carry it.
+let _crashLog = null;
+function crashLog() {
+  if (!_crashLog) {
+    try {
+      _crashLog = createCrashLog({ dir: app.getPath("userData") });
+    } catch {
+      // No userData yet (or no disk). Keep the same shape so callers never
+      // have to check whether logging is available.
+      _crashLog = { log: () => false, ensure: () => "", path: "" };
+    }
+  }
+  return _crashLog;
+}
+
+// Snapshots live under userData, which is only a real path once the app is
+// ready — same lazy shape as the crash log above.
+let _snapshots = null;
+function snapshots() {
+  if (!_snapshots) {
+    try {
+      _snapshots = createSnapshots({ dir: app.getPath("userData") });
+    } catch {
+      // No userData: keep the shape so callers never branch on availability.
+      _snapshots = {
+        capture: () => ({ skipped: "unavailable" }),
+        dirFor: () => "",
+        list: () => [],
+        has: () => false,
+        root: "",
+      };
+    }
+  }
+  return _snapshots;
+}
+
+// Copy what is on disk before replacing it. Never allowed to fail a save: a
+// missing snapshot is a smaller loss than a save that did not happen.
+function snapshotBeforeWrite(filePath, nextContent) {
+  try {
+    const res = snapshots().capture(filePath, nextContent);
+    if (res && res.skipped === "write-failed") {
+      logCrash("snapshot-failed", res.error);
+    }
+  } catch (err) {
+    logCrash("snapshot-failed", err);
+  }
+}
+
+// Shape a (kind, detail) pair into the record sentry-envelope reads. Version
+// and platform come from main, never from the renderer: a crashing renderer is
+// the least trustworthy narrator of what build it is.
+function crashRecord(kind, detail) {
+  const record = {
+    at: new Date().toISOString(),
+    source: "main",
+    message: String(kind),
+    version: app.getVersion(),
+    platform: `${process.platform}/${process.arch}`,
+  };
+  if (detail && typeof detail === "object") {
+    for (const key of ["source", "message", "stack", "componentStack"]) {
+      if (typeof detail[key] === "string" && detail[key]) record[key] = detail[key];
+    }
+    if (detail instanceof Error) {
+      record.message = detail.message || record.message;
+      if (typeof detail.stack === "string") record.stack = detail.stack;
+    }
+  } else if (typeof detail === "string" && detail) {
+    record.stack = detail;
+  }
+  return record;
+}
+
+// Consent-gated, DSN-gated, and allowed to fail silently: reporting a crash
+// must never cause one, and "no consent" or "no DSN" means it never leaves
+// the machine at all.
+function uploadCrash(kind, detail) {
+  try {
+    if (!readCrashConsent(app.getPath("userData"))) return;
+    const dsn = crashDsn();
+    if (!dsn) return;
+    void sendCrash(crashRecord(kind, detail), {
+      dsn,
+      home: app.getPath("home"),
+      environment: app.isPackaged ? "production" : "development",
+      clientVersion: app.getVersion(),
+    });
+  } catch {
+    // Never let the reporter become the crash.
+  }
+}
+
+function logCrash(kind, detail) {
+  try {
+    console.error(`${kind}:`, detail);
+  } catch {
+    // The thing we would report it to is the thing that broke.
+  }
+  try {
+    crashLog().log(kind, detail);
+  } catch {
+    // Logging a crash must never be the thing that causes the next one.
+  }
+  uploadCrash(kind, detail);
+}
+
 for (const signal of ["uncaughtException", "unhandledRejection"]) {
   process.on(signal, (error) => {
-    try {
-      console.error(`${signal}:`, error);
-    } catch {
-      // The thing we would report it to is the thing that broke.
-    }
+    logCrash(signal, error);
   });
 }
+
+// A dead GPU/utility/pepper child is the usual prelude to a renderer that
+// stops painting. Recording it is the difference between "Markie froze" and a
+// reproducible report.
+app.on("child-process-gone", (_event, details) => {
+  logCrash("child-process-gone", details);
+});
+
 const {
   OPENABLE,
   findDeepLinkArg,
@@ -59,6 +190,15 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
+// Native crash dumps, kept on the machine. Markie has no crash server and is
+// not getting one: uploadToServer stays false, and the dumps live next to the
+// crash log so a bug report can include both. Must run before app ready.
+try {
+  crashReporter.start({ submitURL: "", uploadToServer: false });
+} catch (err) {
+  logCrash("crash-reporter-start-failed", err);
+}
+
 let mainWindow;
 let rendererReady = false;
 let pendingFilePath = null;
@@ -74,14 +214,22 @@ function deliverDeepLink(link) {
   // A public link: fetch it with the token the link carries and open a copy
   // locally, no account needed.
   if (kind === "shared-token") {
-    openSharedFromDeepLink(link);
+    void openSharedFromDeepLink(link).catch((err) => {
+      logCrash("deep-link-shared-failed", err);
+      showDeepLinkFailure();
+    });
     return;
   }
   // A document shared with this account. The link carries no token: the app
   // fetches it with the signed-in user's own credentials, so it lands in their
   // Library synced and live rather than as a detached copy.
   if (kind === "cloud-doc") {
-    openCloudDocFromDeepLink(link);
+    // An async failure here used to vanish: the link opened nothing and said
+    // nothing, which reads exactly like the app ignoring the click.
+    void openCloudDocFromDeepLink(link).catch((err) => {
+      logCrash("deep-link-cloud-doc-failed", err);
+      showDeepLinkFailure();
+    });
     return;
   }
   if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
@@ -97,6 +245,18 @@ function deliverDeepLink(link) {
   }
 }
 
+// One place to tell the user a link didn't open, so a thrown deep-link handler
+// looks like a failure instead of like nothing happening.
+function showDeepLinkFailure() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      message: "Couldn't open that link",
+      detail: "Markie hit an unexpected error opening the document. Try the link again, or open the file directly.",
+    });
+  }
+}
+
 // Save a shared doc to ~/Downloads with a collision-safe markdown name.
 function downloadsUniquePath(name) {
   let safe = path.basename(String(name || "")).replace(/[\\/:]/g, "_").trim() || "Shared document";
@@ -106,9 +266,14 @@ function downloadsUniquePath(name) {
   const stem = path.basename(safe, ext);
   let candidate = path.join(dir, safe);
   let i = 2;
-  while (fs.existsSync(candidate)) {
+  // Bounded: an unwritable or pathological Downloads folder must not turn one
+  // shared-link click into an unbounded synchronous existsSync loop.
+  while (fs.existsSync(candidate) && i <= 200) {
     candidate = path.join(dir, `${stem} (${i})${ext}`);
     i++;
+  }
+  if (fs.existsSync(candidate)) {
+    candidate = path.join(dir, `${stem} (${Date.now().toString(36)})${ext}`);
   }
   return candidate;
 }
@@ -177,7 +342,7 @@ async function openSharedFromDeepLink(link) {
     const content = await res.text();
     const name = filenameFromDisposition(res.headers.get("content-disposition")) || "Shared document.md";
     const dest = downloadsUniquePath(name);
-    fs.writeFileSync(dest, content, "utf-8");
+    writeFileAtomic(dest, content);
     openLocalFile(dest);
   } catch (err) {
     console.error("markie://open failed:", err);
@@ -274,14 +439,25 @@ function waitForSignIn(timeoutMs) {
 // can tell "nothing moved underneath me" from "something rewrote this file
 // while it was open" — which is the normal case when an agent is working in the
 // same repo. Without it, saving blind-writes the buffer over the newer file.
+// Bounded: one entry per file the session has read, and a long session in a
+// large repo reads a lot of them.
 const lastSeenOnDisk = new Map();
+const LAST_SEEN_LIMIT = 500;
 
 function hashOf(content) {
   return crypto.createHash("sha256").update(content, "utf8").digest("hex");
 }
 
 function rememberDisk(filePath, content) {
+  // Delete-then-set moves the key to the end, so the eviction below drops the
+  // least recently written path rather than an arbitrary one.
+  lastSeenOnDisk.delete(filePath);
   lastSeenOnDisk.set(filePath, hashOf(content));
+  while (lastSeenOnDisk.size > LAST_SEEN_LIMIT) {
+    const oldest = lastSeenOnDisk.keys().next();
+    if (oldest.done) break;
+    lastSeenOnDisk.delete(oldest.value);
+  }
 }
 
 // Returns the current on-disk content when it differs from what we last saw,
@@ -298,12 +474,85 @@ function diskChangedSince(filePath) {
   return hashOf(current) === known ? null : current;
 }
 
+// ── Watching the open document ──
+// Markie already knew a file had changed underneath the user, but only at the
+// moment they pressed save — after they had been typing into a stale document
+// for however long, with nothing left but "discard theirs" or "discard yours".
+//
+// Polling via fs.watchFile rather than fs.watch: editors and agents routinely
+// save by writing a temp file and renaming it over the original (Markie's own
+// atomic writes included), which severs an inode-based watch silently. Polling
+// survives that, and the interval is irrelevant for a single open document.
+let watchedPath = null;
+const WATCH_INTERVAL_MS = 1000;
+
+function stopWatchingOpenFile() {
+  if (!watchedPath) return;
+  try {
+    fs.unwatchFile(watchedPath);
+  } catch {
+    // Already gone; nothing to detach.
+  }
+  watchedPath = null;
+}
+
+function watchOpenFile(filePath) {
+  if (watchedPath === filePath) return;
+  stopWatchingOpenFile();
+  if (!filePath) return;
+  watchedPath = filePath;
+  try {
+    fs.watchFile(filePath, { interval: WATCH_INTERVAL_MS }, () => {
+      // stat changing is only a hint. diskChangedSince compares content
+      // hashes, so a touch, a no-op rewrite, or Markie's own save does not
+      // interrupt the user with a conflict that does not exist.
+      const changed = diskChangedSince(filePath);
+      if (changed === null) return;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("file-changed-on-disk", {
+          path: filePath,
+          content: changed,
+        });
+      }
+    });
+  } catch {
+    // Watching is an improvement, not a requirement: the save-time check still
+    // catches the same conflict later.
+    watchedPath = null;
+  }
+}
+
+// The document the window is showing. Main already learns this on every path
+// that opens or saves a file; keeping it lets the File menu know which folder
+// of snapshots "Revert to Snapshot…" is about, and whether there are any.
+const REVERT_MENU_ID = "revert-to-snapshot";
+let currentDocPath = null;
+
+function setCurrentDoc(filePath) {
+  currentDocPath = filePath || null;
+  // One owner for the watcher: every open and save path already lands here,
+  // so Save As and Fork re-aim it with no renderer involvement.
+  watchOpenFile(currentDocPath);
+  refreshRevertMenuItem();
+}
+
+function refreshRevertMenuItem() {
+  try {
+    const item = Menu.getApplicationMenu()?.getMenuItemById(REVERT_MENU_ID);
+    if (!item) return; // menu not built yet (startup) or not this platform
+    item.enabled = !!currentDocPath && snapshots().has(currentDocPath);
+  } catch {
+    // A menu that stays enabled is a dialog that explains itself instead.
+  }
+}
+
 function readFilePayload(filePath, { grant = false } = {}) {
   try {
     const access = grant ? fileGrants.grantFile(filePath) : fileGrants.canRead(filePath);
     if (!access.ok) return null;
     const content = fs.readFileSync(access.path, "utf-8");
     rememberDisk(access.path, content);
+    setCurrentDoc(access.path);
     return {
       name: path.basename(access.path),
       content,
@@ -322,6 +571,22 @@ if (argFile) pendingFilePath = argFile;
 const argDeepLink = findDeepLinkArg(process.argv.slice(1));
 if (argDeepLink) pendingDeepLink = argDeepLink;
 
+// The renderer's own document: app://markie/... in production, the Next dev
+// server in development.
+function isAppUrl(target) {
+  const value = String(target || "");
+  if (value.startsWith("app://markie/")) return true;
+  if (!isDev) return false;
+  const devUrl = process.env.MARKIE_DEV_URL || "http://localhost:3000";
+  // Origin, not prefix: "http://localhost:3000.evil.test/" starts with the dev
+  // URL but is a different site entirely.
+  try {
+    return new URL(value).origin === new URL(devUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -329,8 +594,11 @@ function createWindow() {
     minWidth: 600,
     minHeight: 400,
     show: false,
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 14, y: 14 },
+    // macOS only: on Windows/Linux `hiddenInset` leaves the app with no usable
+    // title bar and `trafficLightPosition` has nothing to position.
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 14, y: 14 } }
+      : {}),
     backgroundColor: "#09090b",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -345,13 +613,70 @@ function createWindow() {
     mainWindow?.show();
   });
 
-  // Browse: re-scan the markdown index on window focus, debounced to ≥20s, and
-  // only after the first open (so we never scan before the user visits Browse).
+  // Browse: re-scan the markdown index on window focus.
+  //
+  // This used to run every 20 seconds for the rest of the session once Browse
+  // had been opened once — a full walk of the home directory each time, and
+  // every save dialog blurs and refocuses the window. Now it needs the panel to
+  // have actually asked for an index this session, and it waits five minutes
+  // between walks.
   mainWindow.on("focus", () => {
+    if (!_mdScanRequested) return;
     const now = Date.now();
-    if (now - _mdLastFocusScan < 20_000) return;
-    _mdLastFocusScan = now;
+    if (now - _mdLastScanAt < MD_RESCAN_INTERVAL_MS) return;
     if (mdindex.getCached()) mdRescanAndNotify();
+  });
+
+  // A renderer that died takes the whole document view with it and leaves a
+  // white window. Say so, and offer the one action that fixes it.
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    logCrash("render-process-gone", details);
+    if (details?.reason === "clean-exit") return;
+    const target = mainWindow;
+    if (!target || target.isDestroyed()) return;
+    dialog
+      .showMessageBox(target, {
+        type: "error",
+        buttons: ["Reload", "Quit"],
+        defaultId: 0,
+        cancelId: 0,
+        message: "Markie stopped responding and had to restart its editor.",
+        detail:
+          "Unsaved changes in the open document may be lost. Reloading gets you back to the last saved version.",
+      })
+      .then(({ response }) => {
+        if (response === 1) {
+          app.quit();
+          return;
+        }
+        if (target && !target.isDestroyed()) target.reload();
+      })
+      .catch((err) => logCrash("render-process-gone-dialog-failed", err));
+  });
+
+  mainWindow.on("unresponsive", () => {
+    logCrash("window-unresponsive", "main window stopped responding");
+  });
+
+  // Nothing in Markie opens a second Electron window. A target=_blank in
+  // rendered markdown should reach the user's browser, not a chrome-less window
+  // with no way back.
+  mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (/^https?:\/\//i.test(target)) {
+      shell.openExternal(target).catch((err) => logCrash("open-external-failed", err));
+    }
+    return { action: "deny" };
+  });
+
+  // The renderer's own origin is the app. A link that would navigate the whole
+  // window away from it replaces Markie with a web page and strips the preload
+  // bridge; send it to the browser instead.
+  mainWindow.webContents.on("will-navigate", (event, target) => {
+    if (isAppUrl(target)) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(target)) {
+      shell.openExternal(target).catch((err) => logCrash("open-external-failed", err));
+    }
   });
 
   mainWindow.on("closed", () => {
@@ -426,8 +751,24 @@ function setupCSP() {
   });
 }
 
+// ── IPC ──
+// Every channel below goes through handle() instead of ipcMain.handle: a
+// handler that throws would otherwise reject the renderer's invoke(), and
+// almost no call site has a .catch(). The visible result was a spinner that
+// never stopped. Failures now answer `{ error }` (or the `onFailure` shape the
+// channel's callers already understand) and land in the crash log.
+const handle = createIpcHandler({
+  ipcMain,
+  onError: (channel, err) => logCrash(`ipc:${channel}`, err),
+});
+
+// Export handlers answer `{ success, error }`; their callers show `error`.
+function exportFailure(err) {
+  return errorMessage(err);
+}
+
 // IPC: Open file dialog
-ipcMain.handle("open-file", async (_event, args) => {
+handle("open-file", async (_event, args) => {
   const startDir = dialogStartDir(args?.near);
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ["openFile"],
@@ -446,61 +787,63 @@ ipcMain.handle("open-file", async (_event, args) => {
 
   // The dialog is the user grant. Store it in main before returning the file.
   return readFilePayload(result.filePaths[0], { grant: true });
+}, { onFailure: () => null });
+
+// IPC: Export PDF — the hidden-window rendering lives in export-pdf.js.
+const pdfExporter = createPdfExporter({
+  BrowserWindow,
+  fs,
+  os: require("os"),
+  path,
+  onError: (err) => logCrash("export-pdf-failed", err),
 });
 
-// IPC: Export PDF — render standalone HTML in hidden window, then printToPDF
-ipcMain.handle("export-pdf", async (_event, html) => {
-  const result = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: "document.pdf",
-    filters: [{ name: "PDF", extensions: ["pdf"] }],
-  });
-
-  if (result.canceled || !result.filePath) {
-    return { success: false };
-  }
-
-  // Create a hidden window to render the styled HTML
-  const pdfWindow = new BrowserWindow({
-    show: false,
-    width: 800,
-    height: 600,
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
-  });
-
-  // Destroy the hidden renderer no matter how we exit — a thrown loadURL /
-  // printToPDF / write would otherwise leak a full renderer process each time.
-  try {
-    const dataUrl =
-      "data:text/html;charset=utf-8," + encodeURIComponent(html);
-    await pdfWindow.loadURL(dataUrl);
-
-    // Wait a moment for fonts/rendering to settle
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    const pdfData = await pdfWindow.webContents.printToPDF({
-      printBackground: true,
-      preferCSSPageSize: true,
-      margins: { top: 0, bottom: 0, left: 0, right: 0 },
+// `args` is `{ html, theme?, docPath?, mode? }`. The bare-string form is the
+// old renderer contract and still works, so a renderer and a main process from
+// different builds don't produce an export of the text "[object Object]".
+//
+// mode "print" is ⌘P: the same hidden window and the same rendered HTML, then
+// the system print sheet instead of a file. There is no destination to choose,
+// so there is no save dialog either.
+handle(
+  "export-pdf",
+  async (_event, args) => {
+    const { html, docPath, mode } =
+      typeof args === "string" ? { html: args } : args || {};
+    if (pdfExporter.isBusy()) {
+      return {
+        success: false,
+        error: "Markie is already exporting a PDF. Wait for that one to finish.",
+      };
+    }
+    if (mode === "print") {
+      return pdfExporter.exportPdf({ html, docPath, mode });
+    }
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: "document.pdf",
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
     });
-
-    fs.writeFileSync(result.filePath, pdfData);
-    return { success: true, path: result.filePath };
-  } catch (err) {
-    return { success: false, error: String(err) };
-  } finally {
-    if (!pdfWindow.isDestroyed()) pdfWindow.destroy();
-  }
-});
+    if (result.canceled || !result.filePath) {
+      return { success: false, canceled: true };
+    }
+    return pdfExporter.exportPdf({ html, filePath: result.filePath, docPath });
+  },
+  { onFailure: (err) => ({ success: false, error: exportFailure(err) }) }
+);
 
 // IPC: write content to a known path
-ipcMain.handle("save-file", async (_event, { filePath, content }) => {
+handle("save-file", async (_event, { filePath, content, force = false }) => {
   try {
     const access = fileGrants.canWrite(filePath);
     if (!access.ok) return { success: false, error: access.error };
 
     // Someone changed this file since Markie read it. Writing now would throw
     // their work away with no trace, so ask instead of guessing.
-    const newer = diskChangedSince(access.path);
+    //
+    // `force` means the renderer already put that decision to the user — the
+    // in-app conflict dialog — and they chose to overwrite. Asking again here
+    // would be a second, native prompt for a question already answered.
+    const newer = force ? null : diskChangedSince(access.path);
     if (newer !== null) {
       const { response } = await dialog.showMessageBox(mainWindow, {
         type: "warning",
@@ -520,8 +863,12 @@ ipcMain.handle("save-file", async (_event, { filePath, content }) => {
       // response === 1: the user chose to overwrite, so fall through.
     }
 
-    fs.writeFileSync(access.path, content, "utf-8");
+    // What the file said a moment ago, kept where "Revert to Snapshot…" can
+    // find it. A save is the only moment that copy still exists.
+    snapshotBeforeWrite(access.path, content);
+    writeFileAtomic(access.path, content);
     rememberDisk(access.path, content);
+    setCurrentDoc(access.path);
     return { success: true, path: access.path };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -529,7 +876,11 @@ ipcMain.handle("save-file", async (_event, { filePath, content }) => {
 });
 
 // IPC: write content to a user-chosen path (Save As / Fork)
-ipcMain.handle("save-file-as", async (_event, { defaultName, content }) => {
+// `csvContent` is optional: a table document has a markdown form and a CSV
+// form, and which one belongs on disk is decided by the extension the user
+// typed in the dialog. Sending both means one write instead of a write plus a
+// rewrite (which left a half-correct file behind if the second one failed).
+handle("save-file-as", async (_event, { defaultName, content, csvContent }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: defaultName || "untitled.md",
     filters: [
@@ -545,13 +896,23 @@ ipcMain.handle("save-file-as", async (_event, { defaultName, content }) => {
     return { success: false, error: "Unsupported file type" };
   }
   try {
-    fs.writeFileSync(result.filePath, content, "utf-8");
+    const useCsv = /\.csv$/i.test(result.filePath) && typeof csvContent === "string";
+    const bytes = useCsv ? csvContent : content;
+    // Save As over a file that already exists is still an overwrite of somebody
+    // else's document. capture() skips the new-file case on its own.
+    snapshotBeforeWrite(result.filePath, bytes);
+    writeFileAtomic(result.filePath, bytes);
     const grant = fileGrants.grantFile(result.filePath);
     const savedPath = grant.ok ? grant.path : result.filePath;
+    // Record what is now on disk, so the next save of this path does not read
+    // its own write as "someone else changed this file".
+    rememberDisk(savedPath, bytes);
+    setCurrentDoc(savedPath);
     return {
       success: true,
       path: savedPath,
       name: path.basename(savedPath),
+      wroteCsv: useCsv,
     };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -559,7 +920,7 @@ ipcMain.handle("save-file-as", async (_event, { defaultName, content }) => {
 });
 
 // IPC: rename the file on disk, same directory
-ipcMain.handle("rename-file", async (_event, { oldPath, newName }) => {
+handle("rename-file", async (_event, { oldPath, newName }) => {
   try {
     const access = fileGrants.canRename(oldPath, newName);
     if (!access.ok) return { success: false, error: access.error };
@@ -572,22 +933,44 @@ ipcMain.handle("rename-file", async (_event, { oldPath, newName }) => {
   }
 });
 
-// IPC: export rendered HTML to a file
-ipcMain.handle("export-html", async (_event, { defaultName, html }) => {
-  const result = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: defaultName || "document.html",
-    filters: [{ name: "HTML", extensions: ["html"] }],
-  });
-  if (result.canceled || !result.filePath) {
-    return { success: false, canceled: true };
-  }
+// An HTML export that references ./diagram.png is a file that shows broken
+// images the moment it is mailed anywhere. Fold the document folder's own
+// images in as data: URIs first.
+//
+// Required lazily and defensively: this module is owned by the export track and
+// may be absent in a partial checkout, and a missing picture must never be the
+// reason an export fails.
+function inlineExportImages(html, docPath) {
+  const text = String(html == null ? "" : html);
+  if (!docPath) return text;
   try {
-    fs.writeFileSync(result.filePath, html, "utf-8");
-    return { success: true, path: result.filePath };
+    const { inlineLocalImages } = require("./inline-images");
+    return inlineLocalImages(text, path.dirname(String(docPath)));
   } catch (err) {
-    return { success: false, error: String(err) };
+    logCrash("export-html-inline-failed", err);
+    return text;
   }
-});
+}
+
+// IPC: export rendered HTML to a file
+handle(
+  "export-html",
+  async (_event, { defaultName, html, docPath } = {}) => {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: defaultName || "document.html",
+      filters: [{ name: "HTML", extensions: ["html"] }],
+    });
+    if (result.canceled || !result.filePath) {
+      return { success: false, canceled: true };
+    }
+    // The dialog returns whatever the user typed. An HTML export saved without
+    // .html opens in nothing.
+    const target = ensureExtension(result.filePath, ".html");
+    writeFileAtomic(target, inlineExportImages(html, docPath));
+    return { success: true, path: target };
+  },
+  { onFailure: (err) => ({ success: false, error: exportFailure(err) }) }
+);
 
 // ── Sync / library IPC ──
 const registry = require("./registry");
@@ -604,54 +987,55 @@ const wsTry = (fn) => {
     return { error: String(err) };
   }
 };
-ipcMain.handle("ws-roots", () => workspace.roots());
-ipcMain.handle("ws-default-path", () => workspace.defaultRootPath());
-ipcMain.handle("ws-create-default", () => wsTry(() => ({ ok: true, path: workspace.createDefaultRoot() })));
-ipcMain.handle("ws-add-root", async () => {
+handle("ws-roots", () => workspace.roots(), { onFailure: () => [] });
+handle("ws-default-path", () => workspace.defaultRootPath(), { onFailure: () => "" });
+handle("ws-create-default", () => wsTry(() => ({ ok: true, path: workspace.createDefaultRoot() })));
+handle("ws-add-root", async () => {
   const r = await dialog.showOpenDialog(mainWindow, {
     properties: ["openDirectory", "createDirectory"],
   });
   if (r.canceled || !r.filePaths[0]) return { canceled: true };
   return workspace.addRoot(r.filePaths[0]);
 });
-ipcMain.handle("ws-remove-root", (_e, p) => wsTry(() => workspace.removeRoot(p)));
-ipcMain.handle("ws-list-dir", (_e, p) => wsTry(() => workspace.listDir(p)));
-ipcMain.handle("ws-mkdir", (_e, { parent, name }) => wsTry(() => workspace.mkdir(parent, name)));
-ipcMain.handle("ws-new-file", (_e, { parent, name }) => wsTry(() => workspace.newFile(parent, name)));
-ipcMain.handle("ws-move", (_e, { src, destDir }) => wsTry(() => workspace.move(src, destDir)));
-ipcMain.handle("ws-rename", (_e, { target, newName }) => wsTry(() => workspace.rename(target, newName)));
-ipcMain.handle("ws-trash", async (_e, target) => {
+handle("ws-remove-root", (_e, p) => wsTry(() => workspace.removeRoot(p)));
+handle("ws-list-dir", (_e, p) => wsTry(() => workspace.listDir(p)));
+handle("ws-mkdir", (_e, { parent, name }) => wsTry(() => workspace.mkdir(parent, name)));
+handle("ws-new-file", (_e, { parent, name }) => wsTry(() => workspace.newFile(parent, name)));
+handle("ws-move", (_e, { src, destDir }) => wsTry(() => workspace.move(src, destDir)));
+handle("ws-rename", (_e, { target, newName }) => wsTry(() => workspace.rename(target, newName)));
+handle("ws-trash", async (_e, target) => {
   try {
     return await workspace.trash(target);
   } catch (err) {
     return { error: String(err) };
   }
 });
-ipcMain.handle("ws-reveal", (_e, target) => wsTry(() => workspace.reveal(target)));
+handle("ws-reveal", (_e, target) => wsTry(() => workspace.reveal(target)));
 
 // ── Terminal IPC ──
 const terminal = require("./terminal");
-ipcMain.handle("term-available", () => terminal.available());
-ipcMain.handle("term-create", (_e, context = {}) =>
+handle("term-available", () => terminal.available(), { onFailure: () => false });
+handle("term-create", (_e, context = {}) =>
   terminal.create(
     terminal.resolveContext(context, workspace.roots()),
     (id, data) => mainWindow?.webContents.send("term-data", { id, data }),
     (id) => mainWindow?.webContents.send("term-exit", { id })
-  )
+  ),
+  { onFailure: () => null }
 );
-ipcMain.handle("term-write", (_e, { id, data }) => terminal.write(id, data));
-ipcMain.handle("term-resize", (_e, { id, cols, rows }) => terminal.resize(id, cols, rows));
-ipcMain.handle("term-kill", (_e, id) => terminal.kill(id));
-ipcMain.handle("term-external-apps", () => terminal.externalApps());
-ipcMain.handle("term-open-external", (_e, { app, cwd }) => terminal.openExternal(app, cwd));
+handle("term-write", (_e, { id, data }) => terminal.write(id, data));
+handle("term-resize", (_e, { id, cols, rows }) => terminal.resize(id, cols, rows));
+handle("term-kill", (_e, id) => terminal.kill(id));
+handle("term-external-apps", () => terminal.externalApps(), { onFailure: () => [] });
+handle("term-open-external", (_e, { app, cwd }) => terminal.openExternal(app, cwd));
 
-ipcMain.handle("sync-config", (_event, cfg) => sync.setConfig(cfg));
+handle("sync-config", (_event, cfg) => sync.setConfig(cfg));
 // The renderer resolved this doc's share role against the server; the sync
 // engine needs it so a save can refuse a push the server would only 403.
-ipcMain.handle("sync-doc-role", (_event, { cloudId, role }) =>
+handle("sync-doc-role", (_event, { cloudId, role }) =>
   sync.setDocRole(cloudId, role)
 );
-ipcMain.handle("registry-track", (_event, { path: p, name, content }) => {
+handle("registry-track", (_event, { path: p, name, content }) => {
   try {
     const access = fileGrants.canRead(p);
     if (!access.ok) return { error: access.error };
@@ -663,7 +1047,7 @@ ipcMain.handle("registry-track", (_event, { path: p, name, content }) => {
 });
 // Remember the role the server confirmed for a file, so a later offline
 // session can honour it instead of locking the owner out of their own document.
-ipcMain.handle("registry-set-role", (_event, { path: p, role }) => {
+handle("registry-set-role", (_event, { path: p, role }) => {
   try {
     if (!["owner", "editor", "viewer"].includes(role)) return { error: "bad role" };
     registry.update(p, { share_role: role });
@@ -673,21 +1057,25 @@ ipcMain.handle("registry-set-role", (_event, { path: p, role }) => {
   }
 });
 
-ipcMain.handle("registry-get", (_event, p) => {
+handle("registry-get", (_event, p) => {
   try {
     return registry.get(p) ?? null;
   } catch {
     return null;
   }
+}, { onFailure: () => null });
+// The Library indexes into `items`; a bare `{ error }` used to reach it as
+// `items === undefined` and take the panel down with a TypeError.
+handle("library-state", () => sync.libraryState(), {
+  onFailure: (err) => ({ signedIn: false, items: [], error: errorMessage(err) }),
 });
-ipcMain.handle("library-state", () => sync.libraryState());
-ipcMain.handle("doc-sync-on", (_event, { path: p, name, content }) =>
+handle("doc-sync-on", (_event, { path: p, name, content }) =>
   sync.syncOn(p, name, content)
 );
-ipcMain.handle("doc-sync-off", (_event, { path: p, deleteRemote }) =>
+handle("doc-sync-off", (_event, { path: p, deleteRemote }) =>
   sync.syncOff(p, deleteRemote)
 );
-ipcMain.handle("doc-push", (_event, { path: p, name, content }) =>
+handle("doc-push", (_event, { path: p, name, content }) =>
   sync.push(p, name, content)
 );
 // Retry a push that failed, for a file the Library is showing but the renderer
@@ -697,7 +1085,34 @@ ipcMain.handle("doc-push", (_event, { path: p, name, content }) =>
 // *server* is ahead, which is exactly what an unpushed file usually is not.
 // Same grant rule as open-file-path: a path the app itself advertised.
 // Open the file manager with the file selected.
+//
+// Throttled: ⌘⌥R repeats while held, and every repeat is a Finder/Explorer
+// activation. One window per half second is as fast as anyone can mean it.
+const REVEAL_INTERVAL_MS = 500;
+let _lastRevealAt = 0;
+let _pendingReveal = null;
+let _revealTimer = null;
+
 function revealInFileManager(target) {
+  const now = Date.now();
+  const wait = REVEAL_INTERVAL_MS - (now - _lastRevealAt);
+  if (wait > 0) {
+    // Dropping the second reveal loses the one the user meant — they asked for
+    // *this* file. Remember the latest request and show it when the window is
+    // over instead.
+    _pendingReveal = target;
+    if (!_revealTimer) {
+      _revealTimer = setTimeout(() => {
+        _revealTimer = null;
+        const next = _pendingReveal;
+        _pendingReveal = null;
+        if (next) revealInFileManager(next);
+      }, wait);
+      if (typeof _revealTimer.unref === "function") _revealTimer.unref();
+    }
+    return;
+  }
+  _lastRevealAt = now;
   shell.showItemInFolder(target);
 }
 
@@ -706,7 +1121,7 @@ function revealInFileManager(target) {
 // a workspace root, and the document you are looking at is usually somewhere
 // else entirely. A file Markie already has a read grant for is one the user
 // opened, so pointing at it in Finder gives away nothing new.
-ipcMain.handle("reveal-file", (_event, p) => {
+handle("reveal-file", (_event, p) => {
   const access = isAdvertisedPath(p)
     ? fileGrants.grantFile(p)
     : fileGrants.canRead(p);
@@ -727,7 +1142,7 @@ ipcMain.handle("reveal-file", (_event, p) => {
   return { ok: true };
 });
 
-ipcMain.handle("doc-retry-push", (_event, { path: p }) => {
+handle("doc-retry-push", (_event, { path: p }) => {
   const access = isAdvertisedPath(p)
     ? fileGrants.grantFile(p)
     : fileGrants.canRead(p);
@@ -741,20 +1156,50 @@ ipcMain.handle("doc-retry-push", (_event, { path: p }) => {
   rememberDisk(access.path, content);
   return sync.push(access.path, path.basename(access.path), content);
 });
-ipcMain.handle("doc-resolve", (_event, { path: p, strategy }) =>
-  sync.resolve(p, strategy)
-);
+// A successful cloud pull rewrote the open file on disk. Without recording
+// what was written, lastSeenOnDisk goes stale and the watcher (and the next
+// save) reports a conflict for a change the user just accepted.
+function refreshDiskMemory(filePath, result) {
+  if (!filePath || !result || result.error) return;
+  try {
+    const content =
+      typeof result.content === "string"
+        ? result.content
+        : fs.readFileSync(filePath, "utf-8");
+    rememberDisk(filePath, content);
+  } catch {
+    // The stale-hash prompt is annoying, not dangerous; never fail the pull.
+  }
+}
+
+handle("doc-resolve", async (_event, { path: p, strategy }) => {
+  const res = await sync.resolve(p, strategy);
+  refreshDiskMemory(p, res);
+  return res;
+});
+// The renderer owns which document is open (a new unsaved buffer has no path),
+// so it can also say "watch nothing". Opens and saves re-aim the watcher in
+// main via setCurrentDoc without any renderer call.
+handle("watch-file", (_e, filePath) => {
+  if (filePath) watchOpenFile(filePath);
+  else stopWatchingOpenFile();
+  return { ok: true };
+});
 // Which tracked files the server is ahead of. One request for the whole
 // library, called on focus and on a timer, so it has to stay cheap and quiet.
-ipcMain.handle("doc-check-updates", () => sync.checkUpdates());
+handle("doc-check-updates", () => sync.checkUpdates(), {
+  onFailure: (err) => ({ updates: [], error: errorMessage(err) }),
+});
 // The server's copy, for showing what a pull would cost before doing it.
-ipcMain.handle("doc-remote-content", (_event, { path: p }) =>
+handle("doc-remote-content", (_event, { path: p }) =>
   sync.remoteContent(p)
 );
-ipcMain.handle("doc-keep-both", (_event, { path: p, content }) =>
-  sync.resolveKeepBoth(p, content)
-);
-ipcMain.handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
+handle("doc-keep-both", async (_event, { path: p, content }) => {
+  const res = await sync.resolveKeepBoth(p, content);
+  refreshDiskMemory(p, res);
+  return res;
+});
+handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: suggestedName || "document.md",
     filters: [
@@ -765,13 +1210,16 @@ ipcMain.handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
   if (result.canceled || !result.filePath) return { canceled: true };
   if (!OPENABLE.test(result.filePath)) return { error: "Unsupported file type" };
   const pulled = await sync.pull(cloudId, result.filePath);
-  if (pulled?.ok) fileGrants.grantFile(pulled.path);
+  if (pulled?.ok) {
+    fileGrants.grantFile(pulled.path);
+    refreshDiskMemory(pulled.path, pulled);
+  }
   return pulled;
 });
 
 // Open a shared cloud doc with one click: save it to ~/Downloads and open it,
 // no "where do you want to save" dialog. Backs the "Shared with you" list.
-ipcMain.handle("doc-open-shared", async (_event, { cloudId, suggestedName }) => {
+handle("doc-open-shared", async (_event, { cloudId, suggestedName }) => {
   const dest = downloadsUniquePath(suggestedName || "Shared document.md");
   const res = await sync.pull(cloudId, dest);
   if (res && res.error) return res;
@@ -781,57 +1229,103 @@ ipcMain.handle("doc-open-shared", async (_event, { cloudId, suggestedName }) => 
 });
 
 // IPC: open an https URL in the system browser (OAuth flows)
-ipcMain.handle("open-external", (_event, url) => {
-  if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+handle("open-external", (_event, target) => {
+  if (/^https?:\/\//i.test(target)) {
+    shell.openExternal(target).catch((err) => logCrash("open-external-failed", err));
+  }
 });
 
 // ── Browse: device-wide markdown index ──
-let _mdLastFocusScan = 0;
+// A scan walks the user's files, so it only ever runs because a panel asked
+// for it. `_mdScanRequested` records that Browse or Skills opened this session;
+// without it, focus alone used to be enough.
+let _mdScanRequested = false;
+let _mdLastScanAt = 0;
+const MD_RESCAN_INTERVAL_MS = 5 * 60_000;
+
+// A truncated scan stopped early (budget or depth cap), so it is a *subset* of
+// what is out there. Persisting it over a fuller snapshot loses rows the user
+// could see a moment ago, and the next launch seeds from the smaller list.
+function keepCacheOverTruncated(result) {
+  if (!result || !result.truncated) return false;
+  const cached = mdindex.getCached();
+  const kept = Array.isArray(cached?.files) ? cached.files.length : 0;
+  if (kept <= (Array.isArray(result.files) ? result.files.length : 0)) return false;
+  logCrash("mdindex-truncated", {
+    reason: result.truncatedReason || null,
+    scanned: result.files.length,
+    cached: kept,
+  });
+  return true;
+}
 
 // Run a fresh index scan, persist the snapshot, and tell the renderer.
 async function mdRescanAndNotify() {
+  _mdLastScanAt = Date.now();
   try {
     const result = await mdindex.rescan();
+    _mdLastScanAt = Date.now();
+    if (keepCacheOverTruncated(result)) {
+      // Broadcast the fuller cache instead of the partial walk.
+      const cached = mdindex.getCached();
+      if (cached && mainWindow && !mainWindow.isDestroyed())
+        mainWindow.webContents.send("mdindex-updated", cached);
+      return;
+    }
     try { registry.saveIndexCache(result.files); } catch { /* cache best-effort */ }
+    // Send the whole result, not just a timestamp. The renderer used to answer
+    // this event by calling mdindex-refresh, which walked the disk a second
+    // time for the same answer we already had in hand.
     if (mainWindow && !mainWindow.isDestroyed())
-      mainWindow.webContents.send("mdindex-updated", { scannedAt: result.scannedAt });
+      mainWindow.webContents.send("mdindex-updated", result);
   } catch (err) {
-    console.error("md index scan failed:", err == null ? "unknown" : String(err));
+    logCrash("mdindex-scan-failed", err);
   }
 }
 
 // Return cached rows immediately (seeding from the DB snapshot on first call),
 // and kick a background refresh.
-ipcMain.handle("mdindex-scan", async () => {
+handle("mdindex-scan", async () => {
+  _mdScanRequested = true;
   if (!mdindex.getCached()) {
     try { mdindex.seed(registry.loadIndexCache(), null); } catch { /* no snapshot yet */ }
   }
   const cached = mdindex.getCached();
-  mdRescanAndNotify(); // fire-and-forget refresh
+  // Every Browse/Skills mount used to start a device-wide walk. Mounting a
+  // panel is not new information about the disk, so honour the same interval
+  // the focus-driven rescan does; the cached rows come back either way.
+  if (Date.now() - _mdLastScanAt >= MD_RESCAN_INTERVAL_MS) {
+    mdRescanAndNotify(); // fire-and-forget refresh
+  }
   return cached || { files: [], scannedAt: null };
-});
+}, { onFailure: (err) => ({ files: [], scannedAt: null, error: errorMessage(err) }) });
 
-ipcMain.handle("mdindex-refresh", async () => {
+// An explicit refresh (the Browse panel's own button) still walks now.
+handle("mdindex-refresh", async () => {
+  _mdScanRequested = true;
+  _mdLastScanAt = Date.now();
   const result = await mdindex.rescan();
+  _mdLastScanAt = Date.now();
+  if (keepCacheOverTruncated(result)) return mdindex.getCached() || result;
   try { registry.saveIndexCache(result.files); } catch { /* best-effort */ }
   return result;
-});
+}, { onFailure: (err) => ({ files: [], scannedAt: null, error: errorMessage(err) }) });
 
-ipcMain.handle("mdindex-stars", () => registry.listStars());
-ipcMain.handle("mdindex-star-toggle", (_e, { path: p, kind }) =>
+handle("mdindex-stars", () => registry.listStars(), { onFailure: () => [] });
+handle("mdindex-star-toggle", (_e, { path: p, kind }) =>
   registry.toggleStar(p, kind)
 );
 
 // Where the bundled Markie MCP server lives, so the Agents dialog can hand an
 // agent a working `node <path>` command. Packaged: under Resources (copied via
 // extraResources); dev: the repo's mcp/ next to the app path.
-ipcMain.handle("mcp-info", () => {
+handle("mcp-info", () => {
   const base = app.isPackaged ? process.resourcesPath : app.getAppPath();
   return {
     serverPath: path.join(base, "mcp", "markie-mcp.mjs"),
     packaged: app.isPackaged,
   };
-});
+}, { onFailure: (err) => ({ serverPath: "", packaged: false, error: errorMessage(err) }) });
 
 // ── Auto-update (electron-updater → macOS feed) ──
 // The current production feed is signed + notarized macOS only. Windows and
@@ -923,6 +1417,7 @@ function setupAutoUpdate() {
   autoUpdater.logger = guardedLogger(console);
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  applyUpdateChannel();
 
   autoUpdater.on("checking-for-update", () => {
     updateState = "checking";
@@ -978,15 +1473,56 @@ function setupAutoUpdate() {
   setInterval(check, 6 * 60 * 60 * 1000);
 }
 
+// Point the updater at the channel this install follows. Called at setup and
+// again whenever the user flips the Settings toggle, so the change takes effect
+// without a relaunch.
+function applyUpdateChannel() {
+  const optedIn = readBetaOptIn(app.getPath("userData"));
+  const { channel, allowDowngrade } = updaterSettingsFor({
+    optedIn,
+    currentVersion: app.getVersion(),
+  });
+  autoUpdater.channel = channel;
+  // Leaving beta means walking back down to stable; see update-channel.js.
+  autoUpdater.allowDowngrade = allowDowngrade;
+  return { optedIn, channel, allowDowngrade };
+}
+
 // IPC: renderer asks for the latest known update status / triggers a check
-ipcMain.handle("update-status", () => updateState);
-ipcMain.handle("check-for-updates", () => requestUpdateCheck({ manual: true }));
+handle("update-status", () => updateState, { onFailure: () => "idle" });
+// IPC: the beta-channel opt-in. Reachable only from inside the app, which is
+// what keeps the channel unlisted — nothing on the website can enrol anyone.
+handle(
+  "update-channel-get",
+  () => ({
+    optedIn: readBetaOptIn(app.getPath("userData")),
+    currentVersion: app.getVersion(),
+  }),
+  // Stable is the safe answer to "I can't tell", matching readBetaOptIn.
+  { onFailure: () => ({ optedIn: false, currentVersion: "" }) }
+);
+handle(
+  "update-channel-set",
+  async (_e, optedIn) => {
+    const saved = writeBetaOptIn(app.getPath("userData"), optedIn === true);
+    if (!saved) return { ok: false, error: "Couldn't save that preference." };
+    const applied = applyUpdateChannel();
+    // Check straight away: opting in should find the beta now, and opting out
+    // should start the walk back to stable rather than waiting up to six hours.
+    requestUpdateCheck().catch(() => {});
+    return { ok: true, ...applied };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+handle("check-for-updates", () => requestUpdateCheck({ manual: true }), {
+  onFailure: (err) => ({ ok: false, reason: "error", error: errorMessage(err) }),
+});
 // IPC: user accepted the update — quit and install the downloaded version.
 //
 // Answers the renderer instead of returning nothing, because a failure here is
 // invisible from the other side: the button says "Restarting…" and waits for a
 // quit that is never coming. On success this call does not return at all.
-ipcMain.handle("quit-and-install", () => {
+handle("quit-and-install", () => {
   if (updateState !== "ready") return { ok: false, reason: "not-ready" };
   try {
     autoUpdater.quitAndInstall();
@@ -999,7 +1535,7 @@ ipcMain.handle("quit-and-install", () => {
       error: String(err?.message ?? err ?? "Unknown updater error"),
     };
   }
-});
+}, { onFailure: () => null });
 
 // IPC: make Markie the default app for Markdown files (macOS).
 // LaunchServices has no first-party CLI, so we drive it through a tiny Swift
@@ -1008,6 +1544,11 @@ ipcMain.handle("quit-and-install", () => {
 // app — in dev the running bundle is Electron, not Markie.
 const MARKIE_BUNDLE_ID = "com.zvn.markie";
 const MARKDOWN_UTI = "net.daringfireball.markdown"; // covers .md + .markdown
+
+// `swift <file>` compiles before it runs. On a cold toolchain that is seconds,
+// and if the toolchain is half-installed it can be forever — with the renderer
+// waiting on an invoke() that never answers.
+const SWIFT_TIMEOUT_MS = 5_000;
 
 // Run a one-off Swift snippet, resolving { code, stdout } (or an error string).
 function runSwift(src) {
@@ -1028,24 +1569,40 @@ function runSwift(src) {
       return resolve({ error: "swift-missing" });
     }
     let out = "";
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { fs.rmSync(tmp, { force: true }); } catch { /* temp file, best effort */ }
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch { /* already gone */ }
+      finish({ error: "timeout" });
+    }, SWIFT_TIMEOUT_MS);
     child.stdout.on("data", (d) => (out += d.toString()));
     child.on("error", (err) => {
-      fs.rmSync(tmp, { force: true });
-      resolve({ error: err.code === "ENOENT" ? "swift-missing" : String(err) });
+      finish({ error: err.code === "ENOENT" ? "swift-missing" : String(err) });
     });
     child.on("exit", (code) => {
-      fs.rmSync(tmp, { force: true });
-      resolve({ code, stdout: out.trim() });
+      finish({ code, stdout: out.trim() });
     });
   });
 }
 
 // IPC: is Markie already the default handler for Markdown? Lets the UI hide
 // the "set default" prompt when it's already set, instead of nagging.
-ipcMain.handle("default-md-status", async () => {
+// Cached: the Library asks on every mount, and the answer only changes when
+// this app changes it (set-default-md clears the cache) or the user changes it
+// in System Settings, which is not worth a Swift compile per panel open.
+let _defaultMdStatus = null;
+
+handle("default-md-status", async () => {
   if (!supportsMarkdownDefaultHandler({ platform: process.platform, isPackaged: app.isPackaged })) {
     return { supported: false, isDefault: false };
   }
+  if (_defaultMdStatus) return _defaultMdStatus;
   const res = await runSwift(
     [
       "import Foundation",
@@ -1054,19 +1611,27 @@ ipcMain.handle("default-md-status", async () => {
       'print(h ?? "")',
     ].join("\n")
   );
-  if (res.error) return { supported: false, isDefault: false };
-  return {
+  // Cache the failure too. A missing Swift toolchain or a LaunchServices
+  // timeout answers the same way every time this session, and re-running the
+  // compile per panel mount only makes the panel slower.
+  if (res.error) {
+    _defaultMdStatus = { supported: false, isDefault: false };
+    return _defaultMdStatus;
+  }
+  _defaultMdStatus = {
     supported: true,
     isDefault: res.stdout.toLowerCase() === MARKIE_BUNDLE_ID,
   };
-});
+  return _defaultMdStatus;
+}, { onFailure: () => ({ supported: false, isDefault: false }) });
 
-ipcMain.handle("set-default-md", async () => {
+handle("set-default-md", async () => {
   const unsupported = markdownDefaultHandlerUnavailable({
     platform: process.platform,
     isPackaged: app.isPackaged,
   });
   if (unsupported) return unsupported;
+  _defaultMdStatus = null; // whatever it was, this call is about to change it
   const res = await runSwift(
     [
       "import Foundation",
@@ -1079,6 +1644,9 @@ ipcMain.handle("set-default-md", async () => {
   if (res.error === "swift-missing") {
     return { ok: false, error: "Swift isn't installed. Run: xcode-select --install" };
   }
+  if (res.error === "timeout") {
+    return { ok: false, error: "LaunchServices didn't answer in time. Try again." };
+  }
   if (res.error) return { ok: false, error: res.error };
   return res.code === 0
     ? { ok: true }
@@ -1086,7 +1654,7 @@ ipcMain.handle("set-default-md", async () => {
 });
 
 // IPC: renderer signals it has mounted and asks for any queued file
-ipcMain.handle("get-initial-file", () => {
+handle("get-initial-file", () => {
   rendererReady = true;
   // The packaging gate watches for this. It is written from the handshake the
   // renderer only makes once React has mounted, which is the thing the gate is
@@ -1114,58 +1682,210 @@ ipcMain.handle("get-initial-file", () => {
   const payload = readFilePayload(pendingFilePath, { grant: true });
   pendingFilePath = null;
   return payload;
-});
+}, { onFailure: () => null });
 
 // IPC: Open file from a path already granted by a dialog, OS event, drop, or workspace root.
 // A path the app itself advertised to the renderer — a Library/Recent registry
 // entry or a Browse/Skills index hit — is the user's own listed markdown, so
 // clicking it must open. Grant those; everything else still needs a prior
 // grant (open dialog, drag-drop, deep link) or a workspace root.
+// The index can hold tens of thousands of rows and this runs on every open, so
+// the membership test is a Set built once per scan rather than a linear scan
+// per click. Keyed on the cached result object: a new scan replaces it.
+let _advertisedSource = null;
+let _advertisedPaths = null;
+
+function advertisedPathSet() {
+  const cached = mdindex.getCached();
+  if (!cached) return null;
+  if (_advertisedSource !== cached) {
+    _advertisedSource = cached;
+    _advertisedPaths = new Set((cached.files || []).map((f) => f.path));
+  }
+  return _advertisedPaths;
+}
+
 function isAdvertisedPath(p) {
   try {
     if (registry.get(p)) return true;
   } catch {
     // registry unavailable — fall through to the index
   }
-  const cached = mdindex.getCached();
-  return !!cached?.files?.some((f) => f.path === p);
+  return !!advertisedPathSet()?.has(p);
 }
 
-ipcMain.handle("open-file-path", async (_event, filePath) => {
+handle("open-file-path", async (_event, filePath) => {
   return readFilePayload(filePath, { grant: isAdvertisedPath(filePath) });
-});
+}, { onFailure: () => null });
 
 // Synchronous so preload can grant a dropped/selected File before renderer code
 // calls open-file-path with the returned path.
+// The renderer's error boundary reports here. `send`, not `invoke`: the
+// renderer is mid-crash and has nothing useful to do with an answer. Only the
+// three strings are kept, and each is capped — a stack from a loop can be
+// megabytes, and this is a log file the user is meant to be able to read.
+const RENDERER_DETAIL_LIMIT = 8 * 1024;
+function sanitizeRendererDetail(detail) {
+  const out = {};
+  if (!detail || typeof detail !== "object") return out;
+  let budget = RENDERER_DETAIL_LIMIT;
+  for (const key of ["source", "scope", "message", "stack", "componentStack"]) {
+    const value = detail[key];
+    if (typeof value !== "string" || value === "" || budget <= 0) continue;
+    out[key] = value.length > budget ? value.slice(0, budget) : value;
+    budget -= out[key].length;
+  }
+  return out;
+}
+
+ipcMain.on("log-renderer-error", (_event, detail) => {
+  logCrash("renderer", sanitizeRendererDetail(detail));
+});
+
+// Crash-report consent. Fail closed on both: an unreadable consent file must
+// read as "no", and an unresolvable DSN as "don't offer the switch at all".
+handle(
+  "crash-consent-get",
+  () => ({
+    enabled: readCrashConsent(app.getPath("userData")),
+    available: Boolean(crashDsn()),
+  }),
+  { onFailure: () => ({ enabled: false, available: false }) }
+);
+handle(
+  "crash-consent-set",
+  (_e, enabled) => {
+    const saved = writeCrashConsent(app.getPath("userData"), enabled === true);
+    return saved
+      ? { ok: true, enabled: enabled === true }
+      : { ok: false, error: "Couldn't save that preference." };
+  },
+  // The settings UI truth-tests res.ok; the default { error } shape would
+  // read as a silent success.
+  { onFailure: () => ({ ok: false, error: "Couldn't save that preference." }) }
+);
+// revealCrashLog is a hoisted declaration below; it already shows the
+// "no crashes recorded yet" dialog when the log is empty.
+handle("crash-log-reveal", () => {
+  revealCrashLog();
+  return { ok: true };
+}, { onFailure: () => ({ ok: false }) });
+
 ipcMain.on("grant-file-path", (event, filePath) => {
   const grant = fileGrants.grantFile(filePath);
   event.returnValue = grant.ok;
 });
 
 // App menu
+//
+// The app-name menu is a macOS convention, and `hide`/`hideOthers`/`unhide` are
+// macOS roles: on Windows the same template renders a stray "Markie" menu full
+// of items that do nothing. Elsewhere its useful entries move into File.
+const isMac = process.platform === "darwin";
+
+// Show the crash log so a bug report can carry it. Not an IPC channel: the
+// renderer is exactly the thing that may have just died.
+function revealCrashLog() {
+  try {
+    const target = crashLog().path;
+    // Creating the file to reveal it hands the user an empty log and makes
+    // "nothing has gone wrong" look like "we lost the record".
+    if (!target || !fs.existsSync(target)) {
+      dialog.showMessageBox(
+        mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+        {
+          type: "info",
+          message: "No crashes have been recorded yet.",
+          detail: "If Markie does crash, this is where the report will be.",
+        }
+      );
+      return;
+    }
+    shell.showItemInFolder(target);
+  } catch (err) {
+    logCrash("reveal-crash-log-failed", err);
+  }
+}
+
+// Open one of this document's snapshots. Not an IPC channel and not a write:
+// the picked snapshot is handed to the renderer as the buffer for the path
+// that is already open, so the user reads it, compares it, and decides. Nothing
+// touches the file on disk until they save.
+async function revertToSnapshot() {
+  try {
+    const target = currentDocPath;
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    if (!target || !snapshots().has(target)) {
+      dialog.showMessageBox(parent, {
+        type: "info",
+        message: "No snapshots for this document yet.",
+        detail: "Markie keeps a copy of a document each time you save over it. Save once and there will be one here.",
+      });
+      return;
+    }
+    const result = await dialog.showOpenDialog(parent, {
+      title: `Revert "${path.basename(target)}"`,
+      defaultPath: snapshots().dirFor(target),
+      buttonLabel: "Open Snapshot",
+      properties: ["openFile"],
+      filters: [{ name: "Snapshot", extensions: ["md"] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return;
+    const content = fs.readFileSync(result.filePaths[0], "utf-8");
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    // The existing file-opened payload, with the document's own path and name:
+    // the renderer keeps editing the same file. `unsaved` marks the buffer as
+    // not yet written, so the revert is one ⌘S away and one ⌘Z from undone.
+    mainWindow.webContents.send("file-opened", {
+      name: path.basename(target),
+      content,
+      path: target,
+      unsaved: true,
+    });
+  } catch (err) {
+    logCrash("revert-to-snapshot-failed", err);
+  }
+}
+
+// Finder on macOS, File Explorer on Windows, and neither name is right on Linux.
+const crashLogMenuLabel =
+  process.platform === "darwin"
+    ? "Reveal Crash Log in Finder"
+    : process.platform === "win32"
+      ? "Show Crash Log in Explorer"
+      : "Show Crash Log";
+
+const settingsItem = {
+  label: "Settings…",
+  accelerator: "CmdOrCtrl+,",
+  click: () => mainWindow?.webContents.send("menu-settings"),
+};
+
+const updatesItem = {
+  label: "Check for Updates…",
+  click: () => requestUpdateCheck({ manual: true }),
+};
+
 const template = [
-  {
-    label: app.name,
-    submenu: [
-      { role: "about" },
-      { type: "separator" },
-      {
-        label: "Settings…",
-        accelerator: "CmdOrCtrl+,",
-        click: () => mainWindow?.webContents.send("menu-settings"),
-      },
-      {
-        label: "Check for Updates…",
-        click: () => requestUpdateCheck({ manual: true }),
-      },
-      { type: "separator" },
-      { role: "hide" },
-      { role: "hideOthers" },
-      { role: "unhide" },
-      { type: "separator" },
-      { role: "quit" },
-    ],
-  },
+  ...(isMac
+    ? [
+        {
+          label: app.name,
+          submenu: [
+            { role: "about" },
+            { type: "separator" },
+            settingsItem,
+            updatesItem,
+            { type: "separator" },
+            { role: "hide" },
+            { role: "hideOthers" },
+            { role: "unhide" },
+            { type: "separator" },
+            { role: "quit" },
+          ],
+        },
+      ]
+    : []),
   {
     label: "File",
     submenu: [
@@ -1195,6 +1915,16 @@ const template = [
         label: "Save As…",
         accelerator: "CmdOrCtrl+Shift+S",
         click: () => mainWindow?.webContents.send("menu-save-as"),
+      },
+      {
+        id: REVERT_MENU_ID,
+        label: "Revert to Snapshot…",
+        // Enabled by refreshRevertMenuItem() once a document with snapshots is
+        // open; an item that opens an empty folder is worse than a grey one.
+        enabled: false,
+        click: () => {
+          void revertToSnapshot();
+        },
       },
       {
         label: "Duplicate (Fork)",
@@ -1235,7 +1965,9 @@ const template = [
         ],
       },
       { type: "separator" },
-      { role: "close" },
+      ...(isMac
+        ? [{ role: "close" }]
+        : [settingsItem, updatesItem, { type: "separator" }, { role: "quit" }]),
     ],
   },
   {
@@ -1351,9 +2083,18 @@ const template = [
     label: "Window",
     submenu: [
       { role: "minimize" },
-      { role: "zoom" },
-      { type: "separator" },
-      { role: "front" },
+      // `zoom` and `front` are macOS window roles; on Windows they render as
+      // dead entries.
+      ...(isMac ? [{ role: "zoom" }, { type: "separator" }, { role: "front" }] : []),
+    ],
+  },
+  {
+    role: "help",
+    submenu: [
+      {
+        label: crashLogMenuLabel,
+        click: () => revealCrashLog(),
+      },
     ],
   },
 ];
@@ -1399,6 +2140,8 @@ if (!gotLock) {
     registerProtocol();
     setupCSP();
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+    // The menu is built after the first file may already have been opened.
+    refreshRevertMenuItem();
     createWindow();
     setupAutoUpdate();
 
@@ -1425,9 +2168,16 @@ app.on("will-quit", () => {
 });
 
 app.on("window-all-closed", () => {
+  // The poll keeps a live handle; without this, packaging smokes and quit on
+  // win32/linux can hold the process open past teardown.
+  stopWatchingOpenFile();
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", () => {
+  stopWatchingOpenFile();
 });
 
 // Handle file open via Finder "open with" / double-click.

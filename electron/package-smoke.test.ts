@@ -97,22 +97,42 @@ afterEach(() => {
   }
 });
 
+
+// packageProfile and hostSmokeMode normalise their inputs, so they accept
+// electron-builder profile names ("mac", "windows") as well as Node's own.
+// Their parameter types are inferred from `process.platform` defaults, which
+// does not say that, so fixtures cross the boundary through these.
+type ProfileTarget = NonNullable<Parameters<typeof packageProfile>[0]>;
+const packageTarget = (o: {
+  platform: string;
+  arch: string;
+  distDir?: string;
+  productName?: string;
+}): ProfileTarget => o as unknown as ProfileTarget;
+
+type SmokeHost = Parameters<typeof hostSmokeMode>[1];
+const smokeHost = (o: {
+  platform: string;
+  arch: string;
+  rosettaAvailable?: boolean;
+}): SmokeHost => o as unknown as SmokeHost;
+
 describe("package smoke checker", () => {
   it("maps local package targets to electron-builder unpacked output paths", () => {
-    expect(packageProfile({ platform: "darwin", arch: "arm64" })).toMatchObject({
+    expect(packageProfile(packageTarget({ platform: "darwin", arch: "arm64" }))).toMatchObject({
       id: "mac-arm64",
       appDir: path.join("dist", "mac-arm64", "Markie.app"),
     });
-    expect(packageProfile({ platform: "mac", arch: "x64" })).toMatchObject({
+    expect(packageProfile(packageTarget({ platform: "mac", arch: "x64" }))).toMatchObject({
       id: "mac-x64",
       appDir: path.join("dist", "mac", "Markie.app"),
     });
-    expect(packageProfile({ platform: "windows", arch: "x64" })).toMatchObject({
+    expect(packageProfile(packageTarget({ platform: "windows", arch: "x64" }))).toMatchObject({
       id: "windows-x64",
       appDir: path.join("dist", "win-unpacked"),
       executableCandidates: [path.join("dist", "win-unpacked", "Markie.exe")],
     });
-    expect(packageProfile({ platform: "linux", arch: "x64" })).toMatchObject({
+    expect(packageProfile(packageTarget({ platform: "linux", arch: "x64" }))).toMatchObject({
       id: "linux-x64",
       appDir: path.join("dist", "linux-unpacked"),
     });
@@ -148,8 +168,8 @@ describe("package smoke checker", () => {
   });
 
   it("rejects unsupported non-macOS package architectures", () => {
-    expect(() => packageProfile({ platform: "windows", arch: "arm64" })).toThrow(/supports x64/);
-    expect(() => packageProfile({ platform: "linux", arch: "arm64" })).toThrow(/supports x64/);
+    expect(() => packageProfile(packageTarget({ platform: "windows", arch: "arm64" }))).toThrow(/supports x64/);
+    expect(() => packageProfile(packageTarget({ platform: "linux", arch: "arm64" }))).toThrow(/supports x64/);
   });
 
   it("passes when a packaged macOS app has executable and bundled MCP resources", () => {
@@ -203,25 +223,25 @@ describe("package smoke checker", () => {
   });
 
   it("separates structure-only smoke from host-native launch evidence", () => {
-    const macArm = packageProfile({ platform: "mac", arch: "arm64" });
-    expect(hostSmokeMode(macArm, { platform: "darwin", arch: "arm64" })).toMatchObject({
+    const macArm = packageProfile(packageTarget({ platform: "mac", arch: "arm64" }));
+    expect(hostSmokeMode(macArm, smokeHost({ platform: "darwin", arch: "arm64" }))).toMatchObject({
       mode: "host-native",
     });
-    expect(hostSmokeMode(macArm, { platform: "windows", arch: "x64" })).toMatchObject({
+    expect(hostSmokeMode(macArm, smokeHost({ platform: "windows", arch: "x64" }))).toMatchObject({
       mode: "structure-only",
     });
-    expect(hostSmokeMode(macArm, { platform: "darwin", arch: "x64" })).toMatchObject({
+    expect(hostSmokeMode(macArm, smokeHost({ platform: "darwin", arch: "x64" }))).toMatchObject({
       mode: "structure-only",
     });
   });
 
   it("reports macOS Intel artifacts as host-compatible on Apple Silicon with Rosetta", () => {
-    const macIntel = packageProfile({ platform: "mac", arch: "x64" });
+    const macIntel = packageProfile(packageTarget({ platform: "mac", arch: "x64" }));
 
-    expect(hostSmokeMode(macIntel, { platform: "darwin", arch: "arm64", rosettaAvailable: true })).toMatchObject({
+    expect(hostSmokeMode(macIntel, smokeHost({ platform: "darwin", arch: "arm64", rosettaAvailable: true }))).toMatchObject({
       mode: "host-compatible",
     });
-    expect(hostSmokeMode(macIntel, { platform: "darwin", arch: "arm64", rosettaAvailable: false })).toMatchObject({
+    expect(hostSmokeMode(macIntel, smokeHost({ platform: "darwin", arch: "arm64", rosettaAvailable: false }))).toMatchObject({
       mode: "structure-only",
     });
     expect(typeof detectRosettaAvailable()).toBe("boolean");

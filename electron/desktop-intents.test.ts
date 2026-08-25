@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { PathLike } from "node:fs";
 import {
   findDeepLinkArg,
   findOpenableLaunchFile,
@@ -14,7 +15,9 @@ describe("desktop launch intent helpers", () => {
     "C:\\Users\\me\\Notes\\brief.md",
     "/home/me/notes/plan.csv",
   ]);
-  const existsSync = (filePath: string) => existing.has(filePath);
+  // The helpers default to fs.existsSync/path.resolve, so their parameter
+  // types are Node's, not string.
+  const existsSync = (filePath: PathLike) => existing.has(String(filePath));
   const resolvePath = (filePath: string) => `resolved:${filePath}`;
 
   it("detects Markie deep links from Windows/Linux argv handoff", () => {

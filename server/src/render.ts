@@ -142,6 +142,7 @@ const PAGE_CSS = `
   .status.public { color: var(--accent-text); background: var(--accent-strong); border-color: transparent; }
   .platform-card .btn { display: inline-flex; margin-top: 12px; }
   .download-note { margin-top: 24px; color: var(--muted); font-size: 0.9rem; }
+  .cta-invite { margin-top: 10px; line-height: 1.5; }
   @media (max-width: 640px) {
     .bar { align-items: flex-start; flex-wrap: wrap; }
     .bar .title { min-width: 0; flex-basis: calc(100% - 34px); }
@@ -281,8 +282,14 @@ export function renderSharedDocPage(opts: {
   siteUrl: string;
   sharedBy?: string | null;
   canEdit: boolean;
+  /**
+   * Set when the reader got here through an invite email and has no account
+   * yet. Signing up with this exact address is what makes claimPendingInvites
+   * hand them the document, so the address has to be named rather than implied.
+   */
+  invitedEmail?: string | null;
 }): string {
-  const { title, markdown, docId, siteUrl, sharedBy, canEdit } = opts;
+  const { title, markdown, docId, siteUrl, sharedBy, canEdit, invitedEmail } = opts;
   const content = renderMarkdownHTML(markdown);
   const safeTitle = esc(title);
   const download = primaryDownloadCta(siteUrl);
@@ -311,6 +318,13 @@ export function renderSharedDocPage(opts: {
       canEdit
         ? "Open it in Markie to edit it with them, live."
         : "You have view access. Open it in Markie to keep a copy of your own."
+    }
+    ${
+      invitedEmail
+        ? `<div class="cta-invite">Get Markie and make an account with
+             <strong>${esc(invitedEmail)}</strong> — this document will already be
+             in your Library when you sign in. Nothing to copy across.</div>`
+        : ""
     }
   </div>
 </body></html>`;

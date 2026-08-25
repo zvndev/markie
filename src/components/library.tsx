@@ -14,6 +14,12 @@ import { FilesView } from "@/components/files-view";
 import { BrowseView } from "@/components/browse-view";
 import { SkillsView } from "@/components/skills-view";
 import { SharedView } from "@/components/shared-view";
+import { PanelResizer } from "@/components/panel-resizer";
+import {
+  LEFT_PANEL_WIDTH_KEY,
+  clampPanelWidth,
+  readPanelWidth,
+} from "@/lib/panel-width";
 // The panel never renders for "edit" (the formatting rail has no panel), so
 // it takes the narrower type rather than inventing a title for one.
 import type { PanelView } from "@/lib/left-rail";
@@ -47,6 +53,35 @@ interface LibraryProps {
 
 const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
 const TAB_KEY = "markie.libtab.v1";
+
+type NoticeKind = "info" | "error";
+interface Notice {
+  text: string;
+  kind: NoticeKind;
+}
+
+// Long enough to read a short sentence, short enough that the panel is not
+// still explaining a copy you made a minute ago.
+const NOTICE_DISMISS_MS = 4000;
+
+// Node hands back "ENOENT: no such file or directory, open '/x/y.md'". The
+// errno is the only part most people can act on, and it is the part they
+// cannot read. Say the same thing in a sentence and keep the path.
+const ERRNO_SENTENCES: Array<[RegExp, string]> = [
+  [/^ENOENT\b[^,]*,?\s*/i, "That file isn't there anymore."],
+  [/^EACCES\b[^,]*,?\s*/i, "Markie isn't allowed to touch that file."],
+  [/^EPERM\b[^,]*,?\s*/i, "The system refused that change."],
+];
+
+export function plainErrorText(raw: string): string {
+  const text = String(raw ?? "").trim();
+  for (const [pattern, sentence] of ERRNO_SENTENCES) {
+    if (!pattern.test(text)) continue;
+    const rest = text.replace(pattern, "").trim();
+    return rest ? `${sentence} (${rest})` : sentence;
+  }
+  return text;
+}
 
 // The "Library" view has a Recent/Files sub-toggle; the other views come from
 // the left rail and have no sub-tabs.
@@ -109,7 +144,10 @@ export function Library({
     () => !!getElectronAPI()?.libraryState
   );
   const [confirmOff, setConfirmOff] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  // A notice is either "that worked" or "that failed", and they must not look
+  // alike: a red line that says "Path copied" is alarming, and a grey line that
+  // says a sync failed reads as chatter and gets ignored.
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [filter, setFilter] = useState("");
   // Freeze the row order for as long as the panel stays open, so opening a file
   // does not send it to the top and shuffle everything you were reading.
@@ -125,6 +163,75 @@ export function Library({
       return "recent";
     }
   });
+  // The panel is unmounted while collapsed and remounted per view, so the width
+  // is read back from storage on every mount rather than lifted into the page.
+  // The width the user chose, clamped only to the panel's own bounds. Infinity
+  // as the viewport means "no viewport limit yet" — the viewport clamp is
+  // applied separately below, so shrinking the window never rewrites the
+  // preference.
+  const [userWidth, setUserWidth] = useState(() => {
+    try {
+      return readPanelWidth(localStorage.getItem(LEFT_PANEL_WIDTH_KEY), Infinity);
+    } catch {
+      return readPanelWidth(null, Infinity);
+    }
+  });
+  const [viewport, setViewport] = useState(() => {
+    try {
+      return window.innerWidth;
+    } catch {
+      return 1280;
+    }
+  });
+  const commitWidth = useCallback((next: number) => {
+    setUserWidth(next);
+    try {
+      localStorage.setItem(LEFT_PANEL_WIDTH_KEY, String(next));
+    } catch {
+      // storage unavailable
+    }
+  }, []);
+
+  // Shrinking the window must not leave the panel eating the document. Clamp
+  // the *effective* width against the viewport and leave the stored one alone:
+  // re-clamping the preference meant a window you shrank and grew back came
+  // back with a narrower panel, permanently.
+  useEffect(() => {
+    const onResize = () => setViewport(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const width = useMemo(
+    () => clampPanelWidth(userWidth, viewport),
+    [userWidth, viewport]
+  );
+
+  const showNotice = useCallback((text: string, kind: NoticeKind) => {
+    setNotice({ text: plainErrorText(text), kind });
+  }, []);
+  const noticeError = useCallback(
+    (text: string) => showNotice(text, "error"),
+    [showNotice]
+  );
+  // FilesView reports failures through this, plus a clipboard acknowledgement.
+  // It has no kind of its own, so the one success message is recognised here
+  // rather than colouring "Path copied." like a failure.
+  const filesNotice = useCallback(
+    (msg: string | null) => {
+      if (msg === null) return setNotice(null);
+      showNotice(msg, /^Path copied/.test(msg) ? "info" : "error");
+    },
+    [showNotice]
+  );
+
+  // An acknowledgement has been read the moment it appears; leaving it pinned
+  // to the bottom of the panel turns it into furniture. Errors stay.
+  useEffect(() => {
+    if (!notice || notice.kind !== "info") return;
+    const t = setTimeout(() => setNotice(null), NOTICE_DISMISS_MS);
+    return () => clearTimeout(t);
+  }, [notice]);
+
   const pickTab = (t: LibTab) => {
     setMenuFor(null);
     setLibTab(t);
@@ -179,14 +286,14 @@ export function Library({
     setDropping(false);
     const api = getElectronAPI();
     if (!api?.pathForFile) {
-      setNotice("Drag-and-drop needs the desktop app.");
+      noticeError("Drag-and-drop needs the desktop app.");
       return;
     }
     const paths = Array.from(e.dataTransfer.files)
       .map((f) => api.pathForFile(f))
       .filter((p): p is string => !!p && OPENABLE.test(p));
     if (paths.length === 0) {
-      setNotice("Drop Markdown, text, or CSV files here.");
+      showNotice("Drop Markdown, text, or CSV files here.", "info");
       return;
     }
     onAddPaths(paths);
@@ -202,9 +309,9 @@ export function Library({
       setSignedIn(s.signedIn);
       setWorkspace(s.workspace);
       setLoading(false);
-      if (s.error) setNotice(s.error);
+      if (s.error) noticeError(s.error);
     });
-  }, []);
+  }, [noticeError]);
 
   useEffect(() => {
     const api = getElectronAPI();
@@ -218,44 +325,64 @@ export function Library({
       setSignedIn(s.signedIn);
       setWorkspace(s.workspace);
       setLoading(false);
-      if (s.error) setNotice(s.error);
+      if (s.error) noticeError(s.error);
     });
     return () => {
       alive = false;
     };
-  }, [refreshKey]);
+  }, [refreshKey, noticeError]);
 
+  // Every library action funnels through here. The main process answers with
+  // `{ error }` rather than throwing, and that used to be dropped on the floor:
+  // clicking a shared doc whose access had been revoked simply did nothing.
+  // Surface both shapes through the panel's notice line, and always let go of
+  // the menu — a failed action must never leave it stuck open.
   const act = async (fn: () => Promise<unknown>) => {
-    await fn();
-    setMenuFor(null);
-    refresh();
-    onSyncChanged?.();
+    try {
+      const result = await fn();
+      const failure =
+        result && typeof result === "object" && "error" in result
+          ? (result as { error?: unknown }).error
+          : null;
+      if (failure) noticeError(String(failure));
+    } catch (err) {
+      noticeError(
+        err instanceof Error && err.message
+          ? err.message
+          : "That didn't work. Please try again."
+      );
+    } finally {
+      setMenuFor(null);
+      refresh();
+      onSyncChanged?.();
+    }
   };
 
-  const flash = (msg: string) => {
-    setNotice(msg);
+  const flash = (msg: string, kind: NoticeKind = "info") => {
+    showNotice(msg, kind);
     setMenuFor(null);
   };
+  const flashError = (msg: string) => flash(msg, "error");
 
   const copyPath = async (path: string) => {
     try {
       await navigator.clipboard.writeText(path);
       flash("Path copied — paste it anywhere.");
     } catch {
-      flash("Couldn't copy the path.");
+      flashError("Couldn't copy the path.");
     }
   };
 
   const copyContents = async (item: LibraryItem) => {
     const api = getElectronAPI();
-    if (!item.path || !api?.openFilePath) return flash("Nothing to copy.");
+    if (!item.path || !api?.openFilePath) return flashError("Nothing to copy.");
     const file = await api.openFilePath(item.path);
-    if (!file) return flash(`Couldn't read ${item.name}.`);
+    if (!file) return flashError(`Couldn't read ${item.name}.`);
     try {
       await navigator.clipboard.writeText(file.content);
       flash("Contents copied to clipboard.");
     } catch {
-      flash("Couldn't copy the contents.");
+      flashError("Couldn't copy the contents.");
     }
   };
 
@@ -263,13 +390,13 @@ export function Library({
     act(async () => {
       const api = getElectronAPI()!;
       const file = await api.openFilePath(item.path!);
-      if (!file) return setNotice(`Can't read ${item.name}`);
+      if (!file) return noticeError(`Can't read ${item.name}`);
       const res = await api.docSyncOn({
         path: item.path!,
         name: item.name,
         content: file.content,
       });
-      if (res.error) setNotice(res.error);
+      if (res.error) noticeError(res.error);
     });
 
   const orderedItems = useMemo(
@@ -402,9 +529,10 @@ export function Library({
 
   return (
     <div
-      className={`markie-side-panel relative w-[252px] shrink-0 h-full flex flex-col border-r bg-surface ${
+      className={`markie-side-panel relative shrink-0 h-full flex flex-col border-r bg-surface ${
         dropping ? "border-foreground/40" : "border-border"
       }`}
+      style={{ width }}
       onDragOver={(e) => {
         if (!getElectronAPI()?.pathForFile) return;
         e.preventDefault();
@@ -422,6 +550,7 @@ export function Library({
           <span className="text-[12px] text-foreground/80">Drop to add to your library</span>
         </div>
       )}
+      <PanelResizer width={width} onWidth={setUserWidth} onCommit={commitWidth} />
       <div className="flex items-center justify-between px-3 h-10 shrink-0 border-b border-border">
         <span className="text-[11px] uppercase tracking-wide text-muted font-medium">{VIEW_TITLE[view]}</span>
         <div className="flex items-center gap-1">
@@ -495,7 +624,7 @@ export function Library({
             activePath={activePath}
             refreshKey={refreshKey}
             onOpenPath={onOpenPath}
-            onNotice={setNotice}
+            onNotice={filesNotice}
           />
         ) : localFiles.length === 0 &&
           myCloudOnly.length === 0 &&
@@ -533,7 +662,13 @@ export function Library({
         </button>
       )}
       {notice && (
-        <div className="px-3 py-2 text-[11px] text-muted border-t border-border">{notice}</div>
+        <div
+          className={`px-3 py-2 text-[11px] border-t border-border ${
+            notice.kind === "error" ? "text-[var(--status-red)]" : "text-muted"
+          }`}
+        >
+          {notice.text}
+        </div>
       )}
 
       {needsDefault && (

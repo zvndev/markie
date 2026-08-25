@@ -8,6 +8,11 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+
+// A real window on a real machine is a deliberate act; see the helper.
+requireElectronConsent("light-mode-visual-audit", import.meta.url);
+
 
 const root = path.resolve(new URL("..", import.meta.url).pathname);
 const require = createRequire(path.join(root, "server", "package.json"));
@@ -457,19 +462,30 @@ async function main() {
     modal.setAttribute('data-audit-surface', 'settings-probe');
     modal.className = 'markie-scrim fixed inset-0 z-[100] flex items-center justify-center';
     modal.innerHTML = \`
-      <div class="w-[440px] max-w-[92vw] max-h-[84vh] overflow-y-auto rounded-xl border border-border shadow-2xl p-5" style="background: var(--surface-2)">
+      <div class="markie-overlay-panel w-[480px] max-w-[92vw] max-h-[84vh] overflow-y-auto rounded-xl p-5" role="dialog" aria-modal="true">
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-[14px] font-semibold text-foreground">Settings</h2>
-          <button aria-label="Close settings" class="text-muted hover:text-foreground">x</button>
+          <button aria-label="Close settings" class="markie-overlay-close">x</button>
         </div>
-        <div class="text-[10px] uppercase tracking-wide text-muted mb-2">Account</div>
-        <div class="mb-5 space-y-2">
-          <input class="w-full text-[13px] bg-background border border-border rounded-md px-3 py-2 text-foreground outline-none focus:border-foreground/30" placeholder="Email" type="email" value="person@example.com" />
-          <input class="w-full text-[13px] bg-background border border-border rounded-md px-3 py-2 text-foreground outline-none focus:border-foreground/30" placeholder="Password" type="password" value="password" />
-          <button class="w-full text-[13px] py-2 rounded-md bg-accent text-foreground">Sign in</button>
-          <button class="w-full text-[13px] py-2 rounded-md border border-border text-foreground/90 hover:bg-accent/40">Continue with Google</button>
+        <div class="flex gap-1 mb-5 border-b border-border" role="tablist" aria-label="Settings sections">
+          <button role="tab" aria-selected="true" data-audit-sample="settings-tab-active" class="markie-overlay-button -mb-px px-3 py-2 text-[12px] border-b-2 border-foreground text-foreground">Account</button>
+          <button role="tab" aria-selected="false" data-audit-sample="settings-tab-idle" class="markie-overlay-button -mb-px px-3 py-2 text-[12px] border-b-2 border-transparent text-muted hover:text-foreground">Appearance</button>
+          <button role="tab" aria-selected="false" class="markie-overlay-button -mb-px px-3 py-2 text-[12px] border-b-2 border-transparent text-muted hover:text-foreground">Advanced</button>
         </div>
-        <button class="text-[11px] text-muted hover:text-foreground">Advanced...</button>
+        <div class="space-y-3">
+          <div>
+            <div class="text-[14px] font-semibold text-foreground">Sign in to Markie</div>
+            <div class="text-[12px] text-muted mt-1 leading-relaxed">For syncing and sharing across your devices. Markie works fully without an account, and your files stay on this Mac either way.</div>
+          </div>
+          <button class="markie-overlay-button w-full text-[13px] py-2 rounded-md bg-accent text-foreground hover:opacity-90">Continue with Google</button>
+          <div class="flex items-center gap-3 py-1">
+            <div class="h-px flex-1 bg-border"></div>
+            <span class="text-[11px] text-muted">or</span>
+            <div class="h-px flex-1 bg-border"></div>
+          </div>
+          <input class="markie-overlay-field w-full text-[13px] px-3 py-2" placeholder="you@work.com" type="email" value="person@example.com" />
+          <button class="markie-overlay-button w-full text-[13px] py-2 rounded-md border border-border text-foreground/90 hover:bg-accent/40">Email me a code</button>
+        </div>
       </div>\`;
     document.body.appendChild(modal);
   })()`);
@@ -754,6 +770,8 @@ async function main() {
       ['command palette input', document.querySelector('input[placeholder^="Type a command"]')],
       ['command palette row', findText('Open File')],
       ['settings heading', [...document.querySelectorAll('h2')].find((el) => text(el) === 'Settings')],
+      ['settings active tab', document.querySelector('[data-audit-sample="settings-tab-active"]')],
+      ['settings idle tab', document.querySelector('[data-audit-sample="settings-tab-idle"]')],
       ['settings email input', document.querySelector('input[type="email"]')],
       ['settings google button', findText('Continue with Google')],
       ['stats heading', document.querySelector('[data-audit-surface="stats-panel-probe"] span')],

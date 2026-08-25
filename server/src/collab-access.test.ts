@@ -33,7 +33,7 @@ if (toBeCreated.length > 0 || toBeAdded.length > 0) {
 
 const { docs } = await import("./docs.ts");
 const { shares } = await import("./shares.ts");
-const { ACCESS_CACHE_MS, attachCollab } = await import("./collab.ts");
+const { ACCESS_CACHE_MS, attachCollab, seedLockState } = await import("./collab.ts");
 const Database = (await import("better-sqlite3")).default;
 
 const db = new Database(process.env.DB_PATH);
@@ -110,8 +110,8 @@ async function signUp(name: string, email: string) {
   return { name, email, token, id: res.data?.user.id ?? "" };
 }
 
-async function createDoc(token: string, docId: string) {
-  const content = "# Collab access\n";
+async function createDoc(token: string, docId: string, body = "# Collab access\n") {
+  const content = body;
   const hash = createHash("sha256").update(content, "utf8").digest("hex");
   const res = await jsonRequest("PUT", `/api/docs/${docId}`, token, {
     name: "collab-access.md",
@@ -315,8 +315,11 @@ test("an editor can write into the room", async () => {
   await createDoc(owner.token, docId);
   await share(owner.token, docId, editor.email, "editor");
 
-  const ownerPeer = await connect(docId, owner.token);
+  // Join order matters now: the room is empty and the doc is not, so the first
+  // editor through the door holds the seed lock. Letting the editor take it
+  // keeps this test about write permission rather than about the lock.
   const editorPeer = await connect(docId, editor.token);
+  const ownerPeer = await connect(docId, owner.token);
 
   editorPeer.write("editor-write ");
   await editorPeer.resync();
@@ -330,8 +333,8 @@ test("a revoked editor's open socket can no longer write", async () => {
   await createDoc(owner.token, docId);
   const editorId = await share(owner.token, docId, editor.email, "editor");
 
+  const editorPeer = await connect(docId, editor.token); // seeder, see above
   const ownerPeer = await connect(docId, owner.token);
-  const editorPeer = await connect(docId, editor.token);
   editorPeer.write("before-revoke ");
   await editorPeer.resync();
   await ownerPeer.resync();
@@ -433,4 +436,189 @@ test("awareness from a viewer cannot claim another user's identity", async () =>
   assert.equal(seen.user.name, viewer.name, "presence must carry the authenticated name");
   assert.notEqual(seen.user.color, "#000000", "presence must not carry a client-chosen colour");
   assert.deepEqual(seen.cursor, { anchor: 3, head: 7 }, "the cursor itself is still the client's");
+});
+
+
+// ── seed lock: docs.content and doc_updates are stored independently, so a doc
+// shared as a snapshot opens into an empty room that somebody has to seed ──
+
+test("only the first editor may seed a room that has no updates yet", async () => {
+  const docId = `collab-seed-lock-${stamp}`;
+  await createDoc(owner.token, docId);
+  await share(owner.token, docId, editor.email, "editor");
+
+  const ownerPeer = await connect(docId, owner.token); // first editor in, seeder
+  const editorPeer = await connect(docId, editor.token);
+  assert.deepEqual(seedLockState(docId), { seedPending: true, seeder: owner.id });
+
+  editorPeer.write("racing-seed ");
+  await editorPeer.resync();
+  await ownerPeer.resync();
+  assert.ok(
+    !ownerPeer.text().includes("racing-seed"),
+    "a second editor must not seed the room alongside the seeder"
+  );
+
+  ownerPeer.write("real-seed ");
+  await ownerPeer.resync();
+  await waitFor("the seed to reach the other editor", () =>
+    editorPeer.text().includes("real-seed")
+  );
+  assert.deepEqual(
+    seedLockState(docId),
+    { seedPending: false, seeder: null },
+    "the first stored update releases the lock"
+  );
+
+  // A dropped update leaves that client's own doc ahead of the room, and Yjs
+  // will not integrate later edits that sit on top of the item the server never
+  // saw. Reconnecting is what the real client does with a room it lost, so the
+  // "editing works again" half of this is asserted from a fresh socket.
+  const rejoined = await connect(docId, editor.token);
+  rejoined.write("after-seed ");
+  await rejoined.resync();
+  await ownerPeer.resync();
+  assert.ok(
+    ownerPeer.text().includes("after-seed"),
+    "once the room is seeded every editor writes normally"
+  );
+});
+
+test("a metadata-only update does not release the seed lock", async () => {
+  const docId = `collab-seed-meta-only-${stamp}`;
+  await createDoc(owner.token, docId);
+  await share(owner.token, docId, editor.email, "editor");
+
+  const ownerPeer = await connect(docId, owner.token); // seeder
+  const editorPeer = await connect(docId, editor.token);
+  assert.deepEqual(seedLockState(docId), { seedPending: true, seeder: owner.id });
+
+  // The client stamps a schemaVersion into the meta map when it seeds. Sent
+  // as its own update ahead of the content, that stamp carries no document —
+  // the lock must hold until something readable actually lands.
+  ownerPeer.doc.getMap("meta").set("schemaVersion", 1);
+  await ownerPeer.resync();
+  assert.deepEqual(
+    seedLockState(docId),
+    { seedPending: true, seeder: owner.id },
+    "a stamp with no content must not open the room"
+  );
+
+  editorPeer.write("meta-race ");
+  await editorPeer.resync();
+  await ownerPeer.resync();
+  assert.ok(
+    !ownerPeer.text().includes("meta-race"),
+    "the lock still blocks the racing editor after a metadata-only update"
+  );
+
+  // The seeder leaves after the stamp but before the text. The stored
+  // metadata update must not make a reborn room believe it was seeded.
+  ownerPeer.ws.close();
+  editorPeer.ws.close();
+  await waitFor("the room to be torn down", () => seedLockState(docId) === null);
+  const rejoined = await connect(docId, editor.token);
+  assert.deepEqual(
+    seedLockState(docId),
+    { seedPending: true, seeder: editor.id },
+    "a room holding only metadata still needs its seed"
+  );
+
+  rejoined.write("real-content ");
+  await rejoined.resync();
+  assert.deepEqual(
+    seedLockState(docId),
+    { seedPending: false, seeder: null },
+    "the first update carrying content releases the lock"
+  );
+});
+
+test("the seed passes to the next editor when the seeder leaves", async () => {
+  const docId = `collab-seed-handoff-${stamp}`;
+  await createDoc(owner.token, docId);
+  await share(owner.token, docId, editor.email, "editor");
+
+  const ownerPeer = await connect(docId, owner.token); // seeder
+  const editorPeer = await connect(docId, editor.token);
+  assert.deepEqual(seedLockState(docId), { seedPending: true, seeder: owner.id });
+
+  ownerPeer.ws.close();
+  await waitFor("the seed to be handed to the remaining editor", () => {
+    const state = seedLockState(docId);
+    return !!state && state.seedPending && state.seeder === editor.id;
+  });
+
+  editorPeer.write("inherited-seed ");
+  await editorPeer.resync();
+  const witness = await connect(docId, owner.token);
+  assert.ok(
+    witness.text().includes("inherited-seed"),
+    "the inheriting editor may seed the room"
+  );
+});
+
+test("a viewer never holds the seed", async () => {
+  const docId = `collab-seed-viewer-${stamp}`;
+  await createDoc(owner.token, docId);
+  await share(owner.token, docId, viewer.email, "viewer");
+  await share(owner.token, docId, editor.email, "editor");
+
+  const viewerPeer = await connect(docId, viewer.token);
+  assert.deepEqual(
+    seedLockState(docId),
+    { seedPending: true, seeder: null },
+    "a room of viewers waits for an editor rather than electing one"
+  );
+
+  const editorPeer = await connect(docId, editor.token);
+  assert.deepEqual(seedLockState(docId), { seedPending: true, seeder: editor.id });
+
+  editorPeer.write("editor-seed ");
+  await editorPeer.resync();
+  await waitFor("the seed to reach the viewer", () =>
+    viewerPeer.text().includes("editor-seed")
+  );
+});
+
+test("a doc with no content is never seed locked", async () => {
+  const docId = `collab-seed-empty-doc-${stamp}`;
+  await createDoc(owner.token, docId, "");
+  await share(owner.token, docId, editor.email, "editor");
+
+  const ownerPeer = await connect(docId, owner.token);
+  const editorPeer = await connect(docId, editor.token);
+  assert.deepEqual(seedLockState(docId), { seedPending: false, seeder: null });
+
+  editorPeer.write("no-lock-here ");
+  await editorPeer.resync();
+  await ownerPeer.resync();
+  assert.ok(ownerPeer.text().includes("no-lock-here"), "nothing to seed, nothing to lock");
+});
+
+test("a room that already holds updates is never seed locked", async () => {
+  const docId = `collab-seed-existing-${stamp}`;
+  await createDoc(owner.token, docId);
+  await share(owner.token, docId, editor.email, "editor");
+
+  // Straight into the update log, so the room is built from stored Yjs state
+  // rather than from an empty doc.
+  const seeded = new Y.Doc();
+  seeded.getText("default").insert(0, "already-here ");
+  db.prepare(
+    "INSERT INTO doc_updates (doc_id, seq, update_data) VALUES (?, 1, ?)"
+  ).run(docId, Buffer.from(Y.encodeStateAsUpdate(seeded)));
+  seeded.destroy();
+
+  const ownerPeer = await connect(docId, owner.token);
+  const editorPeer = await connect(docId, editor.token);
+  assert.deepEqual(seedLockState(docId), { seedPending: false, seeder: null });
+  assert.ok(ownerPeer.text().includes("already-here"), "the stored update loaded");
+
+  editorPeer.write("second-editor ");
+  await editorPeer.resync();
+  await ownerPeer.resync();
+  assert.ok(
+    ownerPeer.text().includes("second-editor"),
+    "a seeded room takes writes from any editor"
+  );
 });

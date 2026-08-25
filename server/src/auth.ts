@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 import { sendEmail } from "./email.ts";
 import { claimPendingInvites } from "./pending.ts";
 import { resolveAuthSecret } from "./auth-secret.ts";
+import { otpEmail } from "./otp-email.ts";
 
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
@@ -27,6 +28,10 @@ export const auth = betterAuth({
       "/sign-in/email": { window: 60, max: 10 },
       "/sign-up/email": { window: 60, max: 10 },
       "/email-otp/send-verification-otp": { window: 60, max: 5 },
+      // Password reset is the same shape of vector: an unauthenticated route
+      // that makes us send mail to an address the caller chose.
+      "/forget-password/email-otp": { window: 60, max: 5 },
+      "/email-otp/reset-password": { window: 60, max: 10 },
     },
   },
   emailAndPassword: {
@@ -60,15 +65,18 @@ export const auth = betterAuth({
     // response header) — cross-origin cookies are unreliable from app://
     bearer(),
     emailOTP({
+      // Pinned to the plugin's defaults on purpose: the email copy promises
+      // "expires in 5 minutes" (otp-email.ts) and the reset rate limit was
+      // sized around 3 attempts — an upgraded default must not silently
+      // loosen either.
+      expiresIn: 300,
+      allowedAttempts: 3,
       async sendVerificationOTP({ email, otp, type }) {
-        await sendEmail({
-          to: email,
-          subject:
-            type === "sign-in"
-              ? `${otp} is your Markie sign-in code`
-              : `${otp} is your Markie verification code`,
-          text: `Your code is ${otp}. It expires in 5 minutes.`,
-        });
+        // Forgotten passwords are recovered with a code rather than a reset
+        // link: a link needs a hosted page plus a second deep-link hop back
+        // into the desktop app, and this plugin already does it in two
+        // requests without the user leaving Markie.
+        await sendEmail({ to: email, ...otpEmail(type, otp) });
       },
     }),
   ],

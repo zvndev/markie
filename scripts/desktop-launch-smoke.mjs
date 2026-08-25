@@ -8,6 +8,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostSmokeMode, verifyPackageLayout } from "./package-smoke.mjs";
 import { capturePageScreenshot, selectPageTarget, validateRendererProbe } from "./windows-launch-smoke.mjs";
+import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+
+// A real window on a real machine is a deliberate act; see the helper.
+requireElectronConsent("desktop-launch-smoke", import.meta.url);
+
 
 const DEFAULT_PRODUCT_NAME = "Markie";
 const DEFAULT_TIMEOUT_MS = 45000;
@@ -242,25 +247,21 @@ async function stopProcessTree(child, platform = process.platform) {
     return;
   }
 
+  // Signal ONLY this child, never its process group. A negative-pid group kill
+  // on macOS once reached session services (a recycled/LaunchServices-detached
+  // pid) and took Finder down; see scripts/lib/safe-kill.mjs.
+  if (child.exitCode !== null || child.signalCode !== null || child.killed) return;
   try {
-    process.kill(-child.pid, "SIGTERM");
+    child.kill("SIGTERM");
   } catch {
-    try {
-      process.kill(child.pid, "SIGTERM");
-    } catch {
-      return;
-    }
+    return;
   }
   await waitForExit(child);
   if (child.exitCode === null && child.signalCode === null) {
     try {
-      process.kill(-child.pid, "SIGKILL");
+      child.kill("SIGKILL");
     } catch {
-      try {
-        process.kill(child.pid, "SIGKILL");
-      } catch {
-        // Best-effort cleanup after the app process already exited.
-      }
+      // Best-effort cleanup after the app process already exited.
     }
   }
 }
@@ -307,7 +308,6 @@ export async function runDesktopLaunchSmoke({
     [`--remote-debugging-port=${resolvedDebugPort}`, `--user-data-dir=${tempUserDataDir}`],
     {
       cwd: app.appDir,
-      detached: process.platform !== "win32",
       env: { ...process.env, MARKIE_E2E: "1" },
       stdio: "ignore",
       windowsHide: true,

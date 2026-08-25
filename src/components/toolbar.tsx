@@ -23,6 +23,9 @@ interface ToolbarProps {
   // PDF render it. All three live in the one visible Export menu.
   onSaveAs: () => void;
   onExportHTML: () => void;
+  // An export is running. A second one spawns a hidden renderer main never
+  // reclaims, so the menu says so instead of letting it be started.
+  exporting?: boolean;
   fileName: string | null;
   isDirty: boolean;
   canRename: boolean;
@@ -47,6 +50,7 @@ export function Toolbar({
   onExportPDF,
   onSaveAs,
   onExportHTML,
+  exporting = false,
   fileName,
   isDirty,
   canRename,
@@ -175,7 +179,7 @@ export function Toolbar({
                 <line x1="12" y1="18" x2="12" y2="12" />
                 <polyline points="9 15 12 18 15 15" />
               </svg>
-              Export
+              {exporting ? "Exporting…" : "Export"}
               <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="6 9 12 15 18 9" />
               </svg>
@@ -196,7 +200,8 @@ export function Toolbar({
                 </button>
                 <button
                   onClick={() => { onExportHTML(); setShowPDFMenu(false); }}
-                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
+                  disabled={exporting}
+                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2 disabled:opacity-40"
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
                     <polyline points="16 18 22 12 16 6" />
@@ -207,7 +212,8 @@ export function Toolbar({
                 <div className="h-px bg-border my-1" />
                 <button
                   onClick={() => { onExportPDF("dark"); setShowPDFMenu(false); }}
-                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
+                  disabled={exporting}
+                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2 disabled:opacity-40"
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -218,7 +224,8 @@ export function Toolbar({
                 </button>
                 <button
                   onClick={() => { onExportPDF("light"); setShowPDFMenu(false); }}
-                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
+                  disabled={exporting}
+                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2 disabled:opacity-40"
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />

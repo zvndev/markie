@@ -1,8 +1,8 @@
 // Pure helpers for the Markie MCP server: path guarding, query matching, and
 // agent-file classification. Kept dependency-light and side-effect-free so they
 // can be unit-tested in isolation (node --test lib.test.mjs).
-import { resolve, join, sep, dirname, basename } from "node:path";
-import { lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { resolve, join, sep, dirname, basename, win32 as winPath } from "node:path";
+import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
 // Self-contained scan rules (no ../electron dependency — see scan.mjs header).
 import { isExcludedDir, allowlist } from "./scan.mjs";
 
@@ -160,7 +160,32 @@ export function groupSkills(rows) {
   })).filter((g) => g.files.length > 0);
 }
 
-export function markieOpenCommand(filePath, platform = process.platform) {
+// Where the Windows installer puts Markie. NSIS defaults to a per-user install
+// under %LOCALAPPDATA%\\Programs; the machine-wide install lands in Program Files.
+function windowsMarkieExe({ env = process.env, exists = existsSync } = {}) {
+  // win32.join explicitly: this path is a Windows path even when the rule is
+  // being evaluated (in a test) on a POSIX host.
+  const candidates = [
+    env.LOCALAPPDATA && winPath.join(env.LOCALAPPDATA, "Programs", "Markie", "Markie.exe"),
+    env.ProgramFiles && winPath.join(env.ProgramFiles, "Markie", "Markie.exe"),
+    env["ProgramFiles(x86)"] && winPath.join(env["ProgramFiles(x86)"], "Markie", "Markie.exe"),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      if (exists(candidate)) return candidate;
+    } catch {
+      // unreadable location — try the next one
+    }
+  }
+  return null;
+}
+
+// The command that opens a file in Markie. `open -a Markie` on macOS is exact;
+// the other platforms have to work harder.
+export function markieOpenCommand(filePath, platform = process.platform, {
+  env = process.env,
+  exists = existsSync,
+} = {}) {
   if (!filePath || typeof filePath !== "string") {
     return { ok: false, error: "path is required" };
   }
@@ -173,10 +198,30 @@ export function markieOpenCommand(filePath, platform = process.platform) {
     };
   }
   if (platform === "win32") {
+    // The old form was `powershell -Command "Start-Process -LiteralPath $args[0]"
+    // <path>`, which binds nothing: with -Command the trailing argument is
+    // appended to the script text, so $args is empty and the path is ignored.
+    // Launching the installed executable directly is both correct and actually
+    // opens Markie rather than whatever owns the .md association.
+    const exe = windowsMarkieExe({ env, exists });
+    if (exe) {
+      return {
+        ok: true,
+        command: exe,
+        args: [filePath],
+        message: `Opening ${filePath} in Markie`,
+      };
+    }
+    // No install found: hand the path to explorer.exe, which launches the
+    // system .md handler and does no command-line re-parsing. `cmd.exe /c start`
+    // was rejected: Node only quotes arguments containing spaces or quotes, so
+    // a file named `notes&calc&.md` would make cmd.exe run `calc` — a real
+    // command-injection through a filename an agent or archive can create.
+    const explorer = winPath.join(env.SystemRoot || env.windir || "C:\\Windows", "explorer.exe");
     return {
       ok: true,
-      command: "powershell.exe",
-      args: ["-NoProfile", "-Command", "Start-Process -LiteralPath $args[0]", filePath],
+      command: explorer,
+      args: [filePath],
       message: `Opening ${filePath} with your system Markdown handler`,
     };
   }

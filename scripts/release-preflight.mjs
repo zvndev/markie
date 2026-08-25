@@ -96,7 +96,7 @@ const REQUIRED_WINDOWS_WORKFLOW_SNIPPETS = [
   "npm run electron:pack:win",
   "npm run electron:smoke:win",
   "npm run electron:smoke:win:launch",
-  "actions/upload-artifact@v4",
+  "actions/upload-artifact@v5",
   ".autoloop/runs/windows-launch-smoke-*/launch-smoke.json",
   ".autoloop/runs/windows-launch-smoke-*/screenshot.png",
 ];
@@ -127,7 +127,7 @@ const REQUIRED_ELECTRON_MAIN_SNIPPETS = [
   "autoUpdater.checkForUpdates()",
   'buttons: ["Restart & Update", "Later"]',
   "autoUpdater.quitAndInstall()",
-  'ipcMain.handle("check-for-updates", () => requestUpdateCheck({ manual: true }))',
+  'handle("check-for-updates", () => requestUpdateCheck({ manual: true })',
   'label: "Check for Updates…"',
   'const csp = buildAppCsp(path.join(__dirname, "../out"));',
   "...(isDev ? [{ type: \"separator\" }, { role: \"toggleDevTools\" }] : [])",
@@ -291,6 +291,22 @@ export function validateReleaseManifest(rootDir) {
   assert(Boolean(manifest.storage?.region), "release storage region is required");
   assert(Boolean(manifest.storage?.publicBaseUrl), "release public storage base is required");
   assert(mac?.feed?.path === "mac/latest-mac.yml", "public macOS feed path must remain canonical");
+  // The beta channel is opt-in from inside the app and must stay unlisted. The
+  // website and the share emails render from `platforms`, so a beta entry
+  // appearing there is the exact failure this guards: a build we intend to be
+  // able to withdraw becoming something the public was told to download.
+  assert(
+    !manifest.platforms?.some((platform) => String(platform.id).includes("beta")),
+    "beta builds must never appear as a platform entry"
+  );
+  assert(
+    manifest.betaChannel?.feed?.path === "mac/beta-mac.yml",
+    "beta feed path must remain canonical"
+  );
+  assert(
+    manifest.betaChannel?.feed?.path !== mac?.feed?.path,
+    "beta and stable must not share a feed file"
+  );
   assert(publish?.provider === manifest.storage.provider, "builder provider must come from the release manifest");
   assert(publish?.bucket === manifest.storage.bucket, "builder bucket must come from the release manifest");
   assert(publish?.endpoint === manifest.storage.endpoint, "builder endpoint must come from the release manifest");
@@ -527,7 +543,7 @@ export function validateElectronMainDesktopSupport(
     "manual update check helper must be defined before setupAutoUpdate"
   );
   assert(
-    main.indexOf('ipcMain.handle("check-for-updates"') < main.indexOf("// IPC: user accepted the update"),
+    main.indexOf('handle("check-for-updates"') < main.indexOf("// IPC: user accepted the update"),
     "update check IPC must stay with the update IPC handlers"
   );
   return snippets;

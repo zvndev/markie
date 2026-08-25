@@ -9,6 +9,12 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+import { safeKill } from "./lib/safe-kill.mjs";
+
+// A real window on a real machine is a deliberate act; see the helper.
+requireElectronConsent("ui-check", import.meta.url);
+
 
 const root = path.resolve(new URL("..", import.meta.url).pathname);
 const require = createRequire(path.join(root, "server", "package.json"));
@@ -25,12 +31,12 @@ const check = (name, passed, detail = "") => {
   process.stdout.write(`${passed ? "  ok  " : "  FAIL"} ${name}${detail ? `\n         ${detail}` : ""}\n`);
 };
 
-// detached gives each child its own process group, so killing -pid takes the
+// Kill only the direct child (safeKill); a group kill once took Finder down. Was: 
 // whole tree. Without it `npm run dev` dies and the `next dev` it spawned is
 // orphaned, keeps .next/dev/lock, and every later run fails to start.
 function start(command, args, options = {}) {
   const fd = options.log ? openSync(options.log, "a") : "ignore";
-  const child = spawn(command, args, { cwd: root, env: options.env ?? process.env, stdio: ["ignore", fd, fd], detached: true });
+  const child = spawn(command, args, { cwd: root, env: options.env ?? process.env, stdio: ["ignore", fd, fd] });
   children.push(child);
   if (typeof fd === "number") child.on("exit", () => closeSync(fd));
   return child;
@@ -38,7 +44,7 @@ function start(command, args, options = {}) {
 
 function killTree(child) {
   if (child.exitCode !== null) return;
-  try { process.kill(-child.pid, "SIGKILL"); } catch { try { process.kill(child.pid, "SIGKILL"); } catch {} }
+  safeKill(child, "SIGKILL");
 }
 async function cleanup() {
   for (const c of children) killTree(c);

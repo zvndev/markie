@@ -11,6 +11,7 @@ const {
   feedForPlatform,
   findDownloadPlatform,
   markieSiteUrl,
+  parseArtifactName,
   parseDmgName,
   parseFeedVersion,
   primaryDownloadCta,
@@ -30,6 +31,28 @@ sha512: abc==
 releaseDate: '2026-06-15T00:00:00.000Z'
 `;
 
+// What electron-builder actually writes for a dual-architecture mac release:
+// both arches live in one latest-mac.yml, and each platform has to pick its own
+// artifact out of it.
+const DUAL_ARCH_YML = `version: 0.4.0
+files:
+  - url: Markie-0.4.0-arm64-mac.zip
+    sha512: aaa==
+    size: 200709891
+  - url: Markie-0.4.0-arm64.dmg
+    sha512: bbb==
+    size: 209341444
+  - url: Markie-0.4.0-mac.zip
+    sha512: ccc==
+    size: 210709891
+  - url: Markie-0.4.0-x64.dmg
+    sha512: ddd==
+    size: 219341444
+path: Markie-0.4.0-arm64-mac.zip
+sha512: aaa==
+releaseDate: '2026-08-15T00:00:00.000Z'
+`;
+
 test("parseDmgName pulls the .dmg filename from latest-mac.yml", () => {
   assert.equal(parseDmgName(SAMPLE_YML), "Markie-0.2.3-arm64.dmg");
 });
@@ -43,6 +66,24 @@ test("parseDmgName works across version bumps", () => {
 
 test("parseDmgName returns null when no dmg is present", () => {
   assert.equal(parseDmgName("files:\n  - url: Markie-0.2.3-arm64-mac.zip\n"), null);
+});
+
+test("each mac platform picks its own artifact out of one dual-arch feed", () => {
+  const arm = findDownloadPlatform("mac-arm64");
+  const intel = findDownloadPlatform("mac-x64");
+  assert(arm);
+  assert(intel);
+  // One latest-mac.yml lists four artifacts; the x64 pattern must not match the
+  // arm64 dmg, and vice versa.
+  assert.equal(parseArtifactName(DUAL_ARCH_YML, arm), "Markie-0.4.0-arm64.dmg");
+  assert.equal(parseArtifactName(DUAL_ARCH_YML, intel), "Markie-0.4.0-x64.dmg");
+  assert.equal(parseFeedVersion(DUAL_ARCH_YML), "0.4.0");
+});
+
+test("the Intel pattern finds nothing in an arm64-only feed", () => {
+  const intel = findDownloadPlatform("mac-x64");
+  assert(intel);
+  assert.equal(parseArtifactName(SAMPLE_YML, intel), null);
 });
 
 test("parseFeedVersion reads the stable feed version", () => {
@@ -98,7 +139,7 @@ test("download manifest covers public and planned desktop targets", () => {
         id: "mac-x64",
         label: "macOS Intel",
         route: "/download/mac-intel",
-        status: "planned",
+        status: "public",
         artifactPattern: "Markie-*-x64.dmg",
       },
       {
@@ -150,7 +191,7 @@ test("latest release JSON is a stable machine-readable source for sites and emai
     globalThis.fetch = previousFetch;
     clearDownloadCacheForTests();
   });
-  globalThis.fetch = async () => new Response(SAMPLE_YML, { status: 200 });
+  globalThis.fetch = async () => new Response(DUAL_ARCH_YML, { status: 200 });
 
   const res = await publicShare.request("/download/latest.json");
   const body = await res.json();
@@ -160,7 +201,7 @@ test("latest release JSON is a stable machine-readable source for sites and emai
   assert.deepEqual(body, {
     schemaVersion: 2,
     channel: "stable",
-    version: "0.2.3",
+    version: "0.4.0",
     primaryPlatformId: "mac-arm64",
     downloadPageUrl: "https://markie.zvndev.com/download",
     platforms: [
@@ -169,10 +210,20 @@ test("latest release JSON is a stable machine-readable source for sites and emai
         label: "macOS Apple Silicon",
         os: "macos",
         arch: "arm64",
-        version: "0.2.3",
+        version: "0.4.0",
         downloadUrl: "https://markie.zvndev.com/download/mac",
         artifactUrl:
-          "https://f005.backblazeb2.com/file/markie-releases/mac/Markie-0.2.3-arm64.dmg",
+          "https://f005.backblazeb2.com/file/markie-releases/mac/Markie-0.4.0-arm64.dmg",
+      },
+      {
+        id: "mac-x64",
+        label: "macOS Intel",
+        os: "macos",
+        arch: "x64",
+        version: "0.4.0",
+        downloadUrl: "https://markie.zvndev.com/download/mac-intel",
+        artifactUrl:
+          "https://f005.backblazeb2.com/file/markie-releases/mac/Markie-0.4.0-x64.dmg",
       },
     ],
   });
@@ -191,4 +242,21 @@ test("planned download routes render an honest unavailable page", async () => {
   assert.equal(res.status, 404);
   assert.match(body, /Windows x64 Is Not Published Yet/);
   assert.match(body, /current public build remains macOS Apple Silicon/i);
+});
+
+test("the Intel download route redirects to the x64 artifact", async (t) => {
+  const previousFetch = globalThis.fetch;
+  clearDownloadCacheForTests();
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+    clearDownloadCacheForTests();
+  });
+  globalThis.fetch = async () => new Response(DUAL_ARCH_YML, { status: 200 });
+
+  const res = await publicShare.request("/download/mac-intel");
+  assert.equal(res.status, 302);
+  assert.equal(
+    res.headers.get("location"),
+    "https://f005.backblazeb2.com/file/markie-releases/mac/Markie-0.4.0-x64.dmg"
+  );
 });

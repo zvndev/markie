@@ -27,6 +27,8 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
   const [stars, setStars] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(!!api?.mdIndexScan);
   const [filter, setFilter] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [starNotice, setStarNotice] = useState<string | null>(null);
   // Sections the user has flipped away from their default state.
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const [fullPath, setFullPath] = useState(
@@ -38,21 +40,62 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
   }, [rows]);
 
   const loadStars = () =>
-    api?.mdIndexStars?.().then((s: MdStar[]) => setStars(new Set(s.map((x) => x.path))));
+    api?.mdIndexStars?.()
+      // A failed channel answers `{ error }`, not a list.
+      .then((s: MdStar[]) =>
+        setStars(new Set((Array.isArray(s) ? s : []).map((x) => x.path)))
+      )
+      .catch(() => {});
 
   useEffect(() => {
     if (!api?.mdIndexScan) return;
     let alive = true;
-    api.mdIndexScan().then((res) => {
-      if (!alive) return;
-      setRows(res.files);
-      setLoading(false);
-    });
-    loadStars();
-    const off = api.onMdIndexUpdated?.(() => {
-      api.mdIndexRefresh?.().then((res) => {
-        if (alive) setRows(res.files);
+    api.mdIndexScan()
+      .then((res) => {
+        if (!alive) return;
+        // The scan can fail without rejecting: main answers the same shape
+        // with an empty list and an `error`.
+        if (!Array.isArray(res?.files)) {
+          setError(res?.error ?? "Couldn't read your agent files.");
+          setLoading(false);
+          return;
+        }
+        setRows(res.files);
+        setError(null);
+        setLoading(false);
+      })
+      // Without this the panel sat on "Looking for agent files…" forever.
+      .catch(() => {
+        if (!alive) return;
+        setError("Couldn't read your agent files.");
+        setLoading(false);
       });
+    loadStars();
+    // The broadcast carries the scan result; asking for another scan in
+    // response to one meant two device-wide walks per event.
+    const off = api.onMdIndexUpdated?.((payload) => {
+      if (!alive) return;
+      if (payload?.files) {
+        setRows(payload.files);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+      api.mdIndexRefresh?.()
+        .then((res) => {
+          if (!alive) return;
+          if (!Array.isArray(res?.files)) {
+            setError(res?.error ?? "Couldn't refresh the index.");
+            setLoading(false);
+            return;
+          }
+          setRows(res.files);
+          setError(null);
+          setLoading(false);
+        })
+        .catch(() => {
+          if (alive) setError("Couldn't refresh the index.");
+        });
     });
     return () => {
       alive = false;
@@ -61,8 +104,36 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Rescan on demand, so an error state is not a dead end.
+  const retry = () => {
+    if (!api?.mdIndexRefresh) return;
+    setError(null);
+    setLoading(true);
+    api.mdIndexRefresh()
+      .then((res) => {
+        if (!Array.isArray(res?.files)) {
+          setError(res?.error ?? "Couldn't read your agent files.");
+          setLoading(false);
+          return;
+        }
+        setRows(res.files);
+        setError(null);
+        setLoading(false);
+      })
+      .catch(() => {
+        setError("Couldn't read your agent files.");
+        setLoading(false);
+      });
+  };
+
+  // A star is decoration; its failure must not replace the whole list.
   const toggleStar = (p: string) =>
-    api?.mdIndexToggleStar?.(p, "file").then(() => loadStars());
+    api?.mdIndexToggleStar?.(p, "file")
+      .then(() => {
+        setStarNotice(null);
+        return loadStars();
+      })
+      .catch(() => setStarNotice("Couldn't save that star."));
 
   // Grouped by tool, then by what the file is for. One flat list per tool put
   // a skill, a subagent definition and a saved session note in the same run of
@@ -139,8 +210,21 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
         </button>
       </div>
 
+      {starNotice && (
+        <div className="px-3 py-1.5 text-[11px] text-[var(--status-red)] border-b border-border">
+          {starNotice}
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto">
-        {loading ? (
+        {error ? (
+          <div className="p-4 text-[12px] text-[var(--status-red)]">
+            {error}{" "}
+            <button onClick={retry} className="underline hover:no-underline">
+              Try again
+            </button>
+          </div>
+        ) : loading ? (
           <div className="p-4 text-[12px] text-muted">Looking for agent files…</div>
         ) : total === 0 ? (
           <div className="p-4 text-[12px] text-muted leading-relaxed">

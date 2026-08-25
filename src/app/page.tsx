@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Toolbar } from "@/components/toolbar";
 import { Editor } from "@/components/editor";
-import { RichView } from "@/components/rich-view";
+import { RichView, type FlushRich } from "@/components/rich-view";
 import { FormatRail } from "@/components/format-rail";
 import { DocToolbar } from "@/components/doc-toolbar";
 import {
@@ -17,7 +17,7 @@ import {
 import { StatsPanel } from "@/components/stats-panel";
 import type { Editor as TipTapEditor } from "@tiptap/react";
 import { formatMarkdownTables } from "@/lib/format-tables";
-import { csvToMarkdownTable, markdownTableToCSV } from "@/lib/csv";
+import { csvToMarkdownTable, csvDropsContent, markdownTableToCSV } from "@/lib/csv";
 import { CommandPalette } from "@/components/command-palette";
 import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { Settings } from "@/components/settings";
@@ -39,6 +39,9 @@ import {
   UpdateStrip,
 } from "@/components/share-banner";
 import { ConflictDialog } from "@/components/conflict-dialog";
+import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
+import { diskChangeKind } from "@/lib/disk-change";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
 import { FindBar } from "@/components/find-bar";
@@ -53,17 +56,22 @@ import {
   applyColorMode,
   colorModeForThemeId,
   getColorMode,
+  resolveColorMode,
   watchSystemColorMode,
 } from "@/lib/color-mode";
 import {
   adoptAuthToken,
-  authClient,
   collabWsBase,
   getAuthToken,
   pushSyncConfig,
   sharesClient,
 } from "@/lib/auth-client";
 import { consumeAuthState } from "@/lib/auth-state";
+import { authStore } from "@/lib/auth-store";
+import { markWelcomeSeen, shouldShowWelcome } from "@/lib/first-run";
+import { WELCOME_DOC } from "@/lib/welcome-doc";
+import { SignInDialog } from "@/components/sign-in";
+import type { SignInReason } from "@/lib/auth-errors";
 import { colorForName, type CollabConfig, type PeerUser } from "@/lib/collab";
 import {
   canEditDocument,
@@ -89,6 +97,7 @@ import {
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
 import {
   getElectronAPI,
+  getSafeAPI,
   type DocUpdate,
   type FilePayload,
   type SaveResult,
@@ -143,6 +152,19 @@ type ViewMode = "edit" | "preview" | "split";
 
 const isCSVName = (name: string | null) => !!name && /\.csv$/i.test(name);
 
+// One wording for "an export is already running", wherever the second one is
+// refused — the renderer's own guard and the main process's say the same thing.
+const EXPORT_BUSY = "Markie is already exporting. Wait for that one to finish.";
+
+// A short, stable fingerprint of the collab token, so the RichView key changes
+// when the token is rotated (revoke-and-reissue keeps the same doc id) without
+// putting the token itself into a DOM key.
+const tokenTag = (token: string) => {
+  let h = 5381;
+  for (let i = 0; i < token.length; i++) h = ((h * 33) ^ token.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+};
+
 // CSV files stay true CSV on disk; in the app they live as a markdown table
 const fromDisk = (name: string | null, raw: string) =>
   isCSVName(name) ? csvToMarkdownTable(raw) : raw;
@@ -162,11 +184,17 @@ export default function Home() {
   const [showHelp, setShowHelp] = useState(false);
   const [showTheme, setShowTheme] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  // Non-null while a gated surface is asking for a session; the value is what
+  // it wants the session for, which is what the dialog puts at the top.
+  const [signInReason, setSignInReason] = useState<SignInReason | null>(null);
   const [showLibrary, setShowLibrary] = useState(false);
   // which side-panel view the left rail has selected
   const [leftView, setLeftView] = useState<LeftView>("library");
   const leftViewRef = useRef<LeftView>("library");
   const [showTerminal, setShowTerminal] = useState(false);
+  // Latches on the first open. Hiding the terminal must not unmount it — that
+  // kills the shells and whatever they were running.
+  const [terminalMounted, setTerminalMounted] = useState(false);
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
   const [sourceView, setSourceView] = useState<SourceView | null>(null);
   const [showFind, setShowFind] = useState(false);
@@ -179,7 +207,6 @@ export default function Home() {
   // somebody's notes.
   const [appearance, setAppearance] = useState<DocAppearance>(DEFAULT_APPEARANCE);
   // bumps when auth changes out-of-band (deep-link sign-in) so account UI refreshes
-  const [authNonce, setAuthNonce] = useState(0);
   // bumps to refresh the Library panel (file opened/saved, sync changed)
   const [libRefreshKey, setLibRefreshKey] = useState(0);
   const [showShare, setShowShare] = useState(false);
@@ -194,13 +221,32 @@ export default function Home() {
   // answers. Everything that can write to the document reads this.
   const [roleState, setRoleState] = useState<ShareRoleState>("local");
   const [sharedBy, setSharedBy] = useState<string | null>(null);
-  // A copy that could not be written. Shown on the banner; there is no toast.
+  // The one place a document-level failure can be said out loud: a copy that
+  // could not be written, an export the main process refused, a Save As that
+  // silently reshaped the file. Shown on the banner; there is no toast system.
   const [forkError, setForkError] = useState<string | null>(null);
+  // The rich pane's debounced serializer, so a save or an export can settle it
+  // before reading the document rather than writing what it said 250 ms ago.
+  const flushRichRef = useRef<FlushRich | null>(null);
+  const handleFlushReady = useCallback((f: FlushRich | null) => {
+    flushRichRef.current = f;
+  }, []);
+  // One export at a time. Two concurrent printToPDF runs each spawn a hidden
+  // renderer the main process never reclaims, and both open a save sheet on the
+  // same window.
+  const exportInFlight = useRef(false);
+  // The same fact for the UI: the ref is the guard (synchronous, so a double
+  // click cannot slip through), this is what greys the Export menu out.
+  const [exporting, setExporting] = useState(false);
   // The server has a newer snapshot of the open document. Null when it does not.
   const [updateWaiting, setUpdateWaiting] = useState<DocUpdate | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [showConflict, setShowConflict] = useState(false);
+  // Set when something else edited the open file. Holds the new on-disk text so
+  // a reload does not have to go back to the filesystem and race the next edit.
+  const [diskChange, setDiskChange] = useState<string | null>(null);
+  const [showDiskConflict, setShowDiskConflict] = useState(false);
   const [peers, setPeers] = useState<PeerUser[]>([]);
   const [liveStatus, setLiveStatus] = useState<
     "connecting" | "connected" | "disconnected"
@@ -213,6 +259,10 @@ export default function Home() {
   useEffect(() => {
     leftViewRef.current = leftView;
   }, [leftView]);
+
+  useEffect(() => {
+    if (showTerminal) setTerminalMounted(true);
+  }, [showTerminal]);
 
   // Latest open-doc path + content, read by palette command closures without
   // rebuilding the command list on every keystroke.
@@ -256,7 +306,7 @@ export default function Home() {
         // this". The document stays read-only until it answers: assuming yes is
         // how a viewer got to type into a doc their edits could never reach.
         setRoleState("checking");
-        const me = await authClient.me();
+        const { user: me } = await authStore.ready();
         const [access, members] = me
           ? await Promise.all([sharesClient.access(cid), sharesClient.list(cid)])
           : [null, null];
@@ -376,7 +426,8 @@ export default function Home() {
     }
     api
       .docCheckUpdates()
-      .then(({ updates }) => {
+      .then((res) => {
+        const updates = Array.isArray(res?.updates) ? res.updates : [];
         setUpdateWaiting(updates.find((u) => u.path === filePath) ?? null);
       })
       // A background check that fails means no strip appears, which is exactly
@@ -463,6 +514,20 @@ export default function Home() {
   const resetDocAccess = useCallback(() => {
     setRoleState((prev) => (prev === "local" ? "local" : "checking"));
     setSharedBy(null);
+    // Tear the live session down in the same tick the document changes. The
+    // RichView key only covers collab-to-collab moves, so a config left
+    // standing kept file A's room mounted under file B: B's content never
+    // reached the editor, A's markdown kept arriving through onChange, and the
+    // next save wrote A into B's path.
+    setCollabCfg(null);
+    setEnforcedTheme(null);
+    setPeers([]);
+    // The conflict dialog is about one document's divergence from its cloud
+    // copy. Left standing across a swap it described the previous file — and
+    // its own state was frozen on the file it opened with, so the key on
+    // <ConflictDialog> remounts it per document as well.
+    setShowConflict(false);
+    setUpdateError(null);
   }, []);
 
   // Just open. ShareGate resolves the prerequisites and offers the action that
@@ -527,14 +592,21 @@ export default function Home() {
   );
 
   const loadFile = useCallback(
-    (data: { name: string; content: string; path: string | null }) => {
+    (data: { name: string; content: string; path: string | null; unsaved?: boolean }) => {
       dismissDocumentUI();
-      resetDocAccess();
+      // Re-opening the document that is already open (Library click, a reveal,
+      // a re-track) is not a document swap. Tearing the session down here left
+      // it down: refreshCollab is keyed on filePath, so an unchanged path never
+      // re-resolved the role and the live session never came back.
+      if (!data.path || data.path !== docRef.current.filePath) resetDocAccess();
       const md = fromDisk(data.name, data.content);
       setContent(md);
       setFileName(data.name);
       setFilePath(data.path);
-      setSavedContent(md);
+      // A snapshot revert arrives with unsaved:true: the buffer holds the old
+      // version while the file on disk still holds the new one, so the document
+      // must show as dirty until the user saves (or discards) the revert.
+      if (!data.unsaved) setSavedContent(md);
       if (data.path) {
         getElectronAPI()?.registryTrack?.({
           path: data.path,
@@ -603,22 +675,61 @@ export default function Home() {
   }, [loadFile]);
 
   const getPreviewHTML = useCallback(
-    (): string => renderMarkdownHTML(content),
+    (md?: string): string => renderMarkdownHTML(md ?? content),
     [content]
   );
 
-  const handleExportPDF = useCallback((theme: PDFTheme) => {
-    const html = getPreviewHTML();
-    const fullHTML = buildPDFHTML(html, theme);
+  // The document as it stands *now*. The rich pane serializes on a 250 ms
+  // debounce, so exporting or saving straight after a keystroke used to use the
+  // previous version of the text; flushing returns the current one and pushes
+  // it into state on the way past.
+  const currentMarkdown = useCallback(
+    (): string => flushRichRef.current?.() ?? content,
+    [content]
+  );
+
+  const handleExportPDF = useCallback(async (theme: PDFTheme) => {
+    const md = currentMarkdown();
 
     // In Electron, send HTML to main process for printToPDF
-    const api = getElectronAPI();
+    const api = getSafeAPI();
     if (api) {
-      api.exportPDF(fullHTML);
+      if (exportInFlight.current) {
+        setForkError(EXPORT_BUSY);
+        return;
+      }
+      exportInFlight.current = true;
+      setExporting(true);
+      try {
+        const fullHTML = await buildPDFHTML(getPreviewHTML(md), theme);
+        // Both failure shapes are possible: main may reject the invoke, and it
+        // may resolve with { success: false, error }. Ignoring either is how a
+        // failed export used to look exactly like a successful one.
+        const res = await api.exportPDF({
+          html: fullHTML,
+          theme,
+          // Main inlines this folder's images so the PDF still has pictures
+          // once it leaves the machine.
+          docPath: docRef.current.filePath,
+        });
+        // Backing out of the save sheet is not a failure.
+        if (res?.canceled) return;
+        if (res?.error || res?.success === false) {
+          setForkError(res?.error ?? "Couldn't export this document as a PDF.");
+        } else {
+          setForkError(null);
+        }
+      } catch (err) {
+        setForkError(`Couldn't export this document as a PDF: ${String(err)}`);
+      } finally {
+        exportInFlight.current = false;
+        setExporting(false);
+      }
       return;
     }
 
     // Web fallback: open in new window and print
+    const fullHTML = await buildPDFHTML(getPreviewHTML(md), theme);
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
     printWindow.document.write(fullHTML);
@@ -626,45 +737,93 @@ export default function Home() {
     printWindow.onload = () => {
       printWindow.print();
     };
-  }, [getPreviewHTML]);
+  }, [getPreviewHTML, currentMarkdown]);
 
   const handleSaveAs = useCallback(async (defaultName?: string): Promise<SaveResult | null> => {
-    const api = getElectronAPI();
+    const api = getSafeAPI();
     if (!api) return null;
     const name = defaultName ?? fileName ?? "untitled.md";
-    const diskContent = toDisk(name, content);
-    const res = await api.saveFileAs({ defaultName: name, content: diskContent });
+    const md = currentMarkdown();
+    // The extension the user types in the dialog is the one that decides the
+    // format, and they only type it after the content has been encoded. Hand
+    // main both encodings so it can write the right one once, instead of the
+    // renderer writing the file a second time behind the save sheet.
+    const csvContent = markdownTableToCSV(md);
+    const res = await api.saveFileAs({
+      defaultName: name,
+      content: md,
+      csvContent,
+    });
+    if (res?.error) return res;
     if (res.success && res.path && res.name) {
+      // Which bytes actually landed. An older main has no `wroteCsv` and wrote
+      // `content` verbatim, so a .csv still needs the one re-encode + rewrite.
+      let written = res.wroteCsv === undefined ? md : res.wroteCsv ? csvContent : md;
+      if (res.wroteCsv === undefined && isCSVName(res.name)) {
+        written = csvContent;
+        const rewrite = await api.saveFile({ filePath: res.path, content: written });
+        if (rewrite?.error || rewrite?.success === false) {
+          return {
+            success: false,
+            path: res.path,
+            name: res.name,
+            error:
+              rewrite?.error ??
+              `Saved, but couldn't rewrite ${res.name} in that format.`,
+          };
+        }
+      }
+      // CSV keeps the first table and nothing else. Saying so after the fact is
+      // the least we owe someone who just watched their prose disappear.
+      const dropped = isCSVName(res.name) ? csvDropsContent(md) : null;
+      setForkError(
+        dropped?.drops
+          ? dropped.hasTable
+            ? `Saved as CSV: ${dropped.droppedLines} line${dropped.droppedLines === 1 ? "" : "s"} outside the first table are not in that file.`
+            : "Saved as CSV: this document has no table, so the file is empty."
+          : null
+      );
       // A different file is open now, so whatever access the last one carried
       // stops applying here.
       resetDocAccess();
       setFilePath(res.path);
       setFileName(res.name);
-      setSavedContent(content);
+      setSavedContent(md);
       // A file Markie wrote and now has open belongs in the registry like any
       // file it opens. A fresh row is local-only with no cloud doc, which is
       // exactly what a copy has to stay.
       await api.registryTrack?.({
         path: res.path,
         name: res.name,
-        content: diskContent,
+        content: written,
       });
       setLibRefreshKey((k) => k + 1);
     }
     return res;
-  }, [fileName, content, resetDocAccess]);
+  }, [fileName, currentMarkdown, resetDocAccess]);
 
   // Resolves to an error message when the save landed on disk but not in the
   // cloud, and to null otherwise.
-  const handleSave = useCallback(async (): Promise<string | null> => {
-    const api = getElectronAPI();
+  const handleSave = useCallback(async (
+    // Set when the user has already resolved a disk conflict in the app, so
+    // main does not put the same question a second time in a native dialog.
+    { force = false }: { force?: boolean } = {}
+  ): Promise<string | null> => {
+    const api = getSafeAPI();
     if (!api) return null;
     if (!filePath) {
-      await handleSaveAs();
-      return null;
+      const saved = await handleSaveAs();
+      return saved?.error ?? null;
     }
-    const diskContent = toDisk(fileName, content);
-    const res = await api.saveFile({ filePath, content: diskContent });
+    const md = currentMarkdown();
+    const diskContent = toDisk(fileName, md);
+    const res = await api.saveFile({ filePath, content: diskContent, force });
+    // Every caller of handleSave discards the return value, so a save that
+    // never reached disk has to say so here or it says nothing at all.
+    if (res?.error) {
+      setForkError(res.error);
+      return res.error;
+    }
     // The file changed underneath us and the user chose to take the disk copy
     // rather than overwrite it. Load it in place of what they had.
     if (res.code === "reloaded" && typeof res.content === "string") {
@@ -674,7 +833,16 @@ export default function Home() {
       return null;
     }
     if (res.success) {
-      setSavedContent(content);
+      setSavedContent(md);
+      // ⌘S on a .csv keeps the first table and drops the rest, every time.
+      const dropped = isCSVName(fileName) ? csvDropsContent(md) : null;
+      if (dropped?.drops) {
+        setForkError(
+          dropped.hasTable
+            ? `Saved as CSV: ${dropped.droppedLines} line${dropped.droppedLines === 1 ? "" : "s"} outside the first table are not in that file.`
+            : "Saved as CSV: this document has no table, so the file is empty."
+        );
+      }
       // Push the snapshot if this file is cloud-synced — except during a live
       // session, where peers saving would race the version counter into fake
       // conflicts; the Yjs update log is the source of truth while live.
@@ -684,14 +852,19 @@ export default function Home() {
           name: fileName ?? "untitled.md",
           content: diskContent,
         });
-        // The file is on disk but not in the cloud. The Library now shows the
-        // row as "Not backed up"; the caller gets the reason so it can say so.
-        // TODO(toast): surface this failure as a toast once the toast system lands.
-        if (push?.error) return push.error;
+        // The file is on disk but not in the cloud. The Library shows the row
+        // as "Not backed up", but nobody reads a return value: every caller of
+        // handleSave discards it, so this used to be a backup that silently
+        // never happened. Say it on the banner as well.
+        // TODO(toast): move this to a toast once the toast system lands.
+        if (push?.error) {
+          setForkError(push.error);
+          return push.error;
+        }
       }
     }
     return null;
-  }, [filePath, fileName, content, handleSaveAs, collabCfg]);
+  }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg]);
 
   // Resolves to an error message when the copy could not be made, null when it
   // was made or the user backed out of the dialog.
@@ -717,7 +890,11 @@ export default function Home() {
   // Every route to "Make a copy" reports through the banner: the menu, the
   // command palette, and the banner's own button.
   const handleMakeCopy = useCallback(async () => {
-    setForkError(await handleFork());
+    const err = await handleFork();
+    // Only a failure overwrites the banner. A copy that worked may already have
+    // put a "saved as CSV, here is what it dropped" warning there, and clearing
+    // it unconditionally was how that warning went unread.
+    if (err) setForkError(err);
   }, [handleFork]);
 
   // Named for the file manager the reader actually has, so the palette entry
@@ -747,12 +924,36 @@ export default function Home() {
   }, []);
 
   const handleExportHTML = useCallback(async () => {
-    const api = getElectronAPI();
+    const api = getSafeAPI();
     if (!api) return;
-    const html = buildPDFHTML(getPreviewHTML(), "light");
+    if (exportInFlight.current) {
+      setForkError(EXPORT_BUSY);
+      return;
+    }
     const base = (fileName ?? "document").replace(/\.[^.]+$/, "");
-    await api.exportHTML({ defaultName: `${base}.html`, html });
-  }, [fileName, getPreviewHTML]);
+    exportInFlight.current = true;
+    setExporting(true);
+    try {
+      const html = await buildPDFHTML(getPreviewHTML(currentMarkdown()), "light");
+      const res = await api.exportHTML({
+        defaultName: `${base}.html`,
+        html,
+        docPath: docRef.current.filePath,
+      });
+      // Backing out of the save sheet is not a failure.
+      if (res?.canceled) return;
+      if (res?.error || res?.success === false) {
+        setForkError(res?.error ?? "Couldn't export this document as HTML.");
+      } else {
+        setForkError(null);
+      }
+    } catch (err) {
+      setForkError(`Couldn't export this document as HTML: ${String(err)}`);
+    } finally {
+      exportInFlight.current = false;
+      setExporting(false);
+    }
+  }, [fileName, getPreviewHTML, currentMarkdown]);
 
   const handleRename = useCallback(async (newName: string) => {
     const api = getElectronAPI();
@@ -926,6 +1127,47 @@ export default function Home() {
     [richEditor, sourceView]
   );
 
+  // The IPC subscriptions below are installed once, so anything they compare
+  // against has to be read through a ref rather than captured.
+  const filePathRef = useRef<string | null>(null);
+  useEffect(() => {
+    filePathRef.current = filePath;
+    // Follow the document that is actually open: Save As and Fork move it, and
+    // a watcher left on the old path reports edits to a file nobody is reading.
+    void getElectronAPI()?.watchFile?.(filePath)?.catch?.(() => {});
+    // A different document cannot inherit the previous one's conflict.
+    setDiskChange(null);
+    setShowDiskConflict(false);
+  }, [filePath]);
+
+  // Take what is on disk, dropping the buffer. Used by the strip (where there
+  // is nothing to drop) and by the dialog's explicit "discard mine".
+  // fromDisk, because the disk text may be CSV or another to-disk format and
+  // the buffer always holds markdown.
+  const reloadFromDisk = useCallback(() => {
+    if (diskChange === null) return;
+    const md = fromDisk(fileName, diskChange);
+    setContent(md);
+    setSavedContent(md);
+    setDiskChange(null);
+    setShowDiskConflict(false);
+  }, [diskChange, fileName]);
+
+  // Keep both: save the buffer under a new name and leave the changed file
+  // alone. The only resolution that destroys nothing.
+  const saveCopyOfMine = useCallback(
+    async (suggestedName: string) => {
+      const saved = await handleSaveAs(suggestedName);
+      // A cancelled save sheet answers { canceled: true }, not success: the
+      // conflict still stands and the dialog stays.
+      if (!saved?.success) return;
+      // Save As re-points the document, and the effect on filePath clears the
+      // conflict and re-aims the watcher at the copy.
+      setShowDiskConflict(false);
+    },
+    [handleSaveAs]
+  );
+
   const handlersRef = useRef({
     openFile: handleOpenFile,
     newFile: handleNewFile,
@@ -937,7 +1179,10 @@ export default function Home() {
     exportHTML: handleExportHTML,
     fileOpened: (data: FilePayload) => loadFile(data),
     undoRedo: (d: "undo" | "redo") => runUndoRedo(d),
-    print: () => window.print(),
+    print: () => {
+      // Replaced by handlePrint below, before any menu event can arrive.
+      window.print();
+    },
     zoom: (step: number) => {
       void step;
     },
@@ -991,20 +1236,37 @@ export default function Home() {
     }
   }, [enforcedTheme]);
 
-  // Boot: decide the first painted document — the OS-opened file or the
-  // welcome sample — before rendering anything, so the wrong doc never flashes
+  // Boot: decide the first painted document — the OS-opened file, the one-time
+  // welcome document, or the sample — before rendering anything, so the wrong
+  // doc never flashes
   useEffect(() => {
     const pending =
       getElectronAPI()?.getInitialFile?.() ?? Promise.resolve(null);
-    pending.then((file) => {
-      if (file) {
-        loadFile(file);
-      } else {
+    pending
+      .then((file) => {
+        // A handler that answers with { error } instead of a payload must not
+        // be mistaken for a file: loading it would blank the editor.
+        if (file && typeof file.content === "string") {
+          loadFile(file);
+        } else if (shouldShowWelcome({ openedFile: false })) {
+          setContent(WELCOME_DOC);
+          setSavedContent(WELCOME_DOC);
+          markWelcomeSeen();
+        } else {
+          setContent(SAMPLE);
+          setSavedContent(SAMPLE);
+        }
+      })
+      // A rejected getInitialFile used to leave `booted` false forever, and
+      // the pre-boot placeholder is an empty div: the app launched to a blank
+      // window with no way out. The welcome document is a better answer than
+      // nothing.
+      .catch((err) => {
+        console.error("Markie: couldn't read the file to open at launch", err);
         setContent(SAMPLE);
         setSavedContent(SAMPLE);
-      }
-      setBooted(true);
-    });
+      })
+      .finally(() => setBooted(true));
   }, [loadFile]);
 
   // Listen for Electron IPC events — each subscription returns an unsubscribe
@@ -1040,7 +1302,7 @@ export default function Home() {
             }
             adoptAuthToken(token);
             refreshCollabRef.current();
-            setAuthNonce((n) => n + 1); // re-render Settings/account state
+            void authStore.refresh(); // every auth-aware surface updates at once
             setShowSettings(false); // dismiss the sign-in modal — we're in now
             setLibRefreshKey((k) => k + 1); // Library can show cloud files now
             return;
@@ -1071,6 +1333,12 @@ export default function Home() {
       api.onMenuReveal?.(() => handlersRef.current.reveal()),
       api.onMenuExportHTML?.(() => handlersRef.current.exportHTML()),
       api.onFileOpened?.((data) => handlersRef.current.fileOpened(data)),
+      api.onFileChangedOnDisk?.((data) => {
+        // Ignore a change to a file we are no longer showing: the watcher can
+        // fire once more between opening a new document and re-pointing.
+        if (data.path !== filePathRef.current) return;
+        setDiskChange(data.content);
+      }),
     ];
     return () => offs.forEach((off) => off?.());
   }, [selectView]);
@@ -1184,9 +1452,49 @@ export default function Home() {
     [appearanceStore]
   );
 
-  // Printing goes through the browser, which already knows how to paginate the
-  // rendered document.
-  const handlePrint = useCallback(() => window.print(), []);
+  // Printing the app window prints the app: the editor chrome, the sidebar, a
+  // pane scrolled to wherever it happened to be. In Electron the print sheet
+  // gets the same rendered document the PDF export builds, off the same hidden
+  // window, so what comes out of the printer is the document.
+  const handlePrint = useCallback(async () => {
+    const api = getSafeAPI();
+    if (!api) {
+      // Browser: print.css already reshapes the page for paper.
+      window.print();
+      return;
+    }
+    if (exportInFlight.current) {
+      setForkError(EXPORT_BUSY);
+      return;
+    }
+    exportInFlight.current = true;
+    setExporting(true);
+    try {
+      const theme: PDFTheme = resolveColorMode(getColorMode());
+      const fullHTML = await buildPDFHTML(
+        getPreviewHTML(currentMarkdown()),
+        theme
+      );
+      const res = await api.exportPDF({
+        html: fullHTML,
+        theme,
+        docPath: docRef.current.filePath,
+        mode: "print",
+      });
+      // Dismissing the system print sheet is not a failure.
+      if (res?.canceled) return;
+      if (res?.error || res?.success === false) {
+        setForkError(res?.error ?? "Couldn't print this document.");
+      } else {
+        setForkError(null);
+      }
+    } catch (err) {
+      setForkError(`Couldn't print this document: ${String(err)}`);
+    } finally {
+      exportInFlight.current = false;
+      setExporting(false);
+    }
+  }, [getPreviewHTML, currentMarkdown]);
 
   // ⌘+ / ⌘- / ⌘0 are the same document zoom the toolbar shows a percentage
   // for, so the menu and the toolbar always report one number. Deliberately
@@ -1248,6 +1556,7 @@ export default function Home() {
         onExportPDF={handleExportPDF}
         onSaveAs={() => handleSaveAs()}
         onExportHTML={handleExportHTML}
+        exporting={exporting}
         fileName={fileName}
         isDirty={isDirty}
         canRename={filePath !== null}
@@ -1272,7 +1581,6 @@ export default function Home() {
           onAgents={() => setShowAgents(true)}
           onShortcuts={() => setShowHelp((v) => !v)}
           onAccount={() => setShowSettings(true)}
-          authNonce={authNonce}
         />
 
         {/* Docked side panel (Library / Browse / Shared / Skills) */}
@@ -1284,7 +1592,7 @@ export default function Home() {
             onOpenPath={openPath}
             onOpenFile={handleOpenFile}
             onAddPaths={addPaths}
-            onSignIn={() => setShowSettings(true)}
+            onSignIn={() => setSignInReason("sync")}
             onManageShare={handleManageShare}
             onSyncChanged={refreshCollab}
             activePath={filePath}
@@ -1298,6 +1606,7 @@ export default function Home() {
           <ShareBanner
             view={shareBanner}
             error={forkError}
+            onDismissError={() => setForkError(null)}
             onMakeCopy={handleMakeCopy}
           />
           {updateWaiting && (
@@ -1317,6 +1626,20 @@ export default function Home() {
               error={updateError}
               onUpdate={handlePullUpdate}
               onReview={() => setShowConflict(true)}
+            />
+          )}
+
+          {/* Something else edited this file. With a clean buffer the reload
+              cannot cost anything, so it is a strip; with unsaved work it is a
+              real decision and opens the dialog. */}
+          {diskChange !== null && (
+            <DiskChangeStrip
+              fileName={fileName ?? "This document"}
+              onReload={() =>
+                diskChangeKind(isDirty) === "clean"
+                  ? reloadFromDisk()
+                  : setShowDiskConflict(true)
+              }
             />
           )}
 
@@ -1387,20 +1710,61 @@ export default function Home() {
                   <FormatRail editor={richEditor} disabled={formatRailDisabled(leftState)} />
                 )}
                 <div className="flex-1 min-w-0 h-full overflow-hidden">
-                  <RichView
-                    key={
-                      collabCfg
-                        ? `live:${collabCfg.docId}:${collabCfg.readonly}`
-                        : "solo"
-                    }
-                    value={content}
-                    onChange={setContent}
-                    onEditorReady={setRichEditor}
-                    collab={collabCfg}
-                    readOnly={!docEditable}
-                    onPeersChange={handlePeersChange}
-                    onCollabStatus={handleCollabStatus}
-                  />
+                  {/* The rich pane builds a TipTap editor at render time; a
+                      throw in that binding is not catchable inside the
+                      component, and uncaught it takes the whole window. Source
+                      mode is right there and holds the same document. */}
+                  <ErrorBoundary
+                    fallback={(_error, reset) => (
+                      <div
+                        role="alert"
+                        className="h-full w-full overflow-auto flex items-center justify-center p-8"
+                      >
+                        <div className="max-w-[420px] flex flex-col gap-3 text-center">
+                          <p className="text-[13px] text-muted">
+                            The rich editor hit an error — switch to Source to
+                            keep editing
+                          </p>
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                reset();
+                                setMode("edit");
+                              }}
+                              className="h-8 px-3 rounded-md border border-border bg-surface hover:bg-surface-2 text-[13px]"
+                            >
+                              Switch to Source
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => window.location.reload()}
+                              className="h-8 px-3 rounded-md border border-border text-muted hover:text-foreground text-[13px]"
+                            >
+                              Reload
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  >
+                    <RichView
+                      key={
+                        collabCfg
+                          ? `live:${collabCfg.docId}:${collabCfg.readonly}:${tokenTag(collabCfg.token)}`
+                          : "solo"
+                      }
+                      value={content}
+                      onChange={setContent}
+                      onEditorReady={setRichEditor}
+                      collab={collabCfg}
+                      readOnly={!docEditable}
+                      canModerate={roleState === "owner"}
+                      onPeersChange={handlePeersChange}
+                      onCollabStatus={handleCollabStatus}
+                      onFlushReady={handleFlushReady}
+                    />
+                  </ErrorBoundary>
                 </div>
               </div>
             )}
@@ -1408,14 +1772,20 @@ export default function Home() {
         </div>
       </div>
 
-      {TERMINAL_ENABLED && showTerminal && (
-        <TerminalPanel
-          context={{
-            cwd: filePath ? pathDirname(filePath) : null,
-            filePath,
-          }}
-          onClose={() => setShowTerminal(false)}
-        />
+      {/* Mounted on first open and kept mounted: unmounting the panel kills its
+          shells, so "Hide terminal" used to end every running command. Hidden
+          with display:none instead; `contents` keeps the visible panel laid out
+          exactly as if the wrapper were not there. */}
+      {TERMINAL_ENABLED && terminalMounted && (
+        <div className={showTerminal ? "contents" : "hidden"}>
+          <TerminalPanel
+            context={{
+              cwd: filePath ? pathDirname(filePath) : null,
+              filePath,
+            }}
+            onClose={() => setShowTerminal(false)}
+          />
+        </div>
       )}
 
       {showStats && (
@@ -1430,11 +1800,9 @@ export default function Home() {
       )}
       {showTheme && (
         <Settings
-          authNonce={authNonce}
           initialSection="appearance"
           onClose={() => {
             setShowTheme(false);
-            setAuthNonce((n) => n + 1); // account/avatar reflects sign-in/out
             setLibRefreshKey((k) => k + 1);
             refreshCollab(); // sign-in/out changes live eligibility
           }}
@@ -1442,12 +1810,20 @@ export default function Home() {
       )}
       {showSettings && (
         <Settings
-          authNonce={authNonce}
           onClose={() => {
             setShowSettings(false);
-            setAuthNonce((n) => n + 1); // account/avatar reflects sign-in/out
             setLibRefreshKey((k) => k + 1);
             refreshCollab(); // sign-in/out changes live eligibility
+          }}
+        />
+      )}
+      {signInReason && (
+        <SignInDialog
+          reason={signInReason}
+          onClose={() => setSignInReason(null)}
+          onDone={() => {
+            setLibRefreshKey((k) => k + 1); // cloud files can be listed now
+            refreshCollab(); // sign-in changes live eligibility
           }}
         />
       )}
@@ -1458,14 +1834,32 @@ export default function Home() {
           content={toDisk(fileName, content)}
           onClose={() => setShowShare(false)}
           onChanged={refreshCollab}
-          onSignIn={() => {
-            setShowShare(false);
-            setShowSettings(true);
+        />
+      )}
+      {showDiskConflict && diskChange !== null && (
+        <DiskConflictDialog
+          fileName={fileName ?? "This document"}
+          // Compare disk-form to disk-form: the buffer holds markdown, the
+          // file may be CSV or another to-disk format.
+          localContent={toDisk(fileName, currentMarkdown())}
+          diskContent={diskChange}
+          onClose={() => setShowDiskConflict(false)}
+          onSaveCopy={saveCopyOfMine}
+          onOverwrite={() => {
+            // Keep the buffer and let the normal save run; force skips the
+            // save-time prompt for the question the dialog just answered.
+            setDiskChange(null);
+            setShowDiskConflict(false);
+            void handlersRef.current.save({ force: true });
           }}
+          onDiscardMine={reloadFromDisk}
         />
       )}
       {showConflict && filePath && (
         <ConflictDialog
+          // The dialog resolves its diff once, on mount. Without a key per
+          // document it kept showing the first file it was ever opened for.
+          key={filePath ?? "none"}
           filePath={filePath}
           fileName={fileName ?? "this document"}
           // The buffer, not the file on disk: unsaved text is what a pull would

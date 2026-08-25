@@ -256,20 +256,68 @@ const lightTheme = `
 
 export type PDFTheme = "dark" | "light";
 
-export function getPDFStyles(theme: PDFTheme): string {
-  return `<style>${shared}\n${theme === "dark" ? darkTheme : lightTheme}</style>`;
+// The export pipeline runs rehype-katex, so the exported document needs the
+// KaTeX stylesheet too or math renders as garbled inline spans. There is no
+// bundler or network in the print window, so it is inlined from a generated
+// constant (fonts embedded as data: URIs). See scripts/generate-katex-css.mjs.
+const mathTheme = `
+  .markdown-body .katex { font-size: 1.05em; }
+  .markdown-body .katex-display { margin: 1em 0; page-break-inside: avoid; }
+  .markdown-body .katex-display > .katex { white-space: normal; }
+  .markdown-body .katex-error { color: #ef4444; font-family: inherit; }
+`;
+
+// The KaTeX stylesheet is ~240 KB of embedded font data. Imported at module
+// scope it rode into the app's main chunk for every launch, to be used only by
+// an export. Loaded on demand it lands in a chunk of its own.
+export async function getPDFStyles(theme: PDFTheme): Promise<string> {
+  const { KATEX_CSS } = await import("./katex-css.generated");
+  return `<style>${KATEX_CSS}\n${styleBody(theme)}</style>`;
 }
 
-export function buildPDFHTML(markdownHTML: string, theme: PDFTheme): string {
+// Same stylesheet without KaTeX, for callers that cannot await (and for tests
+// that only care about the theme rules). Math renders unstyled.
+export function getPDFStylesSync(theme: PDFTheme): string {
+  return `<style>${styleBody(theme)}</style>`;
+}
+
+function styleBody(theme: PDFTheme): string {
+  return `${shared}\n${theme === "dark" ? darkTheme : lightTheme}\n${mathTheme}`;
+}
+
+// The rendered body is dropped into a plain <body>, after the <style> block has
+// already been closed, so it cannot reach the stylesheet. renderMarkdownHTML
+// escapes raw HTML anyway (a document's <script> arrives as text), but
+// buildPDFHTML is a public helper and the print window executes what it is
+// given: neutralise the two element names that could end the template early or
+// run code, so a caller passing unescaped content can never break out.
+// This is not a sanitizer — it is a template-integrity guard.
+function neutralizeBodyBreakouts(html: string): string {
+  return html.replace(/<(\/?)(style|script)\b/gi, "&lt;$1$2");
+}
+
+export async function buildPDFHTML(
+  markdownHTML: string,
+  theme: PDFTheme
+): Promise<string> {
+  return pdfDocument(await getPDFStyles(theme), markdownHTML);
+}
+
+// The KaTeX-less variant. Same document, same guards.
+export function buildPDFHTMLSync(markdownHTML: string, theme: PDFTheme): string {
+  return pdfDocument(getPDFStylesSync(theme), markdownHTML);
+}
+
+function pdfDocument(styles: string, markdownHTML: string): string {
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-${getPDFStyles(theme)}
+${styles}
 </head>
 <body>
-<article class="markdown-body">${markdownHTML}</article>
+<article class="markdown-body">${neutralizeBodyBreakouts(markdownHTML)}</article>
 </body>
 </html>`;
 }

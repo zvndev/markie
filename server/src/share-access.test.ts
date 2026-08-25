@@ -8,6 +8,7 @@ process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-share-access-")), 
 process.env.BETTER_AUTH_SECRET = "markie-share-access-test-secret-32-plus-chars";
 const {
   accessLevel,
+  canCommentLevel,
   canEditLevel,
   canManageLevel,
   canReadLevel,
@@ -47,28 +48,36 @@ test("accessLevel resolves owner, editor, viewer, and no-access users", () => {
 
 test("role helpers make read/edit/manage permissions explicit", () => {
   assert.equal(canReadLevel("owner"), true);
+  assert.equal(canCommentLevel("owner"), true);
   assert.equal(canEditLevel("owner"), true);
   assert.equal(canManageLevel("owner"), true);
 
   assert.equal(canReadLevel("editor"), true);
+  assert.equal(canCommentLevel("editor"), true);
   assert.equal(canEditLevel("editor"), true);
   assert.equal(canManageLevel("editor"), false);
 
   assert.equal(canReadLevel("viewer"), true);
+  assert.equal(canCommentLevel("viewer"), true);
   assert.equal(canEditLevel("viewer"), false);
   assert.equal(canManageLevel("viewer"), false);
 
   assert.equal(canReadLevel(null), false);
+  assert.equal(canCommentLevel(null), false);
   assert.equal(canEditLevel(null), false);
   assert.equal(canManageLevel(null), false);
 });
 
-test("comment-writing follows edit permission, not read permission", () => {
-  assert.equal(canReadLevel("viewer"), true);
+test("comment-writing follows read permission, not edit permission", () => {
+  // A viewer may write comments even though they may not edit the doc.
+  assert.equal(canCommentLevel("viewer"), true);
   assert.equal(canEditLevel("viewer"), false);
 
-  assert.equal(canEditLevel("editor"), true);
-  assert.equal(canEditLevel("owner"), true);
+  assert.equal(canCommentLevel("editor"), true);
+  assert.equal(canCommentLevel("owner"), true);
+
+  // Someone with no access to the doc still cannot comment.
+  assert.equal(canCommentLevel(null), false);
 });
 
 test("shareAccessSummary returns role and scoped capabilities from server truth", () => {

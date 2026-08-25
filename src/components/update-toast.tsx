@@ -74,7 +74,7 @@ export function UpdateToast() {
   }
 
   return (
-    <div className="fixed bottom-4 right-4 z-[120] w-[300px] rounded-xl border border-border shadow-2xl p-3.5" style={{ background: "var(--surface-2)" }}>
+    <div className="fixed bottom-4 right-4 z-[120] w-[300px] rounded-lg border border-border shadow-2xl p-3.5" style={{ background: "var(--surface-2)" }}>
       <div className="text-[13px] text-foreground font-medium mb-0.5">
         Update ready{version ? ` (${version})` : ""}
       </div>

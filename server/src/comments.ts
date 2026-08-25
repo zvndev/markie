@@ -1,11 +1,18 @@
 // Comment threads on shared docs. Anchors are Yjs relative positions
 // (serialized JSON) so they survive concurrent edits; the server treats
-// them as opaque. Viewers can read; editors and the owner can write.
+// them as opaque. Anyone with access can read and comment; resolving a
+// thread and deleting somebody else's comment stay with editors and the owner.
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { auth } from "./auth.ts";
-import { accessLevel, canEditLevel, canReadLevel, isOwner } from "./shares.ts";
+import {
+  accessLevel,
+  canCommentLevel,
+  canEditLevel,
+  canReadLevel,
+  isOwner,
+} from "./shares.ts";
 import { sendEmail } from "./email.ts";
 
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
@@ -35,6 +42,12 @@ async function requireUser(c: { req: { raw: Request } }) {
   return session?.user ?? null;
 }
 
+// Writing a comment only needs access to the doc; viewers may comment.
+function canComment(docId: string, userId: string): boolean {
+  return canCommentLevel(accessLevel(docId, userId));
+}
+
+// Changing a thread's status is an editing act and stays with editors.
 function canWrite(docId: string, userId: string): boolean {
   return canEditLevel(accessLevel(docId, userId));
 }
@@ -128,7 +141,7 @@ comments.post("/:id/threads", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  if (!canWrite(docId, user.id)) return c.json({ error: "forbidden" }, 403);
+  if (!canComment(docId, user.id)) return c.json({ error: "forbidden" }, 403);
   const { anchor, body } = (await c.req.json()) as {
     anchor: unknown;
     body: string;
@@ -155,7 +168,7 @@ comments.post("/:id/threads/:threadId/comments", async (c) => {
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
   const threadId = c.req.param("threadId");
-  if (!canWrite(docId, user.id)) return c.json({ error: "forbidden" }, 403);
+  if (!canComment(docId, user.id)) return c.json({ error: "forbidden" }, 403);
   const thread = db
     .prepare("SELECT id FROM threads WHERE id = ? AND doc_id = ?")
     .get(threadId, docId);

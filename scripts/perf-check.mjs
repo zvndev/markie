@@ -8,6 +8,11 @@
 //   dist/linux-unpacked/markie --remote-debugging-port=9222
 //   node scripts/perf-check.mjs
 
+import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+
+// A real window on a real machine is a deliberate act; see the helper.
+requireElectronConsent("perf-check", import.meta.url);
+
 const targets = await (await fetch("http://127.0.0.1:9222/json")).json();
 const page = targets.find((t) => t.type === "page");
 if (!page) {

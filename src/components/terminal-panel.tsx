@@ -13,12 +13,28 @@ interface Tab {
   id: string;
 }
 
+const TERM_GENERIC = "Markie couldn't open a terminal.";
+
+// term-create answers with a session id, or with a refusal object explaining
+// why there isn't one ({ error, message }), or null when the IPC call threw.
+// An object is truthy, so treating the answer as an id put a refusal where a
+// session id belongs and left a tab wired to nothing.
+function readTermCreate(res: unknown): { id: string | null; message: string | null } {
+  if (typeof res === "string" && res) return { id: res, message: null };
+  const refusal = res as { error?: string; message?: string } | null | undefined;
+  if (refusal?.error) return { id: null, message: refusal.message ?? TERM_GENERIC };
+  return { id: null, message: TERM_GENERIC };
+}
+
 export function TerminalPanel({ context, onClose }: TerminalPanelProps) {
   const api = getElectronAPI();
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [externalApps, setExternalApps] = useState<Array<{ id: string; name: string }>>([]);
   const [showExternal, setShowExternal] = useState(false);
+  // Why the last "+" produced no terminal. Shown in the panel: the alternative
+  // is a button that visibly does nothing.
+  const [createError, setCreateError] = useState<string | null>(null);
   const creating = useRef(false);
   const latestContext = useRef(context);
 
@@ -26,30 +42,70 @@ export function TerminalPanel({ context, onClose }: TerminalPanelProps) {
     latestContext.current = context;
   }, [context]);
 
+  const unmounted = useRef(false);
+
   const newTab = useCallback(async () => {
     if (!api?.termCreate || creating.current) return;
     creating.current = true;
-    const id = await api.termCreate(latestContext.current);
-    creating.current = false;
-    if (!id) return;
+    let res: unknown = null;
+    try {
+      res = await api.termCreate(latestContext.current);
+    } finally {
+      creating.current = false;
+    }
+    const { id, message } = readTermCreate(res);
+    if (!id) {
+      setCreateError(message);
+      return;
+    }
+    if (unmounted.current) {
+      api.termKill?.(id);
+      return;
+    }
+    setCreateError(null);
     setTabs((prev) => [...prev, { id }]);
     setActiveId(id);
   }, [api]);
 
+  // Every live tab id, readable from the unmount cleanup without making the
+  // effect depend on `tabs` (which would tear the shells down on every change).
+  const liveIds = useRef<string[]>([]);
+  useEffect(() => {
+    liveIds.current = tabs.map((t) => t.id);
+  }, [tabs]);
+
   // first tab on mount + load external apps
   useEffect(() => {
     let alive = true;
+    // StrictMode (and any remount) runs the cleanup before this effect runs
+    // again, so a latched `unmounted` made the second mount kill every shell it
+    // created the moment it created them.
+    unmounted.current = false;
     (async () => {
       if (!api?.termCreate) return;
-      const id = await api.termCreate(context);
-      if (!alive || !id) return;
+      const { id, message } = readTermCreate(await api.termCreate(context));
+      if (!id) {
+        if (alive) setCreateError(message);
+        return;
+      }
+      // Closing the panel while the shell was still starting left a real login
+      // shell running with nothing attached to it — one orphan per open/close.
+      if (!alive) {
+        api.termKill?.(id);
+        return;
+      }
       setTabs([{ id }]);
       setActiveId(id);
       const apps = await api.termExternalApps?.();
-      if (alive && apps) setExternalApps(apps);
+      if (alive && Array.isArray(apps)) setExternalApps(apps);
     })();
     return () => {
       alive = false;
+      unmounted.current = true;
+      // Closing the panel closes its shells. They are the user's processes, but
+      // there is no way left to reach them once the panel is gone.
+      for (const id of liveIds.current) api?.termKill?.(id);
+      liveIds.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -107,7 +163,7 @@ export function TerminalPanel({ context, onClose }: TerminalPanelProps) {
               Open in ▾
             </button>
             {showExternal && (
-              <div className="absolute right-0 top-7 z-20 w-40 rounded-md border border-border shadow-xl py-1" style={{ background: "var(--surface-2)" }}>
+              <div className="absolute right-0 top-7 z-20 w-40 rounded-lg border border-border shadow-xl py-1" style={{ background: "var(--surface-2)" }}>
                 {externalApps.map((app) => (
                   <button
                     key={app.id}
@@ -123,6 +179,23 @@ export function TerminalPanel({ context, onClose }: TerminalPanelProps) {
         )}
         <button onClick={onClose} title="Hide terminal (⌃`)" aria-label="Hide terminal" className="text-muted hover:text-foreground px-1.5 text-[15px]">×</button>
       </div>
+
+      {createError && (
+        <div
+          role="status"
+          className="shrink-0 flex items-center gap-2 px-3 py-1 border-b border-border text-[11px] text-[color:var(--status-red)]"
+        >
+          <span className="min-w-0">{createError}</span>
+          <button
+            type="button"
+            onClick={() => setCreateError(null)}
+            aria-label="Dismiss"
+            className="ml-auto shrink-0 text-muted hover:text-foreground text-[12px] leading-none"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 relative overflow-hidden">
         {tabs.map((t) => (

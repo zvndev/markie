@@ -1234,3 +1234,90 @@
 - blockers: Windows publication remains gated on exact-commit native Windows launch evidence and
   production Authenticode signing. The existing GitHub-hosted Windows runner remains blocked by
   account billing before job allocation.
+
+## 2026-08-23 13:05 EDT — terminal: progressed
+- did: Product sprint on a fresh clone (main @ f9c3f4a, 0.4.0). Six audits → docs/superpowers/plans/2026-08-23-crash-hardening-sprint-plan.md → six
+  dev tracks → five reviews → three fix passes. Shipped in the working tree (uncommitted): crash
+  log + render-process-gone recovery + navigation guards; universal IPC failure shapes with
+  explicit `onFailure`; PDF export rebuilt (temp file, readiness wait, timeout, busy guard);
+  home-folder rescan gated to 5 min/panel-open and cloud/bundle/Windows exclusions with a global
+  budget; shared-doc open/sync/collab silent-failure and data-loss fixes (collab teardown on file
+  switch, 4403 → read-only, viewer seeding, unreadable responses, conflict dialog keyed per file,
+  Save As single write); drag-resizable library panel (200–520px, persisted, keyboard, e2e);
+  top-level ErrorBoundary + render fallback + print CSS + KaTeX in exports (lazy chunk) +
+  rehype-sanitize; PTY kill on real unmount; Windows path/name/case fixes; mcp open via
+  explorer.exe; jsdom vitest project + bridge mock + IPC contract test + server route tests;
+  Intel Mac download published in the manifest; docs/WINDOWS-TESTING.md; docs/mobile/MOBILE-PLAN.md.
+- evidence: `npm test` 74 files / 871 tests (was 49 / 492); `(cd server && npm test)` 122 (was
+  66); `node --test mcp/lib.test.mjs` 24; `npm run lint` clean; `npm run build` clean;
+  `npm run release:preflight` passed; `npm run visual:check:panel-resize` passed (widths
+  252→372→200→520→252→316, survives relaunch); `npm run ui:check` 26/26.
+  `npm run visual:check:overlays` fails on a pre-existing stale expectation (BACKLOG).
+- next: Owner pushes the unpushed 0.4.1–0.4.3 work from the other machine, rebases this tree,
+  commits, then `npm run release:version -- 0.4.x` and the mac release flow; test the Windows
+  build on the real PC per docs/WINDOWS-TESTING.md.
+- blockers: Windows public download still gated on Authenticode signing + updater feed
+  (BACKLOG). Atomic user-file writes (tmp+rename) recommended as the next trust item.
+
+## 2026-08-24 12:55 EDT — terminal: progressed
+- did: Follow-up sprint per docs/superpowers/plans/2026-08-24-followup-sprint-plan.md, five
+  parallel tracks on the working tree (no worktrees, disjoint file ownership). Shipped
+  (uncommitted, on top of the 2026-08-23 sprint): atomic user-file writes
+  (electron/atomic-write.js — temp beside the original, fsync file and directory, rename;
+  darwin xattr/Finder-tag preservation; readable EACCES/EROFS message) routed through save,
+  save-as, and every sync write; per-save snapshots (electron/snapshots.js, 20/file, 200 MB
+  total, same-millisecond suffix) with File → Revert to Snapshot… loading as unsaved changes;
+  viewers can start threads and reply (server canCommentLevel + UI gates, revoked hides the
+  composer); exports embed local images (electron/inline-images.js, containment-checked,
+  10/30 MB caps) and ⌘P prints the rendered document through the export pipeline with the
+  system sheet left untimed; server-side collab seed lock (first editor seeds an empty room,
+  metadata-only updates do not release the lock, hand-off on disconnect) paired with a client
+  settle delay and a schemaVersion stamp written in the same transaction as the content;
+  87 new component tests (conflict-dialog, shared-view, library, browse truncated notice,
+  page save/conflict/menu/shortcuts/drop), electron test fixtures typed, `npm run typecheck`
+  as a CI gate, overlay-interaction-check assertion fixed and green. A combined re-review
+  agent confirmed all 20 plan tasks and raised two P1s (stamp-before-content releasing the
+  seed lock early; the 30 s export deadline killing an open print sheet) — both fixed with
+  regression tests, plus five weakened tests rewritten to assert outcomes.
+- evidence: `npm test` 86 files / 1029 tests; `(cd server && npm test)` 131;
+  `node --test mcp/lib.test.mjs` 24; `npm run lint` clean; `npm run typecheck` exit 0;
+  `npm run build` clean; `npm run release:preflight` passed;
+  `npm run visual:check:overlays` runs to the end (artifact
+  .autoloop/runs/overlay-interaction-check-20260824122306/).
+- next: Owner pushes 0.4.1–0.4.3 from the other machine, rebases, commits this tree (Lore
+  message drafted in the session recap), then the mac release flow. Real-PC Windows pass per
+  docs/WINDOWS-TESTING.md still owed.
+- blockers: Windows signing/publication unchanged (BACKLOG). New BACKLOG items: seed-lock
+  force-resync for the dropped racer, shortcuts firing behind modals (owner decision),
+  page print/export handler tests, owner comment-moderation unreachable from the UI.
+
+## 2026-08-24 15:35 EDT — terminal: progressed
+- did: Merged the unique work from origin/feat/onboarding-auth-pass (9 commits, same base
+  f9c3f4a) into the working tree, adapted to this tree's conventions. Ported: sign-in
+  surfaces (auth-store useSyncExternalStore, auth-errors, sign-in.tsx with Google/OTP/
+  password/reset; Settings and Share gate now sign in in place; comments/activity-bar read
+  the shared store), first-run welcome document, server OTP recovery (otp-email, rate limits,
+  invite address on the share page, expiresIn/allowedAttempts pinned), beta update channel
+  (update-channel.js through the handle() wrapper + Settings toggle + release.mjs channel
+  awareness), disk-change watcher (fs.watchFile on the open doc, in-app conflict dialog,
+  save force flag, refreshDiskMemory after cloud pulls), and opt-in Sentry crash reporting
+  (sentry-envelope with the NUL sentinels removed, file:// path leak and greedy-username
+  scrubs fixed; consent-gated, DSN-gated). Skipped the branch's sidebar (our panel-width is a
+  superset) and its text-format crash log (ours is a superset); took only the CrashProbe and
+  the reduced-motion CSS rule.
+  SEPARATELY: root-caused and fixed a SECOND Finder crash. The e2e window-check scripts spawned
+  Electron `detached` and cleaned up with `process.kill(-pid)` group kills; on macOS the app
+  re-launches via LaunchServices and the recycled launcher pid's group hit session services
+  (uiagent, cli-llm-bridge), taking Finder down. Added scripts/lib/safe-kill.mjs (direct-child
+  only) across the 5 offenders, removed `detached`, and added scripts/lib/e2e-consent.mjs so no
+  window-check boots without MARKIE_ALLOW_E2E=1 (import-safe; the 3 ported checks isolate $HOME).
+- evidence: `npm test` 95 files / 1143 tests; `(cd server && npm test)` 142; `node --test
+  mcp/lib.test.mjs` 24; `npm run typecheck` exit 0; `npm run lint` clean; `npm run build` clean;
+  `npm run release:preflight` exit 0. Crash root-cause confirmed in the unified log
+  (node[runner] SIGKILL → coreservices.uiagent + cli-llm-bridge at 14:24:55, Finder relaunch).
+  Consent gate exits 2 on direct run; safeKill proven to never issue a negative-pid kill;
+  importing a guarded script does not exit.
+- next: Owner commits (Lore message drafted in the recap). Real-window checks are now safe to
+  run with MARKIE_ALLOW_E2E=1; wiring them into CI is a new BACKLOG item. 0.4.1–0.4.3 push +
+  rebase from the other Mac and the Windows real-device pass still stand.
+- blockers: Windows signing/publication unchanged.

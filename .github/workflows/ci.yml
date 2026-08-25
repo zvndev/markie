@@ -27,10 +27,29 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
+      # A hard gate: `next build` type-checks src/ only, so nothing used to
+      # check electron/ or the test fixtures at all.
+      - run: npm run typecheck
+      # Both projects: `node` (src/lib + electron helpers) and `dom` (jsdom
+      # component tests).
       - run: npx vitest run
+      # Informational only — no thresholds yet, and a coverage failure must not
+      # be the thing that blocks a green PR.
+      - name: Coverage summary
+        continue-on-error: true
+        run: npx vitest run --coverage --coverage.reporter=text-summary --coverage.reporter=lcov
+      # The summary scrolls out of the log; the lcov report is the thing you can
+      # actually open next to the diff.
+      - name: Upload coverage report
+        continue-on-error: true
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore
 
-  # Lint plus the static export. `next build` is also the only type-check in the
-  # repo, so this job is the TypeScript gate as well.
+  # Lint plus the static export. The whole-repo type gate is `npm run typecheck`
+  # in the unit job; `next build` only covers src/.
   lint-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15

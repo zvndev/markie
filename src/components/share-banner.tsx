@@ -4,16 +4,27 @@ import type { ShareBannerView } from "@/lib/share-role";
 
 interface ShareBannerProps {
   view: ShareBannerView | null;
-  // A copy that could not be written. It replaces the role line so the failure
-  // lands on the surface whose button caused it; there is no toast system yet.
+  // A copy that could not be written, a save that reshaped the file. It gets a
+  // row of its own under the role line — the reason the document is read-only
+  // is still true while the failure is on screen, and hiding it left people
+  // reading an error with no idea why they could not simply type. There is no
+  // toast system yet.
   error?: string | null;
+  // Clears the error row only. Without it a one-off failure sat on the banner
+  // for the rest of the session.
+  onDismissError?: () => void;
   onMakeCopy: () => void;
 }
 
 // The strip above the document that explains why typing does nothing. Not a
 // modal, not dismissible: it has to be true for as long as the state it
 // describes is true.
-export function ShareBanner({ view, error, onMakeCopy }: ShareBannerProps) {
+export function ShareBanner({
+  view,
+  error,
+  onDismissError,
+  onMakeCopy,
+}: ShareBannerProps) {
   if (!view && !error) return null;
   return (
     <div
@@ -22,28 +33,47 @@ export function ShareBanner({ view, error, onMakeCopy }: ShareBannerProps) {
       // to reach someone who is not looking at the strip.
       role="status"
       aria-live="polite"
-      className="markie-banner shrink-0 flex items-center gap-2 px-3 py-1.5"
+      className="markie-banner shrink-0 flex flex-col gap-1 px-3 py-1.5"
     >
-      {view?.kind === "view-only" && (
-        <span aria-hidden="true" className="text-[12px] leading-none">
-          👁
-        </span>
+      {view && (
+        <div className="flex items-center gap-2">
+          {view.kind === "view-only" && (
+            <span aria-hidden="true" className="text-[12px] leading-none">
+              👁
+            </span>
+          )}
+          <span className="text-[11px] min-w-0 truncate text-muted">
+            {view.message}
+          </span>
+          {view.kind === "view-only" && (
+            <button
+              type="button"
+              onClick={onMakeCopy}
+              className="markie-overlay-button ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-muted hover:text-foreground"
+            >
+              Make a copy
+            </button>
+          )}
+        </div>
       )}
-      <span
-        className={`text-[11px] min-w-0 truncate ${
-          error ? "text-[color:var(--status-red)]" : "text-muted"
-        }`}
-      >
-        {error ?? view?.message}
-      </span>
-      {view?.kind === "view-only" && (
-        <button
-          type="button"
-          onClick={onMakeCopy}
-          className="markie-overlay-button ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-muted hover:text-foreground"
-        >
-          Make a copy
-        </button>
+      {error && (
+        <div className="flex items-start gap-2">
+          {/* Not truncated: a failure explains itself in a sentence, and half a
+              sentence with an ellipsis is not an explanation. Two lines. */}
+          <span className="text-[11px] leading-snug min-w-0 line-clamp-2 text-[color:var(--status-red)]">
+            {error}
+          </span>
+          {onDismissError && (
+            <button
+              type="button"
+              onClick={onDismissError}
+              aria-label="Dismiss"
+              className="markie-overlay-button ml-auto shrink-0 rounded border border-border px-1.5 leading-none text-[12px] text-muted hover:text-foreground"
+            >
+              ×
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

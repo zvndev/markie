@@ -49,8 +49,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onMdIndexUpdated: (callback) =>
     subscribe("mdindex-updated", callback, (info) => info),
   mcpInfo: () => ipcRenderer.invoke("mcp-info"),
+  // Fire-and-forget: the error boundary calls this while the renderer is
+  // already broken, so there is nothing to wait for and nothing to answer.
+  logRendererError: (detail) => ipcRenderer.send("log-renderer-error", detail),
   getInitialFile: () => ipcRenderer.invoke("get-initial-file"),
-  exportPDF: (html) => ipcRenderer.invoke("export-pdf", html),
+  // `{ html, theme?, docPath?, mode? }`; a bare html string is the older form
+  // main.js still accepts. Forwarded as-is either way.
+  exportPDF: (args) => ipcRenderer.invoke("export-pdf", args),
   exportHTML: (args) => ipcRenderer.invoke("export-html", args),
   saveFile: (args) => ipcRenderer.invoke("save-file", args),
   saveFileAs: (args) => ipcRenderer.invoke("save-file-as", args),
@@ -100,6 +105,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onToggleStats: (callback) => subscribe("toggle-stats", callback),
   onFileOpened: (callback) =>
     subscribe("file-opened", callback, (data) => data),
+  onFileChangedOnDisk: (callback) =>
+    subscribe("file-changed-on-disk", callback, (data) => data),
+  watchFile: (filePath) => ipcRenderer.invoke("watch-file", filePath),
+  crashConsentGet: () => ipcRenderer.invoke("crash-consent-get"),
+  crashConsentSet: (enabled) => ipcRenderer.invoke("crash-consent-set", enabled),
+  crashLogReveal: () => ipcRenderer.invoke("crash-log-reveal"),
   // Terminal
   termAvailable: () => ipcRenderer.invoke("term-available"),
   termCreate: (context) => ipcRenderer.invoke("term-create", context),
@@ -113,6 +124,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Auto-update
   checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
   updateStatus: () => ipcRenderer.invoke("update-status"),
+  updateChannelGet: () => ipcRenderer.invoke("update-channel-get"),
+  updateChannelSet: (optedIn) => ipcRenderer.invoke("update-channel-set", optedIn),
   quitAndInstall: () => ipcRenderer.invoke("quit-and-install"),
   onUpdateAvailable: (callback) =>
     subscribe("update-available", callback, (info) => info),

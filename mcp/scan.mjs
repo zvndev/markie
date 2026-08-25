@@ -14,12 +14,29 @@ export const EXCLUDED_NAMES = new Set([
   "dist", "build", "out", "target", "Pods",
   "venv", "site-packages", "DerivedData",
   "tmp", "temp",
+  // Cloud-sync mounts (macOS + Windows): each readdir inside one is an XPC
+  // round trip to the provider's daemon.
+  "Dropbox", "Google Drive", "OneDrive",
+  // macOS media/app folders that are bundle farms, not document folders.
+  "Applications", "Pictures", "Movies", "Music",
+  // Windows profile noise.
+  "AppData", "Application Data", "Local Settings", "$Recycle.Bin",
 ]);
 
-// A directory is excluded if it is hidden (dot-dir) or a known vendored name.
+// Directories that are really opaque documents (packages/bundles).
+export const BUNDLE_RE =
+  /\.(app|photoslibrary|musiclibrary|tvlibrary|aplibrary|fcpbundle|imovielibrary|logicx|band|rcproject|xcodeproj|xcworkspace|playground|pvm|vmwarevm|utm|sparsebundle|download|lproj|framework|bundle|kext|pkg|appex|plugin|qlgenerator|prefpane|wdgt)$/i;
+
+export function isBundleDir(name) {
+  return BUNDLE_RE.test(String(name || ""));
+}
+
+// A directory is excluded if it is hidden (dot-dir), a bundle, or a known
+// vendored name.
 export function isExcludedDir(name) {
   if (!name) return false;
   if (name.startsWith(".")) return true;
+  if (isBundleDir(name)) return true;
   return EXCLUDED_NAMES.has(name);
 }
 
@@ -38,8 +55,8 @@ function hasExcludedSegment(full, home) {
 }
 
 // Decide whether to descend into directory `full` (named `name`).
-function shouldDescend(full, name, home) {
-  const allow = allowlist(home);
+function shouldDescend(full, name, home, allow = allowlist(home)) {
+  if (isBundleDir(name)) return false;
   if (allow.some((a) => a === full)) return true;
   if (allow.some((a) => a.startsWith(full + path.sep))) return true;
   if (allow.some((a) => full.startsWith(a + path.sep))) {
@@ -55,6 +72,8 @@ function shouldDescend(full, name, home) {
 // Recursively collect markdown files under rootDir, pruning excluded dirs.
 export async function walk(rootDir, { home } = {}) {
   const baseHome = home ?? rootDir;
+  // Hoisted out of the per-directory loop: it was rebuilt for every readdir.
+  const allow = allowlist(baseHome);
   const out = [];
   async function visit(dir) {
     let entries;
@@ -67,7 +86,7 @@ export async function walk(rootDir, { home } = {}) {
     for (const ent of entries) {
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
-        if (shouldDescend(full, ent.name, baseHome)) subdirs.push(full);
+        if (shouldDescend(full, ent.name, baseHome, allow)) subdirs.push(full);
       } else if (ent.isFile() && MD_RE.test(ent.name)) {
         let mtimeMs = 0;
         try { mtimeMs = (await fsp.stat(full)).mtimeMs; } catch { /* keep 0 */ }

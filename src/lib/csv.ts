@@ -132,3 +132,40 @@ export function markdownTableToCSV(markdown: string): string {
   }
   return serializeCSV(rows);
 }
+
+// markdownTableToCSV keeps the first pipe table and nothing else, so saving a
+// document as .csv silently discards prose, headings and any later table. This
+// reports what would be lost so callers can warn before overwriting a file.
+// Pure and side-effect free: it mirrors the scanner above without converting.
+export function csvDropsContent(markdown: string): {
+  drops: boolean;
+  droppedLines: number;
+  hasTable: boolean;
+} {
+  const lines = markdown.split("\n");
+  let start = -1;
+  let end = -1; // exclusive
+  for (let i = 0; i < lines.length; i++) {
+    const isRow = lines[i].trim().startsWith("|");
+    if (start === -1) {
+      if (isRow) start = i;
+      continue;
+    }
+    if (!isRow) {
+      end = i;
+      break;
+    }
+  }
+  if (start === -1) {
+    const droppedLines = lines.filter((l) => l.trim() !== "").length;
+    return { drops: droppedLines > 0, droppedLines, hasTable: false };
+  }
+  if (end === -1) end = lines.length;
+
+  let droppedLines = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (i >= start && i < end) continue;
+    if (lines[i].trim() !== "") droppedLines++;
+  }
+  return { drops: droppedLines > 0, droppedLines, hasTable: true };
+}

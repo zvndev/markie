@@ -5,6 +5,55 @@ const path = require("path");
 const crypto = require("crypto");
 
 let db = null;
+let driverError = null;
+
+// better-sqlite3 is a native module. A packaged build whose prebuild did not
+// match the platform (the Windows install path is rebuilt at pack time) used to
+// take the whole main process down at the first Library render with an opaque
+// "Cannot find module" — every caller of this file assumed the require worked.
+// Load it through here instead, so callers can ask whether the registry is
+// usable and show that rather than crashing.
+function loadDriver() {
+  try {
+    return require("better-sqlite3");
+  } catch (err) {
+    driverError = new Error(
+      `Markie's local database could not be loaded (${err && err.message ? err.message : err}). ` +
+        "Reinstalling Markie usually fixes this."
+    );
+    return null;
+  }
+}
+
+// True when the local registry can actually be opened. Callers that can degrade
+// (the Library, the index cache) should check this instead of throwing.
+function available() {
+  try {
+    getDB();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The reason available() is false, as a user-facing sentence, or null.
+function unavailableReason() {
+  return driverError ? driverError.message : null;
+}
+
+// SQLite's `=` is case-sensitive but Windows paths are not: the same file
+// reached as C:\Users\… and c:\users\… must be one row, not two.
+//
+// A `COLLATE NOCASE` clause used to do this at query time. It was worse in two
+// ways: it dropped the primary-key index (every lookup became a table scan),
+// and it was only ever attached to *some* of the queries, so the same file
+// could still be inserted twice and then be found by only one of them. Doing
+// it at the boundary instead means one canonical spelling per file goes into
+// the table, and every query is an indexed equality again.
+function canonicalPath(p, platform = process.platform) {
+  if (p == null) return p;
+  return platform === "win32" ? String(p).toLowerCase() : p;
+}
 
 function getDB() {
   if (db) return db;
@@ -14,7 +63,8 @@ function getDB() {
   // for its pure functions would fail at import time. Nothing here touches the
   // database until a caller actually asks for it.
   const { app } = require("electron");
-  const Database = require("better-sqlite3");
+  const Database = loadDriver();
+  if (!Database) throw driverError;
   db = new Database(path.join(app.getPath("userData"), "registry.db"));
   // WAL survives an abrupt quit better and lets reads not block writes.
   db.pragma("journal_mode = WAL");
@@ -85,19 +135,32 @@ function removeRoot(rootPath) {
 function movePath(oldPath, newPath) {
   getDB()
     .prepare("UPDATE files SET path = ? WHERE path = ?")
-    .run(newPath, oldPath);
+    .run(canonicalPath(newPath), canonicalPath(oldPath));
 }
 
 // Re-point any tracked file under an old directory prefix to a new prefix
 // (used when a folder is renamed/moved).
-function movePrefix(oldPrefix, newPrefix) {
+//
+// LIKE is the wrong operator here twice over: it treats `_` and `%` as
+// wildcards (so `my_notes` also matched `myXnotes`), and SQLite's LIKE is
+// case-insensitive for ASCII by default, so renaming `/tmp/Old` also dragged
+// `/tmp/old` along with it. `substr(path, 1, n) = ?` is a plain BINARY compare
+// of exactly the prefix — no wildcards to escape, no folding — and only on
+// Windows, where the filesystem itself folds case, do we fold too.
+function movePrefix(oldPrefix, newPrefix, platform = process.platform) {
+  const oldP = canonicalPath(oldPrefix, platform);
+  const newP = canonicalPath(newPrefix, platform);
+  const clause =
+    platform === "win32"
+      ? "lower(substr(path, 1, ?)) = lower(?)"
+      : "substr(path, 1, ?) = ?";
   const rows = getDB()
-    .prepare("SELECT path FROM files WHERE path LIKE ?")
-    .all(`${oldPrefix}%`);
+    .prepare(`SELECT path FROM files WHERE ${clause}`)
+    .all(oldP.length, oldP);
   const update = getDB().prepare("UPDATE files SET path = ? WHERE path = ?");
   const tx = getDB().transaction(() => {
     for (const { path: p } of rows) {
-      update.run(newPrefix + p.slice(oldPrefix.length), p);
+      update.run(newP + p.slice(oldP.length), p);
     }
   });
   tx();
@@ -117,11 +180,16 @@ function track(filePath, name, content) {
          content_hash = excluded.content_hash,
          last_opened_at = excluded.last_opened_at`
     )
-    .run(filePath, name, content != null ? hashContent(content) : null, new Date().toISOString());
+    .run(
+      canonicalPath(filePath),
+      name,
+      content != null ? hashContent(content) : null,
+      new Date().toISOString()
+    );
 }
 
 function get(filePath) {
-  return getDB().prepare("SELECT * FROM files WHERE path = ?").get(filePath);
+  return getDB().prepare("SELECT * FROM files WHERE path = ?").get(canonicalPath(filePath));
 }
 
 // Drop local-only rows whose file no longer exists on disk. Agent worktrees
@@ -171,7 +239,7 @@ function update(filePath, fields) {
     }
   }
   if (!sets.length) return;
-  values.push(filePath);
+  values.push(canonicalPath(filePath));
   getDB()
     .prepare(`UPDATE files SET ${sets.join(", ")} WHERE path = ?`)
     .run(...values);
@@ -185,28 +253,48 @@ function listStars() {
 // Toggle a star; returns the new state. kind is 'folder' | 'file'.
 function toggleStar(p, kind) {
   const d = getDB();
-  const existing = d.prepare("SELECT path FROM md_stars WHERE path = ?").get(p);
+  const key = canonicalPath(p);
+  const existing = d.prepare("SELECT path FROM md_stars WHERE path = ?").get(key);
   if (existing) {
-    d.prepare("DELETE FROM md_stars WHERE path = ?").run(p);
+    d.prepare("DELETE FROM md_stars WHERE path = ?").run(key);
     return { starred: false };
   }
   d.prepare("INSERT INTO md_stars (path, kind, added_at) VALUES (?, ?, ?)")
-    .run(p, kind, new Date().toISOString());
+    .run(key, kind, new Date().toISOString());
   return { starred: true };
 }
 
 // ── Browse: persisted index snapshot (instant first paint) ──
+// The snapshot the index writes back after every scan. Rewriting 20-50k rows
+// (DELETE + re-INSERT, synchronously, on the main process) stalled the UI for
+// hundreds of milliseconds — and the scan that triggers it usually finds
+// nothing new. Hash what would be written and skip the write when it matches
+// what is already stored. Returns whether the table was actually rewritten.
+let indexCacheHash = null;
+
+function indexCacheFingerprint(rows) {
+  const h = crypto.createHash("sha256");
+  for (const r of rows) h.update(`${r.path}|${r.mtimeMs || 0}\n`);
+  h.update(`#${rows.length}`);
+  return h.digest("hex");
+}
+
 function saveIndexCache(rows) {
+  const items = Array.isArray(rows) ? rows : [];
+  const fingerprint = indexCacheFingerprint(items);
+  if (fingerprint === indexCacheHash) return { written: false };
   const d = getDB();
   const wipe = d.prepare("DELETE FROM md_index_cache");
   const ins = d.prepare(
     "INSERT OR REPLACE INTO md_index_cache (path, name, mtime_ms) VALUES (?, ?, ?)"
   );
-  const tx = d.transaction((items) => {
+  const tx = d.transaction((list) => {
     wipe.run();
-    for (const r of items) ins.run(r.path, r.name, r.mtimeMs || 0);
+    for (const r of list) ins.run(r.path, r.name, r.mtimeMs || 0);
   });
-  tx(rows);
+  tx(items);
+  indexCacheHash = fingerprint;
+  return { written: true };
 }
 
 function loadIndexCache() {
@@ -231,10 +319,15 @@ function close() {
     }
     db.close();
     db = null;
+    indexCacheHash = null;
   }
 }
 
 module.exports = {
+  available,
+  unavailableReason,
+  canonicalPath,
+  indexCacheFingerprint,
   track,
   get,
   list,

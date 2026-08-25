@@ -114,6 +114,12 @@ export function canEditLevel(level: ShareAccessLevel): boolean {
   return level === "owner" || level === "editor";
 }
 
+// Anyone with access to the doc may comment, viewers included. Resolving a
+// thread and deleting somebody else's comment stay at editor/owner.
+export function canCommentLevel(level: ShareAccessLevel): boolean {
+  return level !== null;
+}
+
 export function canManageLevel(level: ShareAccessLevel): boolean {
   return level === "owner";
 }

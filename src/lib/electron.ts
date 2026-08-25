@@ -2,6 +2,10 @@ export interface FilePayload {
   name: string;
   content: string;
   path: string;
+  // The content is a buffer, not what is on disk: "Revert to Snapshot…" hands
+  // back an older version of the file that is already open. The document keeps
+  // its path and stays unsaved until the user saves it.
+  unsaved?: boolean;
 }
 
 export interface SaveResult {
@@ -10,6 +14,8 @@ export interface SaveResult {
   path?: string;
   name?: string;
   error?: string;
+  // true when the chosen path ended in .csv and the CSV form was written.
+  wroteCsv?: boolean;
   // "reloaded": the file changed on disk since Markie read it and the user
   // chose the disk copy over their own edits. `content` carries that copy.
   code?: "reloaded";
@@ -57,10 +63,46 @@ export interface ElectronAPI {
   termExternalApps(): Promise<Array<{ id: string; name: string }>>;
   termOpenExternal(app: string, cwd: string | null): Promise<WsResult>;
   getInitialFile(): Promise<FilePayload | null>;
-  exportPDF(html: string): Promise<{ success: boolean; path?: string }>;
-  exportHTML(args: { defaultName: string; html: string }): Promise<SaveResult>;
-  saveFile(args: { filePath: string; content: string }): Promise<SaveResult>;
-  saveFileAs(args: { defaultName: string; content: string }): Promise<SaveResult>;
+  // `success: false` with a reason is a real outcome here: the print can time
+  // out, another export can already hold the hidden window, or the save sheet
+  // can be dismissed. Callers must read it.
+  // `docPath` lets main inline the document folder's images before rendering,
+  // and `mode: "print"` runs the system print sheet off the same hidden window
+  // instead of writing a PDF. The plain string form is the older payload.
+  exportPDF(
+    args:
+      | string
+      | {
+          html: string;
+          theme?: "dark" | "light";
+          docPath?: string | null;
+          mode?: "pdf" | "print";
+        }
+  ): Promise<{
+    success: boolean;
+    path?: string;
+    error?: string;
+    canceled?: boolean;
+    printed?: boolean;
+  }>;
+  exportHTML(args: {
+    defaultName: string;
+    html: string;
+    docPath?: string | null;
+  }): Promise<SaveResult>;
+  saveFile(args: {
+    filePath: string;
+    content: string;
+    /** The user already resolved a disk conflict; do not ask them again. */
+    force?: boolean;
+  }): Promise<SaveResult>;
+  // `csvContent` lets a table document hand over both forms at once; main
+  // picks by the extension the user chose and reports which one it wrote.
+  saveFileAs(args: {
+    defaultName: string;
+    content: string;
+    csvContent?: string;
+  }): Promise<SaveResult>;
   renameFile(args: { oldPath: string; newName: string }): Promise<SaveResult>;
   revealFile(path: string): Promise<{ ok?: boolean; error?: string }>;
   // Each onX subscribes and returns an unsubscribe function.
@@ -102,7 +144,13 @@ export interface ElectronAPI {
   registryGet(path: string): Promise<RegistryEntry | null>;
   // Remember a server-confirmed share role so an offline launch can honour it.
   registrySetRole?(args: { path: string; role: "owner" | "editor" | "viewer" }): Promise<{ ok?: boolean; error?: string }>;
-  libraryState(): Promise<{ signedIn: boolean; items: LibraryItem[] }>;
+  // A failure answers the same shape with an empty list and `error`, so a
+  // caller that maps over `items` never meets `undefined`.
+  libraryState(): Promise<{
+    signedIn: boolean;
+    items: LibraryItem[];
+    error?: string;
+  }>;
   docSyncOn(args: {
     path: string;
     name: string;
@@ -129,7 +177,7 @@ export interface ElectronAPI {
   // "unpushed" is not a state with a badge and no way out.
   docRetryPush?(args: { path: string }): Promise<SyncResult>;
   // Which tracked files the server is ahead of. One request for all of them.
-  docCheckUpdates?(): Promise<{ updates: DocUpdate[] }>;
+  docCheckUpdates?(): Promise<{ updates: DocUpdate[]; error?: string }>;
   // The server's copy, for costing a pull before making it.
   docRemoteContent?(args: {
     path: string;
@@ -146,13 +194,36 @@ export interface ElectronAPI {
   onSetMode(cb: (mode: ViewMode) => void): Unsubscribe;
   onToggleStats(cb: () => void): Unsubscribe;
   onFileOpened(cb: (data: FilePayload) => void): Unsubscribe;
+  /** Something else edited the open document. Carries the new on-disk text. */
+  onFileChangedOnDisk(
+    cb: (data: { path: string; content: string }) => void
+  ): Unsubscribe;
+  /** Follow this path for external edits (after Save As, or a new document). */
+  watchFile(filePath: string | null): Promise<{ ok: boolean } | { error: string } | null>;
+  /** Whether crash reports may be sent, and whether a DSN is configured at all. */
+  crashConsentGet(): Promise<{ enabled: boolean; available: boolean }>;
+  crashConsentSet(
+    enabled: boolean
+  ): Promise<{ ok: boolean; enabled?: boolean; error?: string }>;
+  /** Show the local crash log in the file manager (or say it is empty). */
+  crashLogReveal(): Promise<{ ok: boolean }>;
   // Auto-update
-  checkForUpdates(): Promise<{ ok: boolean; reason?: string }>;
+  checkForUpdates(): Promise<{ ok: boolean; reason?: string; error?: string }>;
   updateStatus(): Promise<string>;
+  /** Whether this install follows the opt-in beta update channel. */
+  updateChannelGet(): Promise<{ optedIn: boolean; currentVersion: string }>;
+  updateChannelSet(optedIn: boolean): Promise<{
+    ok: boolean;
+    error?: string;
+    optedIn?: boolean;
+    channel?: string;
+    allowDowngrade?: boolean;
+  }>;
   // Resolves only when the install did *not* happen; a successful call takes
   // the process down before it can return.
+  // null is the failure answer from main: the install did not start.
   quitAndInstall(): Promise<
-    { ok: boolean; reason?: string; error?: string } | void
+    { ok: boolean; reason?: string; error?: string } | void | null
   >;
   onUpdateAvailable(cb: (info: { version?: string }) => void): Unsubscribe;
   onUpdateProgress(cb: (info: { percent: number }) => void): Unsubscribe;
@@ -165,9 +236,21 @@ export interface ElectronAPI {
     path: string,
     kind: "folder" | "file"
   ): Promise<{ starred: boolean }>;
-  onMdIndexUpdated?(cb: (info: { scannedAt: string | null }) => void): Unsubscribe;
+  // The broadcast carries the scan result itself. A listener that only had the
+  // timestamp had to turn around and ask for a fresh scan, which doubled every
+  // device-wide walk. `files` stays optional so an older main process (or a
+  // notification that only reports the time) still type-checks.
+  onMdIndexUpdated?(cb: (info: MdIndexUpdate) => void): Unsubscribe;
   // Markie MCP server location, for the Agents setup dialog
-  mcpInfo?(): Promise<{ serverPath: string; packaged: boolean }>;
+  mcpInfo?(): Promise<{ serverPath: string; packaged: boolean; error?: string }>;
+  // Report a renderer crash to the main process's crash log. Fire-and-forget:
+  // the caller is an error boundary that has nothing to do with an answer.
+  logRendererError?(detail: {
+    message: string;
+    stack?: string;
+    componentStack?: string;
+    source?: string;
+  }): void;
 }
 
 export type Unsubscribe = (() => void) | undefined;
@@ -187,7 +270,17 @@ export interface MdStar {
 export interface MdScanResult {
   files: MdRow[];
   scannedAt: string | null;
+  // Present when the scan itself failed; `files` is then empty rather than
+  // absent, so callers still have an array to work with.
+  error?: string;
+  // The walk stopped early (time budget or depth cap), so this is a subset.
+  truncated?: boolean;
+  truncatedReason?: string | null;
 }
+
+// What `mdindex-updated` delivers: a full MdScanResult when main has one,
+// otherwise just the timestamp.
+export type MdIndexUpdate = Partial<MdScanResult> & { scannedAt: string | null };
 
 export interface WsEntry {
   name: string;
@@ -275,4 +368,64 @@ export interface DocUpdate {
 export function getElectronAPI(): ElectronAPI | null {
   if (typeof window === "undefined") return null;
   return (window as unknown as { electronAPI?: ElectronAPI }).electronAPI ?? null;
+}
+
+const SAFE = new WeakMap<ElectronAPI, ElectronAPI>();
+
+// Every call here crosses a process boundary, and the main process can refuse,
+// throw, or go away mid-call. A rejected invoke() lands as an unhandled
+// rejection, which in a React event handler means the click did nothing and
+// nothing said so. This wrapper turns any rejection into the `{ error }` shape
+// the main-process handlers already return, so a call site has one failure
+// shape to handle instead of two. Non-promise members (the onX subscriptions,
+// `platform`, `pathForFile`) pass straight through.
+export function safeApi(api: ElectronAPI | null): ElectronAPI | null {
+  if (!api) return null;
+  const cached = SAFE.get(api);
+  if (cached) return cached;
+  // One wrapper per method, kept for the life of the proxy. Without this, every
+  // property read minted a new closure, so `api.saveFile !== api.saveFile` and
+  // anything using a method as a hook dependency or a listener identity (an
+  // effect's deps array, removeEventListener) silently misbehaved.
+  const wrapped = new Map<string | symbol, unknown>();
+  const proxy = new Proxy(api, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== "function") return value;
+      // An onX subscriber returns an unsubscribe function, not a promise, and
+      // folding its failure into `{ error }` would hand the caller an object
+      // where a cleanup function belongs. Subscriptions pass through.
+      if (typeof prop === "string" && /^on[A-Z]/.test(prop)) return value;
+      const cached = wrapped.get(prop);
+      if (cached) return cached;
+      const fn = value as (...args: unknown[]) => unknown;
+      const safe = (...args: unknown[]) => {
+        const fail = (err: unknown) => {
+          console.error(`electronAPI.${String(prop)} failed`, err);
+          return {
+            error:
+              (err as { message?: string } | null)?.message ?? String(err),
+          };
+        };
+        try {
+          const out = fn.apply(target, args);
+          if (out && typeof (out as Promise<unknown>).then === "function") {
+            return (out as Promise<unknown>).catch(fail);
+          }
+          return out;
+        } catch (err) {
+          return fail(err);
+        }
+      };
+      wrapped.set(prop, safe);
+      return safe;
+    },
+  }) as ElectronAPI;
+  SAFE.set(api, proxy);
+  return proxy;
+}
+
+/** getElectronAPI(), with every rejection folded into `{ error }`. */
+export function getSafeAPI(): ElectronAPI | null {
+  return safeApi(getElectronAPI());
 }

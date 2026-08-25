@@ -59,7 +59,11 @@
       "arch": "x64",
       "status": "planned",
       "description": "Local packaging is configured; public signed artifacts are not published yet.",
-      "artifactPattern": "Markie-*-x64.exe"
+      "artifactPattern": "Markie-*-x64.exe",
+      "feed": {
+        "type": "electron-builder-win-yml",
+        "path": "windows/latest.yml"
+      }
     },
     {
       "id": "linux-x64",

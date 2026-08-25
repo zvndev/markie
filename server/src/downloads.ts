@@ -3,7 +3,11 @@ import { readFileSync } from "node:fs";
 export type DownloadStatus = "public" | "planned";
 
 export type DownloadFeed = {
-  type: "electron-builder-mac-yml";
+  // electron-updater picks the feed file by platform: latest-mac.yml on macOS,
+  // latest.yml on Windows. Naming the type is what keeps a manifest entry from
+  // pointing a platform at the other one's feed, which resolves to a 404 that
+  // only ever shows up as "no updates available".
+  type: "electron-builder-mac-yml" | "electron-builder-win-yml";
   path: string;
 };
 

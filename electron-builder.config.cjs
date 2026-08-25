@@ -15,6 +15,26 @@ if (!macPlatform?.feed?.path) {
 
 const publishPath = path.posix.dirname(macPlatform.feed.path);
 
+// Windows is built in CI and published from here, so its updater directory has
+// to be declared even while the platform is still marked planned: the path is
+// baked into app-update.yml at pack time, and an installer that shipped with
+// the wrong one would look for its updates in the macOS directory forever.
+const winPlatform = releaseManifest.platforms.find((platform) => platform.id === "windows-x64");
+
+if (!winPlatform?.feed?.path) {
+  throw new Error("release manifest needs a Windows updater feed path");
+}
+
+const winPublishPath = path.posix.dirname(winPlatform.feed.path);
+
+const publishTarget = (targetPath) => ({
+  provider: releaseManifest.storage.provider,
+  bucket: releaseManifest.storage.bucket,
+  endpoint: releaseManifest.storage.endpoint,
+  region: releaseManifest.storage.region,
+  path: targetPath,
+});
+
 module.exports = {
   appId: "com.zvn.markie",
   productName: "Markie",
@@ -44,6 +64,11 @@ module.exports = {
       { target: "nsis", arch: ["x64"] },
       { target: "zip", arch: ["x64"] },
     ],
+    // Overrides the top-level publish block for Windows only. macOS keeps
+    // reading the top-level one, so its app-update.yml is byte-for-byte what it
+    // was — and the release runner asserts that, which is what would catch this
+    // if the override ever leaked across platforms.
+    publish: [publishTarget(winPublishPath)],
   },
   linux: {
     icon: "build/icons",
@@ -54,15 +79,7 @@ module.exports = {
       { target: "deb", arch: ["x64"] },
     ],
   },
-  publish: [
-    {
-      provider: releaseManifest.storage.provider,
-      bucket: releaseManifest.storage.bucket,
-      endpoint: releaseManifest.storage.endpoint,
-      region: releaseManifest.storage.region,
-      path: publishPath,
-    },
-  ],
+  publish: [publishTarget(publishPath)],
   // electron/ and out/ are the whole shipped app. Note that `files` does NOT
   // control node_modules: electron-builder resolves production dependencies
   // from package.json separately and copies them in on top of this list, which

@@ -14,6 +14,47 @@ import { desktopAuthDeepLink, desktopAuthState } from "./desktop-auth.ts";
 
 const app = new Hono();
 
+// What a shared document page is allowed to load.
+//
+// script-src stays 'unsafe-inline' for one reason: /auth/desktop-bridge hands
+// the session back with an inline redirect. Nothing else here runs script, and
+// no user content can introduce any — render.ts sanitizes without rehype-raw,
+// so a <script> in somebody's markdown never survives to the page.
+//
+// img-src has to allow https: because shared documents legitimately embed
+// remote images, and a policy that blanks them is a policy someone turns off.
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: https:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+].join("; ");
+
+// Defence in depth on the origin itself.
+//
+// markie.zvndev.com sits behind Vercel, which sets these, and every share link
+// points there. But the Railway origin is publicly reachable and was serving
+// the same HTML with no CSP, no HSTS and no frame protection at all. A header
+// that exists only on the CDN is not a header the application has.
+app.use("*", async (c, next) => {
+  await next();
+  const h = c.res.headers;
+  h.set("X-Content-Type-Options", "nosniff");
+  h.set("X-Frame-Options", "DENY");
+  h.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  h.set("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+  h.set("Strict-Transport-Security", "max-age=63072000");
+  if ((h.get("content-type") ?? "").includes("text/html")) {
+    h.set("Content-Security-Policy", CONTENT_SECURITY_POLICY);
+  }
+});
+
 app.use(
   "*",
   cors({
@@ -67,6 +108,11 @@ app.get("/auth/google-start", async (c) => {
 // back to the desktop app via a markie:// deep link, since the app can't read
 // the browser's cookie.
 app.get("/auth/desktop-bridge", async (c) => {
+  // This page carries a live session token, in the markup and in the link.
+  // Without no-store it is an ordinary cacheable document, and a disk cache or
+  // any intermediary that keeps it is keeping a credential. doc-view.ts already
+  // says this for document pages; the page that hands out the session had not.
+  c.header("Cache-Control", "private, no-store");
   const result = await auth.api.getSession({ headers: c.req.raw.headers });
   const token = result?.session?.token;
   const page = (heading: string, sub: string, link?: string) =>
@@ -134,6 +180,8 @@ app.onError((err, c) => {
 app.notFound((c) => c.json({ error: "not found" }, 404));
 
 app.get("/api/me", async (c) => {
+  // Answers differ per session and name the signed-in person. Never shared.
+  c.header("Cache-Control", "private, no-store");
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   if (!session) return c.json({ user: null });
   return c.json({

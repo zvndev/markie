@@ -118,6 +118,46 @@ const BLOCK_STYLES = [
   { id: "code", label: "Code block" },
 ] as const;
 
+// The toolbar's whole reading of the document, as a pure function.
+//
+// Extracted from the selector so it can be proved without mounting TipTap:
+// this is where a torn-down editor bites, and the crash it caused was only
+// reachable through a real window.
+export function docToolbarState(e: Editor | null) {
+  // A destroyed editor is not a null one, and `!e` does not catch it.
+  // Switching to the Source pane tears the rich editor down while this toolbar
+  // still holds the reference; every accessor below reads through the view,
+  // which is gone by then. e.can() threw
+  //   TypeError: Cannot read properties of null (reading 'can')
+  // and the error boundary took the whole app to the crash screen — so
+  // pressing Cmd-F in the Source pane killed Markie and lost unsaved work.
+  if (!e || e.isDestroyed) return null;
+  return {
+    bold: e.isActive("bold"),
+    italic: e.isActive("italic"),
+    underline: e.isActive("underline"),
+    highlight: e.isActive("highlight"),
+    alignLeft: e.isActive({ textAlign: "left" }),
+    alignCenter: e.isActive({ textAlign: "center" }),
+    alignRight: e.isActive({ textAlign: "right" }),
+    // An empty selection means "apply to the document"; a real one means
+    // "apply to this". The toolbar has to know which before it acts.
+    hasSelection: !e.state.selection.empty,
+    strike: e.isActive("strike"),
+    code: e.isActive("code"),
+    bullet: e.isActive("bulletList"),
+    ordered: e.isActive("orderedList"),
+    task: e.isActive("taskList"),
+    quote: e.isActive("blockquote"),
+    codeBlock: e.isActive("codeBlock"),
+    h1: e.isActive("heading", { level: 1 }),
+    h2: e.isActive("heading", { level: 2 }),
+    h3: e.isActive("heading", { level: 3 }),
+    canUndo: e.can().undo(),
+    canRedo: e.can().redo(),
+  };
+}
+
 export function DocToolbar({
   editor,
   appearance,
@@ -127,33 +167,7 @@ export function DocToolbar({
 }: DocToolbarProps) {
   const state = useEditorState({
     editor,
-    selector: ({ editor: e }) => {
-      if (!e) return null;
-      return {
-        bold: e.isActive("bold"),
-        italic: e.isActive("italic"),
-        underline: e.isActive("underline"),
-        highlight: e.isActive("highlight"),
-        alignLeft: e.isActive({ textAlign: "left" }),
-        alignCenter: e.isActive({ textAlign: "center" }),
-        alignRight: e.isActive({ textAlign: "right" }),
-        // An empty selection means "apply to the document"; a real one means
-        // "apply to this". The toolbar has to know which before it acts.
-        hasSelection: !e.state.selection.empty,
-        strike: e.isActive("strike"),
-        code: e.isActive("code"),
-        bullet: e.isActive("bulletList"),
-        ordered: e.isActive("orderedList"),
-        task: e.isActive("taskList"),
-        quote: e.isActive("blockquote"),
-        codeBlock: e.isActive("codeBlock"),
-        h1: e.isActive("heading", { level: 1 }),
-        h2: e.isActive("heading", { level: 2 }),
-        h3: e.isActive("heading", { level: 3 }),
-        canUndo: e.can().undo(),
-        canRedo: e.can().redo(),
-      };
-    },
+    selector: ({ editor: e }) => docToolbarState(e),
   });
 
   const run = (fn: (e: Editor) => void) => () => {

@@ -19,6 +19,13 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
 const WINDOW_TIMEOUT_MS = 40000;
+// An Intel build on an Apple Silicon host runs under Rosetta, and the first
+// launch of a freshly built binary pays for translating it. 40s is enough on
+// the second run and marginal on the first, which is exactly the shape of a
+// gate that fails good builds: one release run saw x64 mount inside 40s and
+// the next, on identical code, did not. The native build keeps the tight
+// budget; only the translated one gets the slack it genuinely needs.
+const TRANSLATED_TIMEOUT_MS = 180000;
 const POLL_MS = 1000;
 // A word present in every title the window legitimately shows.
 //
@@ -91,8 +98,18 @@ async function afterPack(context) {
   const appPath = path.join(context.appOutDir, `${appName}.app`);
   const bin = path.join(appPath, "Contents", "MacOS", appName);
 
+  // Ask the binary what it is rather than inferring from the output directory
+  // name, which is a packaging convention and not a fact about the executable.
+  const hostSlice = process.arch === "arm64" ? "arm64" : "x86_64";
+  const slices = sh(`lipo -archs ${JSON.stringify(bin)}`);
+  const translated = slices !== "" && !slices.split(/\s+/).includes(hostSlice);
+  const timeoutMs = translated ? TRANSLATED_TIMEOUT_MS : WINDOW_TIMEOUT_MS;
 
   console.log(`\n[preflight] release gate: smoke-testing ${appPath}`);
+  console.log(
+    `[preflight] ${slices || "unknown"} on ${process.arch}` +
+      `${translated ? " (translated, Rosetta)" : " (native)"}; allowing ${timeoutMs / 1000}s`
+  );
 
   // Its own profile directory, which is what the single-instance lock is keyed
   // on. The gate therefore does not care whether Markie is already running:
@@ -134,7 +151,7 @@ async function afterPack(context) {
   let lastPid = 0;
   let mounted = false;
   const started = Date.now();
-  while (Date.now() - started < WINDOW_TIMEOUT_MS) {
+  while (Date.now() - started < timeoutMs) {
     await sleep(POLL_MS);
     const alive = (() => {
       try { process.kill(child.pid, 0); return true; } catch { return false; }
@@ -160,7 +177,9 @@ async function afterPack(context) {
   if (!ok) {
     throw new Error(
       `[preflight] HARD STOP — release aborted.\n` +
-        `  ${appName} did not present a loaded window within ${WINDOW_TIMEOUT_MS / 1000}s.\n` +
+        `  ${appName} did not present a loaded window within ${timeoutMs / 1000}s.\n` +
+        `  binary: ${slices || "unknown"} on ${process.arch}` +
+        `${translated ? " (translated through Rosetta)" : " (native)"}\n` +
         `  last window count: ${lastCount}; last titles: ${lastTitles || "(none)"}\n` +
         `  launched pid ${child.pid}; the window belonged to pid ${lastPid || "(none)"}\n` +
         `  renderer mounted: ${mounted ? "yes" : "no"}\n` +

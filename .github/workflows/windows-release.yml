@@ -1,0 +1,276 @@
+name: Windows signed release
+
+# Builds, signs, installs, launches and uninstalls the Windows build on a real
+# Windows runner, then publishes the signed installer.
+#
+# Signing is Azure Artifact Signing (formerly Trusted Signing). There is no
+# local path: nothing on the maintainer's Mac can sign a Windows binary, so CI
+# is the only way a signed Markie installer exists. An unsigned build is still
+# useful for testing but trips SmartScreen's "Windows protected your PC", which
+# is why `signing: none` is a deliberate, separate choice rather than a
+# fallback the workflow takes on its own.
+#
+# The Azure identity is a federated credential on `repo:zvndev/markie` scoped to
+# a branch, so a run from an unfederated branch fails at login with a subject
+# mismatch. Add a credential per branch you dispatch from; do not wildcard.
+
+on:
+  workflow_dispatch:
+    inputs:
+      signing:
+        description: Signing identity (azure = Public Trust, none = unsigned test build)
+        type: choice
+        options:
+          - azure
+          - none
+        default: azure
+      publish_release:
+        description: Publish the installer to the windows-signed release tag
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  # Required for azure/login's OIDC token exchange. Without it the login step
+  # fails with a confusing credential error rather than a permissions one.
+  id-token: write
+
+jobs:
+  windows-release:
+    name: Build, sign and verify
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22.13.1"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the renderer
+        run: npm run build
+
+      - name: Resolve the version being built
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if ([string]::IsNullOrWhiteSpace($version)) { throw "could not read a version from package.json" }
+          "MARKIE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "building Markie $version"
+
+      - name: Require the signing identity to be fully configured
+        if: inputs.signing == 'azure'
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          MARKIE_WINDOWS_PUBLISHER_NAME: ${{ vars.MARKIE_WINDOWS_PUBLISHER_NAME }}
+          MARKIE_WINDOWS_PUBLISHER_SUBJECT: ${{ vars.MARKIE_WINDOWS_PUBLISHER_SUBJECT }}
+        run: |
+          # Fail here, before a 20-minute build, rather than at the signing call.
+          foreach ($required in @(
+            "AZURE_CLIENT_ID",
+            "AZURE_TENANT_ID",
+            "AZURE_SUBSCRIPTION_ID",
+            "AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME",
+            "AZURE_ARTIFACT_SIGNING_ENDPOINT",
+            "AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME",
+            "MARKIE_WINDOWS_PUBLISHER_NAME",
+            "MARKIE_WINDOWS_PUBLISHER_SUBJECT"
+          )) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($required))) {
+              throw "Azure Artifact Signing requires the repository variable $required"
+            }
+          }
+          # MARKIE_EXPECTED_SIGNER_SUBJECT is compared character for character
+          # against what the signed binary reports, so it must be the full
+          # distinguished name read off the issued certificate — not the CN, and
+          # not the portal's preview field.
+          "MARKIE_EXPECTED_SIGNER_SUBJECT=$env:MARKIE_WINDOWS_PUBLISHER_SUBJECT" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Authenticate to Azure with GitHub OIDC
+        if: inputs.signing == 'azure'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build unsigned installer
+        if: inputs.signing == 'none'
+        run: npx electron-builder --config electron-builder.config.cjs --win --x64 --publish never --config.win.forceCodeSigning=false
+
+      - name: Build signed installer
+        if: inputs.signing == 'azure'
+        shell: pwsh
+        env:
+          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          MARKIE_WINDOWS_PUBLISHER_NAME: ${{ vars.MARKIE_WINDOWS_PUBLISHER_NAME }}
+        run: |
+          npx electron-builder --config electron-builder.config.cjs --win --x64 --publish never `
+            --config.win.azureSignOptions.publisherName="$env:MARKIE_WINDOWS_PUBLISHER_NAME" `
+            --config.win.azureSignOptions.endpoint="$env:AZURE_ARTIFACT_SIGNING_ENDPOINT" `
+            --config.win.azureSignOptions.certificateProfileName="$env:AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME" `
+            --config.win.azureSignOptions.codeSigningAccountName="$env:AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME" `
+            --config.win.azureSignOptions.fileDigest=SHA256 `
+            --config.win.azureSignOptions.timestampRfc3161=http://timestamp.acs.microsoft.com `
+            --config.win.azureSignOptions.timestampDigest=SHA256
+
+      - name: Verify the signature, then install, launch and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Assert-MarkieSignature {
+            param(
+              [Parameter(Mandatory = $true)] $Signature,
+              [Parameter(Mandatory = $true)] [string] $Label
+            )
+
+            if ("${{ inputs.signing }}" -eq "none") {
+              Write-Host "$Label — unsigned build, signature not asserted"
+              return
+            }
+
+            if (-not $Signature.SignerCertificate) {
+              throw "$Label does not carry an Authenticode signer"
+            }
+            if ($Signature.SignerCertificate.Subject -ne $env:MARKIE_EXPECTED_SIGNER_SUBJECT) {
+              throw "$Label signer subject '$($Signature.SignerCertificate.Subject)' did not match the configured identity '$env:MARKIE_EXPECTED_SIGNER_SUBJECT'"
+            }
+            if ($Signature.Status -ne "Valid") {
+              throw "$Label Authenticode trust status was $($Signature.Status)"
+            }
+            # Artifact Signing issues certificates that live about three days and
+            # rotate automatically. The signature outlives them only because the
+            # build countersigns with RFC 3161, so a missing timestamp means
+            # every install breaks a few days from now.
+            if (-not $Signature.TimeStamperCertificate) {
+              throw "$Label signature is missing a trusted timestamp"
+            }
+
+            $chain = [Security.Cryptography.X509Certificates.X509Chain]::new()
+            $chain.ChainPolicy.RevocationMode = [Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+            if (-not $chain.Build($Signature.SignerCertificate)) {
+              $errors = ($chain.ChainStatus | ForEach-Object StatusInformation) -join "; "
+              throw "$Label signer chain could not be built: $errors"
+            }
+            $chainSubjects = ($chain.ChainElements | ForEach-Object { $_.Certificate.Subject }) -join "  <-  "
+            Write-Host "$Label chain: $chainSubjects"
+
+            # The FULL distinguished name. Pinning the bare CN is the mistake
+            # that made the equivalent check in the Circular workflow silently
+            # unsatisfiable, so it had never once passed.
+            $expectedRoot = "CN=Microsoft Identity Verification Root Certificate Authority 2020, O=Microsoft Corporation, C=US"
+            $root = $chain.ChainElements[$chain.ChainElements.Count - 1].Certificate
+            if ($root.Subject -ne $expectedRoot) {
+              throw "$Label did not chain to the Artifact Signing Public Trust root. Found '$($root.Subject)'. Full chain: $chainSubjects"
+            }
+
+            $fingerprint = [Convert]::ToHexString(
+              [Security.Cryptography.SHA256]::HashData($Signature.SignerCertificate.RawData)
+            )
+            Write-Host "$Label signer SHA-256: $fingerprint"
+          }
+
+          $installer = Get-ChildItem dist -Filter "Markie-*-x64.exe" | Select-Object -First 1
+          if (-not $installer) { throw "no Windows installer was produced in dist/" }
+          Write-Host "installer: $($installer.Name)"
+          Assert-MarkieSignature (Get-AuthenticodeSignature $installer.FullName) "Installer"
+
+          # /S is NSIS silent mode. A signed installer that cannot actually
+          # install is not a release, so this runs the real thing.
+          $install = Start-Process $installer.FullName -ArgumentList "/S" -PassThru -Wait
+          if ($install.ExitCode -ne 0) { throw "installer exited with code $($install.ExitCode)" }
+
+          $executable = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Filter "Markie.exe" -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $executable) { throw "installed Markie.exe was not found under LOCALAPPDATA\Programs" }
+          Write-Host "installed: $($executable.FullName)"
+          Assert-MarkieSignature (Get-AuthenticodeSignature $executable.FullName) "Installed executable"
+
+          # electron-builder's default NSIS installer is one-click, and a
+          # one-click install launches the app when it finishes — silent mode
+          # included. Markie also holds a single-instance lock, so a second
+          # launch hands off to the copy already running and exits immediately.
+          # Launching straight after /S therefore watches the WRONG process die
+          # a normal death and calls a healthy build broken. Clear the field
+          # first so the process this step inspects is the one it started.
+          Get-Process Markie -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 3
+
+          $proc = Start-Process $executable.FullName -PassThru
+          # Give the window a chance to appear, then require the process to
+          # still be alive AND to have put a titled window on screen. Liveness
+          # alone passes a build whose renderer never mounts.
+          $deadline = 60
+          $titled = $null
+          for ($waited = 0; $waited -lt $deadline; $waited += 2) {
+            Start-Sleep -Seconds 2
+            $running = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
+            if (-not $running) { throw "Markie exited on its own $waited s after launching" }
+            $running.Refresh()
+            if ($running.MainWindowTitle -like "*Markie*") { $titled = $running.MainWindowTitle; break }
+          }
+          if (-not $titled) {
+            throw "Markie stayed alive but never presented a window titled Markie within $deadline s"
+          }
+          Write-Host "launched, window title: '$titled'"
+          Get-Process Markie -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 3
+
+          $uninstaller = Get-ChildItem (Split-Path $executable.FullName) -Filter "Uninstall*.exe" |
+            Select-Object -First 1
+          if ($uninstaller) {
+            Assert-MarkieSignature (Get-AuthenticodeSignature $uninstaller.FullName) "Uninstaller"
+            $remove = Start-Process $uninstaller.FullName -ArgumentList "/S" -PassThru -Wait
+            if ($remove.ExitCode -ne 0) { throw "uninstaller exited with code $($remove.ExitCode)" }
+          } else {
+            Write-Host "no uninstaller found next to the executable; skipping the uninstall leg"
+          }
+
+      - name: Upload the installer as a build artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: markie-windows-${{ env.MARKIE_VERSION }}-${{ github.sha }}
+          path: |
+            dist/Markie-*-x64.exe
+            dist/Markie-*-x64.zip
+          if-no-files-found: warn
+
+      # Actions artifacts are billed against a quota that can silently fill, and
+      # when it does the upload step reports success while storing nothing. A
+      # release asset is billed separately and fails loudly, so the installer
+      # anyone is expected to download goes here.
+      - name: Publish to the windows-signed release tag
+        if: inputs.publish_release && inputs.signing == 'azure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view windows-signed --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create windows-signed \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "Windows (signed)" \
+              --notes "Rolling signed Windows installer, replaced on every signed build. Signed by ZVN DEV LLC through Azure Artifact Signing, so it does not trip SmartScreen."
+          fi
+          gh release upload windows-signed dist/Markie-*-x64.exe dist/Markie-*-x64.zip \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          echo "published Markie ${MARKIE_VERSION} to the windows-signed tag"

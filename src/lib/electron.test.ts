@@ -8,7 +8,50 @@ function api(overrides: Partial<ElectronAPI>): ElectronAPI {
   return overrides as unknown as ElectronAPI;
 }
 
+// What contextBridge.exposeInMainWorld actually hands the renderer: every
+// property read-only and non-configurable. A plain object literal is writable
+// and configurable, so it cannot catch a Proxy that violates the invariant
+// those flags impose — which is how a broken safeApi shipped while every test
+// above stayed green.
+function bridged(overrides: Partial<ElectronAPI>): ElectronAPI {
+  const exposed = {};
+  for (const [key, value] of Object.entries(overrides)) {
+    Object.defineProperty(exposed, key, {
+      value,
+      writable: false,
+      configurable: false,
+      enumerable: true,
+    });
+  }
+  return exposed as unknown as ElectronAPI;
+}
+
 describe("safeApi", () => {
+  it("works on an object exposed through contextBridge", async () => {
+    // Reading any method off a Proxy whose get trap returns a wrapper throws
+    //   TypeError: 'get' on proxy: property 'saveFile' is a read-only and
+    //   non-configurable data property on the proxy target
+    // The renderer swallowed that as a failed save: the user confirmed
+    // "Yes, overwrite the file" and nothing whatsoever was written.
+    const saveFile = vi.fn(async () => ({ success: true }));
+    const safe = safeApi(bridged({ saveFile }))!;
+
+    await expect(
+      safe.saveFile({ filePath: "/x.md", content: "hello", force: true })
+    ).resolves.toEqual({ success: true });
+    expect(saveFile).toHaveBeenCalledWith({
+      filePath: "/x.md",
+      content: "hello",
+      force: true,
+    });
+  });
+
+  it("keeps method identity stable across reads of a bridged object", () => {
+    // The reason the Proxy exists at all: effect deps and listener identity.
+    const safe = safeApi(bridged({ saveFile: vi.fn(async () => ({ success: true })) }))!;
+    expect(safe.saveFile).toBe(safe.saveFile);
+  });
+
   it("folds a rejected invoke into { error }", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const safe = safeApi(

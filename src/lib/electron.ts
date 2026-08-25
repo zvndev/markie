@@ -388,7 +388,19 @@ export function safeApi(api: ElectronAPI | null): ElectronAPI | null {
   // anything using a method as a hook dependency or a listener identity (an
   // effect's deps array, removeEventListener) silently misbehaved.
   const wrapped = new Map<string | symbol, unknown>();
-  const proxy = new Proxy(api, {
+  // Proxy a plain copy, never `api` itself.
+  //
+  // contextBridge.exposeInMainWorld defines every property read-only and
+  // non-configurable, and a Proxy `get` trap is required to return the target's
+  // actual value for such a property. Returning a wrapper threw
+  //   TypeError: 'get' on proxy: property 'saveFile' is a read-only and
+  //   non-configurable data property on the proxy target
+  // on every single method read. The renderer reported that as a failed call,
+  // so "Yes, overwrite the file" wrote nothing at all. A shallow copy carries
+  // the same methods with writable, configurable descriptors, which is what
+  // makes wrapping legal. Calls are still applied to the original.
+  const target = { ...api } as ElectronAPI;
+  const proxy = new Proxy(target, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (typeof value !== "function") return value;
@@ -408,7 +420,9 @@ export function safeApi(api: ElectronAPI | null): ElectronAPI | null {
           };
         };
         try {
-          const out = fn.apply(target, args);
+          // `api`, not the copy: contextBridge methods are closures, but the
+          // original is the honest receiver.
+          const out = fn.apply(api, args);
           if (out && typeof (out as Promise<unknown>).then === "function") {
             return (out as Promise<unknown>).catch(fail);
           }

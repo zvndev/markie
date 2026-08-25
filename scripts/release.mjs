@@ -484,8 +484,17 @@ async function prepareMac() {
   await notarizeMacDiskImages(version);
   run("npm", ["run", "electron:smoke:mac:arm64"]);
   run("npm", ["run", "electron:smoke:mac:x64"]);
-  run("npm", ["run", "electron:smoke:mac:launch"]);
-  run("node", ["scripts/desktop-launch-smoke.mjs", "--platform", "mac", "--arch", "x64"]);
+  // Launching the packaged app IS the check here, so the release runner says so
+  // itself rather than requiring the operator to remember an environment
+  // variable. The consent gate exists to stop an agent or a stray `npm run`
+  // booting Markie on somebody's Mac unasked; a release that has already been
+  // given an explicit instruction is not that, and without this the whole
+  // pipeline stops after notarizing with a message about consent.
+  const launchEnv = { ...process.env, MARKIE_ALLOW_E2E: "1" };
+  run("npm", ["run", "electron:smoke:mac:launch"], { env: launchEnv });
+  run("node", ["scripts/desktop-launch-smoke.mjs", "--platform", "mac", "--arch", "x64"], {
+    env: launchEnv,
+  });
   const verified = await verifyLocalMacArtifacts({ verifyTrust: true });
   writeEvidence(verified.version, "local.json", {
     schemaVersion: 1,

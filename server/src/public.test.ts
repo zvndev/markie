@@ -34,6 +34,24 @@ releaseDate: '2026-06-15T00:00:00.000Z'
 // What electron-builder actually writes for a dual-architecture mac release:
 // both arches live in one latest-mac.yml, and each platform has to pick its own
 // artifact out of it.
+const WINDOWS_YML = `version: 0.4.0
+files:
+  - url: Markie-0.4.0-x64.exe
+    sha512: eee==
+    size: 118341444
+  - url: Markie-0.4.0-x64.zip
+    sha512: fff==
+    size: 117709891
+path: Markie-0.4.0-x64.exe
+sha512: eee==
+releaseDate: '2026-08-15T00:00:00.000Z'
+`;
+
+// The manifest gives macOS and Windows separate feed files, so a stub that
+// answers every URL with the same body tests a world that does not exist.
+const feedFor = async (input: RequestInfo | URL) =>
+  new Response(String(input).includes("/windows/") ? WINDOWS_YML : DUAL_ARCH_YML, { status: 200 });
+
 const DUAL_ARCH_YML = `version: 0.4.0
 files:
   - url: Markie-0.4.0-arm64-mac.zip
@@ -146,7 +164,7 @@ test("download manifest covers public and planned desktop targets", () => {
         id: "windows-x64",
         label: "Windows x64",
         route: "/download/windows",
-        status: "planned",
+        status: "public",
         artifactPattern: "Markie-*-x64.exe",
       },
       {
@@ -158,7 +176,8 @@ test("download manifest covers public and planned desktop targets", () => {
       },
     ]
   );
-  assert.equal(findDownloadPlatform("/download/windows")?.status, "planned");
+  assert.equal(findDownloadPlatform("/download/windows")?.status, "public");
+  assert.equal(findDownloadPlatform("/download/linux")?.status, "planned");
   assert.deepEqual(primaryDownloadCta(), {
     href: "/download/mac",
     label: "Get Markie for macOS",
@@ -191,7 +210,7 @@ test("latest release JSON is a stable machine-readable source for sites and emai
     globalThis.fetch = previousFetch;
     clearDownloadCacheForTests();
   });
-  globalThis.fetch = async () => new Response(DUAL_ARCH_YML, { status: 200 });
+  globalThis.fetch = feedFor as typeof fetch;
 
   const res = await publicShare.request("/download/latest.json");
   const body = await res.json();
@@ -225,6 +244,16 @@ test("latest release JSON is a stable machine-readable source for sites and emai
         artifactUrl:
           "https://f005.backblazeb2.com/file/markie-releases/mac/Markie-0.4.0-x64.dmg",
       },
+      {
+        id: "windows-x64",
+        label: "Windows x64",
+        os: "windows",
+        arch: "x64",
+        version: "0.4.0",
+        downloadUrl: "https://markie.zvndev.com/download/windows",
+        artifactUrl:
+          "https://f005.backblazeb2.com/file/markie-releases/windows/Markie-0.4.0-x64.exe",
+      },
     ],
   });
 });
@@ -236,11 +265,13 @@ test("latest human download route stays versionless", async () => {
 });
 
 test("planned download routes render an honest unavailable page", async () => {
-  const res = await publicShare.request("/download/windows");
+  // Linux, now that Windows ships. The page has to keep refusing to pretend a
+  // platform is ready, which is the whole reason the manifest carries a status.
+  const res = await publicShare.request("/download/linux");
   const body = await res.text();
 
   assert.equal(res.status, 404);
-  assert.match(body, /Windows x64 Is Not Published Yet/);
+  assert.match(body, /Linux x64 Is Not Published Yet/);
   assert.match(body, /current public build remains macOS Apple Silicon/i);
 });
 
@@ -251,7 +282,7 @@ test("the Intel download route redirects to the x64 artifact", async (t) => {
     globalThis.fetch = previousFetch;
     clearDownloadCacheForTests();
   });
-  globalThis.fetch = async () => new Response(DUAL_ARCH_YML, { status: 200 });
+  globalThis.fetch = feedFor as typeof fetch;
 
   const res = await publicShare.request("/download/mac-intel");
   assert.equal(res.status, 302);

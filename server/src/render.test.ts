@@ -55,7 +55,7 @@ test("renderDownloadPage lists public and planned platforms", () => {
   assert.match(page, /\/download\/linux/);
 });
 
-test("renderDownloadPage offers both published mac builds and gates the rest", () => {
+test("renderDownloadPage offers every signed build and gates the rest", () => {
   const page = renderDownloadPage({ siteUrl: "https://markie.example.com" });
   const card = (label: string) =>
     page.slice(
@@ -63,19 +63,21 @@ test("renderDownloadPage offers both published mac builds and gates the rest", (
       page.indexOf("</section>", page.indexOf(`<h2>${label}</h2>`))
     );
 
-  // Both macOS architectures are signed, notarized and downloadable.
-  for (const label of ["macOS Apple Silicon", "macOS Intel"]) {
+  // Both macOS architectures are signed and notarized; Windows is signed by
+  // Azure Artifact Signing. All three are downloadable.
+  for (const label of ["macOS Apple Silicon", "macOS Intel", "Windows x64"]) {
     assert.match(card(label), /Published/, label);
     assert.doesNotMatch(card(label), /Not published yet/, label);
   }
   assert.match(card("macOS Intel"), /href="\/download\/mac-intel"/);
   assert.match(card("macOS Intel"), /Get Markie for Intel Mac/);
+  assert.match(card("Windows x64"), /href="\/download\/windows"/);
+  assert.match(card("Windows x64"), /Get Markie for Windows/);
 
-  // Windows and Linux are still packaging-only.
-  for (const label of ["Windows x64", "Linux x64"]) {
-    assert.match(card(label), /Not published yet/, label);
-    assert.match(card(label), /Planned/, label);
-  }
+  // Linux is still packaging-only, and the page has to keep saying so rather
+  // than offering a link to something that was never built.
+  assert.match(card("Linux x64"), /Not published yet/);
+  assert.match(card("Linux x64"), /Planned/);
 });
 
 test("renderPublicPage's Open in Markie deep link carries the token + source", () => {

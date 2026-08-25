@@ -45,11 +45,10 @@ function winCertificate(der: Buffer, { certificateType = 0x0002 } = {}) {
 }
 
 describe("expectedWindowsArtifacts", () => {
-  it("names both artifacts the Windows feed has to cover", () => {
-    expect(expectedWindowsArtifacts("0.4.2")).toEqual([
-      "Markie-0.4.2-x64.exe",
-      "Markie-0.4.2-x64.zip",
-    ]);
+  it("covers the installer, which is all the Windows updater feed lists", () => {
+    // Asserting the portable .zip belongs here failed a real release: the feed
+    // electron-builder writes for Windows names the NSIS target only.
+    expect(expectedWindowsArtifacts("0.4.2")).toEqual(["Markie-0.4.2-x64.exe"]);
   });
 });
 

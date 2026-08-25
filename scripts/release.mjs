@@ -801,8 +801,13 @@ function windowsFeedFile(version) {
   return releaseChannel(version) === "beta" ? "beta.yml" : "latest.yml";
 }
 
+// Only the installer. electron-builder's Windows feed lists the NSIS target and
+// nothing else — differential updates on Windows are the installer plus its
+// blockmap — so the portable .zip is not part of the update surface. It stays
+// on the GitHub release tag for anyone who wants it and is not copied to the
+// bucket, where nothing would link to it.
 export function expectedWindowsArtifacts(version) {
-  return [`Markie-${version}-x64.exe`, `Markie-${version}-x64.zip`];
+  return [`Markie-${version}-x64.exe`];
 }
 
 // A distinguished name, compared as a set of components rather than as a
@@ -922,6 +927,7 @@ function downloadSignedWindowsRelease(version) {
     ...expectedWindowsArtifacts(version).flatMap((name) => [name, `${name}.blockmap`]),
     windowsFeedFile(version),
   ];
+  assert(patterns.length > 0, "no Windows artifacts to download");
   run("gh", [
     "release",
     "download",

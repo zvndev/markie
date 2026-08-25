@@ -20,10 +20,21 @@ const { pathToFileURL } = require("node:url");
 
 const WINDOW_TIMEOUT_MS = 40000;
 const POLL_MS = 1000;
-// The static HTML title. Its presence proves the page loaded — an Electron
-// window with no page reports the application name instead — but no more than
-// that: it is Next's metadata, and it survives even if React throws on mount.
-const TITLE_NEEDLE = "Markdown Viewer";
+// A word present in every title the window legitimately shows.
+//
+// This used to be "Markdown Viewer", the static HTML title from Next's
+// metadata — and that made the gate race React. Once mounted, page.tsx sets
+// document.title from the open file, which under MARKIE_PREFLIGHT (no file) is
+// exactly "Markie". So the needle matched only in the window between load and
+// mount: arm64 sampled inside it and passed, x64 under Rosetta mounted first
+// and failed, on identical, working builds.
+//
+// Matching "Markie" is stable on both sides of mount. It is deliberately weak
+// on its own — a window with no page at all reports the application name,
+// which is also "Markie" — and that is fine, because READY_FILE below is the
+// signal that actually carries the proof and cannot be faked by an empty
+// window. The title is a sanity check; the handshake is the gate.
+const TITLE_NEEDLE = "Markie";
 
 // So the window check is only half of it. The app writes this file into its
 // profile directory from the IPC handshake the renderer makes on mount, which

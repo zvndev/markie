@@ -90,12 +90,12 @@ async function main() {
   const devPort = await pickPort(); const debugPort = await pickPort();
   const devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
-  start("npm", ["run", "dev", "--", "--port", String(devPort)], { log: path.join(artifactDir, "next.log") });
+  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], { log: path.join(artifactDir, "next.log") });
   await waitFor("dev server", async () => !!(await fetch(devOrigin).catch(() => null)), 90000);
 
   start(path.join(root, "node_modules", ".bin", "electron"),
     [".", docPath, `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],
-    { env: { ...process.env, NODE_ENV: "development", MARKIE_E2E: "1" }, log: path.join(artifactDir, "electron.log") });
+    { env: { ...process.env, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin }, log: path.join(artifactDir, "electron.log") });
 
   const cdp = await waitFor("CDP", cdpConnect, 40000);
   await cdp.send("Runtime.enable"); await cdp.send("Page.enable");

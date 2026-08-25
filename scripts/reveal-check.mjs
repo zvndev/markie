@@ -208,7 +208,7 @@ async function main() {
   const devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
 
-  start("npm", ["run", "dev", "--", "--port", String(devPort)], {
+  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
     log: logPath("next"),
   });
   await waitFor(
@@ -229,7 +229,7 @@ async function main() {
       `--user-data-dir=${userDataDir}`,
     ],
     {
-      env: { ...process.env, NODE_ENV: "development", MARKIE_E2E: "1" },
+      env: { ...process.env, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
       log: logPath("electron"),
     }
   );

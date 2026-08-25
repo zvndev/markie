@@ -210,7 +210,7 @@ async function main() {
   devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
 
-  start("npm", ["run", "dev", "--", "--port", String(devPort)], {
+  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
     env: baseEnv,
     log: logPath("next"),
   });
@@ -223,7 +223,7 @@ async function main() {
     electronBin,
     [".", docPath, `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],
     {
-      env: { ...baseEnv, NODE_ENV: "development", MARKIE_E2E: "1" },
+      env: { ...baseEnv, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
       log: logPath("electron"),
     }
   );

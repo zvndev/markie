@@ -150,7 +150,7 @@ async function main() {
   const devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
 
-  start("npm", ["run", "dev", "--", "--port", String(devPort)], {
+  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
     log: path.join(artifactDir, "next.log"),
   });
   await waitFor("dev server", async () => !!(await fetch(devOrigin).catch(() => null)), 90000);
@@ -159,7 +159,7 @@ async function main() {
     path.join(root, "node_modules", ".bin", "electron"),
     [".", docPath, `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],
     {
-      env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1" },
+      env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
       log: path.join(artifactDir, "electron.log"),
     }
   );

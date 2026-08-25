@@ -261,7 +261,7 @@ async function main() {
   const userDataDir = await mkdtemp(path.join(tmpdir(), "markie-light-audit-"));
   tempPaths.push(userDataDir);
 
-  start("npm", ["run", "dev", "--", "--port", String(devPort)], { log: logPath("next") });
+  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], { log: logPath("next") });
   await waitFor("Next dev renderer", async () => {
     const res = await fetch(devOrigin).catch(() => null);
     return !!res;
@@ -272,7 +272,7 @@ async function main() {
     electronBin,
     [".", "--remote-debugging-port=9222", `--user-data-dir=${userDataDir}`],
     {
-      env: { ...baseEnv, NODE_ENV: "development", MARKIE_E2E: "1" },
+      env: { ...baseEnv, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
       log: logPath("electron"),
     }
   );

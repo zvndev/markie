@@ -172,7 +172,7 @@ async function main() {
   const devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
 
-  start("npm", ["run", "dev", "--", "--port", String(devPort)], {
+  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
     log: path.join(artifactDir, "next.log"),
   });
   await waitFor("dev server", async () => !!(await fetch(devOrigin).catch(() => null)), 90000);
@@ -185,7 +185,7 @@ async function main() {
         ...process.env,
         HOME: homeDir,
         NODE_ENV: "development",
-        MARKIE_E2E: "1",
+        MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin,
         MARKIE_SENTRY_DSN: dsn,
       },
       log: path.join(artifactDir, "electron.log"),
@@ -311,11 +311,31 @@ async function main() {
 
   // ── Recovery ───────────────────────────────────────────────────────────
   await cdp.ev(clickReload());
-  await waitFor("recovered", () => cdp.ev(bodyHas("markie")), 40000);
-  check(
-    "reloading from the crash screen brings the app back",
-    !(await cdp.ev(bodyHas("Markie hit an error")))
-  );
+  // Wait for the crash screen to LEAVE, not for the word "markie" to arrive.
+  // The crash screen's own heading is "Markie hit an error", so waiting on that
+  // word is satisfied by the very screen we are trying to get away from: the
+  // wait returned on its first poll and the assertion ran before the reload had
+  // painted. The button was fine; the check was measuring nothing.
+  // Both halves, and only once the reload has finished loading. Waiting on
+  // either one alone measures nothing: "markie" is already on screen because
+  // the crash heading contains it, and "no crash heading" is briefly true of
+  // the empty body mid-reload. The app is back when the document is complete,
+  // something rendered, and the crash screen is gone.
+  let recovered = false;
+  try {
+    await waitFor(
+      "the app to come back",
+      async () =>
+        (await cdp.ev("document.readyState === 'complete'")) &&
+        (await cdp.ev(bodyHas("markie"))) &&
+        !(await cdp.ev(bodyHas("Markie hit an error"))),
+      40000
+    );
+    recovered = true;
+  } catch {
+    recovered = false;
+  }
+  check("reloading from the crash screen brings the app back", recovered);
 
   cdp.close();
   const failed = checks.filter((c) => !c.passed);

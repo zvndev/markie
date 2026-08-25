@@ -37,8 +37,10 @@ const check = (name, passed, detail = "") => {
   );
 };
 
-// detached gives each child its own process group, so killing -pid takes the
-// whole tree down with it rather than orphaning `next dev`.
+// The dev server is spawned as `next` directly, not through `npm run dev`.
+// safeKill signals only the direct child, so an npm wrapper would leave the
+// real `next dev` orphaned holding .next/dev/lock, and every later run would
+// fail with "Unable to acquire lock".
 function start(command, args, options = {}) {
   const fd = options.log ? openSync(options.log, "a") : "ignore";
   const child = spawn(command, args, {
@@ -165,7 +167,7 @@ async function main() {
   const devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
 
-  start("npm", ["run", "dev", "--", "--port", String(devPort)], {
+  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
     log: path.join(artifactDir, "next.log"),
   });
   await waitFor("dev server", async () => !!(await fetch(devOrigin).catch(() => null)), 90000);
@@ -176,7 +178,7 @@ async function main() {
     path.join(root, "node_modules", ".bin", "electron"),
     [".", `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],
     {
-      env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1" },
+      env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
       log: path.join(artifactDir, "electron.log"),
     }
   );
@@ -306,16 +308,21 @@ async function main() {
   // starts after the 48px activity bar, so conflating the two silently asks for
   // a panel 48px narrower than intended — which is how the first version of
   // this check "failed" on correct behaviour.
-  const panelLeft = async () =>
-    cdp.ev(`document.querySelector('.markie-side-panel').getBoundingClientRect().left`);
-
+  //
+  // The resizer is delta-based: resizePanelWidth(startWidth, clientX - startX).
+  // So the pointer has to travel the CHANGE in width, not to an absolute x.
+  // Those differ by wherever inside the handle the grab landed — the hit area
+  // straddles the panel's right edge, so its centre sits a couple of pixels
+  // inside — and asking for 420 by absolute x produced a correct panel of 422.
+  // Travelling the delta is right wherever the grab lands, and it is the model
+  // scripts/panel-resize-check.mjs already uses.
   const dragToWidth = async (targetWidth) => {
-    const left = await panelLeft();
+    const startWidth = await cdp.ev(panelWidth);
     const y = await cdp.ev(`(() => { const r = ${handle}.getBoundingClientRect();
       return r.y + Math.min(200, r.height / 2); })()`);
     const startX = await cdp.ev(`(() => { const r = ${handle}.getBoundingClientRect();
       return r.x + r.width / 2; })()`);
-    const endX = left + targetWidth;
+    const endX = startX + (targetWidth - startWidth);
     for (const [type, cx] of [["mousePressed", startX], ["mouseMoved", endX], ["mouseReleased", endX]]) {
       await cdp.send("Input.dispatchMouseEvent", {
         type, x: cx, y, button: "left", buttons: 1, clickCount: 1, pointerType: "mouse",

@@ -27,6 +27,26 @@ if (!winPlatform?.feed?.path) {
 
 const winPublishPath = path.posix.dirname(winPlatform.feed.path);
 
+// Windows signing is opt-in per build, and deliberately not inferred from
+// whether an Azure variable happens to be set: an unsigned installer and a
+// signed one are different products, and which one a build produces should be
+// something it was told, not something it worked out.
+//
+// build/win-sign.cjs explains why electron-builder's own azureSignOptions path
+// is not used. The short version is that it requires a long-lived credential
+// the signing call itself does not need.
+const signWindowsWithAzure = process.env.MARKIE_WINDOWS_SIGNING === "azure";
+
+const windowsSigntoolOptions = signWindowsWithAzure
+  ? {
+      sign: "build/win-sign.cjs",
+      // One pass. Left to default, electron-builder signs twice — sha1 then
+      // sha256 — and the second pass nests a signature inside the first.
+      signingHashAlgorithms: ["sha256"],
+      publisherName: process.env.MARKIE_WINDOWS_PUBLISHER_NAME,
+    }
+  : undefined;
+
 const publishTarget = (targetPath) => ({
   provider: releaseManifest.storage.provider,
   bucket: releaseManifest.storage.bucket,
@@ -69,6 +89,7 @@ module.exports = {
     // was — and the release runner asserts that, which is what would catch this
     // if the override ever leaked across platforms.
     publish: [publishTarget(winPublishPath)],
+    ...(windowsSigntoolOptions ? { signtoolOptions: windowsSigntoolOptions } : {}),
   },
   linux: {
     icon: "build/icons",

@@ -137,22 +137,18 @@ jobs:
         if: inputs.signing == 'azure'
         shell: pwsh
         env:
+          MARKIE_WINDOWS_SIGNING: azure
           AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
           AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
           MARKIE_WINDOWS_PUBLISHER_NAME: ${{ vars.MARKIE_WINDOWS_PUBLISHER_NAME }}
         run: |
-          # build/win-sign.cjs calls Invoke-TrustedSigning itself. See the file
-          # for why electron-builder's own azureSignOptions path is not used:
-          # it demands a long-lived client secret that the signing call itself
-          # does not need. signingHashAlgorithms pins a single SHA-256 pass, so
-          # each file is signed once rather than gaining a nested second
-          # signature on a second pass.
+          # MARKIE_WINDOWS_SIGNING is what turns signing on; the config file
+          # holds the rest. These options do not survive --config.* on the
+          # command line, where an array arrives as a string and fails schema
+          # validation, and where a misspelling would be accepted in silence.
           npx electron-builder --config electron-builder.config.cjs --win --x64 --publish never `
-            --config.npmRebuild=false `
-            --config.win.publisherName="$env:MARKIE_WINDOWS_PUBLISHER_NAME" `
-            --config.win.signtoolOptions.sign=build/win-sign.cjs `
-            --config.win.signtoolOptions.signingHashAlgorithms=sha256
+            --config.npmRebuild=false
 
       - name: Verify the signature, then install, launch and uninstall
         shell: pwsh

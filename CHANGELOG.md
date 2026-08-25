@@ -8,6 +8,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-24
+
 ### Added
 
 - **Resize the library panel.** Drag its right edge to make the Files, Browse,

@@ -9100,3 +9100,41 @@ MSG
   code, stop and escalate with file:line evidence; do not silently deviate
   (CONSTITUTION: human checkpoints; Spec 2.1 is the precedent).
 - `markie-public` (the 0.2.8 mirror repo) is obsolete; never touch it.
+
+---
+
+# Task 29B: Sign-in must handle EMAIL_NOT_VERIFIED (DEPLOY BLOCKER)
+
+Added by the orchestrator after Phase 5 landed. Task 29 turned on
+`requireEmailVerification`, so the server now answers a fresh signup with a
+403 `EMAIL_NOT_VERIFIED`. The desktop client has no branch for it:
+`src/components/sign-in.tsx:102` falls through to a generic failure, so a new
+user signing up hits a dead end with no way forward. The OTP view already
+exists in that component (around line 91), so the pieces are present and only
+the routing is missing.
+
+**This blocks the 0.5.0 server deploy.** The server change must not go live
+until a client that understands the response has shipped, or new signups
+break in the field.
+
+**Files:**
+- Modify: `src/components/sign-in.tsx`
+- Modify: `src/components/sign-in.test.tsx`
+
+- [ ] **Step 1:** On a 403 whose code is `EMAIL_NOT_VERIFIED`, route into the
+  existing OTP/verification view rather than the generic error path, carrying
+  the address the user just typed so they do not retype it.
+- [ ] **Step 2:** Copy states plainly what happened and what to do next:
+  the address needs proving, a code has been sent, enter it here. No jargon,
+  no raw error code, no em-dashes.
+- [ ] **Step 3:** Resending is reachable, and a wrong or expired code gives a
+  distinct, recoverable message rather than dumping the user back to the start.
+- [ ] **Step 4:** Tests cover the 403 routing, the successful verify handoff,
+  and the wrong-code path.
+
+**Verify:** `npm test`, `npm run lint`, `npm run build`.
+
+**Note for the release runbook:** older already-shipped builds cannot complete
+a new signup even once this fix ships, until the user updates. Existing
+accounts are unaffected (the migration grandfathers them). Sequence the deploy
+accordingly and say so in the release notes.

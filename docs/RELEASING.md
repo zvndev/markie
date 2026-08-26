@@ -326,14 +326,25 @@ one-time-code view will show a new user a dead error. Confirm the shipped client
 deploying, and expect users still on an older build to be unable to complete a **new** signup until
 they update. Existing accounts are unaffected, because the backfill below grandfathers them.
 
-### 1. Deploy the server
+### 1. Dry run BEFORE deploying, so review does not become downtime
+
+Between the deploy and step 6, every pre-existing account is unverified and therefore cannot sign
+in with its password. That window has to be minutes, not hours, so do the human part first: run
+step 4's dry run against a **copy** of the production database, read the report, and resolve
+anything flagged (step 5) before the deploy exists. Then the sequence on the live database is
+deploy, dry run to confirm, commit, all back to back.
+
+If a flagged row turns up on the live run that the rehearsal did not show, roll the server back
+rather than leaving users locked out while it is investigated.
+
+### 2. Deploy the server
 
 Deploy `server/` as normal. Nothing is required in the database for the new code to run: every claim
 path simply checks `emailVerified` first. Record the deploy time in UTC ISO form, for example
 `2026-09-01T14:32:00.000Z`. That timestamp is the migration cutoff. Everything created before it is
 an account that predates verification; everything after it proves its address the normal way.
 
-### 2. Back up, then check the column names
+### 3. Back up, then check the column names
 
 Take a database backup first. Litestream replication is not a substitute for a snapshot taken
 immediately before a schema-touching run.
@@ -350,7 +361,7 @@ PRAGMA table_info(account);  -- expect providerId and userId
 cutoff comparison is a plain string comparison. If either has changed shape, stop and fix the
 migration before running it.
 
-### 3. Dry run the migration and read the report
+### 4. Dry run the migration and read the report
 
 ```bash
 cd server
@@ -373,7 +384,7 @@ Check the account count and date range against expectations. The range should st
 account and end just before the deploy; an account dated after the cutoff appearing here means the
 wrong cutoff was passed.
 
-### 4. If the flagged count is not zero, stop
+### 5. If the flagged count is not zero, stop
 
 Zero is the expected result, and it is worth confirming rather than assuming. A flagged row is an
 already-claimed share held by an account that never proved the address and has no OAuth account.
@@ -389,7 +400,7 @@ around it. Instead:
    disabling the claiming accounts;
 4. re-run the dry run and confirm the count is now zero.
 
-### 5. Commit the backfill
+### 6. Commit the backfill
 
 ```bash
 DB_PATH=/path/to/markie.db node --experimental-strip-types src/migrate-verified.ts \
@@ -399,7 +410,7 @@ DB_PATH=/path/to/markie.db node --experimental-strip-types src/migrate-verified.
 It re-prints the same audit and then reports how many accounts it verified. Exit code 0 means the
 write happened; 2 means a flagged row appeared between runs and nothing was written.
 
-### 6. Smoke checks
+### 7. Smoke checks
 
 - An account that existed before the deploy signs in with its password, unchanged.
 - A brand new signup receives a code by email, cannot sign in until the code is entered, and can
@@ -413,7 +424,7 @@ write happened; 2 means a flagged row appeared between runs and nothing was writ
   no account. That path is unchanged on purpose: holding the token is itself evidence of receiving
   mail at the address, and it never converts the invite into an account share.
 
-### 7. Afterwards
+### 8. Afterwards
 
 The migration is one-time. Once every pre-deploy account is verified, a second run reports zero
 accounts to grandfather. Leave the script in the tree: its audit query is the standing way to ask

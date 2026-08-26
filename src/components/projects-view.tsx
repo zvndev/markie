@@ -532,7 +532,11 @@ export function ProjectsView({
           <div className="min-h-0 overflow-y-auto p-3">
             {entries.map((entry) =>
               entry.file ? (
-                <div key={entry.file.path} className="mb-2.5 px-2.5">
+                // Outdented past the cards' left edge, not inset inside it: a
+                // loose row indented FURTHER than a card's own file rows reads
+                // as the tail of the card above it, which is the nesting this
+                // pass removed.
+                <div key={entry.file.path} className="mb-2.5 -mx-0.5">
                   {organizeRow(entry.file, null)}
                 </div>
               ) : (

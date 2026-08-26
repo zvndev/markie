@@ -16,6 +16,10 @@ import path from "node:path";
 // Node's built-in SQLite. The SQL itself still runs for real, which is the
 // whole point: LIKE-escaping and COLLATE NOCASE are SQL behaviour, not ours.
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "markie-registry-"));
+// Which directory the Electron stub hands back as userData. Mutable so the
+// v0-to-v1 migration case can point registry.js at a database it built by
+// hand at the old schema.
+let userDataDir = tmpDir;
 
 interface Loader {
   _load(request: string, parent: unknown, isMain: boolean): unknown;
@@ -46,9 +50,17 @@ function makeAdapter() {
     constructor(file: string) {
       this.db = new DatabaseSync!(file);
     }
-    pragma(statement: string) {
+    pragma(statement: string, options?: { simple?: boolean }) {
       // better-sqlite3 takes the pragma body; node:sqlite takes whole SQL.
-      this.db.exec(`PRAGMA ${statement}`);
+      // `{ simple: true }` asks for the first column of the first row, which
+      // is how registry.js reads `user_version`; without it the pragma is a
+      // statement to run, not a question to answer.
+      if (!options?.simple) {
+        this.db.exec(`PRAGMA ${statement}`);
+        return undefined;
+      }
+      const rows = this.db.prepare(`PRAGMA ${statement}`).all() as Row[];
+      return rows.length ? Object.values(rows[0])[0] : undefined;
     }
     exec(sql: string) {
       this.db.exec(sql);
@@ -79,7 +91,7 @@ const loader = Module as unknown as Loader;
 const realLoad = loader._load;
 const Adapter = DatabaseSync ? makeAdapter() : null;
 loader._load = function patched(request: string, parent: unknown, isMain: boolean) {
-  if (request === "electron") return { app: { getPath: () => tmpDir } };
+  if (request === "electron") return { app: { getPath: () => userDataDir } };
   if (request === "better-sqlite3" && Adapter) return Adapter;
   return realLoad.call(this, request, parent, isMain);
 };
@@ -293,5 +305,225 @@ describe("pruneMissing", () => {
     expect(registry.pruneMissing(() => false)).toBe(1);
     expect(registry.get("/tmp/gone.md")).toBeFalsy();
     expect(registry.get("/tmp/cloud.md")).toBeTruthy();
+  });
+});
+
+// ── Schema v1: the projects tables (Spec 5.7) ──
+//
+// Isolation note: the shared `wipe()` above only knows the pre-v1 tables, and
+// the v1 DDL deliberately ships no delete helper for blocks or meta (user
+// decisions are precious by contract). So these cases clear what they can
+// through the real API and otherwise key on ids unique to each test.
+interface BlockRow {
+  block_id: string;
+  project: string;
+  auto_name: string;
+  custom_name: string | null;
+  merged_into: string | null;
+}
+
+describe("schema v1 migration", () => {
+  beforeEach(() => {
+    for (const pin of registry.pinsAll() as Array<{ path: string }>) {
+      registry.pinClear(pin.path);
+    }
+    registry.assignmentsSave("", []);
+  });
+
+  const block = (id: string, over: Partial<BlockRow> = {}) => ({
+    block_id: id,
+    project: "P",
+    auto_name: "auto",
+    custom_name: null,
+    merged_into: null,
+    created_at: "2026-08-26T00:00:00.000Z",
+    updated_at: "2026-08-26T00:00:00.000Z",
+    ...over,
+  });
+  const findBlock = (id: string) =>
+    (registry.blocksAll() as BlockRow[]).find((b) => b.block_id === id);
+
+  it("stamps user_version 1 and creates the projects tables", () => {
+    expect(registry.schemaVersion()).toBe(1);
+
+    registry.metaUpsertMany([
+      {
+        path: "/meta-a.md",
+        mtimeMs: 5,
+        birthtimeMs: 1,
+        fmProject: "P",
+        fmBlock: null,
+        repoName: "repo",
+      },
+    ]);
+    const meta = (registry.metaAll() as Array<{ path: string; fm_project: string | null }>).find(
+      (m) => m.path === "/meta-a.md"
+    );
+    expect(meta?.fm_project).toBe("P");
+
+    registry.pinSet({ path: "/a.md", project: "P2", blockId: null });
+    expect(registry.pinsAll()).toHaveLength(1);
+    registry.pinClear("/a.md");
+    expect(registry.pinsAll()).toHaveLength(0);
+  });
+
+  it("re-extracted metadata replaces the old row rather than duplicating it", () => {
+    const row = {
+      path: "/meta-b.md",
+      mtimeMs: 5,
+      birthtimeMs: 1,
+      fmProject: "Old",
+      fmBlock: null,
+      repoName: null,
+    };
+    registry.metaUpsertMany([row]);
+    registry.metaUpsertMany([{ ...row, mtimeMs: 9, fmProject: "New" }]);
+    const rows = (registry.metaAll() as Array<{ path: string; fm_project: string }>).filter(
+      (m) => m.path === "/meta-b.md"
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].fm_project).toBe("New");
+  });
+
+  it("is idempotent: reopening an already-migrated database changes nothing", () => {
+    registry.blockUpsert(block("reopen-1", { custom_name: "Kept" }));
+    registry.close();
+    expect(registry.schemaVersion()).toBe(1);
+    expect(findBlock("reopen-1")?.custom_name).toBe("Kept");
+  });
+
+  it("keeps user decisions when derived tables are dropped", () => {
+    registry.blockUpsert(block("b1", { custom_name: "My Block" }));
+    registry.assignmentsSave("fp1", [
+      { path: "/a.md", project: "P", blockId: "b1", source: "derived", mtimeMs: 5 },
+    ]);
+    expect(registry.assignmentsGet("fp1")).toHaveLength(1);
+    // A different fingerprint invalidates the cache but not the decisions.
+    expect(registry.assignmentsGet("fp2")).toEqual([]);
+    expect(findBlock("b1")?.custom_name).toBe("My Block");
+  });
+
+  it("a fresh cache write never resurrects rows from the previous index", () => {
+    registry.assignmentsSave("fp1", [
+      { path: "/old.md", project: "P", blockId: null, source: "derived", mtimeMs: 1 },
+    ]);
+    registry.assignmentsSave("fp2", [
+      { path: "/new.md", project: "P", blockId: null, source: "derived", mtimeMs: 2 },
+    ]);
+    expect(
+      (registry.assignmentsGet("fp2") as Array<{ path: string }>).map((r) => r.path)
+    ).toEqual(["/new.md"]);
+  });
+
+  it("an upsert of a known block never clobbers the rename on it", () => {
+    registry.blockUpsert(block("rename-1"));
+    registry.blockSetName("rename-1", "Release planning");
+    registry.blockUpsert(block("rename-1", { auto_name: "auto-2" }));
+    const row = findBlock("rename-1");
+    expect(row?.custom_name).toBe("Release planning");
+    expect(row?.auto_name).toBe("auto-2");
+  });
+
+  it("merge records survive and chain", () => {
+    registry.blockUpsert(block("m1"));
+    registry.blockUpsert(block("m2"));
+    registry.blockMerge("m1", "m2");
+    expect(findBlock("m1")?.merged_into).toBe("m2");
+    registry.blockUpsert(block("m1", { auto_name: "auto-again" }));
+    expect(findBlock("m1")?.merged_into).toBe("m2");
+  });
+
+  it("stores and replaces the known-good rules blob", () => {
+    expect(registry.projectsConfigGet("rules-known-good")).toBeNull();
+    registry.projectsConfigSet("rules-known-good", "first");
+    registry.projectsConfigSet("rules-known-good", "second");
+    expect(registry.projectsConfigGet("rules-known-good")).toBe("second");
+  });
+});
+
+// The migration a real user actually runs: their database exists, holds their
+// files, roots, stars, and index cache, and has never heard of user_version.
+// Losing anything here is a release blocker, so this builds that database by
+// hand rather than trusting a fresh one to represent it.
+describe("upgrading a populated version 0 database", () => {
+  const legacyDir = fs.mkdtempSync(path.join(os.tmpdir(), "markie-registry-v0-"));
+
+  beforeAll(() => {
+    if (!Adapter) return;
+    const legacy = new Adapter(path.join(legacyDir, "registry.db"));
+    // The 0.4.x schema, share_role column included but no user_version.
+    legacy.exec(`
+      CREATE TABLE files (
+        path TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        content_hash TEXT,
+        cloud_doc_id TEXT,
+        cloud_version INTEGER DEFAULT 0,
+        sync_state TEXT NOT NULL DEFAULT 'local-only',
+        last_opened_at TEXT,
+        last_synced_at TEXT,
+        share_role TEXT
+      );
+      CREATE TABLE workspace_roots (path TEXT PRIMARY KEY, added_at TEXT NOT NULL);
+      CREATE TABLE md_stars (path TEXT PRIMARY KEY, kind TEXT NOT NULL, added_at TEXT NOT NULL);
+      CREATE TABLE md_index_cache (path TEXT PRIMARY KEY, name TEXT NOT NULL, mtime_ms REAL NOT NULL);
+      INSERT INTO files (path, name, sync_state, cloud_doc_id, share_role)
+        VALUES ('/legacy/notes.md', 'notes.md', 'synced', 'doc_legacy', 'editor');
+      INSERT INTO workspace_roots (path, added_at) VALUES ('/legacy/root', '2026-01-01');
+      INSERT INTO md_stars (path, kind, added_at) VALUES ('/legacy/star.md', 'file', '2026-01-01');
+      INSERT INTO md_index_cache (path, name, mtime_ms) VALUES ('/legacy/notes.md', 'notes.md', 42);
+    `);
+    legacy.close();
+  });
+
+  afterAll(() => {
+    registry.close();
+    userDataDir = tmpDir;
+    fs.rmSync(legacyDir, { recursive: true, force: true });
+  });
+
+  // One arc, not two cases: the shared beforeEach wipe() above is written
+  // against the pre-v1 tables and would clear the legacy file row between
+  // tests, which would prove nothing about the migration.
+  it("stamps version 1, keeps every row the user had, and stays put on reopen", () => {
+    registry.close();
+    userDataDir = legacyDir;
+
+    expect(registry.schemaVersion()).toBe(1);
+    expect(registry.listRoots()).toEqual(["/legacy/root"]);
+    expect(
+      (registry.listStars() as Array<{ path: string }>).map((star) => star.path)
+    ).toEqual(["/legacy/star.md"]);
+    expect(registry.loadIndexCache()).toHaveLength(1);
+    const file = registry.get("/legacy/notes.md") as {
+      cloud_doc_id: string;
+      share_role: string;
+      sync_state: string;
+    };
+    expect(file.cloud_doc_id).toBe("doc_legacy");
+    expect(file.share_role).toBe("editor");
+    expect(file.sync_state).toBe("synced");
+
+    // The new tables are usable on the same database, in the same open.
+    registry.pinSet({ path: "/legacy/notes.md", project: "Legacy", blockId: null });
+    registry.blockUpsert({
+      block_id: "legacy-b1",
+      project: "Legacy",
+      auto_name: "auto",
+      custom_name: "Named by hand",
+      merged_into: null,
+      created_at: "2026-08-26",
+      updated_at: "2026-08-26",
+    });
+
+    // Reopen: nothing re-runs, and no decision is lost.
+    registry.close();
+    expect(registry.schemaVersion()).toBe(1);
+    expect((registry.pinsAll() as Array<{ project: string }>)[0].project).toBe("Legacy");
+    expect(
+      (registry.blocksAll() as Array<{ custom_name: string }>)[0].custom_name
+    ).toBe("Named by hand");
+    expect(registry.get("/legacy/notes.md")).toBeTruthy();
+    expect(registry.listRoots()).toEqual(["/legacy/root"]);
   });
 });

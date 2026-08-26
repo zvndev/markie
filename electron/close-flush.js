@@ -7,6 +7,8 @@ function createCloseFlusher({
   onReady,
   timeoutMs = 2000,
   destroy,
+  quitting = () => false,
+  quit = () => {},
   setTimer = setTimeout,
   clearTimer = clearTimeout,
 }) {
@@ -23,6 +25,11 @@ function createCloseFlusher({
     if (timer) clearTimer(timer);
     timer = null;
     destroy();
+    // Preventing a close cancels the quit that asked for it, and on macOS
+    // nothing restarts it: the window goes away and the app lives on with no
+    // window and a dock icon that answers nothing. Ask again now that the
+    // document is safe.
+    if (quitting()) quit();
   };
 
   onReady(settle);

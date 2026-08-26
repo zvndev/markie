@@ -68,6 +68,64 @@ describe("createCloseFlusher", () => {
     expect(f.isSettled()).toBe(true);
   });
 
+  it("resumes the quit that its own preventDefault cancelled", () => {
+    let ready: () => void = () => {};
+    const destroy = vi.fn();
+    const quit = vi.fn();
+    const f = createCloseFlusher({
+      send: vi.fn(),
+      onReady: (cb: () => void) => {
+        ready = cb;
+      },
+      timeoutMs: 2000,
+      destroy,
+      quitting: () => true,
+      quit,
+    });
+    f.requestClose();
+    expect(quit).not.toHaveBeenCalled(); // not until the document is safe
+    ready();
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(quit).toHaveBeenCalledTimes(1);
+  });
+
+  it("resumes the quit even when the renderer never answers", () => {
+    vi.useFakeTimers();
+    const quit = vi.fn();
+    const f = createCloseFlusher({
+      send: vi.fn(),
+      onReady: () => {},
+      timeoutMs: 2000,
+      destroy: vi.fn(),
+      quitting: () => true,
+      quit,
+    });
+    f.requestClose();
+    vi.advanceTimersByTime(2000);
+    expect(quit).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("closing a window on its own does not quit the app", () => {
+    let ready: () => void = () => {};
+    const quit = vi.fn();
+    const f = createCloseFlusher({
+      send: vi.fn(),
+      onReady: (cb: () => void) => {
+        ready = cb;
+      },
+      timeoutMs: 2000,
+      destroy: vi.fn(),
+      quitting: () => false,
+      quit,
+    });
+    f.requestClose();
+    ready();
+    // On macOS a closed window leaves the app running by design; only a quit
+    // that we interrupted may be restarted.
+    expect(quit).not.toHaveBeenCalled();
+  });
+
   it("a ready that arrives before any close request destroys nothing", () => {
     let ready: () => void = () => {};
     const destroy = vi.fn();

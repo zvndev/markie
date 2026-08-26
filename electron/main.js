@@ -225,6 +225,10 @@ try {
 
 let mainWindow;
 let rendererReady = false;
+// Set once the user has asked to quit. The close interception below prevents
+// the window close that a quit performs, and a prevented close cancels the
+// quit outright, so the flusher has to ask for it again afterwards.
+let quitRequested = false;
 let pendingFilePath = null;
 // markie:// deep link that arrived before the renderer was ready to receive it
 let pendingDeepLink = null;
@@ -731,6 +735,8 @@ function createWindow() {
     destroy: () => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
     },
+    quitting: () => quitRequested,
+    quit: () => app.quit(),
   });
   mainWindow.on("close", (event) => {
     // No renderer to ask, or it already answered: let the close happen.
@@ -2246,6 +2252,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  quitRequested = true;
   stopWatchingOpenFile();
 });
 

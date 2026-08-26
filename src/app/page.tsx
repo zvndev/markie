@@ -111,6 +111,7 @@ import {
 } from "@/lib/electron";
 import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { pathDirname } from "@/lib/path-utils";
+import { useDocument } from "@/lib/use-document";
 
 const SAMPLE = `# Northstar Sprint Brief
 
@@ -179,12 +180,17 @@ const toDisk = (name: string | null, md: string) =>
   isCSVName(name) ? markdownTableToCSV(md) : md;
 
 export default function Home() {
-  const [content, setContent] = useState("");
+  // One owner for the buffer, its path, and whether it is dirty, so autosave,
+  // drafts, and flush-on-transition attach to one place instead of five
+  // useStates whose invariants nothing enforced. The transitions come out by
+  // name because they are stable while the values are not: a callback that
+  // writes the buffer has to keep its identity, or effects keyed on it re-run
+  // in the middle of an edit.
+  const doc = useDocument();
+  const { content, fileName, filePath, isDirty } = doc;
+  const { edit: editDoc, applyExternal: applyExternalDoc, load: loadDoc, reset: resetDoc, markSaved, setLocation } = doc;
   const [booted, setBooted] = useState(false);
   const [mode, setMode] = useState<ViewMode>("preview");
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [filePath, setFilePath] = useState<string | null>(null);
-  const [savedContent, setSavedContent] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
@@ -260,8 +266,6 @@ export default function Home() {
   >("disconnected");
   // Owner-pinned theme on the open shared doc (non-owners only)
   const [enforcedTheme, setEnforcedTheme] = useState<ThemeTokens | null>(null);
-
-  const isDirty = content !== savedContent;
 
   useEffect(() => {
     leftViewRef.current = leftView;
@@ -504,8 +508,7 @@ export default function Home() {
       if (typeof res.content === "string") {
         // What came back is what is now on disk, and a CSV on disk is CSV.
         const pulled = fromDisk(fileName, res.content);
-        setContent(pulled);
-        setSavedContent(pulled);
+        applyExternalDoc(pulled);
         assessRichSafety(pulled, docRef.current.filePath);
       }
       setUpdateWaiting(null);
@@ -515,19 +518,18 @@ export default function Home() {
     } finally {
       setUpdateBusy(false);
     }
-  }, [filePath, fileName, assessRichSafety]);
+  }, [filePath, fileName, assessRichSafety, applyExternalDoc]);
 
   // Whatever the dialog did, the file on disk now holds this content.
   const handleConflictResolved = useCallback(
     (next: string) => {
       const pulled = fromDisk(fileName, next);
-      setContent(pulled);
-      setSavedContent(pulled);
+      applyExternalDoc(pulled);
       assessRichSafety(pulled, docRef.current.filePath);
       setUpdateWaiting(null);
       setUpdateError(null);
     },
-    [fileName, assessRichSafety]
+    [fileName, assessRichSafety, applyExternalDoc]
   );
 
   // A document that is being swapped out must not leave its access behind for
@@ -601,13 +603,10 @@ export default function Home() {
   const handleNewFile = useCallback(() => {
     dismissDocumentUI();
     resetDocAccess();
-    setContent("");
-    setSavedContent("");
-    setFileName(null);
-    setFilePath(null);
+    resetDoc();
     setCanShare(false);
     assessRichSafety("", null);
-  }, [dismissDocumentUI, resetDocAccess, assessRichSafety]);
+  }, [dismissDocumentUI, resetDocAccess, assessRichSafety, resetDoc]);
 
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
@@ -624,13 +623,10 @@ export default function Home() {
       // re-resolved the role and the live session never came back.
       if (!data.path || data.path !== docRef.current.filePath) resetDocAccess();
       const md = fromDisk(data.name, data.content);
-      setContent(md);
-      setFileName(data.name);
-      setFilePath(data.path);
       // A snapshot revert arrives with unsaved:true: the buffer holds the old
       // version while the file on disk still holds the new one, so the document
       // must show as dirty until the user saves (or discards) the revert.
-      if (!data.unsaved) setSavedContent(md);
+      loadDoc({ name: data.name, content: md, path: data.path, unsaved: data.unsaved });
       if (data.path) {
         getElectronAPI()?.registryTrack?.({
           path: data.path,
@@ -641,7 +637,7 @@ export default function Home() {
       setLibRefreshKey((k) => k + 1);
       assessRichSafety(md, data.path);
     },
-    [dismissDocumentUI, resetDocAccess, assessRichSafety]
+    [dismissDocumentUI, resetDocAccess, assessRichSafety, loadDoc]
   );
 
   const openPath = useCallback(
@@ -811,9 +807,8 @@ export default function Home() {
       // A different file is open now, so whatever access the last one carried
       // stops applying here.
       resetDocAccess();
-      setFilePath(res.path);
-      setFileName(res.name);
-      setSavedContent(md);
+      setLocation(res.path, res.name);
+      markSaved(md);
       // A file Markie wrote and now has open belongs in the registry like any
       // file it opens. A fresh row is local-only with no cloud doc, which is
       // exactly what a copy has to stay.
@@ -825,7 +820,7 @@ export default function Home() {
       setLibRefreshKey((k) => k + 1);
     }
     return res;
-  }, [fileName, currentMarkdown, resetDocAccess]);
+  }, [fileName, currentMarkdown, resetDocAccess, markSaved, setLocation]);
 
   // Resolves to an error message when the save landed on disk but not in the
   // cloud, and to null otherwise.
@@ -853,13 +848,12 @@ export default function Home() {
     // rather than overwrite it. Load it in place of what they had.
     if (res.code === "reloaded" && typeof res.content === "string") {
       const reloaded = fromDisk(fileName, res.content);
-      setContent(reloaded);
-      setSavedContent(reloaded);
+      applyExternalDoc(reloaded);
       assessRichSafety(reloaded, filePath);
       return null;
     }
     if (res.success) {
-      setSavedContent(md);
+      markSaved(md);
       // ⌘S on a .csv keeps the first table and drops the rest, every time.
       const dropped = isCSVName(fileName) ? csvDropsContent(md) : null;
       if (dropped?.drops) {
@@ -890,7 +884,7 @@ export default function Home() {
       }
     }
     return null;
-  }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg, assessRichSafety]);
+  }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg, assessRichSafety, applyExternalDoc, markSaved]);
 
   // Resolves to an error message when the copy could not be made, null when it
   // was made or the user backed out of the dialog.
@@ -989,10 +983,9 @@ export default function Home() {
       newName: newName.trim(),
     });
     if (res.success && res.path && res.name) {
-      setFilePath(res.path);
-      setFileName(res.name);
+      setLocation(res.path, res.name);
     }
-  }, [filePath]);
+  }, [filePath, setLocation]);
 
   // Window title tracks the open file and dirty state
   useEffect(() => {
@@ -1173,12 +1166,11 @@ export default function Home() {
   const reloadFromDisk = useCallback(() => {
     if (diskChange === null) return;
     const md = fromDisk(fileName, diskChange);
-    setContent(md);
-    setSavedContent(md);
+    applyExternalDoc(md);
     assessRichSafety(md, docRef.current.filePath);
     setDiskChange(null);
     setShowDiskConflict(false);
-  }, [diskChange, fileName, assessRichSafety]);
+  }, [diskChange, fileName, assessRichSafety, applyExternalDoc]);
 
   // Keep both: save the buffer under a new name and leave the changed file
   // alone. The only resolution that destroys nothing.
@@ -1276,13 +1268,11 @@ export default function Home() {
         if (file && typeof file.content === "string") {
           loadFile(file);
         } else if (shouldShowWelcome({ openedFile: false })) {
-          setContent(WELCOME_DOC);
-          setSavedContent(WELCOME_DOC);
+          applyExternalDoc(WELCOME_DOC);
           assessRichSafety(WELCOME_DOC, null);
           markWelcomeSeen();
         } else {
-          setContent(SAMPLE);
-          setSavedContent(SAMPLE);
+          applyExternalDoc(SAMPLE);
           assessRichSafety(SAMPLE, null);
         }
       })
@@ -1292,12 +1282,11 @@ export default function Home() {
       // nothing.
       .catch((err) => {
         console.error("Markie: couldn't read the file to open at launch", err);
-        setContent(SAMPLE);
-        setSavedContent(SAMPLE);
+        applyExternalDoc(SAMPLE);
         assessRichSafety(SAMPLE, null);
       })
       .finally(() => setBooted(true));
-  }, [loadFile, assessRichSafety]);
+  }, [loadFile, assessRichSafety, applyExternalDoc]);
 
   // Listen for Electron IPC events — each subscription returns an unsubscribe
   // so listeners don't accumulate on the long-lived ipcRenderer (HMR/remount).
@@ -1343,7 +1332,7 @@ export default function Home() {
         setShowSettings(true);
       }),
       api.onMenuFormatTables?.(() =>
-        setContent((prev) => formatMarkdownTables(prev))
+        editDoc((prev) => formatMarkdownTables(prev))
       ),
       api.onMenuFind?.(() => {
         setFindWithReplace(false);
@@ -1371,7 +1360,7 @@ export default function Home() {
       }),
     ];
     return () => offs.forEach((off) => off?.());
-  }, [selectView]);
+  }, [selectView, editDoc]);
 
   const commands = useMemo<AppCommand[]>(
     () => [
@@ -1398,7 +1387,7 @@ export default function Home() {
       ...(TERMINAL_ENABLED ? [{ id: "terminal", title: "Toggle Terminal", group: "View", shortcut: "⌃`", keywords: "shell console zsh bash powershell cmd", run: () => setShowTerminal((v) => !v) }] as AppCommand[] : []),
       { id: "copy-path", title: "Copy File Path", group: "File", keywords: "link location terminal clipboard", run: () => { const p = docRef.current.filePath; if (p) navigator.clipboard.writeText(p); } },
       { id: "copy-content", title: "Copy Document Contents", group: "File", keywords: "clipboard markdown text", run: () => navigator.clipboard.writeText(docRef.current.content) },
-      { id: "format-tables", title: "Format Tables", group: "Format", shortcut: "⌥⌘T", keywords: "align prettify pipes", run: () => setContent((prev) => formatMarkdownTables(prev)) },
+      { id: "format-tables", title: "Format Tables", group: "Format", shortcut: "⌥⌘T", keywords: "align prettify pipes", run: () => editDoc((prev) => formatMarkdownTables(prev)) },
       ...BUILT_IN_THEMES.map((t) => ({
         id: `theme-${t.id}`,
         title: `Theme: ${t.name}`,
@@ -1439,6 +1428,7 @@ export default function Home() {
       handleExportHTML,
       handleNewFile,
       selectView,
+      editDoc,
     ]
   );
 
@@ -1718,7 +1708,7 @@ export default function Home() {
                 <div className="flex-1 min-h-0 overflow-hidden">
                   <Editor
                     value={content}
-                    onChange={setContent}
+                    onChange={editDoc}
                     onViewReady={setSourceView}
                     // Read-only for two separate reasons: the rich pane owns the
                     // shared document while a session is live, and a viewer may
@@ -1796,7 +1786,7 @@ export default function Home() {
                           : "solo"
                       }
                       value={content}
-                      onChange={setContent}
+                      onChange={editDoc}
                       onEditorReady={setRichEditor}
                       collab={collabCfg}
                       readOnly={!docEditable || richBlocked}

@@ -311,3 +311,136 @@ test("the same token is returned on repeat, so a document has one link per perso
 
   assert.equal(ensureShareToken(docId, bobId), ensureShareToken(docId, bobId));
 });
+
+// ---------------------------------------------------------------------------
+// Why the emailed-token path survives the email-verification change.
+//
+// Every other route that acts on a pending invite is now gated on proof of
+// email ownership (auth.ts, docs.ts). This one is deliberately not, and these
+// cases are the reason it is safe: the token was mailed to the invited address
+// and nowhere else, so holding it is evidence of receiving mail there. It
+// grants one read of one document and never creates anything account-bound,
+// which is what keeps it from becoming a way around the gate.
+// ---------------------------------------------------------------------------
+
+// A signup that stops at signup: no proof of the address, so no session.
+async function signUpUnverified(name: string, email: string) {
+  const res = await app.request("/api/auth/sign-up/email", {
+    method: "POST",
+    headers: new Headers({
+      "Content-Type": "application/json",
+      "x-forwarded-for": `10.4.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`,
+      ...ORIGIN,
+    }),
+    body: JSON.stringify({ name, email, password: "password-123" }),
+  });
+  assert.equal(res.status, 200);
+  return { sessionToken: res.headers.get("set-auth-token") };
+}
+
+async function inviteAndToken(ownerToken: string, docId: string, email: string) {
+  const invited = await jsonRequest<{ status: string }>(
+    "POST",
+    `/api/docs/${docId}/shares`,
+    ownerToken,
+    { email, role: "viewer" }
+  );
+  assert.equal(invited.data?.status, "invited");
+  const db = new (await import("better-sqlite3")).default(process.env.DB_PATH as string);
+  const row = db
+    .prepare("SELECT token FROM pending_shares WHERE doc_id = ? AND email = ?")
+    .get(docId, email) as { token: string };
+  assert.ok(row?.token);
+  return row.token;
+}
+
+test("an emailed invite token opens the doc without minting an account for anyone", async () => {
+  const owner = await signUp("Owner", `dv.tokown.${stamp}@test.local`);
+  const docId = `dv-token-${stamp}`;
+  const invitee = `dv.token.${stamp}@test.local`;
+  await createDoc(owner.token, docId);
+  const token = await inviteAndToken(owner.token, docId, invitee);
+
+  const ok = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
+  assert.equal(ok.status, 200);
+  assert.ok(ok.body.includes(SECRET_LINE), "the invited reader sees the document");
+
+  // Reading it must leave no trace that could be mistaken for membership.
+  const db = new (await import("better-sqlite3")).default(process.env.DB_PATH as string);
+  const user = db.prepare("SELECT id FROM user WHERE email = ?").get(invitee);
+  assert.equal(user, undefined, "viewing must not create an account");
+  const share = db
+    .prepare("SELECT * FROM shares WHERE doc_id = ?")
+    .all(docId) as unknown[];
+  assert.deepEqual(share, [], "viewing must not create a share row");
+  const pending = db
+    .prepare("SELECT email FROM pending_shares WHERE doc_id = ?")
+    .all(docId) as Array<{ email: string }>;
+  assert.deepEqual(
+    pending.map((p) => p.email),
+    [invitee],
+    "the invite is still an invite, not a membership"
+  );
+});
+
+test("withdrawing the invite kills the token immediately, account or no account", async () => {
+  const owner = await signUp("Owner", `dv.withown.${stamp}@test.local`);
+  const docId = `dv-withdraw-${stamp}`;
+  const invitee = `dv.withdraw.${stamp}@test.local`;
+  await createDoc(owner.token, docId);
+  const token = await inviteAndToken(owner.token, docId, invitee);
+
+  // An unverified account now exists at the address. It changes nothing about
+  // the token: the pending row is still the only authorization, so withdrawing
+  // it is still the whole revocation.
+  await signUpUnverified("Not Proven", invitee);
+  const before = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
+  assert.equal(before.status, 200);
+
+  const withdrawn = await jsonRequest(
+    "DELETE",
+    `/api/docs/${docId}/shares/${encodeURIComponent(invitee)}`,
+    owner.token
+  );
+  assert.equal(withdrawn.status, 200);
+
+  const after = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
+  assert.equal(after.status, 403, "the withdrawn invite must stop opening the doc");
+  assert.ok(!after.body.includes(SECRET_LINE));
+});
+
+test("an unverified account at the invited address gains nothing extra from the token", async () => {
+  const owner = await signUp("Owner", `dv.unvown.${stamp}@test.local`);
+  const docId = `dv-unverified-${stamp}`;
+  const invitee = `dv.unverified.${stamp}@test.local`;
+  await createDoc(owner.token, docId);
+  const token = await inviteAndToken(owner.token, docId, invitee);
+
+  const { sessionToken } = await signUpUnverified("Unproven", invitee);
+  assert.equal(
+    sessionToken,
+    null,
+    "an unproven address gets no session, so there is nothing to list with"
+  );
+
+  // The token grants the read it always granted, and only that.
+  const viaToken = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
+  assert.equal(viaToken.status, 200);
+
+  const db = new (await import("better-sqlite3")).default(process.env.DB_PATH as string);
+  const userId = (
+    db.prepare("SELECT id FROM user WHERE email = ?").get(invitee) as { id: string }
+  ).id;
+  const share = db
+    .prepare("SELECT * FROM shares WHERE doc_id = ? AND user_id = ?")
+    .get(docId, userId);
+  assert.equal(
+    share,
+    undefined,
+    "reading through the token must not convert the invite into a share"
+  );
+  const stillPending = db
+    .prepare("SELECT role FROM pending_shares WHERE doc_id = ? AND email = ?")
+    .get(docId, invitee);
+  assert.ok(stillPending, "the invite is still waiting for proof of the address");
+});

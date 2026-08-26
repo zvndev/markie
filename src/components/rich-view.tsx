@@ -10,22 +10,7 @@ import {
 } from "@tiptap/react";
 import { TableBar } from "@/components/format-rail";
 import { formatMarkdownTables } from "@/lib/format-tables";
-import { StarterKit } from "@tiptap/starter-kit";
-import { TableKit } from "@tiptap/extension-table";
-import { TaskList } from "@tiptap/extension-task-list";
-import { TaskItem } from "@tiptap/extension-task-item";
-import { Image } from "@tiptap/extension-image";
-import { Placeholder } from "@tiptap/extension-placeholder";
-import { Highlight } from "@tiptap/extension-highlight";
-import { MarkieKeymap } from "@/lib/rich-keymap";
-import { TextAlign } from "@tiptap/extension-text-align";
-import {
-  Color,
-  FontFamily,
-  FontSize,
-  TextStyle,
-} from "@tiptap/extension-text-style";
-import { Markdown } from "tiptap-markdown";
+import { richBaseExtensions } from "@/lib/rich-extensions";
 import { Collaboration } from "@tiptap/extension-collaboration";
 import { CollaborationCaret } from "@tiptap/extension-collaboration-caret";
 import * as Y from "yjs";
@@ -205,38 +190,10 @@ export function RichView({
   const editor = useEditor({
     immediatelyRender: false,
     editable: !locked,
+    // One shared list (src/lib/rich-extensions.ts) so the round-trip probe and
+    // the block normalizer test the exact editor configuration, never a copy.
     extensions: [
-      // Collaboration replaces local undo history with the shared Yjs one
-      StarterKit.configure(session ? { undoRedo: false } : {}),
-      TableKit.configure({ table: { resizable: false } }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Image,
-      Placeholder.configure({ placeholder: "Start typing or open a file" }),
-      MarkieKeymap,
-      // Formatting markdown has no syntax for. These serialize as inline HTML,
-      // which is a deliberate trade: a document that uses underline, colour,
-      // highlight or alignment stops round-tripping byte for byte, because the
-      // markup has to live somewhere. A document that uses none of them is
-      // untouched, which is why they are opt-in per selection rather than a
-      // document mode. Underline is not listed: StarterKit already registers
-      // it, and registering the same mark twice makes TipTap warn.
-      Highlight.configure({ multicolor: true }),
-      TextStyle,
-      Color,
-      FontFamily,
-      FontSize,
-      TextAlign.configure({ types: ["heading", "paragraph"] }),
-      Markdown.configure({
-        // Required for the above to survive a save. With html:false the marks
-        // render on screen and are silently dropped the moment the file is
-        // written, which is worse than not offering them.
-        html: true,
-        linkify: true,
-        breaks: false,
-        tightLists: true,
-        transformPastedText: true,
-      }),
+      ...richBaseExtensions({ collab: !!session }),
       ...init.extensions,
     ],
     // In collab mode the Yjs doc is the source of truth from the first sync

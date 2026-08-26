@@ -16,12 +16,22 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   groups every markdown file it can see into projects, and each project into
   blocks of work, without moving a single file on disk. The grouping is
   Markie's own, laid over your files wherever they already live, so you get an
-  organized workspace without reorganizing your computer. The Library's Files
-  tab shows it and now opens by default; Recent is still there, one tab over.
-- **A full-width Projects view.** A new button on the left rail opens the whole
-  window onto your projects, for when the side panel is too narrow to navigate
-  comfortably. The Library panel is unchanged and still there. Everything sorts
-  most recent first.
+  organized workspace without reorganizing your computer.
+- **Projects is its own place in the left rail, two levels deep.** The index
+  fills the window with every project, most recently updated first. Open one
+  to see its blocks and files, and a back chevron, a breadcrumb, Command-Up,
+  and Escape all walk you back out. The search field scopes itself to wherever
+  you are and shows which, so a search inside a project stays inside it.
+- **Folders that keep themselves current.** Updated today, in the last three
+  days, and in the last week are there from the start, and you can add your
+  own to `Projects.md` by naming a time window, a path pattern, or both. They
+  are views rather than containers: a folder shows its files grouped by the
+  project each one still belongs to, and every heading walks into that
+  project. Nothing is moved, copied, or duplicated.
+- **Make and rename projects.** Call a project what you actually call it, or
+  start an empty one before its first file exists. A rename changes only what
+  you read: pins, blocks, and assignments keep pointing exactly where they
+  did, and nothing on disk is touched.
 - **`Projects.md`, an organization file you can edit.** Your rules live in a
   real markdown document in your Markie folder, so you can open it, read it,
   and change how your work is grouped. Match paths to projects, pin a file
@@ -61,9 +71,20 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   own line wrapping all survive. In the rare document Markie cannot promise to
   reproduce, rich editing waits and tells you why, and Source is always
   available and always exact.
+- **The Library is Recent and Folders, with nothing nested inside either.**
+  Picking Files and then picking Projects inside it is gone; Projects has the
+  left rail to itself now, and the panel spends its rows on your files instead
+  of on where you are.
+- **File names come first in every list.** Rows used to open with the whole
+  absolute path, so forty of them began with the same forty characters before
+  reaching the word that told them apart. The name leads now, the folder
+  follows it quietly, and the full path is still on the row and copyable from
+  its menu.
 - **Cards and panels have visible edges in both themes.** Borders were close
   to invisible in dark mode and faint in light; both now meet a real contrast
-  floor.
+  floor. Documents were given their own, much quieter rule at the same time,
+  so heading underlines and table borders read as typography rather than as
+  panel edges.
 - **`markie_list_skills` stopped reporting noise.** It was listing thousands of
   cached plugin copies the app itself hides. It now shows the agent files you
   actually wrote.

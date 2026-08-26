@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { assignProjects, containerChild, UNFILED, type EngineFile } from "@/lib/projects/assign";
+import {
+  assignProjects,
+  containerChild,
+  discoverContainers,
+  UNFILED,
+  type EngineFile,
+} from "@/lib/projects/assign";
 import { parseRules } from "@/lib/projects/rules";
 
 const HOME = "/home/u";
@@ -158,5 +164,89 @@ describe("containerChild", () => {
 
   it("reads Windows paths", () => {
     expect(containerChild("C:\\Users\\u\\Documents\\Thesis\\ch1", "C:\\Users\\u")).toBe("Thesis");
+  });
+});
+
+// A directory that mostly holds other projects is a shelf, not a project. The
+// real index put 608 files under one project called "Coding" — the folder that
+// contains every project on the machine — which tells a reader nothing.
+describe("container discovery", () => {
+  const inRepo = (repo: string, sub: string) =>
+    f({
+      path: `/home/u/Desktop/Coding/${sub}/${repo}/a.md`,
+      dir: `/home/u/Desktop/Coding/${sub}/${repo}`,
+      repoName: repo,
+    });
+  const loose = (dir: string) => f({ path: `${dir}/notes.md`, dir });
+  const EMPTY = parseRules("").rules!;
+  const assign = (files: EngineFile[], rules = EMPTY) =>
+    assignProjects(files, { pins: [], rules, home: HOME }).assignments;
+
+  it("finds a directory holding several repositories", () => {
+    const found = discoverContainers(
+      [inRepo("one", "ZVN"), inRepo("two", "ZVN"), inRepo("three", "ZVN")],
+      HOME
+    );
+    expect(found.has("/home/u/Desktop/Coding")).toBe(true);
+    expect(found.has("/home/u/Desktop/Coding/ZVN")).toBe(true);
+    // The checkout itself holds exactly one repository: itself.
+    expect(found.has("/home/u/Desktop/Coding/ZVN/one")).toBe(false);
+  });
+
+  it("leaves a directory holding a couple of checkouts alone", () => {
+    const found = discoverContainers([inRepo("one", "ZVN"), inRepo("two", "ZVN")], HOME);
+    expect(found.has("/home/u/Desktop/Coding")).toBe(false);
+  });
+
+  it("walks past a shelf to the folder the work is actually in", () => {
+    const work = loose("/home/u/Desktop/Coding/ZVN/research");
+    const assigned = assign([
+      inRepo("one", "ZVN"),
+      inRepo("two", "ZVN"),
+      inRepo("three", "ZVN"),
+      work,
+    ]);
+    expect(assigned.find((a) => a.path === work.path)?.project).toBe("research");
+  });
+
+  it("sends a file sitting loose in a shelf to Unfiled", () => {
+    const stray = loose("/home/u/Desktop/Coding");
+    const assigned = assign([
+      inRepo("one", "ZVN"),
+      inRepo("two", "ZVN"),
+      inRepo("three", "ZVN"),
+      stray,
+    ]);
+    expect(assigned.find((a) => a.path === stray.path)?.project).toBe(UNFILED);
+  });
+
+  it("a repository is still its own project inside a shelf", () => {
+    const assigned = assign([inRepo("one", "ZVN"), inRepo("two", "ZVN"), inRepo("three", "ZVN")]);
+    expect(assigned.map((a) => a.project).sort()).toEqual(["one", "three", "two"]);
+  });
+
+  it("takes a container the user names, and gives back one the user exempts", () => {
+    const work = loose("/home/u/notes/journal");
+    const named = parseRules(
+      `---\nmarkie_rules:\n  containers:\n    - "~/notes"\n---\n`
+    ).rules!;
+    expect(assign([work], named)[0].project).toBe("journal");
+
+    const exempted = parseRules(
+      `---\nmarkie_rules:\n  containers:\n    - "~/notes"\n  not_containers:\n    - "~/notes"\n---\n`
+    ).rules!;
+    expect(assign([work], exempted)[0].project).toBe("notes");
+  });
+
+  it("lets the user take back a shelf Markie found on its own", () => {
+    const work = loose("/home/u/Desktop/Coding/ZVN/research");
+    const exempted = parseRules(
+      `---\nmarkie_rules:\n  not_containers:\n    - "~/Desktop/Coding"\n---\n`
+    ).rules!;
+    const assigned = assign(
+      [inRepo("one", "ZVN"), inRepo("two", "ZVN"), inRepo("three", "ZVN"), work],
+      exempted
+    );
+    expect(assigned.find((a) => a.path === work.path)?.project).toBe("Coding");
   });
 });

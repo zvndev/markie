@@ -15,6 +15,11 @@ markie_rules:
     gap_hours: 24
     min_files: 1
     max_blocks_per_project: 30
+  dumping_grounds:
+    - "~/Downloads/**"
+    - "~/.*/**"
+  containers: []
+  not_containers: []
   rules: []
   ignore: []
 ---
@@ -40,6 +45,15 @@ rules:
 becomes the file's parent folder. Rules are tried in order and the first match
 wins. Anything matching an \`ignore\` glob stays out of the Projects views
 entirely (Browse still shows it).
+
+\`dumping_grounds\` is the same idea for the places nobody writes their work:
+an inbox like \`~/Downloads\`, and the hidden folders under your home that
+belong to applications and agents. Delete a line to bring one back.
+
+\`containers\` are folders that HOLD projects rather than being one, so the
+folder inside them becomes the project instead. Markie finds most of them by
+itself (any folder with several git repositories under it), and these two lists
+are how you add one it missed or take back one it should not have taken.
 
 Markie decides where a file belongs in this order: a file you moved by hand,
 then a \`markie: {project, block}\` declaration in the file's own front matter,

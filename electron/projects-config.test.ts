@@ -60,6 +60,25 @@ describe("the default template", () => {
     expect(DEFAULT_PROJECTS_MD).toMatch(/\{repo\}/);
     expect(DEFAULT_PROJECTS_MD).toMatch(/ignore/);
   });
+
+  // The places Markie leaves out of the tree by default are the places a user
+  // is most likely to disagree about, so they are written down where he can
+  // read them and delete a line, not buried in the engine.
+  it("names the dumping grounds and the container levers it ships with", () => {
+    expect(DEFAULT_PROJECTS_MD).toMatch(/dumping_grounds/);
+    expect(DEFAULT_PROJECTS_MD).toMatch(/~\/Downloads\/\*\*/);
+    expect(DEFAULT_PROJECTS_MD).toMatch(/not_containers/);
+  });
+
+  // The template is the front matter the engine will parse back: a typo here
+  // reaches every new user as a rules error banner.
+  it("parses as the rules it advertises", async () => {
+    const { parseRules } = await import("../src/lib/projects/rules");
+    const parsed = parseRules(DEFAULT_PROJECTS_MD);
+    expect(parsed.error).toBeNull();
+    expect(parsed.rules?.dumpingGrounds).toEqual(["~/Downloads/**", "~/.*/**"]);
+    expect(parsed.rules?.clustering.gapHours).toBe(24);
+  });
 });
 
 describe("writeOverviewSection", () => {

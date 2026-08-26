@@ -27,6 +27,15 @@ export interface MarkieRules {
   clustering: ClusteringTunables;
   rules: ProjectRule[];
   ignore: string[];
+  // Places whose contents are not the user's work: an inbox, an application's
+  // state directory. Hidden from the taxonomy exactly like `ignore`, but kept
+  // as its own list so the shipped defaults can change without overwriting the
+  // globs a user wrote by hand.
+  dumpingGrounds: string[];
+  // Directories that HOLD projects rather than being one. Additive to the
+  // structural defaults; `notContainers` takes them back out again.
+  containers: string[];
+  notContainers: string[];
 }
 
 export const DEFAULT_CLUSTERING: ClusteringTunables = {
@@ -45,11 +54,24 @@ export const DEFAULT_CLUSTERING: ClusteringTunables = {
   maxBlockFiles: 500,
 };
 
+// A directory nobody writes their work in. `~/Downloads` is an inbox: an
+// unzipped handoff bundle there is a folder somebody sent, not a project the
+// user started. A hidden directory directly under home is an application's or
+// an agent's state: the index walks into `~/.claude/skills` and `~/.codex` on
+// purpose, because the Skills view reads them, but a tool's vendored plugin
+// documentation is not the user's work and does not belong in his project
+// tree. Both stay in Browse and in Skills; only the project tree is spared
+// them, and both are globs the user can delete.
+export const DEFAULT_DUMPING_GROUNDS: string[] = ["~/Downloads/**", "~/.*/**"];
+
 const EMPTY_RULES: MarkieRules = {
   version: 1,
   clustering: DEFAULT_CLUSTERING,
   rules: [],
   ignore: [],
+  dumpingGrounds: DEFAULT_DUMPING_GROUNDS,
+  containers: [],
+  notContainers: [],
 };
 
 export function parseRules(markdown: string): {
@@ -115,15 +137,44 @@ export function parseRules(markdown: string): {
     }
   }
 
-  const ignore: string[] = [];
-  if (r.ignore !== undefined && r.ignore !== null) {
-    if (!Array.isArray(r.ignore)) return { rules: null, error: "ignore must be a list" };
-    for (const g of r.ignore as unknown[]) {
-      if (typeof g === "string" && g.trim()) ignore.push(g);
+  const globList = (key: string): { list: string[] | null; error: string | null } => {
+    const value = r[key];
+    if (value === undefined || value === null) return { list: null, error: null };
+    if (!Array.isArray(value)) return { list: null, error: `${key} must be a list` };
+    const out: string[] = [];
+    for (const g of value as unknown[]) {
+      if (typeof g === "string" && g.trim()) out.push(g);
     }
+    return { list: out, error: null };
+  };
+
+  const lists: Record<string, string[]> = {};
+  // An ABSENT key means "whatever Markie ships"; a present one, even an empty
+  // one, is the user's answer and replaces it. That is what lets the shipped
+  // dumping grounds arrive for someone whose document predates them.
+  for (const [key, fallback] of [
+    ["ignore", [] as string[]],
+    ["dumping_grounds", DEFAULT_DUMPING_GROUNDS],
+    ["containers", [] as string[]],
+    ["not_containers", [] as string[]],
+  ] as Array<[string, string[]]>) {
+    const { list, error } = globList(key);
+    if (error) return { rules: null, error };
+    lists[key] = list ?? fallback;
   }
 
-  return { rules: { version: 1, clustering, rules, ignore }, error: null };
+  return {
+    rules: {
+      version: 1,
+      clustering,
+      rules,
+      ignore: lists.ignore,
+      dumpingGrounds: lists.dumping_grounds,
+      containers: lists.containers,
+      notContainers: lists.not_containers,
+    },
+    error: null,
+  };
 }
 
 // Minimal glob: ~ expansion, * within a segment, ** across segments.
@@ -182,6 +233,9 @@ export function applyRules(
   const p = normalize(file.path);
   const h = normalize(home);
   for (const g of rules.ignore) {
+    if (compileGlob(normalize(g), h).test(p)) return { ignored: true };
+  }
+  for (const g of rules.dumpingGrounds) {
     if (compileGlob(normalize(g), h).test(p)) return { ignored: true };
   }
   for (const rule of rules.rules) {

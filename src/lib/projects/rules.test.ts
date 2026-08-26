@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CLUSTERING,
+  DEFAULT_DUMPING_GROUNDS,
   applyRules,
   compileGlob,
   parseRules,
@@ -178,6 +179,64 @@ describe("applyRules", () => {
     expect(applyRules(rules, { path: "/a.md", dir: "/", repoName: null }, HOME)).toEqual({
       project: "Root",
       block: null,
+    });
+  });
+});
+
+describe("dumping grounds and containers", () => {
+  const at = (path: string) => ({ path, dir: path.slice(0, path.lastIndexOf("/")), repoName: null });
+
+  it("ships defaults when the document never mentions dumping grounds", () => {
+    const rules = parseRules("").rules!;
+    expect(rules.dumpingGrounds).toEqual(DEFAULT_DUMPING_GROUNDS);
+    // ~/Downloads is an inbox: an unzipped handoff bundle there is something
+    // somebody sent, not a project this person started.
+    expect(applyRules(rules, at("/home/u/Downloads/bundle/00-START.md"), HOME)).toEqual({
+      ignored: true,
+    });
+    // A hidden directory under home is an agent's or an application's state.
+    expect(applyRules(rules, at("/home/u/.codex/plugins/readme.md"), HOME)).toEqual({
+      ignored: true,
+    });
+  });
+
+  it("leaves ordinary work alone", () => {
+    const rules = parseRules("").rules!;
+    expect(applyRules(rules, at("/home/u/Desktop/Coding/proj/a.md"), HOME)).toBeNull();
+    // A hidden FILE in home is a file, not a dumping ground.
+    expect(applyRules(rules, at("/home/u/.notes.md"), HOME)).toBeNull();
+    // A dot directory INSIDE a project belongs to that project.
+    expect(applyRules(rules, at("/home/u/Desktop/proj/.claude/skills/s.md"), HOME)).toBeNull();
+  });
+
+  it("an explicit list is the user's answer and replaces the defaults", () => {
+    const rules = parseRules(
+      `---\nmarkie_rules:\n  dumping_grounds:\n    - "~/Inbox/**"\n---\n`
+    ).rules!;
+    expect(applyRules(rules, at("/home/u/Downloads/bundle/x.md"), HOME)).toBeNull();
+    expect(applyRules(rules, at("/home/u/Inbox/x.md"), HOME)).toEqual({ ignored: true });
+  });
+
+  it("an empty list means ignore nothing, not fall back to the defaults", () => {
+    const rules = parseRules(`---\nmarkie_rules:\n  dumping_grounds: []\n---\n`).rules!;
+    expect(rules.dumpingGrounds).toEqual([]);
+    expect(applyRules(rules, at("/home/u/Downloads/bundle/x.md"), HOME)).toBeNull();
+  });
+
+  it("reads the container lists, defaulting both to empty", () => {
+    const rules = parseRules(
+      `---\nmarkie_rules:\n  containers:\n    - "~/work"\n  not_containers:\n    - "~/work/solo"\n---\n`
+    ).rules!;
+    expect(rules.containers).toEqual(["~/work"]);
+    expect(rules.notContainers).toEqual(["~/work/solo"]);
+    expect(parseRules("").rules!.containers).toEqual([]);
+    expect(parseRules("").rules!.notContainers).toEqual([]);
+  });
+
+  it("rejects a container list that is not a list", () => {
+    expect(parseRules(`---\nmarkie_rules:\n  containers: "~/work"\n---\n`)).toEqual({
+      rules: null,
+      error: "containers must be a list",
     });
   });
 });

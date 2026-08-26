@@ -319,8 +319,11 @@ export function ProjectDetail({
                 <button
                   type="button"
                   onClick={() => setExpanded(new Set(expanded).add(entry.block!.id))}
-                  className={`mt-0.5 w-full rounded-md py-1 pl-3 pr-2 text-left text-[11.5px] text-muted hover:bg-accent/30 hover:text-foreground ${FOCUS_RING}`}
+                  className={`mt-0.5 flex w-full items-center gap-1.5 rounded-md py-1 pl-3 pr-2 text-left text-[11.5px] text-foreground/80 hover:bg-accent/40 hover:text-foreground ${FOCUS_RING}`}
                 >
+                  <span aria-hidden="true" className="text-muted">
+                    ▾
+                  </span>
                   Show all {entry.block!.files.length} files
                 </button>
               )}

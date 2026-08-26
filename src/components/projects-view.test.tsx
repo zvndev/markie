@@ -62,6 +62,19 @@ const ROWS = [
   },
 ];
 
+// A file sitting directly in a container (~/Documents) has no project of its
+// own, which is exactly how the Unfiled pile comes into existence.
+const UNFILED_ROW = {
+  path: "/home/u/Documents/orphan.md",
+  name: "orphan.md",
+  dir: "/home/u/Documents",
+  mtimeMs: NOW - 4 * HOUR,
+  birthtimeMs: NOW - 4 * HOUR,
+  fmProject: null,
+  fmBlock: null,
+  repoName: null,
+};
+
 const state = (over: Record<string, unknown> = {}) => ({
   pins: [],
   blocks: [],
@@ -94,6 +107,12 @@ const view = (over: Partial<React.ComponentProps<typeof ProjectsView>> = {}) => 
 // starts by walking there the way a person would.
 async function openProject(name: string) {
   await userEvent.click(await screen.findByRole("button", { name: `Open project ${name}` }));
+}
+
+// The header keeps navigation and search; everything else waits behind one
+// quiet button, so the tests reach those actions the way a person does.
+async function openHeaderMenu() {
+  await userEvent.click(await screen.findByRole("button", { name: "More project actions" }));
 }
 
 beforeEach(() => {
@@ -223,6 +242,7 @@ describe("ProjectsView index", () => {
     const api = bridge();
     render(view());
     await screen.findByRole("button", { name: "Open project Markie" });
+    await openHeaderMenu();
     await userEvent.click(screen.getByRole("button", { name: /update listing/i }));
     await waitFor(() => expect(api.projectsWriteOverview).toHaveBeenCalled());
     const listing = (
@@ -239,8 +259,26 @@ describe("ProjectsView index", () => {
     bridge();
     render(view({ onOpenPath }));
     await screen.findByRole("button", { name: "Open project Markie" });
+    await openHeaderMenu();
     await userEvent.click(screen.getByRole("button", { name: /open projects\.md/i }));
     expect(onOpenPath).toHaveBeenCalledWith("/home/u/Documents/Markie/Projects.md");
+  });
+
+  it("keeps the header to navigation, search, and one quiet menu", async () => {
+    // Two sentence-long buttons naming a file used to sit beside the search
+    // box at every level. They are the plumbing, and plumbing does not get to
+    // compete with the thing people came to type in.
+    bridge();
+    render(view());
+    await screen.findByRole("button", { name: "Open project Markie" });
+    const header = screen.getByRole("banner");
+    const labels = [...header.querySelectorAll("button")].map(
+      (b) => b.getAttribute("aria-label") ?? b.textContent?.trim()
+    );
+    expect(labels).toEqual(["More project actions"]);
+    await openHeaderMenu();
+    expect(screen.getByRole("button", { name: /open projects\.md/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /update listing/i })).toBeInTheDocument();
   });
 
   it("labels every control it puts on screen", async () => {
@@ -389,6 +427,22 @@ describe("ProjectsView project level", () => {
     }
   });
 
+  it("starts the directory in a column rather than wherever the name ended", async () => {
+    // Forty rows whose second column begins at forty different x positions is
+    // a heap, not a list. The name owns a fixed share of the row so the
+    // directory beside it always starts in the same place.
+    bridge();
+    render(view());
+    await openProject("Markie");
+    await screen.findByText("plan.md");
+    const names = [...document.querySelectorAll("[data-markie-project-file] button > span:first-child")];
+    expect(names.length).toBeGreaterThan(1);
+    for (const name of names) {
+      expect(name.className).toContain("basis-[44%]");
+      expect(name.className).toContain("shrink-0");
+    }
+  });
+
   it("leads with the file name and keeps the directory secondary", async () => {
     bridge();
     render(view());
@@ -514,6 +568,21 @@ describe("ProjectsView project level", () => {
 });
 
 describe("ProjectsView auto folders", () => {
+  it("draws a view as a control, not as another project tile", async () => {
+    // Two rounds of independent visual review said the folders still read as
+    // containers while they shared the projects' card grammar. A chip is a
+    // filter; a bordered tile in the same grid is a place.
+    bridge();
+    render(view());
+    const chip = (await screen.findByText("Updated today")).closest("button")!;
+    expect(chip.className).not.toContain("border");
+    expect(chip.className).toContain("inline-flex");
+    const card = (await screen.findByRole("button", { name: "Open project Markie" })).closest(
+      "[data-markie-project-card]"
+    )!;
+    expect(card.className).toContain("border");
+  });
+
   it("offers the three it ships, above the projects", async () => {
     bridge();
     render(view());
@@ -543,9 +612,13 @@ describe("ProjectsView auto folders", () => {
       })),
     });
     render(view());
-    const card = await screen.findByText("Thesis chapters");
-    expect(card).toBeInTheDocument();
-    expect(within(card.closest("button")!).getByText(/2 files/)).toBeInTheDocument();
+    const chip = await screen.findByText("Thesis chapters");
+    const control = chip.closest("button")!;
+    expect(within(control).getByText("2")).toBeInTheDocument();
+    // A chip carries its own rule, so nobody has to open it to find out what
+    // it keeps, and it says where the user wrote it down.
+    expect(control.getAttribute("title")).toMatch(/stored under ~\/Documents\/Thesis/);
+    expect(control.getAttribute("title")).toMatch(/Defined in Projects\.md/);
   });
 
   it("shows a folder's files grouped by the project they are still in", async () => {
@@ -605,6 +678,7 @@ describe("ProjectsView project names", () => {
     const api = bridge();
     render(view());
     await openProject("Thesis");
+    await openHeaderMenu();
     await userEvent.click(await screen.findByRole("button", { name: /rename project/i }));
     const input = screen.getByRole("textbox", { name: /rename project Thesis/i });
     await userEvent.clear(input);
@@ -673,6 +747,36 @@ describe("ProjectsView project names", () => {
     await userEvent.type(screen.getByRole("textbox", { name: /new project name/i }), "markie{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent(/already have a project/i);
     expect(api.projectsCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not offer to rename Unfiled, which is the absence of a project", async () => {
+    // Renaming it would present a system bucket as a normal one, and would
+    // persist a stored name keyed on the literal "Unfiled".
+    bridge({
+      mdIndexScan: vi.fn(async () => ({ files: [...ROWS, UNFILED_ROW], scannedAt: "now" })),
+    });
+    render(view());
+    expect(await screen.findByRole("button", { name: "Open project Unfiled" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rename project Markie" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Rename project Unfiled" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not offer to rename Unfiled from inside it either", async () => {
+    bridge({
+      mdIndexScan: vi.fn(async () => ({ files: [...ROWS, UNFILED_ROW], scannedAt: "now" })),
+    });
+    render(view());
+    await openProject("Unfiled");
+    expect(await screen.findByText("orphan.md")).toBeInTheDocument();
+    await openHeaderMenu();
+    expect(screen.queryByRole("button", { name: /rename project/i })).not.toBeInTheDocument();
+    // And a real project standing in the same place still offers it.
+    await userEvent.click(screen.getByRole("button", { name: /back to all projects/i }));
+    await openProject("Markie");
+    await openHeaderMenu();
+    expect(await screen.findByRole("button", { name: /rename project/i })).toBeInTheDocument();
   });
 
   it("never writes a file when a project is renamed or created", async () => {

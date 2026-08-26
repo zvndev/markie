@@ -7,8 +7,8 @@
 // projects its files came from cannot be.
 import { useState } from "react";
 import { compactDir } from "@/lib/path-display";
-import { shortAgo } from "@/lib/relative-time";
-import { FOCUS_RING } from "@/components/projects-rows";
+import { longAgo, shortAgo } from "@/lib/relative-time";
+import { FOCUS_RING, NAME_COL } from "@/components/projects-rows";
 import type { FolderNode, FolderProjectGroup } from "@/lib/projects/folders";
 
 // A week of a busy machine is thousands of files. Each group opens to a
@@ -53,7 +53,7 @@ function Group({
           className="ml-auto shrink-0 text-[10.5px] text-muted"
           title={new Date(group.updated).toLocaleString()}
         >
-          updated {shortAgo(group.updated)} ago
+          updated {longAgo(group.updated)}
         </span>
       </div>
       <div className="px-1 pb-1.5">
@@ -66,9 +66,7 @@ function Group({
             data-markie-project-file={file.path}
             className={`flex w-full items-baseline gap-2 rounded-md py-[3px] pl-3 pr-2 text-left hover:bg-accent/30 ${FOCUS_RING}`}
           >
-            <span className="max-w-[62%] shrink-0 truncate text-[12.5px] text-foreground/90">
-              {file.name}
-            </span>
+            <span className={`${NAME_COL} text-[12.5px] text-foreground/90`}>{file.name}</span>
             <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted">
               {compactDir(file.dir, home)}
             </span>
@@ -84,8 +82,11 @@ function Group({
           <button
             type="button"
             onClick={() => setAll(true)}
-            className={`mt-0.5 w-full rounded-md py-1 pl-3 pr-2 text-left text-[11.5px] text-muted hover:bg-accent/30 hover:text-foreground ${FOCUS_RING}`}
+            className={`mt-0.5 flex w-full items-center gap-1.5 rounded-md py-1 pl-3 pr-2 text-left text-[11.5px] text-foreground/80 hover:bg-accent/40 hover:text-foreground ${FOCUS_RING}`}
           >
+            <span aria-hidden="true" className="text-muted">
+              ▾
+            </span>
             Show all {group.files.length} files in {group.projectName}
           </button>
         )}
@@ -137,7 +138,7 @@ export function FolderDetail({
         <button
           type="button"
           onClick={() => setAllGroups(true)}
-          className={`w-full rounded-md border border-border py-1.5 text-[11.5px] text-muted hover:bg-accent/30 hover:text-foreground ${FOCUS_RING}`}
+          className={`w-full rounded-md border border-border py-1.5 text-[11.5px] text-foreground/80 hover:bg-accent/40 hover:text-foreground ${FOCUS_RING}`}
         >
           Show all {folder.groups.length} projects
         </button>

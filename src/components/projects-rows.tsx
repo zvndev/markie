@@ -7,6 +7,14 @@ import { compactDir } from "@/lib/path-display";
 import { shortAgo } from "@/lib/relative-time";
 import type { FileNode } from "@/lib/projects/taxonomy";
 
+// The file name owns a fixed share of the row, so the directory beside it
+// starts at the same x on every line instead of wherever that line's name
+// happened to stop. A ragged second column is the thing that makes a list of
+// forty files read as a heap; a real column is what makes it scannable. The
+// share is generous enough that an ordinary name never truncates, and a name
+// long enough to hit the edge ellipsizes there, which is what a column does.
+export const NAME_COL = "shrink-0 grow-0 basis-[44%] truncate";
+
 export const FOCUS_RING =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--status-blue)]";
 
@@ -108,9 +116,7 @@ export function FileRow({
         title={file.path}
         className={`flex min-w-0 flex-1 items-baseline gap-2 rounded-md text-left ${FOCUS_RING}`}
       >
-        <span className="max-w-[62%] shrink-0 truncate text-[12.5px] text-foreground/90">
-          {file.name}
-        </span>
+        <span className={`${NAME_COL} text-[12.5px] text-foreground/90`}>{file.name}</span>
         <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted">{dir}</span>
       </button>
       {pinned && (

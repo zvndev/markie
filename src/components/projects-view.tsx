@@ -10,7 +10,7 @@
 // all views over files that never move.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getElectronAPI } from "@/lib/electron";
-import { shortAgo } from "@/lib/relative-time";
+import { longAgo } from "@/lib/relative-time";
 import { useProjects } from "@/lib/use-projects";
 import { filterTaxonomy, filterProject } from "@/lib/projects/search";
 import { filterFolder } from "@/lib/projects/folders";
@@ -22,7 +22,8 @@ import {
   writeLocation,
   type ProjectsLocation,
 } from "@/lib/projects-nav";
-import { FOCUS_RING } from "@/components/projects-rows";
+import { FOCUS_RING, MenuAction, MenuPanel } from "@/components/projects-rows";
+import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 import { ProjectsIndex } from "@/components/projects-index";
 import { ProjectDetail } from "@/components/projects-detail";
 import { FolderDetail } from "@/components/projects-folder";
@@ -57,27 +58,6 @@ function Stat({ value, label }: { value: number; label: string }) {
       <span className="tabular-nums text-foreground">{value.toLocaleString()}</span>{" "}
       <span className="text-muted">{label}</span>
     </span>
-  );
-}
-
-function HeaderButton({
-  children,
-  onClick,
-  disabled,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={`h-7 shrink-0 rounded-md px-2.5 text-[12px] text-foreground/90 transition-colors hover:bg-accent/40 hover:text-foreground disabled:opacity-40 ${FOCUS_RING}`}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -145,6 +125,9 @@ export function ProjectsView({
     readLocation((k) => localStorage.getItem(k))
   );
   const [renamingProject, setRenamingProject] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRoot = useRef<HTMLDivElement>(null);
+  useDismissibleLayer(menuOpen, menuRoot, () => setMenuOpen(false));
 
   const allProjects = useMemo(() => taxonomy?.projects ?? [], [taxonomy]);
   const folders = projects.folders;
@@ -277,14 +260,15 @@ export function ProjectsView({
                 onClick={() => go(INDEX)}
                 aria-label="Back to all projects"
                 title="Back to all projects (⌘[)"
-                className={`shrink-0 rounded-md px-1 text-[15px] leading-none text-muted transition-colors hover:bg-accent/40 hover:text-foreground ${FOCUS_RING}`}
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[16px] leading-none text-muted transition-colors hover:bg-accent/50 hover:text-foreground ${FOCUS_RING}`}
               >
                 ‹
               </button>
               <button
                 type="button"
                 onClick={() => go(INDEX)}
-                className={`shrink-0 rounded-md px-1 text-[12.5px] text-muted transition-colors hover:text-foreground ${FOCUS_RING}`}
+                title="Back to all projects (⌘[)"
+                className={`shrink-0 rounded-md px-1.5 py-0.5 text-[12.5px] text-muted transition-colors hover:bg-accent/50 hover:text-foreground ${FOCUS_RING}`}
               >
                 Projects
               </button>
@@ -310,18 +294,57 @@ export function ProjectsView({
             </nav>
           )}
           <SearchField query={query} onQuery={setQuery} scope={scope} />
-          {at_.kind === "project" && activeProject && !renamingProject && (
-            <HeaderButton onClick={() => setRenamingProject(true)}>Rename project</HeaderButton>
-          )}
-          <HeaderButton onClick={writeOverview} disabled={!taxonomy}>
-            Update listing in Projects.md
-          </HeaderButton>
-          <HeaderButton
-            onClick={() => projects.configPath && onOpenPath(projects.configPath)}
-            disabled={!projects.configPath}
-          >
-            Open Projects.md
-          </HeaderButton>
+          {/* Two sentence-long buttons naming a file used to sit here at every
+              level, beside the search field, on every screen. They are real
+              actions and they are also the plumbing, and plumbing does not get
+              to compete with the search box for the eye. One quiet button, and
+              the header is a breadcrumb and a place to type. */}
+          <div ref={menuRoot} className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((open) => !open)}
+              aria-label="More project actions"
+              title="More project actions"
+              aria-expanded={menuOpen}
+              className={`flex h-7 w-7 items-center justify-center rounded-md text-[15px] leading-none text-muted transition-colors hover:bg-accent/40 hover:text-foreground ${FOCUS_RING}`}
+            >
+              ⋯
+            </button>
+            {menuOpen && (
+              <MenuPanel>
+                {/* Unfiled is not a project the user made. It is the name of
+                    the absence of one, so there is nothing there to call
+                    something else, and a stored name keyed on the literal
+                    "Unfiled" would outlive the pile it was describing. */}
+                {at_.kind === "project" && activeProject && !activeProject.isUnfiled && (
+                  <MenuAction
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setRenamingProject(true);
+                    }}
+                  >
+                    Rename project
+                  </MenuAction>
+                )}
+                <MenuAction
+                  onClick={() => {
+                    setMenuOpen(false);
+                    if (projects.configPath) onOpenPath(projects.configPath);
+                  }}
+                >
+                  Open Projects.md
+                </MenuAction>
+                <MenuAction
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void writeOverview();
+                  }}
+                >
+                  Update listing in Projects.md
+                </MenuAction>
+              </MenuPanel>
+            )}
+          </div>
         </div>
 
         <div className="mt-2 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[11.5px]">
@@ -339,7 +362,7 @@ export function ProjectsView({
               <Stat value={activeProject.fileCount} label="files" />
               <Stat value={activeProject.blocks.length} label="blocks" />
               <span className="text-muted" title={new Date(activeProject.updated).toLocaleString()}>
-                updated {shortAgo(activeProject.updated)} ago
+                updated {longAgo(activeProject.updated)}
               </span>
               <span className="text-muted">Nothing here moves a file on disk.</span>
             </>

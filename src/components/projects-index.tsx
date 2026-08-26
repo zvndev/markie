@@ -5,7 +5,7 @@
 // have", and a grid rather than a 248px column so the page fills the window it
 // was given instead of crowding into its top left corner.
 import { useRef, useState } from "react";
-import { shortAgo } from "@/lib/relative-time";
+import { longAgo } from "@/lib/relative-time";
 import { FOCUS_RING } from "@/components/projects-rows";
 import type { FolderNode } from "@/lib/projects/folders";
 import type { ProjectNode } from "@/lib/projects/taxonomy";
@@ -38,23 +38,25 @@ function SectionHeading({
   );
 }
 
-function FolderCard({ folder, onOpen }: { folder: FolderNode; onOpen: () => void }) {
+// A view is not a place, and after two rounds of review it was still reading
+// as one: same grid, same tile, same footprint as the projects underneath. So
+// it stops being a tile. One line, inline, wrapped into a row: the grammar of
+// a filter, not of a container. The rule it applies and where it came from are
+// on the control itself for anyone who wants to check.
+function FolderChip({ folder, onOpen }: { folder: FolderNode; onOpen: () => void }) {
   const empty = folder.count === 0;
   return (
     <button
       type="button"
       onClick={onOpen}
-      title={folder.rule}
+      title={folder.custom ? `${folder.rule} Defined in Projects.md.` : folder.rule}
       data-markie-folder-card={folder.id}
-      className={`flex flex-col gap-1 rounded-lg border border-border bg-surface px-3 py-2.5 text-left transition-colors hover:border-[color:var(--status-blue)] hover:bg-accent/30 ${FOCUS_RING}`}
+      className={`inline-flex items-center gap-2 rounded-md bg-surface px-2.5 py-1.5 text-left transition-colors hover:bg-accent/50 ${FOCUS_RING}`}
     >
-      <span className="truncate text-[12.5px] font-medium text-foreground">{folder.name}</span>
-      <span className="text-[10.5px] tabular-nums text-muted">
-        {empty ? "Nothing yet" : `${plural(folder.count, "file")} · ${plural(folder.projectCount, "project")}`}
+      <span className="truncate text-[12px] text-foreground">{folder.name}</span>
+      <span className="shrink-0 text-[11px] tabular-nums text-muted">
+        {empty ? "none" : num(folder.count)}
       </span>
-      {folder.custom && (
-        <span className="text-[9.5px] uppercase tracking-wide text-muted">from Projects.md</span>
-      )}
     </button>
   );
 }
@@ -98,16 +100,20 @@ function ProjectCard({
         className="text-[10.5px] text-muted"
         title={new Date(project.updated).toLocaleString()}
       >
-        {project.isUnfiled ? "Markie could not place these" : `updated ${shortAgo(project.updated)} ago`}
+        {project.isUnfiled ? "Markie could not place these" : `updated ${longAgo(project.updated)}`}
       </span>
-      <button
-        type="button"
-        onClick={onRename}
-        aria-label={`Rename project ${project.name}`}
-        className={`absolute right-1.5 top-1.5 z-10 rounded-md px-1 text-[11px] text-muted opacity-0 transition-opacity hover:bg-accent/50 hover:text-foreground focus-visible:opacity-100 group-hover/card:opacity-100 ${FOCUS_RING}`}
-      >
-        ✎
-      </button>
+      {/* Unfiled is a synthetic pile, not a project the user made, so there is
+          no name of theirs to change on it. */}
+      {!project.isUnfiled && (
+        <button
+          type="button"
+          onClick={onRename}
+          aria-label={`Rename project ${project.name}`}
+          className={`absolute right-1.5 top-1.5 z-10 rounded-md px-1 text-[11px] text-muted opacity-0 transition-opacity hover:bg-accent/50 hover:text-foreground focus-visible:opacity-100 group-hover/card:opacity-100 ${FOCUS_RING}`}
+        >
+          ✎
+        </button>
+      )}
     </div>
   );
 }
@@ -224,7 +230,8 @@ export function ProjectsIndex({
   // A project that vanishes mid-rename (the index moved under us, or the
   // search narrowed past it) must not leave a field editing something that is
   // no longer on screen. Derived rather than corrected after the fact.
-  const renaming = asked && projects.some((p) => p.key === asked) ? asked : null;
+  const renaming =
+    asked && projects.some((p) => p.key === asked && !p.isUnfiled) ? asked : null;
   const setRenaming = setAsked;
 
   return (
@@ -240,9 +247,9 @@ export function ProjectsIndex({
             title="Auto folders"
             note="Views across every project. Files stay where they are."
           />
-          <div className={CARD_GRID}>
+          <div className="flex flex-wrap gap-1.5">
             {folders.map((f) => (
-              <FolderCard key={f.id} folder={f} onOpen={() => onOpenFolder(f.id)} />
+              <FolderChip key={f.id} folder={f} onOpen={() => onOpenFolder(f.id)} />
             ))}
           </div>
         </section>

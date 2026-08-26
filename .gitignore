@@ -68,3 +68,7 @@ mcp/node_modules/
 # they are machine noise and can capture private file names
 /.autoloop/runs/
 /.autoloop/scratch/
+
+# Projects screenshots, for the same reason: every one of them is a picture of
+# somebody's real project and file names.
+/shots-v4/

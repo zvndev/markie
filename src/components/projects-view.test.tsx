@@ -130,10 +130,12 @@ describe("ProjectsView", () => {
     bridge();
     render(view());
     const stray = await screen.findByText("stray.md");
-    const run = stray.closest("[data-markie-project-file]")!.parentElement!;
-    // The caption names the run and counts it, the way a block header does.
+    // The run is its own object: a container with the card's footprint, headed
+    // by a caption that names and counts it the way a block header does.
+    const run = stray.closest("[data-markie-project-loose]")!;
+    expect(run.querySelector("[data-markie-project-block]")).toBeNull();
     const caption = screen.getByText("Not in a block");
-    expect(caption.parentElement!.parentElement).toBe(run);
+    expect(caption.closest("[data-markie-project-loose]")).toBe(run);
     expect(caption.nextElementSibling!.textContent).toBe("1 file");
   });
 
@@ -161,7 +163,7 @@ describe("ProjectsView", () => {
     bridge();
     render(view());
     await screen.findByText("stray.md");
-    const pane = document.querySelector(".min-h-0.overflow-y-auto.p-3")!;
+    const pane = document.querySelector("[data-markie-projects-detail]")!;
     const text = pane.textContent ?? "";
     expect(text.indexOf("plan.md")).toBeLessThan(text.indexOf("stray.md"));
   });

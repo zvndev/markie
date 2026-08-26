@@ -67,7 +67,7 @@ function HeaderButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`h-7 shrink-0 rounded-md border border-border px-2.5 text-[12px] text-muted transition-colors hover:bg-surface-2 hover:text-foreground disabled:opacity-40 ${FOCUS_RING}`}
+      className={`h-7 shrink-0 rounded-md px-2.5 text-[12px] text-foreground/90 transition-colors hover:bg-accent/40 hover:text-foreground disabled:opacity-40 ${FOCUS_RING}`}
     >
       {children}
     </button>
@@ -115,11 +115,11 @@ function ProjectButton({
       <span className="min-w-0 flex-1 truncate text-[12.5px]">{project.name}</span>
       {/* Two ragged numbers per row read as clutter; two right-aligned columns
           read as a table of contents. Same information, quieter. */}
-      <span className="min-w-[24px] shrink-0 text-right tabular-nums text-[10px] text-muted">
+      <span className="min-w-[22px] shrink-0 text-right tabular-nums text-[10px] text-muted">
         {project.fileCount}
       </span>
       <span
-        className="min-w-[30px] shrink-0 text-right tabular-nums text-[10px] text-muted"
+        className="min-w-[28px] shrink-0 text-right tabular-nums text-[10px] text-muted"
         title={new Date(project.updated).toLocaleString()}
       >
         {shortAgo(project.updated)}
@@ -128,13 +128,11 @@ function ProjectButton({
   );
 }
 
-// A file row is written twice over, at two ranks. Inside a card it is a member
-// of a block: small, indented well past the block name, quiet. Outside one it
-// stands where a card stands, so it takes the card's own title treatment and
-// hangs a marker into the margin left of where the card's border would be. The
-// difference has to be legible as grammar, not as a card that lost its border.
-type RowTone = "nested" | "loose";
-
+// A file is a file wherever it sits. The rank is carried by the container it
+// sits in, not by the row: a block is a card, a run of files that clustered
+// with nothing is an open group, and both hold rows that look the same. Giving
+// the loose row its own bigger type made the files nobody organized look more
+// important than the files somebody did.
 function FileRow({
   file,
   pinned,
@@ -142,7 +140,6 @@ function FileRow({
   onDragStart,
   menuOpen,
   onMenu,
-  tone,
   children,
 }: {
   file: FileNode;
@@ -151,20 +148,11 @@ function FileRow({
   onDragStart: () => void;
   menuOpen: boolean;
   onMenu: () => void;
-  tone: RowTone;
   children: React.ReactNode;
 }) {
-  const loose = tone === "loose";
   return (
     <div
-      className={`group relative flex items-center gap-2 rounded-md ${
-        loose
-          ? // 25px is where a block name sits: the card's own left edge plus its
-            // border and header padding. Every peer-level name in the pane
-            // therefore starts on one line down the page.
-            "py-2 pl-[25px] pr-2 hover:bg-accent/25"
-          : "py-[3px] pl-8 pr-2 hover:bg-accent/30"
-      }`}
+      className="group relative flex items-center gap-2 rounded-md py-[3px] pl-8 pr-2 hover:bg-accent/30"
       draggable
       onDragStart={onDragStart}
       data-markie-project-file={file.path}
@@ -175,20 +163,8 @@ function FileRow({
         title={file.path}
         className={`flex min-w-0 flex-1 items-baseline gap-2 rounded-md text-left ${FOCUS_RING}`}
       >
-        <span
-          className={`shrink-0 truncate ${
-            loose
-              ? "text-[13.5px] font-semibold text-foreground"
-              : "text-[12.5px] text-foreground/85"
-          }`}
-        >
-          {file.name}
-        </span>
-        <span
-          className={`min-w-0 flex-1 truncate text-muted ${loose ? "text-[11px]" : "text-[10.5px]"}`}
-        >
-          {file.dir}
-        </span>
+        <span className="shrink-0 truncate text-[12.5px] text-foreground/85">{file.name}</span>
+        <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted">{file.dir}</span>
       </button>
       {pinned && (
         <span
@@ -199,9 +175,7 @@ function FileRow({
         </span>
       )}
       <span
-        className={`min-w-[34px] shrink-0 text-right tabular-nums text-muted ${
-          loose ? "text-[10.5px]" : "text-[10px]"
-        }`}
+        className="min-w-[34px] shrink-0 text-right tabular-nums text-[10px] text-muted"
         title={new Date(file.mtimeMs).toLocaleString()}
       >
         {shortAgo(file.mtimeMs)}
@@ -372,7 +346,7 @@ export function ProjectsView({
 
   // One row, wherever the file sits. `inBlock` is the block it is already in,
   // so the move menu never offers to move it where it already is.
-  const organizeRow = (file: FileNode, inBlock: string | null, tone: RowTone = "nested") => (
+  const organizeRow = (file: FileNode, inBlock: string | null) => (
     <FileRow
       key={file.path}
       file={file}
@@ -381,7 +355,6 @@ export function ProjectsView({
       onDragStart={() => setDragPath(file.path)}
       menuOpen={fileMenu === file.path}
       onMenu={() => setFileMenu(fileMenu === file.path ? null : file.path)}
-      tone={tone}
     >
       {fileMenu === file.path && (
         <MenuPanel>
@@ -575,13 +548,15 @@ export function ProjectsView({
             : "No markdown to organize yet. Open a file and Markie will start grouping your work."}
         </p>
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-[264px_minmax(0,1fr)] max-[860px]:grid-cols-1">
+        <div className="grid min-h-0 flex-1 grid-cols-[248px_minmax(0,1fr)] max-[860px]:grid-cols-1">
           <nav
             aria-label="Projects"
             className="min-h-0 overflow-y-auto border-r border-border bg-surface p-2 max-[860px]:max-h-[132px] max-[860px]:border-b max-[860px]:border-r-0"
           >
             {/* 240px left most real project names ending in an ellipsis, and a
-                column of "winebid-core-back…" is noise, not navigation. */}
+                column of "winebid-core-back…" is noise, not navigation. The
+                trailing columns are tight so the extra width buys name, not
+                margin. */}
             <div className="flex flex-col gap-0.5">
               {list.map((p) => (
                 <ProjectButton
@@ -595,30 +570,35 @@ export function ProjectsView({
             </div>
           </nav>
 
-          <div className="min-h-0 overflow-y-auto p-3">
+          <div data-markie-projects-detail className="min-h-0 overflow-y-auto px-2.5 py-3">
             {entries.map((entry) =>
               entry.loose ? (
-                // A run of loose files is set off from the cards by more space
-                // than the cards give each other, hangs a marker into the
-                // margin left of the card edge, and says out loud what it is.
-                // A row that only lost its border reads as the tail of the card
-                // above it however far it is outdented.
-                <div key={`loose:${entry.loose[0].path}`} className="-ml-3 my-7 first:mt-0">
-                  {/* A section head built the way a card head is built, name
-                      then count, and set on the same line every block name and
-                      every loose file name starts on. No rule and no marker:
-                      each drawn marker tried here (a dot, then a tick) read as
-                      a connector back into the card above, which is the
-                      opposite of what a peer is. */}
-                  <div className="mb-2 flex items-center gap-2.5 pl-[25px] pr-2">
-                    <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted">
+                // A peer of a different kind. It takes the card's footprint and
+                // the card's fill, so it weighs what a card weighs, but it is an
+                // open form: one spine down its left instead of a closed
+                // outline, square where a card is rounded, and a caption where a
+                // card carries a title. An outdented bare row never weighed
+                // enough to read as a peer, and a closed box would just be a
+                // block, which is the one thing these files are not in.
+                <div
+                  key={`loose:${entry.loose[0].path}`}
+                  data-markie-project-loose
+                  // -ml-px: the spine is 2px where a card's border is 1px, so
+                  // the run starts one pixel left and every name inside it lands
+                  // on exactly the line the block names land on.
+                  className="my-4 -ml-px rounded-r-lg border-l-2 border-border bg-surface first:mt-0"
+                >
+                  <div className="flex items-center gap-2.5 px-3 pb-2 pt-3">
+                    <span className="text-[10.5px] font-medium uppercase tracking-[0.08em] text-muted">
                       Not in a block
                     </span>
                     <span className="text-[10.5px] text-muted">
                       {entry.loose.length} {entry.loose.length === 1 ? "file" : "files"}
                     </span>
                   </div>
-                  {entry.loose.map((file) => organizeRow(file, null, "loose"))}
+                  <div className="px-1 pb-1.5">
+                    {entry.loose.map((file) => organizeRow(file, null))}
+                  </div>
                 </div>
               ) : (
                 <section

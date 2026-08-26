@@ -3,7 +3,9 @@ import {
   blockNameCandidates,
   commonRootDepth,
   deriveBlocks,
+  humanizeStem,
   pickBlockName,
+  stripDateStamp,
 } from "@/lib/projects/cluster";
 import { DEFAULT_CLUSTERING } from "@/lib/projects/rules";
 import type { EngineFile } from "@/lib/projects/assign";
@@ -59,7 +61,7 @@ describe("deriveBlocks", () => {
   it("falls back to the newest file's stem when no folder dominates", () => {
     const one = [file("/home/u/p/plan-v2.md", 1, "/home/u/p")];
     const res = deriveBlocks("P", one, [], [], DEFAULT_CLUSTERING, () => NOW);
-    expect(res.blocks[0].auto_name).toBe("plan-v2");
+    expect(res.blocks[0].auto_name).toBe("Plan v2");
   });
 
   it("names by the newest stem when the folder is split evenly enough", () => {
@@ -69,7 +71,7 @@ describe("deriveBlocks", () => {
       file("/home/u/p/c/three.md", 3, "/home/u/p/c"),
     ];
     const res = deriveBlocks("P", files, [], [], DEFAULT_CLUSTERING, () => NOW);
-    expect(res.blocks[0].auto_name).toBe("one");
+    expect(res.blocks[0].auto_name).toBe("One");
   });
 
   it("names a second session in the same folder after its work, not with a counter", () => {
@@ -84,7 +86,7 @@ describe("deriveBlocks", () => {
     const res = deriveBlocks("P", files, [], [], DEFAULT_CLUSTERING, () => NOW);
     const names = res.blocks.map((b) => b.auto_name);
     expect(names[0]).toBe("auth"); // ordered oldest first
-    expect(names[1]).toBe("a"); // the newest file in the newer session
+    expect(names[1]).toBe("A"); // the newest file in the newer session
     expect(new Set(names).size).toBe(2);
     expect(res.blocks[0].block_id).toBe(res.byPath.get("/home/u/p/auth/c.md"));
   });
@@ -360,9 +362,72 @@ describe("block naming", () => {
     expect(blockNameCandidates(members, 3, () => NOW)).toEqual([
       "auth",
       "auth",
-      "a",
+      "A",
       "Work session 2026-08-26",
     ]);
+  });
+
+  // A block called "2026-08-26-organized-workspace-design" is the date bucket
+  // that was turned down: it says when and never what.
+  it("names a block after the work, not the day it was filed under", () => {
+    const members = [
+      file("/home/u/p/specs/2026-08-26-organized-workspace-design.md", 1, "/home/u/p/specs"),
+    ];
+    expect(blockNameCandidates(members, 3, () => NOW)[2]).toBe("Organized workspace design");
+  });
+
+  it("leaves a folder's own spelling alone, because the user typed it", () => {
+    const members = [file("/home/u/p/alt-ui-smart-par/a.md", 1, "/home/u/p/alt-ui-smart-par")];
+    expect(blockNameCandidates(members, 3, () => NOW)[0]).toBe("alt-ui-smart-par");
+  });
+
+  it("still takes the date off a folder that is only a date stamp plus a name", () => {
+    const members = [file("/home/u/p/2026-08-24-smart-par/a.md", 1, "/home/u/p/2026-08-24-smart-par")];
+    expect(blockNameCandidates(members, 3, () => NOW)[0]).toBe("smart-par");
+  });
+
+  it("dates the session block from the work, not from the clock", () => {
+    // Nothing distinguishes these but time, so the last resort names them; a
+    // block last touched in June must not be called a session in August.
+    const june = Date.parse("2026-06-10T09:00:00Z");
+    const members = [{ ...file("/home/u/p/x", 0), mtimeMs: june, dir: "/home/u/p" }];
+    expect(blockNameCandidates(members, 3, () => NOW).at(-1)).toBe("Work session 2026-06-10");
+  });
+});
+
+describe("stripDateStamp", () => {
+  it("takes a stamp off either end", () => {
+    expect(stripDateStamp("2026-08-26-organized-workspace-design")).toBe(
+      "organized-workspace-design"
+    );
+    expect(stripDateStamp("20260826-handoff")).toBe("handoff");
+    expect(stripDateStamp("2026_08_26_notes")).toBe("notes");
+    expect(stripDateStamp("search-polish-plan-2026-08-26")).toBe("search-polish-plan");
+    expect(stripDateStamp("2026-08-standup")).toBe("standup");
+  });
+
+  it("keeps a name that is only a date, rather than calling it nothing", () => {
+    expect(stripDateStamp("2026-08-26")).toBe("2026-08-26");
+    expect(stripDateStamp("20260826")).toBe("20260826");
+  });
+
+  it("leaves numbers that are not dates", () => {
+    expect(stripDateStamp("round6-contents-presets")).toBe("round6-contents-presets");
+    expect(stripDateStamp("grant-review-9415")).toBe("grant-review-9415");
+    expect(stripDateStamp("v2-migration")).toBe("v2-migration");
+  });
+});
+
+describe("humanizeStem", () => {
+  it("reads a slug back as a sentence", () => {
+    expect(humanizeStem("organized-workspace-design")).toBe("Organized workspace design");
+    expect(humanizeStem("shopify_integration_plan")).toBe("Shopify integration plan");
+  });
+
+  it("leaves anybody's own capitals exactly as written", () => {
+    expect(humanizeStem("README")).toBe("README");
+    expect(humanizeStem("WHAT-I-NEED-FROM-YOU")).toBe("WHAT I NEED FROM YOU");
+    expect(humanizeStem("iOS-notes")).toBe("iOS notes");
   });
 
   it("takes the first name nobody has claimed", () => {

@@ -68,6 +68,37 @@ function stem(name: string): string {
   return name.replace(/\.[^.]+$/, "");
 }
 
+// A date stamp in a name says WHEN and never WHAT. Blocks named
+// "2026-08-26-organized-workspace-design" are the date buckets that were turned
+// down on purpose, so the stamp comes off both ends of a derived name.
+// Recognized: 2026-08-26, 20260826 and 2026-08, separated by -, _ or . A name
+// that is ONLY a date keeps it, because the alternative is calling the block
+// nothing at all.
+const DATE_HEAD = /^(?:\d{4}[-_.]\d{2}[-_.]\d{2}|\d{8}|\d{4}[-_.]\d{2})(?:[-_.]|$)/;
+const DATE_TAIL = /[-_.](?:\d{4}[-_.]\d{2}[-_.]\d{2}|\d{8}|\d{4}[-_.]\d{2})$/;
+
+export function stripDateStamp(name: string): string {
+  let out = name;
+  const head = out.replace(DATE_HEAD, "");
+  if (head.trim()) out = head;
+  const tail = out.replace(DATE_TAIL, "");
+  if (tail.trim()) out = tail;
+  return out;
+}
+
+// A file stem is a slug; a block name is read by a person. Words that already
+// carry a capital are somebody's spelling (README, AGENTS, iOS, PR) and are
+// left exactly as written, so only an all-lowercase leading word is raised.
+// The rest stay lowercase: sentence case reads as a phrase, Title Case Reads
+// As A Headline, And These Are Phrases.
+export function humanizeStem(name: string): string {
+  const words = stripDateStamp(name).split(/[-_\s]+/).filter(Boolean);
+  if (!words.length) return name;
+  const [first, ...rest] = words;
+  const head = /[A-Z]/.test(first) ? first : first.charAt(0).toUpperCase() + first.slice(1);
+  return [head, ...rest].join(" ");
+}
+
 const segments = (dir: string) => dir.replace(/\\/g, "/").split("/").filter(Boolean);
 
 // The deepest directory every file in the project shares. Block names are
@@ -124,17 +155,26 @@ export function blockNameCandidates(
   // when the folder is several levels below the project root. Without this a
   // path-split block would be named after the branch it was split out of, so
   // every sibling would come back with the same name.
+  // Folder names keep their own spelling minus any date stamp: they are
+  // directories the user made and recognizes, and "alt-ui-smart-par" read back
+  // as "Alt ui smart par" is a folder he has to translate. A file stem is a
+  // slug nobody chose to look at, so that one is made readable.
   const shared = commonRootDepth(members);
   if (shared > rootDepth) {
     const own = segments(members[0].dir)[shared - 1];
-    if (own) out.push(own);
+    if (own) out.push(stripDateStamp(own));
   }
   const dom = dominantBranch(members, rootDepth);
-  if (dom) out.push(dom);
+  if (dom) out.push(stripDateStamp(dom));
   let newest: EngineFile | null = null;
   for (const f of members) if (!newest || f.mtimeMs > newest.mtimeMs) newest = f;
-  if (newest) out.push(stem(newest.name));
-  out.push(`Work session ${new Date(now()).toISOString().slice(0, 10)}`);
+  if (newest) out.push(humanizeStem(stem(newest.name)));
+  // Last resort, and the only place a date earns its keep: this is the block
+  // with nothing else to be called. It carries the block's OWN newest edit,
+  // not the clock, so "Work session" names an afternoon that happened rather
+  // than the day the tree was drawn.
+  const when = newest ? newest.mtimeMs : now();
+  out.push(`Work session ${new Date(when).toISOString().slice(0, 10)}`);
   return out.filter(Boolean);
 }
 

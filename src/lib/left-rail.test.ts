@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   formatRailDisabled,
+  isFullView,
   isPanelView,
   selectLeftView,
+  showDocumentArea,
   showFormatRail,
   showSidePanel,
   type LeftState,
@@ -94,5 +96,53 @@ describe("clicking the activity bar", () => {
       view: "skills",
       panelOpen: true,
     });
+  });
+});
+
+describe("full-width views", () => {
+  const base = { panelOpen: true, richVisible: true, canEdit: true } as const;
+
+  it("projects opens full-width: panel closed, document hidden", () => {
+    const next = selectLeftView({ ...base, view: "library" }, "projects");
+    expect(next).toEqual({ view: "projects", panelOpen: false });
+    expect(showDocumentArea({ ...base, view: "projects", panelOpen: false })).toBe(false);
+    expect(showSidePanel({ ...base, view: "projects", panelOpen: false })).toBe(false);
+  });
+
+  it("clicking projects again returns to the previous panel", () => {
+    const next = selectLeftView(
+      { ...base, view: "projects", panelOpen: false },
+      "projects",
+      "browse"
+    );
+    expect(next).toEqual({ view: "browse", panelOpen: true });
+  });
+
+  it("a panel click from projects restores the document area", () => {
+    const next = selectLeftView({ ...base, view: "projects", panelOpen: false }, "library");
+    expect(next).toEqual({ view: "library", panelOpen: true });
+    expect(showDocumentArea({ ...base, view: "library", panelOpen: true })).toBe(true);
+  });
+
+  it("edit from projects behaves like edit from anywhere", () => {
+    const next = selectLeftView({ ...base, view: "projects", panelOpen: false }, "edit");
+    expect(next).toEqual({ view: "edit", panelOpen: false });
+  });
+
+  it("the format rail never shows in a full view", () => {
+    expect(showFormatRail({ ...base, view: "projects", panelOpen: false })).toBe(false);
+  });
+
+  it("the document is there for every view that is not full-width", () => {
+    for (const view of ["library", "browse", "shared", "skills", "edit"] as const) {
+      expect(showDocumentArea({ ...base, view })).toBe(true);
+    }
+  });
+
+  it("knows which views own a panel, a document, or neither", () => {
+    expect(isPanelView("projects")).toBe(false);
+    expect(isFullView("projects")).toBe(true);
+    expect(isFullView("library")).toBe(false);
+    expect(isFullView("edit")).toBe(false);
   });
 });

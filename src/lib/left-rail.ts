@@ -12,14 +12,28 @@
 
 // The views that own a side panel...
 export type PanelView = "library" | "browse" | "shared" | "skills";
-// ...and everything the activity bar can select, which includes one that does
-// not: the formatting rail.
-export type LeftView = PanelView | "edit";
+// ...one that takes the document area over entirely, because organizing needs
+// room the side panel does not have. The Library panel stays exactly as it
+// was: a full view is additional navigation, never a replacement.
+export type FullView = "projects";
+// ...and everything the activity bar can select, which includes one that owns
+// neither: the formatting rail.
+export type LeftView = PanelView | "edit" | FullView;
 
 export const PANEL_VIEWS: PanelView[] = ["library", "browse", "shared", "skills"];
 
 export function isPanelView(view: LeftView): view is PanelView {
   return (PANEL_VIEWS as LeftView[]).includes(view);
+}
+
+export function isFullView(view: LeftView): view is FullView {
+  return view === "projects";
+}
+
+// The document (editor panes, doc toolbar) renders except while a full-width
+// view holds the document area.
+export function showDocumentArea(state: LeftState): boolean {
+  return !isFullView(state.view);
 }
 
 export interface LeftState {
@@ -57,9 +71,11 @@ export function selectLeftView(
   clicked: LeftView,
   previousPanel: LeftView = "library"
 ): { view: LeftView; panelOpen: boolean } {
-  if (clicked === "edit") {
-    if (current.view === "edit") return { view: previousPanel, panelOpen: true };
-    return { view: "edit", panelOpen: false };
+  // A full view and the pencil share one shape: neither has a panel to close,
+  // so clicking either a second time returns you to the last panel you had.
+  if (clicked === "edit" || isFullView(clicked)) {
+    if (current.view === clicked) return { view: previousPanel, panelOpen: true };
+    return { view: clicked, panelOpen: false };
   }
   const closing = current.panelOpen && current.view === clicked;
   return { view: clicked, panelOpen: !closing };

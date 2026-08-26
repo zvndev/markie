@@ -23,10 +23,12 @@ import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { Settings } from "@/components/settings";
 import { Library } from "@/components/library";
 import { ActivityBar } from "@/components/activity-bar";
+import { RichPaneError } from "@/components/rich-pane-error";
 import {
   formatRailDisabled,
   isPanelView,
   selectLeftView,
+  showDocumentArea,
   showFormatRail,
   showSidePanel,
   type LeftView,
@@ -582,7 +584,9 @@ export default function Home() {
         v,
         lastPanelRef.current
       );
-      if (next.view !== "edit") lastPanelRef.current = next.view;
+      // Only a panel view can be "the panel you were on"; the pencil and the
+      // full-width views have none to come back to.
+      if (isPanelView(next.view)) lastPanelRef.current = next.view;
       setLeftView(next.view);
       return next.panelOpen;
     });
@@ -1097,9 +1101,12 @@ export default function Home() {
             e.preventDefault();
             setShowPalette((v) => !v);
             break;
+          // Shift makes e.key uppercase, so the shifted form is its own case
+          // rather than a lowercasing of the whole switch.
           case "l":
+          case "L":
             e.preventDefault();
-            selectView("library");
+            selectView(e.shiftKey ? "projects" : "library");
             break;
           case "n":
             e.preventDefault();
@@ -1409,6 +1416,7 @@ export default function Home() {
       { id: "theme-settings", title: "Theme Settings…", group: "Theme", keywords: "color font preset style", run: () => setShowTheme(true) },
       { id: "settings", title: "Settings…", group: "File", shortcut: "⌘,", keywords: "account sign in sync login", run: () => setShowSettings(true) },
       { id: "library", title: "Library…", group: "File", shortcut: "⌘L", keywords: "documents cloud sync files recent", run: () => selectView("library") },
+      { id: "projects", title: "Projects", group: "File", shortcut: "⇧⌘L", keywords: "organize blocks workspace virtual folders group", run: () => selectView("projects") },
       { id: "browse", title: "Browse all markdown…", group: "File", keywords: "all files device skills index find", run: () => selectView("browse") },
       { id: "skills", title: "Skills & agent files…", group: "File", keywords: "claude agents codex gemini cursor instructions", run: () => selectView("skills") },
       { id: "new-file", title: "New file", group: "File", shortcut: "⌘N", keywords: "blank create empty document", run: handleNewFile },
@@ -1578,205 +1586,184 @@ export default function Home() {
 
         {/* Document column: the access strip sits above both panes, because it
             explains something about the document, not about one view of it. */}
-        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-          <ShareBanner
-            view={shareBanner}
-            error={forkError}
-            onDismissError={() => setForkError(null)}
-            onMakeCopy={handleMakeCopy}
-          />
-          {updateWaiting && (
-            <UpdateStrip
-              // "Clean" has to mean nothing is at risk, not merely that the
-              // buffer looks saved. A file whose push was rejected holds
-              // changes the server never took, and opening it produces a clean
-              // buffer over exactly the content a one-click pull would destroy.
-              kind={
-                isDirty ||
-                updateWaiting.syncState === "conflict" ||
-                updateWaiting.syncState === "unpushed"
-                  ? "dirty"
-                  : "clean"
-              }
-              busy={updateBusy}
-              error={updateError}
-              onUpdate={handlePullUpdate}
-              onReview={() => setShowConflict(true)}
+        {showDocumentArea(leftState) ? (
+          <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+            <ShareBanner
+              view={shareBanner}
+              error={forkError}
+              onDismissError={() => setForkError(null)}
+              onMakeCopy={handleMakeCopy}
             />
-          )}
-
-          {/* Unsaved work from a session that ended badly. Offered once, above
-              the document, and only for the document that is open. */}
-          {saveGuard.recovered && (
-            <DraftStrip
-              savedAt={saveGuard.recovered.savedAt}
-              onRestore={() => {
-                const entry = saveGuard.recovered;
-                if (!entry) return;
-                saveGuard.acceptRecovered();
-                void loadFile({
-                  name: entry.name ?? "untitled.md",
-                  content: entry.content,
-                  path: entry.path,
-                  unsaved: true,
-                });
-              }}
-              onDiscard={saveGuard.discardRecovered}
-            />
-          )}
-
-          {/* Something else edited this file. With a clean buffer the reload
-              cannot cost anything, so it is a strip; with unsaved work it is a
-              real decision and opens the dialog. */}
-          {diskChange !== null && (
-            <DiskChangeStrip
-              fileName={fileName ?? "This document"}
-              onReload={() =>
-                diskChangeKind(isDirty) === "clean"
-                  ? reloadFromDisk()
-                  : setShowDiskConflict(true)
-              }
-            />
-          )}
-
-          {/* The formatting row, above the document and below the app chrome,
-              where every editor puts it. */}
-          <DocToolbar
-            editor={richEditor}
-            appearance={appearance}
-            onAppearance={changeAppearance}
-            onPrint={printDocument}
-            onHistory={filePath ? () => setShowHistory(true) : undefined}
-            canEdit={docEditable}
-          />
-
-          <div
-            data-markie-document-area
-            style={appearanceVars(appearance) as React.CSSProperties}
-            className={`markie-document-area relative flex-1 min-h-0 min-w-0 overflow-hidden ${
-              mode === "split"
-                ? "markie-document-area--split grid grid-cols-[minmax(0,0.96fr)_minmax(0,1.04fr)] max-[820px]:grid-cols-[minmax(0,0.94fr)_minmax(0,1.06fr)]"
-                : "markie-document-area--single flex"
-            }`}
-          >
-            <FindBar
-              open={showFind}
-              withReplace={findWithReplace}
-              target={findTarget}
-              // The source pane is also locked during a live session, because
-              // shared edits have to travel through the rich pane's Yjs doc.
-              canReplace={
-                docEditable && !(findPane === "source" && !!collabCfg)
-              }
-              revision={content}
-              onClose={closeFind}
-            />
-
-            {/* Editor pane */}
-            {(mode === "edit" || mode === "split") && (
-              <div
-                data-markie-source-pane
-                onFocusCapture={() => setLastPane("source")}
-                className={`${
-                  mode === "split" ? "markie-pane-divider" : ""
-                } markie-source-pane h-full min-w-0 w-full flex-1 overflow-hidden flex flex-col`}
-              >
-                {collabCfg && <LiveSourceBanner />}
-                <div className="flex-1 min-h-0 overflow-hidden">
-                  <Editor
-                    value={content}
-                    onChange={editContent}
-                    onViewReady={setSourceView}
-                    // Read-only for two separate reasons: the rich pane owns the
-                    // shared document while a session is live, and a viewer may
-                    // not edit at all.
-                    readOnly={!!collabCfg || !docEditable}
-                  />
-                </div>
-              </div>
+            {updateWaiting && (
+              <UpdateStrip
+                // "Clean" has to mean nothing is at risk, not merely that the
+                // buffer looks saved. A file whose push was rejected holds
+                // changes the server never took, and opening it produces a clean
+                // buffer over exactly the content a one-click pull would destroy.
+                kind={
+                  isDirty ||
+                  updateWaiting.syncState === "conflict" ||
+                  updateWaiting.syncState === "unpushed"
+                    ? "dirty"
+                    : "clean"
+                }
+                busy={updateBusy}
+                error={updateError}
+                onUpdate={handlePullUpdate}
+                onReview={() => setShowConflict(true)}
+              />
             )}
 
-            {/* Rich View pane with format rail */}
-            {(mode === "preview" || mode === "split") && (
-              <div
-                data-markie-rich-pane
-                onFocusCapture={() => setLastPane("rich")}
-                className="markie-rich-pane h-full min-w-0 w-full flex-1 overflow-hidden flex"
-              >
-                {showFormatRail(leftState) && (
-                  <FormatRail editor={richEditor} disabled={formatRailDisabled(leftState)} />
-                )}
-                <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
-                  {richBlocked && !collabCfg && (
-                    <RichLossBanner
-                      risks={richLossy ?? []}
-                      onEditSource={() => setMode("edit")}
-                      onOverride={overrideRichSafety}
-                    />
-                  )}
-                  {richPreparing && !collabCfg && <RichPreparingNote />}
-                  <div className="flex-1 min-h-0">
-                  {/* The rich pane builds a TipTap editor at render time; a
-                      throw in that binding is not catchable inside the
-                      component, and uncaught it takes the whole window. Source
-                      mode is right there and holds the same document. */}
-                  <ErrorBoundary
-                    fallback={(_error, reset) => (
-                      <div
-                        role="alert"
-                        className="h-full w-full overflow-auto flex items-center justify-center p-8"
-                      >
-                        <div className="max-w-[420px] flex flex-col gap-3 text-center">
-                          <p className="text-[13px] text-muted">
-                            The rich editor hit an error — switch to Source to
-                            keep editing
-                          </p>
-                          <div className="flex items-center justify-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                reset();
-                                setMode("edit");
-                              }}
-                              className="h-8 px-3 rounded-md border border-border bg-surface hover:bg-surface-2 text-[13px]"
-                            >
-                              Switch to Source
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => window.location.reload()}
-                              className="h-8 px-3 rounded-md border border-border text-muted hover:text-foreground text-[13px]"
-                            >
-                              Reload
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  >
-                    <RichView
-                      key={
-                        collabCfg
-                          ? `live:${collabCfg.docId}:${collabCfg.readonly}:${tokenTag(collabCfg.token)}`
-                          : "solo"
-                      }
+            {/* Unsaved work from a session that ended badly. Offered once, above
+                the document, and only for the document that is open. */}
+            {saveGuard.recovered && (
+              <DraftStrip
+                savedAt={saveGuard.recovered.savedAt}
+                onRestore={() => {
+                  const entry = saveGuard.recovered;
+                  if (!entry) return;
+                  saveGuard.acceptRecovered();
+                  void loadFile({
+                    name: entry.name ?? "untitled.md",
+                    content: entry.content,
+                    path: entry.path,
+                    unsaved: true,
+                  });
+                }}
+                onDiscard={saveGuard.discardRecovered}
+              />
+            )}
+
+            {/* Something else edited this file. With a clean buffer the reload
+                cannot cost anything, so it is a strip; with unsaved work it is a
+                real decision and opens the dialog. */}
+            {diskChange !== null && (
+              <DiskChangeStrip
+                fileName={fileName ?? "This document"}
+                onReload={() =>
+                  diskChangeKind(isDirty) === "clean"
+                    ? reloadFromDisk()
+                    : setShowDiskConflict(true)
+                }
+              />
+            )}
+
+            {/* The formatting row, above the document and below the app chrome,
+                where every editor puts it. */}
+            <DocToolbar
+              editor={richEditor}
+              appearance={appearance}
+              onAppearance={changeAppearance}
+              onPrint={printDocument}
+              onHistory={filePath ? () => setShowHistory(true) : undefined}
+              canEdit={docEditable}
+            />
+
+            <div
+              data-markie-document-area
+              style={appearanceVars(appearance) as React.CSSProperties}
+              className={`markie-document-area relative flex-1 min-h-0 min-w-0 overflow-hidden ${
+                mode === "split"
+                  ? "markie-document-area--split grid grid-cols-[minmax(0,0.96fr)_minmax(0,1.04fr)] max-[820px]:grid-cols-[minmax(0,0.94fr)_minmax(0,1.06fr)]"
+                  : "markie-document-area--single flex"
+              }`}
+            >
+              <FindBar
+                open={showFind}
+                withReplace={findWithReplace}
+                target={findTarget}
+                // The source pane is also locked during a live session, because
+                // shared edits have to travel through the rich pane's Yjs doc.
+                canReplace={
+                  docEditable && !(findPane === "source" && !!collabCfg)
+                }
+                revision={content}
+                onClose={closeFind}
+              />
+
+              {/* Editor pane */}
+              {(mode === "edit" || mode === "split") && (
+                <div
+                  data-markie-source-pane
+                  onFocusCapture={() => setLastPane("source")}
+                  className={`${
+                    mode === "split" ? "markie-pane-divider" : ""
+                  } markie-source-pane h-full min-w-0 w-full flex-1 overflow-hidden flex flex-col`}
+                >
+                  {collabCfg && <LiveSourceBanner />}
+                  <div className="flex-1 min-h-0 overflow-hidden">
+                    <Editor
                       value={content}
                       onChange={editContent}
-                      onEditorReady={setRichEditor}
-                      collab={collabCfg}
-                      readOnly={!docEditable || !richArmed}
-                      canModerate={roleState === "owner"}
-                      onPeersChange={handlePeersChange}
-                      onCollabStatus={handleCollabStatus}
-                      onFlushReady={handleFlushReady}
+                      onViewReady={setSourceView}
+                      // Read-only for two separate reasons: the rich pane owns the
+                      // shared document while a session is live, and a viewer may
+                      // not edit at all.
+                      readOnly={!!collabCfg || !docEditable}
                     />
-                  </ErrorBoundary>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
+
+              {/* Rich View pane with format rail */}
+              {(mode === "preview" || mode === "split") && (
+                <div
+                  data-markie-rich-pane
+                  onFocusCapture={() => setLastPane("rich")}
+                  className="markie-rich-pane h-full min-w-0 w-full flex-1 overflow-hidden flex"
+                >
+                  {showFormatRail(leftState) && (
+                    <FormatRail editor={richEditor} disabled={formatRailDisabled(leftState)} />
+                  )}
+                  <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
+                    {richBlocked && !collabCfg && (
+                      <RichLossBanner
+                        risks={richLossy ?? []}
+                        onEditSource={() => setMode("edit")}
+                        onOverride={overrideRichSafety}
+                      />
+                    )}
+                    {richPreparing && !collabCfg && <RichPreparingNote />}
+                    <div className="flex-1 min-h-0">
+                    <ErrorBoundary
+                      fallback={(_error, reset) => (
+                        <RichPaneError
+                          onSwitchToSource={() => {
+                            reset();
+                            setMode("edit");
+                          }}
+                          onReload={() => window.location.reload()}
+                        />
+                      )}
+                    >
+                      <RichView
+                        key={
+                          collabCfg
+                            ? `live:${collabCfg.docId}:${collabCfg.readonly}:${tokenTag(collabCfg.token)}`
+                            : "solo"
+                        }
+                        value={content}
+                        onChange={editContent}
+                        onEditorReady={setRichEditor}
+                        collab={collabCfg}
+                        readOnly={!docEditable || !richArmed}
+                        canModerate={roleState === "owner"}
+                        onPeersChange={handlePeersChange}
+                        onCollabStatus={handleCollabStatus}
+                        onFlushReady={handleFlushReady}
+                      />
+                    </ErrorBoundary>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        ) : (
+          /* The full-width Projects view arrives in the next task; the
+             routing is here so the rail's behavior is real now. */
+          <div data-markie-projects-view className="flex-1 min-w-0" />
+        )}
       </div>
 
       {/* Mounted on first open and kept mounted: unmounting the panel kills its

@@ -156,6 +156,14 @@ describe("ProjectsTree", () => {
     expect(screen.getByRole("status").textContent).toMatch(/organizing/i);
   });
 
+  it("refuses to draw a tree it knows is not ready yet", () => {
+    // A taxonomy built before the repo names are read folds whole machines
+    // into one folder-derived project. Better to say so than to show it.
+    render(tree({ preparing: true }));
+    expect(screen.getByRole("status").textContent).toMatch(/organizing/i);
+    expect(screen.queryByText("Markie")).not.toBeInTheDocument();
+  });
+
   it("invites the user in when there is genuinely nothing", () => {
     render(tree({ taxonomy: { ...TAXONOMY, projects: [] } }));
     expect(screen.getByText(/Open a file/)).toBeInTheDocument();

@@ -143,6 +143,21 @@ body {
     inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent);
 }
 
+/* A popover that opens on top of a card, rather than on top of the page,
+   needs a harder edge than var(--border) can give it. Measured in the running
+   app, that token draws at 1.19:1 against the dark surface, which is not an
+   edge at all, and the default popover shadow disappears into the same dark.
+   Raised panels keep the elevation direction (lighter than what is behind
+   them) and get a border mixed toward var(--muted), the one secondary token
+   that is legible in both themes, so the hairline clears 3:1 either way. */
+.markie-menu-panel.markie-menu-raised {
+  border-color: color-mix(in srgb, var(--muted) 62%, var(--border));
+  box-shadow:
+    0 12px 26px color-mix(in srgb, #000 30%, transparent),
+    0 2px 6px color-mix(in srgb, #000 18%, transparent),
+    inset 0 1px color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
 .markie-overlay-panel:focus-within {
   box-shadow:
     0 18px 44px color-mix(in srgb, #000 26%, transparent),

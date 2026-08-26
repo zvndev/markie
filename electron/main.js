@@ -1380,12 +1380,20 @@ function keepCacheOverTruncated(result) {
 // markie front matter declaration, the containing repo's name) onto index
 // rows. Additive and best-effort: the index has to keep working even if the
 // metadata table is unreadable, so a failure here returns the plain rows.
+// True while the metadata pass still has files to get through.
+let _mdMetaPending = false;
+
 function mdRowsWithMeta(result) {
   if (!result || !Array.isArray(result.files)) return result;
   try {
     const { withMeta } = require("./mdmeta");
     const metaByPath = new Map(registry.metaAll().map((m) => [m.path, m]));
-    return { ...result, files: withMeta(result.files, metaByPath) };
+    // metaPending says the four extra fields are not all filled in yet. The
+    // renderer needs it: a taxonomy built while repo names are still missing
+    // collapses thousands of files into one enormous folder-derived project,
+    // and showing that confidently for three seconds is worse than saying
+    // "still organizing".
+    return { ...result, metaPending: _mdMetaPending, files: withMeta(result.files, metaByPath) };
   } catch {
     return result;
   }
@@ -1399,6 +1407,7 @@ const MD_META_SLICE_MS = 120;
 let _mdMetaSliceTimer = null;
 
 function mdRefreshMetaSliced(rows) {
+  _mdMetaPending = true;
   if (_mdMetaSliceTimer) {
     clearTimeout(_mdMetaSliceTimer);
     _mdMetaSliceTimer = null;
@@ -1413,11 +1422,13 @@ function mdRefreshMetaSliced(rows) {
         budgetMs: MD_META_SLICE_MS,
       });
       touched += updated;
+      _mdMetaPending = remaining > 0;
       if (remaining > 0) {
         _mdMetaSliceTimer = setTimeout(step, 50);
         return;
       }
     } catch (err) {
+      _mdMetaPending = false;
       logCrash("mdmeta-refresh-failed", err);
       return;
     }
@@ -1464,6 +1475,13 @@ handle("mdindex-scan", async () => {
     try { mdindex.seed(registry.loadIndexCache(), null); } catch { /* no snapshot yet */ }
   }
   const cached = mdindex.getCached();
+  if (Array.isArray(cached?.files) && cached.files.length) {
+    try {
+      // Cheap: one indexed count against the row total. If metadata is missing
+      // for anything, the taxonomy is not ready to be believed yet.
+      _mdMetaPending = _mdMetaPending || registry.metaAll().length < cached.files.length;
+    } catch { /* meta is additive */ }
+  }
   // Every Browse/Skills mount used to start a device-wide walk. Mounting a
   // panel is not new information about the disk, so honour the same interval
   // the focus-driven rescan does; the cached rows come back either way.

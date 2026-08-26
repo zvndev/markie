@@ -16,6 +16,9 @@ interface ProjectsTreeProps {
   // The index is still being walked, so "nothing here" would be a lie.
   scanning?: boolean;
   loading?: boolean;
+  // The metadata the grouping depends on is still being read, so the tree we
+  // could draw now would be confidently wrong.
+  preparing?: boolean;
 }
 
 // How many projects open themselves on first paint. Two is the current piece
@@ -202,6 +205,7 @@ export function ProjectsTree({
   filter,
   scanning,
   loading,
+  preparing,
 }: ProjectsTreeProps) {
   const projects = useMemo(
     () => filterTaxonomy(taxonomy?.projects ?? [], filter),
@@ -247,7 +251,7 @@ export function ProjectsTree({
   const toggleProject = (name: string) => toggle(`p:${name}`, seedProjects.has(name));
   const toggleBlock = (id: string) => toggle(`b:${id}`, seedBlocks.has(id));
 
-  if (loading && !taxonomy) {
+  if (preparing || (loading && !taxonomy)) {
     return (
       <div className="px-3 py-4 text-[12px] text-muted" role="status">
         Organizing your markdown…

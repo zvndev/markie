@@ -18,6 +18,10 @@ export interface ProjectsHandle {
   // Set when the index itself is still being built, so the view can say that
   // instead of claiming the user has no markdown.
   scanning: boolean;
+  // Set while the metadata behind the taxonomy is still being extracted. The
+  // tree computed right now would be wrong (repo names missing folds whole
+  // machines into one project), so views wait rather than show it.
+  preparing: boolean;
   rulesError: string | null;
   configPath: string | null;
   available: boolean;
@@ -50,6 +54,7 @@ export function useProjects(refreshKey: number): ProjectsHandle {
   // render React now rejects outright.
   const [loaded, setLoaded] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const [rulesError, setRulesError] = useState<string | null>(null);
   const [configPath, setConfigPath] = useState<string | null>(null);
   const [bump, setBump] = useState(0);
@@ -64,7 +69,11 @@ export function useProjects(refreshKey: number): ProjectsHandle {
     if (!api?.projectsState || !api.projectsConfig || !api.mdIndexScan) return;
     let alive = true;
 
-    const compute = async (override?: { files: MdRow[]; scannedAt: string | null }) => {
+    const compute = async (override?: {
+      files: MdRow[];
+      scannedAt: string | null;
+      metaPending?: boolean;
+    }) => {
       const [state, cfg, scan] = await Promise.all([
         api.projectsState!(),
         api.projectsConfig!(),
@@ -87,6 +96,7 @@ export function useProjects(refreshKey: number): ProjectsHandle {
 
       const rows = override ? override.files : Array.isArray(scan?.files) ? scan.files : [];
       const scannedAt = override ? override.scannedAt : (scan?.scannedAt ?? null);
+      const metaPending = Boolean(override ? override.metaPending : scan?.metaPending);
       const files = toEngineFiles(rows);
       const home = cfg?.home || inferHomePath(rows.map((r) => r.path)) || "";
       const next = buildTaxonomy(files, {
@@ -102,6 +112,7 @@ export function useProjects(refreshKey: number): ProjectsHandle {
       // and only one of them is the user's fault. Browse used to say the
       // former while a walk of 12,000 files was still running.
       setScanning(rows.length === 0 && !scannedAt);
+      setPreparing(metaPending);
       setLoaded(true);
 
       // Persist the derived state when the index moved (or on a first run),
@@ -132,7 +143,11 @@ export function useProjects(refreshKey: number): ProjectsHandle {
     const off = api.onMdIndexUpdated?.((payload) => {
       if (!alive) return;
       if (Array.isArray(payload?.files)) {
-        void compute({ files: payload.files, scannedAt: payload.scannedAt ?? null });
+        void compute({
+          files: payload.files,
+          scannedAt: payload.scannedAt ?? null,
+          metaPending: payload.metaPending,
+        });
       } else {
         void compute();
       }
@@ -178,6 +193,7 @@ export function useProjects(refreshKey: number): ProjectsHandle {
       taxonomy,
       loading,
       scanning,
+      preparing,
       rulesError,
       configPath,
       available,
@@ -187,6 +203,19 @@ export function useProjects(refreshKey: number): ProjectsHandle {
       rename,
       merge,
     }),
-    [taxonomy, loading, scanning, rulesError, configPath, available, refresh, pin, unpin, rename, merge]
+    [
+      taxonomy,
+      loading,
+      scanning,
+      preparing,
+      rulesError,
+      configPath,
+      available,
+      refresh,
+      pin,
+      unpin,
+      rename,
+      merge,
+    ]
   );
 }

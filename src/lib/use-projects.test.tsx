@@ -129,6 +129,25 @@ describe("useProjects", () => {
     expect(result.current.taxonomy?.projects).toEqual([]);
   });
 
+  it("reports that the grouping metadata is still being read", async () => {
+    bridge({ mdIndexScan: vi.fn(async () => ({ files: ROWS, scannedAt: "now", metaPending: true })) });
+    const { result } = renderHook(() => useProjects(0));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.preparing).toBe(true);
+  });
+
+  it("clears preparing once the metadata pass finishes", async () => {
+    const api = bridge({
+      mdIndexScan: vi.fn(async () => ({ files: ROWS, scannedAt: "now", metaPending: true })),
+    });
+    const { result } = renderHook(() => useProjects(0));
+    await waitFor(() => expect(result.current.preparing).toBe(true));
+    const listener = (api.onMdIndexUpdated as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][0] as (info: unknown) => void;
+    listener({ files: ROWS, scannedAt: "later", metaPending: false });
+    await waitFor(() => expect(result.current.preparing).toBe(false));
+  });
+
   it("knows the difference between scanning and an empty machine", async () => {
     bridge({ mdIndexScan: vi.fn(async () => ({ files: [], scannedAt: "now" })) });
     const { result } = renderHook(() => useProjects(0));

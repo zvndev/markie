@@ -694,6 +694,7 @@ export function Library({
                 filter={filter}
                 loading={projects.loading}
                 scanning={projects.scanning}
+                preparing={projects.preparing}
               />
             </>
           )

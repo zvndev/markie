@@ -402,6 +402,10 @@ export interface MdScanResult {
   // The walk stopped early (time budget or depth cap), so this is a subset.
   truncated?: boolean;
   truncatedReason?: string | null;
+  // The per-file metadata join is still catching up, so the four optional
+  // fields on MdRow are not all filled in yet. A taxonomy built now would be
+  // wrong in a way the user can see.
+  metaPending?: boolean;
 }
 
 // What `mdindex-updated` delivers: a full MdScanResult when main has one,

@@ -24,6 +24,7 @@ import { Settings } from "@/components/settings";
 import { Library } from "@/components/library";
 import { ActivityBar } from "@/components/activity-bar";
 import { RichPaneError } from "@/components/rich-pane-error";
+import { ProjectsView } from "@/components/projects-view";
 import {
   formatRailDisabled,
   isPanelView,
@@ -1760,9 +1761,15 @@ export default function Home() {
             </div>
           </div>
         ) : (
-          /* The full-width Projects view arrives in the next task; the
-             routing is here so the rail's behavior is real now. */
-          <div data-markie-projects-view className="flex-1 min-w-0" />
+          <ProjectsView
+            onOpenPath={(p) => {
+              // Toggling the rail's own view is what returns the document
+              // area, and it restores whichever panel was open before.
+              selectView("projects");
+              openPath(p);
+            }}
+            refreshKey={libRefreshKey}
+          />
         )}
       </div>
 

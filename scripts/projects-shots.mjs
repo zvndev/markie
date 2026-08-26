@@ -320,7 +320,11 @@ async function main() {
   // The copy, made before Electron ever sees the path, minus everything that
   // could carry a signed-in session into the run.
   const profile = await mkdtemp(path.join(tmpdir(), "markie-projects-shots-"));
-  temps.push(profile);
+  // --keep leaves the COPY on disk so its registry can be inspected after the
+  // run (schema version, decisions). It never affects what the run touches:
+  // the source profile is still only ever read.
+  if (!args.includes("--keep")) temps.push(profile);
+  else console.log(`profile copy kept at ${profile}`);
   await cp(profileSource, profile, { recursive: true });
   for (const name of ["Cookies", "Cookies-journal", "Local Storage", "Session Storage", "Network Persistent State", "Preferences"]) {
     await rm(path.join(profile, name), { recursive: true, force: true });

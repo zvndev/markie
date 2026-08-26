@@ -8,6 +8,89 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-26
+
+### Added
+
+- **Projects: your markdown organized the way you actually work.** Markie now
+  groups every markdown file it can see into projects, and each project into
+  blocks of work, without moving a single file on disk. The grouping is
+  Markie's own, laid over your files wherever they already live, so you get an
+  organized workspace without reorganizing your computer. The Library's Files
+  tab shows it and now opens by default; Recent is still there, one tab over.
+- **A full-width Projects view.** A new button on the left rail opens the whole
+  window onto your projects, for when the side panel is too narrow to navigate
+  comfortably. The Library panel is unchanged and still there. Everything sorts
+  most recent first.
+- **`Projects.md`, an organization file you can edit.** Your rules live in a
+  real markdown document in your Markie folder, so you can open it, read it,
+  and change how your work is grouped. Match paths to projects, pin a file
+  somewhere it would not land on its own, or rename and merge blocks in the
+  app and have those choices stick. A broken rule falls back to the last
+  version that worked and tells you, rather than emptying your view.
+- **Blocks are named after work, not dates.** A block called
+  `checkout-redesign` says what it is; one called `2026-08-26` only says when
+  it was filed. Files written close together become a block named for the work
+  itself, and you can rename any of them.
+- **File history with diffs.** Every save keeps a version, stored inside
+  Markie rather than beside your file, so your folders stay clean. Open the
+  history for any document to see what changed line by line, who changed it,
+  and restore any version. Recent history is kept in full and older versions
+  thin out over time.
+- **Agents file their own writing.** The bundled MCP server now tells any
+  connected agent what Markie is, which tool to use when, and how to declare
+  where a document belongs. Claude Code, Codex, and any other MCP client get
+  the same guidance, so documents an agent writes land in the right project
+  and block as they are created.
+- **Windows updates itself.** The signed Windows build has been downloadable
+  since 0.4.2 but could never update. It now checks for and installs updates
+  the way the Mac build does.
+
+### Changed
+
+- **Markie saves as you type.** Edits land on disk about a second after you
+  stop typing, the way a document editor should. Command-S still works and
+  simply saves now rather than later. Switching files, opening a new one,
+  closing the window, and quitting all finish the save first.
+- **Nothing is lost if Markie stops unexpectedly.** Unsaved work is journaled
+  as you type, so a crash or a force quit offers your text back on the next
+  launch.
+- **Rich mode no longer rewrites the rest of your file.** Editing one
+  paragraph now leaves every other line exactly as it was, byte for byte:
+  your front matter, footnotes, raw HTML, comments, table alignment, and your
+  own line wrapping all survive. In the rare document Markie cannot promise to
+  reproduce, rich editing waits and tells you why, and Source is always
+  available and always exact.
+- **Cards and panels have visible edges in both themes.** Borders were close
+  to invisible in dark mode and faint in light; both now meet a real contrast
+  floor.
+- **`markie_list_skills` stopped reporting noise.** It was listing thousands of
+  cached plugin copies the app itself hides. It now shows the agent files you
+  actually wrote.
+- **`markie_find_md` will not walk forever.** The agent-facing search now
+  respects the same limits the app's own index has always had, and says so
+  when a result set was cut short instead of quietly looking empty.
+
+### Fixed
+
+- **Security: a shared document could be claimed by the wrong person.**
+  Sharing a document with an email address that had no account yet left the
+  invitation waiting. Anyone who registered that address first inherited the
+  document, because signing up did not require proving you own the address.
+  Verification is now required before any pending share is claimed, on every
+  path that could claim one. Existing accounts are unaffected. If you have
+  shared anything to an address that had not yet signed up, this closes it.
+- Signing up with a password and then confirming your address no longer
+  discards that password.
+- Signing in with an unverified address, or signing up with one, now leads
+  somewhere instead of a dead end.
+
+### Security
+
+- Updated `better-auth` (account takeover via pre-account hijacking on
+  emailed-code sign-in) and `@hono/node-server` (an unauthenticated memory
+  leak reachable through the collaboration socket).
+
 ## [0.4.1] - 2026-08-24
 
 ### Added

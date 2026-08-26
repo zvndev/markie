@@ -5,9 +5,15 @@ import path from "node:path";
 import {
   DEFAULT_PROJECTS_MD,
   OVERVIEW_MARKER,
-  ensureProjectsConfig,
+  ensureProjectsConfig as ensureProjectsConfigJs,
   writeOverviewSection,
 } from "./projects-config.js";
+
+// The CommonJS option bag loses `dir` to inference because it has no default.
+// Name it here rather than add a .d.ts for a main-process-only module.
+const ensureProjectsConfig = ensureProjectsConfigJs as unknown as (opts: {
+  dir: string;
+}) => { path: string; content: string; created: boolean };
 
 const made: string[] = [];
 const tmp = () => {

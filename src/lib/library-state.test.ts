@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { libraryLoadErrorMessage, readLibrarySnapshot } from "./library-state";
+import {
+  initialFilesSubView,
+  initialLibTab,
+  libraryLoadErrorMessage,
+  readLibrarySnapshot,
+} from "./library-state";
 
 describe("library state loader", () => {
   it("returns library state when the desktop IPC call succeeds", async () => {
@@ -47,5 +52,52 @@ describe("library state loader", () => {
 
     expect(message).toMatch(/^Library couldn't load: x+/);
     expect(message.length).toBeLessThanOrEqual(205);
+  });
+});
+
+describe("initialLibTab", () => {
+  const store = (m: Record<string, string>) => (k: string) => m[k] ?? null;
+
+  it("defaults new users to files", () => {
+    expect(initialLibTab(store({}))).toBe("files");
+  });
+
+  it("keeps an explicit legacy recent choice", () => {
+    expect(initialLibTab(store({ "markie.libtab.v1": "recent" }))).toBe("recent");
+  });
+
+  it("migrates a legacy files choice to files", () => {
+    expect(initialLibTab(store({ "markie.libtab.v1": "files" }))).toBe("files");
+  });
+
+  it("v2 always wins", () => {
+    expect(
+      initialLibTab(store({ "markie.libtab.v1": "files", "markie.libtab.v2": "recent" }))
+    ).toBe("recent");
+    expect(
+      initialLibTab(store({ "markie.libtab.v1": "recent", "markie.libtab.v2": "files" }))
+    ).toBe("files");
+  });
+
+  it("ignores a value neither version recognises", () => {
+    expect(initialLibTab(store({ "markie.libtab.v2": "nonsense" }))).toBe("files");
+  });
+
+  it("survives storage that refuses to answer", () => {
+    expect(
+      initialLibTab(() => {
+        throw new Error("blocked");
+      })
+    ).toBe("files");
+  });
+});
+
+describe("initialFilesSubView", () => {
+  const store = (m: Record<string, string>) => (k: string) => m[k] ?? null;
+
+  it("shows projects unless the user asked for folders", () => {
+    expect(initialFilesSubView(store({}))).toBe("projects");
+    expect(initialFilesSubView(store({ "markie.filesview.v1": "folders" }))).toBe("folders");
+    expect(initialFilesSubView(store({ "markie.filesview.v1": "projects" }))).toBe("projects");
   });
 });

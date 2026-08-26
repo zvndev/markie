@@ -1,5 +1,48 @@
 import { describe, expect, it, vi } from "vitest";
-import { findRepoRoot, refreshMeta, withMeta } from "./mdmeta.js";
+import {
+  findRepoRoot as findRepoRootJs,
+  refreshMeta as refreshMetaJs,
+  withMeta,
+} from "./mdmeta.js";
+
+// mdmeta.js is CommonJS with injectable seams, so TypeScript infers its option
+// bags from the defaults and loses the parameters that have none. Same problem
+// mdindex.test.ts solves the same way: name the seams here, once, rather than
+// grow a .d.ts for a module only the main process requires.
+interface RepoRootOptions {
+  home?: string;
+  exists?: (p: string) => boolean;
+  cache?: Map<string, string | null>;
+}
+interface MetaRow {
+  path: string;
+  mtimeMs: number;
+  birthtimeMs: number | null;
+  fmProject: string | null;
+  fmBlock: string | null;
+  repoName: string | null;
+}
+interface RefreshDeps {
+  registry: {
+    metaAll: () => Array<{ path: string; mtime_ms: number }>;
+    metaUpsertMany: (rows: MetaRow[]) => void;
+  };
+  readHead?: (p: string) => string;
+  statBirthtime?: (p: string) => number | null;
+  findRepoRoot?: (dir: string, opts: RepoRootOptions) => string | null;
+  budgetMs?: number;
+  now?: () => number;
+}
+type IndexRow = { path: string; name: string; dir: string; mtimeMs: number };
+
+const findRepoRoot = findRepoRootJs as unknown as (
+  dir: string,
+  options?: RepoRootOptions
+) => string | null;
+const refreshMeta = refreshMetaJs as unknown as (
+  rows: IndexRow[],
+  deps: RefreshDeps
+) => { updated: number; remaining: number };
 
 interface StoredMeta {
   path: string;
@@ -186,8 +229,8 @@ describe("refreshMeta", () => {
 
   it("shares one repo cache across the whole batch", () => {
     const registry = fakeRegistry();
-    const findRepo = vi.fn((_dir: string, opts: { cache: Map<string, unknown> }) => {
-      opts.cache.set("seen", true);
+    const findRepo = vi.fn((_dir: string, opts: RepoRootOptions) => {
+      opts.cache?.set("seen", null);
       return "repo";
     });
     refreshMeta(
@@ -196,6 +239,7 @@ describe("refreshMeta", () => {
     );
     const firstCache = findRepo.mock.calls[0][1].cache;
     const secondCache = findRepo.mock.calls[1][1].cache;
+    expect(firstCache).toBeInstanceOf(Map);
     expect(secondCache).toBe(firstCache);
   });
 });

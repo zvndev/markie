@@ -1,16 +1,6 @@
 "use client";
 
-// How long ago, in words a strip has room for.
-function relativeTime(iso: string): string {
-  const ms = Date.now() - Date.parse(iso);
-  const min = Math.round(ms / 60_000);
-  if (min < 1) return "moments ago";
-  if (min < 60) return `${min} minute${min === 1 ? "" : "s"} ago`;
-  const h = Math.round(min / 60);
-  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
-  const d = Math.round(h / 24);
-  return `${d} day${d === 1 ? "" : "s"} ago`;
-}
+import { relativeTime } from "@/lib/relative-time";
 
 export function DraftStrip({
   savedAt,

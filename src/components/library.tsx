@@ -11,6 +11,8 @@ import {
 import { matchesFilter, stableOrder } from "@/lib/stable-order";
 import { getElectronAPI, type LibraryItem } from "@/lib/electron";
 import { FilesView } from "@/components/files-view";
+import { ProjectsTree } from "@/components/projects-tree";
+import { useProjects } from "@/lib/use-projects";
 import { BrowseView } from "@/components/browse-view";
 import { SkillsView } from "@/components/skills-view";
 import { SharedView } from "@/components/shared-view";
@@ -24,6 +26,14 @@ import {
 // it takes the narrower type rather than inventing a title for one.
 import type { PanelView } from "@/lib/left-rail";
 import { readLibraryStartupSnapshot } from "@/lib/library-startup";
+import {
+  FILES_SUBVIEW_KEY,
+  LIB_TAB_KEY,
+  initialFilesSubView,
+  initialLibTab,
+  type FilesSubView,
+  type LibTab,
+} from "@/lib/library-state";
 import {
   libraryItemNeedsAttention,
   organizeLibraryItems,
@@ -52,7 +62,6 @@ interface LibraryProps {
 }
 
 const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
-const TAB_KEY = "markie.libtab.v1";
 
 type NoticeKind = "info" | "error";
 interface Notice {
@@ -85,7 +94,6 @@ export function plainErrorText(raw: string): string {
 
 // The "Library" view has a Recent/Files sub-toggle; the other views come from
 // the left rail and have no sub-tabs.
-type LibTab = "recent" | "files";
 
 const VIEW_TITLE: Record<PanelView, string> = {
   library: "Library",
@@ -156,13 +164,15 @@ export function Library({
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const menuRootRef = useRef<HTMLDivElement>(null);
   const [dropping, setDropping] = useState(false);
-  const [libTab, setLibTab] = useState<LibTab>(() => {
-    try {
-      return localStorage.getItem(TAB_KEY) === "files" ? "files" : "recent";
-    } catch {
-      return "recent";
-    }
-  });
+  const [libTab, setLibTab] = useState<LibTab>(() =>
+    initialLibTab((k) => localStorage.getItem(k))
+  );
+  // Projects or the workspace folder tree. Folders stays because it is the
+  // only surface with new folder, rename and trash.
+  const [filesSub, setFilesSub] = useState<FilesSubView>(() =>
+    initialFilesSubView((k) => localStorage.getItem(k))
+  );
+  const projects = useProjects(refreshKey);
   // The panel is unmounted while collapsed and remounted per view, so the width
   // is read back from storage on every mount rather than lifted into the page.
   // The width the user chose, clamped only to the panel's own bounds. Infinity
@@ -236,7 +246,17 @@ export function Library({
     setMenuFor(null);
     setLibTab(t);
     try {
-      localStorage.setItem(TAB_KEY, t);
+      localStorage.setItem(LIB_TAB_KEY, t);
+    } catch {
+      // storage unavailable
+    }
+  };
+
+  const pickFilesSub = (v: FilesSubView) => {
+    setMenuFor(null);
+    setFilesSub(v);
+    try {
+      localStorage.setItem(FILES_SUBVIEW_KEY, v);
     } catch {
       // storage unavailable
     }
@@ -567,7 +587,7 @@ export function Library({
       {view === "library" && (
         <>
           <div className="flex items-center gap-0.5 px-2 py-1.5 shrink-0 border-b border-border/60">
-            {(["recent", "files"] as LibTab[]).map((t) => (
+            {(["files", "recent"] as LibTab[]).map((t) => (
               <button
                 key={t}
                 data-library-tab={t}
@@ -582,23 +602,55 @@ export function Library({
               </button>
             ))}
           </div>
-          {!loading && libTab === "recent" && items.length > 0 && (
-            <div className="px-2 pb-1.5 shrink-0">
-              <input
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape" && filter) {
-                    e.stopPropagation();
-                    setFilter("");
-                  }
-                }}
-                placeholder="Filter by name or folder"
-                aria-label="Filter documents"
-                className="markie-overlay-field w-full text-[11.5px] px-2 py-1"
-              />
+          {libTab === "files" && (
+            <div
+              className="flex items-center gap-0.5 px-2 pt-1.5 shrink-0"
+              role="group"
+              aria-label="How to group your files"
+            >
+              {(
+                [
+                  ["projects", "Projects"],
+                  ["folders", "Folders"],
+                ] as Array<[FilesSubView, string]>
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  data-files-subview={value}
+                  aria-pressed={filesSub === value}
+                  onClick={() => pickFilesSub(value)}
+                  className={`flex-1 rounded-md py-0.5 text-[10.5px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[color:var(--status-blue)] ${
+                    filesSub === value
+                      ? "bg-surface-2 text-foreground"
+                      : "text-muted hover:bg-accent/40 hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           )}
+          {!loading &&
+            ((libTab === "recent" && items.length > 0) ||
+              (libTab === "files" && filesSub === "projects")) && (
+              <div className="px-2 pt-1.5 pb-1.5 shrink-0">
+                <input
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape" && filter) {
+                      e.stopPropagation();
+                      setFilter("");
+                    }
+                  }}
+                  placeholder={
+                    libTab === "files" ? "Filter projects and files" : "Filter by name or folder"
+                  }
+                  aria-label={libTab === "files" ? "Filter projects" : "Filter documents"}
+                  className="markie-overlay-field w-full text-[11.5px] px-2 py-1"
+                />
+              </div>
+            )}
           {!loading && libTab === "recent" && <LibraryOverviewBand overview={overview} />}
         </>
       )}
@@ -620,12 +672,31 @@ export function Library({
         ) : loading ? (
           <LibrarySkeleton />
         ) : libTab === "files" ? (
-          <FilesView
-            activePath={activePath}
-            refreshKey={refreshKey}
-            onOpenPath={onOpenPath}
-            onNotice={filesNotice}
-          />
+          filesSub === "folders" ? (
+            <FilesView
+              activePath={activePath}
+              refreshKey={refreshKey}
+              onOpenPath={onOpenPath}
+              onNotice={filesNotice}
+            />
+          ) : (
+            <>
+              {projects.rulesError && (
+                <div className="mx-1 mb-1.5 rounded-md border border-[color:var(--status-yellow)] bg-surface px-2 py-1.5 text-[10.5px] text-[color:var(--status-yellow)]">
+                  Projects.md has a rules error: {projects.rulesError}. Using the last working
+                  rules.
+                </div>
+              )}
+              <ProjectsTree
+                taxonomy={projects.taxonomy}
+                activePath={activePath}
+                onOpenPath={onOpenPath}
+                filter={filter}
+                loading={projects.loading}
+                scanning={projects.scanning}
+              />
+            </>
+          )
         ) : localFiles.length === 0 &&
           myCloudOnly.length === 0 &&
           sharedCloudOnly.length === 0 ? (

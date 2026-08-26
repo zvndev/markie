@@ -29,12 +29,17 @@ function renderLibrary(
     signedIn = true,
     overrides = {},
     props = {},
+    tab = "recent",
   }: {
     signedIn?: boolean;
     overrides?: Partial<ElectronAPI>;
     props?: Partial<React.ComponentProps<typeof Library>>;
+    // Files is the default tab as of 0.5.0. The cases below are about the
+    // Recent list, so they say so rather than depending on a default.
+    tab?: "recent" | "files" | "default";
   } = {}
 ) {
+  if (tab !== "default") localStorage.setItem("markie.libtab.v2", tab);
   const api = installBridge({
     libraryState: vi.fn(async () => ({ signedIn, items })),
     wsRoots: vi.fn(async () => ["/Users/test/Markie"]),
@@ -254,5 +259,64 @@ describe("Library signed-out state", () => {
     expect(await screen.findByText("Workspace ready")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Open file" }));
     expect(onOpenFile).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("which tab opens", () => {
+  it("opens on Files, showing the user's work rather than an empty folder tree", async () => {
+    renderLibrary([item()], { tab: "default" });
+    const files = await screen.findByRole("button", { name: "files" });
+    expect(files.className).toContain("bg-accent");
+    // And the Projects grouping, not the workspace folder tree.
+    expect(screen.getByRole("button", { name: "Projects" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+  });
+
+  it("keeps Recent for someone who explicitly chose it before the flip", async () => {
+    localStorage.setItem("markie.libtab.v1", "recent");
+    renderLibrary([item()], { tab: "default" });
+    const recent = await screen.findByRole("button", { name: "recent" });
+    expect(recent.className).toContain("bg-accent");
+  });
+
+  it("moves a legacy Files choice straight across", async () => {
+    localStorage.setItem("markie.libtab.v1", "files");
+    renderLibrary([item()], { tab: "default" });
+    const files = await screen.findByRole("button", { name: "files" });
+    expect(files.className).toContain("bg-accent");
+  });
+
+  it("remembers the tab under the new key once the user picks one", async () => {
+    renderLibrary([item()], { tab: "default" });
+    await userEvent.click(await screen.findByRole("button", { name: "recent" }));
+    expect(localStorage.getItem("markie.libtab.v2")).toBe("recent");
+  });
+});
+
+describe("the Files tab's two shapes", () => {
+  it("keeps the folder tree one click away, with its file operations intact", async () => {
+    renderLibrary([item()], { tab: "files" });
+    await userEvent.click(await screen.findByRole("button", { name: "Folders" }));
+    expect(screen.getByRole("button", { name: "Folders" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    // FilesView's own controls are back.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /new folder/i })).toBeInTheDocument()
+    );
+  });
+
+  it("remembers which shape the user chose", async () => {
+    renderLibrary([item()], { tab: "files" });
+    await userEvent.click(await screen.findByRole("button", { name: "Folders" }));
+    expect(localStorage.getItem("markie.filesview.v1")).toBe("folders");
+  });
+
+  it("offers a filter over projects, not only over Recent", async () => {
+    renderLibrary([item()], { tab: "files" });
+    expect(await screen.findByLabelText("Filter projects")).toBeInTheDocument();
   });
 });

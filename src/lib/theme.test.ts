@@ -211,7 +211,9 @@ describe("theme store", () => {
         configurable: true,
       });
       try {
-        const { docRule: _drop, ...legacy } = MARKIE_DARK.tokens;
+        // A theme object saved before docRule existed: same palette, that key absent.
+        const legacy = { ...MARKIE_DARK.tokens };
+        delete (legacy as { docRule?: string }).docRule;
         applyTheme(legacy as typeof MARKIE_DARK.tokens);
         const derived = styles.get("--doc-rule");
         expect(derived).toBeDefined();

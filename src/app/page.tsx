@@ -63,7 +63,6 @@ import {
   applyColorMode,
   colorModeForThemeId,
   getColorMode,
-  resolveColorMode,
   watchSystemColorMode,
 } from "@/lib/color-mode";
 import {
@@ -101,7 +100,6 @@ import {
   saveThemeStore,
   BUILT_IN_THEMES,
 } from "@/lib/theme";
-import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
 import {
   getElectronAPI,
   getSafeAPI,
@@ -112,6 +110,7 @@ import {
 import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { pathDirname } from "@/lib/path-utils";
 import { useDocument } from "@/lib/use-document";
+import { useDocumentExport } from "@/lib/use-export";
 
 const SAMPLE = `# Northstar Sprint Brief
 
@@ -159,10 +158,6 @@ $E = mc^2$
 type ViewMode = "edit" | "preview" | "split";
 
 const isCSVName = (name: string | null) => !!name && /\.csv$/i.test(name);
-
-// One wording for "an export is already running", wherever the second one is
-// refused — the renderer's own guard and the main process's say the same thing.
-const EXPORT_BUSY = "Markie is already exporting. Wait for that one to finish.";
 
 // A short, stable fingerprint of the collab token, so the RichView key changes
 // when the token is rotated (revoke-and-reissue keeps the same doc id) without
@@ -244,13 +239,6 @@ export default function Home() {
   const handleFlushReady = useCallback((f: FlushRich | null) => {
     flushRichRef.current = f;
   }, []);
-  // One export at a time. Two concurrent printToPDF runs each spawn a hidden
-  // renderer the main process never reclaims, and both open a save sheet on the
-  // same window.
-  const exportInFlight = useRef(false);
-  // The same fact for the UI: the ref is the guard (synchronous, so a double
-  // click cannot slip through), this is what greys the Export menu out.
-  const [exporting, setExporting] = useState(false);
   // The server has a newer snapshot of the open document. Null when it does not.
   const [updateWaiting, setUpdateWaiting] = useState<DocUpdate | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -709,56 +697,15 @@ export default function Home() {
     [content]
   );
 
-  const handleExportPDF = useCallback(async (theme: PDFTheme) => {
-    const md = currentMarkdown();
-
-    // In Electron, send HTML to main process for printToPDF
-    const api = getSafeAPI();
-    if (api) {
-      if (exportInFlight.current) {
-        setForkError(EXPORT_BUSY);
-        return;
-      }
-      exportInFlight.current = true;
-      setExporting(true);
-      try {
-        const fullHTML = await buildPDFHTML(getPreviewHTML(md), theme);
-        // Both failure shapes are possible: main may reject the invoke, and it
-        // may resolve with { success: false, error }. Ignoring either is how a
-        // failed export used to look exactly like a successful one.
-        const res = await api.exportPDF({
-          html: fullHTML,
-          theme,
-          // Main inlines this folder's images so the PDF still has pictures
-          // once it leaves the machine.
-          docPath: docRef.current.filePath,
-        });
-        // Backing out of the save sheet is not a failure.
-        if (res?.canceled) return;
-        if (res?.error || res?.success === false) {
-          setForkError(res?.error ?? "Couldn't export this document as a PDF.");
-        } else {
-          setForkError(null);
-        }
-      } catch (err) {
-        setForkError(`Couldn't export this document as a PDF: ${String(err)}`);
-      } finally {
-        exportInFlight.current = false;
-        setExporting(false);
-      }
-      return;
-    }
-
-    // Web fallback: open in new window and print
-    const fullHTML = await buildPDFHTML(getPreviewHTML(md), theme);
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) return;
-    printWindow.document.write(fullHTML);
-    printWindow.document.close();
-    printWindow.onload = () => {
-      printWindow.print();
-    };
-  }, [getPreviewHTML, currentMarkdown]);
+  // Paper, PDF, and standalone HTML all render through main's one hidden
+  // window, so they share one in-flight guard and one error surface.
+  const { exporting, exportPDF, exportHTML, printDocument } = useDocumentExport({
+    previewHTML: getPreviewHTML,
+    currentMarkdown,
+    docPath: () => docRef.current.filePath,
+    fileName,
+    onError: setForkError,
+  });
 
   const handleSaveAs = useCallback(async (defaultName?: string): Promise<SaveResult | null> => {
     const api = getSafeAPI();
@@ -942,38 +889,6 @@ export default function Home() {
     }
     await api.revealFile?.(current);
   }, []);
-
-  const handleExportHTML = useCallback(async () => {
-    const api = getSafeAPI();
-    if (!api) return;
-    if (exportInFlight.current) {
-      setForkError(EXPORT_BUSY);
-      return;
-    }
-    const base = (fileName ?? "document").replace(/\.[^.]+$/, "");
-    exportInFlight.current = true;
-    setExporting(true);
-    try {
-      const html = await buildPDFHTML(getPreviewHTML(currentMarkdown()), "light");
-      const res = await api.exportHTML({
-        defaultName: `${base}.html`,
-        html,
-        docPath: docRef.current.filePath,
-      });
-      // Backing out of the save sheet is not a failure.
-      if (res?.canceled) return;
-      if (res?.error || res?.success === false) {
-        setForkError(res?.error ?? "Couldn't export this document as HTML.");
-      } else {
-        setForkError(null);
-      }
-    } catch (err) {
-      setForkError(`Couldn't export this document as HTML: ${String(err)}`);
-    } finally {
-      exportInFlight.current = false;
-      setExporting(false);
-    }
-  }, [fileName, getPreviewHTML, currentMarkdown]);
 
   const handleRename = useCallback(async (newName: string) => {
     const api = getElectronAPI();
@@ -1190,18 +1105,15 @@ export default function Home() {
   const handlersRef = useRef({
     openFile: handleOpenFile,
     newFile: handleNewFile,
-    exportPDF: handleExportPDF,
+    exportPDF: exportPDF,
     save: handleSave,
     saveAs: handleSaveAs,
     fork: handleMakeCopy,
     reveal: handleReveal,
-    exportHTML: handleExportHTML,
+    exportHTML: exportHTML,
     fileOpened: (data: FilePayload) => loadFile(data),
     undoRedo: (d: "undo" | "redo") => runUndoRedo(d),
-    print: () => {
-      // Replaced by handlePrint below, before any menu event can arrive.
-      window.print();
-    },
+    print: printDocument,
     zoom: (step: number) => {
       void step;
     },
@@ -1212,23 +1124,11 @@ export default function Home() {
     handlersRef.current.undoRedo = runUndoRedo;
     handlersRef.current.openFile = handleOpenFile;
     handlersRef.current.newFile = handleNewFile;
-    handlersRef.current.exportPDF = handleExportPDF;
     handlersRef.current.save = handleSave;
     handlersRef.current.saveAs = handleSaveAs;
     handlersRef.current.fork = handleMakeCopy;
     handlersRef.current.reveal = handleReveal;
-    handlersRef.current.exportHTML = handleExportHTML;
-  }, [
-    handleOpenFile,
-    handleNewFile,
-    handleExportPDF,
-    handleSave,
-    handleSaveAs,
-    handleMakeCopy,
-    handleReveal,
-    handleExportHTML,
-    runUndoRedo,
-  ]);
+  }, [handleOpenFile, handleNewFile, handleSave, handleSaveAs, handleMakeCopy, handleReveal, runUndoRedo]);
 
   // Apply the chosen color mode (system/light/dark) before first paint, and
   // keep "system" tracking the OS preference.
@@ -1369,9 +1269,9 @@ export default function Home() {
       { id: "save-as", title: "Save As…", group: "File", shortcut: "⇧⌘S", run: () => handleSaveAs() },
       { id: "fork", title: "Duplicate (Fork)", group: "File", shortcut: "⇧⌘D", keywords: "copy fork duplicate", run: handleMakeCopy },
       { id: "reveal", title: revealLabel, group: "File", shortcut: "⌥⌘R", keywords: "finder explorer folder show reveal drag locate", run: handleReveal },
-      { id: "export-pdf-dark", title: "Export PDF (Dark)", group: "File", shortcut: "⇧⌘E", keywords: "print", run: () => handleExportPDF("dark") },
-      { id: "export-pdf-light", title: "Export PDF (Light)", group: "File", keywords: "print", run: () => handleExportPDF("light") },
-      { id: "export-html", title: "Export HTML", group: "File", run: handleExportHTML },
+      { id: "export-pdf-dark", title: "Export PDF (Dark)", group: "File", shortcut: "⇧⌘E", keywords: "print", run: () => exportPDF("dark") },
+      { id: "export-pdf-light", title: "Export PDF (Light)", group: "File", keywords: "print", run: () => exportPDF("light") },
+      { id: "export-html", title: "Export HTML", group: "File", run: exportHTML },
       { id: "mode-view", title: "Rich Mode", group: "View", shortcut: "⌘1", keywords: "preview rich wysiwyg formatted view", run: () => setMode("preview") },
       { id: "mode-edit", title: "Source Mode", group: "View", shortcut: "⌘2", keywords: "source raw markdown edit", run: () => setMode("edit") },
       { id: "mode-split", title: "Split Mode", group: "View", shortcut: "⌘3", keywords: "both side by side", run: () => setMode("split") },
@@ -1424,8 +1324,8 @@ export default function Home() {
       handleMakeCopy,
       handleReveal,
       revealLabel,
-      handleExportPDF,
-      handleExportHTML,
+      exportPDF,
+      exportHTML,
       handleNewFile,
       selectView,
       editDoc,
@@ -1472,50 +1372,6 @@ export default function Home() {
     [appearanceStore]
   );
 
-  // Printing the app window prints the app: the editor chrome, the sidebar, a
-  // pane scrolled to wherever it happened to be. In Electron the print sheet
-  // gets the same rendered document the PDF export builds, off the same hidden
-  // window, so what comes out of the printer is the document.
-  const handlePrint = useCallback(async () => {
-    const api = getSafeAPI();
-    if (!api) {
-      // Browser: print.css already reshapes the page for paper.
-      window.print();
-      return;
-    }
-    if (exportInFlight.current) {
-      setForkError(EXPORT_BUSY);
-      return;
-    }
-    exportInFlight.current = true;
-    setExporting(true);
-    try {
-      const theme: PDFTheme = resolveColorMode(getColorMode());
-      const fullHTML = await buildPDFHTML(
-        getPreviewHTML(currentMarkdown()),
-        theme
-      );
-      const res = await api.exportPDF({
-        html: fullHTML,
-        theme,
-        docPath: docRef.current.filePath,
-        mode: "print",
-      });
-      // Dismissing the system print sheet is not a failure.
-      if (res?.canceled) return;
-      if (res?.error || res?.success === false) {
-        setForkError(res?.error ?? "Couldn't print this document.");
-      } else {
-        setForkError(null);
-      }
-    } catch (err) {
-      setForkError(`Couldn't print this document: ${String(err)}`);
-    } finally {
-      exportInFlight.current = false;
-      setExporting(false);
-    }
-  }, [getPreviewHTML, currentMarkdown]);
-
   // ⌘+ / ⌘- / ⌘0 are the same document zoom the toolbar shows a percentage
   // for, so the menu and the toolbar always report one number. Deliberately
   // not Electron's { role: "zoomIn" }, which scales the entire interface.
@@ -1541,12 +1397,11 @@ export default function Home() {
     [appearanceStore]
   );
 
-  // These two IPC handlers are registered once, above, before the callbacks
-  // they run have been declared. Kept current here.
+  // Zoom is declared after the IPC handlers are registered, so it is the one
+  // that still has to be kept current here.
   useEffect(() => {
-    handlersRef.current.print = handlePrint;
     handlersRef.current.zoom = handleZoom;
-  }, [handlePrint, handleZoom]);
+  }, [handleZoom]);
 
 
   if (!booted) {
@@ -1573,9 +1428,9 @@ export default function Home() {
         mode={mode}
         onModeChange={setMode}
         onOpenFile={handleOpenFile}
-        onExportPDF={handleExportPDF}
+        onExportPDF={exportPDF}
         onSaveAs={() => handleSaveAs()}
-        onExportHTML={handleExportHTML}
+        onExportHTML={exportHTML}
         exporting={exporting}
         fileName={fileName}
         isDirty={isDirty}
@@ -1669,7 +1524,7 @@ export default function Home() {
             editor={richEditor}
             appearance={appearance}
             onAppearance={changeAppearance}
-            onPrint={handlePrint}
+            onPrint={printDocument}
             canEdit={docEditable}
           />
 

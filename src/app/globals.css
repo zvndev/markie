@@ -635,9 +635,13 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* The gutter's edge runs the full height of the text you are reading, which
+   makes it the longest continuous line in the app. At the card-border weight
+   it reads as a wall down the middle of the document, so it takes the quiet
+   document rule like every other line drawn inside the reading surface. */
 .cm-editor .cm-gutters {
   background: var(--background) !important;
-  border-right: 1px solid var(--border) !important;
+  border-right: 1px solid var(--doc-rule) !important;
   color: var(--muted) !important;
 }
 

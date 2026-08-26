@@ -17,6 +17,11 @@ import {
   restoreHoldAsides,
   type HoldAside,
 } from "@/lib/rich-hold-aside";
+import {
+  preserveBlocks,
+  splitTopLevelBlocks,
+} from "@/lib/rich-block-preserve";
+import { createBlockNormalizer } from "@/lib/rich-roundtrip";
 import { Collaboration } from "@tiptap/extension-collaboration";
 import { CollaborationCaret } from "@tiptap/extension-collaboration-caret";
 import * as Y from "yjs";
@@ -66,23 +71,44 @@ interface CollabSession {
 interface SerializeCtx {
   frontMatter: string;
   holds: HoldAside[];
+  // Solo mode only. `baseline` is the placeholder-space source the editor's
+  // content came from; `normalize` tells a block the user changed from one the
+  // serializer merely reformatted. Both null in collab, where the room, not a
+  // file, is the source of truth.
+  baseline: string | null;
+  normalize: ((block: string) => string) | null;
 }
 
-// The document as markdown, exactly as an edit would emit it. Rich edits always
-// emit pretty-aligned table pipes, and the constructs TipTap destroys at parse
-// time (front matter, HTML comments, raw HTML blocks, footnote definitions) are
-// put back verbatim from the bytes that were held aside on the way in.
-function serializeMarkdown(editor: Editor, ctx: SerializeCtx): string {
+// The document as markdown, exactly as an edit would emit it, in three moves:
+// the serializer's whole-document output is reduced to the blocks the user
+// actually changed (every other block comes back as its original source
+// bytes), tables are pretty-aligned, and the constructs TipTap destroys at
+// parse time (front matter, HTML comments, raw HTML blocks, footnote
+// definitions) are put back verbatim from what was held aside on the way in.
+//
+// Returns the markdown to write and the placeholder-space body it came from,
+// which becomes the baseline the next serialize diffs against.
+function serializeMarkdown(
+  editor: Editor,
+  ctx: SerializeCtx
+): { markdown: string; body: string } {
   const raw = (
     editor.storage as unknown as {
       markdown: { getMarkdown(): string };
     }
   ).markdown.getMarkdown();
   const formatted = formatMarkdownTables(raw);
-  return joinFrontMatter(
-    ctx.frontMatter,
-    restoreHoldAsides(formatted, ctx.holds)
-  );
+  const body =
+    ctx.baseline !== null && ctx.normalize
+      ? preserveBlocks(ctx.baseline, formatted, ctx.normalize)
+      : formatted;
+  return {
+    markdown: joinFrontMatter(
+      ctx.frontMatter,
+      restoreHoldAsides(body, ctx.holds)
+    ),
+    body,
+  };
 }
 
 export function RichView({
@@ -217,11 +243,40 @@ export function RichView({
   // Layer 2 baseline: the placeholder-space source the editor content came
   // from, which block preservation diffs the serializer's output against.
   const baselineBodyRef = useRef(session ? "" : initialSplit.held.text);
+  // One headless editor for the whole component lifetime, created on the first
+  // solo serialize and never in collab, which does not preserve blocks.
+  const normalizerRef = useRef<ReturnType<typeof createBlockNormalizer> | null>(
+    null
+  );
+  const getNormalizer = () =>
+    (normalizerRef.current ??= createBlockNormalizer());
+  useEffect(() => {
+    return () => {
+      normalizerRef.current?.destroy();
+      normalizerRef.current = null;
+    };
+  }, []);
+
   // Read through refs so every serialize path sees the document as it stands.
   const serializeCtx = (): SerializeCtx =>
     session
-      ? { frontMatter: "", holds: [] }
-      : { frontMatter: frontMatterRef.current, holds: holdsRef.current };
+      ? { frontMatter: "", holds: [], baseline: null, normalize: null }
+      : {
+          frontMatter: frontMatterRef.current,
+          holds: holdsRef.current,
+          baseline: baselineBodyRef.current,
+          normalize: getNormalizer().normalize,
+        };
+
+  // Serialize, remember what we emitted as the next diff's baseline, and hand
+  // back the markdown. Every path that writes the document goes through here.
+  const serializeNow = (ed: Editor): string => {
+    const { markdown, body } = serializeMarkdown(ed, serializeCtx());
+    if (!session) baselineBodyRef.current = body;
+    return markdown;
+  };
+  const serializeNowRef = useRef(serializeNow);
+  serializeNowRef.current = serializeNow;
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -243,7 +298,7 @@ export function RichView({
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       debounceTimer.current = setTimeout(() => {
         debounceTimer.current = null;
-        const md = serializeMarkdown(editor, serializeCtx());
+        const md = serializeNow(editor);
         lastEmitted.current = md;
         onChange(md);
       }, 250);
@@ -273,8 +328,6 @@ export function RichView({
 
   // Settle the debounce now and hand back what the document currently says.
   // Null means nothing was pending, so the parent's own copy is already current.
-  const serializeCtxRef = useRef(serializeCtx);
-  serializeCtxRef.current = serializeCtx;
   const flush = useCallback((): string | null => {
     if (!debounceTimer.current) return null;
     clearTimeout(debounceTimer.current);
@@ -282,7 +335,7 @@ export function RichView({
     const ed = editorRef.current;
     if (!ed || ed.isDestroyed) return null;
     try {
-      const md = serializeMarkdown(ed, serializeCtxRef.current());
+      const md = serializeNowRef.current(ed);
       lastEmitted.current = md;
       onChangeRef.current(md);
       return md;
@@ -459,6 +512,19 @@ export function RichView({
     } finally {
       applyingExternal.current = false;
     }
+    // Normalizing a block is a parse plus a serialize. Doing every block on the
+    // first flush would stall the save; doing them while the app is idle means
+    // steady-state autosave only normalizes what actually changed.
+    const idle = window.requestIdleCallback;
+    if (typeof idle !== "function") return;
+    const warmFrom = held.text;
+    const handle = idle(() => {
+      const { normalize } = getNormalizer();
+      for (const block of splitTopLevelBlocks(warmFrom)) {
+        if (block.text !== "") normalize(block.text.replace(/(?:\r?\n)+$/, ""));
+      }
+    });
+    return () => window.cancelIdleCallback?.(handle);
   }, [value, editor, session]);
 
   useEffect(() => {

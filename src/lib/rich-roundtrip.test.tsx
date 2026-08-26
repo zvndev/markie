@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { probeRoundTrip, describeLossRisks } from "@/lib/rich-roundtrip";
+import {
+  probeRoundTrip,
+  describeLossRisks,
+  createBlockNormalizer,
+} from "@/lib/rich-roundtrip";
 import { splitFrontMatter, joinFrontMatter } from "@/lib/front-matter";
 import { extractHoldAsides, restoreHoldAsides } from "@/lib/rich-hold-aside";
+import {
+  preserveBlocks,
+  splitTopLevelBlocks,
+} from "@/lib/rich-block-preserve";
 
 // Fixtures that MUST survive a parse-serialize round trip byte for byte
 // (after Markie's deliberate table re-alignment, which the probe accepts).
@@ -105,4 +113,99 @@ describe("layer 1 pipeline (hold-aside)", () => {
       ).toBe(md);
     });
   }
+});
+
+const key = (s: string) => s.replace(/(?:\r?\n)+$/, "");
+
+describe("layer 2 pipeline (block preservation)", () => {
+  // The whole zero-edit path: hold aside, parse, serialize, preserve blocks,
+  // restore. By construction the output must be the input, byte for byte.
+  const zeroEditPipeline = (md: string) => {
+    const { frontMatter, body } = splitFrontMatter(md);
+    const { text, holds } = extractHoldAsides(body);
+    const raw = probeRoundTrip(text); // raw serializer output
+    const { normalize, destroy } = createBlockNormalizer();
+    try {
+      const preserved = preserveBlocks(text, raw.output, normalize);
+      return joinFrontMatter(frontMatter, restoreHoldAsides(preserved, holds));
+    } finally {
+      destroy();
+    }
+  };
+
+  const CORPUS_SHAPED: Array<[string, string]> = [
+    [
+      "hand-wrapped prose",
+      "# Notes\n\nThis paragraph was wrapped\nby hand at eighty columns\nlike most real files.\n\nAnother wrapped\nparagraph follows.\n",
+    ],
+    ["aligned table", "| left | right |\n| :--- | ---: |\n| 1 | 2 |\n"],
+    ["loose list", "- one\n\n- two\n\n- three\n"],
+    ["tight task list", "- [x] done\n- [ ] todo\n- [ ] later\n"],
+    ["inline math", "Euler: $e^{i\\pi} + 1 = 0$ stays put.\n"],
+    ["display math", "$$\n\\frac{a}{b} \\, dx\n$$\n"],
+    ["footnote pair", "Text with a note.[^1]\n\n[^1]: the note\n"],
+    [
+      "mixed document",
+      "---\ntitle: Mixed\nmarkie:\n  project: Markie\n---\n# Heading\n\n<!-- a comment that must survive -->\n\nProse wrapped\nby hand across lines.\n\n| a | b |\n| :--- | ---: |\n| 1 | 2 |\n\n<div class=\"note\">\n<b>raw</b>\n</div>\n\nClosing line.\n",
+    ],
+  ];
+
+  for (const [name, md] of CORPUS_SHAPED) {
+    it(`zero-edit output is byte-identical: ${name}`, () => {
+      expect(zeroEditPipeline(md)).toBe(md);
+    });
+  }
+
+  it("zero-edit output is byte-identical for hand-wrapped prose", () => {
+    const md =
+      "# Notes\n\nThis paragraph was wrapped\nby hand at eighty columns\nlike most real files.\n\nAnother wrapped\nparagraph follows.\n";
+    expect(zeroEditPipeline(md)).toBe(md);
+  });
+
+  it("editing one paragraph of a 400-line hand-wrapped document leaves every other line byte-identical", () => {
+    // The release's success criterion, stated as a test.
+    const PARAGRAPHS = 120;
+    const EDITED = 42;
+    const paragraphs: string[] = [];
+    for (let i = 0; i < PARAGRAPHS; i++) {
+      paragraphs.push(
+        `Paragraph ${i} opens here and\nis wrapped by hand across\nthree separate source lines.`
+      );
+    }
+    const md = paragraphs.join("\n\n") + "\n";
+    expect(md.split("\n").length).toBeGreaterThan(400);
+    // Each paragraph is three lines plus a blank separator.
+    const firstLine = EDITED * 4;
+
+    const { text, holds } = extractHoldAsides(splitFrontMatter(md).body);
+    const { normalize, destroy } = createBlockNormalizer();
+    try {
+      // What the serializer emits once the user has retyped paragraph 42:
+      // every other block comes back in its normalized (rewrapped) form.
+      const serialized =
+        splitTopLevelBlocks(text)
+          .filter((b) => b.text !== "")
+          .map((b, i) =>
+            i === EDITED
+              ? "Paragraph 42 was rewritten by hand."
+              : normalize(key(b.text))
+          )
+          .join("\n\n") + "\n";
+      const outMd = restoreHoldAsides(
+        preserveBlocks(text, serialized, normalize),
+        holds
+      );
+
+      const before = md.split("\n");
+      const after = outMd.split("\n");
+      // Everything above the edited paragraph is untouched.
+      expect(after.slice(0, firstLine)).toEqual(before.slice(0, firstLine));
+      // The three wrapped lines collapsed to the one line the user typed.
+      expect(after[firstLine]).toBe("Paragraph 42 was rewritten by hand.");
+      // Everything below it is untouched too, shifted by the two lines lost.
+      expect(after.slice(firstLine + 1)).toEqual(before.slice(firstLine + 3));
+    } finally {
+      destroy();
+    }
+  });
 });

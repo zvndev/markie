@@ -72,3 +72,29 @@ export function describeLossRisks(markdown: string): LossRisk[] {
   }
   return risks;
 }
+
+// One reused headless editor plus a memo cache. parse+serialize per block is a
+// few ms; a long document normalizes each block once and then hits the cache on
+// every autosave flush.
+export function createBlockNormalizer(): {
+  normalize(block: string): string;
+  destroy(): void;
+} {
+  const editor = new Editor({ extensions: richBaseExtensions(), content: "" });
+  const cache = new Map<string, string>();
+  const normalize = (block: string): string => {
+    const hit = cache.get(block);
+    if (hit !== undefined) return hit;
+    let out: string;
+    try {
+      editor.commands.setContent(block, { emitUpdate: false });
+      out = formatMarkdownTables(readMarkdown(editor)).replace(/\n+$/, "");
+    } catch {
+      out = "\u0000unparseable"; // never equals any real block
+    }
+    if (cache.size > 4000) cache.clear();
+    cache.set(block, out);
+    return out;
+  };
+  return { normalize, destroy: () => editor.destroy() };
+}

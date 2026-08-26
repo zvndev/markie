@@ -90,6 +90,32 @@ describe("ProjectsView", () => {
     expect(onOpenPath).toHaveBeenCalledWith("/home/u/Documents/Markie/plan.md");
   });
 
+  it("opens on real work, not on the folder holding the document Markie wrote", async () => {
+    // Projects.md is the newest file on a fresh machine, and its folder would
+    // otherwise be the first thing the headline feature shows.
+    bridge({
+      mdIndexScan: vi.fn(async () => ({
+        files: [
+          {
+            path: "/home/u/Documents/Fresh/Projects.md",
+            name: "Projects.md",
+            dir: "/home/u/Documents/Fresh",
+            mtimeMs: NOW,
+            birthtimeMs: NOW,
+            fmProject: null,
+            fmBlock: null,
+            repoName: null,
+          },
+          ...ROWS,
+        ],
+        scannedAt: "now",
+      })),
+    });
+    render(view());
+    expect(await screen.findByText("plan.md")).toBeInTheDocument();
+    expect(screen.queryByText("Projects.md")).not.toBeInTheDocument();
+  });
+
   it("shows a file that clustered with nothing outside every block", async () => {
     bridge();
     render(view());

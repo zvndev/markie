@@ -151,4 +151,35 @@ describe("theme store", () => {
     expect(editorThemeForTokens({ background: "#fff" })).toBe("light");
     expect(editorThemeForTokens({ background: "not-a-color" })).toBe("dark");
   });
+
+  // WCAG 1.4.11: a boundary that identifies a component needs 3:1. The dark
+  // border used to draw at 1.19:1 against the surface behind it, which meant
+  // every card in the Projects view had no visible edge at all. This pins the
+  // ratio so it cannot quietly slip back.
+  describe("the border token stays a visible edge", () => {
+    const luminance = (hex: string) => {
+      const [r, g, b] = [0, 2, 4]
+        .map((i) => parseInt(hex.replace("#", "").slice(i, i + 2), 16) / 255)
+        .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ratio = (a: string, b: string) => {
+      const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+
+    it("clears 3:1 against every surface the dark theme paints", () => {
+      const t = MARKIE_DARK.tokens;
+      for (const behind of [t.background, t.surface, t.surface2]) {
+        expect(ratio(t.border, behind)).toBeGreaterThanOrEqual(3);
+      }
+    });
+
+    it("measures what it claims to measure", () => {
+      // A control on the control: these are the published ratios for black on
+      // white and for a colour against itself.
+      expect(ratio("#000000", "#ffffff")).toBeCloseTo(21, 1);
+      expect(ratio("#71717a", "#71717a")).toBeCloseTo(1, 5);
+    });
+  });
 });

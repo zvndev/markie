@@ -12,7 +12,7 @@
   --background: #09090b;
   --foreground: #fafafa;
   --muted: #a1a1aa;
-  --border: #27272a;
+  --border: #71717a;
   --accent: #3f3f46;
   --surface: #18181b;
   --surface-2: #1c1c20;
@@ -143,13 +143,13 @@ body {
     inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent);
 }
 
-/* A popover that opens on top of a card, rather than on top of the page,
-   needs a harder edge than var(--border) can give it. Measured in the running
-   app, that token draws at 1.19:1 against the dark surface, which is not an
-   edge at all, and the default popover shadow disappears into the same dark.
-   Raised panels keep the elevation direction (lighter than what is behind
-   them) and get a border mixed toward var(--muted), the one secondary token
-   that is legible in both themes, so the hairline clears 3:1 either way. */
+/* A popover that opens on top of a card, rather than on top of the page, needs
+   a harder edge than the card it covers. var(--border) is now legible in its
+   own right (3.67:1 against the dark surface), so this is no longer rescuing an
+   invisible hairline; it is keeping the elevation READABLE, because two edges
+   of equal weight read as one plane. Raised panels stay lighter than what is
+   behind them and mix their border toward var(--muted), which lands around
+   5.5:1 in dark and stays legible in light. */
 .markie-menu-panel.markie-menu-raised {
   border-color: color-mix(in srgb, var(--muted) 62%, var(--border));
   box-shadow:

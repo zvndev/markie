@@ -9,7 +9,7 @@ import { useMemo, useRef, useState } from "react";
 import { getElectronAPI } from "@/lib/electron";
 import { longAgo, shortAgo } from "@/lib/relative-time";
 import { useProjects } from "@/lib/use-projects";
-import { filterTaxonomy } from "@/components/projects-tree";
+import { filterTaxonomy, substantialProjects } from "@/components/projects-tree";
 import type { BlockNode, FileNode, ProjectNode, Taxonomy } from "@/lib/projects/taxonomy";
 
 // A project can hold thousands of files, and the detail pane renders every
@@ -260,7 +260,7 @@ export function ProjectsView({
     [taxonomy, query]
   );
   const active = useMemo(
-    () => list.find((p) => p.name === picked) ?? list[0] ?? null,
+    () => list.find((p) => p.name === picked) ?? substantialProjects(list)[0] ?? null,
     [list, picked]
   );
   const pinnedPaths = useMemo(

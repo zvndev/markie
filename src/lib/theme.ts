@@ -35,7 +35,11 @@ export const MARKIE_DARK: ThemePreset = {
     surface2: "#1c1c20",
     foreground: "#fafafa",
     muted: "#a1a1aa",
-    border: "#27272a",
+    // Zinc 500, one step of the same ramp as muted and accent. The old #27272a
+    // drew a card edge at 1.19:1 against the surface behind it, which is not an
+    // edge; this clears 3:1 on every dark background the app paints
+    // (background 4.12, surface 3.67, surface-2 3.51).
+    border: "#71717a",
     accent: "#3f3f46",
     link: "#60a5fa",
     statusGreen: "#4ade80",

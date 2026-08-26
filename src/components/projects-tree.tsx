@@ -195,6 +195,20 @@ function ProjectSection({
   );
 }
 
+// Where to land, and what to open first. Sorting by recency alone opens
+// whatever was written last, and right after setup that is the workspace
+// folder holding one file: Projects.md, which Markie wrote itself. Landing
+// there shows the organization feature organizing nothing. Unfiled is skipped
+// for the same reason: it is the pile of things Markie could not place.
+// Nothing is hidden by this, and the fallbacks mean a workspace that really
+// does hold one file still lands somewhere.
+export function substantialProjects(projects: ProjectNode[]): ProjectNode[] {
+  const real = projects.filter((p) => !p.isUnfiled && p.fileCount > 1);
+  if (real.length) return real;
+  const placed = projects.filter((p) => !p.isUnfiled);
+  return placed.length ? placed : projects;
+}
+
 // A project matches wholesale on its own name; otherwise it keeps the blocks
 // and files that match, so a search shows answers rather than headings.
 export function filterTaxonomy(projects: ProjectNode[], filter: string): ProjectNode[] {
@@ -247,11 +261,16 @@ export function ProjectsTree({
   // Seeded from the taxonomy rather than stored: the most recent work is what
   // you came back for, and three clicks to reach it is two too many.
   const seedProjects = useMemo(
-    () => new Set((taxonomy?.projects ?? []).slice(0, AUTO_OPEN_PROJECTS).map((p) => p.name)),
+    () =>
+      new Set(
+        substantialProjects(taxonomy?.projects ?? [])
+          .slice(0, AUTO_OPEN_PROJECTS)
+          .map((p) => p.name)
+      ),
     [taxonomy]
   );
   const seedBlocks = useMemo(() => {
-    const first = taxonomy?.projects?.[0];
+    const first = substantialProjects(taxonomy?.projects ?? [])[0];
     return new Set(first?.blocks[0] ? [first.blocks[0].id] : []);
   }, [taxonomy]);
 

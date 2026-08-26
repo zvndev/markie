@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { ProjectsTree, filterTaxonomy } from "@/components/projects-tree";
+import { ProjectsTree, filterTaxonomy, substantialProjects } from "@/components/projects-tree";
 import type { Taxonomy } from "@/lib/projects/taxonomy";
 
 const NOW = Date.now();
@@ -19,7 +19,7 @@ const file = (name: string, dir: string, ageHours: number) => ({
 });
 
 const TAXONOMY: Taxonomy = {
-  totalFiles: 5,
+  totalFiles: 6,
   unfiledCount: 1,
   ignoredCount: 0,
   assignmentRows: [],
@@ -48,7 +48,7 @@ const TAXONOMY: Taxonomy = {
       name: "Thesis",
       made: NOW - 100 * HOUR,
       updated: NOW - 50 * HOUR,
-      fileCount: 1,
+      fileCount: 2,
       isUnfiled: false,
       looseFiles: [],
       blocks: [
@@ -57,7 +57,7 @@ const TAXONOMY: Taxonomy = {
           name: "chapter one",
           made: NOW - 100 * HOUR,
           updated: NOW - 50 * HOUR,
-          files: [file("ch1.md", "/t", 50)],
+          files: [file("ch1.md", "/t", 50), file("ch2.md", "/t", 51)],
         },
       ],
     },
@@ -216,5 +216,34 @@ describe("filterTaxonomy", () => {
 
   it("returns everything for an empty filter", () => {
     expect(filterTaxonomy(TAXONOMY.projects, "  ")).toBe(TAXONOMY.projects);
+  });
+});
+
+describe("substantialProjects", () => {
+  const p = (name: string, fileCount: number, isUnfiled = false) =>
+    ({ name, fileCount, isUnfiled, made: 0, updated: 0, blocks: [], looseFiles: [] }) as never;
+
+  it("skips the workspace folder holding only the document Markie wrote", () => {
+    // Right after setup that folder is the newest thing on the machine, and
+    // landing there shows the organization feature organizing nothing.
+    const list = [p("Markie", 1), p("Thesis", 40), p("Notes", 12)];
+    expect(substantialProjects(list).map((x) => x.name)).toEqual(["Thesis", "Notes"]);
+  });
+
+  it("skips Unfiled, which is the pile of things Markie could not place", () => {
+    expect(
+      substantialProjects([p("Unfiled", 90, true), p("Thesis", 40)]).map((x) => x.name)
+    ).toEqual(["Thesis"]);
+  });
+
+  it("keeps recency order among the projects it does offer", () => {
+    const list = [p("New", 5), p("Old", 500)];
+    expect(substantialProjects(list).map((x) => x.name)).toEqual(["New", "Old"]);
+  });
+
+  it("still lands somewhere when every project is thin", () => {
+    expect(substantialProjects([p("Markie", 1)]).map((x) => x.name)).toEqual(["Markie"]);
+    expect(substantialProjects([p("Unfiled", 3, true)]).map((x) => x.name)).toEqual(["Unfiled"]);
+    expect(substantialProjects([])).toEqual([]);
   });
 });

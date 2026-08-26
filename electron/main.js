@@ -38,6 +38,7 @@ const { createPdfExporter, ensureExtension } = require("./export-pdf");
 const { createIpcHandler, errorMessage } = require("./ipc-result");
 const { writeFileAtomic } = require("./atomic-write");
 const { createSnapshots } = require("./snapshots");
+const { saveConflictAction } = require("./save-conflict");
 
 // Electron answers an uncaught exception in the main process with a modal
 // dialog containing a raw stack trace. That is alarming on its own, and it is
@@ -832,7 +833,7 @@ handle(
 );
 
 // IPC: write content to a known path
-handle("save-file", async (_event, { filePath, content, force = false }) => {
+handle("save-file", async (_event, { filePath, content, force = false, autosave = false }) => {
   try {
     const access = fileGrants.canWrite(filePath);
     if (!access.ok) return { success: false, error: access.error };
@@ -843,8 +844,17 @@ handle("save-file", async (_event, { filePath, content, force = false }) => {
     // `force` means the renderer already put that decision to the user — the
     // in-app conflict dialog — and they chose to overwrite. Asking again here
     // would be a second, native prompt for a question already answered.
+    //
+    // `autosave` means nobody asked for this write and nobody is watching it.
+    // A modal would interrupt typing and a blind write would destroy the other
+    // writer's work, so it refuses and hands the newer bytes back for the
+    // renderer's own non-modal strip. saveConflictAction owns that decision.
     const newer = force ? null : diskChangedSince(access.path);
-    if (newer !== null) {
+    const action = saveConflictAction({ autosave, force, changed: newer });
+    if (action === "refuse") {
+      return { success: false, code: "disk-changed", path: access.path, content: newer };
+    }
+    if (action === "ask") {
       const { response } = await dialog.showMessageBox(mainWindow, {
         type: "warning",
         buttons: ["Reload from disk", "Overwrite", "Cancel"],

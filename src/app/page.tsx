@@ -104,7 +104,8 @@ import {
 } from "@/lib/electron";
 import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { pathDirname } from "@/lib/path-utils";
-import { useDocument } from "@/lib/use-document";
+import { useDocument, type EditInput } from "@/lib/use-document";
+import { useSaveGuard } from "@/lib/use-save-guard";
 import { useDocumentExport } from "@/lib/use-export";
 
 const SAMPLE = `# Northstar Sprint Brief
@@ -153,6 +154,10 @@ $E = mc^2$
 type ViewMode = "edit" | "preview" | "split";
 
 const isCSVName = (name: string | null) => !!name && /\.csv$/i.test(name);
+
+// What handleSave returns when a write was refused because the file moved
+// underneath it. Not an error to show: the strip is already saying it.
+const DISK_CHANGED = "changed-on-disk";
 
 // A short, stable fingerprint of the collab token, so the RichView key changes
 // when the token is rotated (revoke-and-reissue keeps the same doc id) without
@@ -276,6 +281,13 @@ export default function Home() {
     armed: richArmed,
     preparing: richPreparing,
   } = useRichSafety();
+
+  // What the server says this user may do with the open document. Read by the
+  // panes, the format rail, and the autosave gate alike.
+  const docEditable = canEditDocument(roleState);
+  // The save machinery is built further down, because it needs handleSave.
+  // A manual save has to be able to call back into it from up here.
+  const cancelAutosaveRef = useRef<() => void>(() => {});
 
   // Only the newest resolution may write state. Role now decides whether the
   // document can be edited, so a slow answer for the previous file landing on
@@ -765,19 +777,24 @@ export default function Home() {
   // Resolves to an error message when the save landed on disk but not in the
   // cloud, and to null otherwise.
   const handleSave = useCallback(async (
-    // Set when the user has already resolved a disk conflict in the app, so
-    // main does not put the same question a second time in a native dialog.
-    { force = false }: { force?: boolean } = {}
+    // force: the user has already resolved a disk conflict in the app, so main
+    // does not put the same question a second time in a native dialog.
+    // autosave: nobody asked for this write, so it must never raise a dialog
+    // and must refuse rather than overwrite a file that moved underneath it.
+    { force = false, autosave = false }: { force?: boolean; autosave?: boolean } = {}
   ): Promise<string | null> => {
     const api = getSafeAPI();
     if (!api) return null;
+    // A manual save is the flush. Cancelling first means the pending timer
+    // cannot fire straight after it and write the same bytes twice.
+    if (!autosave) cancelAutosaveRef.current();
     if (!filePath) {
       const saved = await handleSaveAs();
       return saved?.error ?? null;
     }
     const md = currentMarkdown();
     const diskContent = toDisk(fileName, md);
-    const res = await api.saveFile({ filePath, content: diskContent, force });
+    const res = await api.saveFile({ filePath, content: diskContent, force, autosave });
     // Every caller of handleSave discards the return value, so a save that
     // never reached disk has to say so here or it says nothing at all.
     if (res?.error) {
@@ -792,10 +809,19 @@ export default function Home() {
       assessRichSafety(reloaded, filePath);
       return null;
     }
+    // An autosave found the same collision. Nothing was written and nobody was
+    // interrupted: raise the strip the user already knows, and let the gate
+    // below hold autosave off until they resolve it.
+    if (res.code === "disk-changed" && typeof res.content === "string") {
+      setDiskChange(res.content);
+      return DISK_CHANGED;
+    }
     if (res.success) {
       markSaved(md);
       // ⌘S on a .csv keeps the first table and drops the rest, every time.
-      const dropped = isCSVName(fileName) ? csvDropsContent(md) : null;
+      // Only on a save the user asked for: repeating it every second while
+      // they type would bury the banner in its own noise.
+      const dropped = !autosave && isCSVName(fileName) ? csvDropsContent(md) : null;
       if (dropped?.drops) {
         setForkError(
           dropped.hasTable
@@ -825,6 +851,36 @@ export default function Home() {
     }
     return null;
   }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg, assessRichSafety, applyExternalDoc, markSaved]);
+
+  // Autosave arms only where a write is provably safe: a real file to write,
+  // the right to write it, no unresolved disk conflict, and either Source
+  // (CodeMirror is byte-faithful) or a rich pipeline that has proved it can
+  // reconstruct this document. "Not proved yet" counts as not safe.
+  const autosaveEligible =
+    filePath !== null &&
+    docEditable &&
+    diskChange === null &&
+    !showDiskConflict &&
+    (mode === "edit" || richArmed);
+  const saveGuard = useSaveGuard({
+    save: async () => (await handleSave({ autosave: true })) === null,
+    eligible: autosaveEligible,
+    docKey: filePath,
+  });
+  useEffect(() => {
+    cancelAutosaveRef.current = saveGuard.cancel;
+  }, [saveGuard]);
+
+  // The one way a user edit reaches the buffer, and so the only thing that may
+  // ever arm a write. Loads, pulls, and reloads go through the document hook's
+  // other transitions and must never come through here.
+  const editContent = useCallback(
+    (md: EditInput) => {
+      editDoc(md);
+      saveGuard.noteEdit();
+    },
+    [editDoc, saveGuard]
+  );
 
   // Resolves to an error message when the copy could not be made, null when it
   // was made or the user backed out of the dialog.
@@ -1225,7 +1281,7 @@ export default function Home() {
         setShowSettings(true);
       }),
       api.onMenuFormatTables?.(() =>
-        editDoc((prev) => formatMarkdownTables(prev))
+        editContent((prev) => formatMarkdownTables(prev))
       ),
       api.onMenuFind?.(() => {
         setFindWithReplace(false);
@@ -1253,7 +1309,7 @@ export default function Home() {
       }),
     ];
     return () => offs.forEach((off) => off?.());
-  }, [selectView, editDoc]);
+  }, [selectView, editContent]);
 
   const commands = useMemo<AppCommand[]>(
     () => [
@@ -1280,7 +1336,7 @@ export default function Home() {
       ...(TERMINAL_ENABLED ? [{ id: "terminal", title: "Toggle Terminal", group: "View", shortcut: "⌃`", keywords: "shell console zsh bash powershell cmd", run: () => setShowTerminal((v) => !v) }] as AppCommand[] : []),
       { id: "copy-path", title: "Copy File Path", group: "File", keywords: "link location terminal clipboard", run: () => { const p = docRef.current.filePath; if (p) navigator.clipboard.writeText(p); } },
       { id: "copy-content", title: "Copy Document Contents", group: "File", keywords: "clipboard markdown text", run: () => navigator.clipboard.writeText(docRef.current.content) },
-      { id: "format-tables", title: "Format Tables", group: "Format", shortcut: "⌥⌘T", keywords: "align prettify pipes", run: () => editDoc((prev) => formatMarkdownTables(prev)) },
+      { id: "format-tables", title: "Format Tables", group: "Format", shortcut: "⌥⌘T", keywords: "align prettify pipes", run: () => editContent((prev) => formatMarkdownTables(prev)) },
       ...BUILT_IN_THEMES.map((t) => ({
         id: `theme-${t.id}`,
         title: `Theme: ${t.name}`,
@@ -1321,7 +1377,7 @@ export default function Home() {
       exportHTML,
       handleNewFile,
       selectView,
-      editDoc,
+      editContent,
     ]
   );
 
@@ -1404,7 +1460,6 @@ export default function Home() {
   // One resolution, every consumer: the banner, the rich pane, and the source
   // pane all read the same answer instead of each deciding for itself.
   const shareBanner = shareBannerFor(roleState, sharedBy);
-  const docEditable = canEditDocument(roleState);
 
   // One answer for what the left edge is showing, read by the panel, the
   // formatting rail and the activity bar alike.
@@ -1556,7 +1611,7 @@ export default function Home() {
                 <div className="flex-1 min-h-0 overflow-hidden">
                   <Editor
                     value={content}
-                    onChange={editDoc}
+                    onChange={editContent}
                     onViewReady={setSourceView}
                     // Read-only for two separate reasons: the rich pane owns the
                     // shared document while a session is live, and a viewer may
@@ -1632,7 +1687,7 @@ export default function Home() {
                           : "solo"
                       }
                       value={content}
-                      onChange={editDoc}
+                      onChange={editContent}
                       onEditorReady={setRichEditor}
                       collab={collabCfg}
                       readOnly={!docEditable || !richArmed}

@@ -42,6 +42,9 @@ describe("page save", () => {
       filePath: OPEN.path,
       content: OPEN.content,
       force: false,
+      // A save the user asked for. Main reads this to decide whether it may
+      // put a dialog in front of them.
+      autosave: false,
     });
   });
 

@@ -18,7 +18,10 @@ export interface SaveResult {
   wroteCsv?: boolean;
   // "reloaded": the file changed on disk since Markie read it and the user
   // chose the disk copy over their own edits. `content` carries that copy.
-  code?: "reloaded";
+  // "disk-changed": the same collision, found by an autosave, which never puts
+  // a dialog in front of anyone. `content` carries the newer disk copy so the
+  // renderer can raise its own strip. Nothing was written.
+  code?: "reloaded" | "disk-changed";
   content?: string;
 }
 
@@ -95,6 +98,8 @@ export interface ElectronAPI {
     content: string;
     /** The user already resolved a disk conflict; do not ask them again. */
     force?: boolean;
+    /** Nobody asked for this write: never dialog, and refuse over a changed disk. */
+    autosave?: boolean;
   }): Promise<SaveResult>;
   // `csvContent` lets a table document hand over both forms at once; main
   // picks by the extension the user chose and reports which one it wrote.

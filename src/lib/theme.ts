@@ -62,7 +62,15 @@ export const MARKIE_LIGHT: ThemePreset = {
     surface2: "#e3e8ef",
     foreground: "#18181b",
     muted: "#475569",
-    border: "#c7d0dc",
+    // A cool grey with about half the blue of the palette it sits in. The old
+    // #c7d0dc drew a card edge at 1.38:1 against the surface behind it and
+    // 1.49:1 against the page, so cards dissolved into the background exactly
+    // the way the dark theme's old border did. This clears 3:1 on every light
+    // surface the app paints (background 3.76, surface 3.50, surface-2 3.19,
+    // accent 3.22), the same bar dark meets, and it stays a boundary rather
+    // than a blue outline: a saturated edge at this contrast reads as a form
+    // field, not as the quiet inevitable edge of an object.
+    border: "#7a818b",
     accent: "#dbeafe",
     link: "#1d4ed8",
     statusGreen: "#166534",

@@ -296,7 +296,7 @@ async function main() {
       "--surface-2": "#e3e8ef",
       "--foreground": "#18181b",
       "--muted": "#475569",
-      "--border": "#c7d0dc",
+      "--border": "#7a818b",
       "--accent": "#dbeafe",
       "--blue": "#1d4ed8",
       "--status-green": "#166534",

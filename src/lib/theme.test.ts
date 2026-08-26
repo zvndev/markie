@@ -168,10 +168,14 @@ describe("theme store", () => {
       return (hi + 0.05) / (lo + 0.05);
     };
 
-    it("clears 3:1 against every surface the dark theme paints", () => {
-      const t = MARKIE_DARK.tokens;
-      for (const behind of [t.background, t.surface, t.surface2]) {
-        expect(ratio(t.border, behind)).toBeGreaterThanOrEqual(3);
+    it("clears 3:1 against every surface either built-in theme paints", () => {
+      // Light used to be exempt from this and drew its card edge at 1.38:1,
+      // which is not an edge either. Both themes are held to the same bar.
+      for (const theme of [MARKIE_DARK, MARKIE_LIGHT]) {
+        const t = theme.tokens;
+        for (const behind of [t.background, t.surface, t.surface2]) {
+          expect(ratio(t.border, behind)).toBeGreaterThanOrEqual(3);
+        }
       }
     });
 

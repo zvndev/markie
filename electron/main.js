@@ -77,6 +77,17 @@ function crashLog() {
 
 // Snapshots live under userData, which is only a real path once the app is
 // ready — same lazy shape as the crash log above.
+// The crash journal, same lazy shape: userData is only a real path once the
+// app is ready.
+let _drafts = null;
+function drafts() {
+  if (!_drafts) {
+    const { createDrafts } = require("./drafts");
+    _drafts = createDrafts({ dir: app.getPath("userData") });
+  }
+  return _drafts;
+}
+
 let _snapshots = null;
 function snapshots() {
   if (!_snapshots) {
@@ -1231,6 +1242,35 @@ handle("watch-file", (_e, filePath) => {
   if (filePath) watchOpenFile(filePath);
   else stopWatchingOpenFile();
   return { ok: true };
+});
+
+// ── The crash journal ──
+// Written ahead of the file debounce, so the window between "the user typed"
+// and "the bytes are on disk" holds nothing that a kill would cost them.
+handle(
+  "draft-save",
+  (_e, { path: docPath, name, content }) =>
+    drafts().save({ path: docPath ?? null, name: name ?? null }, String(content ?? "")),
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+handle(
+  "draft-check",
+  () =>
+    drafts()
+      .check({
+        fileMtime: (p) => {
+          try {
+            return fs.statSync(p).mtimeMs;
+          } catch {
+            return null;
+          }
+        },
+      })
+      .map((entry) => ({ ...entry, content: drafts().read(entry.key) })),
+  { onFailure: () => [] }
+);
+handle("draft-discard", (_e, key) => drafts().discard(String(key || "")), {
+  onFailure: () => ({ ok: false }),
 });
 // Which tracked files the server is ahead of. One request for the whole
 // library, called on focus and on a timer, so it has to stay cheap and quiet.

@@ -25,6 +25,16 @@ export interface SaveResult {
   content?: string;
 }
 
+export interface DraftEntry {
+  key: string;
+  path: string | null;
+  name: string | null;
+  savedAt: string;
+  bytes: number;
+  /** The journalled text. Null when the file behind the entry has gone. */
+  content: string | null;
+}
+
 export type ViewMode = "edit" | "preview" | "split";
 
 export interface TerminalContext {
@@ -209,6 +219,16 @@ export interface ElectronAPI {
   // capped at two seconds. Everything that must land goes in between.
   onAppWillClose(cb: () => void): Unsubscribe;
   appCloseReady(): void;
+  // The crash journal: written ahead of the file debounce, offered back on the
+  // next launch. An empty `content` clears the entry, which is how a committed
+  // save discards it.
+  draftSave(args: {
+    path: string | null;
+    name: string | null;
+    content: string;
+  }): Promise<{ ok: boolean; cleared?: boolean; error?: string }>;
+  draftCheck(): Promise<DraftEntry[]>;
+  draftDiscard(key: string): Promise<{ ok: boolean }>;
   /** Whether crash reports may be sent, and whether a DSN is configured at all. */
   crashConsentGet(): Promise<{ enabled: boolean; available: boolean }>;
   crashConsentSet(

@@ -40,6 +40,7 @@ import {
 } from "@/components/share-banner";
 import { ConflictDialog } from "@/components/conflict-dialog";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
+import { DraftStrip } from "@/components/draft-strip";
 import { diskChangeKind } from "@/lib/disk-change";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { RichLossBanner, RichPreparingNote } from "@/components/rich-guard";
@@ -287,8 +288,7 @@ export default function Home() {
   const docEditable = canEditDocument(roleState);
   // The save machinery is built further down, because it needs handleSave.
   // Everything declared up here that has to reach it goes through this ref.
-  const saveGuardRef = useRef<SaveGuard>({
-    noteEdit: () => {},
+  const saveGuardRef = useRef<Pick<SaveGuard, "cancel" | "settle">>({
     cancel: () => {},
     settle: async () => {},
   });
@@ -773,6 +773,8 @@ export default function Home() {
       resetDocAccess();
       setLocation(res.path, res.name);
       markSaved(md);
+      // Save As commits the untitled buffer, so its journal entry is spent too.
+      void getElectronAPI()?.draftSave?.({ path: null, name: null, content: "" });
       // A file Markie wrote and now has open belongs in the registry like any
       // file it opens. A fresh row is local-only with no cloud doc, which is
       // exactly what a copy has to stay.
@@ -830,6 +832,8 @@ export default function Home() {
     }
     if (res.success) {
       markSaved(md);
+      // These bytes are on disk now, so the journal entry for them is spent.
+      void getElectronAPI()?.draftSave?.({ path: filePath, name: fileName, content: "" });
       // ⌘S on a .csv keeps the first table and drops the rest, every time.
       // Only on a save the user asked for: repeating it every second while
       // they type would bury the banner in its own noise.
@@ -878,6 +882,8 @@ export default function Home() {
     save: async () => (await handleSave({ autosave: true })) === null,
     eligible: autosaveEligible,
     docKey: filePath,
+    document: { path: filePath, name: fileName, content, dirty: isDirty },
+    booted,
   });
   useEffect(() => {
     saveGuardRef.current = saveGuard;
@@ -1235,11 +1241,14 @@ export default function Home() {
     const pending =
       getElectronAPI()?.getInitialFile?.() ?? Promise.resolve(null);
     pending
-      .then((file) => {
+      .then(async (file) => {
         // A handler that answers with { error } instead of a payload must not
         // be mistaken for a file: loading it would blank the editor.
+        //
+        // Awaited so `booted` really does mean "the first document has landed":
+        // draft recovery matches what it finds against the open path.
         if (file && typeof file.content === "string") {
-          loadFile(file);
+          await loadFile(file);
         } else if (shouldShowWelcome({ openedFile: false })) {
           applyExternalDoc(WELCOME_DOC);
           assessRichSafety(WELCOME_DOC, null);
@@ -1585,6 +1594,26 @@ export default function Home() {
               error={updateError}
               onUpdate={handlePullUpdate}
               onReview={() => setShowConflict(true)}
+            />
+          )}
+
+          {/* Unsaved work from a session that ended badly. Offered once, above
+              the document, and only for the document that is open. */}
+          {saveGuard.recovered && (
+            <DraftStrip
+              savedAt={saveGuard.recovered.savedAt}
+              onRestore={() => {
+                const entry = saveGuard.recovered;
+                if (!entry) return;
+                saveGuard.acceptRecovered();
+                void loadFile({
+                  name: entry.name ?? "untitled.md",
+                  content: entry.content,
+                  path: entry.path,
+                  unsaved: true,
+                });
+              }}
+              onDiscard={saveGuard.discardRecovered}
             />
           )}
 

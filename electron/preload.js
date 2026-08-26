@@ -110,6 +110,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   watchFile: (filePath) => ipcRenderer.invoke("watch-file", filePath),
   // The window is closing: settle the document, then answer.
   onAppWillClose: (callback) => subscribe("app-will-close", callback),
+  // Crash journal
+  draftSave: (args) => ipcRenderer.invoke("draft-save", args),
+  draftCheck: () => ipcRenderer.invoke("draft-check"),
+  draftDiscard: (key) => ipcRenderer.invoke("draft-discard", key),
   appCloseReady: () => ipcRenderer.send("app-close-ready"),
   crashConsentGet: () => ipcRenderer.invoke("crash-consent-get"),
   crashConsentSet: (enabled) => ipcRenderer.invoke("crash-consent-set", enabled),

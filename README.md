@@ -46,6 +46,22 @@ gives an AI agent a markdown workspace on *your* machine: `markie_find_md`,
 Reads/writes are fenced to markdown under your home folder (symlink-guarded), so an
 agent can *"find my notes and add a section"* and actually do it.
 
+Connecting also hands the agent Markie's organization conventions, so it says
+where a document belongs as it writes:
+
+```yaml
+---
+markie:
+  project: bevrly
+  block: checkout-redesign
+---
+```
+
+New documents then arrive filed under that project and block in Markie, and
+nothing moves on disk to make it happen. Claude Code users get the same
+conventions as a plugin skill; every other MCP client receives them through the
+server's `initialize` instructions.
+
 **Claude Code — plugin (easiest):**
 
 ```

@@ -127,7 +127,18 @@ module.exports = {
     {
       from: "mcp",
       to: "mcp",
-      filter: ["markie-mcp.mjs", "lib.mjs", "scan.mjs", "package.json"],
+      // Named one by one so nothing accidental (a test file, a scratch
+      // module) rides along. electron/mcp-packaging.test.ts fails when a new
+      // runtime module in mcp/ is missing here, because a module left out of
+      // this list is fine in dev and a dead MCP server in the shipped app.
+      filter: [
+        "agent-classify.mjs",
+        "conventions.mjs",
+        "lib.mjs",
+        "markie-mcp.mjs",
+        "scan.mjs",
+        "package.json",
+      ],
     },
   ],
   directories: { output: "dist" },

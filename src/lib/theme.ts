@@ -5,6 +5,16 @@ export interface ThemeTokens {
   foreground: string;
   muted: string;
   border: string;
+  /**
+   * Rules drawn inside a rendered document: heading underlines, horizontal
+   * rules, table borders, code edges. Deliberately far quieter than `border`.
+   * A card edge is an object boundary you can act on and has to be seen; a
+   * heading underline is typography and its job is to be almost subliminal.
+   * They shared a token until 0.5.0, which meant making cards legible also
+   * made every document shout. Optional: a theme without it gets a value
+   * derived from its own border, so custom themes need no migration.
+   */
+  docRule?: string;
   accent: string;
   link: string;
   statusGreen?: string;
@@ -40,6 +50,9 @@ export const MARKIE_DARK: ThemePreset = {
     // edge; this clears 3:1 on every dark background the app paints
     // (background 4.12, surface 3.67, surface-2 3.51).
     border: "#71717a",
+    // The border value this theme used before 0.5.0. Inside a document that was
+    // always right: a hairline that separates without competing with the text.
+    docRule: "#27272a",
     accent: "#3f3f46",
     link: "#60a5fa",
     statusGreen: "#4ade80",
@@ -71,6 +84,8 @@ export const MARKIE_LIGHT: ThemePreset = {
     // than a blue outline: a saturated edge at this contrast reads as a form
     // field, not as the quiet inevitable edge of an object.
     border: "#7a818b",
+    // As above: the pre-0.5.0 light border, kept for document rules only.
+    docRule: "#c7d0dc",
     accent: "#dbeafe",
     link: "#1d4ed8",
     statusGreen: "#166534",
@@ -171,6 +186,14 @@ export function applyTheme(tokens: ThemeTokens): void {
   r.setProperty("--foreground", tokens.foreground);
   r.setProperty("--muted", tokens.muted);
   r.setProperty("--border", tokens.border);
+  // A custom theme saved before 0.5.0 has no docRule. Rather than dropping such
+  // a document back to the loud shared border, soften that theme's own border
+  // toward its surface, which keeps the hairline in the theme's palette.
+  r.setProperty(
+    "--doc-rule",
+    tokens.docRule ??
+      `color-mix(in srgb, ${tokens.border} 42%, ${tokens.surface})`
+  );
   r.setProperty("--accent", tokens.accent);
   r.setProperty("--blue", tokens.link);
   r.setProperty("--status-green", tokens.statusGreen ?? tokens.foreground);

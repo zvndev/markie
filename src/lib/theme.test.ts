@@ -179,6 +179,49 @@ describe("theme store", () => {
       }
     });
 
+    // The other half of the same lesson. Raising `border` to fix card edges also
+    // raised every heading underline, table rule and code edge inside rendered
+    // documents, because they shared the token. The app chrome got legible and
+    // the reading experience got shouty, which is a bad trade in a reader.
+    // These two are now separate tokens and must stay separate: chrome is an
+    // object edge and has to be seen, a document rule is typography and has to
+    // recede.
+    it("keeps document rules far quieter than chrome borders", () => {
+      for (const theme of [MARKIE_DARK, MARKIE_LIGHT]) {
+        const t = theme.tokens;
+        expect(t.docRule).toBeDefined();
+        for (const behind of [t.background, t.surface]) {
+          // Quieter than the chrome border against the same backdrop...
+          expect(ratio(t.docRule!, behind)).toBeLessThan(ratio(t.border, behind));
+          // ...and genuinely a hairline, not a second edge.
+          expect(ratio(t.docRule!, behind)).toBeLessThan(2);
+        }
+      }
+    });
+
+    it("gives a theme saved before docRule existed a derived hairline", () => {
+      // Custom themes predate this token. Falling back to `border` would give
+      // them the exact problem this split exists to fix, so applyTheme derives
+      // one from the theme's own palette instead.
+      const styles = new Map<string, string>();
+      const root = { style: { setProperty: (k: string, v: string) => styles.set(k, v) } };
+      const doc = globalThis.document;
+      Object.defineProperty(globalThis, "document", {
+        value: { documentElement: root },
+        configurable: true,
+      });
+      try {
+        const { docRule: _drop, ...legacy } = MARKIE_DARK.tokens;
+        applyTheme(legacy as typeof MARKIE_DARK.tokens);
+        const derived = styles.get("--doc-rule");
+        expect(derived).toBeDefined();
+        expect(derived).not.toBe(MARKIE_DARK.tokens.border);
+        expect(derived).toContain("color-mix");
+      } finally {
+        Object.defineProperty(globalThis, "document", { value: doc, configurable: true });
+      }
+    });
+
     it("measures what it claims to measure", () => {
       // A control on the control: these are the published ratios for black on
       // white and for a colour against itself.

@@ -394,7 +394,7 @@ body {
   font-weight: 700;
   margin: 1.5em 0 0.6em;
   padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--doc-rule);
   letter-spacing: 0;
   overflow-wrap: anywhere;
 }
@@ -404,7 +404,7 @@ body {
   font-weight: 650;
   margin: 1.4em 0 0.5em;
   padding-bottom: 0.25em;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--doc-rule);
   letter-spacing: 0;
   overflow-wrap: anywhere;
 }
@@ -496,7 +496,7 @@ body {
   font-size: 0.88em;
   padding: 0.2em 0.4em;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--doc-rule);
   border-radius: 5px;
   color: var(--status-yellow);
 }
@@ -505,7 +505,7 @@ body {
   margin: 1em 0;
   padding: 1em 1.2em;
   background: var(--surface) !important;
-  border: 1px solid var(--border);
+  border: 1px solid var(--doc-rule);
   border-radius: 8px;
   overflow-x: auto;
   max-width: 100%;
@@ -525,7 +525,7 @@ body {
   margin: 2em 0;
   border: none;
   height: 1px;
-  background: var(--border);
+  background: var(--doc-rule);
 }
 
 .markdown-body img {
@@ -548,7 +548,7 @@ body {
   text-align: left;
   padding: 0.6em 1em;
   background: var(--surface);
-  border-bottom: 2px solid var(--border);
+  border-bottom: 2px solid var(--doc-rule);
   font-weight: 600;
   font-size: 0.85em;
   text-transform: uppercase;
@@ -558,7 +558,7 @@ body {
 
 .markdown-body tbody td {
   padding: 0.55em 1em;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--doc-rule);
 }
 
 .markdown-body tbody tr:hover {

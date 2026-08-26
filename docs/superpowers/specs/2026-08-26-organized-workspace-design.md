@@ -159,85 +159,196 @@ Called out per instructions, with the smallest adjustment proposed:
    the plan's first task writes the round-trip suite, which empirically
    documents the real number on this dependency set. If the suite disagrees
    with the briefing, the suite wins.
+6. **Construct frequency on real data** (measured by the plan review against
+   3,866 real markdown files on the owner's machine): hand-wrapped
+   paragraphs 76.5%, front matter 56.2%, raw HTML 29.2%, footnotes 1.2%,
+   table alignment 0.4%, display math 0.0%. Any design that refuses rich
+   editing on wrapped paragraphs or raw HTML refuses most of the corpus;
+   the genuinely hard constructs are statistically negligible. Section 3 is
+   built around these numbers.
 
 ---
 
 ## 3. Workstream 1: Rich-mode round-trip integrity (prerequisite)
 
-### 3.1 Problem
+### 3.1 Problem, sized against real data
 
 TipTap parse-then-serialize is lossy for at least: YAML front matter (becomes
 a setext H2), footnotes (escaped to `\[^1\]`), raw HTML blocks (flattened) and
 HTML comments (deleted), display math (doubled backslashes, dropped `\,`), GFM
-table alignment markers, and soft line breaks (joined). Today a human pressing
-save is the only gate between that damage and the file. Debounced autosave
-removes the gate, so autosave is forbidden until Rich mode either round-trips
-a document losslessly or refuses to edit it.
+table alignment markers, and soft line breaks (hand-wrapped paragraphs joined
+into one line). Today a human pressing save is the only gate between that
+damage and the file. Debounced autosave removes the gate, so autosave is
+forbidden until Rich mode either round-trips a document losslessly or refuses
+to edit it.
 
-### 3.2 Approach: exact probe, front matter shim, explicit override
+Measured construct frequency on 3,866 real markdown files (Section 2.1 point
+6): wrapped paragraphs 76.5%, front matter 56.2%, raw HTML 29.2%, footnotes
+1.2%, table alignment 0.4%, display math 0.0%. A gate that refuses rich
+editing whenever the serializer would change bytes therefore refuses roughly
+80% of real documents, which fails the product bar for the default mode. The
+design is inverted: instead of detecting loss and refusing, Markie prevents
+the loss for the overwhelmingly common cases and refuses only for the
+statistically negligible residue. Three layers, in order of application.
 
-Three pieces, in order of leverage:
+### 3.2 Layer 0: shared extension list (foundation)
 
-1. **Shared extension list.** Extract the inline extension array from
-   `rich-view.tsx:208-241` into `src/lib/rich-extensions.ts`
-   (`richBaseExtensions(): AnyExtension[]`, everything except the
-   Collaboration pair, which stays session-specific in the component). The
-   component, the probe, and the test suite all import the same list, so the
-   probe can never drift from the real editor.
+Extract the inline extension array from `rich-view.tsx:208-241` into
+`src/lib/rich-extensions.ts` (`richBaseExtensions(): AnyExtension[]`,
+everything except the Collaboration pair, which stays session-specific in the
+component). The component, the normalizer in layer 2, the probe in layer 3,
+and the test suite all import the same list, so none of them can drift from
+the real editor.
 
-2. **Front matter shim (lossless for the most common construct).**
-   `src/lib/front-matter.ts` provides `splitFrontMatter(md)` and
-   `joinFrontMatter(fm, body)`. In solo (non-collab) mode, `RichView` strips
-   leading front matter before `setContent` and re-attaches it verbatim in
-   `serializeMarkdown` and `flush`. Front matter is what agents write
-   constantly and what Workstream A's `markie: {project, block}` declaration
-   depends on, so it must survive rich editing byte for byte. Collab mode is
-   unchanged in 0.5.0 (the Yjs room already holds parsed content; noted as a
-   known limitation).
+### 3.3 Layer 1: hold-aside for constructs TipTap destroys entirely
 
-3. **Round-trip probe with refusal.** `src/lib/rich-roundtrip.ts` provides
-   `probeRoundTrip(md)`: build a headless `Editor` from
-   `richBaseExtensions()`, set content (front-matter-stripped), serialize,
-   and compare against `formatMarkdownTables(strippedInput)`. Table
-   re-alignment is Markie's existing deliberate normalization on any rich
-   edit, so it is accepted; any other byte difference means "lossy".
-   `describeLossRisks(md)` names the constructs found (footnotes, raw HTML,
-   HTML comments, display math, alignment markers, wrapped paragraphs) for
-   the banner copy.
+Some constructs do not survive `setContent` at all: YAML front matter, HTML
+comments on their own lines, raw HTML blocks, and footnote definitions.
+Because the editor destroys them on parse, no serialization-side fix can
+recover them. They are extracted from the source before `setContent` and
+restored verbatim at serialization time.
 
-   `RichView` runs the probe when it applies an external value in solo mode
-   and reports the result up. When a document is lossy and not overridden:
-   the rich pane stays mounted but **read-only**, with a banner:
-   "Rich editing is off for this file: it uses formatting the rich editor
-   would rewrite (`<construct list>`). Edit in Source to keep it intact."
-   with actions **Edit in Source** (switches mode) and
-   **Edit rich anyway** (records a per-document override; the user has
-   explicitly consented to normalization). The override persists in
-   `localStorage` under `markie.richoverride.v1:<path>`.
+- `src/lib/front-matter.ts` provides `splitFrontMatter(md)` and
+  `joinFrontMatter(fm, body)` (front matter also matters independently:
+  Workstream A's `markie: {project, block}` declaration and the config
+  document both parse it).
+- `src/lib/rich-hold-aside.ts` generalizes the same idea to the other three
+  construct classes: `extractHoldAsides(body)` scans line by line (skipping
+  fenced code), lifts each block-level HTML comment, raw HTML block, and
+  footnote definition out of the text, and substitutes an opaque single-line
+  placeholder token (plain alphanumeric text such as `markie-hold-1-a3f9c2d1`,
+  chosen because plain words survive TipTap round trip unchanged).
+  `restoreHoldAsides(serialized, holds)` replaces each placeholder with the
+  original bytes on the way back out. Unmatched or duplicated placeholders
+  (the user deleted or copied one in the editor) restore what can be matched
+  and drop the rest; a deleted placeholder deletes the held block, which is
+  the user's visible intent.
 
-   Read-only-rich preserves Markie's viewer-first experience: a lossy
-   document still renders beautifully; it just cannot be silently rewritten.
+In solo (non-collab) mode, `RichView` runs front matter split plus hold-aside
+extraction before `setContent` and the inverse in `serializeMarkdown` and
+`flush`. Collab mode is unchanged in 0.5.0 (the Yjs room already holds parsed
+content; noted as a known limitation).
 
-### 3.3 Autosave gate
+Visible consequence, flagged for review: a held-aside raw HTML block renders
+in the rich pane as its placeholder token instead of TipTap's flattened text.
+Preservation is the release's point (agents and git watch these files), so
+the trade is accepted; an optional polish step may style the placeholder as a
+neutral chip via a ProseMirror decoration, but nothing depends on it.
+
+### 3.4 Layer 2: block-preserving serialization (kills rewrapping loss)
+
+The dominant loss class is reformatting of blocks the user never touched:
+hand-wrapped paragraphs joined, list markers normalized, table alignment
+rewritten. Layer 2 makes serialization a block-level diff against the
+original source instead of a wholesale rewrite:
+
+1. `src/lib/rich-block-preserve.ts` provides `splitTopLevelBlocks(md)`: split
+   the document into top-level blocks on blank lines, treating fenced code
+   (``` and ~~~) as opaque so a blank line inside a fence never splits.
+   Blocks carry their exact source bytes including trailing blank lines, and
+   `blocks.join("") === md` always holds.
+2. `preserveBlocks(originalBody, serializedBody, normalize)` splits both
+   sides and aligns them by normalized equivalence: `normalize(block)` runs
+   the block through the same parse-then-serialize path as the editor (the
+   shared extension list, one reused headless Editor). Alignment is a
+   longest-common-subsequence over `normalize(originalBlock) ===
+   serializedBlock`. For every aligned pair, the original source bytes are
+   emitted verbatim; only genuinely changed blocks (and insertions) get the
+   serializer's output. A coalescing pass extends the same exact-equality
+   test to runs the serializer merges: when a run of consecutive unmatched
+   source blocks normalizes, as one unit, to exactly one output block (a
+   loose list tightened by `tightLists`, an adjacent reference definition
+   inlined), the run is emitted verbatim too. When a block cannot be
+   confidently matched, the serializer's output for it is used; the code
+   never guesses.
+3. Performance: `normalize` results are memoized per block content in an LRU
+   shared across saves, and the cache is warmed once at document load in an
+   idle callback, so steady-state autosave flushes only normalize blocks
+   that actually changed.
+
+Net effect: an edit to one paragraph rewrites that paragraph only; the other
+few hundred blocks, wrapped paragraphs, aligned tables and all, are emitted
+byte for byte. With no edits at all, the output is byte-identical to the
+input by construction. This is what turns the 76.5% wrapped-paragraph corpus
+from "read-only" into "safe".
+
+### 3.5 Layer 3: probe gate, read-only rich, explicit override (last resort)
+
+The probe and refusal machinery survives, but demoted to the residue layers
+1 and 2 cannot save:
+
+- `src/lib/rich-roundtrip.ts` keeps `probeRoundTrip(md)` (raw serializer
+  fidelity, used by the normalizer tests and loss diagnostics) and
+  `describeLossRisks(md)` (names constructs for banner copy). New
+  `probeReconstruction(md)` runs the full zero-edit pipeline: front matter
+  split, hold-aside extraction, parse, serialize, block preservation,
+  restore, and compares the result to the original bytes. By construction it
+  should be byte-identical; where it is not (block-splitter edge cases,
+  exotic nesting, mixed line endings), the pipeline cannot promise fidelity
+  for this document.
+- `RichView` runs `probeReconstruction` when it applies an external value in
+  solo mode. Only on failure does the document fall back to the original
+  design: rich pane mounted but **read-only**, banner "Rich editing is off
+  for this file: it uses formatting the rich editor would rewrite
+  (`<construct list>`). Edit in Source to keep it intact.", actions **Edit
+  in Source** and **Edit rich anyway** (per-document override in
+  `localStorage` under `markie.richoverride.v1:<path>`; explicit consent to
+  normalization).
+- Known residue inside editable documents: constructs that live inline in a
+  block the user edits (an inline footnote reference in an edited paragraph,
+  alignment markers in an edited table) take the serializer's rewrite for
+  that block only. The damage is confined to a block the user deliberately
+  changed, and `describeLossRisks` still names these constructs so the UI
+  can warn without refusing.
+
+Expected fallback share: with zero edits, layer 2 preserves even footnote,
+alignment, and math documents (untouched blocks come back verbatim), so
+what actually gates is structural: reference-style link definitions the
+parser consumes with unrelated content in between, held-aside placeholders
+that cannot keep their position (a comment inside a list item), inline HTML
+whose parse bleeds across blocks, and splitter edge cases. Every one of
+these is rarer than the rarest measured construct (footnotes, 1.2%). The
+plan requires measuring against the real corpus after layers 1 and 2 land
+(Section 3.7); the target is well under 5% of documents read-only in rich,
+the planner's estimate is 1 to 3%, and the measured number is reported to
+the human reviewer. If it lands materially above target, that is stated
+plainly, not papered over.
+
+### 3.6 Autosave gate
 
 Autosave (Section 4) is enabled for a document only when one of:
 - the active editing surface is Source (CodeMirror is byte-faithful), or
-- the probe passed for this document, or
+- `probeReconstruction` passed for this document, or
 - the user recorded the explicit rich override.
 
-While rich is read-only due to a failed probe, `onChange` never fires from the
-rich pane, so no corruption path exists even with autosave armed for source
-edits.
+While rich is read-only due to a failed reconstruction probe, `onChange`
+never fires from the rich pane, so no corruption path exists even with
+autosave armed for source edits.
 
-### 3.4 Tests
+### 3.7 Tests and corpus measurement
 
-A real vitest suite (`src/lib/rich-roundtrip.test.tsx`, jsdom project because
-TipTap needs a DOM) with concrete fixtures for every construct listed in 3.1
-plus the safe cases (headings, lists, task lists, tables without alignment,
-code fences, links, images, math inline). The suite asserts `clean === true`
-for the safe set, `clean === false` plus the correct risk labels for the lossy
-set, and byte-identical front matter through the shim. This is the first task
-of the release and the regression net for everything after it.
+A real vitest suite (`src/lib/rich-roundtrip.test.tsx` plus per-layer suites,
+jsdom project because TipTap needs a DOM) with concrete fixtures for every
+construct listed in 3.1 and the safe cases. Required assertions:
+
+- Per-construct fixtures through the full pipeline: front matter, HTML
+  comments, raw HTML blocks, footnote definitions, wrapped paragraphs,
+  aligned tables each survive a zero-edit open/serialize byte for byte.
+- Byte-identity for untouched blocks: edit one block programmatically,
+  serialize, assert every other block's source bytes are unchanged in the
+  output.
+- Hold-aside edge cases: placeholder deleted in the editor, fences containing
+  comment-looking text, footnote definitions adjacent to references.
+- Splitter invariants: `splitTopLevelBlocks(md).join("") === md` on every
+  fixture, fences never split.
+- Raw probe fixtures (`probeRoundTrip`) still document serializer behavior so
+  a dependency upgrade that changes fidelity fails loudly.
+- Corpus measurement: an opt-in test walks a local directory of real files
+  (env-gated, owner-run) and reports the share of documents failing
+  `probeReconstruction`; it asserts the under-5% target when enabled.
+
+This workstream is the first phase of the release and the regression net for
+everything after it.
 
 ---
 
@@ -272,7 +383,7 @@ createAutosave(opts: {
 
 Wiring lives in a new hook extracted from `page.tsx` (Section 4.7). The hook
 computes `autosaveEligible` from: `filePath !== null`, `docEditable`,
-rich-safety (Section 3.3), no pending disk conflict, and not currently showing
+rich-safety (Section 3.6), no pending disk conflict, and not currently showing
 the disk conflict dialog. `noteChange` is called from `setContent` paths that
 represent edits (not from loads, pulls, or reloads, which set content and
 savedContent together).
@@ -509,8 +620,20 @@ Within one project:
   forever); a merge records `merged_into` and every future derivation routes
   the merged block's members to the target. Decisions survive re-derivation,
   re-indexing, and restarts.
-- All thresholds are tunable via `markie_rules.clustering` because the
-  heuristic will need tuning against real data (Section 5.9).
+- **Bulk-write detection (degenerate-clustering guard)**: `git clone`,
+  branch checkout, and archive extraction rewrite mtimes in bulk (and on
+  those files birthtime is the checkout time too), so time signal is
+  meaningless there and a naive pass collapses a fresh clone into one
+  enormous block. Before accepting a cluster, check its mtime spread: when a
+  cluster holds at least `bulk_min_files` files (default 50) whose mtimes
+  all fall within `bulk_window_minutes` (default 15), treat it as a bulk
+  event and split it into path-based blocks instead (group by top-level
+  subdirectory under the project root, named by that directory). Files later
+  edited individually migrate out of the path block into time clusters
+  through normal incremental re-derivation.
+- All thresholds (including the bulk-write pair) are tunable via
+  `markie_rules.clustering` because the heuristic will need tuning against
+  real data (Section 5.9).
 
 Fallback **project** naming (precedence step 4): the containing git repo's
 directory name when the file is inside a repo (detected main-side, cached per
@@ -686,13 +809,24 @@ other check scripts, no window needed) that opens the real registry
 (`~/Library/Application Support/markie/registry.db`) read-only, loads
 `md_index_cache` + `md_meta`, runs the engine, and reports: project count,
 block count, files per project (top 20), Unfiled count and percentage,
-singleton-block percentage, adaptive-gap activations, and a sample rendered
-tree for the five most recent projects. The release is verified on the
-owner's machine (~12,370 indexed files). Acceptance gates: Unfiled below 20%
-of files, no project over `max_blocks_per_project` after adaptation, and the
-owner confirms the tree "reads like my actual work". If the heuristic
-produces junk, the finding is fixed (tunables, naming rule, container list),
-not papered over; the script is the tuning loop.
+singleton-block percentage, the largest block per project (name, file
+count, share of the project), and a sample rendered tree for the five most
+recent projects. The
+release is verified on the owner's machine (~12,370 indexed files).
+Acceptance gates:
+
+- Unfiled below 20% of files.
+- No project over `max_blocks_per_project` after adaptation.
+- **Concentration**: in any project with at least 10 files, no single block
+  holds more than 40% of the project's files, and no block anywhere holds
+  more than 500 files. This is the specific guard against the fresh-clone
+  degenerate case (bulk-rewritten mtimes collapsing into one enormous
+  block), which the earlier gates cannot see.
+- The owner confirms the tree "reads like my actual work".
+
+If the heuristic produces junk, the finding is fixed (tunables, naming rule,
+bulk-write thresholds, container list), not papered over; the script is the
+tuning loop.
 
 ---
 
@@ -791,15 +925,26 @@ before Alice does inherits documents shared with her.
   sign-in or sign-up that better-auth refuses with "email not verified" flips
   the dialog into the existing `otp-code` view instead of showing a dead
   error. Verifying by code both proves the address and signs the user in.
-- **Existing accounts**: a one-time migration (documented in
-  `server/src/migrate.ts` and the deploy runbook) backfills
-  `emailVerified = 1` for accounts created before the deploy. Rationale:
-  breaking every existing sign-in fails the "must not break" requirement;
-  accounts created during the vulnerability window that already claimed
-  shares cannot be retroactively distinguished, and the residual risk is
-  recorded in the runbook for the owner to review. Any pending (unclaimed)
-  invites remain protected from that point on because every future claim
-  path requires verification.
+- **Existing accounts, auditable grandfathering**: a one-time migration
+  script (`server/src/migrate-verified.ts`, documented in the deploy
+  runbook) backfills `emailVerified = 1` for accounts created before the
+  deploy. Rationale: breaking every existing sign-in fails the "must not
+  break" requirement. The script is **dry-run by default** and prints an
+  audit report for human review before anything is written:
+  1. how many accounts it is about to grandfather (and their creation-date
+     range);
+  2. how many pending invites have already been claimed (converted to
+     shares) versus still pending;
+  3. **flagged rows**: every already-claimed share whose claiming account
+     has `emailVerified = 0` and no OAuth provider account. That is the
+     signature of the takeover vulnerability having actually been
+     exercised. Zero rows are expected; any non-zero result is presented to
+     the owner before grandfathering proceeds, because grandfathering such
+     an account would launder a stolen claim into a legitimate one.
+  Only an explicit `--commit` flag performs the UPDATE, and it re-prints the
+  same report as part of the run. Any pending (unclaimed) invites remain
+  protected from that point on because every future claim path requires
+  verification.
 - **Regression test is the attack itself**: attacker signs up with the
   victim's email (unverified), lists docs, and must NOT receive the pending
   share; the real owner of the address verifies and must receive it.
@@ -850,12 +995,19 @@ before Alice does inherits documents shared with her.
 
 ## 9. Design calls made by the planner (not user-reviewed; catch these in review)
 
-1. **Probe-based rich gating with read-only rich + explicit override**
-   (Section 3.2) rather than construct-blacklisting or forcing Source mode.
-   Consequence: files with hand-wrapped paragraphs are "lossy" and default to
-   read-only rich until overridden.
-2. **Front matter shim in solo mode only**; collab sessions keep today's
-   (lossy) behavior for front matter in 0.5.0.
+1. **Layered preservation, then gating** (Sections 3.2 to 3.5): hold-aside
+   for parse-destroyed constructs, block-preserving serialization for
+   reformat loss, and the read-only probe gate demoted to the residue.
+   Consequence: nearly all documents stay rich-editable; the corpus-measured
+   fallback share must land well under 5% (reviewed against the real number).
+   This shape was directed by plan review after corpus measurement; the
+   concrete mechanics (placeholder format, LCS alignment, normalize cache)
+   are planner calls.
+2. **Hold-aside layer (front matter, comments, raw HTML, footnote
+   definitions) applies in solo mode only**; collab sessions keep today's
+   (lossy) behavior in 0.5.0. Held raw HTML blocks display as a neutral
+   placeholder token in the rich pane rather than flattened text; styling
+   the token is optional polish.
 3. **No blocking dialog for a dirty untitled buffer on close/new**; the draft
    journal plus the recovery strip carry it (Section 4.4).
 4. **History evolves `snapshots.js` in place** (same store, sidecar metadata,
@@ -884,13 +1036,15 @@ before Alice does inherits documents shared with her.
 
 | Risk | Detection |
 |---|---|
-| Autosave writes a lossy rich serialization | The round-trip suite (first task) plus the gating tests; any probe regression fails `rich-roundtrip.test.tsx` |
+| Autosave writes a lossy rich serialization | Per-construct pipeline fixtures, untouched-block byte-identity tests, and the `probeReconstruction` gate; any regression fails the Phase 1 suites |
+| Block preservation misaligns and emits stale bytes | Splitter invariant tests (`join === original`, fences opaque); alignment falls back to serializer output when unmatched, never guesses; corpus measurement reports reconstruction failures |
 | Autosave fights the disk watcher (false conflict strips) | Page-level regression: autosave then watcher tick emits no `onFileChangedOnDisk` handling; `save-file` unit test that `rememberDisk` runs before return |
 | Autosave overwrites an agent's concurrent edit | `save-file` autosave-mode test: disk changed → `code: "disk-changed"`, no write, no dialog |
 | Flush-on-close blocks quit | 2s cap test on the close handshake; draft journal covers the remainder |
 | page.tsx grows | Explicit line-count check in every UI task; extraction tasks land before feature tasks |
 | Registry migration corrupts existing databases | `registry.test.ts` migration cases run v0 → v1 on a populated node:sqlite database; decisions-only-precious invariant tested (dropping derived tables loses nothing) |
-| Taxonomy junk on real data | `scripts/projects-audit.mjs` gates (Unfiled < 20%, block caps) on the owner's 12,370-file index before the release is called done |
+| Taxonomy junk on real data | `scripts/projects-audit.mjs` gates (Unfiled < 20%, block caps, concentration: no block over 40% of a 10+ file project or over 500 files) on the owner's 12,370-file index before the release is called done |
+| Fresh clone collapses into one giant block | Bulk-write mtime-spread detection splits it into path-based blocks (Section 5.4); the concentration gate and largest-block-per-project report catch any residue |
 | Index/meta scan slows the app | Meta extraction is incremental (mtime-gated) and runs after the existing rescan; the audit script reports wall time; budgeting mirrors `mdindex.js` |
 | New IPC breaks the contract | `electron/ipc-contract.test.ts` stays green; every task adding a channel updates all three files in one commit |
 | Server verification locks out existing users | Migration backfill + regression tests for legacy sign-in; the attack test proves the fix |

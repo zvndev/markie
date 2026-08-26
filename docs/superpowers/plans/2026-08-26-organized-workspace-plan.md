@@ -70,7 +70,7 @@ including in parallel worktrees.
 
 | Phase | Tasks | Theme |
 |---|---|---|
-| 1 | 1-4 | Rich-mode round-trip integrity (blocks autosave) |
+| 1 | 1-4B | Rich-mode round-trip: hold-aside, block preservation, last-resort gate (blocks autosave) |
 | 2 | 5-12 | Autosave, flush-on-transition, drafts, history |
 | 3 | 13-23 | Projects: metadata, schema, engine, Files tab, full view, audit |
 | 4 | 24-27 | MCP instructions, write-path conventions, drift fixes, plugin skill |
@@ -82,6 +82,25 @@ including in parallel worktrees.
 
 # Phase 1: Rich-mode round-trip integrity
 
+The design is preservation-first, gate-last (Spec 3.1). Measured against
+3,866 real markdown files: wrapped paragraphs 76.5%, front matter 56.2%, raw
+HTML 29.2%, footnotes 1.2%, table alignment 0.4%, display math 0.0%. A gate
+that refuses rich editing whenever the raw serializer changes bytes would
+open roughly 80% of real documents read-only, which fails the product bar
+for the default mode. So this phase builds three layers:
+
+- **Layer 1 (Task 3)**: hold aside what TipTap destroys on parse (front
+  matter, HTML comments, raw HTML blocks, footnote definitions) and restore
+  it verbatim on serialize.
+- **Layer 2 (Task 4)**: block-preserving serialization. Untouched blocks are
+  emitted from the original source bytes; only blocks the user actually
+  changed get the serializer's output. This is what neutralizes the
+  dominant loss class (rewrapping and reformatting of untouched content).
+- **Layer 3 (Task 4B)**: the read-only gate, banner, and explicit override,
+  demoted to the residue: documents the full pipeline cannot reconstruct
+  byte for byte with zero edits. Target, measured against the real corpus:
+  well under 5% of documents fall back to read-only rich.
+
 ## Task 1: Extract the rich extension list to a shared module
 
 **Files:**
@@ -92,8 +111,8 @@ including in parallel worktrees.
 
 **Interfaces:**
 - Produces: `richBaseExtensions(opts?: { collab?: boolean }): AnyExtension[]`
-  consumed by `rich-view.tsx` (Task 1), `probeRoundTrip` (Task 2), and the
-  round-trip suite (Task 2).
+  consumed by `rich-view.tsx` (Task 1), `probeRoundTrip` and the block
+  normalizer (Tasks 2 and 4), and the round-trip suites (Tasks 2 to 4B).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -149,8 +168,9 @@ Expected: FAIL (module does not exist).
 ```ts
 // src/lib/rich-extensions.ts
 // The one list of extensions the rich editor is built from. The editor
-// component, the round-trip probe, and the round-trip test suite all import
-// this so the probe can never drift from what the real editor does.
+// component, the round-trip probe, the block normalizer, and the round-trip
+// test suites all import this so none of them can drift from what the real
+// editor does.
 import { StarterKit } from "@tiptap/starter-kit";
 import { TableKit } from "@tiptap/extension-table";
 import { TaskList } from "@tiptap/extension-task-list";
@@ -226,8 +246,8 @@ git add src/lib/rich-extensions.ts src/lib/rich-extensions.test.ts src/component
 git commit -m "$(cat <<'MSG'
 Give the rich editor's extension list one home so a probe can trust it
 
-Constraint: The round-trip probe (next task) must test the exact editor
-  configuration, not a copy that can drift.
+Constraint: The round-trip probe and block normalizer (next tasks) must test
+  the exact editor configuration, not a copy that can drift.
 Rejected: Building the probe from a duplicated list | drift is the failure
   mode this release exists to close.
 Confidence: high
@@ -240,7 +260,7 @@ MSG
 
 ---
 
-## Task 2: Round-trip probe and the round-trip test suite
+## Task 2: Serializer-fidelity probe and loss diagnostics
 
 **Files:**
 - Create: `src/lib/rich-roundtrip.ts`
@@ -251,14 +271,24 @@ MSG
 - Consumes: `richBaseExtensions()` from Task 1;
   `formatMarkdownTables` from `src/lib/format-tables.ts`.
 - Produces:
-  - `probeRoundTrip(markdown: string): { clean: boolean; output: string }`
+  - `probeRoundTrip(markdown: string): { clean: boolean; output: string }`,
+    the RAW parse-then-serialize fidelity check. It is the building block
+    for the layer-2 normalizer (Task 4) and the layer-3 reconstruction
+    probe (Task 4B); it is NOT the user-facing gate by itself.
   - `describeLossRisks(markdown: string): LossRisk[]` where
     `type LossRisk = "footnotes" | "raw-html" | "html-comments" |
     "display-math" | "table-alignment" | "wrapped-paragraphs" |
-    "front-matter"`
-  consumed by Task 4 (gating) and Task 7 (autosave eligibility).
+    "front-matter" | "reference-links"`
+    consumed by Task 4B for banner copy and corpus reporting only.
 
 - [ ] **Step 1: Write the failing suite**
+
+The fixture tables pin the RAW serializer's behavior on this exact
+dependency set. The LOSSY table is not a list of documents that will end up
+read-only; layers 1 and 2 (Tasks 3 and 4) neutralize almost all of these.
+The tables exist so a TipTap or tiptap-markdown upgrade that changes
+fidelity fails loudly here instead of silently changing what the layers
+must compensate for.
 
 ```tsx
 // src/lib/rich-roundtrip.test.tsx
@@ -279,10 +309,10 @@ const SAFE: Array<[string, string]> = [
   ["inline math", "Euler: $e^{i\\pi}$ stays.\n"],
 ];
 
-// Fixtures the current dependency set is expected to change. If one of these
-// turns out to round-trip cleanly on this exact TipTap/tiptap-markdown
-// version, move it to SAFE with a dated comment; the suite documents real
-// behavior, and the gating logic reads the probe, not this table.
+// Fixtures the current dependency set is expected to change when serialized
+// raw. If one of these turns out to round-trip cleanly on this exact
+// TipTap/tiptap-markdown version, move it to SAFE with a dated comment; the
+// suite documents real behavior.
 const LOSSY: Array<[string, string]> = [
   ["footnote", "Text with a note.[^1]\n\n[^1]: the note\n"],
   ["raw html block", "<div class=\"warn\">\n<b>html</b>\n</div>\n"],
@@ -290,6 +320,7 @@ const LOSSY: Array<[string, string]> = [
   ["display math", "$$\n\\frac{a}{b} \\, dx\n$$\n"],
   ["table alignment", "| a | b |\n| :--- | ---: |\n| 1 | 2 |\n"],
   ["wrapped paragraph", "This paragraph is wrapped\nacross two lines.\n"],
+  ["reference link", "See [the docs][ref].\n\n[ref]: https://example.com\n"],
 ];
 
 describe("probeRoundTrip", () => {
@@ -300,7 +331,7 @@ describe("probeRoundTrip", () => {
     });
   }
   for (const [name, md] of LOSSY) {
-    it(`detects loss: ${name}`, () => {
+    it(`detects raw loss: ${name}`, () => {
       expect(probeRoundTrip(md).clean).toBe(false);
     });
   }
@@ -321,6 +352,9 @@ describe("describeLossRisks", () => {
     expect(describeLossRisks("$$\nx\n$$\n")).toContain("display-math");
     expect(describeLossRisks("| a |\n| :--- |\n")).toContain("table-alignment");
     expect(describeLossRisks("---\nkey: v\n---\nbody\n")).toContain("front-matter");
+    expect(describeLossRisks("[a][r]\n\n[r]: https://x.example\n")).toContain(
+      "reference-links"
+    );
   });
   it("finds nothing in plain prose", () => {
     expect(describeLossRisks("# T\n\nOne line.\n")).toEqual([]);
@@ -337,10 +371,10 @@ Expected: FAIL (module missing).
 
 ```ts
 // src/lib/rich-roundtrip.ts
-// Answers one question exactly: if the rich editor parsed this document and
-// the user made a single edit, would saving change bytes the user did not
-// touch? The probe is exact (parse + serialize with the real extension list)
-// rather than a heuristic, so it can never miss a new lossy construct.
+// Answers one question exactly: does a raw parse-then-serialize through the
+// real extension list reproduce this markdown byte for byte? Layers 1 and 2
+// are built on top of this primitive; the user-facing gate (Task 4B) uses
+// the full-pipeline probeReconstruction, not this.
 import { Editor } from "@tiptap/core";
 import { richBaseExtensions } from "@/lib/rich-extensions";
 import { formatMarkdownTables } from "@/lib/format-tables";
@@ -352,7 +386,8 @@ export type LossRisk =
   | "html-comments"
   | "display-math"
   | "table-alignment"
-  | "wrapped-paragraphs";
+  | "wrapped-paragraphs"
+  | "reference-links";
 
 // A trailing-newline difference is not damage.
 const norm = (s: string) => s.replace(/\n+$/, "") + "\n";
@@ -382,8 +417,9 @@ export function probeRoundTrip(markdown: string): {
   }
 }
 
-// Names the constructs for the banner. Best-effort and purely informational:
-// gating decisions use probeRoundTrip, never this.
+// Names the constructs for the banner and the corpus report. Best-effort and
+// purely informational: gating decisions use probeReconstruction (Task 4B),
+// never this.
 export function describeLossRisks(markdown: string): LossRisk[] {
   const risks: LossRisk[] = [];
   const md = String(markdown ?? "");
@@ -399,6 +435,8 @@ export function describeLossRisks(markdown: string): LossRisk[] {
   if (/^\$\$/m.test(md)) risks.push("display-math");
   // A delimiter row cell with alignment colons.
   if (/^\s*\|?\s*:-{2,}|-{2,}:\s*(\||$)/m.test(md)) risks.push("table-alignment");
+  // A reference-style link definition (not a footnote definition).
+  if (/^\[(?!\^)[^\]]+\]:\s/m.test(md)) risks.push("reference-links");
   // A paragraph line followed directly by another text line (soft wrap).
   if (/^[^\s>#|`\-*\d![<][^\n]*\n[^\s>#|`\-*\d![<]/m.test(md)) {
     risks.push("wrapped-paragraphs");
@@ -431,16 +469,17 @@ Expected: full suite green.
 ```bash
 git add src/lib/rich-roundtrip.ts src/lib/rich-roundtrip.test.tsx
 git commit -m "$(cat <<'MSG'
-Prove, per document, whether rich editing would rewrite bytes the user never touched
+Pin exactly what the raw rich serializer changes, per construct
 
-Constraint: Autosave (phase 2) is forbidden until lossy documents refuse
-  silent rich serialization; the probe is that gate.
-Rejected: A construct blacklist as the gate | a heuristic misses the next
-  lossy construct, an exact parse+serialize comparison cannot.
+Constraint: Layers 1 and 2 (hold-aside, block preservation) compensate for
+  raw serializer loss; the compensation is only sound while the raw behavior
+  is pinned by tests.
+Rejected: A construct blacklist as the primitive | a heuristic misses the
+  next lossy construct, an exact parse+serialize comparison cannot.
 Confidence: high
 Scope-risk: narrow
-Directive: The gating logic must always read probeRoundTrip, never
-  describeLossRisks, which is banner copy only.
+Directive: Gating decisions must always read probeReconstruction (Task 4B),
+  never describeLossRisks, which is banner copy and reporting only.
 Tested: Round-trip suite over safe and lossy fixture tables.
 Not-tested: Collab-mode documents (probe is solo-mode by design).
 MSG
@@ -448,26 +487,39 @@ MSG
 ```
 
 ---
+## Task 3: Layer 1: hold-aside for front matter and parse-destroyed constructs
 
-## Task 3: Front matter shim (lossless front matter through rich edits)
+TipTap destroys some constructs at `setContent` time (front matter becomes a
+mangled heading; HTML comments are deleted; raw HTML blocks are flattened;
+footnote definitions are escaped), so no serialization-side fix can recover
+them. This task lifts them out of the text before the editor sees it and
+puts them back verbatim on the way out. Solo mode only; collab rooms keep
+today's behavior (Spec 3.3).
 
 **Files:**
 - Create: `src/lib/front-matter.ts`
 - Create: `src/lib/front-matter.test.ts`
+- Create: `src/lib/rich-hold-aside.ts`
+- Create: `src/lib/rich-hold-aside.test.ts`
 - Modify: `src/components/rich-view.tsx` (external-value application effect
   at 451-461, `serializeMarkdown` at 76-83, `flush` at 282-299)
-- Modify: `src/lib/rich-roundtrip.test.tsx` (front matter fixtures become
-  clean through the shim path)
+- Modify: `src/lib/rich-roundtrip.test.tsx` (pipeline fixtures for the held
+  constructs)
 
 **Interfaces:**
 - Produces:
   - `splitFrontMatter(md: string): { frontMatter: string; body: string }`
   - `joinFrontMatter(frontMatter: string, body: string): string`
-  consumed by `rich-view.tsx` (this task), `probe` callers (Task 4), the MCP
-  helper mirror (Task 24), and the meta extractor's spec (Task 13 keeps its
-  own CJS copy; a parity test ties them, see Task 13 Step 1).
+    consumed by `rich-view.tsx` (this task), `probeReconstruction` (Task
+    4B), the MCP helper mirror (Task 24), and the meta extractor's spec
+    (Task 13 keeps its own CJS copy; a parity test ties them, see Task 13
+    Step 1).
+  - `extractHoldAsides(body: string): { text: string; holds: HoldAside[] }`
+    and `restoreHoldAsides(text: string, holds: HoldAside[]): string`
+    consumed by `rich-view.tsx` (this task) and `probeReconstruction`
+    (Task 4B).
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the failing front matter tests**
 
 ```ts
 // src/lib/front-matter.test.ts
@@ -512,12 +564,89 @@ describe("splitFrontMatter", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [ ] **Step 2: Write the failing hold-aside tests**
 
-Run: `npm test -- src/lib/front-matter.test.ts`
-Expected: FAIL (module missing).
+```ts
+// src/lib/rich-hold-aside.test.ts
+import { describe, expect, it } from "vitest";
+import { extractHoldAsides, restoreHoldAsides } from "@/lib/rich-hold-aside";
 
-- [ ] **Step 3: Implement**
+const roundTrip = (md: string) => {
+  const { text, holds } = extractHoldAsides(md);
+  return { text, holds, back: restoreHoldAsides(text, holds) };
+};
+
+describe("extractHoldAsides", () => {
+  it("lifts a block-level HTML comment and restores it verbatim", () => {
+    const md = "before\n\n<!-- keep\nme -->\n\nafter\n";
+    const { text, holds, back } = roundTrip(md);
+    expect(holds).toHaveLength(1);
+    expect(holds[0].kind).toBe("html-comment");
+    expect(text).not.toContain("<!--");
+    expect(text).toMatch(/markie-hold-\d+-[0-9a-f]{8}/);
+    expect(back).toBe(md);
+  });
+
+  it("lifts a raw HTML block (start tag to blank line) verbatim", () => {
+    const md = "intro\n\n<div class=\"warn\">\n<b>html</b>\n</div>\n\noutro\n";
+    const { text, holds, back } = roundTrip(md);
+    expect(holds).toHaveLength(1);
+    expect(holds[0].kind).toBe("raw-html");
+    expect(holds[0].source).toBe("<div class=\"warn\">\n<b>html</b>\n</div>\n");
+    expect(back).toBe(md);
+  });
+
+  it("lifts a footnote definition with its indented continuation", () => {
+    const md = "Text.[^1]\n\n[^1]: the note\n    continued\n\nmore\n";
+    const { text, holds, back } = roundTrip(md);
+    expect(holds).toHaveLength(1);
+    expect(holds[0].kind).toBe("footnote-def");
+    expect(holds[0].source).toBe("[^1]: the note\n    continued\n");
+    expect(back).toBe(md);
+  });
+
+  it("never extracts from inside fenced code", () => {
+    const md = "```html\n<!-- not a comment to us -->\n<div>x</div>\n```\n";
+    const { holds, back } = roundTrip(md);
+    expect(holds).toHaveLength(0);
+    expect(back).toBe(md);
+  });
+
+  it("leaves inline HTML and inline footnote references alone", () => {
+    const md = "Some <b>bold</b> text with a note[^1] inline.\n";
+    const { holds, text } = extractHoldAsides(md);
+    expect(holds).toHaveLength(0);
+    expect(text).toBe(md);
+  });
+
+  it("a deleted placeholder deletes the held block", () => {
+    const md = "a\n\n<!-- gone -->\n\nb\n";
+    const { text, holds } = extractHoldAsides(md);
+    const edited = text.replace(/markie-hold-\d+-[0-9a-f]{8}\n\n/, "");
+    expect(restoreHoldAsides(edited, holds)).not.toContain("<!--");
+  });
+
+  it("extracts multiple constructs in order with distinct tokens", () => {
+    const md = "<!-- one -->\n\n<div>\nx\n</div>\n\n[^a]: n\n";
+    const { text, holds, back } = roundTrip(md);
+    expect(holds.map((h) => h.kind)).toEqual([
+      "html-comment",
+      "raw-html",
+      "footnote-def",
+    ]);
+    expect(new Set(holds.map((h) => h.token)).size).toBe(3);
+    expect(back).toBe(md);
+    expect(text).not.toMatch(/[<>\[]/);
+  });
+});
+```
+
+- [ ] **Step 3: Run to verify failure**
+
+Run: `npm test -- src/lib/front-matter.test.ts src/lib/rich-hold-aside.test.ts`
+Expected: FAIL (modules missing).
+
+- [ ] **Step 4: Implement front-matter.ts**
 
 ```ts
 // src/lib/front-matter.ts
@@ -545,16 +674,140 @@ export function joinFrontMatter(frontMatter: string, body: string): string {
 }
 ```
 
-- [ ] **Step 4: Wire the shim into RichView (solo mode only)**
+- [ ] **Step 5: Implement rich-hold-aside.ts**
+
+```ts
+// src/lib/rich-hold-aside.ts
+// Constructs TipTap destroys at parse time are lifted out of the text before
+// setContent and restored verbatim at serialize time. The placeholder is a
+// plain alphanumeric token because plain words are the one thing guaranteed
+// to survive a markdown round trip unchanged. Scope is block-level only:
+// inline HTML and inline footnote references stay in the text (layer 2
+// protects them in untouched blocks; an edited block takes the serializer's
+// rewrite, confined to that block).
+
+export type HoldKind = "html-comment" | "raw-html" | "footnote-def";
+
+export interface HoldAside {
+  token: string; // e.g. "markie-hold-0-3fa9c2d1", always its own paragraph
+  source: string; // original bytes, verbatim, including line endings
+  kind: HoldKind;
+}
+
+// djb2; only used to make tokens visually distinct and stable per content.
+function hash8(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(16).padStart(8, "0");
+}
+
+const FENCE_OPEN = /^\s{0,3}(`{3,}|~{3,})/;
+const COMMENT_OPEN = /^\s{0,3}<!--/;
+const HTML_OPEN = /^\s{0,3}<[a-zA-Z!/]/;
+const FOOTNOTE_DEF = /^\[\^[^\]]+\]:/;
+const CONTINUATION = /^(?: {4}|\t)\S/;
+
+export function extractHoldAsides(body: string): {
+  text: string;
+  holds: HoldAside[];
+} {
+  const lines = body.split(/(?<=\n)/);
+  const holds: HoldAside[] = [];
+  const out: string[] = [];
+  let fenceClose: RegExp | null = null;
+  let i = 0;
+
+  const take = (kind: HoldKind, from: number, to: number) => {
+    // [from, to) line range, exclusive of `to`
+    const source = lines.slice(from, to).join("");
+    const token = `markie-hold-${holds.length}-${hash8(source)}`;
+    holds.push({ token, source, kind });
+    // The token replaces the block and keeps its position as a paragraph.
+    const eol = source.endsWith("\r\n") ? "\r\n" : "\n";
+    out.push(token + eol);
+    return to;
+  };
+
+  while (i < lines.length) {
+    const bare = lines[i].replace(/\r?\n$/, "");
+    if (fenceClose) {
+      out.push(lines[i]);
+      if (fenceClose.test(bare)) fenceClose = null;
+      i++;
+      continue;
+    }
+    const fence = FENCE_OPEN.exec(bare);
+    if (fence) {
+      const ch = fence[1][0] === "`" ? "`" : "~";
+      fenceClose = new RegExp(`^\\s{0,3}\\${ch}{${fence[1].length},}\\s*$`);
+      out.push(lines[i]);
+      i++;
+      continue;
+    }
+    if (COMMENT_OPEN.test(bare)) {
+      let j = i;
+      while (j < lines.length && !lines[j].includes("-->")) j++;
+      i = take("html-comment", i, Math.min(j + 1, lines.length));
+      continue;
+    }
+    if (FOOTNOTE_DEF.test(bare)) {
+      let j = i + 1;
+      while (j < lines.length && CONTINUATION.test(lines[j])) j++;
+      i = take("footnote-def", i, j);
+      continue;
+    }
+    if (HTML_OPEN.test(bare)) {
+      // CommonMark-style HTML block: runs to the next blank line.
+      let j = i + 1;
+      while (j < lines.length && lines[j].trim() !== "") j++;
+      i = take("raw-html", i, j);
+      continue;
+    }
+    out.push(lines[i]);
+    i++;
+  }
+  return { text: out.join(""), holds };
+}
+
+export function restoreHoldAsides(text: string, holds: HoldAside[]): string {
+  let result = text;
+  for (const hold of holds) {
+    // Match the token as a whole line WITHOUT consuming its newline (the
+    // line terminator stays in place so separators survive). Replace every
+    // occurrence (a duplicated token duplicates the block, which is the
+    // user's visible intent). A missing token means the user deleted the
+    // block; it stays deleted. An indented or otherwise altered token line
+    // deliberately does NOT match: restoration fails closed and the
+    // reconstruction probe (Task 4B) gates the document instead.
+    const line = new RegExp(`^${hold.token}$`, "gm");
+    const src = hold.source.replace(/\r?\n$/, "");
+    result = result.replace(line, () => src);
+  }
+  return result;
+}
+```
+
+Note on `restoreHoldAsides`: the replacement uses a function argument so `$`
+characters in the held source are never treated as replacement patterns.
+Reconcile the exact newline handling against the tests in Step 2 (the tests
+are the contract: extraction plus restoration with zero edits must be
+byte-identical); adjust the implementation, not the tests.
+
+- [ ] **Step 6: Wire both shims into RichView (solo mode only)**
 
 In `rich-view.tsx`:
 
-1. Add a ref near the other refs:
+1. Add refs near the other refs:
 
 ```ts
-  // Front matter held aside while the body is in the editor (solo mode).
-  // Collab rooms hold parsed content already; the shim does not apply there.
+  // Layer 1 state: front matter and held constructs while the body is in
+  // the editor (solo mode). Collab rooms hold parsed content already; the
+  // shims do not apply there.
   const frontMatterRef = useRef("");
+  const holdsRef = useRef<HoldAside[]>([]);
+  // Layer 2 baseline (Task 4): the placeholder-space source the current
+  // editor content came from.
+  const baselineBodyRef = useRef("");
 ```
 
 2. In the external-value effect (currently lines 451-461), strip before
@@ -566,121 +819,710 @@ In `rich-view.tsx`:
     if (value === lastEmitted.current) return;
     lastEmitted.current = value;
     const { frontMatter, body } = splitFrontMatter(value);
+    const held = extractHoldAsides(body);
     frontMatterRef.current = frontMatter;
+    holdsRef.current = held.holds;
+    baselineBodyRef.current = held.text;
     applyingExternal.current = true;
     try {
-      editor.commands.setContent(body, { emitUpdate: false });
+      editor.commands.setContent(held.text, { emitUpdate: false });
     } finally {
       applyingExternal.current = false;
     }
   }, [value, editor, session]);
 ```
 
-3. Change `serializeMarkdown` to take the held front matter (make it a
-   closure-level helper or pass the ref value):
+3. Change `serializeMarkdown` into the pipeline (Task 4 inserts block
+   preservation in the middle; at this task's stage it is identity):
 
 ```ts
-function serializeMarkdown(editor: Editor, frontMatter = ""): string {
+function serializeMarkdown(
+  editor: Editor,
+  ctx: { frontMatter: string; holds: HoldAside[] }
+): string {
   const raw = (
     editor.storage as unknown as { markdown: { getMarkdown(): string } }
   ).markdown.getMarkdown();
-  return joinFrontMatter(frontMatter, formatMarkdownTables(raw));
+  const formatted = formatMarkdownTables(raw);
+  return joinFrontMatter(
+    ctx.frontMatter,
+    restoreHoldAsides(formatted, ctx.holds)
+  );
 }
 ```
 
 4. Every call site inside the component passes
-   `session ? "" : frontMatterRef.current` (the debounce in `onUpdate` and
-   `flush`). The initial `content:` for solo mode also becomes the stripped
-   body: change `content: session ? undefined : value` to
-   `content: session ? undefined : splitFrontMatter(value).body` and
-   initialize `frontMatterRef` from the initial value with a `useState`
-   initializer:
+   `session ? { frontMatter: "", holds: [] } : { frontMatter: frontMatterRef.current, holds: holdsRef.current }`
+   (the debounce in `onUpdate` and `flush`). The initial `content:` for solo
+   mode also becomes the processed body: change
+   `content: session ? undefined : value` to use a `useState` initializer:
 
 ```ts
-  const [initialSplit] = useState(() => splitFrontMatter(value));
-  // ... content: session ? undefined : initialSplit.body,
-  // and in the same initializer scope: frontMatterRef.current = initialSplit.frontMatter
+  const [initialSplit] = useState(() => {
+    const { frontMatter, body } = splitFrontMatter(value);
+    const held = extractHoldAsides(body);
+    return { frontMatter, held };
+  });
+  // content: session ? undefined : initialSplit.held.text,
 ```
 
-(Set `frontMatterRef.current = initialSplit.frontMatter` in a `useEffect`
-that runs once, or initialize the ref lazily; either is fine as long as the
-first serialize sees it.)
+and initialize `frontMatterRef` / `holdsRef` / `baselineBodyRef` from
+`initialSplit` in a run-once `useEffect` (or lazily) so the first serialize
+sees them.
 
-- [ ] **Step 5: Extend the round-trip suite through the shim**
+- [ ] **Step 7: Extend the round-trip suite through the shims**
 
 Add to `src/lib/rich-roundtrip.test.tsx`:
 
 ```tsx
 import { splitFrontMatter, joinFrontMatter } from "@/lib/front-matter";
+import { extractHoldAsides, restoreHoldAsides } from "@/lib/rich-hold-aside";
 
-describe("front matter shim", () => {
-  it("carries front matter through a probe untouched", () => {
-    const md = "---\nmarkie:\n  project: Markie\n  block: organized-workspace\n---\n# Doc\n\nBody.\n";
-    const { frontMatter, body } = splitFrontMatter(md);
-    const res = probeRoundTrip(body);
-    expect(res.clean).toBe(true);
-    expect(joinFrontMatter(frontMatter, res.output)).toBe(
-      joinFrontMatter(frontMatter, body)
-    );
-  });
+describe("layer 1 pipeline (hold-aside)", () => {
+  const PRESERVED: Array<[string, string]> = [
+    [
+      "front matter",
+      "---\nmarkie:\n  project: Markie\n  block: organized-workspace\n---\n# Doc\n\nBody.\n",
+    ],
+    ["html comment", "before\n\n<!-- keep me -->\n\nafter\n"],
+    ["raw html block", "intro\n\n<div class=\"warn\">\n<b>html</b>\n</div>\n\noutro\n"],
+    ["footnote definition", "Note here.\n\n[^1]: the note\n"],
+  ];
+
+  for (const [name, md] of PRESERVED) {
+    it(`survives a zero-edit round trip: ${name}`, () => {
+      const { frontMatter, body } = splitFrontMatter(md);
+      const { text, holds } = extractHoldAsides(body);
+      const res = probeRoundTrip(text);
+      expect(res.clean, `placeholder text was:\n${text}\ngot:\n${res.output}`).toBe(true);
+      expect(
+        joinFrontMatter(frontMatter, restoreHoldAsides(res.output, holds))
+      ).toBe(md);
+    });
+  }
 });
 ```
 
-- [ ] **Step 6: Run everything**
+Note: these fixtures pass `probeRoundTrip` on the placeholder text because
+the held construct is gone and what remains is plain markdown. If one fails
+because surrounding content is itself raw-lossy (for example wrapped
+paragraphs), simplify the fixture's surroundings; layer 2 (Task 4) covers
+that class and its suite tests the combination.
+
+- [ ] **Step 8: Run everything**
 
 Run: `npm test && npm run lint && npm run build`
 Expected: PASS, including all existing rich-view-dependent page tests (the
-shim must be invisible for documents without front matter).
+shims must be invisible for documents without these constructs).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/lib/front-matter.ts src/lib/front-matter.test.ts src/components/rich-view.tsx src/lib/rich-roundtrip.test.tsx
+git add src/lib/front-matter.ts src/lib/front-matter.test.ts src/lib/rich-hold-aside.ts src/lib/rich-hold-aside.test.ts src/components/rich-view.tsx src/lib/rich-roundtrip.test.tsx
 git commit -m "$(cat <<'MSG'
-Hold front matter aside so rich edits can never mangle it
+Hold aside what TipTap destroys so rich edits can never mangle it
 
-Constraint: Agents declare markie:{project,block} in front matter and the
-  0.5.0 taxonomy reads it back; one rich edit destroying it would break the
-  headline feature.
-Rejected: Teaching TipTap a front-matter node | far larger surface, and the
-  bytes must be preserved verbatim, which a parse cannot promise.
+Constraint: Front matter, comments, raw HTML, and footnote definitions are
+  destroyed at parse time, so no serializer-side fix can recover them; they
+  must never enter the editor as parseable content.
+Rejected: Teaching TipTap nodes for each construct | far larger surface, and
+  the bytes must be preserved verbatim, which a parse cannot promise.
 Confidence: high
 Scope-risk: moderate
-Directive: The shim is solo-mode only; collab rooms keep parsed content.
-Tested: front-matter unit suite, shim round-trip case, full vitest suite.
-Not-tested: Front matter behavior inside live collab sessions (unchanged,
-  known-lossy, documented in the spec).
+Directive: The shims are solo-mode only; collab rooms keep parsed content.
+Tested: front-matter and hold-aside unit suites, layer-1 pipeline fixtures,
+  full vitest suite.
+Not-tested: Behavior inside live collab sessions (unchanged, known-lossy,
+  documented in the spec); placeholder rendering aesthetics.
 MSG
 )"
 ```
 
 ---
 
-## Task 4: Gate rich editing on the probe, with an explicit override
+## Task 4: Layer 2: block-preserving serialization
+
+The dominant raw-serializer loss is reformatting of blocks the user never
+touched: 76.5% of real files have hand-wrapped paragraphs that the
+serializer joins. This task makes serialization a block-level diff against
+the original source: for every top-level block whose parsed form is
+unchanged, the ORIGINAL SOURCE BYTES are emitted verbatim; only blocks the
+user actually changed get the serializer's output. With zero edits the
+output is byte-identical to the input by construction.
 
 **Files:**
+- Create: `src/lib/rich-block-preserve.ts`
+- Create: `src/lib/rich-block-preserve.test.tsx` (jsdom: the normalizer
+  needs a TipTap Editor)
+- Modify: `src/lib/rich-roundtrip.ts` (add `createBlockNormalizer`)
+- Modify: `src/components/rich-view.tsx` (insert preservation into the
+  serialize pipeline)
+
+**Interfaces:**
+- Consumes: `richBaseExtensions` (Task 1), `formatMarkdownTables`,
+  `probeRoundTrip` internals pattern (Task 2).
+- Produces:
+  - `splitTopLevelBlocks(md: string): SourceBlock[]` and
+    `joinBlocks(blocks: SourceBlock[]): string` where
+    `interface SourceBlock { text: string; trailing: string }`
+    (`text` is the block's source bytes, `trailing` the blank-line bytes
+    after it; `joinBlocks(splitTopLevelBlocks(md)) === md` always).
+  - `preserveBlocks(originalMd: string, serializedMd: string, normalize:
+    (block: string) => string): string`
+  - `createBlockNormalizer(): { normalize(block: string): string;
+    destroy(): void }` (in `rich-roundtrip.ts`; a reused headless Editor
+    plus a memo cache).
+  Consumed by `rich-view.tsx` (this task) and `probeReconstruction`
+  (Task 4B).
+
+- [ ] **Step 1: Write the failing splitter tests**
+
+```tsx
+// src/lib/rich-block-preserve.test.tsx
+import { describe, expect, it } from "vitest";
+import {
+  splitTopLevelBlocks,
+  joinBlocks,
+  preserveBlocks,
+} from "@/lib/rich-block-preserve";
+import { createBlockNormalizer } from "@/lib/rich-roundtrip";
+
+const SPLIT_FIXTURES: Array<[string, string, number]> = [
+  ["two paragraphs", "one\n\ntwo\n", 2],
+  ["wrapped paragraph is one block", "line a\nline b\n\nnext\n", 2],
+  ["blank line inside a fence does not split", "```\na\n\nb\n```\n\npara\n", 2],
+  ["tilde fence", "~~~\nx\n\ny\n~~~\n", 1],
+  ["unterminated fence swallows the rest", "```\na\n\nb\n", 1],
+  ["multiple blank separators preserved", "a\n\n\n\nb\n", 2],
+  ["no trailing newline", "a\n\nb", 2],
+  ["CRLF document", "a\r\n\r\nb\r\n", 2],
+  ["leading blank lines", "\n\na\n", 1],
+];
+
+describe("splitTopLevelBlocks", () => {
+  for (const [name, md, count] of SPLIT_FIXTURES) {
+    it(`splits and rejoins losslessly: ${name}`, () => {
+      const blocks = splitTopLevelBlocks(md);
+      expect(joinBlocks(blocks)).toBe(md);
+      expect(blocks.filter((b) => b.text.trim() !== "").length).toBe(count);
+    });
+  }
+});
+
+describe("preserveBlocks", () => {
+  // A normalize stub for pure splitter-level tests: identity modulo
+  // trailing newlines, with one designated rewrite.
+  const stubNormalize = (rewrites: Record<string, string>) => (b: string) => {
+    const key = b.replace(/\n+$/, "");
+    return (rewrites[key] ?? key);
+  };
+
+  it("emits original bytes for every unchanged block", () => {
+    const original = "wrapped\nparagraph\n\nsecond block\n";
+    // The serializer joined the wrap; normalize(original block) matches it.
+    const serialized = "wrapped paragraph\n\nsecond block\n";
+    const out = preserveBlocks(
+      original,
+      serialized,
+      stubNormalize({ "wrapped\nparagraph": "wrapped paragraph" })
+    );
+    expect(out).toBe(original);
+  });
+
+  it("keeps serializer output only for the changed block", () => {
+    const original = "wrapped\none\n\nwrapped\ntwo\n\nwrapped\nthree\n";
+    // The user edited block two; blocks one and three serialize to their
+    // normalized (joined) forms, block two to new content.
+    const serialized = "wrapped one\n\nEDITED two\n\nwrapped three\n";
+    const out = preserveBlocks(
+      original,
+      serialized,
+      stubNormalize({
+        "wrapped\none": "wrapped one",
+        "wrapped\ntwo": "wrapped two",
+        "wrapped\nthree": "wrapped three",
+      })
+    );
+    expect(out).toBe("wrapped\none\n\nEDITED two\n\nwrapped\nthree\n");
+  });
+
+  it("a deleted block stays deleted", () => {
+    const original = "a\n\nb\n\nc\n";
+    const serialized = "a\n\nc\n";
+    const out = preserveBlocks(original, serialized, stubNormalize({}));
+    expect(out).toBe("a\n\nc\n");
+  });
+
+  it("an inserted block uses serializer output", () => {
+    const original = "a\n\nc\n";
+    const serialized = "a\n\nNEW\n\nc\n";
+    const out = preserveBlocks(original, serialized, stubNormalize({}));
+    expect(out).toBe("a\n\nNEW\n\nc\n");
+  });
+
+  it("coalesces a run of source blocks the serializer merged", () => {
+    // tightLists joins a loose list into one output block; the unchanged
+    // run must still come back verbatim.
+    const original = "- one\n\n- two\n";
+    const serialized = "- one\n- two\n";
+    const normalize = (b: string) => {
+      const key = b.replace(/\n+$/, "");
+      if (key === "- one\n\n- two") return "- one\n- two";
+      return key;
+    };
+    expect(preserveBlocks(original, serialized, normalize)).toBe(original);
+  });
+
+  it("falls back to serializer output when nothing matches (never guesses)", () => {
+    const original = "See [docs][ref].\n\n[ref]: https://example.com\n";
+    const serialized = "See [docs](https://example.com).\n";
+    const out = preserveBlocks(original, serialized, stubNormalize({}));
+    expect(out).toBe(serialized);
+  });
+});
+
+describe("createBlockNormalizer (real editor)", () => {
+  it("normalizes a wrapped paragraph to its serialized form and memoizes", () => {
+    const { normalize, destroy } = createBlockNormalizer();
+    try {
+      const a = normalize("wrapped\nparagraph");
+      expect(a).toBe("wrapped paragraph");
+      expect(normalize("wrapped\nparagraph")).toBe(a);
+    } finally {
+      destroy();
+    }
+  });
+
+  it("end to end: one-block edit leaves every other block byte-identical", () => {
+    const { normalize, destroy } = createBlockNormalizer();
+    try {
+      const original =
+        "First para is\nwrapped by hand.\n\n| a | b |\n| :--- | ---: |\n| 1 | 2 |\n\nThird para also\nwrapped.\n";
+      // Simulate the serializer's whole-document output after the user
+      // edited only the third paragraph: blocks 1 and 2 serialize to their
+      // normalized forms, block 3 to new text.
+      const serialized = [
+        normalize("First para is\nwrapped by hand."),
+        normalize("| a | b |\n| :--- | ---: |\n| 1 | 2 |"),
+        "Third para rewritten.",
+      ].join("\n\n") + "\n";
+      const out = preserveBlocks(original, serialized, normalize);
+      expect(out).toBe(
+        "First para is\nwrapped by hand.\n\n| a | b |\n| :--- | ---: |\n| 1 | 2 |\n\nThird para rewritten.\n"
+      );
+    } finally {
+      destroy();
+    }
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `npm test -- src/lib/rich-block-preserve.test.tsx`
+Expected: FAIL (modules missing).
+
+- [ ] **Step 3: Implement the splitter and the preserver**
+
+```ts
+// src/lib/rich-block-preserve.ts
+// Serialization as a block-level diff. The serializer's whole-document
+// output is compared block by block against the original source; a block
+// whose normalized original equals the serializer's block is UNCHANGED and
+// its original bytes are emitted verbatim. Only genuinely changed blocks
+// (and insertions) take the serializer's rewrite. When alignment is not
+// confident the serializer's output is used; the code never guesses.
+
+export interface SourceBlock {
+  text: string; // the block's source bytes (includes internal newlines)
+  trailing: string; // the blank-line bytes that followed it ("" for last)
+}
+
+const FENCE_OPEN = /^\s{0,3}(`{3,}|~{3,})/;
+
+export function splitTopLevelBlocks(md: string): SourceBlock[] {
+  const out: SourceBlock[] = [];
+  const lines = md.split(/(?<=\n)/);
+  let text = "";
+  let trailing = "";
+  let fenceClose: RegExp | null = null;
+  const push = () => {
+    if (text !== "" || trailing !== "") out.push({ text, trailing });
+    text = "";
+    trailing = "";
+  };
+  for (const line of lines) {
+    const bare = line.replace(/\r?\n$/, "");
+    if (fenceClose) {
+      text += line;
+      if (fenceClose.test(bare)) fenceClose = null;
+      continue;
+    }
+    if (bare.trim() === "") {
+      trailing += line;
+      continue;
+    }
+    if (trailing !== "") push(); // content after blank(s): new block
+    const fence = FENCE_OPEN.exec(bare);
+    if (fence) {
+      const ch = fence[1][0] === "`" ? "`" : "~";
+      fenceClose = new RegExp(`^\\s{0,3}\\${ch}{${fence[1].length},}\\s*$`);
+    }
+    text += line;
+  }
+  push();
+  return out;
+}
+
+export function joinBlocks(blocks: SourceBlock[]): string {
+  return blocks.map((b) => b.text + b.trailing).join("");
+}
+
+const key = (s: string) => s.replace(/\r?\n+$/, "");
+
+export function preserveBlocks(
+  originalMd: string,
+  serializedMd: string,
+  normalize: (block: string) => string
+): string {
+  const orig = splitTopLevelBlocks(originalMd).filter((b) => b.text !== "");
+  const out = splitTopLevelBlocks(serializedMd).filter((b) => b.text !== "");
+  const leading = splitTopLevelBlocks(originalMd).find((b) => b.text === "");
+
+  // eq(i, j): is out[j] exactly what serializing orig[i] unchanged yields?
+  const normed = orig.map((b) => key(normalize(key(b.text))));
+  const outKeys = out.map((b) => key(b.text));
+  const eq = (i: number, j: number) =>
+    key(orig[i].text) === outKeys[j] || normed[i] === outKeys[j];
+
+  // LCS alignment (guarded: fall back to greedy two-pointer when the DP
+  // table would exceed ~4M cells).
+  const match = lcsMatch(orig.length, out.length, eq);
+
+  // Coalescing pass: an output block the serializer produced by MERGING a
+  // run of consecutive unmatched source blocks (loose list joined by
+  // tightLists, for example) still counts as unchanged when normalizing the
+  // concatenated run reproduces it exactly.
+  for (let j = 0; j < out.length; j++) {
+    if (match.byOut[j] !== -1) continue;
+    for (let i = 0; i < orig.length; i++) {
+      if (match.byOrig[i] !== -1) continue;
+      let run = "";
+      for (let k = i; k < orig.length && match.byOrig[k] === -1; k++) {
+        run += orig[k].text + orig[k].trailing;
+        if (key(normalize(key(run))) === outKeys[j]) {
+          match.byOut[j] = i;
+          match.runEnd[j] = k;
+          for (let m = i; m <= k; m++) match.byOrig[m] = j;
+          break;
+        }
+      }
+      if (match.byOut[j] !== -1) break;
+    }
+  }
+
+  let result = leading ? leading.trailing : "";
+  for (let j = 0; j < out.length; j++) {
+    const i = match.byOut[j];
+    if (i !== -1) {
+      const end = match.runEnd[j] ?? i;
+      for (let m = i; m <= end; m++) {
+        result += orig[m].text + (m < end ? orig[m].trailing : "");
+      }
+      result += pickTrailing(orig[end], out[j], j === out.length - 1);
+    } else {
+      result += out[j].text + out[j].trailing;
+    }
+  }
+  return result;
+}
+
+// Separator bytes: prefer the original block's own trailing bytes so blank
+// runs like "a\n\n\n\nb" survive; when the original had none (it was the
+// last block) fall back to the serializer's separator.
+function pickTrailing(
+  origBlock: SourceBlock,
+  outBlock: SourceBlock,
+  isLast: boolean
+): string {
+  if (isLast) return origBlock.trailing !== "" ? origBlock.trailing : outBlock.trailing;
+  return origBlock.trailing !== "" ? origBlock.trailing : outBlock.trailing;
+}
+
+interface Match {
+  byOut: number[]; // out index -> orig index (or -1)
+  byOrig: number[]; // orig index -> out index (or -1)
+  runEnd: Record<number, number>; // out index -> last orig index of a run
+}
+
+function lcsMatch(
+  n: number,
+  m: number,
+  eq: (i: number, j: number) => boolean
+): Match {
+  const byOut = new Array(m).fill(-1);
+  const byOrig = new Array(n).fill(-1);
+  const runEnd: Record<number, number> = {};
+  if (n * m > 4_000_000) {
+    // Greedy fallback for pathological sizes.
+    let i = 0;
+    for (let j = 0; j < m; j++) {
+      while (i < n && !eq(i, j)) i++;
+      if (i < n) {
+        byOut[j] = i;
+        byOrig[i] = j;
+        i++;
+      } else {
+        i = 0; // rewind once; unmatched stays -1 if truly absent
+      }
+    }
+    return { byOut, byOrig, runEnd };
+  }
+  // Standard LCS DP over lengths, then backtrack.
+  const dp: Int32Array[] = [];
+  for (let i = 0; i <= n; i++) dp.push(new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = eq(i, j)
+        ? dp[i + 1][j + 1] + 1
+        : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (eq(i, j)) {
+      byOut[j] = i;
+      byOrig[i] = j;
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+    else j++;
+  }
+  return { byOut, byOrig, runEnd };
+}
+```
+
+The sketch above is the intended shape; the Step 1 tests are the contract.
+In particular `joinBlocks(splitTopLevelBlocks(md)) === md` must hold for
+every fixture, separator bytes must come from the original for preserved
+blocks, and the reference-link case must fall through to serializer output.
+Refine the implementation until the tests pass; do not weaken the tests.
+
+Add to `src/lib/rich-roundtrip.ts`:
+
+```ts
+// One reused headless editor + memo cache. parse+serialize per block is a
+// few ms; a long document normalizes each block once and then hits the
+// cache on every autosave flush.
+export function createBlockNormalizer(): {
+  normalize(block: string): string;
+  destroy(): void;
+} {
+  const editor = new Editor({ extensions: richBaseExtensions(), content: "" });
+  const cache = new Map<string, string>();
+  const normalize = (block: string): string => {
+    const hit = cache.get(block);
+    if (hit !== undefined) return hit;
+    let out: string;
+    try {
+      editor.commands.setContent(block, { emitUpdate: false });
+      const storage = editor.storage as unknown as {
+        markdown: { getMarkdown(): string };
+      };
+      out = formatMarkdownTables(storage.markdown.getMarkdown()).replace(
+        /\n+$/,
+        ""
+      );
+    } catch {
+      out = "\u0000unparseable"; // never equals any real block
+    }
+    if (cache.size > 4000) cache.clear();
+    cache.set(block, out);
+    return out;
+  };
+  return { normalize, destroy: () => editor.destroy() };
+}
+```
+
+- [ ] **Step 4: Wire preservation into RichView's serialize pipeline**
+
+In `rich-view.tsx` (building on Task 3's pipeline):
+
+1. Create the normalizer once per component:
+
+```ts
+  const normalizerRef = useRef<ReturnType<typeof createBlockNormalizer> | null>(null);
+  const getNormalizer = () => (normalizerRef.current ??= createBlockNormalizer());
+  useEffect(() => () => normalizerRef.current?.destroy(), []);
+```
+
+2. Extend `serializeMarkdown` (solo mode only; collab keeps the plain path):
+
+```ts
+  const formatted = formatMarkdownTables(raw);
+  const preserved = preserveBlocks(
+    baselineBodyRef.current,
+    formatted,
+    getNormalizer().normalize
+  );
+  baselineBodyRef.current = preserved; // future diffs run against what we emitted
+  return joinFrontMatter(ctx.frontMatter, restoreHoldAsides(preserved, ctx.holds));
+```
+
+3. Warm the cache after a document lands so the first flush is cheap: in the
+   external-value effect, after `setContent`, schedule
+   `requestIdleCallback`-style warming (guard for jsdom:
+   `typeof requestIdleCallback === "function"`) that walks
+   `splitTopLevelBlocks(baselineBodyRef.current)` and calls `normalize` on
+   each block's text.
+
+- [ ] **Step 5: Byte-identity fixtures through the full pipeline**
+
+Add to `src/lib/rich-roundtrip.test.tsx` a "layer 2 pipeline" describe that
+runs the corpus-shaped constructs end to end with zero edits: for each of
+wrapped paragraphs, aligned tables, loose lists, and a mixed document
+(front matter + comment + wrapped prose + aligned table), run:
+
+```tsx
+const zeroEditPipeline = (md: string) => {
+  const { frontMatter, body } = splitFrontMatter(md);
+  const { text, holds } = extractHoldAsides(body);
+  const raw = probeRoundTrip(text); // raw serializer output
+  const { normalize, destroy } = createBlockNormalizer();
+  try {
+    const preserved = preserveBlocks(text, raw.output, normalize);
+    return joinFrontMatter(frontMatter, restoreHoldAsides(preserved, holds));
+  } finally {
+    destroy();
+  }
+};
+```
+
+and assert `zeroEditPipeline(md) === md` (modulo one trailing newline) for
+every fixture. Include the 76.5% case explicitly:
+
+```tsx
+it("zero-edit output is byte-identical for hand-wrapped prose", () => {
+  const md =
+    "# Notes\n\nThis paragraph was wrapped\nby hand at eighty columns\nlike most real files.\n\nAnother wrapped\nparagraph follows.\n";
+  expect(zeroEditPipeline(md)).toBe(md);
+});
+```
+
+- [ ] **Step 6: Run everything**
+
+Run: `npm test && npm run lint && npm run build`
+Expected: all green; existing rich-view page tests unchanged (documents
+without edits serialize to their own bytes, which is strictly less
+surprising than before).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/lib/rich-block-preserve.ts src/lib/rich-block-preserve.test.tsx src/lib/rich-roundtrip.ts src/lib/rich-roundtrip.test.tsx src/components/rich-view.tsx
+git commit -m "$(cat <<'MSG'
+Serialize rich edits as a block diff so untouched bytes are emitted verbatim
+
+Constraint: 76.5% of real files have hand-wrapped paragraphs; a serializer
+  that rewraps the whole document on any edit makes autosave unshippable.
+Rejected: Gating those documents read-only | measured to refuse ~80% of the
+  corpus; preservation beats refusal wherever it is provably lossless.
+Rejected: Fuzzy block matching | alignment is exact normalize-equivalence
+  only; anything unmatched takes serializer output, never a guess.
+Confidence: medium
+Scope-risk: moderate
+Tested: Splitter invariants, preservation unit cases (edit, delete, insert,
+  coalesced runs, no-match fallback), real-editor end-to-end byte identity,
+  full suite.
+Not-tested: Perf on multi-thousand-block documents beyond the LCS guard
+  (corpus measurement in Task 4B covers real files).
+MSG
+)"
+```
+
+---
+## Task 4B: Layer 3: last-resort gate, explicit override, corpus measurement
+
+After layers 1 and 2, the only documents that still cannot be edited safely
+in Rich are those the full pipeline cannot reconstruct byte for byte even
+with zero edits (reference-link definitions consumed by the parser, exotic
+block structures the splitter cannot follow). Those, and only those, fall
+back to the original design: read-only rich with a banner and an explicit
+per-document override. This task also measures the fallback share against a
+real corpus; the target is well under 5%.
+
+**Files:**
+- Modify: `src/lib/rich-roundtrip.ts` (add `probeReconstruction`)
 - Create: `src/lib/rich-override.ts`
-- Create: `src/lib/rich-override.test.ts`
+- Create: `src/lib/rich-override.test.tsx` (localStorage needs jsdom)
 - Create: `src/components/rich-guard.tsx`
 - Create: `src/components/rich-guard.test.tsx`
+- Create: `src/lib/rich-roundtrip.corpus.test.tsx` (opt-in, env-gated)
 - Modify: `src/app/page.tsx` (probe state, RichView props, banner mount)
 
 **Interfaces:**
-- Consumes: `probeRoundTrip`, `describeLossRisks` (Task 2),
-  `splitFrontMatter` (Task 3).
+- Consumes: `probeRoundTrip`, `describeLossRisks`, `createBlockNormalizer`
+  (Tasks 2, 4), `splitFrontMatter` (Task 3), `extractHoldAsides` /
+  `restoreHoldAsides` (Task 3), `preserveBlocks` (Task 4).
 - Produces:
+  - `probeReconstruction(markdown: string): { clean: boolean; output: string }`
+    (the user-facing gate; full zero-edit pipeline).
   - `richOverride(path: string | null): boolean` /
     `setRichOverride(path: string | null, on: boolean): void`
-    (localStorage key `markie.richoverride.v1:<path>`, untitled uses the
-    fileName or `"untitled"`).
+    (localStorage key `markie.richoverride.v1:<path>`, untitled uses
+    `"untitled"`).
   - `<RichLossBanner risks onEditSource onOverride />` component.
-  - Page state `richLossy: LossRisk[] | null` consumed by Task 7's
-    autosave-eligibility rule.
+  - Page state `richLossy: LossRisk[] | null` and derived `richBlocked`,
+    consumed by Task 7's autosave-eligibility rule.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the failing reconstruction tests**
 
-```ts
-// src/lib/rich-override.test.ts
+Add to `src/lib/rich-roundtrip.test.tsx`:
+
+```tsx
+import { probeReconstruction } from "@/lib/rich-roundtrip";
+
+describe("probeReconstruction (the layer-3 gate)", () => {
+  const CLEAN: Array<[string, string]> = [
+    ["wrapped prose", "Wrapped\nby hand.\n\nMore wrapped\ntext here.\n"],
+    ["front matter + body", "---\nkey: v\n---\n# T\n\nBody.\n"],
+    ["comment + footnote def", "x[^1]\n\n<!-- c -->\n\n[^1]: n\n"],
+    ["aligned table untouched", "| a | b |\n| :--- | ---: |\n| 1 | 2 |\n"],
+    ["loose list", "- one\n\n- two\n"],
+  ];
+  const GATED: Array<[string, string]> = [
+    // The parser consumes the definition and inlines the link. With an
+    // unrelated matched block in between, neither plain alignment nor the
+    // coalescing pass can reproduce the source without guessing, so this
+    // must gate. (The adjacent two-block case may be rescued by coalescing;
+    // it is intentionally not pinned either way.)
+    [
+      "reference link with distance",
+      "See [the docs][ref].\n\nUnrelated paragraph.\n\n[ref]: https://example.com\n",
+    ],
+  ];
+
+  for (const [name, md] of CLEAN) {
+    it(`reconstructs byte for byte: ${name}`, () => {
+      const res = probeReconstruction(md);
+      expect(res.clean, `output was:\n${res.output}`).toBe(true);
+    });
+  }
+  for (const [name, md] of GATED) {
+    it(`gates: ${name}`, () => {
+      expect(probeReconstruction(md).clean).toBe(false);
+    });
+  }
+});
+```
+
+If a GATED fixture turns out to reconstruct cleanly (the layers are better
+than expected), move it to CLEAN with a dated comment; if a CLEAN fixture
+gates, that is a layer bug to fix in Task 3/4 code, not a fixture to move.
+
+```tsx
+// src/lib/rich-override.test.tsx
 import { beforeEach, describe, expect, it } from "vitest";
 import { richOverride, setRichOverride } from "@/lib/rich-override";
 
@@ -701,10 +1543,6 @@ describe("rich override", () => {
 });
 ```
 
-Note: this file uses localStorage, so make it `.test.ts` ONLY if the node
-project provides localStorage (it does not). Name it
-`src/lib/rich-override.test.tsx` so it runs in the jsdom project.
-
 ```tsx
 // src/components/rich-guard.test.tsx
 import { render, screen } from "@testing-library/react";
@@ -718,12 +1556,12 @@ describe("RichLossBanner", () => {
     const onOverride = vi.fn();
     render(
       <RichLossBanner
-        risks={["footnotes", "raw-html"]}
+        risks={["reference-links", "footnotes"]}
         onEditSource={onEditSource}
         onOverride={onOverride}
       />
     );
-    expect(screen.getByRole("status").textContent).toMatch(/footnotes/i);
+    expect(screen.getByRole("status").textContent).toMatch(/reference/i);
     await userEvent.click(screen.getByRole("button", { name: /edit in source/i }));
     expect(onEditSource).toHaveBeenCalled();
     await userEvent.click(
@@ -736,10 +1574,47 @@ describe("RichLossBanner", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm test -- src/lib/rich-override.test.tsx src/components/rich-guard.test.tsx`
+Run: `npm test -- src/lib/rich-roundtrip.test.tsx src/lib/rich-override.test.tsx src/components/rich-guard.test.tsx`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement the override store and banner**
+- [ ] **Step 3: Implement probeReconstruction, the override store, and the banner**
+
+Add to `src/lib/rich-roundtrip.ts`:
+
+```ts
+import { splitFrontMatter, joinFrontMatter } from "@/lib/front-matter";
+import { extractHoldAsides, restoreHoldAsides } from "@/lib/rich-hold-aside";
+import { preserveBlocks } from "@/lib/rich-block-preserve";
+
+// The user-facing gate: can the full pipeline (hold-aside + parse +
+// serialize + block preservation + restore) reproduce this document byte
+// for byte with zero edits? If yes, editing is safe: untouched blocks are
+// emitted from source bytes and only edited blocks change. If no, the
+// document opens read-only in Rich (with an explicit override).
+export function probeReconstruction(markdown: string): {
+  clean: boolean;
+  output: string;
+} {
+  const md = String(markdown ?? "");
+  if (!md.trim()) return { clean: true, output: md };
+  const { frontMatter, body } = splitFrontMatter(md);
+  const { text, holds } = extractHoldAsides(body);
+  const raw = probeRoundTrip(text);
+  const { normalize, destroy } = createBlockNormalizer();
+  try {
+    const preserved = preserveBlocks(text, raw.output, normalize);
+    const output = joinFrontMatter(
+      frontMatter,
+      restoreHoldAsides(preserved, holds)
+    );
+    return { clean: norm(output) === norm(md), output };
+  } catch {
+    return { clean: false, output: "" };
+  } finally {
+    destroy();
+  }
+}
+```
 
 ```ts
 // src/lib/rich-override.ts
@@ -779,6 +1654,7 @@ const LABELS: Record<LossRisk, string> = {
   "display-math": "display math",
   "table-alignment": "table alignment",
   "wrapped-paragraphs": "wrapped lines",
+  "reference-links": "reference-style links",
 };
 
 export function RichLossBanner({
@@ -797,6 +1673,7 @@ export function RichLossBanner({
   return (
     <div
       role="status"
+      data-markie-rich-guard
       className="shrink-0 border-b border-border bg-surface px-3 py-2 text-[12px] text-foreground flex items-center gap-2 flex-wrap"
     >
       <span className="min-w-0">
@@ -825,28 +1702,26 @@ export function RichLossBanner({
 }
 ```
 
-- [ ] **Step 4: Wire the probe into the page**
+- [ ] **Step 4: Wire the gate into the page**
 
 In `page.tsx`:
 
 1. New state near the other document state:
 
 ```ts
-  // Constructs the rich editor would rewrite in the open document, or null
-  // when the document is rich-safe. Drives the read-only guard and, in
-  // phase 2, autosave eligibility.
+  // Constructs named for the banner when the pipeline cannot reconstruct
+  // the open document, or null when the document is rich-safe. Drives the
+  // read-only guard and, in phase 2, autosave eligibility.
   const [richLossy, setRichLossy] = useState<LossRisk[] | null>(null);
   const [richOverridden, setRichOverridden] = useState(false);
 ```
 
-2. Probe whenever a document lands (in `loadFile`, `handleNewFile`, and the
+2. Assess whenever a document lands (in `loadFile`, `handleNewFile`, and the
    boot path, right after `setSavedContent`), via one helper:
 
 ```ts
   const assessRichSafety = useCallback((md: string, path: string | null) => {
-    const { body } = splitFrontMatter(md);
-    // Empty and trivially small documents are always safe; skip the parse.
-    const res = body.trim() ? probeRoundTrip(body) : { clean: true, output: "" };
+    const res = probeReconstruction(md);
     setRichLossy(res.clean ? null : describeLossRisks(md));
     setRichOverridden(richOverride(path));
   }, []);
@@ -854,9 +1729,9 @@ In `page.tsx`:
 
 Call `assessRichSafety(md, data.path)` at the end of `loadFile`,
 `assessRichSafety("", null)` in `handleNewFile`, and for the boot
-sample/welcome paths. Do not re-probe on every keystroke: the probe protects
-the bytes as they were opened; once the user edits (or overrides), the
-decision stands until the next document load.
+sample/welcome paths. Do not re-assess on every keystroke: the probe
+protects the bytes as they were opened; once the user edits (or overrides),
+the decision stands until the next document load.
 
 3. Compute the guard and pass it down where `<RichView>` renders:
 
@@ -908,16 +1783,25 @@ vi.mock("@/lib/auth-client", () => ({
 
 import Home from "./page";
 
-const LOSSY = {
+// Reference-link definitions are consumed by the parser; with an
+// intervening block the pipeline cannot reconstruct them, so this document
+// must gate.
+const GATED = {
+  name: "refs.md",
+  path: "/notes/refs.md",
+  content: "See [the docs][ref].\n\nUnrelated paragraph.\n\n[ref]: https://example.com\n",
+};
+// Footnotes and wrapped prose are pipeline-safe now (layers 1+2); this
+// document must NOT gate.
+const CLEAN = {
   name: "notes.md",
   path: "/notes/notes.md",
-  content: "Text with a note.[^1]\n\n[^1]: the note\n",
+  content: "Wrapped\nprose.[^1]\n\n[^1]: the note\n",
 };
-const CLEAN = { name: "plain.md", path: "/notes/plain.md", content: "# Hi\n\nBody.\n" };
 
 describe("rich loss guard", () => {
-  it("locks rich editing for a lossy document and unlocks on override", async () => {
-    installBridge({ getInitialFile: vi.fn(async () => LOSSY) } as Partial<ElectronAPI>);
+  it("locks rich editing for an unreconstructable document, unlocks on override", async () => {
+    installBridge({ getInitialFile: vi.fn(async () => GATED) } as Partial<ElectronAPI>);
     render(<Home />);
     const banner = await screen.findByRole("status");
     expect(banner.textContent).toMatch(/rich editing is off/i);
@@ -927,44 +1811,120 @@ describe("rich loss guard", () => {
     );
   });
 
-  it("shows no banner for a clean document", async () => {
+  it("shows no banner for a layered-safe document (footnote + wrap)", async () => {
     installBridge({ getInitialFile: vi.fn(async () => CLEAN) } as Partial<ElectronAPI>);
     render(<Home />);
-    await screen.findByText("Body.");
+    await screen.findByText(/prose/);
     expect(screen.queryByText(/rich editing is off/i)).not.toBeInTheDocument();
   });
 });
 ```
 
 Adjust the `role="status"` query if the collab error banner also uses it;
-scope with `within` on the rich pane or give the loss banner a
-`data-markie-rich-guard` attribute and query that.
+the banner carries `data-markie-rich-guard` for scoping.
 
-- [ ] **Step 6: Run everything**
+- [ ] **Step 6: Corpus measurement (opt-in, run on the owner's machine)**
+
+```tsx
+// src/lib/rich-roundtrip.corpus.test.tsx
+// Opt-in corpus audit. Run:
+//   MARKIE_CORPUS_DIR=~/Documents npx vitest run src/lib/rich-roundtrip.corpus.test.tsx
+// Reports the share of real documents the pipeline cannot reconstruct
+// (which is exactly the share that opens read-only in Rich) and asserts the
+// release target: well under 5%.
+import { describe, expect, it } from "vitest";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { probeReconstruction, describeLossRisks } from "@/lib/rich-roundtrip";
+
+const dir = process.env.MARKIE_CORPUS_DIR;
+const MAX_FILES = Number(process.env.MARKIE_CORPUS_MAX ?? 5000);
+
+function* walk(d: string): Generator<string> {
+  for (const name of readdirSync(d)) {
+    if (name.startsWith(".") || name === "node_modules") continue;
+    const p = join(d, name);
+    try {
+      const st = statSync(p);
+      if (st.isDirectory()) yield* walk(p);
+      else if (/\.(md|markdown)$/i.test(name) && st.size < 2_000_000) yield p;
+    } catch {
+      // unreadable entries are skipped
+    }
+  }
+}
+
+describe.skipIf(!dir)("corpus reconstruction audit", () => {
+  it(
+    "keeps the read-only fallback share well under 5%",
+    () => {
+      const files: string[] = [];
+      for (const f of walk(dir!)) {
+        files.push(f);
+        if (files.length >= MAX_FILES) break;
+      }
+      expect(files.length).toBeGreaterThan(0);
+      let failed = 0;
+      const byRisk = new Map<string, number>();
+      const failures: string[] = [];
+      for (const f of files) {
+        const md = readFileSync(f, "utf8");
+        if (!probeReconstruction(md).clean) {
+          failed++;
+          if (failures.length < 50) failures.push(f);
+          for (const r of describeLossRisks(md)) {
+            byRisk.set(r, (byRisk.get(r) ?? 0) + 1);
+          }
+        }
+      }
+      const share = failed / files.length;
+      console.log(
+        `[corpus] ${files.length} files, ${failed} gated (${(share * 100).toFixed(2)}%)`
+      );
+      console.log("[corpus] risks among gated files:", Object.fromEntries(byRisk));
+      console.log("[corpus] sample gated files:", failures);
+      expect(share).toBeLessThan(0.05);
+    },
+    600_000 // timeout: real corpora take a while
+  );
+});
+```
+
+Run it against the owner's real corpus and RECORD THE MEASURED NUMBER:
+update Spec 3.5's "expected fallback share" paragraph with the measured
+percentage and date, and include the number in this task's completion
+summary. If the share is at or above 5%, do not tune the gate to pass; stop
+and escalate with the per-risk breakdown (the honest number is the
+deliverable).
+
+- [ ] **Step 7: Run everything**
 
 Run: `npm test && npm run lint && npm run build && wc -l src/app/page.tsx`
 Expected: all green; page.tsx grew by only the guard wiring (roughly +40
 lines is acceptable at this stage; Task 6 pays it back).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/lib/rich-override.ts src/lib/rich-override.test.tsx src/components/rich-guard.tsx src/components/rich-guard.test.tsx src/app/page.tsx src/app/page.richguard.test.tsx
+git add src/lib/rich-roundtrip.ts src/lib/rich-roundtrip.test.tsx src/lib/rich-override.ts src/lib/rich-override.test.tsx src/components/rich-guard.tsx src/components/rich-guard.test.tsx src/lib/rich-roundtrip.corpus.test.tsx src/app/page.tsx src/app/page.richguard.test.tsx
 git commit -m "$(cat <<'MSG'
-Refuse silent rich rewrites: lossy documents open read-only in Rich with a way out
+Gate rich editing only where the preservation pipeline cannot promise fidelity
 
-Constraint: Autosave lands next phase; without this gate it would corrupt
-  footnotes, raw HTML, and math in files agents and git are watching.
-Rejected: Forcing Source mode on lossy files | the rendered view is Markie's
+Constraint: Autosave lands next phase; a document the pipeline cannot
+  reconstruct byte for byte must not be silently rewritten by it.
+Rejected: Gating on raw serializer fidelity | measured to refuse ~80% of a
+  3,866-file corpus; after layers 1+2 the gate applies to well under 5%.
+Rejected: Forcing Source mode on gated files | the rendered view is Markie's
   core value; read-only rich keeps it while removing the corruption path.
 Confidence: medium
 Scope-risk: moderate
 Directive: Never enable autosave for a document where richBlocked is true
   and the rich pane is the editing surface.
-Tested: Guard unit + component tests, page-level lossy/clean/override tests,
-  full suite green.
-Not-tested: Real-world corpus beyond the fixture tables; the probe is exact
-  per document so unknown constructs fail closed.
+Tested: Reconstruction clean/gated fixtures, guard unit + component tests,
+  page-level gated/clean/override tests, full suite; corpus audit run
+  against real files with the measured share recorded in the spec.
+Not-tested: Constructs absent from both fixtures and corpus; the
+  reconstruction probe is exact per document so unknowns fail closed.
 MSG
 )"
 ```
@@ -1449,7 +2409,7 @@ Verify that and leave it alone.
 
 **Interfaces:**
 - Consumes: `createAutosave` (Task 5), `useDocument` (Task 6), `richBlocked`
-  and `richLossy` (Task 4).
+  and `richLossy` (Task 4B).
 - Produces:
   - `saveConflictAction({ autosave, force, changed }): "proceed" | "ask" | "refuse"`
     in `electron/save-conflict.js`.
@@ -1581,7 +2541,7 @@ In `page.tsx`:
     docEditable &&
     diskChange === null &&
     !showDiskConflict &&
-    // In rich-visible modes a probe-blocked document must not autosave; in
+    // In rich-visible modes a reconstruction-blocked document must not autosave; in
     // pure source mode CodeMirror is byte-faithful and always safe.
     (mode === "edit" || !richBlocked);
   const autosaveEligibleRef = useRef(autosaveEligible);
@@ -1679,8 +2639,9 @@ git add electron/save-conflict.js electron/save-conflict.test.ts electron/main.j
 git commit -m "$(cat <<'MSG'
 Autosave: typing lands on disk within a second, never via a dialog or a blind overwrite
 
-Constraint: The rich-loss gate from phase 1 is a hard precondition; autosave
-  arms only where the serializer is proven faithful or the user overrode.
+Constraint: The phase 1 preservation pipeline and its last-resort gate
+  are a hard precondition; autosave arms only where serialization is
+  proven faithful or the user explicitly overrode.
 Rejected: Retrying refused autosaves | a disk conflict needs a human, and
   the existing strip is the surface for it.
 Confidence: medium
@@ -3155,8 +4116,11 @@ build afterwards for tests, per CONTRIBUTING):
    holds the edit (flush-on-close).
 3. Edit the same file from another editor while Markie holds unsaved
    changes: the in-app strip appears, no native dialog, autosave holds off.
-4. Rich-open a file with footnotes: the loss banner shows; the file on disk
-   never changes while the banner is up.
+4. Rich-open a file with footnotes and wrapped prose, edit one paragraph,
+   let autosave land: the footnote definition and every untouched wrapped
+   line are byte-identical on disk (layers 1+2 at work).
+5. Rich-open a file with reference-style links: the loss banner shows; the
+   file on disk never changes while the banner is up.
 
 Record outcomes in the commit's `Tested:` trailer.
 
@@ -3996,6 +4960,7 @@ describe("parseRules", () => {
     expect(error).toBeNull();
     expect(rules?.clustering.gapHours).toBe(12);
     expect(rules?.clustering.minFiles).toBe(DEFAULT_CLUSTERING.minFiles);
+    expect(rules?.clustering.bulkMinFiles).toBe(DEFAULT_CLUSTERING.bulkMinFiles);
     expect(rules?.rules).toHaveLength(2);
     expect(rules?.ignore).toEqual(["~/scratch/**"]);
   });
@@ -4079,6 +5044,8 @@ export interface ClusteringTunables {
   gapHours: number;
   minFiles: number;
   maxBlocksPerProject: number;
+  bulkMinFiles: number; // bulk-write guard: cluster size threshold
+  bulkWindowMinutes: number; // bulk-write guard: mtime spread threshold
 }
 export interface MarkieRules {
   version: 1;
@@ -4091,6 +5058,11 @@ export const DEFAULT_CLUSTERING: ClusteringTunables = {
   gapHours: 24,
   minFiles: 1,
   maxBlocksPerProject: 30,
+  // git clone / checkout / unzip stamp many files with near-identical
+  // mtimes; a cluster this large and this tight is a bulk event, not a
+  // work session (Spec 5.4).
+  bulkMinFiles: 50,
+  bulkWindowMinutes: 15,
 };
 
 const EMPTY_RULES: MarkieRules = {
@@ -4128,6 +5100,12 @@ export function parseRules(markdown: string): {
     if (typeof c.min_files === "number" && c.min_files >= 1) clustering.minFiles = c.min_files;
     if (typeof c.max_blocks_per_project === "number" && c.max_blocks_per_project >= 1) {
       clustering.maxBlocksPerProject = c.max_blocks_per_project;
+    }
+    if (typeof c.bulk_min_files === "number" && c.bulk_min_files >= 2) {
+      clustering.bulkMinFiles = c.bulk_min_files;
+    }
+    if (typeof c.bulk_window_minutes === "number" && c.bulk_window_minutes > 0) {
+      clustering.bulkWindowMinutes = c.bulk_window_minutes;
     }
   }
   const rules: ProjectRule[] = [];
@@ -4638,6 +5616,40 @@ describe("deriveBlocks", () => {
     );
     expect(res.byPath.get("/a1.md")).toBe(id); // identity survived
   });
+
+  it("splits a bulk-write cluster (fresh clone) into path-based blocks", () => {
+    // 60 files stamped within 5 minutes by a git clone, in three folders.
+    // Time signal is meaningless here (Spec 5.4 bulk-write detection); the
+    // guard must split by path instead of minting one 60-file block.
+    const MIN = 60_000;
+    const files = Array.from({ length: 60 }, (_, i) => {
+      const folder = ["src", "docs", "guides"][i % 3];
+      return {
+        ...file(`/home/u/repo/${folder}/f${i}.md`, 0, `/home/u/repo/${folder}`),
+        mtimeMs: NOW - (i % 5) * MIN,
+      };
+    });
+    const res = deriveBlocks("repo", files, [], [], DEFAULT_CLUSTERING, () => NOW);
+    const counts = new Map<string, number>();
+    for (const f of files) {
+      const id = res.byPath.get(f.path)!;
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    expect(counts.size).toBeGreaterThanOrEqual(3);
+    // Concentration: no path block may swallow the project (audit gate is 40%).
+    expect(Math.max(...counts.values())).toBeLessThanOrEqual(
+      Math.ceil(files.length * 0.4)
+    );
+    // Files from one folder share a block.
+    expect(res.byPath.get(files[0].path)).toBe(res.byPath.get(files[3].path));
+  });
+
+  it("does not bulk-split a small tight cluster (a real work session)", () => {
+    const files = [file("/a1.md", 1), file("/a2.md", 1.01), file("/a3.md", 1.02)];
+    const res = deriveBlocks("P", files, [], [], DEFAULT_CLUSTERING, () => NOW);
+    const ids = new Set(files.map((f) => res.byPath.get(f.path)));
+    expect(ids.size).toBe(1);
+  });
 });
 ```
 
@@ -4743,6 +5755,54 @@ function clusterByGap(files: EngineFile[], gapMs: number): EngineFile[][] {
   return clusters;
 }
 
+// Bulk-write guard (Spec 5.4): git clone, checkout, and archive extraction
+// stamp many files with near-identical mtimes (and birthtimes), so a fresh
+// clone would collapse into one enormous "session". A cluster that large
+// and that tight is a bulk event; time is meaningless there, so it is
+// split into path-based blocks instead. Files edited individually later
+// migrate out through normal incremental re-derivation.
+function isBulkCluster(cluster: EngineFile[], t: ClusteringTunables): boolean {
+  if (cluster.length < t.bulkMinFiles) return false;
+  const times = cluster.map((f) => f.mtimeMs);
+  const spread = Math.max(...times) - Math.min(...times);
+  return spread <= t.bulkWindowMinutes * 60_000;
+}
+
+function splitByPath(cluster: EngineFile[]): EngineFile[][] {
+  // Group by the first directory segment below the cluster's common root;
+  // files sitting at the root form their own group.
+  const dirs = cluster.map((f) => f.dir.replace(/\\/g, "/"));
+  let root = dirs[0].split("/");
+  for (const d of dirs) {
+    const segs = d.split("/");
+    let i = 0;
+    while (i < root.length && i < segs.length && root[i] === segs[i]) i++;
+    root = root.slice(0, i);
+  }
+  const groups = new Map<string, EngineFile[]>();
+  for (const f of cluster) {
+    const segs = f.dir.replace(/\\/g, "/").split("/");
+    const key = segs[root.length] ?? ".";
+    const arr = groups.get(key) ?? [];
+    arr.push(f);
+    groups.set(key, arr);
+  }
+  return [...groups.values()];
+}
+
+function clusterWithBulkGuard(
+  files: EngineFile[],
+  gapMs: number,
+  t: ClusteringTunables
+): EngineFile[][] {
+  const out: EngineFile[][] = [];
+  for (const cluster of clusterByGap(files, gapMs)) {
+    if (isBulkCluster(cluster, t)) out.push(...splitByPath(cluster));
+    else out.push(cluster);
+  }
+  return out;
+}
+
 export function deriveBlocks(
   project: string,
   files: EngineFile[],
@@ -4809,8 +5869,8 @@ export function deriveBlocks(
     }
   }
 
-  // 3. Fresh clustering for the remainder.
-  const freshClusters = clusterByGap(stillPool, gapMs);
+  // 3. Fresh clustering for the remainder (bulk-write guarded).
+  const freshClusters = clusterWithBulkGuard(stillPool, gapMs, tunables);
   for (const cluster of freshClusters) {
     const founder = cluster[cluster.length - 1]; // oldest member founds it
     const id = mintId(project, founder);
@@ -4825,7 +5885,7 @@ export function deriveBlocks(
   let finalMembers = members;
   while (finalMembers.size > tunables.maxBlocksPerProject) {
     effectiveGap *= 2;
-    const reclustered = clusterByGap(files, effectiveGap);
+    const reclustered = clusterWithBulkGuard(files, effectiveGap, tunables);
     const adopted = new Map<string, EngineFile[]>();
     for (const cluster of reclustered) {
       // Which old id covers most of this cluster?
@@ -5202,7 +6262,8 @@ Confidence: medium
 Scope-risk: moderate
 Directive: Tune clustering via markie_rules.clustering and the Task 23
   audit, never by hardcoding machine-specific values.
-Tested: Ladder cases, gap/naming/stability/merge/adaptive-cap clustering,
+Tested: Ladder cases, gap/naming/stability/merge/adaptive-cap and
+  bulk-write path-split clustering,
   taxonomy ordering + custom names + cache rows, 12k-file perf canary.
 Not-tested: Real-corpus quality (Task 23 owns that).
 MSG
@@ -6407,6 +7468,23 @@ const ms = Date.now() - started;
 
 const singletonBlocks = t.projects.flatMap((p) => p.blocks).filter((b) => b.files.length === 1).length;
 const totalBlocks = t.projects.reduce((n, p) => n + p.blocks.length, 0);
+// Concentration (Spec 5.9): the fresh-clone degenerate case shows up as one
+// block holding most of a project. Report it per project and gate on it.
+const largestBlockOf = (proj) => {
+  let best = null;
+  for (const b of proj.blocks) {
+    if (!best || b.files.length > best.files.length) best = b;
+  }
+  return best
+    ? {
+        name: best.name, // BlockNode.name is already custom_name ?? auto_name
+        files: best.files.length,
+        sharePct: proj.fileCount
+          ? Math.round((best.files.length / proj.fileCount) * 1000) / 10
+          : 0,
+      }
+    : null;
+};
 const report = {
   generatedAt: new Date().toISOString(),
   indexedFiles: files.length,
@@ -6421,8 +7499,14 @@ const report = {
     name: p.name,
     files: p.fileCount,
     blocks: p.blocks.length,
+    largestBlock: largestBlockOf(p),
     updated: new Date(p.updated).toISOString(),
   })),
+  largestBlocks: t.projects
+    .map((p) => ({ project: p.name, files: p.fileCount, largest: largestBlockOf(p) }))
+    .filter((e) => e.largest)
+    .sort((a, b) => b.largest.files - a.largest.files)
+    .slice(0, 20),
 };
 
 console.log(`\nMarkie projects audit  (${report.indexedFiles} files, engine ${ms}ms)\n`);
@@ -6430,7 +7514,10 @@ console.log(`projects: ${report.projects}   blocks: ${report.blocks}   unfiled: 
 if (report.rulesError) console.log(`RULES ERROR: ${report.rulesError}`);
 console.log("\nTop projects:");
 for (const p of report.top20) {
-  console.log(`  ${p.name.padEnd(32)} ${String(p.files).padStart(5)} files  ${String(p.blocks).padStart(3)} blocks  updated ${p.updated}`);
+  const lb = p.largestBlock
+    ? `largest block ${p.largestBlock.files} (${p.largestBlock.sharePct}%)`
+    : "";
+  console.log(`  ${p.name.padEnd(32)} ${String(p.files).padStart(5)} files  ${String(p.blocks).padStart(3)} blocks  ${lb}  updated ${p.updated}`);
 }
 console.log("\nSample tree (5 most recent projects):");
 for (const p of t.projects.slice(0, 5)) {
@@ -6458,6 +7545,29 @@ if (over.length) {
   console.error(`GATE FAILED: ${over.length} projects exceed the block cap after adaptation`);
   failed = true;
 }
+// Concentration gates (Spec 5.9): a fresh clone rewrites mtimes in bulk and
+// would otherwise collapse into one enormous block that the gates above
+// cannot see. Thresholds: 40% share in any project with >= 10 files, and an
+// absolute ceiling of 500 files per block anywhere.
+const CONC_SHARE = 0.4;
+const CONC_MIN_PROJECT = 10;
+const CONC_CEILING = 500;
+for (const proj of t.projects) {
+  const lb = largestBlockOf(proj);
+  if (!lb) continue;
+  if (proj.fileCount >= CONC_MIN_PROJECT && lb.files > proj.fileCount * CONC_SHARE) {
+    console.error(
+      `GATE FAILED: block "${lb.name}" holds ${lb.files}/${proj.fileCount} files (${lb.sharePct}%) of project "${proj.name}" (max 40%)`
+    );
+    failed = true;
+  }
+  if (lb.files > CONC_CEILING) {
+    console.error(
+      `GATE FAILED: block "${lb.name}" in project "${proj.name}" holds ${lb.files} files (ceiling ${CONC_CEILING})`
+    );
+    failed = true;
+  }
+}
 process.exit(failed ? 1 : 0);
 ```
 
@@ -6478,10 +7588,16 @@ read-only. Expected outcome per Spec 5.9:
 
 - Unfiled below 20%.
 - No project over the block cap after adaptation.
+- Concentration: no block holds more than 40% of a project with at least
+  10 files, and no block anywhere holds more than 500 files. This is the
+  specific guard for bulk-rewritten mtimes (a fresh git clone or checkout
+  collapsing into one enormous "session"); the largest-block-per-project
+  table in the JSON report shows exactly where the mass sits.
 - The printed sample tree reads like the owner's actual work. This last
   gate is human: show the owner the output and get an explicit yes.
 
-If a gate fails, this is a FINDING: tune `DEFAULT_CLUSTERING`, the naming
+If a gate fails, this is a FINDING: tune `DEFAULT_CLUSTERING` (including
+the bulk-write pair `bulkMinFiles` / `bulkWindowMinutes`), the naming
 rule, or the container list; re-run vitest and the audit; repeat. Record
 each tuning change and its measured effect in the commit message. Do not
 ship the feature with failing gates, and do not adjust the gates to pass.
@@ -6499,7 +7615,8 @@ git commit -m "$(cat <<'MSG'
 Audit the taxonomy against the real index before anyone ships it
 
 Constraint: The release gate is the owner's machine: ~12,370 files must
-  organize into a tree he recognizes, with Unfiled under 20%.
+  organize into a tree he recognizes, with Unfiled under 20% and no
+  degenerate mega-block (concentration gates: 40% share, 500-file ceiling).
 Rejected: Gating only on synthetic fixtures | the clustering thresholds are
   guesses until real mtimes hit them.
 Confidence: high
@@ -7473,30 +8590,128 @@ not-verified code, the OTP view renders, and `sendOTP` was called (mock
 // server/src/migrate-verified.ts
 // One-time backfill for the 0.5.0 email-verification deploy: accounts
 // created before verification existed are grandfathered as verified so
-// existing users keep signing in. Residual risk accepted and documented:
-// an attacker account created during the vulnerability window that already
-// claimed shares cannot be distinguished retroactively; every FUTURE claim
-// requires proof. Run once, by a human, against the production DB, after
-// the 0.5.0 server deploy:
+// existing users keep signing in.
+//
+// DRY-RUN BY DEFAULT. The script prints an audit report for human review
+// and writes NOTHING unless --commit is passed. The report answers three
+// questions before any grandfathering happens:
+//   1. how many accounts are about to be grandfathered (and their
+//      creation-date range);
+//   2. how many pending invites were already claimed into shares versus
+//      still pending;
+//   3. FLAGGED: already-claimed shares whose claiming account never proved
+//      email ownership and has no OAuth provider. That is the signature of
+//      the takeover vulnerability having actually been exercised. Zero rows
+//      expected; any non-zero result goes to the owner BEFORE --commit,
+//      because grandfathering such an account would launder a stolen claim
+//      into a legitimate one.
+//
+// Run, by a human, against the production DB, after the 0.5.0 server
+// deploy:
 //   node --experimental-strip-types src/migrate-verified.ts <cutoff-iso>
+//   node --experimental-strip-types src/migrate-verified.ts <cutoff-iso> --commit
 import Database from "better-sqlite3";
 
-const cutoff = process.argv[2];
+const args = process.argv.slice(2);
+const commit = args.includes("--commit");
+const cutoff = args.find((a) => a !== "--commit");
 if (!cutoff || Number.isNaN(Date.parse(cutoff))) {
-  console.error("usage: migrate-verified.ts <cutoff ISO datetime = deploy time>");
+  console.error(
+    "usage: migrate-verified.ts <cutoff ISO datetime = deploy time> [--commit]"
+  );
   process.exit(1);
 }
 const db = new Database(process.env.DB_PATH ?? "./markie.db");
+
+// 1. Accounts the backfill would touch.
+const toGrandfather = db
+  .prepare(
+    `SELECT COUNT(*) AS n, MIN(createdAt) AS first, MAX(createdAt) AS last
+     FROM user WHERE createdAt < ? AND emailVerified = 0`
+  )
+  .get(cutoff) as { n: number; first: string | null; last: string | null };
+
+// 2. Invite claim state. A share created by claimPendingInvites carries the
+//    invite token on the row (see pending.ts), so token IS NOT NULL is the
+//    claimed-from-invite signal.
+const claimed = db
+  .prepare("SELECT COUNT(*) AS n FROM shares WHERE token IS NOT NULL")
+  .get() as { n: number };
+const stillPending = db
+  .prepare("SELECT COUNT(*) AS n FROM pending_shares")
+  .get() as { n: number };
+
+// 3. The vulnerability signature: a claimed share held by an account that
+//    never proved its email and did not arrive via OAuth (which proves it
+//    at the provider). Expected: zero rows.
+const flagged = db
+  .prepare(
+    `SELECT s.doc_id, s.user_id, u.email, s.role, s.created_at
+     FROM shares s
+     JOIN user u ON u.id = s.user_id
+     WHERE s.token IS NOT NULL
+       AND u.emailVerified = 0
+       AND NOT EXISTS (
+         SELECT 1 FROM account a
+         WHERE a.userId = u.id AND a.providerId <> 'credential'
+       )
+     ORDER BY s.created_at`
+  )
+  .all() as Array<{
+  doc_id: string;
+  user_id: string;
+  email: string;
+  role: string;
+  created_at: string;
+}>;
+
+console.log(`migrate-verified audit (cutoff ${cutoff})`);
+console.log(
+  `  accounts to grandfather: ${toGrandfather.n}` +
+    (toGrandfather.n
+      ? ` (created ${toGrandfather.first} .. ${toGrandfather.last})`
+      : "")
+);
+console.log(`  invites already claimed into shares: ${claimed.n}`);
+console.log(`  invites still pending (protected from now on): ${stillPending.n}`);
+console.log(`  FLAGGED claimed shares by never-verified accounts: ${flagged.length}`);
+for (const f of flagged) {
+  console.log(
+    `    doc ${f.doc_id} -> user ${f.user_id} <${f.email}> role ${f.role} claimed ${f.created_at}`
+  );
+}
+if (flagged.length > 0) {
+  console.log(
+    "  WARNING: the takeover flaw appears to have been exercised. Review the" +
+      " flagged rows with the owner before running --commit; consider" +
+      " revoking those shares first."
+  );
+}
+
+if (!commit) {
+  console.log("dry run: nothing written. Re-run with --commit to grandfather.");
+  process.exit(flagged.length > 0 ? 2 : 0);
+}
 const res = db
-  .prepare("UPDATE user SET emailVerified = 1 WHERE createdAt < ? AND emailVerified = 0")
+  .prepare(
+    "UPDATE user SET emailVerified = 1 WHERE createdAt < ? AND emailVerified = 0"
+  )
   .run(cutoff);
 console.log(`verified ${res.changes} pre-existing accounts (created before ${cutoff})`);
 ```
 
+Column-name check before running: `user.emailVerified` / `user.createdAt`
+and `account.providerId` / `account.userId` are better-auth's defaults;
+confirm against the live schema (`PRAGMA table_info(user)`) as part of the
+runbook, since better-auth versions have shifted casing before.
+
 Add a "0.5.0 server deploy" subsection to `docs/RELEASING.md`: deploy order
-(server first, then migration with the deploy timestamp as cutoff), the
-residual-risk note above, and the smoke checks (existing account signs in;
-new signup requires the code; the attack test's scenario manually verified
+(server first, then the migration dry run with the deploy timestamp as
+cutoff, then human review of the printed audit, then `--commit`), the
+schema column-name check, what to do when the flagged-rows count is not
+zero (stop, review with the owner, consider revoking those shares before
+grandfathering), and the smoke checks (existing account signs in; new
+signup requires the code; the attack test's scenario manually verified
 against staging if one exists). Publishing/deploying remains a human
 checkpoint; nothing in this task touches production.
 
@@ -7522,7 +8737,8 @@ Directive: Any future claimPendingInvites call site must check
 Tested: The attack test (fails on 0.4.x code, passes now), claim-on-verify,
   unverified-list refusal, all 148 existing cases via the verified-user
   helper, client OTP routing test.
-Not-tested: Production migration (documented runbook, human-run).
+Not-tested: Production migration (dry-run-by-default audited script,
+  documented runbook, human-run).
 MSG
 )"
 ```
@@ -7844,8 +9060,8 @@ git status                      # clean tree
 - [ ] **Step 2: Write the changelog entry**
 
 Add a `## 0.5.0` section to `CHANGELOG.md` in the file's existing voice,
-covering: autosave with drafts and history (and the rich-editing safety
-gate), the Projects organization (Files tab, full-width view, Projects.md,
+covering: autosave with drafts and history (and the rich round-trip
+preservation pipeline with its last-resort gate), the Projects organization (Files tab, full-width view, Projects.md,
 agent front matter), MCP instructions and fixes, the server email
 verification fix (with a security note), and Windows auto-update. Do NOT
 bump version files by hand: versioning happens through
@@ -7871,7 +9087,8 @@ MSG
 
 # Execution notes for the orchestrator
 
-- Tasks 1-12 are strictly ordered. Tasks 13-23 are ordered within the phase
+- Phase 1 (Tasks 1, 2, 3, 4, 4B) and Phase 2 (Tasks 5-12) are strictly
+  ordered. Tasks 13-23 are ordered within the phase
   but only depend on Task 6 from phase 2 (the page extraction) and Task 3
   (front-matter split, which Task 16 imports). Tasks 24-27 depend on Task 13
   (the front matter shape) and Task 25 touches `src/lib/agent-files.ts`

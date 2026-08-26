@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
+import { signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-doc-view-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -66,26 +67,14 @@ async function page(path: string, bearer?: string) {
   return { status: res.status, body: await res.text(), headers: res.headers };
 }
 
-// Each signup comes from its own address. These tests need far more accounts
-// than the auth rate limiter allows from a single one, and throttling is the
-// behaviour under test everywhere except here.
-let signUpCount = 0;
+// Accounts must prove their address before they can sign in, so the shared
+// helper does the signup, the proof, and the sign-in. It also spreads callers
+// across addresses: these tests need far more accounts than the auth rate
+// limiter allows from a single one, and throttling is the behaviour under test
+// everywhere except here.
 async function signUp(name: string, email: string) {
-  signUpCount += 1;
-  const headers = new Headers({
-    "Content-Type": "application/json",
-    "x-forwarded-for": `10.0.${Math.floor(signUpCount / 250)}.${signUpCount % 250}`,
-    ...ORIGIN,
-  });
-  const res = await app.request("/api/auth/sign-up/email", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ name, email, password: "password-123" }),
-  });
-  assert.equal(res.status, 200);
-  const token = res.headers.get("set-auth-token");
-  assert.ok(token);
-  return { token, email };
+  const user = await signUpVerified(app, { name, email });
+  return { token: user.token, email };
 }
 
 async function createDoc(token: string, docId: string) {
@@ -232,7 +221,9 @@ test("the emailed link still works after the invitee makes an account", async ()
     .prepare("SELECT token FROM pending_shares WHERE doc_id = ? AND email = ?")
     .get(docId, invitee) as { token: string };
 
-  // Signing up claims the invite, which moves the token onto the share row.
+  // Making an account and proving the address claims the invite, which moves
+  // the token onto the share row. Signing up alone no longer does it, which is
+  // the whole point of the verification gate.
   const joined = await signUp("Claimer", invitee);
   const listed = await jsonRequest("GET", "/api/docs", joined.token);
   assert.equal(listed.status, 200);

@@ -36,17 +36,51 @@ export const auth = betterAuth({
   },
   emailAndPassword: {
     enabled: true,
+    // Typing an address is not owning it. Until the address is proven, the
+    // account cannot sign in and cannot inherit anything addressed to it:
+    // documents shared to alice@corp.com before Alice signs up used to land in
+    // whoever registered that address first. See GHSA-qq9h-g4jm-xgf3 for the
+    // same class of flaw upstream.
+    requireEmailVerification: true,
   },
   databaseHooks: {
     user: {
       create: {
-        // The moment someone joins, sweep any docs that were shared with their
-        // email before they had an account into their Library.
-        after: async (user: { id: string; email: string }) => {
+        // Claiming moved out of "an account exists" and into "the address is
+        // proven". A Google account, or a first email-OTP sign-in, arrives
+        // already verified because the provider or the mailbox proved it, so
+        // those still sweep at creation. A password signup does not.
+        after: async (user: {
+          id: string;
+          email: string;
+          emailVerified?: boolean;
+        }) => {
           try {
-            claimPendingInvites(user.email, user.id);
+            if (user.emailVerified && user.email) {
+              claimPendingInvites(user.email, user.id);
+            }
           } catch (err) {
             console.error("claim-on-signup failed:", err);
+          }
+        },
+      },
+      update: {
+        // The claim trigger for everyone else: whenever a row comes back
+        // verified, sweep. That covers entering the emailed code, resetting a
+        // password by code, and any future flow that proves the address.
+        // claimPendingInvites is idempotent, so firing on unrelated updates
+        // costs one indexed SELECT and changes nothing.
+        after: async (user: {
+          id: string;
+          email: string;
+          emailVerified?: boolean;
+        }) => {
+          try {
+            if (user?.emailVerified && user.email) {
+              claimPendingInvites(user.email, user.id);
+            }
+          } catch (err) {
+            console.error("claim-on-verify failed:", err);
           }
         },
       },
@@ -71,6 +105,9 @@ export const auth = betterAuth({
       // loosen either.
       expiresIn: 300,
       allowedAttempts: 3,
+      // Signing up mails the code straight away: with verification required,
+      // an account that never receives one is an account nobody can use.
+      sendVerificationOnSignUp: true,
       async sendVerificationOTP({ email, otp, type }) {
         // Forgotten passwords are recovered with a code rather than a reset
         // link: a link needs a hosted page plus a second deep-link hop back

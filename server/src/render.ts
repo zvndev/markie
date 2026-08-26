@@ -284,8 +284,11 @@ export function renderSharedDocPage(opts: {
   canEdit: boolean;
   /**
    * Set when the reader got here through an invite email and has no account
-   * yet. Signing up with this exact address is what makes claimPendingInvites
-   * hand them the document, so the address has to be named rather than implied.
+   * yet. Making an account at this exact address and confirming it is what
+   * makes claimPendingInvites hand them the document, so the address has to be
+   * named rather than implied. Confirming is not an extra hurdle to mention
+   * here: signing in is impossible until the address is proven, so by the time
+   * they are signed in the document really is waiting for them.
    */
   invitedEmail?: string | null;
 }): string {

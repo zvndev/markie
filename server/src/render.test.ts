@@ -130,8 +130,9 @@ const SHARED = {
 };
 
 test("an invited newcomer is told which address claims the document", () => {
-  // claimPendingInvites already delivers the doc on signup; until now nothing
-  // told the reader that, so the obvious move was to copy the text out by hand.
+  // claimPendingInvites delivers the doc the moment the address is proven, and
+  // no one can sign in without proving it; until now nothing told the reader
+  // that, so the obvious move was to copy the text out by hand.
   const page = renderSharedDocPage({ ...SHARED, invitedEmail: "alice@example.com" });
   assert.match(page, /alice@example\.com/);
   assert.match(page, /already be[\s\S]*in your Library/);

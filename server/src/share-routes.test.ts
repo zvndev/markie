@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
+import { signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-share-routes-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -54,17 +55,10 @@ async function jsonRequest<T>(
 }
 
 async function signUp(name: string, email: string): Promise<{ token: string; email: string }> {
-  const res = await jsonRequest<{ user: { email: string } }>(
-    "POST",
-    "/api/auth/sign-up/email",
-    undefined,
-    { name, email, password: "password-123" }
-  );
-  assert.equal(res.status, 200);
-  const token = res.headers.get("set-auth-token");
-  assert.ok(token, `expected bearer token for ${email}`);
-  assert.equal(res.data?.user.email, email);
-  return { token, email };
+  // signUpVerified asserts the signed-in account is the one that was asked for.
+  const user = await signUpVerified(app, { name, email });
+  assert.equal(user.email, email);
+  return { token: user.token, email };
 }
 
 async function createDoc(token: string, docId: string) {

@@ -308,3 +308,113 @@ auto-update, require all of the following on the exact release commit:
 - an explicit production release decision.
 
 Windows and Linux update checks are disabled until those platform contracts are implemented.
+
+## 0.5.0 server deploy: email verification and the pending-invite backfill
+
+0.5.0 closes a live authorization flaw. Before it, a document shared to an address that had no
+Markie account yet became a `pending_shares` row, and whoever registered that address first
+inherited the document. Nothing proved they owned the address. From 0.5.0 the server requires proof
+of email ownership, and no pending invite is claimed by an account that has not proven it.
+
+This is a production change with a data migration. It is a human checkpoint from start to finish.
+
+### Blocker: ship the client first
+
+The server now refuses a password sign-in for an unverified account (403, `EMAIL_NOT_VERIFIED`) and
+returns no session from signup. A desktop build that does not route that refusal into its existing
+one-time-code view will show a new user a dead error. Confirm the shipped client handles it before
+deploying, and expect users still on an older build to be unable to complete a **new** signup until
+they update. Existing accounts are unaffected, because the backfill below grandfathers them.
+
+### 1. Deploy the server
+
+Deploy `server/` as normal. Nothing is required in the database for the new code to run: every claim
+path simply checks `emailVerified` first. Record the deploy time in UTC ISO form, for example
+`2026-09-01T14:32:00.000Z`. That timestamp is the migration cutoff. Everything created before it is
+an account that predates verification; everything after it proves its address the normal way.
+
+### 2. Back up, then check the column names
+
+Take a database backup first. Litestream replication is not a substitute for a snapshot taken
+immediately before a schema-touching run.
+
+better-auth has changed column casing between versions, so confirm the live schema matches what the
+migration reads:
+
+```sql
+PRAGMA table_info(user);     -- expect id, name, email, emailVerified, image, createdAt, updatedAt
+PRAGMA table_info(account);  -- expect providerId and userId
+```
+
+`emailVerified` is an INTEGER 0 or 1, and `createdAt` is an ISO-8601 UTC string, which is why the
+cutoff comparison is a plain string comparison. If either has changed shape, stop and fix the
+migration before running it.
+
+### 3. Dry run the migration and read the report
+
+```bash
+cd server
+DB_PATH=/path/to/markie.db node --experimental-strip-types src/migrate-verified.ts \
+  2026-09-01T14:32:00.000Z
+```
+
+It writes nothing. It prints:
+
+```
+migrate-verified audit (cutoff 2026-09-01T14:32:00.000Z)
+  accounts to grandfather: 128 (created 2026-02-11T09:03:11.000Z .. 2026-08-30T22:14:02.000Z)
+  invites already claimed into shares: 34
+  invites still pending (protected from now on): 6
+  FLAGGED claimed shares by never-verified accounts: 0
+dry run: nothing written. Re-run with --commit to grandfather.
+```
+
+Check the account count and date range against expectations. The range should start at the oldest
+account and end just before the deploy; an account dated after the cutoff appearing here means the
+wrong cutoff was passed.
+
+### 4. If the flagged count is not zero, stop
+
+Zero is the expected result, and it is worth confirming rather than assuming. A flagged row is an
+already-claimed share held by an account that never proved the address and has no OAuth account.
+That is the signature of the flaw having actually been exercised.
+
+The script exits 2 and **refuses to write in either mode** while any row is flagged, because
+grandfathering such an account would turn a stolen claim into a legitimate-looking one. Do not work
+around it. Instead:
+
+1. take the flagged list to the owner, with the document, the claiming account, and the address;
+2. contact the real owner of each address;
+3. revoke the stolen shares (`DELETE FROM shares WHERE doc_id = ? AND user_id = ?`) and consider
+   disabling the claiming accounts;
+4. re-run the dry run and confirm the count is now zero.
+
+### 5. Commit the backfill
+
+```bash
+DB_PATH=/path/to/markie.db node --experimental-strip-types src/migrate-verified.ts \
+  2026-09-01T14:32:00.000Z --commit
+```
+
+It re-prints the same audit and then reports how many accounts it verified. Exit code 0 means the
+write happened; 2 means a flagged row appeared between runs and nothing was written.
+
+### 6. Smoke checks
+
+- An account that existed before the deploy signs in with its password, unchanged.
+- A brand new signup receives a code by email, cannot sign in until the code is entered, and can
+  sign in immediately afterwards.
+- A Google sign-in still works and still picks up documents shared to that address, because the
+  provider proved the address.
+- The takeover scenario, run by hand against staging if one exists: share a document to an address
+  with no account, register that address, list documents, and confirm the document does **not**
+  appear. Then verify the address and confirm it does.
+- An invite link already sitting in someone's inbox still opens the document for a recipient with
+  no account. That path is unchanged on purpose: holding the token is itself evidence of receiving
+  mail at the address, and it never converts the invite into an account share.
+
+### 7. Afterwards
+
+The migration is one-time. Once every pre-deploy account is verified, a second run reports zero
+accounts to grandfather. Leave the script in the tree: its audit query is the standing way to ask
+whether any share was ever claimed without proof.

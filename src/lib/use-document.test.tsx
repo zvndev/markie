@@ -75,3 +75,28 @@ describe("useDocument", () => {
     expect(result.current.setLocation).toBe(first.setLocation);
   });
 });
+
+describe("useDocument.latest", () => {
+  // Autosave fires from a timer and can beat React to a re-render. A save that
+  // read `content` in that window wrote the document as it stood one
+  // serializer tick ago, which on a flush-before-close is a lost tick.
+  it("reports the last write, before the render that would show it", () => {
+    const { result } = renderHook(() => useDocument());
+    act(() => result.current.load({ name: "a.md", content: "one", path: "/a.md" }));
+    const before = result.current;
+    // No act(): the state update is deliberately left unflushed.
+    before.edit("two");
+    expect(before.content).toBe("one"); // React has not caught up...
+    expect(before.latest()).toBe("two"); // ...but the buffer has moved.
+  });
+
+  it("tracks every transition, not just typing", () => {
+    const { result } = renderHook(() => useDocument());
+    act(() => result.current.load({ name: "a.md", content: "loaded", path: "/a.md" }));
+    expect(result.current.latest()).toBe("loaded");
+    act(() => result.current.applyExternal("pulled"));
+    expect(result.current.latest()).toBe("pulled");
+    act(() => result.current.reset());
+    expect(result.current.latest()).toBe("");
+  });
+});

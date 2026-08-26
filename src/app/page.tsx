@@ -186,6 +186,7 @@ export default function Home() {
   const doc = useDocument();
   const { content, fileName, filePath, isDirty } = doc;
   const { edit: editDoc, applyExternal: applyExternalDoc, load: loadDoc, reset: resetDoc, markSaved, setLocation } = doc;
+  const { latest: latestContent } = doc;
   const [booted, setBooted] = useState(false);
   const [mode, setMode] = useState<ViewMode>("preview");
   const [isDragging, setIsDragging] = useState(false);
@@ -711,9 +712,12 @@ export default function Home() {
   // debounce, so exporting or saving straight after a keystroke used to use the
   // previous version of the text; flushing returns the current one and pushes
   // it into state on the way past.
+  // Nothing pending in the rich pane means the buffer is already current, but
+  // "current" has to mean the last write, not the last render: an autosave
+  // fires from a timer and can beat React to it.
   const currentMarkdown = useCallback(
-    (): string => flushRichRef.current?.() ?? content,
-    [content]
+    (): string => flushRichRef.current?.() ?? latestContent(),
+    [latestContent]
   );
 
   // Paper, PDF, and standalone HTML all render through main's one hidden

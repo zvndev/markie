@@ -25,9 +25,15 @@ interface ProjectsTreeProps {
 // of work and the one before it; more and the panel opens as a wall.
 const AUTO_OPEN_PROJECTS = 2;
 
+// Both trailing numbers get a minimum width and sit right-aligned, so a column
+// of rows ends in two tidy columns rather than a ragged edge of digits. 9px was
+// small enough to read as noise before it read as a number.
 function Count({ n }: { n: number }) {
   return (
-    <span className="shrink-0 text-[9px] tabular-nums text-muted" aria-hidden="true">
+    <span
+      className="min-w-[20px] shrink-0 text-right text-[10px] tabular-nums text-muted"
+      aria-hidden="true"
+    >
       {n}
     </span>
   );
@@ -35,7 +41,10 @@ function Count({ n }: { n: number }) {
 
 function When({ ms }: { ms: number }) {
   return (
-    <span className="shrink-0 text-[9px] tabular-nums text-muted" title={new Date(ms).toLocaleString()}>
+    <span
+      className="min-w-[26px] shrink-0 text-right text-[10px] tabular-nums text-muted"
+      title={new Date(ms).toLocaleString()}
+    >
       {shortAgo(ms)}
     </span>
   );
@@ -49,34 +58,48 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
+// A loose file stands where a block stands, so it takes the block's indent and
+// its own marker in the column the chevron would occupy. An empty column there
+// read as a block row that failed to draw its twisty.
+function LooseMarker() {
+  return (
+    <span className="flex w-3 shrink-0 items-center justify-center" aria-hidden="true">
+      <span className="h-px w-2 bg-[color:var(--border)]" />
+    </span>
+  );
+}
+
 function FileRow({
   name,
   path,
   mtimeMs,
   active,
   onOpen,
-  indent = 32,
+  // A file that clustered with nothing sits where a block would, not inside
+  // one, so it is indented like a block, marked like a block, and set in the
+  // same weight. A file inside a block sits deeper and lighter than both.
+  tone = "nested",
 }: {
   name: string;
   path: string;
   mtimeMs: number;
   active: boolean;
   onOpen: () => void;
-  // A file that clustered with nothing sits where a block would, not inside
-  // one, so it is indented like a block and left of the block's own files.
-  indent?: number;
+  tone?: "nested" | "loose";
 }) {
+  const loose = tone === "loose";
   return (
     <button
       type="button"
       onClick={onOpen}
       title={path}
       data-markie-project-file={path}
-      className={`flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-[12.5px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[color:var(--status-blue)] ${
-        active ? "bg-accent text-foreground" : "text-foreground/90 hover:bg-accent/30"
-      }`}
-      style={{ paddingLeft: indent }}
+      className={`flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[color:var(--status-blue)] ${
+        loose ? "text-[12.5px] font-medium" : "text-[12px]"
+      } ${active ? "bg-accent text-foreground" : "text-foreground/85 hover:bg-accent/30"}`}
+      style={{ paddingLeft: loose ? 18 : 34 }}
     >
+      {loose && <LooseMarker />}
       <span className="min-w-0 flex-1 truncate">{name}</span>
       <When ms={mtimeMs} />
     </button>
@@ -102,7 +125,7 @@ function BlockSection({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-[12.5px] text-foreground/80 transition-colors hover:bg-accent/30 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[color:var(--status-blue)]"
+        className="flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-[12.5px] font-medium text-foreground/85 transition-colors hover:bg-accent/30 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[color:var(--status-blue)]"
         style={{ paddingLeft: 18 }}
       >
         <Chevron open={open} />
@@ -154,13 +177,13 @@ function ProjectSection({
     return rows.sort((a, b) => b.at - a.at);
   }, [project]);
   return (
-    <div data-markie-project={project.name} className="mb-0.5">
+    <div data-markie-project={project.name} className="mb-2">
       <button
         type="button"
         onClick={() => toggleProject(project.name)}
         aria-expanded={open}
         className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[12.5px] transition-colors hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[color:var(--status-blue)] ${
-          project.isUnfiled ? "text-muted" : "font-medium text-foreground"
+          project.isUnfiled ? "text-muted" : "font-semibold text-foreground"
         }`}
       >
         <Chevron open={open} />
@@ -187,7 +210,7 @@ function ProjectSection({
               mtimeMs={entry.file!.mtimeMs}
               active={entry.file!.path === activePath}
               onOpen={() => onOpenPath(entry.file!.path)}
-              indent={18}
+              tone="loose"
             />
           )
         )}

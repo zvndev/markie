@@ -67,7 +67,7 @@ function HeaderButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`h-7 shrink-0 rounded-md border border-border bg-surface px-2.5 text-[12px] text-foreground transition-colors hover:bg-surface-2 disabled:opacity-40 ${FOCUS_RING}`}
+      className={`h-7 shrink-0 rounded-md border border-border px-2.5 text-[12px] text-muted transition-colors hover:bg-surface-2 hover:text-foreground disabled:opacity-40 ${FOCUS_RING}`}
     >
       {children}
     </button>
@@ -102,18 +102,24 @@ function ProjectButton({
         setOver(false);
         onDropFile();
       }}
-      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors ${FOCUS_RING} ${
-        selected ? "bg-accent text-foreground" : "text-foreground/90 hover:bg-accent/40"
+      className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors ${FOCUS_RING} ${
+        selected ? "bg-accent font-medium text-foreground" : "text-foreground/85 hover:bg-accent/35"
       } ${over ? "ring-2 ring-[color:var(--status-blue)]" : ""} ${
-        project.isUnfiled
-          ? "border border-dashed border-[color:color-mix(in_srgb,var(--muted)_68%,transparent)] text-muted"
-          : ""
+        // Unfiled is a synthetic pile, not a project, and it used to say so
+        // with a dashed outline: the loudest thing in a column that is meant
+        // to support the work, not compete with it. Muted text says the same
+        // thing quietly, and the row's own name already says "Unfiled".
+        project.isUnfiled && !selected ? "text-muted" : ""
       }`}
     >
-      <span className="min-w-0 flex-1 truncate text-[13px]">{project.name}</span>
-      <span className="shrink-0 tabular-nums text-[10px] text-muted">{project.fileCount}</span>
+      <span className="min-w-0 flex-1 truncate text-[12.5px]">{project.name}</span>
+      {/* Two ragged numbers per row read as clutter; two right-aligned columns
+          read as a table of contents. Same information, quieter. */}
+      <span className="min-w-[24px] shrink-0 text-right tabular-nums text-[10px] text-muted">
+        {project.fileCount}
+      </span>
       <span
-        className="shrink-0 tabular-nums text-[10px] text-muted"
+        className="min-w-[30px] shrink-0 text-right tabular-nums text-[10px] text-muted"
         title={new Date(project.updated).toLocaleString()}
       >
         {shortAgo(project.updated)}
@@ -122,6 +128,13 @@ function ProjectButton({
   );
 }
 
+// A file row is written twice over, at two ranks. Inside a card it is a member
+// of a block: small, indented well past the block name, quiet. Outside one it
+// stands where a card stands, so it takes the card's own title treatment and
+// hangs a marker into the margin left of where the card's border would be. The
+// difference has to be legible as grammar, not as a card that lost its border.
+type RowTone = "nested" | "loose";
+
 function FileRow({
   file,
   pinned,
@@ -129,6 +142,7 @@ function FileRow({
   onDragStart,
   menuOpen,
   onMenu,
+  tone,
   children,
 }: {
   file: FileNode;
@@ -137,11 +151,20 @@ function FileRow({
   onDragStart: () => void;
   menuOpen: boolean;
   onMenu: () => void;
+  tone: RowTone;
   children: React.ReactNode;
 }) {
+  const loose = tone === "loose";
   return (
     <div
-      className="group relative flex items-center gap-2 rounded-md px-2 py-1 hover:bg-accent/30"
+      className={`group relative flex items-center gap-2 rounded-md ${
+        loose
+          ? // 25px is where a block name sits: the card's own left edge plus its
+            // border and header padding. Every peer-level name in the pane
+            // therefore starts on one line down the page.
+            "py-2 pl-[25px] pr-2 hover:bg-accent/25"
+          : "py-[3px] pl-8 pr-2 hover:bg-accent/30"
+      }`}
       draggable
       onDragStart={onDragStart}
       data-markie-project-file={file.path}
@@ -152,8 +175,20 @@ function FileRow({
         title={file.path}
         className={`flex min-w-0 flex-1 items-baseline gap-2 rounded-md text-left ${FOCUS_RING}`}
       >
-        <span className="shrink-0 truncate text-[13px] text-foreground/90">{file.name}</span>
-        <span className="min-w-0 flex-1 truncate text-[11px] text-muted">{file.dir}</span>
+        <span
+          className={`shrink-0 truncate ${
+            loose
+              ? "text-[13.5px] font-semibold text-foreground"
+              : "text-[12.5px] text-foreground/85"
+          }`}
+        >
+          {file.name}
+        </span>
+        <span
+          className={`min-w-0 flex-1 truncate text-muted ${loose ? "text-[11px]" : "text-[10.5px]"}`}
+        >
+          {file.dir}
+        </span>
       </button>
       {pinned && (
         <span
@@ -164,7 +199,9 @@ function FileRow({
         </span>
       )}
       <span
-        className="shrink-0 tabular-nums text-[10px] text-muted"
+        className={`min-w-[34px] shrink-0 text-right tabular-nums text-muted ${
+          loose ? "text-[10.5px]" : "text-[10px]"
+        }`}
         title={new Date(file.mtimeMs).toLocaleString()}
       >
         {shortAgo(file.mtimeMs)}
@@ -310,17 +347,32 @@ export function ProjectsView({
   // Blocks and loose files share one most-recent-first order. A loose file
   // renders as a bare row rather than a card: a card is a piece of work, and
   // drawing one around a single file is the folder costume this pass took off.
+  // Loose rows that land next to each other are then collected into one run,
+  // so the pane can set a run off from the cards around it and label it once,
+  // rather than dropping unexplained bare rows between cards. The order is
+  // untouched: a run is exactly the loose files that already sorted together.
   const entries = useMemo(() => {
     const rows: Array<{ at: number; block?: BlockNode; file?: FileNode }> = [
       ...(active?.blocks ?? []).map((b) => ({ at: b.updated, block: b })),
       ...(active?.looseFiles ?? []).map((f) => ({ at: f.mtimeMs, file: f })),
     ];
-    return rows.sort((a, b) => b.at - a.at);
+    rows.sort((a, b) => b.at - a.at);
+    const groups: Array<{ block?: BlockNode; loose?: FileNode[] }> = [];
+    for (const row of rows) {
+      if (row.block) {
+        groups.push({ block: row.block });
+        continue;
+      }
+      const tail = groups[groups.length - 1];
+      if (tail?.loose) tail.loose.push(row.file!);
+      else groups.push({ loose: [row.file!] });
+    }
+    return groups;
   }, [active]);
 
   // One row, wherever the file sits. `inBlock` is the block it is already in,
   // so the move menu never offers to move it where it already is.
-  const organizeRow = (file: FileNode, inBlock: string | null) => (
+  const organizeRow = (file: FileNode, inBlock: string | null, tone: RowTone = "nested") => (
     <FileRow
       key={file.path}
       file={file}
@@ -329,6 +381,7 @@ export function ProjectsView({
       onDragStart={() => setDragPath(file.path)}
       menuOpen={fileMenu === file.path}
       onMenu={() => setFileMenu(fileMenu === file.path ? null : file.path)}
+      tone={tone}
     >
       {fileMenu === file.path && (
         <MenuPanel>
@@ -365,8 +418,15 @@ export function ProjectsView({
     </FileRow>
   );
 
+  // The header used to run "name / 15 files / started / updated / ✎ / ⋯" as six
+  // items of near-equal weight on one baseline, so the thing a person is
+  // actually scanning for came fifth in the reading order by size. Now the name
+  // carries the card, the count sits with it as part of its identity, and the
+  // rest is either demoted to the trailing corner or waits for a hover.
+  const quiet =
+    "shrink-0 rounded-md px-1 text-muted opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/card:opacity-100 group-focus-within/card:opacity-100";
   const BlockCardHeader = ({ block }: { block: BlockNode }) => (
-    <div className="flex items-center gap-2 border-b border-border px-2.5 py-1.5">
+    <div className="flex items-center gap-2.5 px-3 pb-2 pt-3">
       {edit?.blockId === block.id ? (
         <input
           autoFocus
@@ -381,24 +441,26 @@ export function ProjectsView({
             }
           }}
           onBlur={() => void submitRename()}
-          className={`markie-overlay-field min-w-0 flex-1 rounded-md px-1.5 py-0.5 text-[13px] ${FOCUS_RING}`}
+          className={`markie-overlay-field min-w-0 flex-1 rounded-md px-1.5 py-0.5 text-[13.5px] ${FOCUS_RING}`}
         />
       ) : (
-        <h2 className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
-          {block.name}
-        </h2>
+        <>
+          <h2 className="min-w-0 truncate text-[13.5px] font-semibold text-foreground">
+            {block.name}
+          </h2>
+          <span className="shrink-0 text-[10.5px] text-muted">
+            {block.files.length} {block.files.length === 1 ? "file" : "files"}
+          </span>
+        </>
       )}
-      <span className="shrink-0 text-[11px] text-muted">
-        {block.files.length} {block.files.length === 1 ? "file" : "files"}
-      </span>
       <span
-        className="shrink-0 text-[11px] text-muted"
+        className="ml-auto shrink-0 text-[10.5px] text-muted opacity-0 transition-opacity group-hover/card:opacity-100 group-focus-within/card:opacity-100"
         title={`Started ${new Date(block.made).toLocaleString()}`}
       >
         started {longAgo(block.made)}
       </span>
       <span
-        className="shrink-0 text-[11px] text-muted"
+        className="shrink-0 text-[10.5px] text-muted"
         title={new Date(block.updated).toLocaleString()}
       >
         updated {longAgo(block.updated)}
@@ -407,7 +469,7 @@ export function ProjectsView({
         type="button"
         onClick={() => beginRename(block)}
         aria-label={`Rename block ${block.name}`}
-        className={`shrink-0 rounded-md px-1 text-[12px] text-muted hover:text-foreground ${FOCUS_RING}`}
+        className={`${quiet} text-[12px] ${FOCUS_RING}`}
       >
         ✎
       </button>
@@ -416,7 +478,9 @@ export function ProjectsView({
         onClick={() => setBlockMenu(blockMenu === block.id ? null : block.id)}
         aria-label={`More actions for ${block.name}`}
         aria-expanded={blockMenu === block.id}
-        className={`shrink-0 rounded-md px-1 text-[13px] leading-none text-muted hover:text-foreground ${FOCUS_RING}`}
+        className={`${quiet} text-[13px] leading-none ${FOCUS_RING} ${
+          blockMenu === block.id ? "opacity-100" : ""
+        }`}
       >
         ⋯
       </button>
@@ -453,7 +517,7 @@ export function ProjectsView({
   return (
     <Shell>
       <header className="shrink-0 border-b border-border bg-surface px-4 py-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
           <h1 className="mr-1 text-[15px] font-semibold text-foreground">Projects</h1>
           <input
             value={query}
@@ -478,7 +542,7 @@ export function ProjectsView({
             Open Projects.md
           </HeaderButton>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px]">
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[11.5px]">
           <Stat value={taxonomy?.projects.length ?? 0} label="projects" />
           <Stat value={totalBlocks} label="blocks" />
           <Stat value={taxonomy?.totalFiles ?? 0} label="files" />
@@ -511,11 +575,13 @@ export function ProjectsView({
             : "No markdown to organize yet. Open a file and Markie will start grouping your work."}
         </p>
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)] max-[860px]:grid-cols-1">
+        <div className="grid min-h-0 flex-1 grid-cols-[264px_minmax(0,1fr)] max-[860px]:grid-cols-1">
           <nav
             aria-label="Projects"
             className="min-h-0 overflow-y-auto border-r border-border bg-surface p-2 max-[860px]:max-h-[132px] max-[860px]:border-b max-[860px]:border-r-0"
           >
+            {/* 240px left most real project names ending in an ellipsis, and a
+                column of "winebid-core-back…" is noise, not navigation. */}
             <div className="flex flex-col gap-0.5">
               {list.map((p) => (
                 <ProjectButton
@@ -531,13 +597,28 @@ export function ProjectsView({
 
           <div className="min-h-0 overflow-y-auto p-3">
             {entries.map((entry) =>
-              entry.file ? (
-                // Outdented past the cards' left edge, not inset inside it: a
-                // loose row indented FURTHER than a card's own file rows reads
-                // as the tail of the card above it, which is the nesting this
-                // pass removed.
-                <div key={entry.file.path} className="mb-2.5 -mx-0.5">
-                  {organizeRow(entry.file, null)}
+              entry.loose ? (
+                // A run of loose files is set off from the cards by more space
+                // than the cards give each other, hangs a marker into the
+                // margin left of the card edge, and says out loud what it is.
+                // A row that only lost its border reads as the tail of the card
+                // above it however far it is outdented.
+                <div key={`loose:${entry.loose[0].path}`} className="-ml-3 my-7 first:mt-0">
+                  {/* A section head built the way a card head is built, name
+                      then count, and set on the same line every block name and
+                      every loose file name starts on. No rule and no marker:
+                      each drawn marker tried here (a dot, then a tick) read as
+                      a connector back into the card above, which is the
+                      opposite of what a peer is. */}
+                  <div className="mb-2 flex items-center gap-2.5 pl-[25px] pr-2">
+                    <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted">
+                      Not in a block
+                    </span>
+                    <span className="text-[10.5px] text-muted">
+                      {entry.loose.length} {entry.loose.length === 1 ? "file" : "files"}
+                    </span>
+                  </div>
+                  {entry.loose.map((file) => organizeRow(file, null, "loose"))}
                 </div>
               ) : (
                 <section
@@ -548,10 +629,14 @@ export function ProjectsView({
                     e.preventDefault();
                     dropOnto(active!.name, entry.block!.id);
                   }}
-                  className="relative mb-2.5 rounded-md border border-border bg-surface"
+                  className="group/card relative mb-3 rounded-lg border border-border bg-surface"
                 >
+                  {/* No rule under the header. A card already draws two
+                      horizontal lines of its own, and a third inside it turned
+                      a column of blocks into a column of stripes. Space and
+                      weight separate the name from its files instead. */}
                   <BlockCardHeader block={entry.block!} />
-                  <div className="p-1">
+                  <div className="px-1 pb-1.5">
                     {(expanded.has(entry.block!.id)
                       ? entry.block!.files
                       : entry.block!.files.slice(0, FILES_SHOWN)
@@ -560,7 +645,7 @@ export function ProjectsView({
                       <button
                         type="button"
                         onClick={() => setExpanded(new Set(expanded).add(entry.block!.id))}
-                        className={`w-full rounded-md px-2 py-1 text-left text-[12px] text-muted hover:bg-accent/30 hover:text-foreground ${FOCUS_RING}`}
+                        className={`mt-0.5 w-full rounded-md py-1 pl-8 pr-2 text-left text-[11.5px] text-muted hover:bg-accent/30 hover:text-foreground ${FOCUS_RING}`}
                       >
                         Show all {entry.block!.files.length} files
                       </button>

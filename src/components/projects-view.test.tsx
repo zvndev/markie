@@ -126,6 +126,37 @@ describe("ProjectsView", () => {
     expect(stray.closest("div.group")).not.toBeNull();
   });
 
+  it("says what a run of loose files is, rather than leaving bare rows", async () => {
+    bridge();
+    render(view());
+    const stray = await screen.findByText("stray.md");
+    const run = stray.closest("[data-markie-project-file]")!.parentElement!;
+    // The caption names the run and counts it, the way a block header does.
+    const caption = screen.getByText("Not in a block");
+    expect(caption.parentElement!.parentElement).toBe(run);
+    expect(caption.nextElementSibling!.textContent).toBe("1 file");
+  });
+
+  it("keeps every control it hides at rest reachable from the keyboard", async () => {
+    bridge();
+    render(view());
+    await screen.findByText("plan.md");
+    // This pass demoted the block header's controls and metadata to a hover
+    // reveal. Anything that starts at opacity-0 has to come back on focus, or
+    // the demotion has quietly removed it for anyone not using a mouse.
+    const hidden = [...document.querySelectorAll("button")].filter((b) =>
+      b.className.includes("opacity-0")
+    );
+    expect(hidden.length).toBeGreaterThan(0);
+    for (const button of hidden) {
+      expect(button.className).toMatch(/focus-visible:opacity-100/);
+      expect(button.tabIndex).toBe(0);
+      expect(
+        button.getAttribute("aria-label") || button.textContent?.trim()
+      ).toBeTruthy();
+    }
+  });
+
   it("orders blocks and loose files together, newest first", async () => {
     bridge();
     render(view());

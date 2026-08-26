@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  findRepoInfo as findRepoInfoJs,
   findRepoRoot as findRepoRootJs,
   refreshMeta as refreshMetaJs,
   withMeta,
@@ -9,10 +10,16 @@ import {
 // bags from the defaults and loses the parameters that have none. Same problem
 // mdindex.test.ts solves the same way: name the seams here, once, rather than
 // grow a .d.ts for a module only the main process requires.
+interface RepoInfo {
+  repoName: string;
+  repoRoot: string;
+  worktreeName: string | null;
+}
 interface RepoRootOptions {
   home?: string;
   exists?: (p: string) => boolean;
-  cache?: Map<string, string | null>;
+  readGitFile?: (p: string) => string | null;
+  cache?: Map<string, RepoInfo | null>;
 }
 interface MetaRow {
   path: string;
@@ -39,6 +46,10 @@ const findRepoRoot = findRepoRootJs as unknown as (
   dir: string,
   options?: RepoRootOptions
 ) => string | null;
+const findRepoInfo = findRepoInfoJs as unknown as (
+  dir: string,
+  options?: RepoRootOptions
+) => RepoInfo | null;
 const refreshMeta = refreshMetaJs as unknown as (
   rows: IndexRow[],
   deps: RefreshDeps
@@ -93,6 +104,101 @@ describe("findRepoRoot", () => {
     expect(calls).toBeGreaterThan(0);
     findRepoRoot("/home/u/a/b", { home: "/home/u", exists, cache });
     expect(exists.mock.calls.length).toBe(calls);
+  });
+
+  // A git worktree's .git is a FILE pointing into the parent repository. Six
+  // sibling worktrees of one repo used to arrive as six sibling projects
+  // holding the same 1,357 documents, which is a duplicate of one project, not
+  // an organized workspace.
+  describe("git worktrees", () => {
+    const HOME = "/home/u";
+    const WORKTREE = "/home/u/code/alt-ui-smart-par";
+    const worktreeExists = (p: string) => p === `${WORKTREE}/.git`;
+
+    it("attributes a worktree's files to the parent repository", () => {
+      const info = findRepoInfo(`${WORKTREE}/docs`, {
+        home: HOME,
+        exists: worktreeExists,
+        readGitFile: () => "gitdir: /home/u/code/alt-ui/.git/worktrees/alt-ui-smart-par\n",
+        cache: new Map(),
+      });
+      expect(info).toEqual({
+        repoName: "alt-ui",
+        repoRoot: "/home/u/code/alt-ui",
+        worktreeName: "alt-ui-smart-par",
+      });
+    });
+
+    it("keeps the worktree's own name, which is a real unit of work", () => {
+      expect(
+        findRepoInfo(WORKTREE, {
+          home: HOME,
+          exists: worktreeExists,
+          readGitFile: () => "gitdir: /home/u/code/alt-ui/.git/worktrees/alt-ui-smart-par",
+          cache: new Map(),
+        })?.worktreeName
+      ).toBe("alt-ui-smart-par");
+    });
+
+    it("resolves a relative gitdir against the worktree", () => {
+      expect(
+        findRepoInfo(WORKTREE, {
+          home: HOME,
+          exists: worktreeExists,
+          readGitFile: () => "gitdir: ../alt-ui/.git/worktrees/alt-ui-smart-par",
+          cache: new Map(),
+        })?.repoName
+      ).toBe("alt-ui");
+    });
+
+    it("names a bare repository's worktree without the .git suffix", () => {
+      expect(
+        findRepoInfo(WORKTREE, {
+          home: HOME,
+          exists: worktreeExists,
+          readGitFile: () => "gitdir: /home/u/code/alt-ui.git/worktrees/wt",
+          cache: new Map(),
+        })
+      ).toEqual({
+        repoName: "alt-ui",
+        repoRoot: "/home/u/code/alt-ui.git",
+        worktreeName: "alt-ui-smart-par",
+      });
+    });
+
+    it("leaves a submodule as its own repository", () => {
+      // A submodule's .git is a file too, but it points into .git/modules and
+      // a submodule genuinely is a separate repository.
+      const info = findRepoInfo("/home/u/code/outer/vendor/lib", {
+        home: HOME,
+        exists: (p: string) => p === "/home/u/code/outer/vendor/lib/.git",
+        readGitFile: () => "gitdir: /home/u/code/outer/.git/modules/vendor/lib",
+        cache: new Map(),
+      });
+      expect(info).toEqual({ repoName: "lib", repoRoot: "/home/u/code/outer/vendor/lib", worktreeName: null });
+    });
+
+    it("ignores a pointer whose path merely contains a worktrees folder", () => {
+      expect(
+        findRepoInfo(WORKTREE, {
+          home: HOME,
+          exists: worktreeExists,
+          readGitFile: () => "gitdir: /home/u/worktrees/notes/deeper/.git",
+          cache: new Map(),
+        })?.repoName
+      ).toBe("alt-ui-smart-par");
+    });
+
+    it("treats an unreadable or directory .git as an ordinary repository", () => {
+      expect(
+        findRepoRoot("/home/u/code/proj/docs", {
+          home: HOME,
+          exists: (p: string) => p === "/home/u/code/proj/.git",
+          readGitFile: () => null,
+          cache: new Map(),
+        })
+      ).toBe("proj");
+    });
   });
 
   it("caches the answer for every directory on the way up, not just the hit", () => {

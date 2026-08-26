@@ -41,13 +41,62 @@ function defaultStatBirthtime(p) {
   }
 }
 
-// The nearest ancestor holding a .git entry, named by its directory. Stops at
-// home so a walk never climbs out into /Users or /. The cache is per rescan
-// and covers every directory walked, not just the hits: most directories have
-// no repo above them, and that answer is the expensive one to recompute.
-function findRepoRoot(
+// A git worktree's `.git` is a FILE, not a directory, holding
+// "gitdir: <path>" where <path> ends in `.git/worktrees/<name>`. Every file in
+// a worktree belongs to the parent repository, so someone running several
+// worktree sprints at once should see one project with several blocks, not one
+// sibling project per sprint. Returns the pointer target, or null when the
+// entry is a plain repository directory.
+function parseGitdirPointer(text) {
+  const m = /^\s*gitdir:\s*(.+?)\s*$/m.exec(String(text ?? ""));
+  return m && m[1] ? m[1] : null;
+}
+
+// The parent repository root a worktree pointer names, or null when the
+// pointer is not a worktree at all. A submodule's `.git` is a file too, but it
+// points into `.git/modules/`, and a submodule genuinely is its own repository,
+// so it keeps its own identity.
+function worktreeParentRoot(gitdir, worktreeDir) {
+  const abs = path.isAbsolute(gitdir) ? gitdir : path.resolve(worktreeDir, gitdir);
+  const parts = abs.replace(/[\\/]+$/, "").split(/[\\/]/);
+  const at = parts.lastIndexOf("worktrees");
+  // Only the exact shape <common-git-dir>/worktrees/<name> counts; a directory
+  // that merely happens to be called "worktrees" is somebody's folder.
+  if (at <= 0 || at !== parts.length - 2) return null;
+  const common = parts.slice(0, at).join(path.sep);
+  if (!common) return null;
+  // <repo>/.git/worktrees/<n> -> <repo>;  <repo>.git/worktrees/<n> -> <repo>.git
+  return path.basename(common) === ".git" ? path.dirname(common) : common;
+}
+
+// A bare repository's directory carries the .git suffix; the project it holds
+// does not.
+function repoNameOf(root) {
+  const base = path.basename(root);
+  return base.replace(/\.git$/, "") || base;
+}
+
+function defaultReadGitFile(p) {
+  try {
+    return fs.statSync(p).isFile() ? fs.readFileSync(p, "utf-8") : null;
+  } catch {
+    return null; // a directory, or gone between the exists check and here
+  }
+}
+
+// The nearest ancestor holding a .git entry, resolved through worktree
+// pointers and named by its directory. Stops at home so a walk never climbs
+// out into /Users or /. The cache is per rescan and covers every directory
+// walked, not just the hits: most directories have no repo above them, and
+// that answer is the expensive one to recompute.
+function findRepoInfo(
   dir,
-  { home = os.homedir(), exists = fs.existsSync, cache = new Map() } = {}
+  {
+    home = os.homedir(),
+    exists = fs.existsSync,
+    readGitFile = defaultReadGitFile,
+    cache = new Map(),
+  } = {}
 ) {
   let d = dir;
   const walked = [];
@@ -58,16 +107,26 @@ function findRepoRoot(
       break;
     }
     walked.push(d);
-    if (exists(path.join(d, ".git"))) {
-      found = path.basename(d);
+    const entry = path.join(d, ".git");
+    if (exists(entry)) {
+      const pointer = parseGitdirPointer(readGitFile(entry));
+      const parent = pointer ? worktreeParentRoot(pointer, d) : null;
+      found = parent
+        ? { repoName: repoNameOf(parent), repoRoot: parent, worktreeName: path.basename(d) }
+        : { repoName: path.basename(d), repoRoot: d, worktreeName: null };
       break;
     }
-    const parent = path.dirname(d);
-    if (parent === d) break;
-    d = parent;
+    const parentDir = path.dirname(d);
+    if (parentDir === d) break;
+    d = parentDir;
   }
   for (const w of walked) cache.set(w, found);
   return found;
+}
+
+function findRepoRoot(dir, options) {
+  const info = findRepoInfo(dir, options);
+  return info ? info.repoName : null;
 }
 
 // rows: current index rows. Updates md_meta for new/changed paths only, and
@@ -138,4 +197,12 @@ function withMeta(rows, metaByPath) {
   });
 }
 
-module.exports = { refreshMeta, withMeta, findRepoRoot, HEAD_BYTES };
+module.exports = {
+  refreshMeta,
+  withMeta,
+  findRepoRoot,
+  findRepoInfo,
+  parseGitdirPointer,
+  worktreeParentRoot,
+  HEAD_BYTES,
+};

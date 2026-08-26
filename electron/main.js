@@ -1485,6 +1485,74 @@ handle("mdindex-refresh", async () => {
   return mdRowsWithMeta(result);
 }, { onFailure: (err) => ({ files: [], scannedAt: null, error: errorMessage(err) }) });
 
+// ── Projects: virtual organization state ──
+// Thin pass-throughs on purpose. main.js is untyped and untested, so the
+// taxonomy engine lives in src/lib/projects and the decisions live in the
+// registry; nothing here is allowed to have an opinion of its own.
+handle(
+  "projects-state",
+  () => {
+    const cached = registry.loadIndexCache();
+    const fingerprint = registry.indexCacheFingerprint(cached);
+    return {
+      pins: registry.pinsAll(),
+      blocks: registry.blocksAll(),
+      // Assignments written against a different index are stale by
+      // definition, so a fingerprint mismatch reads as "no cache".
+      assignments: registry.assignmentsGet(fingerprint),
+      fingerprint,
+      rulesKnownGood: registry.projectsConfigGet("rules-known-good"),
+      rulesError: registry.projectsConfigGet("rules-error"),
+    };
+  },
+  {
+    onFailure: (err) => ({
+      pins: [],
+      blocks: [],
+      assignments: [],
+      fingerprint: "",
+      rulesKnownGood: null,
+      rulesError: errorMessage(err),
+    }),
+  }
+);
+
+handle(
+  "projects-save-cache",
+  (_e, { fingerprint, assignments, blocks, rulesKnownGood } = {}) => {
+    if (Array.isArray(blocks)) for (const b of blocks) registry.blockUpsert(b);
+    if (Array.isArray(assignments)) {
+      registry.assignmentsSave(String(fingerprint || ""), assignments);
+    }
+    if (typeof rulesKnownGood === "string") {
+      registry.projectsConfigSet("rules-known-good", rulesKnownGood);
+      registry.projectsConfigSet("rules-error", "");
+    }
+    return { ok: true };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+
+handle(
+  "projects-pin",
+  (_e, args) => {
+    if (args && args.clear) registry.pinClear(args.path);
+    else registry.pinSet(args);
+    return { ok: true };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+
+handle(
+  "projects-block-set",
+  (_e, { blockId, customName, mergeInto } = {}) => {
+    if (typeof mergeInto === "string") registry.blockMerge(blockId, mergeInto);
+    else registry.blockSetName(blockId, customName ?? null);
+    return { ok: true };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+
 handle("mdindex-stars", () => registry.listStars(), { onFailure: () => [] });
 handle("mdindex-star-toggle", (_e, { path: p, kind }) =>
   registry.toggleStar(p, kind)

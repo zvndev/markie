@@ -1,3 +1,5 @@
+import type { BlockRecord } from "@/lib/projects/cluster";
+
 export interface FilePayload {
   name: string;
   content: string;
@@ -284,6 +286,24 @@ export interface ElectronAPI {
   // device-wide walk. `files` stays optional so an older main process (or a
   // notification that only reports the time) still type-checks.
   onMdIndexUpdated?(cb: (info: MdIndexUpdate) => void): Unsubscribe;
+  // Projects — the virtual organization layer over the index. The renderer
+  // owns the taxonomy engine; main only stores decisions and the derived
+  // cache, so these are all pass-throughs to the registry.
+  projectsState?(): Promise<ProjectsState>;
+  projectsSaveCache?(args: {
+    fingerprint: string;
+    assignments: ProjectsAssignmentWrite[];
+    blocks: BlockRecord[];
+    rulesKnownGood?: string;
+  }): Promise<ProjectsWriteResult>;
+  projectsPin?(
+    args:
+      | { path: string; project: string; blockId: string | null }
+      | { path: string; clear: true }
+  ): Promise<ProjectsWriteResult>;
+  projectsBlockSet?(
+    args: { blockId: string; customName: string | null } | { blockId: string; mergeInto: string }
+  ): Promise<ProjectsWriteResult>;
   // Markie MCP server location, for the Agents setup dialog
   mcpInfo?(): Promise<{ serverPath: string; packaged: boolean; error?: string }>;
   // Report a renderer crash to the main process's crash log. Fire-and-forget:
@@ -310,6 +330,47 @@ export interface MdRow {
   fmProject?: string | null;
   fmBlock?: string | null;
   repoName?: string | null;
+}
+
+// What main knows about the taxonomy: the user's decisions, plus the derived
+// cache for whichever index fingerprint produced it. Row shapes are the
+// registry's own snake_case, so the engine can consume them unchanged.
+export interface ProjectPinRow {
+  path: string;
+  project: string;
+  block_id: string | null;
+}
+
+export interface ProjectAssignmentRow {
+  path: string;
+  project: string;
+  block_id: string | null;
+  source: string;
+  mtime_ms: number;
+}
+
+export interface ProjectsState {
+  pins: ProjectPinRow[];
+  blocks: BlockRecord[];
+  assignments: ProjectAssignmentRow[];
+  fingerprint: string;
+  rulesKnownGood: string | null;
+  rulesError: string | null;
+}
+
+// Going the other way the arguments are camelCase, because they are arguments
+// and not rows. The two shapes stay visibly different on purpose.
+export interface ProjectsAssignmentWrite {
+  path: string;
+  project: string;
+  blockId: string | null;
+  source: string;
+  mtimeMs: number;
+}
+
+export interface ProjectsWriteResult {
+  ok: boolean;
+  error?: string;
 }
 
 export interface MdStar {

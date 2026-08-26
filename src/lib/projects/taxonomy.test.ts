@@ -96,9 +96,12 @@ describe("buildTaxonomy", () => {
     expect(t.projects[0].isUnfiled).toBe(true);
   });
 
-  it("sorts Unfiled by recency like any other project", () => {
+  it("keeps Unfiled last even when it is the freshest thing in the taxonomy", () => {
+    // Was "sorts Unfiled by recency like any other project", which is what the
+    // spec asked for and what put the bucket meaning "could not place these"
+    // in the first and largest card on the owner's real index.
     const t = build([f("/home/u/Desktop/loose.md", 1), f("/home/u/Documents/P/a.md", 100)]);
-    expect(t.projects.map((p) => p.name)).toEqual(["Unfiled", "P"]);
+    expect(t.projects.map((p) => p.name)).toEqual(["P", "Unfiled"]);
   });
 
   it("counts files the rules told it to ignore, and shows none of them", () => {
@@ -343,6 +346,23 @@ describe("project names and user-made projects", () => {
     });
     expect(t.projects.filter((p) => p.key === "Q4 planning")).toHaveLength(1);
     expect(t.projects[0].fileCount).toBe(1);
+  });
+
+  it("sorts Unfiled last however recently it changed", () => {
+    // The failure bucket must not own the first card. Unfiled here is the most
+    // recently touched thing in the taxonomy, which is its normal state: any
+    // loose file anywhere refreshes it.
+    const t = build([
+      f("/home/u/Documents/Thesis/ch1.md", 48),
+      f("/home/u/Documents/Thesis/ch2.md", 72),
+      f("/home/u/loose.md", 0),
+    ]);
+    const keys = t.projects.map((p) => p.key);
+    expect(keys[keys.length - 1]).toBe("Unfiled");
+    expect(t.projects[t.projects.length - 1].isUnfiled).toBe(true);
+    // and the real projects behind it still sort by recency among themselves
+    const real = t.projects.filter((p) => !p.isUnfiled).map((p) => p.updated);
+    expect([...real].sort((a, b) => b - a)).toEqual(real);
   });
 
   it("a rename row alone never conjures a project", () => {

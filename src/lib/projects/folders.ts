@@ -6,7 +6,7 @@
 // folder carries its files already grouped by the project they still live in:
 // the grouping is the explanation.
 import { compileGlob, type FolderRule } from "@/lib/projects/rules";
-import type { FileNode, ProjectNode } from "@/lib/projects/taxonomy";
+import { byRecencyUnfiledLast, type FileNode, type ProjectNode } from "@/lib/projects/taxonomy";
 
 export interface FolderProjectGroup {
   projectKey: string;
@@ -168,7 +168,7 @@ export function computeFolders(
   return matchers.map((m, i) => {
     const list = [...groups[i].values()];
     for (const g of list) g.files.sort((a, b) => b.mtimeMs - a.mtimeMs);
-    list.sort((a, b) => b.updated - a.updated);
+    list.sort(byRecencyUnfiledLast);
     let count = 0;
     let updated = 0;
     for (const g of list) {

@@ -12,6 +12,32 @@ import {
 import { deriveBlocks, type BlockRecord, type PriorAssignment } from "@/lib/projects/cluster";
 import type { MarkieRules } from "@/lib/projects/rules";
 
+/**
+ * Most recent first, except that Unfiled always sorts last however fresh it is.
+ *
+ * Unfiled is not a project competing on recency. It is the residue of every
+ * file no rule could place, and it changes whenever any loose file anywhere
+ * does, so it is almost always the most recently touched thing in the
+ * taxonomy. Sorting it purely by recency therefore pins the one card that
+ * means "Markie could not place these" to the largest, first position on the
+ * page, more or less permanently.
+ *
+ * This deliberately overrides design spec 5.2, which asked for Unfiled to be
+ * "sorted by recency like any other but visually distinguished". Being
+ * visually distinguished does not help when it is also always first.
+ *
+ * Shared by the project grid and by the group list inside a folder, so the two
+ * cannot drift apart.
+ */
+export function byRecencyUnfiledLast<T extends { isUnfiled: boolean; updated: number }>(
+  a: T,
+  b: T
+): number {
+  if (a.isUnfiled !== b.isUnfiled) return a.isUnfiled ? 1 : -1;
+  return b.updated - a.updated;
+}
+
+
 export type FileNode = EngineFile;
 
 export interface BlockNode {
@@ -280,7 +306,7 @@ export function buildTaxonomy(
     });
   }
 
-  projects.sort((a, b) => b.updated - a.updated);
+  projects.sort(byRecencyUnfiledLast);
   return {
     projects,
     totalFiles: assignments.length,

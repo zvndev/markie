@@ -552,7 +552,11 @@ end of each UI task.
 - Everything sorts most-recent-first: projects by `updated`, blocks by
   `updated`, files by `mtimeMs`.
 - Files that no rule or heuristic can place land in **Unfiled** (a synthetic
-  project, sorted by recency like any other but visually distinguished).
+  project, visually distinguished and always sorted **last**, regardless of
+  recency). Amended during implementation: Unfiled updates whenever any loose
+  file anywhere does, so recency sorting pinned it to the first card in the
+  grid, giving the most prominent position on the page to the bucket that
+  means "Markie could not place these".
 
 ### 5.2 Assignment precedence (locked)
 

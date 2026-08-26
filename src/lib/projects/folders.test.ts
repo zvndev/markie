@@ -111,6 +111,21 @@ describe("computeFolders grouping", () => {
     expect(week.groups[0].files.map((f) => f.name)).toEqual(["plan.md", "spec.md"]);
   });
 
+  it("puts the Unfiled group last inside a folder, however fresh its files are", () => {
+    // Same rule as the project grid, and for the same reason: inside a folder
+    // Unfiled is usually the freshest group, because a loose file is exactly
+    // the kind that gets written and never filed.
+    const unfiled = project("Unfiled", [file("scratch.md", "/home/u/Desktop", NOW - 60_000)], {
+      isUnfiled: true,
+    });
+    const folders = computeFolders([...PROJECTS, unfiled], [], opts);
+    const week = folders.find((f) => f.id === "week")!;
+    expect(week.groups[week.groups.length - 1].projectKey).toBe("Unfiled");
+    // and it really was the newest thing, so last place is the rule, not luck
+    const newest = [...week.groups].sort((a, b) => b.updated - a.updated)[0];
+    expect(newest.projectKey).toBe("Unfiled");
+  });
+
   it("counts loose files too, not only the ones inside blocks", () => {
     const loose = [
       project("Mixed", [file("in-block.md", "/home/u/m", NOW)], {

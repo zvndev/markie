@@ -9138,3 +9138,65 @@ break in the field.
 a new signup even once this fix ships, until the user updates. Existing
 accounts are unaffected (the migration grandfathers them). Sequence the deploy
 accordingly and say so in the release notes.
+
+---
+
+# Task 29C: Verifying a new signup must not revoke the password (DEPLOY BLOCKER)
+
+Added by the orchestrator after Phase 2. Phase 2 verified with a paired
+control that a user who signs up with a password and then proves their address
+with the emailed code loses that password, and has no in-app way to set a new
+one. They can only ever sign in by code afterwards.
+
+**Root cause, confirmed in code.** The server enables verification through the
+email-OTP plugin (`server/src/auth.ts:101-110`, `emailOTP({
+sendVerificationOnSignUp: true })`) and the client proves the address with
+`authClient.verifyOTP` (`src/components/sign-in.tsx:110`). That is email-OTP
+*sign-in*, not email *verification*. better-auth 1.7.1 deliberately revokes
+unproven credentials on that path (`revokeUnprovenAccountAccess`), which is the
+anti-squatting behavior Phase 5's fix depends on: it is how a victim reclaims
+an account an attacker squatted. A legitimate new user proving their own
+address is indistinguishable from that case, so their password is revoked
+correctly by the library and wrongly for the situation.
+
+Do **not** fix this by disabling `revokeUnprovenAccountAccess`. That is load
+bearing for the CRITICAL fix in Task 29.
+
+**Fix direction:** route signup verification through better-auth's email
+verification flow (a verification token proving *this* signup), which sets
+`emailVerified` without revoking credentials. Keep email-OTP as a separate,
+legitimate sign-in method for people who want it. The two flows must stay
+distinct: proving your own new signup is not the same event as signing in by
+code against an existing unverified account.
+
+**Files:** `server/src/auth.ts`, `src/components/sign-in.tsx`, plus tests both
+sides.
+
+- [ ] **Step 1:** Signup sends a verification token, and completing it marks
+  the address proven with the password intact. Regression test asserts the user
+  can sign in with that password afterwards.
+- [ ] **Step 2:** Email-OTP sign-in keeps today's revoke behavior, and the
+  Task 29 attack test stays green. Prove both in the same suite so nobody
+  "fixes" one by breaking the other.
+- [ ] **Step 3:** Copy stops explaining credential loss, because it stops
+  happening. Anyone who did land in the revoked state has a way to set a
+  password.
+- [ ] **Step 4:** Update the sign-in tests Phase 2 added.
+
+**Verify:** `(cd server && npm test)`, `npm test`, `npm run lint`,
+`npm run build`.
+
+---
+
+# Known limitation: rich-mode journal blind window (not a blocker)
+
+Phase 2 measured it honestly. In rich mode the draft journal sits behind
+RichView's 250ms serialize debounce plus the journal's own 250ms debounce, so a
+hard kill within roughly 500ms of a keystroke recovers nothing; at 800ms it
+recovers. Source mode is unaffected.
+
+This is a large improvement on the previous behavior, which lost the entire
+buffer on an ordinary window close, so it does not block the release. Recorded
+so it is a known number rather than a surprise. If it is ever worth closing,
+the direction is to journal from the editor's own change event rather than
+downstream of markdown serialization, which removes the first 250ms entirely.

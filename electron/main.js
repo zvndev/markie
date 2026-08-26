@@ -38,6 +38,7 @@ const { createPdfExporter, ensureExtension } = require("./export-pdf");
 const { createIpcHandler, errorMessage } = require("./ipc-result");
 const { writeFileAtomic } = require("./atomic-write");
 const { createSnapshots } = require("./snapshots");
+const { createHistory } = require("./history");
 const { saveConflictAction } = require("./save-conflict");
 const { createCloseFlusher } = require("./close-flush");
 
@@ -88,30 +89,48 @@ function drafts() {
   return _drafts;
 }
 
+// File history. Backed by the same userData/snapshots directory the 0.4.x
+// snapshot store used, so every existing snapshot is already the oldest
+// version of its document and nothing has to migrate.
+// The raw store, still needed by the native "Revert to Snapshot…" picker
+// until the history dialog replaces it.
 let _snapshots = null;
 function snapshots() {
   if (!_snapshots) {
     try {
       _snapshots = createSnapshots({ dir: app.getPath("userData") });
     } catch {
+      _snapshots = { dirFor: () => "", list: () => [], has: () => false, root: "" };
+    }
+  }
+  return _snapshots;
+}
+
+let _history = null;
+function history() {
+  if (!_history) {
+    try {
+      _history = createHistory({ dir: app.getPath("userData") });
+    } catch {
       // No userData: keep the shape so callers never branch on availability.
-      _snapshots = {
+      _history = {
         capture: () => ({ skipped: "unavailable" }),
-        dirFor: () => "",
+        captureExternal: () => ({ skipped: "unavailable" }),
         list: () => [],
+        read: () => null,
         has: () => false,
         root: "",
       };
     }
   }
-  return _snapshots;
+  return _history;
 }
 
 // Copy what is on disk before replacing it. Never allowed to fail a save: a
 // missing snapshot is a smaller loss than a save that did not happen.
 function snapshotBeforeWrite(filePath, nextContent) {
   try {
-    const res = snapshots().capture(filePath, nextContent);
+    const res = history().capture(filePath, nextContent, { author: "user" });
     if (res && res.skipped === "write-failed") {
       logCrash("snapshot-failed", res.error);
     }
@@ -528,6 +547,14 @@ function watchOpenFile(filePath) {
       // interrupt the user with a conflict that does not exist.
       const changed = diskChangedSince(filePath);
       if (changed === null) return;
+      // Somebody else's write is a version too. Recording it here is what puts
+      // an agent's edit of the open document into the history list; the store
+      // dedupes, so the user's own save over it does not record it twice.
+      try {
+        history().captureExternal(filePath);
+      } catch {
+        // A missing version is a smaller loss than a missed change notice.
+      }
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("file-changed-on-disk", {
           path: filePath,
@@ -560,7 +587,7 @@ function refreshRevertMenuItem() {
   try {
     const item = Menu.getApplicationMenu()?.getMenuItemById(REVERT_MENU_ID);
     if (!item) return; // menu not built yet (startup) or not this platform
-    item.enabled = !!currentDocPath && snapshots().has(currentDocPath);
+    item.enabled = !!currentDocPath && history().has(currentDocPath);
   } catch {
     // A menu that stays enabled is a dialog that explains itself instead.
   }

@@ -1,0 +1,215 @@
+// Assembles the full tree the UI renders: assignments (the ladder), then
+// per-project block derivation (fixed blocks from fm/rules/pins first,
+// clustering for the rest), then most-recent-first ordering everywhere.
+import {
+  assignProjects,
+  UNFILED,
+  type AssignmentSource,
+  type EngineFile,
+  type Pin,
+  type ProjectAssignment,
+} from "@/lib/projects/assign";
+import { deriveBlocks, type BlockRecord, type PriorAssignment } from "@/lib/projects/cluster";
+import type { MarkieRules } from "@/lib/projects/rules";
+
+export type FileNode = EngineFile;
+
+export interface BlockNode {
+  id: string;
+  name: string;
+  made: number;
+  updated: number;
+  files: FileNode[];
+}
+
+export interface ProjectNode {
+  name: string;
+  made: number;
+  updated: number;
+  fileCount: number;
+  blocks: BlockNode[];
+  isUnfiled: boolean;
+}
+
+export interface AssignmentRow {
+  path: string;
+  project: string;
+  blockId: string | null;
+  source: AssignmentSource;
+  mtimeMs: number;
+}
+
+export interface Taxonomy {
+  projects: ProjectNode[];
+  totalFiles: number;
+  unfiledCount: number;
+  ignoredCount: number;
+  assignmentRows: AssignmentRow[];
+  blockUpserts: BlockRecord[];
+}
+
+// A stable id for a block fixed by name (front matter or a rule): the same
+// declaration lands in the same block everywhere.
+const fixedBlockId = (project: string, block: string) => `f_${project}::${block}`;
+
+function minOf(values: number[]): number {
+  let m = Infinity;
+  for (const v of values) if (v < m) m = v;
+  return m;
+}
+function maxOf(values: number[]): number {
+  let m = -Infinity;
+  for (const v of values) if (v > m) m = v;
+  return m;
+}
+
+export function buildTaxonomy(
+  files: EngineFile[],
+  opts: {
+    pins: Pin[];
+    rules: MarkieRules;
+    priorAssignments: PriorAssignment[];
+    knownBlocks: BlockRecord[];
+    home: string;
+    now?: () => number;
+  }
+): Taxonomy {
+  const now = opts.now ?? Date.now;
+  const { assignments, ignored } = assignProjects(files, {
+    pins: opts.pins,
+    rules: opts.rules,
+    home: opts.home,
+  });
+  const fileByPath = new Map(files.map((f) => [f.path, f]));
+  const priorByPath = new Map(opts.priorAssignments.map((p) => [p.path, p]));
+  const knownById = new Map(opts.knownBlocks.map((b) => [b.block_id, b]));
+
+  const byProject = new Map<string, ProjectAssignment[]>();
+  const knownByProject = new Map<string, BlockRecord[]>();
+  for (const a of assignments) {
+    const arr = byProject.get(a.project);
+    if (arr) arr.push(a);
+    else byProject.set(a.project, [a]);
+  }
+  for (const b of opts.knownBlocks) {
+    const arr = knownByProject.get(b.project);
+    if (arr) arr.push(b);
+    else knownByProject.set(b.project, [b]);
+  }
+
+  const assignmentRows: AssignmentRow[] = [];
+  const blockUpserts: BlockRecord[] = [];
+  const projects: ProjectNode[] = [];
+
+  for (const [project, members] of byProject) {
+    // Blocks the ladder already decided, and the files left for clustering.
+    const blockFiles = new Map<string, EngineFile[]>();
+    const declaredName = new Map<string, string>();
+    const toCluster: EngineFile[] = [];
+    const sourceByPath = new Map<string, AssignmentSource>();
+    const addTo = (id: string, f: EngineFile) => {
+      const arr = blockFiles.get(id);
+      if (arr) arr.push(f);
+      else blockFiles.set(id, [f]);
+    };
+
+    for (const a of members) {
+      const f = fileByPath.get(a.path);
+      if (!f) continue;
+      const fixedId = a.pinnedBlockId ?? (a.fixedBlock ? fixedBlockId(project, a.fixedBlock) : null);
+      if (!fixedId) {
+        toCluster.push(f);
+        sourceByPath.set(f.path, a.source);
+        continue;
+      }
+      if (a.fixedBlock) declaredName.set(fixedId, a.fixedBlock);
+      addTo(fixedId, f);
+      assignmentRows.push({
+        path: a.path,
+        project,
+        blockId: fixedId,
+        source: a.source,
+        mtimeMs: f.mtimeMs,
+      });
+    }
+
+    // Clustering sees only this project's history: a prior assignment from
+    // another project is not evidence about this one, and feeding every
+    // project the whole table would be quadratic on a real index.
+    const projectPriors: PriorAssignment[] = [];
+    for (const f of toCluster) {
+      const p = priorByPath.get(f.path);
+      if (p) projectPriors.push(p);
+    }
+    const derived = deriveBlocks(
+      project,
+      toCluster,
+      projectPriors,
+      knownByProject.get(project) ?? [],
+      opts.rules.clustering,
+      now
+    );
+    const derivedById = new Map(derived.blocks.map((b) => [b.block_id, b]));
+    for (const f of toCluster) {
+      const id = derived.byPath.get(f.path) ?? null;
+      if (id) addTo(id, f);
+      assignmentRows.push({
+        path: f.path,
+        project,
+        blockId: id,
+        source: sourceByPath.get(f.path) ?? "derived",
+        mtimeMs: f.mtimeMs,
+      });
+    }
+
+    // Every block the tree shows gets a durable row, not only the clustered
+    // ones: a rename writes to project_blocks by id, and an UPDATE against a
+    // row that was never inserted is a silently discarded decision.
+    const blocks: BlockNode[] = [];
+    for (const [id, entryFiles] of blockFiles) {
+      const known = knownById.get(id);
+      const drv = derivedById.get(id);
+      const auto = drv?.auto_name ?? known?.auto_name ?? declaredName.get(id) ?? id;
+      const times = entryFiles.map((f) => f.mtimeMs);
+      const births = entryFiles.map((f) => f.birthtimeMs ?? f.mtimeMs);
+      const made = minOf(births);
+      const updated = maxOf(times);
+      blocks.push({
+        id,
+        name: known?.custom_name ?? auto,
+        made,
+        updated,
+        files: [...entryFiles].sort((a, b) => b.mtimeMs - a.mtimeMs),
+      });
+      blockUpserts.push({
+        block_id: id,
+        project,
+        auto_name: auto,
+        custom_name: known?.custom_name ?? null,
+        merged_into: known?.merged_into ?? null,
+        created_at: known?.created_at ?? new Date(made).toISOString(),
+        updated_at: new Date(updated).toISOString(),
+      });
+    }
+    blocks.sort((a, b) => b.updated - a.updated);
+
+    projects.push({
+      name: project,
+      made: blocks.length ? minOf(blocks.map((b) => b.made)) : now(),
+      updated: blocks.length ? maxOf(blocks.map((b) => b.updated)) : now(),
+      fileCount: members.length,
+      blocks,
+      isUnfiled: project === UNFILED,
+    });
+  }
+
+  projects.sort((a, b) => b.updated - a.updated);
+  return {
+    projects,
+    totalFiles: assignments.length,
+    unfiledCount: byProject.get(UNFILED)?.length ?? 0,
+    ignoredCount: ignored,
+    assignmentRows,
+    blockUpserts,
+  };
+}

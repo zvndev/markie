@@ -18,6 +18,8 @@ export interface ClusteringTunables {
   maxBlocksPerProject: number;
   bulkMinFiles: number; // bulk-write guard: cluster size threshold
   bulkWindowMinutes: number; // bulk-write guard: mtime spread threshold
+  maxBlockShare: number; // concentration guard: share of a project one block may hold
+  maxBlockFiles: number; // concentration guard: absolute file ceiling for a block
 }
 
 export interface MarkieRules {
@@ -36,6 +38,11 @@ export const DEFAULT_CLUSTERING: ClusteringTunables = {
   // (Spec 5.4).
   bulkMinFiles: 50,
   bulkWindowMinutes: 15,
+  // A block holding most of its project is a bucket, not a unit of work, and
+  // reads as "Markie did not organize this". Anything over these gets broken
+  // up by folder (Spec 5.9 measures the same two numbers as a release gate).
+  maxBlockShare: 0.4,
+  maxBlockFiles: 500,
 };
 
 const EMPTY_RULES: MarkieRules = {
@@ -80,6 +87,12 @@ export function parseRules(markdown: string): {
     }
     if (typeof c.bulk_window_minutes === "number" && c.bulk_window_minutes > 0) {
       clustering.bulkWindowMinutes = c.bulk_window_minutes;
+    }
+    if (typeof c.max_block_share === "number" && c.max_block_share > 0 && c.max_block_share <= 1) {
+      clustering.maxBlockShare = c.max_block_share;
+    }
+    if (typeof c.max_block_files === "number" && c.max_block_files >= 1) {
+      clustering.maxBlockFiles = c.max_block_files;
     }
   }
 

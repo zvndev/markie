@@ -45,13 +45,17 @@ export const MARKIE_DARK: ThemePreset = {
     surface2: "#1c1c20",
     foreground: "#fafafa",
     muted: "#a1a1aa",
-    // Zinc 500, one step of the same ramp as muted and accent. The old #27272a
-    // drew a card edge at 1.19:1 against the surface behind it, which is not an
-    // edge; this clears 3:1 on every dark background the app paints
-    // (background 4.12, surface 3.67, surface-2 3.51).
-    border: "#71717a",
-    // The border value this theme used before 0.5.0. Inside a document that was
-    // always right: a hairline that separates without competing with the text.
+    // Deliberately quiet, and deliberately below the 3:1 that WCAG 1.4.11 asks
+    // of a boundary identifying a component. It was raised to #71717a during
+    // 0.5.0 for exactly that reason, and the result was rejected on sight: an
+    // app made of visible boxes rather than of documents. Markie is a reader,
+    // its edges are meant to be felt rather than seen, and the owner's call is
+    // that the calm is worth more than the ratio. Cards are separated by
+    // background steps (background / surface / surface-2) and by shadow, so
+    // this hairline is a hint and not the only thing carrying structure.
+    // If it is ever raised again, raise it alone: docRule below is what keeps
+    // rendered documents out of the blast radius.
+    border: "#27272a",
     docRule: "#27272a",
     accent: "#3f3f46",
     link: "#60a5fa",
@@ -75,16 +79,11 @@ export const MARKIE_LIGHT: ThemePreset = {
     surface2: "#e3e8ef",
     foreground: "#18181b",
     muted: "#475569",
-    // A cool grey with about half the blue of the palette it sits in. The old
-    // #c7d0dc drew a card edge at 1.38:1 against the surface behind it and
-    // 1.49:1 against the page, so cards dissolved into the background exactly
-    // the way the dark theme's old border did. This clears 3:1 on every light
-    // surface the app paints (background 3.76, surface 3.50, surface-2 3.19,
-    // accent 3.22), the same bar dark meets, and it stays a boundary rather
-    // than a blue outline: a saturated edge at this contrast reads as a form
-    // field, not as the quiet inevitable edge of an object.
-    border: "#7a818b",
-    // As above: the pre-0.5.0 light border, kept for document rules only.
+    // The light half of the same decision recorded on the dark border above:
+    // raised to #7a818b during 0.5.0, rejected, and restored. Same reasoning,
+    // and the light theme feels it more, because a dark hairline on a pale
+    // page reads as a drawn box in a way a light one on a dark page does not.
+    border: "#c7d0dc",
     docRule: "#c7d0dc",
     accent: "#dbeafe",
     link: "#1d4ed8",

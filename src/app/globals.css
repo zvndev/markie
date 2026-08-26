@@ -12,7 +12,7 @@
   --background: #09090b;
   --foreground: #fafafa;
   --muted: #a1a1aa;
-  --border: #71717a;
+  --border: #27272a;
   --accent: #3f3f46;
   --surface: #18181b;
   --surface-2: #1c1c20;
@@ -143,15 +143,11 @@ body {
     inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent);
 }
 
-/* A popover that opens on top of a card, rather than on top of the page, needs
-   a harder edge than the card it covers. var(--border) is now legible in its
-   own right (3.67:1 against the dark surface), so this is no longer rescuing an
-   invisible hairline; it is keeping the elevation READABLE, because two edges
-   of equal weight read as one plane. Raised panels stay lighter than what is
-   behind them and mix their border toward var(--muted), which lands around
-   5.5:1 in dark and stays legible in light. */
+/* A popover that opens on top of a card needs to read as being in front of it.
+   That is the shadow's job here, not the border's: this used to also darken the
+   edge, which made one element in the app outlined more heavily than everything
+   around it. Elevation is depth, and depth is shadow. */
 .markie-menu-panel.markie-menu-raised {
-  border-color: color-mix(in srgb, var(--muted) 62%, var(--border));
   box-shadow:
     0 12px 26px color-mix(in srgb, #000 30%, transparent),
     0 2px 6px color-mix(in srgb, #000 18%, transparent),

@@ -152,11 +152,18 @@ describe("theme store", () => {
     expect(editorThemeForTokens({ background: "not-a-color" })).toBe("dark");
   });
 
-  // WCAG 1.4.11: a boundary that identifies a component needs 3:1. The dark
-  // border used to draw at 1.19:1 against the surface behind it, which meant
-  // every card in the Projects view had no visible edge at all. This pins the
-  // ratio so it cannot quietly slip back.
-  describe("the border token stays a visible edge", () => {
+  // This block used to enforce WCAG 1.4.11 (3:1 for a boundary identifying a
+  // component) on the border token. That bar was met during 0.5.0 by raising
+  // both themes' borders, and the result was rejected by the person who has to
+  // look at it: the app read as a grid of drawn boxes instead of as a reader.
+  //
+  // The bar is not gone, it is reassigned. What must stay legible is the
+  // SEPARATION between surfaces, which the background ramp and the shadows
+  // carry, and the token itself goes back to a hint. So these tests now pin the
+  // restored values, so a future "accessibility fix" cannot silently reapply a
+  // change that was already made and already reverted, and pin document rules
+  // to never exceed chrome, so raising one cannot drag the other along.
+  describe("the border token stays quiet, on purpose", () => {
     const luminance = (hex: string) => {
       const [r, g, b] = [0, 2, 4]
         .map((i) => parseInt(hex.replace("#", "").slice(i, i + 2), 16) / 255)
@@ -168,14 +175,23 @@ describe("theme store", () => {
       return (hi + 0.05) / (lo + 0.05);
     };
 
-    it("clears 3:1 against every surface either built-in theme paints", () => {
-      // Light used to be exempt from this and drew its card edge at 1.38:1,
-      // which is not an edge either. Both themes are held to the same bar.
+    it("holds both themes at the hairline the owner chose", () => {
+      // Pinned by value, not by ratio, because the decision is a specific look
+      // rather than a threshold. Changing either of these is a product call and
+      // should have to edit this line to make it.
+      expect(MARKIE_DARK.tokens.border).toBe("#27272a");
+      expect(MARKIE_LIGHT.tokens.border).toBe("#c7d0dc");
+    });
+
+    it("keeps the separation the border is no longer carrying", () => {
+      // The reason a quiet border is safe: surfaces are told apart by their
+      // backgrounds, so a card is visible whether or not its edge is. If this
+      // ramp ever flattens, the quiet border stops being a preference and
+      // starts being a bug.
       for (const theme of [MARKIE_DARK, MARKIE_LIGHT]) {
         const t = theme.tokens;
-        for (const behind of [t.background, t.surface, t.surface2]) {
-          expect(ratio(t.border, behind)).toBeGreaterThanOrEqual(3);
-        }
+        expect(ratio(t.surface, t.background)).toBeGreaterThan(1.05);
+        expect(ratio(t.surface2, t.background)).toBeGreaterThan(1.05);
       }
     });
 
@@ -186,14 +202,17 @@ describe("theme store", () => {
     // These two are now separate tokens and must stay separate: chrome is an
     // object edge and has to be seen, a document rule is typography and has to
     // recede.
-    it("keeps document rules far quieter than chrome borders", () => {
+    it("never lets a document rule be louder than a chrome border", () => {
+      // The two tokens hold the same value today, because chrome came back down
+      // to where documents already were. The invariant is what matters: if the
+      // border is ever raised again for card edges, documents must not follow,
+      // which is the whole reason this token was split out.
       for (const theme of [MARKIE_DARK, MARKIE_LIGHT]) {
         const t = theme.tokens;
         expect(t.docRule).toBeDefined();
         for (const behind of [t.background, t.surface]) {
-          // Quieter than the chrome border against the same backdrop...
-          expect(ratio(t.docRule!, behind)).toBeLessThan(ratio(t.border, behind));
-          // ...and genuinely a hairline, not a second edge.
+          expect(ratio(t.docRule!, behind)).toBeLessThanOrEqual(ratio(t.border, behind));
+          // and stays typography, not a second edge
           expect(ratio(t.docRule!, behind)).toBeLessThan(2);
         }
       }

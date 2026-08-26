@@ -303,6 +303,13 @@ export interface MdRow {
   name: string;
   dir: string;
   mtimeMs: number;
+  // Joined from the main process's md_meta table for the Projects taxonomy.
+  // Optional because the metadata pass runs after the index and lags it on a
+  // first run: a row without these still renders everywhere it did before.
+  birthtimeMs?: number | null;
+  fmProject?: string | null;
+  fmBlock?: string | null;
+  repoName?: string | null;
 }
 
 export interface MdStar {

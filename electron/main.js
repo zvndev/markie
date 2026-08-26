@@ -1376,6 +1376,61 @@ function keepCacheOverTruncated(result) {
   return true;
 }
 
+// Join the per-file metadata the Projects taxonomy needs (birthtime, the
+// markie front matter declaration, the containing repo's name) onto index
+// rows. Additive and best-effort: the index has to keep working even if the
+// metadata table is unreadable, so a failure here returns the plain rows.
+function mdRowsWithMeta(result) {
+  if (!result || !Array.isArray(result.files)) return result;
+  try {
+    const { withMeta } = require("./mdmeta");
+    const metaByPath = new Map(registry.metaAll().map((m) => [m.path, m]));
+    return { ...result, files: withMeta(result.files, metaByPath) };
+  } catch {
+    return result;
+  }
+}
+
+// Extracting metadata for a whole fresh index is 2+ seconds of synchronous
+// file reads (measured on a 14.5k-file index), so it runs in slices with the
+// event loop free in between rather than freezing the window once. Later
+// passes touch only files whose mtime moved and finish in a millisecond.
+const MD_META_SLICE_MS = 120;
+let _mdMetaSliceTimer = null;
+
+function mdRefreshMetaSliced(rows) {
+  if (_mdMetaSliceTimer) {
+    clearTimeout(_mdMetaSliceTimer);
+    _mdMetaSliceTimer = null;
+  }
+  let touched = 0;
+  const step = () => {
+    _mdMetaSliceTimer = null;
+    try {
+      const { refreshMeta } = require("./mdmeta");
+      const { updated, remaining } = refreshMeta(rows, {
+        registry,
+        budgetMs: MD_META_SLICE_MS,
+      });
+      touched += updated;
+      if (remaining > 0) {
+        _mdMetaSliceTimer = setTimeout(step, 50);
+        return;
+      }
+    } catch (err) {
+      logCrash("mdmeta-refresh-failed", err);
+      return;
+    }
+    // The taxonomy the renderer already drew was built without this metadata.
+    // Tell it once, at the end, rather than after every slice.
+    if (touched > 0 && mainWindow && !mainWindow.isDestroyed()) {
+      const cached = mdindex.getCached();
+      if (cached) mainWindow.webContents.send("mdindex-updated", mdRowsWithMeta(cached));
+    }
+  };
+  step();
+}
+
 // Run a fresh index scan, persist the snapshot, and tell the renderer.
 async function mdRescanAndNotify() {
   _mdLastScanAt = Date.now();
@@ -1386,7 +1441,7 @@ async function mdRescanAndNotify() {
       // Broadcast the fuller cache instead of the partial walk.
       const cached = mdindex.getCached();
       if (cached && mainWindow && !mainWindow.isDestroyed())
-        mainWindow.webContents.send("mdindex-updated", cached);
+        mainWindow.webContents.send("mdindex-updated", mdRowsWithMeta(cached));
       return;
     }
     try { registry.saveIndexCache(result.files); } catch { /* cache best-effort */ }
@@ -1394,7 +1449,8 @@ async function mdRescanAndNotify() {
     // this event by calling mdindex-refresh, which walked the disk a second
     // time for the same answer we already had in hand.
     if (mainWindow && !mainWindow.isDestroyed())
-      mainWindow.webContents.send("mdindex-updated", result);
+      mainWindow.webContents.send("mdindex-updated", mdRowsWithMeta(result));
+    mdRefreshMetaSliced(result.files);
   } catch (err) {
     logCrash("mdindex-scan-failed", err);
   }
@@ -1414,7 +1470,7 @@ handle("mdindex-scan", async () => {
   if (Date.now() - _mdLastScanAt >= MD_RESCAN_INTERVAL_MS) {
     mdRescanAndNotify(); // fire-and-forget refresh
   }
-  return cached || { files: [], scannedAt: null };
+  return mdRowsWithMeta(cached) || { files: [], scannedAt: null };
 }, { onFailure: (err) => ({ files: [], scannedAt: null, error: errorMessage(err) }) });
 
 // An explicit refresh (the Browse panel's own button) still walks now.
@@ -1423,9 +1479,10 @@ handle("mdindex-refresh", async () => {
   _mdLastScanAt = Date.now();
   const result = await mdindex.rescan();
   _mdLastScanAt = Date.now();
-  if (keepCacheOverTruncated(result)) return mdindex.getCached() || result;
+  if (keepCacheOverTruncated(result)) return mdRowsWithMeta(mdindex.getCached() || result);
   try { registry.saveIndexCache(result.files); } catch { /* best-effort */ }
-  return result;
+  mdRefreshMetaSliced(result.files);
+  return mdRowsWithMeta(result);
 }, { onFailure: (err) => ({ files: [], scannedAt: null, error: errorMessage(err) }) });
 
 handle("mdindex-stars", () => registry.listStars(), { onFailure: () => [] });

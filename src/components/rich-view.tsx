@@ -11,6 +11,12 @@ import {
 import { TableBar } from "@/components/format-rail";
 import { formatMarkdownTables } from "@/lib/format-tables";
 import { richBaseExtensions } from "@/lib/rich-extensions";
+import { joinFrontMatter, splitFrontMatter } from "@/lib/front-matter";
+import {
+  extractHoldAsides,
+  restoreHoldAsides,
+  type HoldAside,
+} from "@/lib/rich-hold-aside";
 import { Collaboration } from "@tiptap/extension-collaboration";
 import { CollaborationCaret } from "@tiptap/extension-collaboration-caret";
 import * as Y from "yjs";
@@ -56,15 +62,27 @@ interface CollabSession {
   provider: WebsocketProvider;
 }
 
+/** What the rich pane holds aside while a solo document is being edited. */
+interface SerializeCtx {
+  frontMatter: string;
+  holds: HoldAside[];
+}
+
 // The document as markdown, exactly as an edit would emit it. Rich edits always
-// emit pretty-aligned table pipes.
-function serializeMarkdown(editor: Editor): string {
+// emit pretty-aligned table pipes, and the constructs TipTap destroys at parse
+// time (front matter, HTML comments, raw HTML blocks, footnote definitions) are
+// put back verbatim from the bytes that were held aside on the way in.
+function serializeMarkdown(editor: Editor, ctx: SerializeCtx): string {
   const raw = (
     editor.storage as unknown as {
       markdown: { getMarkdown(): string };
     }
   ).markdown.getMarkdown();
-  return formatMarkdownTables(raw);
+  const formatted = formatMarkdownTables(raw);
+  return joinFrontMatter(
+    ctx.frontMatter,
+    restoreHoldAsides(formatted, ctx.holds)
+  );
 }
 
 export function RichView({
@@ -187,6 +205,24 @@ export function RichView({
     return () => provider.off("connection-close", onClose);
   }, [session, onCollabStatus]);
 
+  // Layer 1 state: the front matter and the held constructs of the document
+  // currently in the editor (solo mode). Collab rooms hold parsed content
+  // already, so the shims do not apply there.
+  const [initialSplit] = useState(() => {
+    const { frontMatter, body } = splitFrontMatter(value);
+    return { frontMatter, held: extractHoldAsides(body) };
+  });
+  const frontMatterRef = useRef(session ? "" : initialSplit.frontMatter);
+  const holdsRef = useRef<HoldAside[]>(session ? [] : initialSplit.held.holds);
+  // Layer 2 baseline: the placeholder-space source the editor content came
+  // from, which block preservation diffs the serializer's output against.
+  const baselineBodyRef = useRef(session ? "" : initialSplit.held.text);
+  // Read through refs so every serialize path sees the document as it stands.
+  const serializeCtx = (): SerializeCtx =>
+    session
+      ? { frontMatter: "", holds: [] }
+      : { frontMatter: frontMatterRef.current, holds: holdsRef.current };
+
   const editor = useEditor({
     immediatelyRender: false,
     editable: !locked,
@@ -196,8 +232,9 @@ export function RichView({
       ...richBaseExtensions({ collab: !!session }),
       ...init.extensions,
     ],
-    // In collab mode the Yjs doc is the source of truth from the first sync
-    content: session ? undefined : value,
+    // In collab mode the Yjs doc is the source of truth from the first sync.
+    // Solo mode gets the held-aside body, never the raw file.
+    content: session ? undefined : initialSplit.held.text,
     onUpdate: ({ editor }) => {
       // Belt and braces alongside emitUpdate:false — an update raised while we
       // are loading an external value is never the user's edit, and echoing it
@@ -206,7 +243,7 @@ export function RichView({
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       debounceTimer.current = setTimeout(() => {
         debounceTimer.current = null;
-        const md = serializeMarkdown(editor);
+        const md = serializeMarkdown(editor, serializeCtx());
         lastEmitted.current = md;
         onChange(md);
       }, 250);
@@ -236,6 +273,8 @@ export function RichView({
 
   // Settle the debounce now and hand back what the document currently says.
   // Null means nothing was pending, so the parent's own copy is already current.
+  const serializeCtxRef = useRef(serializeCtx);
+  serializeCtxRef.current = serializeCtx;
   const flush = useCallback((): string | null => {
     if (!debounceTimer.current) return null;
     clearTimeout(debounceTimer.current);
@@ -243,7 +282,7 @@ export function RichView({
     const ed = editorRef.current;
     if (!ed || ed.isDestroyed) return null;
     try {
-      const md = serializeMarkdown(ed);
+      const md = serializeMarkdown(ed, serializeCtxRef.current());
       lastEmitted.current = md;
       onChangeRef.current(md);
       return md;
@@ -409,9 +448,14 @@ export function RichView({
     if (!editor || session) return;
     if (value === lastEmitted.current) return;
     lastEmitted.current = value;
+    const { frontMatter, body } = splitFrontMatter(value);
+    const held = extractHoldAsides(body);
+    frontMatterRef.current = frontMatter;
+    holdsRef.current = held.holds;
+    baselineBodyRef.current = held.text;
     applyingExternal.current = true;
     try {
-      editor.commands.setContent(value, { emitUpdate: false });
+      editor.commands.setContent(held.text, { emitUpdate: false });
     } finally {
       applyingExternal.current = false;
     }

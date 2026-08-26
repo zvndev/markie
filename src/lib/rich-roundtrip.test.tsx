@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { probeRoundTrip, describeLossRisks } from "@/lib/rich-roundtrip";
+import { splitFrontMatter, joinFrontMatter } from "@/lib/front-matter";
+import { extractHoldAsides, restoreHoldAsides } from "@/lib/rich-hold-aside";
 
 // Fixtures that MUST survive a parse-serialize round trip byte for byte
 // (after Markie's deliberate table re-alignment, which the probe accepts).
@@ -72,4 +74,35 @@ describe("describeLossRisks", () => {
   it("finds nothing in plain prose", () => {
     expect(describeLossRisks("# T\n\nOne line.\n")).toEqual([]);
   });
+});
+
+describe("layer 1 pipeline (hold-aside)", () => {
+  const PRESERVED: Array<[string, string]> = [
+    [
+      "front matter",
+      "---\nmarkie:\n  project: Markie\n  block: organized-workspace\n---\n# Doc\n\nBody.\n",
+    ],
+    ["html comment", "before\n\n<!-- keep me -->\n\nafter\n"],
+    ["raw html block", "intro\n\n<div class=\"warn\">\n<b>html</b>\n</div>\n\noutro\n"],
+    ["footnote definition", "Note here.\n\n[^1]: the note\n"],
+  ];
+
+  // probeRoundTrip returns the RAW serializer output, and tiptap-markdown's
+  // getMarkdown() never ends a document with a newline. Layer 1 alone cannot
+  // put that byte back; layer 2 does, from the original block's own trailing
+  // bytes, and its suite asserts exact byte identity. Here the assertion is
+  // that the held constructs come back verbatim, in place.
+  const endNl = (s: string) => s.replace(/\n*$/, "\n");
+
+  for (const [name, md] of PRESERVED) {
+    it(`survives a zero-edit round trip: ${name}`, () => {
+      const { frontMatter, body } = splitFrontMatter(md);
+      const { text, holds } = extractHoldAsides(body);
+      const res = probeRoundTrip(text);
+      expect(res.clean, `placeholder text was:\n${text}\ngot:\n${res.output}`).toBe(true);
+      expect(
+        endNl(joinFrontMatter(frontMatter, restoreHoldAsides(res.output, holds)))
+      ).toBe(md);
+    });
+  }
 });

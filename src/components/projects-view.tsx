@@ -34,6 +34,11 @@ export function buildOverviewListing(projects: ProjectNode[], now: number = Date
     for (const b of p.blocks) {
       lines.push(`  - ${b.name} (${b.files.length})`);
     }
+    // Loose files are the project too, and a listing that skipped them would
+    // not add up to the count on the line above.
+    for (const f of p.looseFiles) {
+      lines.push(`  - ${f.name}`);
+    }
   }
   lines.push("");
   return lines.join("\n");
@@ -302,6 +307,139 @@ export function ProjectsView({
     setNotice(res?.ok ? "Listing written to Projects.md." : (res?.error ?? "Could not write Projects.md."));
   };
 
+  // Blocks and loose files share one most-recent-first order. A loose file
+  // renders as a bare row rather than a card: a card is a piece of work, and
+  // drawing one around a single file is the folder costume this pass took off.
+  const entries = useMemo(() => {
+    const rows: Array<{ at: number; block?: BlockNode; file?: FileNode }> = [
+      ...(active?.blocks ?? []).map((b) => ({ at: b.updated, block: b })),
+      ...(active?.looseFiles ?? []).map((f) => ({ at: f.mtimeMs, file: f })),
+    ];
+    return rows.sort((a, b) => b.at - a.at);
+  }, [active]);
+
+  // One row, wherever the file sits. `inBlock` is the block it is already in,
+  // so the move menu never offers to move it where it already is.
+  const organizeRow = (file: FileNode, inBlock: string | null) => (
+    <FileRow
+      key={file.path}
+      file={file}
+      pinned={pinnedPaths.has(file.path)}
+      onOpen={() => onOpenPath(file.path)}
+      onDragStart={() => setDragPath(file.path)}
+      menuOpen={fileMenu === file.path}
+      onMenu={() => setFileMenu(fileMenu === file.path ? null : file.path)}
+    >
+      {fileMenu === file.path && (
+        <MenuPanel>
+          <MenuSelect
+            label="Move to project"
+            options={(taxonomy?.projects ?? []).map((p) => ({ value: p.name, label: p.name }))}
+            onPick={(project) => {
+              setFileMenu(null);
+              void projects.pin(file.path, project, null);
+            }}
+          />
+          <MenuSelect
+            label="Move to block"
+            options={(active?.blocks ?? [])
+              .filter((b) => b.id !== inBlock)
+              .map((b) => ({ value: b.id, label: b.name }))}
+            onPick={(blockId) => {
+              setFileMenu(null);
+              if (active) void projects.pin(file.path, active.name, blockId);
+            }}
+          />
+          {pinnedPaths.has(file.path) && (
+            <MenuAction
+              onClick={() => {
+                setFileMenu(null);
+                void projects.unpin(file.path);
+              }}
+            >
+              Unpin (follow rules)
+            </MenuAction>
+          )}
+        </MenuPanel>
+      )}
+    </FileRow>
+  );
+
+  const BlockCardHeader = ({ block }: { block: BlockNode }) => (
+    <div className="flex items-center gap-2 border-b border-border px-2.5 py-1.5">
+      {edit?.blockId === block.id ? (
+        <input
+          autoFocus
+          aria-label="Block name"
+          value={edit.value}
+          onChange={(e) => setEdit({ blockId: block.id, value: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void submitRename();
+            if (e.key === "Escape") {
+              e.stopPropagation();
+              cancelRename();
+            }
+          }}
+          onBlur={() => void submitRename()}
+          className={`markie-overlay-field min-w-0 flex-1 rounded-md px-1.5 py-0.5 text-[13px] ${FOCUS_RING}`}
+        />
+      ) : (
+        <h2 className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
+          {block.name}
+        </h2>
+      )}
+      <span className="shrink-0 text-[11px] text-muted">
+        {block.files.length} {block.files.length === 1 ? "file" : "files"}
+      </span>
+      <span
+        className="shrink-0 text-[11px] text-muted"
+        title={`Started ${new Date(block.made).toLocaleString()}`}
+      >
+        started {longAgo(block.made)}
+      </span>
+      <span
+        className="shrink-0 text-[11px] text-muted"
+        title={new Date(block.updated).toLocaleString()}
+      >
+        updated {longAgo(block.updated)}
+      </span>
+      <button
+        type="button"
+        onClick={() => beginRename(block)}
+        aria-label={`Rename block ${block.name}`}
+        className={`shrink-0 rounded-md px-1 text-[12px] text-muted hover:text-foreground ${FOCUS_RING}`}
+      >
+        ✎
+      </button>
+      <button
+        type="button"
+        onClick={() => setBlockMenu(blockMenu === block.id ? null : block.id)}
+        aria-label={`More actions for ${block.name}`}
+        aria-expanded={blockMenu === block.id}
+        className={`shrink-0 rounded-md px-1 text-[13px] leading-none text-muted hover:text-foreground ${FOCUS_RING}`}
+      >
+        ⋯
+      </button>
+      {blockMenu === block.id && (
+        <MenuPanel>
+          <MenuAction onClick={() => beginRename(block)}>Rename block</MenuAction>
+          <div className="mt-1.5">
+            <MenuSelect
+              label="Merge into"
+              options={(active?.blocks ?? [])
+                .filter((b) => b.id !== block.id)
+                .map((b) => ({ value: b.id, label: b.name }))}
+              onPick={(target) => {
+                setBlockMenu(null);
+                void projects.merge(block.id, target);
+              }}
+            />
+          </div>
+        </MenuPanel>
+      )}
+    </div>
+  );
+
   if (projects.preparing || (projects.loading && !taxonomy)) {
     return (
       <Shell>
@@ -392,149 +530,41 @@ export function ProjectsView({
           </nav>
 
           <div className="min-h-0 overflow-y-auto p-3">
-            {active?.blocks.map((block) => (
-              <section
-                key={block.id}
-                data-markie-project-block={block.id}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  dropOnto(active.name, block.id);
-                }}
-                className="relative mb-2.5 rounded-md border border-border bg-surface"
-              >
-                <div className="flex items-center gap-2 border-b border-border px-2.5 py-1.5">
-                  {edit?.blockId === block.id ? (
-                    <input
-                      autoFocus
-                      aria-label="Block name"
-                      value={edit.value}
-                      onChange={(e) => setEdit({ blockId: block.id, value: e.target.value })}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") void submitRename();
-                        if (e.key === "Escape") {
-                          e.stopPropagation();
-                          cancelRename();
-                        }
-                      }}
-                      onBlur={() => void submitRename()}
-                      className={`markie-overlay-field min-w-0 flex-1 rounded-md px-1.5 py-0.5 text-[13px] ${FOCUS_RING}`}
-                    />
-                  ) : (
-                    <h2 className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
-                      {block.name}
-                    </h2>
-                  )}
-                  <span className="shrink-0 text-[11px] text-muted">
-                    {block.files.length} {block.files.length === 1 ? "file" : "files"}
-                  </span>
-                  <span
-                    className="shrink-0 text-[11px] text-muted"
-                    title={`Started ${new Date(block.made).toLocaleString()}`}
-                  >
-                    started {longAgo(block.made)}
-                  </span>
-                  <span
-                    className="shrink-0 text-[11px] text-muted"
-                    title={new Date(block.updated).toLocaleString()}
-                  >
-                    updated {longAgo(block.updated)}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => beginRename(block)}
-                    aria-label={`Rename block ${block.name}`}
-                    className={`shrink-0 rounded-md px-1 text-[12px] text-muted hover:text-foreground ${FOCUS_RING}`}
-                  >
-                    ✎
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBlockMenu(blockMenu === block.id ? null : block.id)}
-                    aria-label={`More actions for ${block.name}`}
-                    aria-expanded={blockMenu === block.id}
-                    className={`shrink-0 rounded-md px-1 text-[13px] leading-none text-muted hover:text-foreground ${FOCUS_RING}`}
-                  >
-                    ⋯
-                  </button>
-                  {blockMenu === block.id && (
-                    <MenuPanel>
-                      <MenuAction onClick={() => beginRename(block)}>Rename block</MenuAction>
-                      <div className="mt-1.5">
-                        <MenuSelect
-                          label="Merge into"
-                          options={active.blocks
-                            .filter((b) => b.id !== block.id)
-                            .map((b) => ({ value: b.id, label: b.name }))}
-                          onPick={(target) => {
-                            setBlockMenu(null);
-                            void projects.merge(block.id, target);
-                          }}
-                        />
-                      </div>
-                    </MenuPanel>
-                  )}
+            {entries.map((entry) =>
+              entry.file ? (
+                <div key={entry.file.path} className="mb-2.5 px-2.5">
+                  {organizeRow(entry.file, null)}
                 </div>
-                <div className="p-1">
-                  {(expanded.has(block.id) ? block.files : block.files.slice(0, FILES_SHOWN)).map((file) => (
-                    <FileRow
-                      key={file.path}
-                      file={file}
-                      pinned={pinnedPaths.has(file.path)}
-                      onOpen={() => onOpenPath(file.path)}
-                      onDragStart={() => setDragPath(file.path)}
-                      menuOpen={fileMenu === file.path}
-                      onMenu={() => setFileMenu(fileMenu === file.path ? null : file.path)}
-                    >
-                      {fileMenu === file.path && (
-                        <MenuPanel>
-                          <MenuSelect
-                            label="Move to project"
-                            options={(taxonomy?.projects ?? []).map((p) => ({
-                              value: p.name,
-                              label: p.name,
-                            }))}
-                            onPick={(project) => {
-                              setFileMenu(null);
-                              void projects.pin(file.path, project, null);
-                            }}
-                          />
-                          <MenuSelect
-                            label="Move to block"
-                            options={active.blocks
-                              .filter((b) => b.id !== block.id)
-                              .map((b) => ({ value: b.id, label: b.name }))}
-                            onPick={(blockId) => {
-                              setFileMenu(null);
-                              void projects.pin(file.path, active.name, blockId);
-                            }}
-                          />
-                          {pinnedPaths.has(file.path) && (
-                            <MenuAction
-                              onClick={() => {
-                                setFileMenu(null);
-                                void projects.unpin(file.path);
-                              }}
-                            >
-                              Unpin (follow rules)
-                            </MenuAction>
-                          )}
-                        </MenuPanel>
-                      )}
-                    </FileRow>
-                  ))}
-                  {block.files.length > FILES_SHOWN && !expanded.has(block.id) && (
-                    <button
-                      type="button"
-                      onClick={() => setExpanded(new Set(expanded).add(block.id))}
-                      className={`w-full rounded-md px-2 py-1 text-left text-[12px] text-muted hover:bg-accent/30 hover:text-foreground ${FOCUS_RING}`}
-                    >
-                      Show all {block.files.length} files
-                    </button>
-                  )}
-                </div>
-              </section>
-            ))}
+              ) : (
+                <section
+                  key={entry.block!.id}
+                  data-markie-project-block={entry.block!.id}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    dropOnto(active!.name, entry.block!.id);
+                  }}
+                  className="relative mb-2.5 rounded-md border border-border bg-surface"
+                >
+                  <BlockCardHeader block={entry.block!} />
+                  <div className="p-1">
+                    {(expanded.has(entry.block!.id)
+                      ? entry.block!.files
+                      : entry.block!.files.slice(0, FILES_SHOWN)
+                    ).map((file) => organizeRow(file, entry.block!.id))}
+                    {entry.block!.files.length > FILES_SHOWN && !expanded.has(entry.block!.id) && (
+                      <button
+                        type="button"
+                        onClick={() => setExpanded(new Set(expanded).add(entry.block!.id))}
+                        className={`w-full rounded-md px-2 py-1 text-left text-[12px] text-muted hover:bg-accent/30 hover:text-foreground ${FOCUS_RING}`}
+                      >
+                        Show all {entry.block!.files.length} files
+                      </button>
+                    )}
+                  </div>
+                </section>
+              )
+            )}
           </div>
         </div>
       )}

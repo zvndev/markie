@@ -65,7 +65,7 @@ describe("buildTaxonomy", () => {
   });
 
   it("applies custom names over auto names", () => {
-    const files = [f("/home/u/Documents/P/a.md", 1)];
+    const files = [f("/home/u/Documents/P/a.md", 1), f("/home/u/Documents/P/b.md", 2)];
     const first = build(files);
     const blockId = first.assignmentRows[0].blockId!;
     const renamed = build(files, {
@@ -110,7 +110,7 @@ describe("buildTaxonomy", () => {
   });
 
   it("emits assignment rows suitable for the registry cache", () => {
-    const files = [f("/home/u/Documents/P/a.md", 1)];
+    const files = [f("/home/u/Documents/P/a.md", 1), f("/home/u/Documents/P/b.md", 2)];
     const t = build(files);
     expect(t.assignmentRows[0]).toMatchObject({
       path: "/home/u/Documents/P/a.md",
@@ -186,5 +186,75 @@ describe("buildTaxonomy", () => {
     const elapsed = performance.now() - started;
     expect(t.totalFiles).toBe(12_000);
     expect(elapsed).toBeLessThan(1000);
+  });
+
+  // 40% of the blocks the real index produced held exactly one file. A block
+  // of one is a file with a folder drawn around it, and several hundred of
+  // them are noise where organization was promised.
+  describe("blocks of one", () => {
+    it("puts a file that clustered with nothing under its project instead", () => {
+      const t = build([f("/home/u/Documents/P/lonely.md", 1)]);
+      const p = t.projects.find((x) => x.name === "P")!;
+      expect(p.blocks).toHaveLength(0);
+      expect(p.looseFiles.map((x) => x.name)).toEqual(["lonely.md"]);
+      expect(p.fileCount).toBe(1);
+    });
+
+    it("says so in the cache row, so the file is free to join a block later", () => {
+      const t = build([f("/home/u/Documents/P/lonely.md", 1)]);
+      expect(t.assignmentRows).toEqual([
+        expect.objectContaining({ path: "/home/u/Documents/P/lonely.md", blockId: null }),
+      ]);
+      expect(t.blockUpserts).toHaveLength(0);
+    });
+
+    it("keeps a block a document declared for itself, however small", () => {
+      const t = build([
+        f("/home/u/Documents/P/a.md", 1, { fmProject: "P", fmBlock: "Login rewrite" }),
+      ]);
+      const p = t.projects.find((x) => x.name === "P")!;
+      expect(p.blocks.map((b) => b.name)).toEqual(["Login rewrite"]);
+      expect(p.looseFiles).toHaveLength(0);
+    });
+
+    it("keeps a block the user pinned a file into", () => {
+      const file = f("/home/u/Documents/P/a.md", 1);
+      const t = build([file], { pins: [{ path: file.path, project: "P", block_id: "b_kept" }] });
+      const p = t.projects.find((x) => x.name === "P")!;
+      expect(p.blocks.map((b) => b.id)).toEqual(["b_kept"]);
+      expect(p.looseFiles).toHaveLength(0);
+    });
+
+    it("keeps a block the user named, because a name is a decision", () => {
+      const file = f("/home/u/Documents/P/a.md", 1);
+      const t = build([file], {
+        priorAssignments: [{ path: file.path, block_id: "b_kept", mtime_ms: file.mtimeMs }],
+        knownBlocks: [
+          {
+            block_id: "b_kept",
+            project: "P",
+            auto_name: "A",
+            custom_name: "My Feature",
+            merged_into: null,
+            created_at: new Date(NOW).toISOString(),
+            updated_at: new Date(NOW).toISOString(),
+          },
+        ],
+      });
+      const p = t.projects.find((x) => x.name === "P")!;
+      expect(p.blocks.map((b) => b.name)).toEqual(["My Feature"]);
+      expect(p.looseFiles).toHaveLength(0);
+    });
+
+    it("dates a project from its loose files as well as its blocks", () => {
+      const t = build([
+        f("/home/u/Documents/P/old-a.md", 300),
+        f("/home/u/Documents/P/old-b.md", 301),
+        f("/home/u/Documents/P/fresh.md", 1),
+      ]);
+      const p = t.projects.find((x) => x.name === "P")!;
+      expect(p.looseFiles.map((x) => x.name)).toEqual(["fresh.md"]);
+      expect(p.updated).toBe(NOW - HOUR);
+    });
   });
 });

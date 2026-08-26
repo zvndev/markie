@@ -19,7 +19,7 @@ const file = (name: string, dir: string, ageHours: number) => ({
 });
 
 const TAXONOMY: Taxonomy = {
-  totalFiles: 4,
+  totalFiles: 5,
   unfiledCount: 1,
   ignoredCount: 0,
   assignmentRows: [],
@@ -29,8 +29,11 @@ const TAXONOMY: Taxonomy = {
       name: "Markie",
       made: NOW - 5 * HOUR,
       updated: NOW,
-      fileCount: 2,
+      fileCount: 3,
       isUnfiled: false,
+      // Nothing was written alongside this one, so it sits under the project
+      // rather than inside a block of one.
+      looseFiles: [file("stray.md", "/p", 2)],
       blocks: [
         {
           id: "b1",
@@ -47,6 +50,7 @@ const TAXONOMY: Taxonomy = {
       updated: NOW - 50 * HOUR,
       fileCount: 1,
       isUnfiled: false,
+      looseFiles: [],
       blocks: [
         {
           id: "b2",
@@ -63,6 +67,7 @@ const TAXONOMY: Taxonomy = {
       updated: NOW - 300 * HOUR,
       fileCount: 1,
       isUnfiled: false,
+      looseFiles: [],
       blocks: [
         {
           id: "b3",
@@ -87,6 +92,24 @@ const tree = (over: Partial<React.ComponentProps<typeof ProjectsTree>> = {}) => 
 );
 
 describe("ProjectsTree", () => {
+  it("shows a loose file under its project, in with the blocks by recency", () => {
+    render(tree());
+    const stray = screen.getByText("stray.md");
+    expect(stray.closest("[data-markie-project-block]")).toBeNull();
+    const project = stray.closest("[data-markie-project]")!;
+    const rows = [...project.querySelectorAll("button")].map((b) => b.textContent ?? "");
+    // Markie's block was touched now; the loose file two hours ago.
+    expect(rows.findIndex((t) => t.includes("organized-workspace"))).toBeLessThan(
+      rows.findIndex((t) => t.includes("stray.md"))
+    );
+  });
+
+  it("keeps loose files in view when filtering", () => {
+    render(tree({ filter: "stray" }));
+    expect(screen.getByText("stray.md")).toBeInTheDocument();
+    expect(screen.queryByText("plan.md")).not.toBeInTheDocument();
+  });
+
   it("opens the most recent work and leaves older projects folded", () => {
     render(tree());
     // Project one is open down to its newest block's files.

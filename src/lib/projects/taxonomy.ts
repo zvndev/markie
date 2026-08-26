@@ -28,6 +28,11 @@ export interface ProjectNode {
   updated: number;
   fileCount: number;
   blocks: BlockNode[];
+  // Files that never clustered with anything. They sit directly under the
+  // project rather than each inside a block of one, which is a file wearing a
+  // folder costume and, several hundred times over, is noise instead of
+  // organization.
+  looseFiles: FileNode[];
   isUnfiled: boolean;
 }
 
@@ -113,6 +118,10 @@ export function buildTaxonomy(
       else blockFiles.set(id, [f]);
     };
 
+    // Collected per project so a block that dissolves below can take its rows
+    // back down to "no block" before they reach the caller.
+    const projectRows: AssignmentRow[] = [];
+
     for (const a of members) {
       const f = fileByPath.get(a.path);
       if (!f) continue;
@@ -124,7 +133,7 @@ export function buildTaxonomy(
       }
       if (a.fixedBlock) declaredName.set(fixedId, a.fixedBlock);
       addTo(fixedId, f);
-      assignmentRows.push({
+      projectRows.push({
         path: a.path,
         project,
         blockId: fixedId,
@@ -153,7 +162,7 @@ export function buildTaxonomy(
     for (const f of toCluster) {
       const id = derived.byPath.get(f.path) ?? null;
       if (id) addTo(id, f);
-      assignmentRows.push({
+      projectRows.push({
         path: f.path,
         project,
         blockId: id,
@@ -166,9 +175,21 @@ export function buildTaxonomy(
     // ones: a rename writes to project_blocks by id, and an UPDATE against a
     // row that was never inserted is a silently discarded decision.
     const blocks: BlockNode[] = [];
+    const looseFiles: FileNode[] = [];
+    const dissolved = new Set<string>();
     for (const [id, entryFiles] of blockFiles) {
       const known = knownById.get(id);
       const drv = derivedById.get(id);
+      // A block of one is a file with a folder drawn around it. Derived ones
+      // dissolve and the file sits directly under its project. A block the
+      // user named or merged, one a document declared in its own front matter,
+      // and one a file was pinned into are all decisions, and a decision keeps
+      // its block however small it is.
+      if (entryFiles.length === 1 && drv && !known?.custom_name && !known?.merged_into) {
+        looseFiles.push(entryFiles[0]);
+        dissolved.add(id);
+        continue;
+      }
       const auto = drv?.auto_name ?? known?.auto_name ?? declaredName.get(id) ?? id;
       const times = entryFiles.map((f) => f.mtimeMs);
       const births = entryFiles.map((f) => f.birthtimeMs ?? f.mtimeMs);
@@ -192,13 +213,26 @@ export function buildTaxonomy(
       });
     }
     blocks.sort((a, b) => b.updated - a.updated);
+    looseFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
 
+    for (const row of projectRows) {
+      assignmentRows.push(
+        row.blockId && dissolved.has(row.blockId) ? { ...row, blockId: null } : row
+      );
+    }
+
+    const madeTimes = [
+      ...blocks.map((b) => b.made),
+      ...looseFiles.map((f) => f.birthtimeMs ?? f.mtimeMs),
+    ];
+    const updatedTimes = [...blocks.map((b) => b.updated), ...looseFiles.map((f) => f.mtimeMs)];
     projects.push({
       name: project,
-      made: blocks.length ? minOf(blocks.map((b) => b.made)) : now(),
-      updated: blocks.length ? maxOf(blocks.map((b) => b.updated)) : now(),
+      made: madeTimes.length ? minOf(madeTimes) : now(),
+      updated: updatedTimes.length ? maxOf(updatedTimes) : now(),
       fileCount: members.length,
       blocks,
+      looseFiles,
       isUnfiled: project === UNFILED,
     });
   }

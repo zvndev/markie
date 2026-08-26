@@ -6,7 +6,7 @@
 // exactly where they are on disk.
 import { useMemo, useState } from "react";
 import { shortAgo } from "@/lib/relative-time";
-import type { BlockNode, ProjectNode, Taxonomy } from "@/lib/projects/taxonomy";
+import type { BlockNode, FileNode, ProjectNode, Taxonomy } from "@/lib/projects/taxonomy";
 
 interface ProjectsTreeProps {
   taxonomy: Taxonomy | null;
@@ -55,12 +55,16 @@ function FileRow({
   mtimeMs,
   active,
   onOpen,
+  indent = 32,
 }: {
   name: string;
   path: string;
   mtimeMs: number;
   active: boolean;
   onOpen: () => void;
+  // A file that clustered with nothing sits where a block would, not inside
+  // one, so it is indented like a block and left of the block's own files.
+  indent?: number;
 }) {
   return (
     <button
@@ -71,7 +75,7 @@ function FileRow({
       className={`flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-[12.5px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[color:var(--status-blue)] ${
         active ? "bg-accent text-foreground" : "text-foreground/90 hover:bg-accent/30"
       }`}
-      style={{ paddingLeft: 32 }}
+      style={{ paddingLeft: indent }}
     >
       <span className="min-w-0 flex-1 truncate">{name}</span>
       <When ms={mtimeMs} />
@@ -139,6 +143,16 @@ function ProjectSection({
   onOpenPath: (path: string) => void;
 }) {
   const open = openProjects.has(project.name);
+  // Blocks and loose files share one most-recent-first order, so the newest
+  // thing in a project is always the first thing under it, whether or not it
+  // happened to be written alongside anything else.
+  const entries = useMemo(() => {
+    const rows: Array<{ at: number; block?: BlockNode; file?: FileNode }> = [
+      ...project.blocks.map((b) => ({ at: b.updated, block: b })),
+      ...project.looseFiles.map((f) => ({ at: f.mtimeMs, file: f })),
+    ];
+    return rows.sort((a, b) => b.at - a.at);
+  }, [project]);
   return (
     <div data-markie-project={project.name} className="mb-0.5">
       <button
@@ -155,16 +169,28 @@ function ProjectSection({
         <When ms={project.updated} />
       </button>
       {open &&
-        project.blocks.map((b) => (
-          <BlockSection
-            key={b.id}
-            block={b}
-            open={openBlocks.has(b.id)}
-            onToggle={() => toggleBlock(b.id)}
-            activePath={activePath}
-            onOpenPath={onOpenPath}
-          />
-        ))}
+        entries.map((entry) =>
+          entry.block ? (
+            <BlockSection
+              key={entry.block.id}
+              block={entry.block}
+              open={openBlocks.has(entry.block.id)}
+              onToggle={() => toggleBlock(entry.block!.id)}
+              activePath={activePath}
+              onOpenPath={onOpenPath}
+            />
+          ) : (
+            <FileRow
+              key={entry.file!.path}
+              name={entry.file!.name}
+              path={entry.file!.path}
+              mtimeMs={entry.file!.mtimeMs}
+              active={entry.file!.path === activePath}
+              onOpen={() => onOpenPath(entry.file!.path)}
+              indent={18}
+            />
+          )
+        )}
     </div>
   );
 }
@@ -175,6 +201,8 @@ export function filterTaxonomy(projects: ProjectNode[], filter: string): Project
   const q = filter.trim().toLowerCase();
   if (!q) return projects;
   const out: ProjectNode[] = [];
+  const hit = (f: FileNode) =>
+    f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q);
   for (const p of projects) {
     if (p.name.toLowerCase().includes(q)) {
       out.push(p);
@@ -186,13 +214,17 @@ export function filterTaxonomy(projects: ProjectNode[], filter: string): Project
         blocks.push(b);
         continue;
       }
-      const files = b.files.filter(
-        (f) => f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q)
-      );
+      const files = b.files.filter(hit);
       if (files.length) blocks.push({ ...b, files });
     }
-    if (blocks.length) {
-      out.push({ ...p, blocks, fileCount: blocks.reduce((n, b) => n + b.files.length, 0) });
+    const looseFiles = p.looseFiles.filter(hit);
+    if (blocks.length || looseFiles.length) {
+      out.push({
+        ...p,
+        blocks,
+        looseFiles,
+        fileCount: blocks.reduce((n, b) => n + b.files.length, looseFiles.length),
+      });
     }
   }
   return out;

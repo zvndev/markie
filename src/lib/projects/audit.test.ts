@@ -35,6 +35,7 @@ function project(name: string, blocks: BlockNode[], isUnfiled = false): ProjectN
     updated: T0,
     fileCount: blocks.reduce((n, b) => n + b.files.length, 0),
     blocks,
+    looseFiles: [],
     isUnfiled,
   };
 }

@@ -33,6 +33,11 @@ export interface AuditReport {
   unfiledPct: number;
   singletonBlocks: number;
   singletonBlockPct: number;
+  // Files sitting directly under a project because nothing clustered with
+  // them. These used to be blocks of one, and this number is where that noise
+  // went: it is the count to watch now, not the singleton share.
+  looseFiles: number;
+  looseFilePct: number;
   rulesError: string | null;
   top20: AuditProjectRow[];
   largestBlocks: Array<{ project: string; files: number; largest: LargestBlock }>;
@@ -85,6 +90,7 @@ export function buildAuditReport(
     (n, p) => n + p.blocks.filter((b) => b.files.length === 1).length,
     0
   );
+  const loose = taxonomy.projects.reduce((n, p) => n + p.looseFiles.length, 0);
   return {
     generatedAt: new Date(now()).toISOString(),
     indexedFiles: opts.indexedFiles,
@@ -97,6 +103,8 @@ export function buildAuditReport(
     unfiledPct: pct(taxonomy.unfiledCount, taxonomy.totalFiles),
     singletonBlocks: singletons,
     singletonBlockPct: pct(singletons, blocks),
+    looseFiles: loose,
+    looseFilePct: pct(loose, taxonomy.totalFiles),
     rulesError: opts.rulesError,
     top20: taxonomy.projects.slice(0, 20).map((p) => ({
       name: p.name,

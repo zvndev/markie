@@ -19,10 +19,42 @@ const ROWS = [
     repoName: null,
   },
   {
+    path: "/home/u/Documents/Markie/spec.md",
+    name: "spec.md",
+    dir: "/home/u/Documents/Markie",
+    mtimeMs: NOW - HOUR,
+    birthtimeMs: NOW - 2 * HOUR,
+    fmProject: null,
+    fmBlock: null,
+    repoName: null,
+  },
+  // Written months before the pair above, so nothing clusters with it: this is
+  // the loose file the detail pane has to show outside any block.
+  {
+    path: "/home/u/Documents/Markie/stray.md",
+    name: "stray.md",
+    dir: "/home/u/Documents/Markie",
+    mtimeMs: NOW - 900 * HOUR,
+    birthtimeMs: NOW - 901 * HOUR,
+    fmProject: null,
+    fmBlock: null,
+    repoName: null,
+  },
+  {
     path: "/home/u/Documents/Thesis/ch1.md",
     name: "ch1.md",
     dir: "/home/u/Documents/Thesis",
     mtimeMs: NOW - 50 * HOUR,
+    birthtimeMs: null,
+    fmProject: null,
+    fmBlock: null,
+    repoName: null,
+  },
+  {
+    path: "/home/u/Documents/Thesis/ch2.md",
+    name: "ch2.md",
+    dir: "/home/u/Documents/Thesis",
+    mtimeMs: NOW - 51 * HOUR,
     birthtimeMs: null,
     fmProject: null,
     fmBlock: null,
@@ -58,13 +90,32 @@ describe("ProjectsView", () => {
     expect(onOpenPath).toHaveBeenCalledWith("/home/u/Documents/Markie/plan.md");
   });
 
+  it("shows a file that clustered with nothing outside every block", async () => {
+    bridge();
+    render(view());
+    const stray = await screen.findByText("stray.md");
+    // Not a block of one wearing a card: it sits in the pane on its own.
+    expect(stray.closest("[data-markie-project-block]")).toBeNull();
+    // And it is still organizable, like any other row.
+    expect(stray.closest("div.group")).not.toBeNull();
+  });
+
+  it("orders blocks and loose files together, newest first", async () => {
+    bridge();
+    render(view());
+    await screen.findByText("stray.md");
+    const pane = document.querySelector(".min-h-0.overflow-y-auto.p-3")!;
+    const text = pane.textContent ?? "";
+    expect(text.indexOf("plan.md")).toBeLessThan(text.indexOf("stray.md"));
+  });
+
   it("shows the summary stats, and says the layer is virtual", async () => {
     bridge();
     render(view());
     await screen.findByText("plan.md");
     const header = screen.getByRole("banner");
     expect(header.textContent).toMatch(/2\s*projects/);
-    expect(header.textContent).toMatch(/2\s*files/);
+    expect(header.textContent).toMatch(/5\s*files/);
     expect(header.textContent).toMatch(/0\s*unfiled/);
     expect(header.textContent).toMatch(/moves a file on disk/i);
   });
@@ -150,7 +201,9 @@ describe("ProjectsView", () => {
     await waitFor(() => expect(api.projectsWriteOverview).toHaveBeenCalled());
     const listing = (api.projectsWriteOverview as unknown as { mock: { calls: Array<[{ listing: string }]> } })
       .mock.calls[0][0].listing;
-    expect(listing).toMatch(/\*\*Markie\*\* \(1 file\)/);
+    expect(listing).toMatch(/\*\*Markie\*\* \(3 files\)/);
+    // Loose files are listed too, or the listing would not add up to the count.
+    expect(listing).toMatch(/^ {2}- stray\.md$/m);
     expect(await screen.findByRole("status")).toHaveTextContent(/Listing written/);
   });
 
@@ -264,6 +317,7 @@ describe("buildOverviewListing", () => {
     updated: NOW,
     fileCount: files,
     isUnfiled: false,
+    looseFiles: [],
     blocks: blocks.map((b, i) => ({
       id: `b${i}`,
       name: b,

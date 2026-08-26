@@ -161,7 +161,8 @@ log(`metadata: ${metaByPath.size}/${rows.length} files (${metaRows.length} alrea
 log(
   `projects: ${report.projects}   blocks: ${report.blocks}   ` +
     `unfiled: ${report.unfiled} (${report.unfiledPct}% of ${report.organizedFiles} organized)   ` +
-    `ignored: ${report.ignoredFiles}   singleton blocks: ${report.singletonBlockPct}%`
+    `ignored: ${report.ignoredFiles}   singleton blocks: ${report.singletonBlockPct}%   ` +
+    `loose files: ${report.looseFiles} (${report.looseFilePct}%)`
 );
 if (report.rulesError) log(`RULES ERROR: ${report.rulesError}`);
 
@@ -181,6 +182,8 @@ for (const p of taxonomy.projects.slice(0, 5)) {
     log(`    [${b.name}]  ${b.files.length} files  updated ${new Date(b.updated).toISOString().slice(0, 10)}`);
     for (const f of b.files.slice(0, 3)) log(`      ${f.name}`);
   }
+  for (const f of p.looseFiles.slice(0, 4)) log(`    ${f.name}`);
+  if (p.looseFiles.length > 4) log(`    …and ${p.looseFiles.length - 4} more loose files`);
 }
 
 const outDir = path.join(process.cwd(), ".autoloop", "runs");

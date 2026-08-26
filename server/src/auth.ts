@@ -43,6 +43,20 @@ export const auth = betterAuth({
     // same class of flaw upstream.
     requireEmailVerification: true,
   },
+  emailVerification: {
+    // Proving your own address is not the same event as signing in by code,
+    // and the difference is whether the password survives. The email-OTP
+    // SIGN-IN route revokes every credential an account accrued while its
+    // address was unproven (revokeUnprovenAccountAccess): correct when the
+    // real owner of an address is taking back an account a squatter
+    // registered, and wrong when someone is finishing their own signup.
+    // Signup verification therefore goes through /email-otp/verify-email,
+    // which only flips the flag. This option is what makes that route hand
+    // back a session, so proving the address still lands the user signed in
+    // rather than dropping them back at a form to type a password they
+    // already typed.
+    autoSignInAfterVerification: true,
+  },
   databaseHooks: {
     user: {
       create: {

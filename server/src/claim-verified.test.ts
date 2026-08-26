@@ -314,3 +314,108 @@ test("claiming is idempotent: a verified listing does not duplicate the share", 
   assert.equal(rows.length, 1, "sweeping twice must leave exactly one share");
   assert.equal(rows[0].doc_id, docId);
 });
+
+// ---------------------------------------------------------------------------
+// Proving your own address and signing in by code are different events.
+//
+// better-auth's email-OTP SIGN-IN route revokes every credential an unverified
+// account accrued before the proof (revokeUnprovenAccountAccess). That is how
+// the real owner of an address takes back an account a squatter registered
+// first: the squatter's password goes with it. Run the same route against a
+// person finishing their own signup and it deletes the password they just
+// chose, which is what 0.4.x did to every new account. So signup verification
+// goes through /email-otp/verify-email, which proves the address and touches
+// nothing else.
+//
+// Both behaviors are pinned here, in one suite, on purpose. Each one looks like
+// a bug from the other's side, and a change that "fixes" either by breaking the
+// other is not a fix.
+// ---------------------------------------------------------------------------
+
+const PASSWORD = "password-123456";
+
+async function signInWithPassword(email: string, password: string = PASSWORD) {
+  return post<{ user?: { id: string } }>("/api/auth/sign-in/email", {
+    email,
+    password,
+  });
+}
+
+test("verifying a new signup keeps the password it was created with", async () => {
+  const email = `cv.keeps.${stamp}@corp.test`;
+  const signup = await signUp("Keeps Password", email);
+  assert.equal(signup.status, 200);
+
+  // The code signup mailed, entered on the verification route.
+  const verified = await post("/api/auth/email-otp/verify-email", {
+    email,
+    otp: latestOTP("email-verification", email),
+  });
+  assert.equal(verified.status, 200);
+  assert.ok(
+    verified.authToken,
+    "proving the address should finish the job and sign the new user in"
+  );
+
+  const signedIn = await signInWithPassword(email);
+  assert.equal(
+    signedIn.status,
+    200,
+    "the password chosen at signup must still work after verification"
+  );
+  assert.ok(signedIn.authToken, "and it must hand back a session");
+});
+
+test("signing in by code against an unverified account still revokes what it had", async () => {
+  const email = `cv.reclaim.${stamp}@corp.test`;
+  const squatted = await signUp("Squatter", email);
+  assert.equal(squatted.status, 200);
+
+  // The reclaim path: whoever actually receives mail at the address asks for a
+  // sign-in code. The account was never proven, so nothing it accrued survives.
+  const sent = await post("/api/auth/email-otp/send-verification-otp", {
+    email,
+    type: "sign-in",
+  });
+  assert.equal(sent.status, 200);
+  const byCode = await post("/api/auth/sign-in/email-otp", {
+    email,
+    otp: latestOTP("sign-in", email),
+  });
+  assert.equal(byCode.status, 200);
+  assert.ok(byCode.authToken, "the owner of the mailbox gets the session");
+
+  const withPassword = await signInWithPassword(email);
+  assert.equal(
+    withPassword.status,
+    401,
+    "a password nobody had proven must not survive the reclaim"
+  );
+});
+
+test("an account left without a password can set one with a reset code", async () => {
+  // The way back for anyone whose credentials the reclaim path revoked, on
+  // 0.4.x or otherwise: the reset route creates a credential where there is
+  // none, so "forgot password" also means "never had one".
+  const email = `cv.setsagain.${stamp}@corp.test`;
+  await signUp("Reclaimed", email);
+  await post("/api/auth/email-otp/send-verification-otp", { email, type: "sign-in" });
+  await post("/api/auth/sign-in/email-otp", {
+    email,
+    otp: latestOTP("sign-in", email),
+  });
+  assert.equal((await signInWithPassword(email)).status, 401, "no password to start");
+
+  const asked = await post("/api/auth/forget-password/email-otp", { email });
+  assert.equal(asked.status, 200);
+  const reset = await post("/api/auth/email-otp/reset-password", {
+    email,
+    otp: latestOTP("forget-password", email),
+    password: "brand-new-password-1",
+  });
+  assert.equal(reset.status, 200);
+
+  const signedIn = await signInWithPassword(email, "brand-new-password-1");
+  assert.equal(signedIn.status, 200, "the new password works");
+  assert.ok(signedIn.authToken);
+});

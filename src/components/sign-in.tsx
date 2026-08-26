@@ -39,9 +39,17 @@ export function SignInForm({ reason, onDone }: SignInFormProps) {
   const [name, setName] = useState("");
   const [otp, setOtp] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
-  // True while the code on screen is proving an address rather than signing in
-  // with one. Same input, same Verify, same Resend: only the copy differs, and
-  // the difference matters because the user did not ask for a code this time.
+  // True while the code on screen is confirming an address rather than signing
+  // in with one. Same input, same Verify, same Resend, but a different pair of
+  // routes underneath, and the difference is the user's password.
+  //
+  // Signing in by code is the reclaim path: the server revokes whatever an
+  // unproven account had, which is how the real owner of an address takes back
+  // an account somebody else registered in their name. Every way into this
+  // state, though, arrives with the password already in hand: a signup that
+  // just set one, or a sign-in the server refused only after checking it. There
+  // is nothing to reclaim from, so those confirm the address instead and leave
+  // the account intact.
   const [proving, setProving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -103,11 +111,21 @@ export function SignInForm({ reason, onDone }: SignInFormProps) {
     setProving(true);
     setOtp("");
     setView("otp-code");
-    await run("otp-send", () => authClient.sendOTP(email));
+    await run("otp-send", () => authClient.sendVerificationCode(email));
   };
 
+  // Resending stays on whichever route brought the user here. Falling back to
+  // the sign-in code would revoke the password in the middle of the flow.
+  const resendCode = () =>
+    run("otp-send", () =>
+      proving ? authClient.sendVerificationCode(email) : authClient.sendOTP(email)
+    );
+
   const verifyCode = async () => {
-    if (await run("otp-verify", () => authClient.verifyOTP(email, otp))) {
+    const done = await run("otp-verify", () =>
+      proving ? authClient.verifyEmail(email, otp) : authClient.verifyOTP(email, otp)
+    );
+    if (done) {
       setProving(false);
       await landed();
     }
@@ -211,8 +229,8 @@ export function SignInForm({ reason, onDone }: SignInFormProps) {
             <div className="text-[12px] text-muted leading-relaxed">
               <span className="text-foreground">Prove this address is yours.</span> We
               sent a code to <span className="text-foreground">{email}</span>. Enter it
-              to finish signing in. Because this account was never verified, the code
-              takes the place of the password you typed, so use a code from now on.
+              to finish signing in. Your password still works, and this is a one-time
+              check that the address reaches you.
             </div>
           ) : (
             <div className="text-[12px] text-muted">
@@ -232,7 +250,7 @@ export function SignInForm({ reason, onDone }: SignInFormProps) {
             {busy ? "Verifying…" : "Verify"}
           </button>
           <div className="flex items-center justify-between">
-            <button className={LINK} onClick={sendCode} disabled={busy}>
+            <button className={LINK} onClick={resendCode} disabled={busy}>
               Resend code
             </button>
             <button
@@ -299,6 +317,9 @@ export function SignInForm({ reason, onDone }: SignInFormProps) {
         <>
           <div className="text-[12px] text-muted leading-relaxed">
             We&apos;ll email you a code to set a new password.
+          </div>
+          <div className="text-[11px] text-muted leading-relaxed">
+            This also works if you do not have a password yet.
           </div>
           <input
             className={FIELD}

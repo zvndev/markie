@@ -130,6 +130,12 @@ export const authClient = {
       body: JSON.stringify({ email, password }),
     }),
 
+  // Signing in with a code. The server treats this as the reclaim path: if the
+  // account behind the address was never proven, everything it accrued while
+  // unproven (a password, a linked provider, open sessions) is revoked before
+  // the session is minted, so registering somebody else's address buys nothing
+  // once the real owner asks for a code. Use this when the caller is holding
+  // nothing but the address.
   sendOTP: (email: string) =>
     api<{ success: boolean }>("/api/auth/email-otp/send-verification-otp", {
       method: "POST",
@@ -141,6 +147,24 @@ export const authClient = {
       method: "POST",
       body: JSON.stringify({ email, otp }),
     }),
+
+  // Confirming an address the caller already holds the password for: a fresh
+  // signup, or a sign-in the server refused only because the address was never
+  // proven. Same code in the mailbox, different route, and the difference is
+  // that this one proves the address without revoking anything. The server
+  // signs the user in on success (autoSignInAfterVerification), so the token
+  // comes back on the same response.
+  sendVerificationCode: (email: string) =>
+    api<{ success: boolean }>("/api/auth/email-otp/send-verification-otp", {
+      method: "POST",
+      body: JSON.stringify({ email, type: "email-verification" }),
+    }),
+
+  verifyEmail: (email: string, otp: string) =>
+    api<{ status: boolean; token: string | null; user: MarkieUser }>(
+      "/api/auth/email-otp/verify-email",
+      { method: "POST", body: JSON.stringify({ email, otp }) }
+    ),
 
   // Forgotten passwords are recovered with a code, not a reset link. A link
   // has to land somewhere, and the only somewhere a desktop app owns is a

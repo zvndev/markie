@@ -8,6 +8,8 @@ const signInEmail = vi.fn();
 const signUpEmail = vi.fn();
 const sendOTP = vi.fn();
 const verifyOTP = vi.fn();
+const sendVerificationCode = vi.fn();
+const verifyEmail = vi.fn();
 const requestPasswordReset = vi.fn();
 const resetPassword = vi.fn();
 const googleSignInURL = vi.fn();
@@ -23,6 +25,8 @@ vi.mock("@/lib/auth-client", async (importOriginal) => ({
     signUpEmail: (...a: unknown[]) => signUpEmail(...a),
     sendOTP: (...a: unknown[]) => sendOTP(...a),
     verifyOTP: (...a: unknown[]) => verifyOTP(...a),
+    sendVerificationCode: (...a: unknown[]) => sendVerificationCode(...a),
+    verifyEmail: (...a: unknown[]) => verifyEmail(...a),
     requestPasswordReset: (...a: unknown[]) => requestPasswordReset(...a),
     resetPassword: (...a: unknown[]) => resetPassword(...a),
     signOut: vi.fn(async () => undefined),
@@ -50,6 +54,8 @@ beforeEach(() => {
   signUpEmail.mockResolvedValue(UNPROVEN_SIGNUP);
   sendOTP.mockResolvedValue(ok);
   verifyOTP.mockResolvedValue(ok);
+  sendVerificationCode.mockResolvedValue(ok);
+  verifyEmail.mockResolvedValue(ok);
   requestPasswordReset.mockResolvedValue(ok);
   resetPassword.mockResolvedValue(ok);
   googleSignInURL.mockReturnValue("https://accounts.google/auth?state=n");
@@ -104,6 +110,19 @@ describe("SignInForm — email code", () => {
     await user.click(verify);
     expect(verifyOTP).toHaveBeenCalledWith("ada@markie.app", "123456");
     await vi.waitFor(() => expect(onDone).toHaveBeenCalled());
+  });
+
+  it("resends a sign-in code on the sign-in route", async () => {
+    const user = userEvent.setup();
+    render(<SignInForm reason="account" />);
+    await user.type(screen.getByPlaceholderText("you@work.com"), "ada@markie.app");
+    await user.click(screen.getByRole("button", { name: "Email me a code" }));
+    sendOTP.mockClear();
+    await user.click(await screen.findByRole("button", { name: "Resend code" }));
+    // Asking for a code with no password in hand is the reclaim path, and it
+    // stays on the route that revokes what an unproven account had.
+    expect(sendOTP).toHaveBeenCalledWith("ada@markie.app");
+    expect(sendVerificationCode).not.toHaveBeenCalled();
   });
 
   it("names a failed code rather than saying nothing", async () => {
@@ -193,6 +212,13 @@ describe("SignInForm — password", () => {
 
 // The server will not let an account act until the address behind it is
 // proven. Neither answer it gives for that is a failure the user can read.
+//
+// Which route proves it matters. Signing in with a code (sendOTP/verifyOTP)
+// revokes whatever an unproven account had, which is how somebody reclaims an
+// address a squatter registered. Confirming an address you are already holding
+// the password for (sendVerificationCode/verifyEmail) proves the same thing and
+// leaves the account alone. Both cases here reach the code screen with the
+// password in hand, so both take the second route.
 describe("SignInForm — an address that has not been proven", () => {
   const toPassword = async (user: ReturnType<typeof userEvent.setup>) => {
     await user.click(screen.getByRole("button", { name: "Use a password instead" }));
@@ -206,12 +232,16 @@ describe("SignInForm — an address that has not been proven", () => {
     await user.click(screen.getByRole("button", { name: "Create account" }));
   };
 
-  it("sends a code when a signup comes back with no session", async () => {
+  it("sends a verification code when a signup comes back with no session", async () => {
     const user = userEvent.setup();
     render(<SignInForm reason="account" />);
     await signUp(user);
 
-    await vi.waitFor(() => expect(sendOTP).toHaveBeenCalledWith("ada@markie.app"));
+    await vi.waitFor(() =>
+      expect(sendVerificationCode).toHaveBeenCalledWith("ada@markie.app")
+    );
+    // Not the sign-in code: that route would take the password with it.
+    expect(sendOTP).not.toHaveBeenCalled();
     expect(await screen.findByPlaceholderText("6-digit code")).toBeInTheDocument();
     expect(screen.getByText(/Prove this address is yours/)).toBeInTheDocument();
     expect(screen.getByText(/We\s+sent a code to/)).toBeInTheDocument();
@@ -226,19 +256,27 @@ describe("SignInForm — an address that has not been proven", () => {
     await user.type(screen.getByPlaceholderText("Password"), "hunter2hunter2");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
-    await vi.waitFor(() => expect(sendOTP).toHaveBeenCalledWith("ada@markie.app"));
+    // The server checks the password before it checks the address, so a refusal
+    // for an unproven address is proof the caller already knows the password.
+    // Nothing needs revoking; the address just needs confirming.
+    await vi.waitFor(() =>
+      expect(sendVerificationCode).toHaveBeenCalledWith("ada@markie.app")
+    );
+    expect(sendOTP).not.toHaveBeenCalled();
     expect(screen.getByText(/Prove this address is yours/)).toBeInTheDocument();
     expect(screen.queryByText("That email and password don't match.")).toBeNull();
   });
 
-  it("says the code replaces the password, because it does", async () => {
+  it("does not tell the user their password is gone, because it is not", async () => {
     const user = userEvent.setup();
     render(<SignInForm reason="account" />);
     await signUp(user);
-    expect(await screen.findByText(/takes the place of the password you typed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Your password still works/)).toBeInTheDocument();
+    expect(screen.queryByText(/takes the place of the password/)).toBeNull();
+    expect(screen.queryByText(/use a code from now on/)).toBeNull();
   });
 
-  it("finishes the account when the code is entered", async () => {
+  it("finishes the account with the route that keeps the password", async () => {
     const user = userEvent.setup();
     const onDone = vi.fn();
     render(<SignInForm reason="account" onDone={onDone} />);
@@ -247,13 +285,14 @@ describe("SignInForm — an address that has not been proven", () => {
     await user.type(await screen.findByPlaceholderText("6-digit code"), "123456");
     me.mockResolvedValue(USER);
     await user.click(screen.getByRole("button", { name: "Verify" }));
-    expect(verifyOTP).toHaveBeenCalledWith("ada@markie.app", "123456");
+    expect(verifyEmail).toHaveBeenCalledWith("ada@markie.app", "123456");
+    expect(verifyOTP).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(onDone).toHaveBeenCalled());
   });
 
   it("a wrong code leaves the user on the code screen with a way forward", async () => {
     const user = userEvent.setup();
-    verifyOTP.mockResolvedValue({ ok: false, status: 400 });
+    verifyEmail.mockResolvedValue({ ok: false, status: 400 });
     render(<SignInForm reason="account" />);
     await signUp(user);
 
@@ -262,11 +301,14 @@ describe("SignInForm — an address that has not been proven", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "That code isn't right, or it expired. Send a new one."
     );
-    // Still here, still able to ask for another one.
+    // Still here, still able to ask for another one, and the resend stays on
+    // the verification route rather than quietly switching to the one that
+    // revokes.
     expect(screen.getByPlaceholderText("6-digit code")).toBeInTheDocument();
-    sendOTP.mockClear();
+    sendVerificationCode.mockClear();
     await user.click(screen.getByRole("button", { name: "Resend code" }));
-    expect(sendOTP).toHaveBeenCalledWith("ada@markie.app");
+    expect(sendVerificationCode).toHaveBeenCalledWith("ada@markie.app");
+    expect(sendOTP).not.toHaveBeenCalled();
   });
 
   it("drops the explanation when the user starts over with another address", async () => {
@@ -304,6 +346,19 @@ describe("SignInForm — forgotten password", () => {
     expect(resetPassword).toHaveBeenCalledWith("ada@markie.app", "123456", "longenough");
     // The job was signing in, not just setting a password.
     expect(signInEmail).toHaveBeenCalledWith("ada@markie.app", "longenough");
+  });
+
+  // The way back for anyone the old flow left without a password: the reset
+  // route creates a credential where there is none, so this form is the answer
+  // for "never had one" as much as "forgot mine".
+  it("offers itself to people who have no password at all", async () => {
+    const user = userEvent.setup();
+    render(<SignInForm reason="account" />);
+    await user.click(screen.getByRole("button", { name: "Use a password instead" }));
+    await user.click(screen.getByRole("button", { name: "Forgot?" }));
+    expect(
+      screen.getByText("This also works if you do not have a password yet.")
+    ).toBeInTheDocument();
   });
 
   it("does not reveal whether the account exists", async () => {

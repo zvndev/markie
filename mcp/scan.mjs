@@ -2,7 +2,9 @@
 // Ported from electron/mdindex.js as self-contained ESM so the MCP server has
 // NO dependency on ../electron — packaging it as an extraResource must never
 // pull files out of the app's asar (that broke the app once; never again).
-// Keep the exclusion rules in sync with electron/mdindex.js.
+// Keep the exclusion rules AND the walk budget in sync with
+// electron/mdindex.js; "scan.mjs exclusion rules stay in sync with
+// electron/mdindex.js" in lib.test.mjs compares both against the original.
 import { promises as fsp } from "node:fs";
 import path from "node:path";
 
@@ -69,32 +71,74 @@ function shouldDescend(full, name, home, allow = allowlist(home)) {
   return !hasExcludedSegment(full, home);
 }
 
+// What one scan is allowed to cost. The app's index has had these caps since it
+// shipped; the MCP copy did not, so a single markie_find_md could walk a
+// pathological tree for as long as it took. Hitting a limit returns what was
+// found rather than failing: a partial answer now beats a perfect one in five
+// minutes, as long as the caller is told it is partial.
+export const DEFAULT_BUDGET = { maxFiles: 200000, maxMs: 30000, maxDepth: 24 };
+
 // Recursively collect markdown files under rootDir, pruning excluded dirs.
-export async function walk(rootDir, { home } = {}) {
+//
+// `stats` is an optional caller-owned object the walk fills in with what the
+// budget did ({ files, dirs, ms, truncated, reason }). Returning the plain array
+// keeps every existing caller working; the metadata rides alongside.
+export async function walk(rootDir, { home, budget = {}, now = Date.now, stats = {} } = {}) {
   const baseHome = home ?? rootDir;
+  const limits = { ...DEFAULT_BUDGET, ...budget };
+  const startedAt = now();
   // Hoisted out of the per-directory loop: it was rebuilt for every readdir.
   const allow = allowlist(baseHome);
   const out = [];
-  async function visit(dir) {
+  let dirs = 0;
+  let stopped = null;   // "files" or "time": abort the whole walk
+  let depthCapped = false;
+
+  async function visit(dir, depth) {
+    if (stopped) return;
+    if (depth > limits.maxDepth) {
+      depthCapped = true;
+      return;
+    }
     let entries;
     try {
       entries = await fsp.readdir(dir, { withFileTypes: true });
     } catch {
       return; // unreadable (permissions, vanished) — skip silently
     }
+    dirs += 1;
     const subdirs = [];
     for (const ent of entries) {
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
         if (shouldDescend(full, ent.name, baseHome, allow)) subdirs.push(full);
       } else if (ent.isFile() && MD_RE.test(ent.name)) {
+        if (out.length >= limits.maxFiles) {
+          stopped = "files";
+          return;
+        }
         let mtimeMs = 0;
         try { mtimeMs = (await fsp.stat(full)).mtimeMs; } catch { /* keep 0 */ }
         out.push({ path: full, name: ent.name, dir, mtimeMs });
       }
     }
-    for (const d of subdirs) await visit(d);
+    // Checked per directory rather than per entry: one clock read per readdir.
+    if (now() - startedAt > limits.maxMs) {
+      stopped = "time";
+      return;
+    }
+    // Sequential descent keeps memory/FD pressure low on huge trees.
+    for (const d of subdirs) {
+      if (stopped) return;
+      await visit(d, depth + 1);
+    }
   }
-  await visit(rootDir);
+
+  await visit(rootDir, 0);
+  stats.files = out.length;
+  stats.dirs = dirs;
+  stats.ms = now() - startedAt;
+  stats.truncated = !!stopped || depthCapped;
+  stats.reason = stopped || (depthCapped ? "depth" : null);
   return out;
 }

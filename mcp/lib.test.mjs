@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { guardPath, matchQuery, classifyAgentFile, isCachedAgentPath, groupSkills, markieOpenCommand } from "./lib.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, realpathSync, rmSync, existsSync } from "node:fs";
 import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
+import { walk, DEFAULT_BUDGET } from "./scan.mjs";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { dirname as pdirname, join as pjoin } from "node:path";
@@ -387,8 +388,8 @@ test("MCP stdio write/read keeps markdown writes fenced to safe home paths", asy
 // mcp/scan.mjs is a deliberate copy of electron/mdindex.js's exclusion rules:
 // the MCP server ships as an extraResource and must never reach into the app's
 // asar. A copy only stays correct if something notices when the original moves.
-test("scan.mjs exclusion rules stay in sync with electron/mdindex.js", async () => {
-  const { EXCLUDED_NAMES, BUNDLE_RE } = await import("./scan.mjs");
+test("scan.mjs exclusion rules and budget stay in sync with electron/mdindex.js", async () => {
+  const { EXCLUDED_NAMES, BUNDLE_RE, DEFAULT_BUDGET } = await import("./scan.mjs");
   const { createRequire } = await import("node:module");
   const mdindex = createRequire(import.meta.url)("../electron/mdindex.js");
 
@@ -399,6 +400,11 @@ test("scan.mjs exclusion rules stay in sync with electron/mdindex.js", async () 
   );
   assert.equal(BUNDLE_RE.source, mdindex.BUNDLE_RE.source, "BUNDLE_RE drifted");
   assert.equal(BUNDLE_RE.flags, mdindex.BUNDLE_RE.flags, "BUNDLE_RE flags drifted");
+  assert.deepEqual(
+    DEFAULT_BUDGET,
+    mdindex.DEFAULT_BUDGET,
+    "the scan budget drifted; copy it from electron/mdindex.js"
+  );
 });
 
 // ---- Agent-facing conventions (initialize instructions + the write path) ----
@@ -566,5 +572,129 @@ test("no runtime module in mcp/ imports anything outside mcp/", async () => {
       const local = spec.startsWith("node:") || /^\.\/[^/]+$/.test(spec);
       assert.ok(local, `${file} imports "${spec}", which escapes mcp/`);
     }
+  }
+});
+
+// ---- Scan budget (markie_find_md walks $HOME on first call) ----
+
+test("walk stops at maxFiles and reports truncation", async () => {
+  const root = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-scanbudget-")));
+  try {
+    for (let i = 0; i < 10; i++) writeFileSync(pjoin(root, `f${i}.md`), "x");
+    const stats = {};
+    const rows = await walk(root, { home: root, budget: { maxFiles: 3 }, stats });
+    assert.equal(rows.length, 3);
+    assert.equal(stats.truncated, true);
+    assert.equal(stats.reason, "files");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("walk stops descending past maxDepth", async () => {
+  const root = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-scandepth-")));
+  try {
+    let dir = root;
+    for (let i = 0; i < 5; i++) {
+      dir = pjoin(dir, `d${i}`);
+      mkdirSync(dir);
+      writeFileSync(pjoin(dir, `f${i}.md`), "x");
+    }
+    const stats = {};
+    const rows = await walk(root, { home: root, budget: { maxDepth: 2 }, stats });
+    assert.equal(rows.length, 2);
+    assert.equal(stats.truncated, true);
+    assert.equal(stats.reason, "depth");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("walk stops when the clock budget is spent", async () => {
+  const root = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-scantime-")));
+  try {
+    mkdirSync(pjoin(root, "a"));
+    mkdirSync(pjoin(root, "a", "b"));
+    writeFileSync(pjoin(root, "top.md"), "x");
+    writeFileSync(pjoin(root, "a", "mid.md"), "x");
+    writeFileSync(pjoin(root, "a", "b", "deep.md"), "x");
+    // A clock that jumps past the budget after the first directory.
+    let ticks = 0;
+    const now = () => (ticks++ === 0 ? 0 : 999_999);
+    const stats = {};
+    const rows = await walk(root, { home: root, budget: { maxMs: 10 }, now, stats });
+    assert.equal(rows.map((r) => r.name).join(","), "top.md");
+    assert.equal(stats.truncated, true);
+    assert.equal(stats.reason, "time");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an unbudgeted walk reports that it finished", async () => {
+  const root = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-scanfull-")));
+  try {
+    writeFileSync(pjoin(root, "a.md"), "x");
+    mkdirSync(pjoin(root, "sub"));
+    writeFileSync(pjoin(root, "sub", "b.md"), "x");
+    const stats = {};
+    const rows = await walk(root, { home: root, stats });
+    assert.equal(rows.length, 2);
+    assert.equal(stats.truncated, false);
+    assert.equal(stats.reason, null);
+    assert.equal(stats.dirs, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("markie_find_md says so when the real scan hits its depth cap", async () => {
+  // A cap that returns half the disk without saying so is worse than a slow
+  // scan: the agent concludes the document does not exist and writes a
+  // duplicate, which is exactly what the instructions tell it to avoid.
+  // No env override here: the fixture is genuinely deeper than DEFAULT_BUDGET
+  // allows, so this exercises the shipped defaults through the shipped server.
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const client = startMcpClient(home);
+  try {
+    writeFileSync(pjoin(home, "shallow.md"), "x");
+    let dir = home;
+    for (let i = 0; i <= DEFAULT_BUDGET.maxDepth; i++) {
+      dir = pjoin(dir, `d${i}`);
+      mkdirSync(dir);
+    }
+    writeFileSync(pjoin(dir, "too-deep.md"), "x");
+    await client.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "markie-test", version: "0.0.0" },
+    });
+    const res = await client.callTool("markie_find_md", {});
+    const payload = JSON.parse(res.result.content[0].text);
+    assert.deepEqual(payload.files.map((f) => f.name), ["shallow.md"]);
+    assert.match(payload.truncated, /stopped early \(limit: depth\)/);
+  } finally {
+    client.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a complete scan says nothing about truncation", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const client = startMcpClient(home);
+  try {
+    writeFileSync(pjoin(home, "a.md"), "x");
+    await client.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "markie-test", version: "0.0.0" },
+    });
+    const res = await client.callTool("markie_find_md", {});
+    const payload = JSON.parse(res.result.content[0].text);
+    assert.equal(payload.count, 1);
+    assert.equal(payload.truncated, undefined);
+  } finally {
+    client.close();
+    rmSync(home, { recursive: true, force: true });
   }
 });

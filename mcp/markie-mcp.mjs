@@ -27,10 +27,16 @@ const SERVER_VERSION = createRequire(import.meta.url)("./package.json").version;
 const HOME = homedir();
 
 // Cache the device scan for the process lifetime; writes invalidate it so new
-// files surface in the next find.
+// files surface in the next find. The walk runs under DEFAULT_BUDGET, so a
+// pathological tree costs a bounded amount of disk instead of minutes.
 let _scan = null;
+let _scanStats = {};
 async function scan() {
-  if (!_scan) _scan = await walk(HOME, { home: HOME });
+  if (!_scan) {
+    const stats = {};
+    _scan = await walk(HOME, { home: HOME, stats });
+    _scanStats = stats;
+  }
   return _scan;
 }
 
@@ -112,7 +118,14 @@ async function runTool(name, args) {
         .sort((a, b) => b.mtimeMs - a.mtimeMs)
         .slice(0, limit)
         .map((r) => ({ path: r.path, name: r.name, dir: r.dir }));
-      return { count: hits.length, files: hits };
+      const result = { count: hits.length, files: hits };
+      // A budget that silently returns half the disk is worse than a slow
+      // scan: the agent would conclude the document does not exist and write
+      // a duplicate. Say so instead.
+      if (_scanStats.truncated) {
+        result.truncated = `The device scan stopped early (limit: ${_scanStats.reason}) after ${_scanStats.files} files, so some markdown on this computer was not searched.`;
+      }
+      return result;
     }
     case "markie_read_md": {
       const g = guardPath(args.path, HOME);

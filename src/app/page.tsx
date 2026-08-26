@@ -105,7 +105,7 @@ import {
 import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { pathDirname } from "@/lib/path-utils";
 import { useDocument, type EditInput } from "@/lib/use-document";
-import { useSaveGuard } from "@/lib/use-save-guard";
+import { useSaveGuard, type SaveGuard } from "@/lib/use-save-guard";
 import { useDocumentExport } from "@/lib/use-export";
 
 const SAMPLE = `# Northstar Sprint Brief
@@ -265,10 +265,10 @@ export default function Home() {
 
   // Latest open-doc path + content, read by palette command closures without
   // rebuilding the command list on every keystroke.
-  const docRef = useRef({ filePath, content });
+  const docRef = useRef({ filePath, content, isDirty });
   useEffect(() => {
-    docRef.current = { filePath, content };
-  }, [filePath, content]);
+    docRef.current = { filePath, content, isDirty };
+  }, [filePath, content, isDirty]);
 
   // Whether rich edits may reach this document. Rendering rich is always safe,
   // so the verdict is resolved after first paint rather than on the open path;
@@ -286,8 +286,16 @@ export default function Home() {
   // panes, the format rail, and the autosave gate alike.
   const docEditable = canEditDocument(roleState);
   // The save machinery is built further down, because it needs handleSave.
-  // A manual save has to be able to call back into it from up here.
-  const cancelAutosaveRef = useRef<() => void>(() => {});
+  // Everything declared up here that has to reach it goes through this ref.
+  const saveGuardRef = useRef<SaveGuard>({
+    noteEdit: () => {},
+    cancel: () => {},
+    settle: async () => {},
+  });
+  // Everything that must land before the buffer is replaced or the window
+  // dies. Never allowed to throw: a transition the user cannot complete is
+  // worse than a save that did not, and the draft journal holds the rest.
+  const settleDocument = useCallback(() => saveGuardRef.current.settle(), []);
 
   // Only the newest resolution may write state. Role now decides whether the
   // document can be edited, so a slow answer for the previous file landing on
@@ -593,13 +601,14 @@ export default function Home() {
   }, []);
 
   // Start a fresh, unsaved markdown doc.
-  const handleNewFile = useCallback(() => {
+  const handleNewFile = useCallback(async () => {
+    await settleDocument();
     dismissDocumentUI();
     resetDocAccess();
     resetDoc();
     setCanShare(false);
     assessRichSafety("", null);
-  }, [dismissDocumentUI, resetDocAccess, assessRichSafety, resetDoc]);
+  }, [dismissDocumentUI, resetDocAccess, assessRichSafety, resetDoc, settleDocument]);
 
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
@@ -608,7 +617,10 @@ export default function Home() {
   );
 
   const loadFile = useCallback(
-    (data: { name: string; content: string; path: string | null; unsaved?: boolean }) => {
+    async (data: { name: string; content: string; path: string | null; unsaved?: boolean }) => {
+      // Whatever the last document still owes disk lands before this one
+      // replaces it. This is the P0: Markie used to drop it silently.
+      await settleDocument();
       dismissDocumentUI();
       // Re-opening the document that is already open (Library click, a reveal,
       // a re-track) is not a document swap. Tearing the session down here left
@@ -630,7 +642,7 @@ export default function Home() {
       setLibRefreshKey((k) => k + 1);
       assessRichSafety(md, data.path);
     },
-    [dismissDocumentUI, resetDocAccess, assessRichSafety, loadDoc]
+    [dismissDocumentUI, resetDocAccess, assessRichSafety, loadDoc, settleDocument]
   );
 
   const openPath = useCallback(
@@ -787,7 +799,7 @@ export default function Home() {
     if (!api) return null;
     // A manual save is the flush. Cancelling first means the pending timer
     // cannot fire straight after it and write the same bytes twice.
-    if (!autosave) cancelAutosaveRef.current();
+    if (!autosave) saveGuardRef.current.cancel();
     if (!filePath) {
       const saved = await handleSaveAs();
       return saved?.error ?? null;
@@ -868,7 +880,7 @@ export default function Home() {
     docKey: filePath,
   });
   useEffect(() => {
-    cancelAutosaveRef.current = saveGuard.cancel;
+    saveGuardRef.current = saveGuard;
   }, [saveGuard]);
 
   // The one way a user edit reaches the buffer, and so the only thing that may
@@ -950,6 +962,17 @@ export default function Home() {
       setLocation(res.path, res.name);
     }
   }, [filePath, setLocation]);
+
+  // The web build has no main process to hold the window open, so the
+  // browser's own prompt is the only net under an unsaved buffer.
+  useEffect(() => {
+    if (getElectronAPI()) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (docRef.current.isDirty) e.preventDefault();
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
 
   // Window title tracks the open file and dirty state
   useEffect(() => {
@@ -1160,7 +1183,8 @@ export default function Home() {
     fork: handleMakeCopy,
     reveal: handleReveal,
     exportHTML: exportHTML,
-    fileOpened: (data: FilePayload) => loadFile(data),
+    fileOpened: (data: FilePayload) => void loadFile(data),
+    settle: settleDocument,
     undoRedo: (d: "undo" | "redo") => runUndoRedo(d),
     print: printDocument,
     zoom: (step: number) => {
@@ -1301,6 +1325,18 @@ export default function Home() {
       api.onMenuReveal?.(() => handlersRef.current.reveal()),
       api.onMenuExportHTML?.(() => handlersRef.current.exportHTML()),
       api.onFileOpened?.((data) => handlersRef.current.fileOpened(data)),
+      // Main is holding the window open for us. Settle, then answer, and
+      // answer even if settling threw: a renderer that never replies just
+      // makes the user wait out the two second cap.
+      api.onAppWillClose?.(() => {
+        void (async () => {
+          try {
+            await handlersRef.current.settle();
+          } finally {
+            getElectronAPI()?.appCloseReady?.();
+          }
+        })();
+      }),
       api.onFileChangedOnDisk?.((data) => {
         // Ignore a change to a file we are no longer showing: the watcher can
         // fire once more between opening a new document and re-pointing.

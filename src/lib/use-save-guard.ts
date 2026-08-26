@@ -22,6 +22,12 @@ export interface SaveGuard {
   noteEdit(): void;
   /** Drop pending work: a manual save is about to do it by hand. */
   cancel(): void;
+  /**
+   * Everything pending must be on disk before the caller goes on. Used by the
+   * transitions that would otherwise drop it: opening another file, starting a
+   * new one, and the window closing.
+   */
+  settle(): Promise<void>;
 }
 
 export function useSaveGuard({ save, eligible, docKey }: SaveGuardInputs): SaveGuard {
@@ -54,6 +60,15 @@ export function useSaveGuard({ save, eligible, docKey }: SaveGuardInputs): SaveG
       },
       cancel() {
         autosaveRef.current?.cancel();
+      },
+      async settle() {
+        try {
+          await autosaveRef.current?.flush();
+        } catch {
+          // A failed flush has already reported itself through the save path.
+          // Blocking the transition on it would trap the user in a document
+          // they cannot leave, and the draft journal holds what did not land.
+        }
       },
     }),
     []

@@ -39,6 +39,14 @@ const { createIpcHandler, errorMessage } = require("./ipc-result");
 const { writeFileAtomic } = require("./atomic-write");
 const { createSnapshots } = require("./snapshots");
 const { saveConflictAction } = require("./save-conflict");
+const { createCloseFlusher } = require("./close-flush");
+
+// The renderer answers app-will-close here once it has flushed. Registered at
+// module scope, once, because ipcMain listeners outlive any one window.
+let _closeReadyCb = null;
+ipcMain.on("app-close-ready", () => {
+  if (_closeReadyCb) _closeReadyCb();
+});
 
 // Electron answers an uncaught exception in the main process with a modal
 // dialog containing a raw stack trace. That is alarming on its own, and it is
@@ -680,9 +688,38 @@ function createWindow() {
     }
   });
 
+  // Closing the window must not throw away a keystroke that has not reached
+  // disk yet. Ask the renderer to settle, then destroy; destroy() bypasses the
+  // close event, so the handshake always terminates. Cmd+Q goes through the
+  // same interception: quit closes the window, this settles once, and
+  // window-all-closed then quits as it always did.
+  const closeFlusher = createCloseFlusher({
+    send: (channel) => {
+      // Spelled out rather than forwarded, so electron/ipc-contract.test.ts can
+      // see main.js as the sender of this channel.
+      if (channel !== "app-will-close") return;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("app-will-close");
+      }
+    },
+    onReady: (cb) => {
+      _closeReadyCb = cb;
+    },
+    destroy: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
+    },
+  });
+  mainWindow.on("close", (event) => {
+    // No renderer to ask, or it already answered: let the close happen.
+    if (closeFlusher.isSettled() || !rendererReady) return;
+    event.preventDefault();
+    closeFlusher.requestClose();
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
     rendererReady = false;
+    _closeReadyCb = null;
     // never leave orphaned shells behind
     try {
       require("./terminal").killAll();

@@ -5,7 +5,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ElectronAPI } from "@/lib/electron";
+import type { ElectronAPI, SaveResult } from "@/lib/electron";
 import { emit, installBridge } from "@/test/mock-bridge";
 
 vi.mock("@/lib/auth-client", () => ({
@@ -20,6 +20,14 @@ vi.mock("@/lib/auth-client", () => ({
 import Home from "./page";
 
 const OPEN = { name: "notes.md", path: "/notes/notes.md", content: "start\n" };
+
+// Typed so the assertions can read the payload main would have received.
+type SaveArgs = Parameters<ElectronAPI["saveFile"]>[0];
+const okSave = () =>
+  vi.fn<(args: SaveArgs) => Promise<SaveResult>>(async () => ({
+    success: true,
+    path: OPEN.path,
+  }));
 
 interface Handle {
   commands: { setContent(c: string): void };
@@ -60,7 +68,7 @@ afterEach(() => vi.useRealTimers());
 
 describe("autosave", () => {
   it("writes the buffer about a second after an edit, marked as an autosave", async () => {
-    const saveFile = vi.fn(async () => ({ success: true, path: OPEN.path }));
+    const saveFile = okSave();
     await boot({ saveFile } as Partial<ElectronAPI>);
     expect(saveFile).not.toHaveBeenCalled();
 
@@ -84,7 +92,7 @@ describe("autosave", () => {
   });
 
   it("routes an autosave disk conflict into the strip and stops retrying", async () => {
-    const saveFile = vi.fn(async () => ({
+    const saveFile = vi.fn<(args: SaveArgs) => Promise<SaveResult>>(async () => ({
       success: false,
       code: "disk-changed" as const,
       content: "theirs\n",
@@ -101,7 +109,7 @@ describe("autosave", () => {
   });
 
   it("never asks the user anything: an autosave carries the flag that forbids it", async () => {
-    const saveFile = vi.fn(async () => ({ success: true, path: OPEN.path }));
+    const saveFile = okSave();
     await boot({ saveFile } as Partial<ElectronAPI>);
     await typeAndWait("first burst");
     await waitFor(() => expect(saveFile).toHaveBeenCalled());
@@ -111,7 +119,7 @@ describe("autosave", () => {
   });
 
   it("a manual save cancels the pending autosave rather than writing twice", async () => {
-    const saveFile = vi.fn(async () => ({ success: true, path: OPEN.path }));
+    const saveFile = okSave();
     await boot({ saveFile } as Partial<ElectronAPI>);
     await act(async () => {
       richEditor().commands.setContent("typed then saved");
@@ -132,7 +140,7 @@ describe("autosave", () => {
   });
 
   it("does not autosave a document with no file to write", async () => {
-    const saveFile = vi.fn(async () => ({ success: true, path: OPEN.path }));
+    const saveFile = okSave();
     const saveFileAs = vi.fn(async () => ({ success: false, canceled: true }));
     await boot({ saveFile, saveFileAs } as Partial<ElectronAPI>);
     await act(async () => {

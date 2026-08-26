@@ -108,6 +108,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onFileChangedOnDisk: (callback) =>
     subscribe("file-changed-on-disk", callback, (data) => data),
   watchFile: (filePath) => ipcRenderer.invoke("watch-file", filePath),
+  // The window is closing: settle the document, then answer.
+  onAppWillClose: (callback) => subscribe("app-will-close", callback),
+  appCloseReady: () => ipcRenderer.send("app-close-ready"),
   crashConsentGet: () => ipcRenderer.invoke("crash-consent-get"),
   crashConsentSet: (enabled) => ipcRenderer.invoke("crash-consent-set", enabled),
   crashLogReveal: () => ipcRenderer.invoke("crash-log-reveal"),

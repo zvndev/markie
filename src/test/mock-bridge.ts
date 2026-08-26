@@ -176,6 +176,8 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     onFileOpened: vi.fn(subscribe("onFileOpened")),
     onFileChangedOnDisk: vi.fn(subscribe("onFileChangedOnDisk")),
     watchFile: vi.fn(async () => ({ ok: true })),
+    onAppWillClose: vi.fn(subscribe("onAppWillClose")),
+    appCloseReady: vi.fn(() => undefined),
 
     // Crash reporting (consent-gated; off and unavailable by default in tests)
     crashConsentGet: vi.fn(async () => ({ enabled: false, available: false })),

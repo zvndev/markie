@@ -205,6 +205,10 @@ export interface ElectronAPI {
   ): Unsubscribe;
   /** Follow this path for external edits (after Save As, or a new document). */
   watchFile(filePath: string | null): Promise<{ ok: boolean } | { error: string } | null>;
+  // Main is holding the window open until the renderer answers appCloseReady,
+  // capped at two seconds. Everything that must land goes in between.
+  onAppWillClose(cb: () => void): Unsubscribe;
+  appCloseReady(): void;
   /** Whether crash reports may be sent, and whether a DSN is configured at all. */
   crashConsentGet(): Promise<{ enabled: boolean; available: boolean }>;
   crashConsentSet(

@@ -304,6 +304,10 @@ export interface ElectronAPI {
   projectsBlockSet?(
     args: { blockId: string; customName: string | null } | { blockId: string; mergeInto: string }
   ): Promise<ProjectsWriteResult>;
+  projectsConfig?(): Promise<ProjectsConfig>;
+  projectsWriteOverview?(args: {
+    listing: string;
+  }): Promise<ProjectsWriteResult & { path?: string }>;
   // Markie MCP server location, for the Agents setup dialog
   mcpInfo?(): Promise<{ serverPath: string; packaged: boolean; error?: string }>;
   // Report a renderer crash to the main process's crash log. Fire-and-forget:
@@ -370,6 +374,17 @@ export interface ProjectsAssignmentWrite {
 
 export interface ProjectsWriteResult {
   ok: boolean;
+  error?: string;
+}
+
+// Projects.md as it exists on disk right now, created from the template on
+// first read. `home` comes from main because resolving `~` in the user's rules
+// against a guessed home is how a rule silently stops matching.
+export interface ProjectsConfig {
+  path: string;
+  content: string;
+  created: boolean;
+  home: string;
   error?: string;
 }
 

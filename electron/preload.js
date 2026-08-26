@@ -53,6 +53,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   projectsSaveCache: (args) => ipcRenderer.invoke("projects-save-cache", args),
   projectsPin: (args) => ipcRenderer.invoke("projects-pin", args),
   projectsBlockSet: (args) => ipcRenderer.invoke("projects-block-set", args),
+  projectsConfig: () => ipcRenderer.invoke("projects-config"),
+  projectsWriteOverview: (args) => ipcRenderer.invoke("projects-write-overview", args),
   mcpInfo: () => ipcRenderer.invoke("mcp-info"),
   // Fire-and-forget: the error boundary calls this while the renderer is
   // already broken, so there is nothing to wait for and nothing to answer.

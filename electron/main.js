@@ -1544,6 +1544,46 @@ handle(
 );
 
 handle(
+  "projects-config",
+  () => {
+    const workspace = require("./workspace");
+    const { ensureProjectsConfig } = require("./projects-config");
+    const cfg = ensureProjectsConfig({ dir: workspace.defaultRootPath() });
+    // The renderer needs the real home to resolve `~` in the user's rules, and
+    // inferring it from a path is guesswork the main process does not have to
+    // make anyone do.
+    return { ...cfg, home: app.getPath("home") };
+  },
+  {
+    onFailure: (err) => ({
+      path: "",
+      content: "",
+      created: false,
+      home: "",
+      error: errorMessage(err),
+    }),
+  }
+);
+
+// Rewrites only the listing below the overview marker, from whatever is on
+// disk right now, so a rule the user just typed is never clobbered. If they
+// have the document open with unsaved edits, this lands as an ordinary
+// external change and the existing disk-change prompt handles it.
+handle(
+  "projects-write-overview",
+  (_e, { listing } = {}) => {
+    const workspace = require("./workspace");
+    const { ensureProjectsConfig, writeOverviewSection } = require("./projects-config");
+    const cfg = ensureProjectsConfig({ dir: workspace.defaultRootPath() });
+    const next = writeOverviewSection(cfg.content, String(listing ?? ""));
+    writeFileAtomic(cfg.path, next);
+    rememberDisk(cfg.path, next);
+    return { ok: true, path: cfg.path };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+
+handle(
   "projects-block-set",
   (_e, { blockId, customName, mergeInto } = {}) => {
     if (typeof mergeInto === "string") registry.blockMerge(blockId, mergeInto);

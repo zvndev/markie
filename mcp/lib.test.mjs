@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { guardPath, matchQuery, classifyAgentFile, groupSkills, markieOpenCommand } from "./lib.mjs";
+import { guardPath, matchQuery, classifyAgentFile, isCachedAgentPath, groupSkills, markieOpenCommand } from "./lib.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, realpathSync, rmSync, existsSync } from "node:fs";
 import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { tmpdir } from "node:os";
@@ -507,5 +507,64 @@ test("MCP initialize hands the client the conventions, and a declared write land
   } finally {
     client.close();
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("markie_list_skills classification hides plugin-cache noise like the app does", () => {
+  // The bug: a skill cloned into ~/.codex/plugins/cache showed in MCP results
+  // while the app's Skills panel hid it. On this machine that was 1,732 of the
+  // 2,284 files markie_list_skills returned.
+  assert.equal(
+    classifyAgentFile("/home/u/.claude/plugins/cache/foo/SKILL.md", "SKILL.md"),
+    null
+  );
+  assert.equal(
+    classifyAgentFile("/home/u/.codex/plugins/cache/foo/SKILL.md", "SKILL.md"),
+    null
+  );
+  assert.equal(
+    classifyAgentFile("/home/u/.claude/skills/mine/SKILL.md", "SKILL.md"),
+    "claude"
+  );
+});
+
+test("classification normalizes Windows separators before matching", () => {
+  // The app's copy replaced backslashes; the MCP copy did not, so a Windows
+  // cache path escaped the filter on one side only.
+  assert.equal(
+    classifyAgentFile("C:\\Users\\u\\.codex\\plugins\\cache\\f\\SKILL.md", "SKILL.md"),
+    null
+  );
+  assert.equal(classifyAgentFile("C:\\Users\\u\\.codex\\notes.md", "notes.md"), "openai");
+});
+
+test("isCachedAgentPath is exported from the MCP surface", () => {
+  assert.equal(isCachedAgentPath("/h/.codex/plugins/cache/x/SKILL.md"), true);
+  assert.equal(isCachedAgentPath("/h/.codex/skills/x/SKILL.md"), false);
+});
+
+// The MCP server ships as an extraResource, OUTSIDE the app's asar. An import
+// that reaches up into ../electron or ../src resolves fine in the repo and is
+// simply absent in the packaged app (that broke the app once; see the scan.mjs
+// header). Tests may reach out, because tests are not packaged; runtime code
+// may not. Globbing the directory rather than naming files keeps this honest
+// when someone adds a module.
+test("no runtime module in mcp/ imports anything outside mcp/", async () => {
+  const { readdirSync, readFileSync: readSrc } = await import("node:fs");
+  const runtime = readdirSync(MCP_DIR).filter(
+    (f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs")
+  );
+  assert.ok(runtime.length >= 4, `expected the mcp/ runtime modules, saw ${runtime}`);
+  for (const file of runtime) {
+    const src = readSrc(pjoin(MCP_DIR, file), "utf8");
+    const specifiers = [
+      ...src.matchAll(/(?:^|\n)\s*(?:import|export)[^;\n]*?from\s+["']([^"']+)["']/g),
+      ...src.matchAll(/\bimport\(\s*["']([^"']+)["']\s*\)/g),
+      ...src.matchAll(/\brequire\(\s*["']([^"']+)["']\s*\)/g),
+    ].map((m) => m[1]);
+    for (const spec of specifiers) {
+      const local = spec.startsWith("node:") || /^\.\/[^/]+$/.test(spec);
+      assert.ok(local, `${file} imports "${spec}", which escapes mcp/`);
+    }
   }
 });

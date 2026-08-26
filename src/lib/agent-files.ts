@@ -47,54 +47,18 @@ export const AGENT_KINDS: AgentKindMeta[] = [
   { id: "other", label: "Other", collapsed: true },
 ];
 
-// Folders that hold copies of somebody else's files.
-//
-// ~/.claude/plugins/cache and plugins/marketplaces are cloned plugin repos:
-// on this machine they alone are 1,543 of the 3,782 markdown files under
-// ~/.claude, so the panel was mostly other people's READMEs. Nothing in a
-// cache is authored here, so nothing in a cache belongs in a list of your
-// agent files.
-const CACHED_SEGMENTS = [
-  "/plugins/cache/",
-  "/plugins/marketplaces/",
-  "/bundled-marketplaces/",
-  "/vendor_imports/",
-  "/.tmp/",
-  "/tmp/",
-  "/node_modules/",
-  "/.git/",
-  "/caches/",
-  "/.cache/",
-  "/.trash/",
-  "/.removed-skills/",
-  "/backups/",
-  "/shell-snapshots/",
-  "/paste-cache/",
-  "/browser-profiles/",
-  "/file-history/",
-];
-
-// True for a file that is a copy, a build artifact, or a scratch record rather
-// than something written on purpose.
-export function isCachedAgentPath(path: string): boolean {
-  const p = path.toLowerCase().replace(/\\/g, "/");
-  return CACHED_SEGMENTS.some((segment) => p.includes(segment));
-}
-
-// Return the tool a file belongs to, or null if it isn't an agent file.
-// `path` is absolute; `name` is the basename. Matching is case-insensitive.
-export function classifyAgentFile(path: string, name: string): AgentTool | null {
-  const n = name.toLowerCase();
-  const p = path.toLowerCase().replace(/\\/g, "/");
-
-  if (isCachedAgentPath(p)) return null;
-
-  if (n === "claude.md" || p.includes("/.claude/")) return "claude";
-  if (n === "agents.md" || p.includes("/.codex/")) return "openai";
-  if (n === "gemini.md") return "gemini";
-  if (n === ".cursorrules" || p.includes("/.cursor/rules/")) return "cursor";
-  return null;
-}
+// Which tool a file belongs to, and whether it is a copy rather than something
+// authored here, are defined once in mcp/agent-classify.mjs and imported by
+// both runtimes. The app may reach into mcp/; mcp/ may never reach back out
+// (see the mcp/scan.mjs header). Keeping a second copy here is precisely what
+// let the cache filter exist in the app and not in the MCP server, so
+// markie_list_skills listed thousands of cloned plugin READMEs the Skills
+// panel already hid.
+export {
+  CACHED_SEGMENTS,
+  isCachedAgentPath,
+  classifyAgentFile,
+} from "../../mcp/agent-classify.mjs";
 
 // What the file is for. Keyed off the conventional folder layout of each tool.
 export function agentFileKind(path: string, name: string): AgentKind {

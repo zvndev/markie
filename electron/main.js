@@ -1627,10 +1627,14 @@ handle("mcp-info", () => {
   };
 }, { onFailure: (err) => ({ serverPath: "", packaged: false, error: errorMessage(err) }) });
 
-// ── Auto-update (electron-updater → macOS feed) ──
-// The current production feed is signed + notarized macOS only. Windows and
-// Linux packages can be built and smoke-tested locally, but they must not touch
-// the macOS feed until their signing, feed files, and public URLs are approved.
+// ── Auto-update (electron-updater → the platform's published feed) ──
+// macOS updates from a signed and notarized feed, Windows from the signed NSIS
+// feed the release runbook publishes alongside the installer. Which feed an
+// install reads is baked into app-update.yml at pack time from
+// server/download-manifest.json, so the two never cross. Linux packages can be
+// built and smoke-tested locally but must not touch either feed until their
+// signing, feed files, and public URLs are approved: update-policy.js is where
+// that is enforced.
 let updateState = "idle"; // idle | checking | available | downloading | ready | error
 let manualUpdateCheck = false;
 function sendUpdate(channel, payload) {

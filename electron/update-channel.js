@@ -26,11 +26,20 @@ const STABLE_CHANNEL = "latest";
 const BETA_CHANNEL = "beta";
 const PREFS_FILE = "update-channel.json";
 
-// electron-builder names the mac feed after the channel, so the two feeds are
+// electron-builder names the feed after the channel, so the two feeds are
 // separate objects in the bucket and publishing a beta cannot rewrite stable.
+// It also names them after the platform: the mac zip target carries a -mac
+// suffix and NSIS does not, so the same channel is a different file on each.
+// Getting that wrong would offer a Windows install a .dmg.
 const FEEDS = {
-  [STABLE_CHANNEL]: "latest-mac.yml",
-  [BETA_CHANNEL]: "beta-mac.yml",
+  darwin: {
+    [STABLE_CHANNEL]: "latest-mac.yml",
+    [BETA_CHANNEL]: "beta-mac.yml",
+  },
+  win32: {
+    [STABLE_CHANNEL]: "latest.yml",
+    [BETA_CHANNEL]: "beta.yml",
+  },
 };
 
 /**
@@ -42,8 +51,15 @@ function channelFor(optedIn) {
   return optedIn === true ? BETA_CHANNEL : STABLE_CHANNEL;
 }
 
-function feedFor(channel) {
-  return FEEDS[channel] ?? FEEDS[STABLE_CHANNEL];
+/**
+ * The feed file for a channel on a platform. Platforms without a published
+ * feed fall back to the mac table: nothing fetches a feed for them (the update
+ * policy refuses first), and the fallback keeps an unknown platform on stable
+ * rather than letting it read as beta.
+ */
+function feedFor(channel, platform = process.platform) {
+  const table = FEEDS[platform] ?? FEEDS.darwin;
+  return table[channel] ?? table[STABLE_CHANNEL];
 }
 
 /** A semver prerelease build, i.e. one that came from the beta channel. */

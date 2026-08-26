@@ -37,7 +37,6 @@ const { createCrashLog } = require("./crash-log");
 const { createPdfExporter, ensureExtension } = require("./export-pdf");
 const { createIpcHandler, errorMessage } = require("./ipc-result");
 const { writeFileAtomic } = require("./atomic-write");
-const { createSnapshots } = require("./snapshots");
 const { createHistory } = require("./history");
 const { saveConflictAction } = require("./save-conflict");
 const { createCloseFlusher } = require("./close-flush");
@@ -92,20 +91,6 @@ function drafts() {
 // File history. Backed by the same userData/snapshots directory the 0.4.x
 // snapshot store used, so every existing snapshot is already the oldest
 // version of its document and nothing has to migrate.
-// The raw store, still needed by the native "Revert to Snapshot…" picker
-// until the history dialog replaces it.
-let _snapshots = null;
-function snapshots() {
-  if (!_snapshots) {
-    try {
-      _snapshots = createSnapshots({ dir: app.getPath("userData") });
-    } catch {
-      _snapshots = { dirFor: () => "", list: () => [], has: () => false, root: "" };
-    }
-  }
-  return _snapshots;
-}
-
 let _history = null;
 function history() {
   if (!_history) {
@@ -1299,6 +1284,18 @@ handle(
 handle("draft-discard", (_e, key) => drafts().discard(String(key || "")), {
   onFailure: () => ({ ok: false }),
 });
+
+// ── File history ──
+// One version per committed write, plus whatever an agent or another editor
+// wrote while the document was open. Reading a version never touches the file.
+handle("history-list", (_e, p) => history().list(String(p || "")), {
+  onFailure: () => [],
+});
+handle(
+  "history-read",
+  (_e, { path: p, stamp }) => ({ content: history().read(String(p || ""), String(stamp || "")) }),
+  { onFailure: () => ({ content: null }) }
+);
 // Which tracked files the server is ahead of. One request for the whole
 // library, called on focus and on a timer, so it has to stay cheap and quiet.
 handle("doc-check-updates", () => sync.checkUpdates(), {
@@ -1921,46 +1918,6 @@ function revealCrashLog() {
   }
 }
 
-// Open one of this document's snapshots. Not an IPC channel and not a write:
-// the picked snapshot is handed to the renderer as the buffer for the path
-// that is already open, so the user reads it, compares it, and decides. Nothing
-// touches the file on disk until they save.
-async function revertToSnapshot() {
-  try {
-    const target = currentDocPath;
-    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-    if (!target || !snapshots().has(target)) {
-      dialog.showMessageBox(parent, {
-        type: "info",
-        message: "No snapshots for this document yet.",
-        detail: "Markie keeps a copy of a document each time you save over it. Save once and there will be one here.",
-      });
-      return;
-    }
-    const result = await dialog.showOpenDialog(parent, {
-      title: `Revert "${path.basename(target)}"`,
-      defaultPath: snapshots().dirFor(target),
-      buttonLabel: "Open Snapshot",
-      properties: ["openFile"],
-      filters: [{ name: "Snapshot", extensions: ["md"] }],
-    });
-    if (result.canceled || !result.filePaths[0]) return;
-    const content = fs.readFileSync(result.filePaths[0], "utf-8");
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    // The existing file-opened payload, with the document's own path and name:
-    // the renderer keeps editing the same file. `unsaved` marks the buffer as
-    // not yet written, so the revert is one ⌘S away and one ⌘Z from undone.
-    mainWindow.webContents.send("file-opened", {
-      name: path.basename(target),
-      content,
-      path: target,
-      unsaved: true,
-    });
-  } catch (err) {
-    logCrash("revert-to-snapshot-failed", err);
-  }
-}
-
 // Finder on macOS, File Explorer on Windows, and neither name is right on Linux.
 const crashLogMenuLabel =
   process.platform === "darwin"
@@ -2032,13 +1989,11 @@ const template = [
       },
       {
         id: REVERT_MENU_ID,
-        label: "Revert to Snapshot…",
-        // Enabled by refreshRevertMenuItem() once a document with snapshots is
-        // open; an item that opens an empty folder is worse than a grey one.
+        label: "History…",
+        // Enabled by refreshRevertMenuItem() once the open document has
+        // versions; an item that opens an empty list is worse than a grey one.
         enabled: false,
-        click: () => {
-          void revertToSnapshot();
-        },
+        click: () => mainWindow?.webContents.send("menu-history"),
       },
       {
         label: "Duplicate (Fork)",

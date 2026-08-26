@@ -114,6 +114,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   draftSave: (args) => ipcRenderer.invoke("draft-save", args),
   draftCheck: () => ipcRenderer.invoke("draft-check"),
   draftDiscard: (key) => ipcRenderer.invoke("draft-discard", key),
+  // File history
+  historyList: (path) => ipcRenderer.invoke("history-list", path),
+  historyRead: (args) => ipcRenderer.invoke("history-read", args),
+  onMenuHistory: (callback) => subscribe("menu-history", callback),
   appCloseReady: () => ipcRenderer.send("app-close-ready"),
   crashConsentGet: () => ipcRenderer.invoke("crash-consent-get"),
   crashConsentSet: (enabled) => ipcRenderer.invoke("crash-consent-set", enabled),

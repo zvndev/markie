@@ -35,6 +35,15 @@ export interface DraftEntry {
   content: string | null;
 }
 
+export interface HistoryEntry {
+  /** The version's filename stamp, which is also its id. */
+  stamp: string;
+  iso: string;
+  /** "user", "external" (an agent or another editor), or "unknown" (pre-0.5.0). */
+  author: string;
+  bytes: number;
+}
+
 export type ViewMode = "edit" | "preview" | "split";
 
 export interface TerminalContext {
@@ -229,6 +238,11 @@ export interface ElectronAPI {
   }): Promise<{ ok: boolean; cleared?: boolean; error?: string }>;
   draftCheck(): Promise<DraftEntry[]>;
   draftDiscard(key: string): Promise<{ ok: boolean }>;
+  // Every version of this document Markie still holds, newest first, and the
+  // content of one of them. Reading never touches the file on disk.
+  historyList(path: string): Promise<HistoryEntry[]>;
+  historyRead(args: { path: string; stamp: string }): Promise<{ content: string | null }>;
+  onMenuHistory(cb: () => void): Unsubscribe;
   /** Whether crash reports may be sent, and whether a DSN is configured at all. */
   crashConsentGet(): Promise<{ enabled: boolean; available: boolean }>;
   crashConsentSet(

@@ -41,6 +41,7 @@ import {
 import { ConflictDialog } from "@/components/conflict-dialog";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
 import { DraftStrip } from "@/components/draft-strip";
+import { HistoryDialog } from "@/components/history-dialog";
 import { diskChangeKind } from "@/lib/disk-change";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { RichLossBanner, RichPreparingNote } from "@/components/rich-guard";
@@ -249,6 +250,7 @@ export default function Home() {
   // a reload does not have to go back to the filesystem and race the next edit.
   const [diskChange, setDiskChange] = useState<string | null>(null);
   const [showDiskConflict, setShowDiskConflict] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [peers, setPeers] = useState<PeerUser[]>([]);
   const [liveStatus, setLiveStatus] = useState<
     "connecting" | "connected" | "disconnected"
@@ -1328,6 +1330,7 @@ export default function Home() {
         setFindWithReplace(true);
         setShowFind(true);
       }),
+      api.onMenuHistory?.(() => setShowHistory(true)),
       api.onMenuSave?.(() => handlersRef.current.save()),
       api.onMenuSaveAs?.(() => handlersRef.current.saveAs()),
       api.onMenuFork?.(() => handlersRef.current.fork()),
@@ -1409,6 +1412,7 @@ export default function Home() {
       // the user could not work out how to share, which is when they search for
       // it. ShareGate explains whatever is missing.
       { id: "share", title: "Share…", group: "File", keywords: "collaborate invite live people sync cloud link", run: () => setShowShare(true) },
+      { id: "history", title: "History…", group: "File", keywords: "versions restore snapshot revert previous", run: () => setShowHistory(true) },
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
     ],
     [
@@ -1638,6 +1642,7 @@ export default function Home() {
             appearance={appearance}
             onAppearance={changeAppearance}
             onPrint={printDocument}
+            onHistory={filePath ? () => setShowHistory(true) : undefined}
             canEdit={docEditable}
           />
 
@@ -1876,6 +1881,25 @@ export default function Home() {
           onClose={() => setManageShare(null)}
           // membership changed → refresh the Shared lists' counts
           onChanged={() => setLibRefreshKey((k) => k + 1)}
+        />
+      )}
+
+      {showHistory && filePath && (
+        <HistoryDialog
+          filePath={filePath}
+          fileName={fileName ?? "this document"}
+          onClose={() => setShowHistory(false)}
+          onRestore={(versionContent) => {
+            setShowHistory(false);
+            // Loaded as unsaved, never written: reading history must not be
+            // able to cost anyone the document they were looking at.
+            void loadFile({
+              name: fileName ?? "untitled.md",
+              content: versionContent,
+              path: filePath,
+              unsaved: true,
+            });
+          }}
         />
       )}
 

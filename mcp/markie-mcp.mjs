@@ -16,6 +16,7 @@ import { dirname } from "node:path";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { guardPath, matchQuery, groupSkills, markieOpenCommand } from "./lib.mjs";
+import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { walk } from "./scan.mjs";
 import { createRequire } from "node:module";
 
@@ -62,12 +63,22 @@ const TOOLS = [
   {
     name: "markie_write_md",
     description:
-      "Create or overwrite a markdown file. Only .md/.markdown/.mdx under your home folder, never inside excluded dirs (node_modules, tmp, hidden dirs except the skill roots). Markie picks up changes on reopen.",
+      "Create or overwrite a markdown file. Only .md/.markdown/.mdx under your home folder, never inside excluded dirs (node_modules, tmp, hidden dirs except the skill roots). Markie picks up changes on reopen. Declare project/block so Markie files the document in the right place.",
     inputSchema: {
       type: "object",
       properties: {
         path: { type: "string", description: "Absolute path, ~ allowed" },
         content: { type: "string", description: "Full new markdown content" },
+        project: {
+          type: "string",
+          description:
+            "Optional: the Markie project this document belongs to (written into markie front matter)",
+        },
+        block: {
+          type: "string",
+          description:
+            "Optional: the block (unit of work) inside the project. Name it after the work, not the date.",
+        },
       },
       required: ["path", "content"],
       additionalProperties: false,
@@ -111,7 +122,10 @@ async function runTool(name, args) {
     case "markie_write_md": {
       const g = guardPath(args.path, HOME, { mode: "write" });
       if (!g.ok) throw new Error(g.error);
-      const body = String(args.content ?? "");
+      const body = applyMarkieFrontMatter(String(args.content ?? ""), {
+        project: typeof args.project === "string" ? args.project : null,
+        block: typeof args.block === "string" ? args.block : null,
+      });
       // The guard already vetted every ancestor segment (under home, no excluded
       // dirs), so creating missing parents stays inside an allowed tree.
       await mkdir(dirname(g.path), { recursive: true });
@@ -183,6 +197,9 @@ rl.on("line", async (line) => {
           protocolVersion: params?.protocolVersion ?? "2024-11-05",
           capabilities: { tools: {} },
           serverInfo: { name: "markie-mcp", version: SERVER_VERSION },
+          // Clients hand this to the model at connect time: what Markie is,
+          // which tool to reach for, and how to file what it writes.
+          instructions: INSTRUCTIONS,
         },
       });
     } else if (method === "notifications/initialized") {

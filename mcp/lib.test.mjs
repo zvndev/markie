@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { guardPath, matchQuery, classifyAgentFile, groupSkills, markieOpenCommand } from "./lib.mjs";
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, realpathSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, realpathSync, rmSync, existsSync } from "node:fs";
+import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { dirname as pdirname, join as pjoin } from "node:path";
@@ -398,4 +399,113 @@ test("scan.mjs exclusion rules stay in sync with electron/mdindex.js", async () 
   );
   assert.equal(BUNDLE_RE.source, mdindex.BUNDLE_RE.source, "BUNDLE_RE drifted");
   assert.equal(BUNDLE_RE.flags, mdindex.BUNDLE_RE.flags, "BUNDLE_RE flags drifted");
+});
+
+// ---- Agent-facing conventions (initialize instructions + the write path) ----
+
+test("INSTRUCTIONS teach the organization conventions", () => {
+  assert.ok(INSTRUCTIONS.length > 200);
+  assert.match(INSTRUCTIONS, /markie_find_md/);
+  assert.match(INSTRUCTIONS, /project/);
+  assert.match(INSTRUCTIONS, /block/);
+  assert.match(INSTRUCTIONS, /front matter/i);
+});
+
+test("INSTRUCTIONS stay client-agnostic and never recommend date-named blocks", () => {
+  // Codex and any other MCP client read this same string, so nothing in it may
+  // assume Claude Code.
+  assert.doesNotMatch(INSTRUCTIONS, /claude code/i);
+  assert.doesNotMatch(INSTRUCTIONS, /codex/i);
+  // Phase 3B strips leading date stamps out of derived block names; the
+  // instructions must not recommend what the engine deliberately undoes.
+  assert.match(INSTRUCTIONS, /never after a date/i);
+  // No em-dashes in prose the user reads.
+  assert.doesNotMatch(INSTRUCTIONS, /—/);
+});
+
+test("applyMarkieFrontMatter adds front matter to a bare document", () => {
+  const out = applyMarkieFrontMatter("# Doc\n", { project: "App", block: "auth" });
+  assert.equal(
+    out,
+    "---\nmarkie:\n  project: App\n  block: auth\n---\n# Doc\n"
+  );
+});
+
+test("applyMarkieFrontMatter merges into existing front matter, preserving other keys", () => {
+  const src = "---\ntitle: T\nmarkie:\n  project: Old\n---\nbody\n";
+  const out = applyMarkieFrontMatter(src, { project: "New", block: "b" });
+  assert.match(out, /title: T/);
+  assert.match(out, /project: New/);
+  assert.match(out, /block: b/);
+  assert.doesNotMatch(out, /project: Old/);
+  assert.match(out, /^---\n/);
+});
+
+test("applyMarkieFrontMatter quotes values that need it and skips empties", () => {
+  const out = applyMarkieFrontMatter("x\n", { project: "My: App", block: null });
+  assert.match(out, /project: "My: App"/);
+  assert.doesNotMatch(out, /block:/);
+});
+
+test("applyMarkieFrontMatter leaves a hyphenated block name unquoted", () => {
+  // Every block name the instructions and the skill recommend is hyphenated
+  // ("auth-flow", "checkout-redesign"). Quoting them would make the front
+  // matter agents produce look nothing like the front matter we show them.
+  const out = applyMarkieFrontMatter("x\n", { project: "markie", block: "auth-flow" });
+  assert.match(out, /^ {2}block: auth-flow$/m);
+});
+
+test("applyMarkieFrontMatter with no declaration returns the content untouched", () => {
+  // The parameters are additive: every existing call must produce the exact
+  // bytes it always did.
+  const src = "---\ntitle: T\n---\n# Doc\n";
+  assert.equal(applyMarkieFrontMatter(src, {}), src);
+  assert.equal(applyMarkieFrontMatter(src), src);
+  assert.equal(applyMarkieFrontMatter(src, { project: null, block: null }), src);
+});
+
+test("the write path emits the exact shape the app's extractor reads", () => {
+  const out = applyMarkieFrontMatter("# Plan\n", { project: "Markie", block: "organized-workspace" });
+  assert.equal(
+    out,
+    "---\nmarkie:\n  project: Markie\n  block: organized-workspace\n---\n# Plan\n"
+  );
+});
+
+test("MCP initialize hands the client the conventions, and a declared write lands them on disk", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const client = startMcpClient(home);
+  try {
+    const init = await client.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "markie-test", version: "0.0.0" },
+    });
+    assert.equal(init.result.instructions, INSTRUCTIONS);
+    client.notify("notifications/initialized", {});
+
+    // The tool contract is additive: project/block are optional, path/content
+    // are still the only required arguments.
+    const tools = await client.request("tools/list");
+    const write = tools.result.tools.find((t) => t.name === "markie_write_md");
+    assert.deepEqual(write.inputSchema.required, ["path", "content"]);
+    assert.equal(write.inputSchema.properties.project.type, "string");
+    assert.equal(write.inputSchema.properties.block.type, "string");
+
+    const target = pjoin(home, "notes", "plan.md");
+    const res = await client.callTool("markie_write_md", {
+      path: target,
+      content: "# Plan\n",
+      project: "Markie",
+      block: "organized-workspace",
+    });
+    assert.equal(res.result.isError, undefined);
+    assert.equal(
+      readFileSync(target, "utf8"),
+      "---\nmarkie:\n  project: Markie\n  block: organized-workspace\n---\n# Plan\n"
+    );
+  } finally {
+    client.close();
+    rmSync(home, { recursive: true, force: true });
+  }
 });

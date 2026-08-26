@@ -1,4 +1,5 @@
 import type { BlockRecord } from "@/lib/projects/cluster";
+import type { ProjectNameRecord } from "@/lib/projects/taxonomy";
 
 export interface FilePayload {
   name: string;
@@ -304,6 +305,15 @@ export interface ElectronAPI {
   projectsBlockSet?(
     args: { blockId: string; customName: string | null } | { blockId: string; mergeInto: string }
   ): Promise<ProjectsWriteResult>;
+  // Naming a project, and making one. Neither touches the filesystem: the
+  // derived key stays the identity, so a rename cannot orphan a pin.
+  projectsProjectSet?(args: {
+    project: string;
+    customName: string | null;
+  }): Promise<ProjectsWriteResult>;
+  projectsCreate?(args: {
+    name: string;
+  }): Promise<ProjectsWriteResult & { project?: string }>;
   projectsConfig?(): Promise<ProjectsConfig>;
   projectsWriteOverview?(args: {
     listing: string;
@@ -356,6 +366,7 @@ export interface ProjectAssignmentRow {
 export interface ProjectsState {
   pins: ProjectPinRow[];
   blocks: BlockRecord[];
+  projectNames: ProjectNameRecord[];
   assignments: ProjectAssignmentRow[];
   fingerprint: string;
   rulesKnownGood: string | null;

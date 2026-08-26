@@ -30,6 +30,7 @@ function block(id: string, count: number, name = id): BlockNode {
 
 function project(name: string, blocks: BlockNode[], isUnfiled = false): ProjectNode {
   return {
+    key: name,
     name,
     made: T0,
     updated: T0,

@@ -343,8 +343,8 @@ describe("schema v1 migration", () => {
   const findBlock = (id: string) =>
     (registry.blocksAll() as BlockRow[]).find((b) => b.block_id === id);
 
-  it("stamps user_version 1 and creates the projects tables", () => {
-    expect(registry.schemaVersion()).toBe(1);
+  it("stamps the current user_version and creates the projects tables", () => {
+    expect(registry.schemaVersion()).toBe(2);
 
     registry.metaUpsertMany([
       {
@@ -388,7 +388,7 @@ describe("schema v1 migration", () => {
   it("is idempotent: reopening an already-migrated database changes nothing", () => {
     registry.blockUpsert(block("reopen-1", { custom_name: "Kept" }));
     registry.close();
-    expect(registry.schemaVersion()).toBe(1);
+    expect(registry.schemaVersion()).toBe(2);
     expect(findBlock("reopen-1")?.custom_name).toBe("Kept");
   });
 
@@ -441,6 +441,156 @@ describe("schema v1 migration", () => {
   });
 });
 
+describe("schema v2: project names and user-made projects", () => {
+  const names = () => registry.projectsAll() as Array<{
+    project: string;
+    custom_name: string | null;
+    user_created: number;
+  }>;
+  const find = (key: string) => names().find((r) => r.project === key);
+
+  it("records a rename against the derived key, not against a new project", () => {
+    registry.projectSetName("markdown-viewer-zvn", "Markie");
+    expect(find("markdown-viewer-zvn")?.custom_name).toBe("Markie");
+    // The key is the identity. A pin written before the rename still resolves,
+    // because nothing about the pin's project changed.
+    registry.pinSet({ path: "/repo/a.md", project: "markdown-viewer-zvn", blockId: null });
+    registry.projectSetName("markdown-viewer-zvn", "Markie app");
+    expect(
+      (registry.pinsAll() as Array<{ path: string; project: string }>).find(
+        (r) => r.path === "/repo/a.md"
+      )?.project
+    ).toBe("markdown-viewer-zvn");
+    expect(find("markdown-viewer-zvn")?.custom_name).toBe("Markie app");
+    registry.pinClear("/repo/a.md");
+  });
+
+  it("clearing the name hands the project back to the derived one", () => {
+    registry.projectSetName("clearing", "Temporary");
+    registry.projectSetName("clearing", null);
+    expect(find("clearing")?.custom_name).toBeNull();
+    registry.projectSetName("clearing", "   ");
+    expect(find("clearing")?.custom_name).toBeNull();
+  });
+
+  it("makes a project that has no files, and keeps it across reopens", () => {
+    registry.projectCreate("Q4 planning");
+    expect(find("Q4 planning")?.user_created).toBe(1);
+    registry.close();
+    expect(find("Q4 planning")?.user_created).toBe(1);
+  });
+
+  it("renaming a user-made project leaves it user-made", () => {
+    registry.projectCreate("Ideas");
+    registry.projectSetName("Ideas", "Someday");
+    const row = find("Ideas");
+    expect(row?.custom_name).toBe("Someday");
+    expect(row?.user_created).toBe(1);
+  });
+});
+
+// A database that already made it to 0.5.0 and holds real decisions. The v2
+// migration adds a table and touches nothing else, and that has to be provable
+// rather than asserted: build the v1 database by hand, with a pin, a renamed
+// block and a merge in it, and open it.
+describe("upgrading a populated version 1 database", () => {
+  const v1Dir = fs.mkdtempSync(path.join(os.tmpdir(), "markie-registry-v1-"));
+
+  beforeAll(() => {
+    if (!Adapter) return;
+    const legacy = new Adapter(path.join(v1Dir, "registry.db"));
+    legacy.exec(`
+      CREATE TABLE files (
+        path TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        content_hash TEXT,
+        cloud_doc_id TEXT,
+        cloud_version INTEGER DEFAULT 0,
+        sync_state TEXT NOT NULL DEFAULT 'local-only',
+        last_opened_at TEXT,
+        last_synced_at TEXT,
+        share_role TEXT
+      );
+      CREATE TABLE workspace_roots (path TEXT PRIMARY KEY, added_at TEXT NOT NULL);
+      CREATE TABLE md_stars (path TEXT PRIMARY KEY, kind TEXT NOT NULL, added_at TEXT NOT NULL);
+      CREATE TABLE md_index_cache (path TEXT PRIMARY KEY, name TEXT NOT NULL, mtime_ms REAL NOT NULL);
+      CREATE TABLE md_meta (
+        path TEXT PRIMARY KEY, mtime_ms REAL NOT NULL, birthtime_ms REAL,
+        fm_project TEXT, fm_block TEXT, repo_name TEXT, scanned_at TEXT NOT NULL
+      );
+      CREATE TABLE project_pins (
+        path TEXT PRIMARY KEY, project TEXT NOT NULL, block_id TEXT, pinned_at TEXT NOT NULL
+      );
+      CREATE TABLE project_blocks (
+        block_id TEXT PRIMARY KEY, project TEXT NOT NULL, auto_name TEXT NOT NULL,
+        custom_name TEXT, merged_into TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE project_assignments (
+        path TEXT PRIMARY KEY, project TEXT NOT NULL, block_id TEXT,
+        source TEXT NOT NULL, mtime_ms REAL NOT NULL, fingerprint TEXT NOT NULL
+      );
+      CREATE TABLE projects_config (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+      INSERT INTO files (path, name, sync_state, cloud_doc_id, share_role)
+        VALUES ('/v1/notes.md', 'notes.md', 'synced', 'doc_v1', 'editor');
+      INSERT INTO project_pins (path, project, block_id, pinned_at)
+        VALUES ('/v1/notes.md', 'Thesis', 'blk-1', '2026-08-26');
+      INSERT INTO project_blocks (block_id, project, auto_name, custom_name, merged_into, created_at, updated_at)
+        VALUES ('blk-1', 'Thesis', 'auto', 'Chapter one', NULL, '2026-08-26', '2026-08-26');
+      INSERT INTO project_blocks (block_id, project, auto_name, custom_name, merged_into, created_at, updated_at)
+        VALUES ('blk-2', 'Thesis', 'auto-2', NULL, 'blk-1', '2026-08-26', '2026-08-26');
+      INSERT INTO projects_config (key, value, updated_at) VALUES ('rules-known-good', 'kept', '2026-08-26');
+      PRAGMA user_version = 1;
+    `);
+    legacy.close();
+  });
+
+  afterAll(() => {
+    registry.close();
+    userDataDir = tmpDir;
+    fs.rmSync(v1Dir, { recursive: true, force: true });
+  });
+
+  it("stamps version 2, loses no decision, and can name projects immediately", () => {
+    registry.close();
+    userDataDir = v1Dir;
+
+    expect(registry.schemaVersion()).toBe(2);
+    // Every user decision the v1 database held.
+    const pin = (registry.pinsAll() as Array<{ path: string; project: string; block_id: string }>)[0];
+    expect(pin.path).toBe("/v1/notes.md");
+    expect(pin.project).toBe("Thesis");
+    expect(pin.block_id).toBe("blk-1");
+    const blocks = registry.blocksAll() as Array<{
+      block_id: string;
+      custom_name: string | null;
+      merged_into: string | null;
+    }>;
+    expect(blocks.find((b) => b.block_id === "blk-1")?.custom_name).toBe("Chapter one");
+    expect(blocks.find((b) => b.block_id === "blk-2")?.merged_into).toBe("blk-1");
+    expect(registry.projectsConfigGet("rules-known-good")).toBe("kept");
+    expect((registry.get("/v1/notes.md") as { cloud_doc_id: string }).cloud_doc_id).toBe("doc_v1");
+
+    // The new table exists on the same open, and the project the pin points at
+    // can be renamed without the pin noticing.
+    registry.projectSetName("Thesis", "Dissertation");
+    registry.projectCreate("Reading list");
+    expect(
+      (registry.projectsAll() as Array<{ project: string; custom_name: string | null }>)
+        .find((r) => r.project === "Thesis")?.custom_name
+    ).toBe("Dissertation");
+    expect((registry.pinsAll() as Array<{ project: string }>)[0].project).toBe("Thesis");
+
+    // Reopen: nothing re-runs, and nothing is lost.
+    registry.close();
+    expect(registry.schemaVersion()).toBe(2);
+    expect(
+      (registry.projectsAll() as Array<{ project: string; user_created: number }>)
+        .find((r) => r.project === "Reading list")?.user_created
+    ).toBe(1);
+    expect((registry.pinsAll() as Array<{ block_id: string }>)[0].block_id).toBe("blk-1");
+  });
+});
+
 // The migration a real user actually runs: their database exists, holds their
 // files, roots, stars, and index cache, and has never heard of user_version.
 // Losing anything here is a release blocker, so this builds that database by
@@ -485,11 +635,11 @@ describe("upgrading a populated version 0 database", () => {
   // One arc, not two cases: the shared beforeEach wipe() above is written
   // against the pre-v1 tables and would clear the legacy file row between
   // tests, which would prove nothing about the migration.
-  it("stamps version 1, keeps every row the user had, and stays put on reopen", () => {
+  it("stamps the current version, keeps every row the user had, and stays put on reopen", () => {
     registry.close();
     userDataDir = legacyDir;
 
-    expect(registry.schemaVersion()).toBe(1);
+    expect(registry.schemaVersion()).toBe(2);
     expect(registry.listRoots()).toEqual(["/legacy/root"]);
     expect(
       (registry.listStars() as Array<{ path: string }>).map((star) => star.path)
@@ -518,7 +668,7 @@ describe("upgrading a populated version 0 database", () => {
 
     // Reopen: nothing re-runs, and no decision is lost.
     registry.close();
-    expect(registry.schemaVersion()).toBe(1);
+    expect(registry.schemaVersion()).toBe(2);
     expect((registry.pinsAll() as Array<{ project: string }>)[0].project).toBe("Legacy");
     expect(
       (registry.blocksAll() as Array<{ custom_name: string }>)[0].custom_name

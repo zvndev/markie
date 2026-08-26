@@ -33,19 +33,19 @@ export async function readLibrarySnapshot(api: LibraryAPI): Promise<LibrarySnaps
   }
 }
 
-// ── Which Library tab opens, and which shape the Files tab takes ──
+// ── Which Library tab opens ──
 //
-// Files became the default in 0.5.0, because it now shows the user's work
-// organized into projects rather than a workspace folder tree that is empty
-// for most people. Flipping a default must not overrule anyone who chose the
-// old one, so the key is versioned and the migration reads the v1 value: an
-// explicit "recent" was a click, and absence was never a choice at all (Recent
-// was already the default, so most people never touched the toggle).
-export type LibTab = "recent" | "files";
-export type FilesSubView = "projects" | "folders";
+// The Library is Recent and Folders now, one flat row, and that is the whole
+// list. Projects used to be a third thing reached by a tab inside a tab: you
+// picked Files, then picked Projects inside it, and the panel spent two rows
+// of its width explaining where you were. Projects is its own destination in
+// the left rail instead, so the nesting is gone rather than restyled.
+export type LibTab = "recent" | "folders";
 
-export const LIB_TAB_KEY = "markie.libtab.v2";
+export const LIB_TAB_KEY = "markie.libtab.v3";
+export const LIB_TAB_KEY_V2 = "markie.libtab.v2";
 export const LIB_TAB_KEY_V1 = "markie.libtab.v1";
+// Read only by the migration below. Nothing writes it any more.
 export const FILES_SUBVIEW_KEY = "markie.filesview.v1";
 
 // localStorage throws outright in a private window or with site data blocked,
@@ -58,16 +58,25 @@ function safeRead(readKey: (key: string) => string | null, key: string): string 
   }
 }
 
+// Nobody may be stranded on a tab that no longer exists, and nobody may be
+// moved off one that does.
+//
+//   v2 "files" + subview "folders"  -> Folders. Same tab, same content, and
+//                                      the only surface with new folder,
+//                                      rename and trash. They keep it.
+//   v2 "files" + subview "projects" -> Recent. The thing they chose moved out
+//                                      of this panel entirely; the Library's
+//                                      own default is the honest landing, and
+//                                      Projects is one rail click away.
+//   v2 "recent"                     -> Recent.
+//   nothing stored                  -> Recent, which is what the Library is
+//                                      for: what you had open lately.
 export function initialLibTab(readKey: (key: string) => string | null): LibTab {
-  const v2 = safeRead(readKey, LIB_TAB_KEY);
-  if (v2 === "recent" || v2 === "files") return v2;
-  return safeRead(readKey, LIB_TAB_KEY_V1) === "recent" ? "recent" : "files";
-}
-
-// The folder tree is the only surface with new folder, rename and trash, so it
-// stays one toggle away rather than being removed.
-export function initialFilesSubView(
-  readKey: (key: string) => string | null
-): FilesSubView {
-  return safeRead(readKey, FILES_SUBVIEW_KEY) === "folders" ? "folders" : "projects";
+  const v3 = safeRead(readKey, LIB_TAB_KEY);
+  if (v3 === "recent" || v3 === "folders") return v3;
+  const v2 = safeRead(readKey, LIB_TAB_KEY_V2);
+  if (v2 === "files") {
+    return safeRead(readKey, FILES_SUBVIEW_KEY) === "folders" ? "folders" : "recent";
+  }
+  return "recent";
 }

@@ -157,6 +157,27 @@ function getDB() {
     migrate();
   }
 
+  // v2 adds the one thing 0.5.0 could not express: a project the user named,
+  // or made. A project used to exist only as whatever the engine derived, so
+  // there was nowhere to record "I call this one Markie" and no way at all to
+  // have a project before it has files. Both are user decisions and belong
+  // beside pins and block renames, not in the disposable cache.
+  if (version < 2) {
+    const migrate = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS projects (
+          project      TEXT PRIMARY KEY,
+          custom_name  TEXT,
+          user_created INTEGER NOT NULL DEFAULT 0,
+          created_at   TEXT NOT NULL,
+          updated_at   TEXT NOT NULL
+        );
+      `);
+      db.pragma("user_version = 2");
+    });
+    migrate();
+  }
+
   return db;
 }
 
@@ -464,6 +485,45 @@ function blockMerge(blockId, intoBlockId) {
     .run(intoBlockId, new Date().toISOString(), blockId);
 }
 
+// ── Projects: project identity (precious) ──
+// The derived key stays the project's identity forever; only the display name
+// changes. Renaming therefore cannot orphan a pin, a block, or an assignment,
+// and it cannot touch a single byte on disk.
+function projectsAll() {
+  return getDB().prepare("SELECT * FROM projects").all();
+}
+
+function projectSetName(project, customName) {
+  const now = new Date().toISOString();
+  const name = customName == null || String(customName).trim() === "" ? null : String(customName).trim();
+  getDB()
+    .prepare(
+      `INSERT INTO projects (project, custom_name, user_created, created_at, updated_at)
+       VALUES (?, ?, 0, ?, ?)
+       ON CONFLICT(project) DO UPDATE SET
+         custom_name = excluded.custom_name,
+         updated_at = excluded.updated_at`
+    )
+    .run(String(project), name, now, now);
+}
+
+// A project with nothing in it yet. Re-derivation cannot produce one of these
+// (there are no files to derive it from), so the row is the only thing keeping
+// it alive until files are pinned into it.
+function projectCreate(project) {
+  const now = new Date().toISOString();
+  const info = getDB()
+    .prepare(
+      `INSERT INTO projects (project, custom_name, user_created, created_at, updated_at)
+       VALUES (?, NULL, 1, ?, ?)
+       ON CONFLICT(project) DO UPDATE SET
+         user_created = 1,
+         updated_at = excluded.updated_at`
+    )
+    .run(String(project), now, now);
+  return { project: String(project), changes: info.changes };
+}
+
 // ── Projects: derived assignment cache (disposable) ──
 // Keyed by the index fingerprint: rows written against a different index are
 // stale by definition, so a mismatch reads as "no cache" rather than as data.
@@ -553,6 +613,9 @@ module.exports = {
   pinClear,
   blocksAll,
   blockUpsert,
+  projectsAll,
+  projectSetName,
+  projectCreate,
   blockSetName,
   blockMerge,
   assignmentsGet,

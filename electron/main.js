@@ -1515,6 +1515,7 @@ handle(
     return {
       pins: registry.pinsAll(),
       blocks: registry.blocksAll(),
+      projectNames: registry.projectsAll(),
       // Assignments written against a different index are stale by
       // definition, so a fingerprint mismatch reads as "no cache".
       assignments: registry.assignmentsGet(fingerprint),
@@ -1527,6 +1528,7 @@ handle(
     onFailure: (err) => ({
       pins: [],
       blocks: [],
+      projectNames: [],
       assignments: [],
       fingerprint: "",
       rulesKnownGood: null,
@@ -1597,6 +1599,29 @@ handle(
     writeFileAtomic(cfg.path, next);
     rememberDisk(cfg.path, next);
     return { ok: true, path: cfg.path };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+
+// Renaming a project and making one are both decisions about names only. No
+// file is created, moved, or renamed on disk by either, which is the whole
+// reason a virtual project is worth having.
+handle(
+  "projects-project-set",
+  (_e, { project, customName } = {}) => {
+    registry.projectSetName(project, customName ?? null);
+    return { ok: true };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+
+handle(
+  "projects-create",
+  (_e, { name } = {}) => {
+    const project = String(name ?? "").trim();
+    if (!project) return { ok: false, error: "A project needs a name." };
+    registry.projectCreate(project);
+    return { ok: true, project };
   },
   { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
 );

@@ -8,10 +8,16 @@ import { getElectronAPI, type MdRow } from "@/lib/electron";
 import { inferHomePath } from "@/lib/path-display";
 import { parseRules, type MarkieRules } from "@/lib/projects/rules";
 import { buildTaxonomy, type Taxonomy } from "@/lib/projects/taxonomy";
+import { computeFolders, type FolderNode } from "@/lib/projects/folders";
 import type { EngineFile } from "@/lib/projects/assign";
 
 export interface ProjectsHandle {
   taxonomy: Taxonomy | null;
+  // Auto folders, recomputed with the taxonomy because they are a question
+  // about the same files and about the clock.
+  folders: FolderNode[];
+  // The real home directory, for shortening the paths a row shows.
+  home: string;
   // True only until the first taxonomy exists. A recompute over fresh index
   // rows keeps the old tree on screen rather than flashing an empty state.
   loading: boolean;
@@ -30,6 +36,8 @@ export interface ProjectsHandle {
   unpin: (path: string) => Promise<void>;
   rename: (blockId: string, customName: string) => Promise<void>;
   merge: (blockId: string, mergeInto: string) => Promise<void>;
+  renameProject: (project: string, customName: string | null) => Promise<void>;
+  createProject: (name: string) => Promise<void>;
 }
 
 // The index rows carry the four metadata fields as optionals (they are joined
@@ -49,6 +57,8 @@ function toEngineFiles(rows: MdRow[]): EngineFile[] {
 
 export function useProjects(refreshKey: number): ProjectsHandle {
   const [taxonomy, setTaxonomy] = useState<Taxonomy | null>(null);
+  const [folders, setFolders] = useState<FolderNode[]>([]);
+  const [home, setHome] = useState("");
   // Derived rather than stored: without a desktop bridge there is nothing to
   // load, and setting that synchronously inside the effect is a cascading
   // render React now rejects outright.
@@ -104,10 +114,13 @@ export function useProjects(refreshKey: number): ProjectsHandle {
         rules: rules!,
         priorAssignments: state?.assignments ?? [],
         knownBlocks: state?.blocks ?? [],
+        projectNames: state?.projectNames ?? [],
         home,
       });
       if (!alive) return;
       setTaxonomy(next);
+      setHome(home);
+      setFolders(computeFolders(next.projects, rules!.folders, { now: Date.now(), home }));
       // "No projects yet" and "we have not looked yet" are different answers,
       // and only one of them is the user's fault. Browse used to say the
       // former while a walk of 12,000 files was still running.
@@ -187,10 +200,21 @@ export function useProjects(refreshKey: number): ProjectsHandle {
       act((api) => api.projectsBlockSet?.({ blockId, mergeInto }) ?? Promise.resolve()),
     [act]
   );
+  const renameProject = useCallback(
+    (project: string, customName: string | null) =>
+      act((api) => api.projectsProjectSet?.({ project, customName }) ?? Promise.resolve()),
+    [act]
+  );
+  const createProject = useCallback(
+    (name: string) => act((api) => api.projectsCreate?.({ name }) ?? Promise.resolve()),
+    [act]
+  );
 
   return useMemo(
     () => ({
       taxonomy,
+      folders,
+      home,
       loading,
       scanning,
       preparing,
@@ -202,9 +226,13 @@ export function useProjects(refreshKey: number): ProjectsHandle {
       unpin,
       rename,
       merge,
+      renameProject,
+      createProject,
     }),
     [
       taxonomy,
+      folders,
+      home,
       loading,
       scanning,
       preparing,
@@ -216,6 +244,8 @@ export function useProjects(refreshKey: number): ProjectsHandle {
       unpin,
       rename,
       merge,
+      renameProject,
+      createProject,
     ]
   );
 }

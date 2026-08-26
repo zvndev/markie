@@ -258,3 +258,99 @@ describe("buildTaxonomy", () => {
     });
   });
 });
+
+describe("project names and user-made projects", () => {
+  const named = (
+    project: string,
+    custom_name: string | null,
+    user_created = 0,
+    created_at = new Date(NOW - 5 * HOUR).toISOString()
+  ) => ({ project, custom_name, user_created, created_at, updated_at: created_at });
+
+  it("shows the user's name and keeps the derived key as the identity", () => {
+    const t = build([f("/home/u/Documents/Thesis/ch1.md", 1)], {
+      projectNames: [named("Thesis", "Dissertation")],
+    });
+    expect(t.projects[0].name).toBe("Dissertation");
+    expect(t.projects[0].key).toBe("Thesis");
+    // Every stored decision is keyed by the derived name, so a rename cannot
+    // orphan one: the assignment rows still say "Thesis".
+    expect(t.assignmentRows[0].project).toBe("Thesis");
+  });
+
+  it("keeps the rename through re-derivation, exactly as a block rename does", () => {
+    const files = [f("/home/u/Documents/Thesis/ch1.md", 1)];
+    const names = [named("Thesis", "Dissertation")];
+    const first = build(files, { projectNames: names });
+    // A second derivation over changed files, feeding the first one's output
+    // back in the way the app does.
+    const second = build([...files, f("/home/u/Documents/Thesis/ch2.md", 0)], {
+      projectNames: names,
+      priorAssignments: first.assignmentRows.map((r) => ({
+        path: r.path,
+        block_id: r.blockId,
+        mtime_ms: r.mtimeMs,
+      })),
+      knownBlocks: first.blockUpserts,
+    });
+    expect(second.projects[0].name).toBe("Dissertation");
+    expect(second.projects[0].key).toBe("Thesis");
+  });
+
+  it("keeps a pinned file in the project it was pinned to after that project is renamed", () => {
+    const t = build([f("/home/u/Documents/Notes/stray.md", 1)], {
+      pins: [{ path: "/home/u/Documents/Notes/stray.md", project: "Thesis", block_id: null }],
+      projectNames: [named("Thesis", "Dissertation")],
+    });
+    const thesis = t.projects.find((p) => p.key === "Thesis")!;
+    expect(thesis.name).toBe("Dissertation");
+    expect(thesis.fileCount).toBe(1);
+  });
+
+  it("a blank or whitespace custom name falls back to the derived one", () => {
+    expect(
+      build([f("/home/u/Documents/Thesis/ch1.md", 1)], {
+        projectNames: [named("Thesis", "   ")],
+      }).projects[0].name
+    ).toBe("Thesis");
+  });
+
+  it("shows a project the user made even though no file derives it", () => {
+    const t = build([f("/home/u/Documents/Thesis/ch1.md", 1)], {
+      projectNames: [named("Q4 planning", null, 1)],
+    });
+    const made = t.projects.find((p) => p.key === "Q4 planning")!;
+    expect(made.fileCount).toBe(0);
+    expect(made.blocks).toEqual([]);
+    expect(made.isUnfiled).toBe(false);
+    // It does not invent files, so nothing about the totals moves.
+    expect(t.totalFiles).toBe(1);
+  });
+
+  it("dates a user-made project from when it was made, so it does not jump the list on every rebuild", () => {
+    const madeAt = new Date(NOW - 50 * HOUR).toISOString();
+    const t = build([f("/home/u/Documents/Thesis/ch1.md", 1)], {
+      projectNames: [named("Q4 planning", null, 1, madeAt)],
+    });
+    expect(t.projects.map((p) => p.key)).toEqual(["Thesis", "Q4 planning"]);
+    expect(t.projects[1].updated).toBe(Date.parse(madeAt));
+  });
+
+  it("does not duplicate a user-made project once files land in it", () => {
+    const t = build([f("/home/u/Documents/Thesis/ch1.md", 1)], {
+      pins: [{ path: "/home/u/Documents/Thesis/ch1.md", project: "Q4 planning", block_id: null }],
+      projectNames: [named("Q4 planning", null, 1)],
+    });
+    expect(t.projects.filter((p) => p.key === "Q4 planning")).toHaveLength(1);
+    expect(t.projects[0].fileCount).toBe(1);
+  });
+
+  it("a rename row alone never conjures a project", () => {
+    // Renaming a project that has since lost every file must not leave a ghost
+    // card behind; only user_created earns an empty project a place.
+    const t = build([f("/home/u/Documents/Thesis/ch1.md", 1)], {
+      projectNames: [named("Gone", "Still named")],
+    });
+    expect(t.projects.map((p) => p.key)).toEqual(["Thesis"]);
+  });
+});

@@ -212,6 +212,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     projectsState: vi.fn(async () => ({
       pins: [],
       blocks: [],
+      projectNames: [],
       assignments: [],
       fingerprint: "",
       rulesKnownGood: null,
@@ -220,6 +221,8 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     projectsSaveCache: vi.fn(async () => ({ ok: true })),
     projectsPin: vi.fn(async () => ({ ok: true })),
     projectsBlockSet: vi.fn(async () => ({ ok: true })),
+    projectsProjectSet: vi.fn(async () => ({ ok: true })),
+    projectsCreate: vi.fn(async ({ name }: { name: string }) => ({ ok: true, project: name })),
     projectsConfig: vi.fn(async () => ({
       path: "/home/u/Documents/Markie/Projects.md",
       content: "",

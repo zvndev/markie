@@ -53,6 +53,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   projectsSaveCache: (args) => ipcRenderer.invoke("projects-save-cache", args),
   projectsPin: (args) => ipcRenderer.invoke("projects-pin", args),
   projectsBlockSet: (args) => ipcRenderer.invoke("projects-block-set", args),
+  projectsProjectSet: (args) => ipcRenderer.invoke("projects-project-set", args),
+  projectsCreate: (args) => ipcRenderer.invoke("projects-create", args),
   projectsConfig: () => ipcRenderer.invoke("projects-config"),
   projectsWriteOverview: (args) => ipcRenderer.invoke("projects-write-overview", args),
   mcpInfo: () => ipcRenderer.invoke("mcp-info"),

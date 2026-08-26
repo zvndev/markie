@@ -240,3 +240,76 @@ describe("dumping grounds and containers", () => {
     });
   });
 });
+
+describe("auto folder rules", () => {
+  const folders = (yaml: string) =>
+    parseRules(["---", "markie_rules:", "  folders:", yaml, "---"].join("\n"));
+  const DAY = 24 * 3600_000;
+
+  it("reads a window, a path, or both", () => {
+    const { rules, error } = folders(
+      [
+        "    - name: This month",
+        "      within: 30d",
+        "    - name: Specs",
+        '      match: "**/specs/**"',
+        "    - name: Fresh specs",
+        "      within: 14d",
+        '      match: "**/specs/**"',
+      ].join("\n")
+    );
+    expect(error).toBeNull();
+    expect(rules!.folders).toEqual([
+      { name: "This month", withinMs: 30 * DAY, match: null },
+      { name: "Specs", withinMs: null, match: "**/specs/**" },
+      { name: "Fresh specs", withinMs: 14 * DAY, match: "**/specs/**" },
+    ]);
+  });
+
+  it("takes hours, days and weeks, and reads a bare number as days", () => {
+    // `within: 7` is what a person types first, and refusing it teaches
+    // nothing that accepting it does not.
+    const units = folders(
+      [
+        "    - name: H",
+        "      within: 12h",
+        "    - name: D",
+        "      within: 3d",
+        "    - name: W",
+        "      within: 2w",
+        "    - name: Bare",
+        "      within: 7",
+      ].join("\n")
+    ).rules!.folders;
+    expect(units.map((f) => f.withinMs)).toEqual([
+      12 * 3600_000,
+      3 * DAY,
+      14 * DAY,
+      7 * DAY,
+    ]);
+  });
+
+  it("ships with no folders of its own, so the three built-ins stand alone", () => {
+    expect(parseRules("").rules!.folders).toEqual([]);
+    expect(parseRules("---\nmarkie_rules:\n  rules: []\n---").rules!.folders).toEqual([]);
+  });
+
+  it("names the folder in the error, because that is what the user has to find", () => {
+    expect(folders("    - within: 3d").error).toMatch(/folder 1 needs a name/);
+    expect(folders("    - name: Nameless\n      within: 3 fortnights").error).toMatch(
+      /folder "Nameless" has a within Markie cannot read/
+    );
+    expect(folders("    - name: Empty").error).toMatch(/folder "Empty" needs a within or a match/);
+    expect(
+      parseRules("---\nmarkie_rules:\n  folders: not-a-list\n---").error
+    ).toMatch(/folders must be a list/);
+  });
+
+  it("a bad folder never takes the rest of the document down with it", () => {
+    // The caller pairs a parse error with the last known-good rules, so the
+    // view never empties. What must not happen is a half-parsed answer.
+    const { rules, error } = folders("    - name: Broken\n      within: soon");
+    expect(rules).toBeNull();
+    expect(error).toBeTruthy();
+  });
+});

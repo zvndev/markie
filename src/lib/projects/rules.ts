@@ -22,10 +22,23 @@ export interface ClusteringTunables {
   maxBlockFiles: number; // concentration guard: absolute file ceiling for a block
 }
 
+// An auto folder: a saved question about the whole index, not a container.
+// `withinMs` keeps only files touched inside that window; `match` keeps only
+// files whose path matches the glob. Both set means both must hold.
+export interface FolderRule {
+  name: string;
+  withinMs: number | null;
+  match: string | null;
+}
+
 export interface MarkieRules {
   version: 1;
   clustering: ClusteringTunables;
   rules: ProjectRule[];
+  // User-defined auto folders, in document order. The three Markie ships are
+  // not in here: they are built in, and a user folder of the same name
+  // replaces one rather than sitting beside it.
+  folders: FolderRule[];
   ignore: string[];
   // Places whose contents are not the user's work: an inbox, an application's
   // state directory. Hidden from the taxonomy exactly like `ignore`, but kept
@@ -68,11 +81,33 @@ const EMPTY_RULES: MarkieRules = {
   version: 1,
   clustering: DEFAULT_CLUSTERING,
   rules: [],
+  folders: [],
   ignore: [],
   dumpingGrounds: DEFAULT_DUMPING_GROUNDS,
   containers: [],
   notContainers: [],
 };
+
+const HOUR_MS = 3_600_000;
+const DURATION_UNITS: Record<string, number> = {
+  h: HOUR_MS,
+  d: 24 * HOUR_MS,
+  w: 7 * 24 * HOUR_MS,
+};
+
+// "3d", "12h", "2w", and a bare number read as days, because `within: 7` is
+// what a person types first and refusing it teaches nothing.
+export function parseWithin(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0 ? value * DURATION_UNITS.d : null;
+  }
+  if (typeof value !== "string") return null;
+  const m = value.trim().match(/^(\d+(?:\.\d+)?)\s*([hdw])?$/i);
+  if (!m) return null;
+  const n = Number.parseFloat(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n * DURATION_UNITS[(m[2] ?? "d").toLowerCase()];
+}
 
 export function parseRules(markdown: string): {
   rules: MarkieRules | null;
@@ -137,6 +172,32 @@ export function parseRules(markdown: string): {
     }
   }
 
+  const folders: FolderRule[] = [];
+  if (r.folders !== undefined && r.folders !== null) {
+    if (!Array.isArray(r.folders)) return { rules: null, error: "folders must be a list" };
+    for (const [i, item] of (r.folders as unknown[]).entries()) {
+      const o = item as Record<string, unknown> | null;
+      const name = o && typeof o.name === "string" ? o.name.trim() : "";
+      if (!name) return { rules: null, error: `folder ${i + 1} needs a name` };
+      const match =
+        typeof o!.match === "string" && (o!.match as string).trim()
+          ? (o!.match as string)
+          : null;
+      const hasWithin = o!.within !== undefined && o!.within !== null;
+      const withinMs = hasWithin ? parseWithin(o!.within) : null;
+      if (hasWithin && withinMs === null) {
+        return {
+          rules: null,
+          error: `folder "${name}" has a within Markie cannot read. Use 12h, 3d, or 2w.`,
+        };
+      }
+      if (withinMs === null && !match) {
+        return { rules: null, error: `folder "${name}" needs a within or a match` };
+      }
+      folders.push({ name, withinMs, match });
+    }
+  }
+
   const globList = (key: string): { list: string[] | null; error: string | null } => {
     const value = r[key];
     if (value === undefined || value === null) return { list: null, error: null };
@@ -168,6 +229,7 @@ export function parseRules(markdown: string): {
       version: 1,
       clustering,
       rules,
+      folders,
       ignore: lists.ignore,
       dumpingGrounds: lists.dumping_grounds,
       containers: lists.containers,

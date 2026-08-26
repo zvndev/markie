@@ -22,7 +22,23 @@ export interface BlockNode {
   files: FileNode[];
 }
 
+// A row in the registry's `projects` table: the user's own name for a project,
+// and whether they made the project themselves. Snake_case because it crosses
+// IPC exactly as SQLite hands it over, like BlockRecord.
+export interface ProjectNameRecord {
+  project: string;
+  custom_name: string | null;
+  user_created: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ProjectNode {
+  // What the engine derived and what every stored decision is keyed by: a pin,
+  // a block, a rename. Renaming a project must not orphan its pins, so the key
+  // never changes and only the display name does.
+  key: string;
+  // What the user reads: their own name if they gave one, otherwise the key.
   name: string;
   made: number;
   updated: number;
@@ -76,10 +92,15 @@ export function buildTaxonomy(
     priorAssignments: PriorAssignment[];
     knownBlocks: BlockRecord[];
     home: string;
+    // User renames, and the projects the user made rather than Markie deriving
+    // them. Absent means neither has happened yet.
+    projectNames?: ProjectNameRecord[];
     now?: () => number;
   }
 ): Taxonomy {
   const now = opts.now ?? Date.now;
+  const named = new Map((opts.projectNames ?? []).map((r) => [r.project, r]));
+  const displayName = (key: string) => named.get(key)?.custom_name?.trim() || key;
   const { assignments, ignored } = assignProjects(files, {
     pins: opts.pins,
     rules: opts.rules,
@@ -227,13 +248,35 @@ export function buildTaxonomy(
     ];
     const updatedTimes = [...blocks.map((b) => b.updated), ...looseFiles.map((f) => f.mtimeMs)];
     projects.push({
-      name: project,
+      key: project,
+      name: displayName(project),
       made: madeTimes.length ? minOf(madeTimes) : now(),
       updated: updatedTimes.length ? maxOf(updatedTimes) : now(),
       fileCount: members.length,
       blocks,
       looseFiles,
       isUnfiled: project === UNFILED,
+    });
+  }
+
+  // A project the user made by hand starts with no files in it, so nothing in
+  // the assignment pass can produce it. It is still a real destination: you
+  // create it precisely so you can pin files into it next. Its timestamps come
+  // from when it was made, not from now, so it does not jump to the top of a
+  // recency-sorted list every time the taxonomy is rebuilt.
+  for (const rec of opts.projectNames ?? []) {
+    if (!rec.user_created || byProject.has(rec.project)) continue;
+    const at = Date.parse(rec.created_at);
+    const made = Number.isFinite(at) ? at : now();
+    projects.push({
+      key: rec.project,
+      name: displayName(rec.project),
+      made,
+      updated: made,
+      fileCount: 0,
+      blocks: [],
+      looseFiles: [],
+      isUnfiled: false,
     });
   }
 

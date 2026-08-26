@@ -14,9 +14,9 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.0.4",
-    "better-auth": "^1.6.16",
+    "better-auth": "^1.7.1",
     "better-sqlite3": "^12.10.0",
-    "hono": "^4.12.25",
+    "hono": "^4.13.5",
     "rehype-highlight": "^7.0.2",
     "rehype-katex": "^7.0.1",
     "rehype-sanitize": "^6.0.0",

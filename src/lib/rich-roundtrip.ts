@@ -95,31 +95,56 @@ export function describeLossRisks(markdown: string): LossRisk[] {
   return risks;
 }
 
-// The shared scratch editor plus a memo cache. parse+serialize per block is a
-// few ms; a long document normalizes each block once and then hits the cache on
-// every autosave flush. destroy() releases the cache; the editor is shared and
-// outlives every caller.
+// Normalizing a block is a pure function of its bytes and the shared extension
+// list, so the memo is a module-level cache rather than one per caller. That is
+// worth real time: the open-path safety probe normalizes every block of a
+// document, and the rich pane's warm-up then normalizes the same blocks again
+// for the same document. One cache makes the second pass free.
+const blockCache = new Map<string, string>();
+const BLOCK_CACHE_MAX = 4000;
+
+function normalizeBlock(block: string): string {
+  const hit = blockCache.get(block);
+  if (hit !== undefined) {
+    // Least-recently-used: re-inserting moves the key to the end, so the
+    // eviction below drops a block nobody has asked about lately.
+    blockCache.delete(block);
+    blockCache.set(block, hit);
+    return hit;
+  }
+  let out: string;
+  try {
+    const editor = scratchEditor();
+    editor.commands.setContent(block, { emitUpdate: false });
+    out = formatMarkdownTables(readMarkdown(editor)).replace(/\n+$/, "");
+  } catch {
+    out = "\u0000unparseable"; // never equals any real block
+  }
+  blockCache.set(block, out);
+  while (blockCache.size > BLOCK_CACHE_MAX) {
+    const oldest = blockCache.keys().next();
+    if (oldest.done) break;
+    blockCache.delete(oldest.value);
+  }
+  return out;
+}
+
+// The shared scratch editor plus the shared memo. parse+serialize per block is
+// a few ms; a long document normalizes each block once and then hits the cache
+// on every autosave flush.
 export function createBlockNormalizer(): {
   normalize(block: string): string;
   destroy(): void;
 } {
-  const cache = new Map<string, string>();
-  const normalize = (block: string): string => {
-    const hit = cache.get(block);
-    if (hit !== undefined) return hit;
-    let out: string;
-    try {
-      const editor = scratchEditor();
-      editor.commands.setContent(block, { emitUpdate: false });
-      out = formatMarkdownTables(readMarkdown(editor)).replace(/\n+$/, "");
-    } catch {
-      out = "\u0000unparseable"; // never equals any real block
-    }
-    if (cache.size > 4000) cache.clear();
-    cache.set(block, out);
-    return out;
-  };
-  return { normalize, destroy: () => cache.clear() };
+  // destroy() is deliberately not a cache clear any more. The cache belongs to
+  // the module, and one caller finishing (the probe) must not throw away the
+  // work another caller (the open rich pane) is still living off.
+  return { normalize: normalizeBlock, destroy: () => {} };
+}
+
+/** Tests only: forget every memoized block. */
+export function clearBlockCache(): void {
+  blockCache.clear();
 }
 
 // The user-facing gate: can the full pipeline (hold-aside, parse, serialize,

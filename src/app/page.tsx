@@ -42,13 +42,8 @@ import { ConflictDialog } from "@/components/conflict-dialog";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
 import { diskChangeKind } from "@/lib/disk-change";
 import { ErrorBoundary } from "@/components/error-boundary";
-import { RichLossBanner } from "@/components/rich-guard";
-import {
-  describeLossRisks,
-  probeReconstruction,
-  type LossRisk,
-} from "@/lib/rich-roundtrip";
-import { richOverride, setRichOverride } from "@/lib/rich-override";
+import { RichLossBanner, RichPreparingNote } from "@/components/rich-guard";
+import { useRichSafety } from "@/lib/use-rich-safety";
 import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
 import { FindBar } from "@/components/find-bar";
@@ -270,19 +265,17 @@ export default function Home() {
     docRef.current = { filePath, content };
   }, [filePath, content]);
 
-  // The constructs to name in the banner when the preservation pipeline cannot
-  // reconstruct the open document, or null when the document is rich-safe.
-  const [richLossy, setRichLossy] = useState<LossRisk[] | null>(null);
-  const [richOverridden, setRichOverridden] = useState(false);
-
-  // Run once per document as it lands, never per keystroke: the probe protects
-  // the bytes as they were opened, and once the user edits (or overrides) the
-  // decision stands until the next document arrives.
-  const assessRichSafety = useCallback((md: string, path: string | null) => {
-    setRichLossy(probeReconstruction(md).clean ? null : describeLossRisks(md));
-    setRichOverridden(richOverride(path));
-  }, []);
-  const richBlocked = richLossy !== null && !richOverridden;
+  // Whether rich edits may reach this document. Rendering rich is always safe,
+  // so the verdict is resolved after first paint rather than on the open path;
+  // until it lands, rich is read-only and Source is byte-faithful as ever.
+  const {
+    assess: assessRichSafety,
+    override: overrideRichSafety,
+    risks: richLossy,
+    blocked: richBlocked,
+    armed: richArmed,
+    preparing: richPreparing,
+  } = useRichSafety();
 
   // Only the newest resolution may write state. Role now decides whether the
   // document can be edited, so a slow answer for the previous file landing on
@@ -1589,12 +1582,10 @@ export default function Home() {
                     <RichLossBanner
                       risks={richLossy ?? []}
                       onEditSource={() => setMode("edit")}
-                      onOverride={() => {
-                        setRichOverride(filePath, true);
-                        setRichOverridden(true);
-                      }}
+                      onOverride={overrideRichSafety}
                     />
                   )}
+                  {richPreparing && !collabCfg && <RichPreparingNote />}
                   <div className="flex-1 min-h-0">
                   {/* The rich pane builds a TipTap editor at render time; a
                       throw in that binding is not catchable inside the
@@ -1644,7 +1635,7 @@ export default function Home() {
                       onChange={editDoc}
                       onEditorReady={setRichEditor}
                       collab={collabCfg}
-                      readOnly={!docEditable || richBlocked}
+                      readOnly={!docEditable || !richArmed}
                       canModerate={roleState === "owner"}
                       onPeersChange={handlePeersChange}
                       onCollabStatus={handleCollabStatus}

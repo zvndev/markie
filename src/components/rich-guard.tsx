@@ -54,3 +54,18 @@ export function RichLossBanner({
     </div>
   );
 }
+
+// The reconstruction probe has not answered for this document yet, and the
+// document is large enough that the wait is worth explaining. Deliberately
+// quiet: nothing is wrong, and for an ordinary document this never paints.
+export function RichPreparingNote() {
+  return (
+    <div
+      role="status"
+      data-markie-rich-preparing
+      className="shrink-0 border-b border-border bg-surface px-3 py-1.5 text-[11.5px] text-muted"
+    >
+      Getting this document ready for rich editing. Source is ready now.
+    </div>
+  );
+}

@@ -95,6 +95,18 @@ async function api<T>(
   }
 }
 
+export interface AuthResult {
+  token: string | null;
+  user: MarkieUser;
+}
+
+// Failures carry a machine-readable reason alongside the message. Reading it
+// off an unknown body keeps the success types honest about what they describe.
+export function authFailureCode(data: unknown): string {
+  const code = (data as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : "";
+}
+
 export const authClient = {
   health: () => api<{ ok: boolean }>("/health"),
 
@@ -103,14 +115,17 @@ export const authClient = {
     return res.data?.user ?? null;
   },
 
+  // `token` is how the server says whether a session actually exists. Under
+  // email verification a signup succeeds and hands back `token: null`: the
+  // account is made, but nothing is signed in until the address is proven.
   signUpEmail: (email: string, password: string, name: string) =>
-    api<{ user: MarkieUser }>("/api/auth/sign-up/email", {
+    api<AuthResult>("/api/auth/sign-up/email", {
       method: "POST",
       body: JSON.stringify({ email, password, name }),
     }),
 
   signInEmail: (email: string, password: string) =>
-    api<{ user: MarkieUser }>("/api/auth/sign-in/email", {
+    api<AuthResult>("/api/auth/sign-in/email", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),

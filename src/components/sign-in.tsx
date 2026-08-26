@@ -12,7 +12,7 @@
 // works for everyone, and a password is a preference rather than a default.
 
 import { useState } from "react";
-import { authClient } from "@/lib/auth-client";
+import { authClient, authFailureCode } from "@/lib/auth-client";
 import { authStore } from "@/lib/auth-store";
 import { authErrorMessage, signInReasonCopy, type AuthContext, type SignInReason } from "@/lib/auth-errors";
 import { getElectronAPI } from "@/lib/electron";
@@ -39,6 +39,10 @@ export function SignInForm({ reason, onDone }: SignInFormProps) {
   const [name, setName] = useState("");
   const [otp, setOtp] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
+  // True while the code on screen is proving an address rather than signing in
+  // with one. Same input, same Verify, same Resend: only the copy differs, and
+  // the difference matters because the user did not ask for a code this time.
+  const [proving, setProving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -92,17 +96,49 @@ export function SignInForm({ reason, onDone }: SignInFormProps) {
     }
   };
 
+  // The account exists but the address behind it was never proven, so a code
+  // goes out and the code view explains itself. Sending from here is what lets
+  // that view say a code is on its way and mean it.
+  const proveAddress = async () => {
+    setProving(true);
+    setOtp("");
+    setView("otp-code");
+    await run("otp-send", () => authClient.sendOTP(email));
+  };
+
   const verifyCode = async () => {
-    if (await run("otp-verify", () => authClient.verifyOTP(email, otp))) await landed();
+    if (await run("otp-verify", () => authClient.verifyOTP(email, otp))) {
+      setProving(false);
+      await landed();
+    }
   };
 
   const submitPassword = async () => {
-    const ok = await run(isSignUp ? "password-signup" : "password-signin", () =>
-      isSignUp
-        ? authClient.signUpEmail(email, password, name || email.split("@")[0])
-        : authClient.signInEmail(email, password)
-    );
-    if (ok) await landed();
+    const context = isSignUp ? "password-signup" : "password-signin";
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const res = isSignUp
+      ? await authClient.signUpEmail(email, password, name || email.split("@")[0])
+      : await authClient.signInEmail(email, password);
+    setBusy(false);
+    // Two different answers, one situation: the address has not been proven.
+    // A signup succeeds with no session to show for it, and a sign-in on an
+    // account in that state is refused outright. Both used to end here, the
+    // first looking like nothing happened and the second claiming the password
+    // was wrong.
+    const unproven = res.ok
+      ? isSignUp && !res.data?.token
+      : res.status === 403 && authFailureCode(res.data) === "EMAIL_NOT_VERIFIED";
+    if (unproven) {
+      await proveAddress();
+      return;
+    }
+    if (!res.ok) {
+      setError(authErrorMessage(res.status, context));
+      return;
+    }
+    await landed();
   };
 
   const requestReset = async () => {
@@ -171,9 +207,18 @@ export function SignInForm({ reason, onDone }: SignInFormProps) {
 
       {view === "otp-code" && (
         <>
-          <div className="text-[12px] text-muted">
-            Code sent to <span className="text-foreground">{email}</span>
-          </div>
+          {proving ? (
+            <div className="text-[12px] text-muted leading-relaxed">
+              <span className="text-foreground">Prove this address is yours.</span> We
+              sent a code to <span className="text-foreground">{email}</span>. Enter it
+              to finish signing in. Because this account was never verified, the code
+              takes the place of the password you typed, so use a code from now on.
+            </div>
+          ) : (
+            <div className="text-[12px] text-muted">
+              Code sent to <span className="text-foreground">{email}</span>
+            </div>
+          )}
           <input
             className={FIELD}
             placeholder="6-digit code"
@@ -190,7 +235,13 @@ export function SignInForm({ reason, onDone }: SignInFormProps) {
             <button className={LINK} onClick={sendCode} disabled={busy}>
               Resend code
             </button>
-            <button className={LINK} onClick={() => setView("choose")}>
+            <button
+              className={LINK}
+              onClick={() => {
+                setProving(false);
+                setView("choose");
+              }}
+            >
               Use a different email
             </button>
           </div>

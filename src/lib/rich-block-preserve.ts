@@ -12,6 +12,23 @@ export interface SourceBlock {
 
 const FENCE_OPEN = /^\s{0,3}(`{3,}|~{3,})/;
 
+// A serializer merge or split spans a handful of blocks, never a chapter.
+// Without a cap, resolving a gap of N unmatched blocks parses O(N^2) growing
+// prefixes of the document, which on real files means minutes of work and
+// gigabytes of cached strings.
+const MAX_RUN_BLOCKS = 8;
+const MAX_RUN_CHARS = 20_000;
+// The whole-gap test is one parse of the gap, so across a document it costs at
+// most one extra parse in total. The cap is only a sanity bound.
+const MAX_GAP_CHARS = 500_000;
+// Widening re-tests a gap together with the anchors either side. It is capped
+// hard and deliberately: a region emitted as one unit is also a region an edit
+// inside it rewrites as one unit, and an unbounded widen would swallow the
+// document, which would both flatten that blast radius across everything and
+// make the reconstruction gate say "clean" for every file.
+const MAX_WIDEN_BLOCKS = 24;
+const MAX_WIDEN_CHARS = 40_000;
+
 export function splitTopLevelBlocks(md: string): SourceBlock[] {
   const out: SourceBlock[] = [];
   const lines = md.split(/(?<=\n)/);
@@ -82,6 +99,7 @@ export function preserveBlocks(
 
   const align = lcsAlign(orig.length, out.length, eq);
   coalesceRuns(orig, out, outKeys, normed, normalize, align);
+  widenGaps(orig, out, normed, normalize, align);
 
   let result = leading ? leading.trailing : "";
   for (let j = 0; j < out.length; j++) {
@@ -130,16 +148,23 @@ function withSourceEnding(originalMd: string, result: string): string {
   return result;
 }
 
-// Two exact run matches the 1:1 alignment cannot see, applied only inside the
-// gaps between anchors so a run can never cross a confident match:
+// Exact run matches the 1:1 alignment cannot see, applied only inside the gaps
+// between anchors so a run can never cross a confident match:
 //
+//   gap  -> gap   the whole unmatched region at once. This is the one that
+//                 matters on real documents: a list whose items are separated
+//                 by blank lines parses as ONE loose list, so the serializer
+//                 loosens every nested sub-list in it. Normalizing a single
+//                 item in isolation returns it TIGHT, because looseness is a
+//                 property of the list, not of the item. Only normalizing the
+//                 whole region reproduces what the document serializer did.
 //   many -> one   a loose list tightened by tightLists, an adjacent reference
 //                 definition inlined
 //   one -> many   a TIGHT task list, which tiptap-markdown serializes LOOSE
 //                 (measured 2026-08-26); one source block lands as several
 //
-// Both compare exact strings. Anything that does not match stays unmatched
-// and takes the serializer's output.
+// All three compare exact strings. Anything that does not match stays
+// unmatched and takes the serializer's output.
 function coalesceRuns(
   orig: SourceBlock[],
   out: SourceBlock[],
@@ -174,14 +199,17 @@ function resolveGap(
   j0: number,
   j1: number
 ): void {
+  if (i0 >= i1 || j0 >= j1) return;
+  if (matchWholeGap(orig, out, normed, normalize, align, i0, i1, j0, j1)) return;
   let i = i0;
   let j = j0;
   while (i < i1 && j < j1) {
     // many source blocks -> this one output block
     let run = "";
     let matchedTo = -1;
-    for (let k = i; k < i1; k++) {
+    for (let k = i; k < i1 && k - i < MAX_RUN_BLOCKS; k++) {
       run += orig[k].text + orig[k].trailing;
+      if (run.length > MAX_RUN_CHARS) break;
       if (k > i && key(normalize(key(run))) === outKeys[j]) {
         matchedTo = k;
         break;
@@ -198,8 +226,9 @@ function resolveGap(
     // this one source block -> many output blocks
     let outRun = "";
     let spanTo = -1;
-    for (let k = j; k < j1; k++) {
+    for (let k = j; k < j1 && k - j < MAX_RUN_BLOCKS; k++) {
       outRun += out[k].text + out[k].trailing;
+      if (outRun.length > MAX_RUN_CHARS) break;
       if (k > j && normed[i] === key(outRun)) {
         spanTo = k;
         break;
@@ -218,6 +247,113 @@ function resolveGap(
     i++;
     j++;
   }
+}
+
+// An anchor can strand its neighbour: a numbered step that round-trips byte for
+// byte anchors on its own, leaving its indented continuation paragraph alone in
+// a gap, where in isolation it reads as an indented code block and can never
+// match. Re-testing the gap TOGETHER with the anchors either side puts the
+// construct back together. The anchors are released only if the wider region
+// matches exactly.
+function widenGaps(
+  orig: SourceBlock[],
+  out: SourceBlock[],
+  normed: string[],
+  normalize: (block: string) => string,
+  align: Alignment
+): void {
+  const owned = (j: number) => align.owner[j] !== -1;
+  let j = 0;
+  while (j < out.length) {
+    if (owned(j) || align.covered[j]) {
+      j++;
+      continue;
+    }
+    let gapEnd = j;
+    while (gapEnd < out.length && !owned(gapEnd) && !align.covered[gapEnd]) {
+      gapEnd++;
+    }
+    let prev = -1;
+    for (let k = j - 1; k >= 0; k--) {
+      if (owned(k)) {
+        prev = k;
+        break;
+      }
+    }
+    const next = gapEnd < out.length ? gapEnd : -1;
+    const outFrom = prev !== -1 ? prev : j;
+    const outTo = next !== -1 ? align.spanEnd[next] + 1 : gapEnd;
+    const origFrom = prev !== -1 ? align.owner[prev] : 0;
+    const origTo = next !== -1 ? align.ownerEnd[next] + 1 : orig.length;
+    if (
+      (outTo > outFrom || origTo > origFrom) &&
+      origTo - origFrom <= MAX_WIDEN_BLOCKS &&
+      outTo - outFrom <= MAX_WIDEN_BLOCKS &&
+      spanText(orig, origFrom, origTo).length <= MAX_WIDEN_CHARS &&
+      matchWholeGap(
+        orig,
+        out,
+        normed,
+        normalize,
+        align,
+        origFrom,
+        origTo,
+        outFrom,
+        outTo,
+        { allowSingle: true, release: true }
+      )
+    ) {
+      j = outTo;
+      continue;
+    }
+    j = gapEnd;
+  }
+}
+
+/** Concatenated source bytes of blocks [from, to), separators included. */
+function spanText(blocks: SourceBlock[], from: number, to: number): string {
+  let s = "";
+  for (let k = from; k < to; k++) s += blocks[k].text + blocks[k].trailing;
+  return s;
+}
+
+// Does normalizing the entire unmatched source region reproduce the entire
+// unmatched output region, exactly? When it does, the user changed nothing in
+// here and every byte of it comes back from the source.
+function matchWholeGap(
+  orig: SourceBlock[],
+  out: SourceBlock[],
+  normed: string[],
+  normalize: (block: string) => string,
+  align: Alignment,
+  i0: number,
+  i1: number,
+  j0: number,
+  j1: number,
+  opts: { allowSingle?: boolean; release?: boolean } = {}
+): boolean {
+  if (i1 <= i0 || j1 <= j0) return false;
+  // A single block against a single block is what the 1:1 alignment already
+  // tested and rejected; re-running it here would only cost a parse.
+  if (!opts.allowSingle && i1 - i0 === 1 && j1 - j0 === 1) return false;
+  const source = spanText(orig, i0, i1);
+  if (source.length > MAX_GAP_CHARS) return false;
+  const target = key(spanText(out, j0, j1));
+  const produced = i1 - i0 === 1 ? normed[i0] : key(normalize(key(source)));
+  if (produced !== target) return false;
+  if (opts.release) {
+    for (let k = j0; k < j1; k++) {
+      align.owner[k] = -1;
+      align.ownerEnd[k] = -1;
+      align.spanEnd[k] = -1;
+      align.covered[k] = false;
+    }
+  }
+  align.owner[j0] = i0;
+  align.ownerEnd[j0] = i1 - 1;
+  align.spanEnd[j0] = j1 - 1;
+  for (let k = j0 + 1; k < j1; k++) align.covered[k] = true;
+  return true;
 }
 
 function lcsAlign(

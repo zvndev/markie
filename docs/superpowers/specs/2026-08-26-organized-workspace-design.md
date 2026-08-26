@@ -304,18 +304,32 @@ The probe and refusal machinery survives, but demoted to the residue layers
   changed, and `describeLossRisks` still names these constructs so the UI
   can warn without refusing.
 
-Expected fallback share: with zero edits, layer 2 preserves even footnote,
-alignment, and math documents (untouched blocks come back verbatim), so
-what actually gates is structural: reference-style link definitions the
-parser consumes with unrelated content in between, held-aside placeholders
-that cannot keep their position (a comment inside a list item), inline HTML
-whose parse bleeds across blocks, and splitter edge cases. Every one of
-these is rarer than the rarest measured construct (footnotes, 1.2%). The
-plan requires measuring against the real corpus after layers 1 and 2 land
-(Section 3.7); the target is well under 5% of documents read-only in rich,
-the planner's estimate is 1 to 3%, and the measured number is reported to
-the human reviewer. If it lands materially above target, that is stated
-plainly, not papered over.
+Fallback share, measured 2026-08-26 after layers 1 and 2 landed: **1.27%**
+of 1,580 real markdown files open read-only in Rich (980 files under
+`~/Documents`, 13 gated, 1.33%; 600 files under `~/Desktop/Coding`, 7
+gated, 1.17%). That is inside the planner's 1 to 3% estimate and well under
+the 5% target. With zero edits, layer 2 preserves even footnote, alignment,
+and math documents (untouched blocks come back verbatim), so what actually
+gates is structural: reference-style link definitions the parser consumes
+with unrelated content in between, HTML comment markers used as a
+line-suppression idiom (`[//]: #`), indentation the serializer re-flows
+inside deeply nested list continuations, and splitter edge cases. Among the
+gated files the constructs present were wrapped paragraphs (13),
+reference-style links (5), front matter (3), raw HTML (3) and table
+alignment (1); note these are constructs present in gated documents, not
+causes, since layers 1 and 2 preserve each of them on their own.
+
+Two behaviors were discovered while measuring and are worth carrying
+forward. First, the serializer's rendering of a block depends on its
+siblings: a list whose items are separated by blank lines parses as one
+loose list, so every nested sub-list in it is loosened too, and normalizing
+a single item in isolation returns it tight. Block-at-a-time normalization
+therefore cannot match it, and the preserver falls back to testing whole
+unmatched regions (and, once, those regions plus their anchors). Second,
+`probeReconstruction` is not cheap: measured over 150 real documents it
+takes 135ms at the median, 388ms at p90 and 2.2s at p99, and it runs
+synchronously when a document is opened. Phase 2 should decide whether that
+belongs on the document-open critical path.
 
 ### 3.6 Autosave gate
 

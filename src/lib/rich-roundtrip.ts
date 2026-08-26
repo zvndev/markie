@@ -5,6 +5,9 @@
 import { Editor } from "@tiptap/core";
 import { richBaseExtensions } from "@/lib/rich-extensions";
 import { formatMarkdownTables } from "@/lib/format-tables";
+import { splitFrontMatter, joinFrontMatter } from "@/lib/front-matter";
+import { extractHoldAsides, restoreHoldAsides } from "@/lib/rich-hold-aside";
+import { preserveBlocks } from "@/lib/rich-block-preserve";
 
 export type LossRisk =
   | "front-matter"
@@ -25,14 +28,35 @@ function readMarkdown(editor: Editor): string {
   ).markdown.getMarkdown();
 }
 
+// One headless editor for every probe and every normalize, for the life of the
+// renderer. Two measured reasons, both of which showed up as unbounded growth
+// while auditing a real corpus:
+//
+//   * A TipTap Editor is not fully reclaimed by destroy() in this environment.
+//     Creating and destroying one per probe cost about 0.6MB a time, so opening
+//     documents leaked hundreds of megabytes over a session.
+//   * StarterKit's undo history records every setContent, so a reused editor
+//     grows with each document it parses. The scratch editor is built with the
+//     collab configuration, which is exactly "no local undo history".
+//
+// Every user of it does setContent then read, synchronously, so there is no
+// state to collide over.
+let scratch: Editor | null = null;
+function scratchEditor(): Editor {
+  if (!scratch || scratch.isDestroyed) {
+    scratch = new Editor({
+      extensions: richBaseExtensions({ collab: true }),
+      content: "",
+    });
+  }
+  return scratch;
+}
+
 export function probeRoundTrip(markdown: string): {
   clean: boolean;
   output: string;
 } {
-  const editor = new Editor({
-    extensions: richBaseExtensions(),
-    content: "",
-  });
+  const editor = scratchEditor();
   try {
     editor.commands.setContent(markdown, { emitUpdate: false });
     const output = formatMarkdownTables(readMarkdown(editor));
@@ -42,8 +66,6 @@ export function probeRoundTrip(markdown: string): {
     // A document the editor cannot even parse is by definition not safe to
     // rich-edit.
     return { clean: false, output: "" };
-  } finally {
-    editor.destroy();
   }
 }
 
@@ -73,20 +95,21 @@ export function describeLossRisks(markdown: string): LossRisk[] {
   return risks;
 }
 
-// One reused headless editor plus a memo cache. parse+serialize per block is a
+// The shared scratch editor plus a memo cache. parse+serialize per block is a
 // few ms; a long document normalizes each block once and then hits the cache on
-// every autosave flush.
+// every autosave flush. destroy() releases the cache; the editor is shared and
+// outlives every caller.
 export function createBlockNormalizer(): {
   normalize(block: string): string;
   destroy(): void;
 } {
-  const editor = new Editor({ extensions: richBaseExtensions(), content: "" });
   const cache = new Map<string, string>();
   const normalize = (block: string): string => {
     const hit = cache.get(block);
     if (hit !== undefined) return hit;
     let out: string;
     try {
+      const editor = scratchEditor();
       editor.commands.setContent(block, { emitUpdate: false });
       out = formatMarkdownTables(readMarkdown(editor)).replace(/\n+$/, "");
     } catch {
@@ -96,5 +119,34 @@ export function createBlockNormalizer(): {
     cache.set(block, out);
     return out;
   };
-  return { normalize, destroy: () => editor.destroy() };
+  return { normalize, destroy: () => cache.clear() };
+}
+
+// The user-facing gate: can the full pipeline (hold-aside, parse, serialize,
+// block preservation, restore) reproduce this document byte for byte with zero
+// edits? If yes, editing is safe: untouched blocks are emitted from source
+// bytes and only edited blocks change. If no, the document opens read-only in
+// Rich, with an explicit override.
+export function probeReconstruction(markdown: string): {
+  clean: boolean;
+  output: string;
+} {
+  const md = String(markdown ?? "");
+  if (!md.trim()) return { clean: true, output: md };
+  const { frontMatter, body } = splitFrontMatter(md);
+  const { text, holds } = extractHoldAsides(body);
+  const raw = probeRoundTrip(text);
+  const { normalize, destroy } = createBlockNormalizer();
+  try {
+    const preserved = preserveBlocks(text, raw.output, normalize);
+    const output = joinFrontMatter(
+      frontMatter,
+      restoreHoldAsides(preserved, holds)
+    );
+    return { clean: norm(output) === norm(md), output };
+  } catch {
+    return { clean: false, output: "" };
+  } finally {
+    destroy();
+  }
 }

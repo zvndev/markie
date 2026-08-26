@@ -42,6 +42,13 @@ import { ConflictDialog } from "@/components/conflict-dialog";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
 import { diskChangeKind } from "@/lib/disk-change";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { RichLossBanner } from "@/components/rich-guard";
+import {
+  describeLossRisks,
+  probeReconstruction,
+  type LossRisk,
+} from "@/lib/rich-roundtrip";
+import { richOverride, setRichOverride } from "@/lib/rich-override";
 import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
 import { FindBar } from "@/components/find-bar";
@@ -271,6 +278,20 @@ export default function Home() {
     docRef.current = { filePath, content };
   }, [filePath, content]);
 
+  // The constructs to name in the banner when the preservation pipeline cannot
+  // reconstruct the open document, or null when the document is rich-safe.
+  const [richLossy, setRichLossy] = useState<LossRisk[] | null>(null);
+  const [richOverridden, setRichOverridden] = useState(false);
+
+  // Run once per document as it lands, never per keystroke: the probe protects
+  // the bytes as they were opened, and once the user edits (or overrides) the
+  // decision stands until the next document arrives.
+  const assessRichSafety = useCallback((md: string, path: string | null) => {
+    setRichLossy(probeReconstruction(md).clean ? null : describeLossRisks(md));
+    setRichOverridden(richOverride(path));
+  }, []);
+  const richBlocked = richLossy !== null && !richOverridden;
+
   // Only the newest resolution may write state. Role now decides whether the
   // document can be edited, so a slow answer for the previous file landing on
   // this one would be worse than stale: it could unlock a doc it never read.
@@ -485,6 +506,7 @@ export default function Home() {
         const pulled = fromDisk(fileName, res.content);
         setContent(pulled);
         setSavedContent(pulled);
+        assessRichSafety(pulled, docRef.current.filePath);
       }
       setUpdateWaiting(null);
       setLibRefreshKey((k) => k + 1);
@@ -493,7 +515,7 @@ export default function Home() {
     } finally {
       setUpdateBusy(false);
     }
-  }, [filePath, fileName]);
+  }, [filePath, fileName, assessRichSafety]);
 
   // Whatever the dialog did, the file on disk now holds this content.
   const handleConflictResolved = useCallback(
@@ -501,10 +523,11 @@ export default function Home() {
       const pulled = fromDisk(fileName, next);
       setContent(pulled);
       setSavedContent(pulled);
+      assessRichSafety(pulled, docRef.current.filePath);
       setUpdateWaiting(null);
       setUpdateError(null);
     },
-    [fileName]
+    [fileName, assessRichSafety]
   );
 
   // A document that is being swapped out must not leave its access behind for
@@ -583,7 +606,8 @@ export default function Home() {
     setFileName(null);
     setFilePath(null);
     setCanShare(false);
-  }, [dismissDocumentUI, resetDocAccess]);
+    assessRichSafety("", null);
+  }, [dismissDocumentUI, resetDocAccess, assessRichSafety]);
 
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
@@ -615,8 +639,9 @@ export default function Home() {
         });
       }
       setLibRefreshKey((k) => k + 1);
+      assessRichSafety(md, data.path);
     },
-    [dismissDocumentUI, resetDocAccess]
+    [dismissDocumentUI, resetDocAccess, assessRichSafety]
   );
 
   const openPath = useCallback(
@@ -830,6 +855,7 @@ export default function Home() {
       const reloaded = fromDisk(fileName, res.content);
       setContent(reloaded);
       setSavedContent(reloaded);
+      assessRichSafety(reloaded, filePath);
       return null;
     }
     if (res.success) {
@@ -864,7 +890,7 @@ export default function Home() {
       }
     }
     return null;
-  }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg]);
+  }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg, assessRichSafety]);
 
   // Resolves to an error message when the copy could not be made, null when it
   // was made or the user backed out of the dialog.
@@ -1149,9 +1175,10 @@ export default function Home() {
     const md = fromDisk(fileName, diskChange);
     setContent(md);
     setSavedContent(md);
+    assessRichSafety(md, docRef.current.filePath);
     setDiskChange(null);
     setShowDiskConflict(false);
-  }, [diskChange, fileName]);
+  }, [diskChange, fileName, assessRichSafety]);
 
   // Keep both: save the buffer under a new name and leave the changed file
   // alone. The only resolution that destroys nothing.
@@ -1251,10 +1278,12 @@ export default function Home() {
         } else if (shouldShowWelcome({ openedFile: false })) {
           setContent(WELCOME_DOC);
           setSavedContent(WELCOME_DOC);
+          assessRichSafety(WELCOME_DOC, null);
           markWelcomeSeen();
         } else {
           setContent(SAMPLE);
           setSavedContent(SAMPLE);
+          assessRichSafety(SAMPLE, null);
         }
       })
       // A rejected getInitialFile used to leave `booted` false forever, and
@@ -1265,9 +1294,10 @@ export default function Home() {
         console.error("Markie: couldn't read the file to open at launch", err);
         setContent(SAMPLE);
         setSavedContent(SAMPLE);
+        assessRichSafety(SAMPLE, null);
       })
       .finally(() => setBooted(true));
-  }, [loadFile]);
+  }, [loadFile, assessRichSafety]);
 
   // Listen for Electron IPC events — each subscription returns an unsubscribe
   // so listeners don't accumulate on the long-lived ipcRenderer (HMR/remount).
@@ -1709,7 +1739,18 @@ export default function Home() {
                 {showFormatRail(leftState) && (
                   <FormatRail editor={richEditor} disabled={formatRailDisabled(leftState)} />
                 )}
-                <div className="flex-1 min-w-0 h-full overflow-hidden">
+                <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
+                  {richBlocked && !collabCfg && (
+                    <RichLossBanner
+                      risks={richLossy ?? []}
+                      onEditSource={() => setMode("edit")}
+                      onOverride={() => {
+                        setRichOverride(filePath, true);
+                        setRichOverridden(true);
+                      }}
+                    />
+                  )}
+                  <div className="flex-1 min-h-0">
                   {/* The rich pane builds a TipTap editor at render time; a
                       throw in that binding is not catchable inside the
                       component, and uncaught it takes the whole window. Source
@@ -1758,13 +1799,14 @@ export default function Home() {
                       onChange={setContent}
                       onEditorReady={setRichEditor}
                       collab={collabCfg}
-                      readOnly={!docEditable}
+                      readOnly={!docEditable || richBlocked}
                       canModerate={roleState === "owner"}
                       onPeersChange={handlePeersChange}
                       onCollabStatus={handleCollabStatus}
                       onFlushReady={handleFlushReady}
                     />
                   </ErrorBoundary>
+                  </div>
                 </div>
               </div>
             )}

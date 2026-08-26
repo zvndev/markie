@@ -3,6 +3,7 @@ import {
   probeRoundTrip,
   describeLossRisks,
   createBlockNormalizer,
+  probeReconstruction,
 } from "@/lib/rich-roundtrip";
 import { splitFrontMatter, joinFrontMatter } from "@/lib/front-matter";
 import { extractHoldAsides, restoreHoldAsides } from "@/lib/rich-hold-aside";
@@ -145,6 +146,22 @@ describe("layer 2 pipeline (block preservation)", () => {
     ["display math", "$$\n\\frac{a}{b} \\, dx\n$$\n"],
     ["footnote pair", "Text with a note.[^1]\n\n[^1]: the note\n"],
     [
+      // The dominant residue on real files: a list whose items are separated
+      // by blank lines parses as ONE loose list, and the serializer then
+      // loosens every nested sub-list too. Normalizing a single item in
+      // isolation cannot see that context, so only a run match saves it.
+      "ordered list with nested sub-lists",
+      "## Priorities\n\n1. Web-first product truth\n   - Inspect the app first.\n   - Keep desktop work tied to runtime.\n\n2. Portfolio task import\n   - Use the guarded artifacts.\n   - Avoid direct writes.\n\n## After\n",
+    ],
+    [
+      // A numbered step with an indented continuation paragraph. The step
+      // itself round-trips byte for byte, so it anchors and strands the
+      // continuation, which in isolation reads as an indented code block.
+      // Only re-testing the region WITH its anchors can match it.
+      "list item with an indented continuation paragraph",
+      "1. Open the panel.\n\n2. Select the package from the list.\n\n    The manager picks a version for you.\n\n3. Press Install.\n",
+    ],
+    [
       "mixed document",
       "---\ntitle: Mixed\nmarkie:\n  project: Markie\n---\n# Heading\n\n<!-- a comment that must survive -->\n\nProse wrapped\nby hand across lines.\n\n| a | b |\n| :--- | ---: |\n| 1 | 2 |\n\n<div class=\"note\">\n<b>raw</b>\n</div>\n\nClosing line.\n",
     ],
@@ -207,5 +224,43 @@ describe("layer 2 pipeline (block preservation)", () => {
     } finally {
       destroy();
     }
+  });
+});
+
+describe("probeReconstruction (the layer-3 gate)", () => {
+  const CLEAN: Array<[string, string]> = [
+    ["wrapped prose", "Wrapped\nby hand.\n\nMore wrapped\ntext here.\n"],
+    ["front matter + body", "---\nkey: v\n---\n# T\n\nBody.\n"],
+    ["comment + footnote def", "x[^1]\n\n<!-- c -->\n\n[^1]: n\n"],
+    ["aligned table untouched", "| a | b |\n| :--- | ---: |\n| 1 | 2 |\n"],
+    ["loose list", "- one\n\n- two\n"],
+  ];
+  const GATED: Array<[string, string]> = [
+    // The parser consumes the definition and inlines the link. With an
+    // unrelated matched block in between, neither plain alignment nor the
+    // coalescing pass can reproduce the source without guessing, so this
+    // must gate. (The adjacent two-block case may be rescued by coalescing;
+    // it is intentionally not pinned either way.)
+    [
+      "reference link with distance",
+      "See [the docs][ref].\n\nUnrelated paragraph.\n\n[ref]: https://example.com\n",
+    ],
+  ];
+
+  for (const [name, md] of CLEAN) {
+    it(`reconstructs byte for byte: ${name}`, () => {
+      const res = probeReconstruction(md);
+      expect(res.clean, `output was:\n${res.output}`).toBe(true);
+    });
+  }
+  for (const [name, md] of GATED) {
+    it(`gates: ${name}`, () => {
+      expect(probeReconstruction(md).clean).toBe(false);
+    });
+  }
+
+  it("treats an empty document as safe", () => {
+    expect(probeReconstruction("").clean).toBe(true);
+    expect(probeReconstruction("   \n").clean).toBe(true);
   });
 });

@@ -24,18 +24,19 @@ markdown right alongside you.
 
 ## Install
 
-The current public downloads are **Apple Silicon macOS** and **Intel macOS**.
-The source tree also has local packaging configuration for Windows x64 and Linux
-x64; signed public artifacts for those targets are still release work. Server
-download routes and Electron Builder share `server/download-manifest.json`, so
-storage, updater feeds, and planned platforms cannot drift apart.
+The current public downloads are **Apple Silicon macOS**, **Intel macOS**, and
+**Windows x64**, signed through Azure Trusted Signing. All three update
+themselves from their own signed feed. Linux x64 packaging is configured in the
+source tree but nothing is published for it yet. Server download routes and
+Electron Builder both read `server/download-manifest.json`, so storage, updater
+feeds, and platform status cannot drift apart.
 
 ➡️ **[Download the latest Markie](https://markie.zvndev.com/download)**
 
 Release integrations can read the current stable version and platform URLs from
 [`/download/latest.json`](https://markie.zvndev.com/download/latest.json).
 
-> Public Windows and Linux downloads are not published yet.
+> Linux downloads are not published yet.
 
 ## The Markie MCP
 

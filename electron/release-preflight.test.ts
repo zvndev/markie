@@ -117,7 +117,11 @@ describe("release preflight", () => {
         'npm run release:verify:public -- --version="$MARKIE_RELEASE_VERSION" --deep',
         "https://markie.zvndev.com/download/latest.json",
         "Check for Updates",
-        "Windows and Linux update checks are disabled",
+        // 0.5.0 turned the Windows updater on. The doc has to describe a
+        // recurring release runbook now, not a platform waiting for approval.
+        "## Windows release runbook",
+        "npm run release:publish:win",
+        "Linux update checks stay disabled",
         "--publish never",
       ])
     );

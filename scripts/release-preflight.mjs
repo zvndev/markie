@@ -177,7 +177,12 @@ const REQUIRED_RELEASE_DOC_SNIPPETS = [
   "https://markie.zvndev.com/download/latest.json",
   "uploads `latest-mac.yml` last",
   "Check for Updates",
-  "Windows and Linux update checks are disabled",
+  // Windows went from "disabled until the contracts exist" to a per-release
+  // runbook in 0.5.0. These pin the doc to the state the updater is actually
+  // in, so the two cannot drift apart again.
+  "## Windows release runbook",
+  "npm run release:publish:win",
+  "Linux update checks stay disabled",
   "--publish never",
   "does **not** mean an artifact is signed, notarized, published",
 ];

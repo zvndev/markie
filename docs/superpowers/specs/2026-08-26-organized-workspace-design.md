@@ -155,10 +155,13 @@ Called out per instructions, with the smallest adjustment proposed:
    the draft journal targets "at worst one serializer tick (250ms) old" in
    Rich mode and per-keystroke freshness in Source mode. This still satisfies
    the crash-safety intent.
-5. **"14 of 20 probe inputs change bytes."** Not independently re-verified;
-   the plan's first task writes the round-trip suite, which empirically
-   documents the real number on this dependency set. If the suite disagrees
-   with the briefing, the suite wins.
+5. **"14 of 20 probe inputs change bytes."** Now measured. The round-trip
+   suite (`src/lib/rich-roundtrip.test.tsx`, 2026-08-26) pins 16 fixtures on
+   this dependency set: 7 survive a raw parse-then-serialize byte for byte
+   and 9 do not. Two constructs the briefing did not name turned up lossy:
+   a tight task list comes back loose (blank line between items) despite
+   `tightLists: true`, and inline math doubles its backslashes the same way
+   display math does. Both are neutralized by layer 2 for untouched blocks.
 6. **Construct frequency on real data** (measured by the plan review against
    3,866 real markdown files on the owner's machine): hand-wrapped
    paragraphs 76.5%, front matter 56.2%, raw HTML 29.2%, footnotes 1.2%,

@@ -48,6 +48,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("mdindex-star-toggle", { path, kind }),
   onMdIndexUpdated: (callback) =>
     subscribe("mdindex-updated", callback, (info) => info),
+  // Projects — the virtual organization layer over the index
+  projectsState: () => ipcRenderer.invoke("projects-state"),
+  projectsSaveCache: (args) => ipcRenderer.invoke("projects-save-cache", args),
+  projectsPin: (args) => ipcRenderer.invoke("projects-pin", args),
+  projectsBlockSet: (args) => ipcRenderer.invoke("projects-block-set", args),
+  projectsProjectSet: (args) => ipcRenderer.invoke("projects-project-set", args),
+  projectsCreate: (args) => ipcRenderer.invoke("projects-create", args),
+  projectsConfig: () => ipcRenderer.invoke("projects-config"),
+  projectsWriteOverview: (args) => ipcRenderer.invoke("projects-write-overview", args),
   mcpInfo: () => ipcRenderer.invoke("mcp-info"),
   // Fire-and-forget: the error boundary calls this while the renderer is
   // already broken, so there is nothing to wait for and nothing to answer.
@@ -108,6 +117,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onFileChangedOnDisk: (callback) =>
     subscribe("file-changed-on-disk", callback, (data) => data),
   watchFile: (filePath) => ipcRenderer.invoke("watch-file", filePath),
+  // The window is closing: settle the document, then answer.
+  onAppWillClose: (callback) => subscribe("app-will-close", callback),
+  // Crash journal
+  draftSave: (args) => ipcRenderer.invoke("draft-save", args),
+  draftCheck: () => ipcRenderer.invoke("draft-check"),
+  draftDiscard: (key) => ipcRenderer.invoke("draft-discard", key),
+  // File history
+  historyList: (path) => ipcRenderer.invoke("history-list", path),
+  historyRead: (args) => ipcRenderer.invoke("history-read", args),
+  onMenuHistory: (callback) => subscribe("menu-history", callback),
+  appCloseReady: () => ipcRenderer.send("app-close-ready"),
   crashConsentGet: () => ipcRenderer.invoke("crash-consent-get"),
   crashConsentSet: (enabled) => ipcRenderer.invoke("crash-consent-set", enabled),
   crashLogReveal: () => ipcRenderer.invoke("crash-log-reveal"),

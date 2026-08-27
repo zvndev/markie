@@ -38,3 +38,20 @@ export function compactHomePath(input: string, home: string, showFullHome: boole
   if (!showFullHome) return rest;
   return `~${displaySeparator(input, home)}${rest}`;
 }
+
+// The directory a file sits in, sized for a table row rather than for a shell.
+// The Projects rows used to print the whole absolute path, so every line in
+// the list opened with the same forty characters of somebody's home directory
+// and the file name lost the race for attention. Home folds to "~", and
+// anything deeper than `keep` segments keeps only the last ones, because the
+// tail is the part that says which piece of work this is. The full path stays
+// one hover away on the row itself.
+export function compactDir(dir: string, home: string, keep = 2) {
+  const input = String(dir ?? "");
+  if (!input) return "";
+  const sep = displaySeparator(input, home);
+  const compact = compactHomePath(input, home, true);
+  const segments = compact.split(/[\\/]/).filter(Boolean);
+  if (segments.length <= keep) return segments.join(sep);
+  return `…${sep}${segments.slice(-keep).join(sep)}`;
+}

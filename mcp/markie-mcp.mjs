@@ -16,6 +16,7 @@ import { dirname } from "node:path";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { guardPath, matchQuery, groupSkills, markieOpenCommand } from "./lib.mjs";
+import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { walk } from "./scan.mjs";
 import { createRequire } from "node:module";
 
@@ -26,10 +27,16 @@ const SERVER_VERSION = createRequire(import.meta.url)("./package.json").version;
 const HOME = homedir();
 
 // Cache the device scan for the process lifetime; writes invalidate it so new
-// files surface in the next find.
+// files surface in the next find. The walk runs under DEFAULT_BUDGET, so a
+// pathological tree costs a bounded amount of disk instead of minutes.
 let _scan = null;
+let _scanStats = {};
 async function scan() {
-  if (!_scan) _scan = await walk(HOME, { home: HOME });
+  if (!_scan) {
+    const stats = {};
+    _scan = await walk(HOME, { home: HOME, stats });
+    _scanStats = stats;
+  }
   return _scan;
 }
 
@@ -62,12 +69,22 @@ const TOOLS = [
   {
     name: "markie_write_md",
     description:
-      "Create or overwrite a markdown file. Only .md/.markdown/.mdx under your home folder, never inside excluded dirs (node_modules, tmp, hidden dirs except the skill roots). Markie picks up changes on reopen.",
+      "Create or overwrite a markdown file. Only .md/.markdown/.mdx under your home folder, never inside excluded dirs (node_modules, tmp, hidden dirs except the skill roots). Markie picks up changes on reopen. Declare project/block so Markie files the document in the right place.",
     inputSchema: {
       type: "object",
       properties: {
         path: { type: "string", description: "Absolute path, ~ allowed" },
         content: { type: "string", description: "Full new markdown content" },
+        project: {
+          type: "string",
+          description:
+            "Optional: the Markie project this document belongs to (written into markie front matter)",
+        },
+        block: {
+          type: "string",
+          description:
+            "Optional: the block (unit of work) inside the project. Name it after the work, not the date.",
+        },
       },
       required: ["path", "content"],
       additionalProperties: false,
@@ -101,7 +118,14 @@ async function runTool(name, args) {
         .sort((a, b) => b.mtimeMs - a.mtimeMs)
         .slice(0, limit)
         .map((r) => ({ path: r.path, name: r.name, dir: r.dir }));
-      return { count: hits.length, files: hits };
+      const result = { count: hits.length, files: hits };
+      // A budget that silently returns half the disk is worse than a slow
+      // scan: the agent would conclude the document does not exist and write
+      // a duplicate. Say so instead.
+      if (_scanStats.truncated) {
+        result.truncated = `The device scan stopped early (limit: ${_scanStats.reason}) after ${_scanStats.files} files, so some markdown on this computer was not searched.`;
+      }
+      return result;
     }
     case "markie_read_md": {
       const g = guardPath(args.path, HOME);
@@ -111,7 +135,10 @@ async function runTool(name, args) {
     case "markie_write_md": {
       const g = guardPath(args.path, HOME, { mode: "write" });
       if (!g.ok) throw new Error(g.error);
-      const body = String(args.content ?? "");
+      const body = applyMarkieFrontMatter(String(args.content ?? ""), {
+        project: typeof args.project === "string" ? args.project : null,
+        block: typeof args.block === "string" ? args.block : null,
+      });
       // The guard already vetted every ancestor segment (under home, no excluded
       // dirs), so creating missing parents stays inside an allowed tree.
       await mkdir(dirname(g.path), { recursive: true });
@@ -183,6 +210,9 @@ rl.on("line", async (line) => {
           protocolVersion: params?.protocolVersion ?? "2024-11-05",
           capabilities: { tools: {} },
           serverInfo: { name: "markie-mcp", version: SERVER_VERSION },
+          // Clients hand this to the model at connect time: what Markie is,
+          // which tool to reach for, and how to file what it writes.
+          instructions: INSTRUCTIONS,
         },
       });
     } else if (method === "notifications/initialized") {

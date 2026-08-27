@@ -25,6 +25,14 @@ export function otpEmail(type: string, otp: string): OTPEmail {
         subject: `${otp} is your Markie password reset code`,
         text: `Enter ${otp} in Markie to set a new password. ${EXPIRY}\n\nIf you didn't ask to reset your password, ignore this email — your current password is unchanged and this code does nothing on its own.`,
       };
+    case "email-verification":
+      // Signup mails this one. It has to say what confirming does, because
+      // until the address is confirmed the account is inert: it cannot sign in
+      // and nothing shared with the address reaches it.
+      return {
+        subject: `${otp} is your Markie verification code`,
+        text: `Enter ${otp} in Markie to confirm this email address. ${EXPIRY}\n\nUntil it is confirmed you cannot sign in, and any documents shared with this address stay where they are. If you didn't create a Markie account, ignore this email and nobody can use the address.`,
+      };
     default:
       return {
         subject: `${otp} is your Markie verification code`,

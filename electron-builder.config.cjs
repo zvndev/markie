@@ -15,10 +15,12 @@ if (!macPlatform?.feed?.path) {
 
 const publishPath = path.posix.dirname(macPlatform.feed.path);
 
-// Windows is built in CI and published from here, so its updater directory has
-// to be declared even while the platform is still marked planned: the path is
-// baked into app-update.yml at pack time, and an installer that shipped with
-// the wrong one would look for its updates in the macOS directory forever.
+// Windows is built in CI and published from here, so it needs its own updater
+// directory: the path is baked into app-update.yml at pack time, and an
+// installer that shipped with the wrong one would look for its updates in the
+// macOS directory forever. This was declared while the platform was still
+// marked planned, which is why a Windows install packaged today already knows
+// where its feed lives.
 const winPlatform = releaseManifest.platforms.find((platform) => platform.id === "windows-x64");
 
 if (!winPlatform?.feed?.path) {
@@ -127,7 +129,18 @@ module.exports = {
     {
       from: "mcp",
       to: "mcp",
-      filter: ["markie-mcp.mjs", "lib.mjs", "scan.mjs", "package.json"],
+      // Named one by one so nothing accidental (a test file, a scratch
+      // module) rides along. electron/mcp-packaging.test.ts fails when a new
+      // runtime module in mcp/ is missing here, because a module left out of
+      // this list is fine in dev and a dead MCP server in the shipped app.
+      filter: [
+        "agent-classify.mjs",
+        "conventions.mjs",
+        "lib.mjs",
+        "markie-mcp.mjs",
+        "scan.mjs",
+        "package.json",
+      ],
     },
   ],
   directories: { output: "dist" },

@@ -48,6 +48,7 @@ describe("page menu pushes", () => {
         filePath: OPEN.path,
         content: OPEN.content,
         force: false,
+        autosave: false,
       })
     );
   });

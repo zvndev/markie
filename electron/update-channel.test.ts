@@ -46,12 +46,33 @@ describe("channelFor", () => {
 
 describe("feedFor", () => {
   it("maps channels to the electron-builder mac feed files", () => {
-    expect(feedFor(STABLE_CHANNEL)).toBe("latest-mac.yml");
-    expect(feedFor(BETA_CHANNEL)).toBe("beta-mac.yml");
+    expect(feedFor(STABLE_CHANNEL, "darwin")).toBe("latest-mac.yml");
+    expect(feedFor(BETA_CHANNEL, "darwin")).toBe("beta-mac.yml");
+  });
+
+  it("names windows feeds without the -mac suffix", () => {
+    // electron-builder writes latest.yml / beta.yml for NSIS. Pointing a
+    // Windows install at a mac feed would offer it a .dmg it cannot install.
+    expect(feedFor(STABLE_CHANNEL, "win32")).toBe("latest.yml");
+    expect(feedFor(BETA_CHANNEL, "win32")).toBe("beta.yml");
+  });
+
+  it("defaults to the platform it is running on", () => {
+    expect(feedFor(STABLE_CHANNEL)).toBe(feedFor(STABLE_CHANNEL, process.platform));
+    expect(feedFor(BETA_CHANNEL)).toBe(feedFor(BETA_CHANNEL, process.platform));
   });
 
   it("keeps the two feeds distinct so a beta cannot overwrite stable", () => {
-    expect(feedFor(BETA_CHANNEL)).not.toBe(feedFor(STABLE_CHANNEL));
+    for (const platform of ["darwin", "win32"] as const) {
+      expect(feedFor(BETA_CHANNEL, platform)).not.toBe(feedFor(STABLE_CHANNEL, platform));
+    }
+  });
+
+  it("never hands an unsupported platform a beta feed by accident", () => {
+    // Linux has no published feed. Falling through to the mac table is the
+    // existing behavior for an unknown channel; keep it explicit rather than
+    // letting an unmapped platform silently pick up beta.
+    expect(feedFor("nonsense", "linux")).toBe(feedFor(STABLE_CHANNEL, "linux"));
   });
 });
 

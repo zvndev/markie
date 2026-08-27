@@ -84,6 +84,14 @@ export async function resolveViewer(
     const pending = pendingForToken(token);
     // A pending invite has no user to check, so the row's own existence is the
     // authorization. Withdrawing the invite deletes it.
+    //
+    // Deliberately NOT gated on email verification, unlike every other path
+    // that acts on a pending invite. This token was mailed to the invited
+    // address and nowhere else, so holding it is itself evidence of receiving
+    // mail there. It grants one read of one document and never converts the
+    // pending row into an account-bound share, so an unverified account gains
+    // nothing here it could not already do signed out. See
+    // claim-verified.test.ts and doc-view.test.ts.
     if (pending && pending.docId === docId) {
       return { canEdit: pending.role === "editor", invitedEmail: pending.email };
     }

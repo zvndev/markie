@@ -10,18 +10,22 @@
       type: infra
       severity: medium
       source: e2e crash fix 2026-08-24
-- [ ] Sign and publish the Windows build: Authenticode (OV/EV or Azure Trusted Signing), a
-      Windows updater feed (`windows-x64.feed.path`, `update-policy.js`, `setupAutoUpdate` on
-      win32), and a Windows-side release runner; flip the manifest to `public` only after an
-      exact-commit native launch smoke on a real PC (`docs/WINDOWS-TESTING.md`).
+- [ ] Confirm the Windows update path on real hardware: a previous public Windows version
+      finds, downloads, installs, and relaunches through Check for Updates. Everything else
+      this item asked for is now in place: Authenticode signing runs in CI
+      (`windows-release.yml`, Azure Trusted Signing), `windows-x64` is `public` in the
+      manifest with the `windows/latest.yml` feed path, `update-policy.js` supports packaged
+      win32 so `setupAutoUpdate` runs there, a locally packaged Windows build's
+      `app-update.yml` points at the `windows` directory, and the release commands
+      (`release:prepare:win`, `release:publish:win`, `release:verify:public:win`) exist and
+      are written up under "Windows release runbook" in `docs/RELEASING.md`.
       type: release
       severity: high
-      rationale: The Windows build is correct and local packaging/smoke pass, but every public
-        gate in docs/RELEASING.md is unmet; GitHub-hosted Windows runners are still blocked by
-        account billing.
-      acceptance_criteria: `/download/windows` serves a signed installer; previous Windows
-        version receives an update through Check for Updates.
-      source: sprint 2026-08-23 (Windows audit)
+      rationale: The last gate is the only one that cannot be met from this machine. It needs
+        a published feed and a real PC, and it is a human release step by design.
+      acceptance_criteria: A previous public Windows version updates itself through Check for
+        Updates on real hardware.
+      source: sprint 2026-08-23 (Windows audit); narrowed by 0.5.0 Windows updater work
 - [ ] Server should force a resync (or replay) on a connection whose seed update it dropped.
       The seed lock drops a losing racer's first update; that client must currently reconnect
       before its edits land again.

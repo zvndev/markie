@@ -133,3 +133,35 @@ describe("ActivityBar", () => {
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
   });
 });
+
+describe("the Projects button", () => {
+  it("selects the full-width view", async () => {
+    const onSelectView = vi.fn();
+    render(<ActivityBar {...props({ onSelectView })} />);
+    await userEvent.click(screen.getByRole("button", { name: /^Projects/ }));
+    expect(onSelectView).toHaveBeenCalledWith("projects");
+  });
+
+  it("reads as active without a panel being open, unlike the panel views", () => {
+    // The active rail item carries a marker bar; that is the tell, not a
+    // class name a hover style also happens to contain.
+    const marker = (button: HTMLElement) => button.querySelector("span.absolute");
+    const { unmount } = render(
+      <ActivityBar {...props({ activeView: "projects", panelOpen: false })} />
+    );
+    expect(marker(screen.getByRole("button", { name: /^Projects/ }))).not.toBeNull();
+    expect(marker(screen.getByRole("button", { name: /^Library/ }))).toBeNull();
+    unmount();
+    // A panel view with the panel shut is not the thing on screen.
+    render(<ActivityBar {...props({ activeView: "library", panelOpen: false })} />);
+    expect(marker(screen.getByRole("button", { name: /^Library/ }))).toBeNull();
+  });
+
+  it("says what it is and which key opens it", () => {
+    render(<ActivityBar {...props()} />);
+    expect(screen.getByRole("button", { name: /^Projects/ })).toHaveAttribute(
+      "title",
+      expect.stringContaining("⇧⌘L")
+    );
+  });
+});

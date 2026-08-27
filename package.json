@@ -30,6 +30,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "projects:audit": "node scripts/projects-audit.mjs",
     "sync:check": "node scripts/sync-down-check.mjs",
     "comments:verify": "node scripts/comments-verify-local.mjs",
     "comments:verify:e2e": "node scripts/comments-verify-local.mjs --with-e2e",

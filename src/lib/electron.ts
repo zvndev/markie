@@ -1,3 +1,6 @@
+import type { BlockRecord } from "@/lib/projects/cluster";
+import type { ProjectNameRecord } from "@/lib/projects/taxonomy";
+
 export interface FilePayload {
   name: string;
   content: string;
@@ -18,8 +21,30 @@ export interface SaveResult {
   wroteCsv?: boolean;
   // "reloaded": the file changed on disk since Markie read it and the user
   // chose the disk copy over their own edits. `content` carries that copy.
-  code?: "reloaded";
+  // "disk-changed": the same collision, found by an autosave, which never puts
+  // a dialog in front of anyone. `content` carries the newer disk copy so the
+  // renderer can raise its own strip. Nothing was written.
+  code?: "reloaded" | "disk-changed";
   content?: string;
+}
+
+export interface DraftEntry {
+  key: string;
+  path: string | null;
+  name: string | null;
+  savedAt: string;
+  bytes: number;
+  /** The journalled text. Null when the file behind the entry has gone. */
+  content: string | null;
+}
+
+export interface HistoryEntry {
+  /** The version's filename stamp, which is also its id. */
+  stamp: string;
+  iso: string;
+  /** "user", "external" (an agent or another editor), or "unknown" (pre-0.5.0). */
+  author: string;
+  bytes: number;
 }
 
 export type ViewMode = "edit" | "preview" | "split";
@@ -95,6 +120,8 @@ export interface ElectronAPI {
     content: string;
     /** The user already resolved a disk conflict; do not ask them again. */
     force?: boolean;
+    /** Nobody asked for this write: never dialog, and refuse over a changed disk. */
+    autosave?: boolean;
   }): Promise<SaveResult>;
   // `csvContent` lets a table document hand over both forms at once; main
   // picks by the extension the user chose and reports which one it wrote.
@@ -200,6 +227,25 @@ export interface ElectronAPI {
   ): Unsubscribe;
   /** Follow this path for external edits (after Save As, or a new document). */
   watchFile(filePath: string | null): Promise<{ ok: boolean } | { error: string } | null>;
+  // Main is holding the window open until the renderer answers appCloseReady,
+  // capped at two seconds. Everything that must land goes in between.
+  onAppWillClose(cb: () => void): Unsubscribe;
+  appCloseReady(): void;
+  // The crash journal: written ahead of the file debounce, offered back on the
+  // next launch. An empty `content` clears the entry, which is how a committed
+  // save discards it.
+  draftSave(args: {
+    path: string | null;
+    name: string | null;
+    content: string;
+  }): Promise<{ ok: boolean; cleared?: boolean; error?: string }>;
+  draftCheck(): Promise<DraftEntry[]>;
+  draftDiscard(key: string): Promise<{ ok: boolean }>;
+  // Every version of this document Markie still holds, newest first, and the
+  // content of one of them. Reading never touches the file on disk.
+  historyList(path: string): Promise<HistoryEntry[]>;
+  historyRead(args: { path: string; stamp: string }): Promise<{ content: string | null }>;
+  onMenuHistory(cb: () => void): Unsubscribe;
   /** Whether crash reports may be sent, and whether a DSN is configured at all. */
   crashConsentGet(): Promise<{ enabled: boolean; available: boolean }>;
   crashConsentSet(
@@ -241,6 +287,37 @@ export interface ElectronAPI {
   // device-wide walk. `files` stays optional so an older main process (or a
   // notification that only reports the time) still type-checks.
   onMdIndexUpdated?(cb: (info: MdIndexUpdate) => void): Unsubscribe;
+  // Projects — the virtual organization layer over the index. The renderer
+  // owns the taxonomy engine; main only stores decisions and the derived
+  // cache, so these are all pass-throughs to the registry.
+  projectsState?(): Promise<ProjectsState>;
+  projectsSaveCache?(args: {
+    fingerprint: string;
+    assignments: ProjectsAssignmentWrite[];
+    blocks: BlockRecord[];
+    rulesKnownGood?: string;
+  }): Promise<ProjectsWriteResult>;
+  projectsPin?(
+    args:
+      | { path: string; project: string; blockId: string | null }
+      | { path: string; clear: true }
+  ): Promise<ProjectsWriteResult>;
+  projectsBlockSet?(
+    args: { blockId: string; customName: string | null } | { blockId: string; mergeInto: string }
+  ): Promise<ProjectsWriteResult>;
+  // Naming a project, and making one. Neither touches the filesystem: the
+  // derived key stays the identity, so a rename cannot orphan a pin.
+  projectsProjectSet?(args: {
+    project: string;
+    customName: string | null;
+  }): Promise<ProjectsWriteResult>;
+  projectsCreate?(args: {
+    name: string;
+  }): Promise<ProjectsWriteResult & { project?: string }>;
+  projectsConfig?(): Promise<ProjectsConfig>;
+  projectsWriteOverview?(args: {
+    listing: string;
+  }): Promise<ProjectsWriteResult & { path?: string }>;
   // Markie MCP server location, for the Agents setup dialog
   mcpInfo?(): Promise<{ serverPath: string; packaged: boolean; error?: string }>;
   // Report a renderer crash to the main process's crash log. Fire-and-forget:
@@ -260,6 +337,66 @@ export interface MdRow {
   name: string;
   dir: string;
   mtimeMs: number;
+  // Joined from the main process's md_meta table for the Projects taxonomy.
+  // Optional because the metadata pass runs after the index and lags it on a
+  // first run: a row without these still renders everywhere it did before.
+  birthtimeMs?: number | null;
+  fmProject?: string | null;
+  fmBlock?: string | null;
+  repoName?: string | null;
+}
+
+// What main knows about the taxonomy: the user's decisions, plus the derived
+// cache for whichever index fingerprint produced it. Row shapes are the
+// registry's own snake_case, so the engine can consume them unchanged.
+export interface ProjectPinRow {
+  path: string;
+  project: string;
+  block_id: string | null;
+}
+
+export interface ProjectAssignmentRow {
+  path: string;
+  project: string;
+  block_id: string | null;
+  source: string;
+  mtime_ms: number;
+}
+
+export interface ProjectsState {
+  pins: ProjectPinRow[];
+  blocks: BlockRecord[];
+  projectNames: ProjectNameRecord[];
+  assignments: ProjectAssignmentRow[];
+  fingerprint: string;
+  rulesKnownGood: string | null;
+  rulesError: string | null;
+}
+
+// Going the other way the arguments are camelCase, because they are arguments
+// and not rows. The two shapes stay visibly different on purpose.
+export interface ProjectsAssignmentWrite {
+  path: string;
+  project: string;
+  blockId: string | null;
+  source: string;
+  mtimeMs: number;
+}
+
+export interface ProjectsWriteResult {
+  ok: boolean;
+  error?: string;
+}
+
+// Projects.md as it exists on disk right now, created from the template on
+// first read. `home` comes from main because resolving `~` in the user's rules
+// against a guessed home is how a rule silently stops matching.
+export interface ProjectsConfig {
+  path: string;
+  content: string;
+  created: boolean;
+  home: string;
+  error?: string;
 }
 
 export interface MdStar {
@@ -276,6 +413,10 @@ export interface MdScanResult {
   // The walk stopped early (time budget or depth cap), so this is a subset.
   truncated?: boolean;
   truncatedReason?: string | null;
+  // The per-file metadata join is still catching up, so the four optional
+  // fields on MdRow are not all filled in yet. A taxonomy built now would be
+  // wrong in a way the user can see.
+  metaPending?: boolean;
 }
 
 // What `mdindex-updated` delivers: a full MdScanResult when main has one,

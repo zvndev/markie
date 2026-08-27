@@ -8,6 +8,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getMigrations } from "better-auth/db/migration";
+import { signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-index-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -68,14 +69,9 @@ test("/api/me ignores a bogus bearer token", async () => {
 
 test("/api/me returns the signed-in account", async () => {
   const email = `me-${stamp}@markie.test`;
-  const signUp = await request("/api/auth/sign-up/email", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: "Ada Lovelace", email, password: "password-123" }),
-  });
-  assert.equal(signUp.status, 200);
-  const token = signUp.headers.get("set-auth-token");
-  assert.ok(token);
+  // Signing up no longer hands out a session: the address has to be proven
+  // first. signUpVerified does both and returns the bearer token.
+  const { token } = await signUpVerified(app, { name: "Ada Lovelace", email });
 
   const res = await request("/api/me", {
     headers: { Authorization: `Bearer ${token}` },
@@ -145,13 +141,7 @@ test("an unknown path of any shape answers the same JSON 404", async () => {
 
 test("an unhandled error answers JSON 500, with no stack in production", async () => {
   const email = `boom-${stamp}@markie.test`;
-  const signUp = await request("/api/auth/sign-up/email", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: "Boom", email, password: "password-123" }),
-  });
-  assert.equal(signUp.status, 200);
-  const token = signUp.headers.get("set-auth-token")!;
+  const { token } = await signUpVerified(app, { name: "Boom", email });
 
   // Malformed JSON on a route that parses a body: the handler throws, and
   // without app.onError Hono answers text/plain.

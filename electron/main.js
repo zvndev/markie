@@ -37,7 +37,16 @@ const { createCrashLog } = require("./crash-log");
 const { createPdfExporter, ensureExtension } = require("./export-pdf");
 const { createIpcHandler, errorMessage } = require("./ipc-result");
 const { writeFileAtomic } = require("./atomic-write");
-const { createSnapshots } = require("./snapshots");
+const { createHistory } = require("./history");
+const { saveConflictAction } = require("./save-conflict");
+const { createCloseFlusher } = require("./close-flush");
+
+// The renderer answers app-will-close here once it has flushed. Registered at
+// module scope, once, because ipcMain listeners outlive any one window.
+let _closeReadyCb = null;
+ipcMain.on("app-close-ready", () => {
+  if (_closeReadyCb) _closeReadyCb();
+});
 
 // Electron answers an uncaught exception in the main process with a modal
 // dialog containing a raw stack trace. That is alarming on its own, and it is
@@ -68,30 +77,45 @@ function crashLog() {
 
 // Snapshots live under userData, which is only a real path once the app is
 // ready — same lazy shape as the crash log above.
-let _snapshots = null;
-function snapshots() {
-  if (!_snapshots) {
+// The crash journal, same lazy shape: userData is only a real path once the
+// app is ready.
+let _drafts = null;
+function drafts() {
+  if (!_drafts) {
+    const { createDrafts } = require("./drafts");
+    _drafts = createDrafts({ dir: app.getPath("userData") });
+  }
+  return _drafts;
+}
+
+// File history. Backed by the same userData/snapshots directory the 0.4.x
+// snapshot store used, so every existing snapshot is already the oldest
+// version of its document and nothing has to migrate.
+let _history = null;
+function history() {
+  if (!_history) {
     try {
-      _snapshots = createSnapshots({ dir: app.getPath("userData") });
+      _history = createHistory({ dir: app.getPath("userData") });
     } catch {
       // No userData: keep the shape so callers never branch on availability.
-      _snapshots = {
+      _history = {
         capture: () => ({ skipped: "unavailable" }),
-        dirFor: () => "",
+        captureExternal: () => ({ skipped: "unavailable" }),
         list: () => [],
+        read: () => null,
         has: () => false,
         root: "",
       };
     }
   }
-  return _snapshots;
+  return _history;
 }
 
 // Copy what is on disk before replacing it. Never allowed to fail a save: a
 // missing snapshot is a smaller loss than a save that did not happen.
 function snapshotBeforeWrite(filePath, nextContent) {
   try {
-    const res = snapshots().capture(filePath, nextContent);
+    const res = history().capture(filePath, nextContent, { author: "user" });
     if (res && res.skipped === "write-failed") {
       logCrash("snapshot-failed", res.error);
     }
@@ -201,6 +225,10 @@ try {
 
 let mainWindow;
 let rendererReady = false;
+// Set once the user has asked to quit. The close interception below prevents
+// the window close that a quit performs, and a prevented close cancels the
+// quit outright, so the flusher has to ask for it again afterwards.
+let quitRequested = false;
 let pendingFilePath = null;
 // markie:// deep link that arrived before the renderer was ready to receive it
 let pendingDeepLink = null;
@@ -508,6 +536,14 @@ function watchOpenFile(filePath) {
       // interrupt the user with a conflict that does not exist.
       const changed = diskChangedSince(filePath);
       if (changed === null) return;
+      // Somebody else's write is a version too. Recording it here is what puts
+      // an agent's edit of the open document into the history list; the store
+      // dedupes, so the user's own save over it does not record it twice.
+      try {
+        history().captureExternal(filePath);
+      } catch {
+        // A missing version is a smaller loss than a missed change notice.
+      }
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("file-changed-on-disk", {
           path: filePath,
@@ -540,7 +576,7 @@ function refreshRevertMenuItem() {
   try {
     const item = Menu.getApplicationMenu()?.getMenuItemById(REVERT_MENU_ID);
     if (!item) return; // menu not built yet (startup) or not this platform
-    item.enabled = !!currentDocPath && snapshots().has(currentDocPath);
+    item.enabled = !!currentDocPath && history().has(currentDocPath);
   } catch {
     // A menu that stays enabled is a dialog that explains itself instead.
   }
@@ -679,9 +715,40 @@ function createWindow() {
     }
   });
 
+  // Closing the window must not throw away a keystroke that has not reached
+  // disk yet. Ask the renderer to settle, then destroy; destroy() bypasses the
+  // close event, so the handshake always terminates. Cmd+Q goes through the
+  // same interception: quit closes the window, this settles once, and
+  // window-all-closed then quits as it always did.
+  const closeFlusher = createCloseFlusher({
+    send: (channel) => {
+      // Spelled out rather than forwarded, so electron/ipc-contract.test.ts can
+      // see main.js as the sender of this channel.
+      if (channel !== "app-will-close") return;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("app-will-close");
+      }
+    },
+    onReady: (cb) => {
+      _closeReadyCb = cb;
+    },
+    destroy: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
+    },
+    quitting: () => quitRequested,
+    quit: () => app.quit(),
+  });
+  mainWindow.on("close", (event) => {
+    // No renderer to ask, or it already answered: let the close happen.
+    if (closeFlusher.isSettled() || !rendererReady) return;
+    event.preventDefault();
+    closeFlusher.requestClose();
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
     rendererReady = false;
+    _closeReadyCb = null;
     // never leave orphaned shells behind
     try {
       require("./terminal").killAll();
@@ -832,7 +899,7 @@ handle(
 );
 
 // IPC: write content to a known path
-handle("save-file", async (_event, { filePath, content, force = false }) => {
+handle("save-file", async (_event, { filePath, content, force = false, autosave = false }) => {
   try {
     const access = fileGrants.canWrite(filePath);
     if (!access.ok) return { success: false, error: access.error };
@@ -843,8 +910,17 @@ handle("save-file", async (_event, { filePath, content, force = false }) => {
     // `force` means the renderer already put that decision to the user — the
     // in-app conflict dialog — and they chose to overwrite. Asking again here
     // would be a second, native prompt for a question already answered.
+    //
+    // `autosave` means nobody asked for this write and nobody is watching it.
+    // A modal would interrupt typing and a blind write would destroy the other
+    // writer's work, so it refuses and hands the newer bytes back for the
+    // renderer's own non-modal strip. saveConflictAction owns that decision.
     const newer = force ? null : diskChangedSince(access.path);
-    if (newer !== null) {
+    const action = saveConflictAction({ autosave, force, changed: newer });
+    if (action === "refuse") {
+      return { success: false, code: "disk-changed", path: access.path, content: newer };
+    }
+    if (action === "ask") {
       const { response } = await dialog.showMessageBox(mainWindow, {
         type: "warning",
         buttons: ["Reload from disk", "Overwrite", "Cancel"],
@@ -1185,6 +1261,47 @@ handle("watch-file", (_e, filePath) => {
   else stopWatchingOpenFile();
   return { ok: true };
 });
+
+// ── The crash journal ──
+// Written ahead of the file debounce, so the window between "the user typed"
+// and "the bytes are on disk" holds nothing that a kill would cost them.
+handle(
+  "draft-save",
+  (_e, { path: docPath, name, content }) =>
+    drafts().save({ path: docPath ?? null, name: name ?? null }, String(content ?? "")),
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+handle(
+  "draft-check",
+  () =>
+    drafts()
+      .check({
+        fileMtime: (p) => {
+          try {
+            return fs.statSync(p).mtimeMs;
+          } catch {
+            return null;
+          }
+        },
+      })
+      .map((entry) => ({ ...entry, content: drafts().read(entry.key) })),
+  { onFailure: () => [] }
+);
+handle("draft-discard", (_e, key) => drafts().discard(String(key || "")), {
+  onFailure: () => ({ ok: false }),
+});
+
+// ── File history ──
+// One version per committed write, plus whatever an agent or another editor
+// wrote while the document was open. Reading a version never touches the file.
+handle("history-list", (_e, p) => history().list(String(p || "")), {
+  onFailure: () => [],
+});
+handle(
+  "history-read",
+  (_e, { path: p, stamp }) => ({ content: history().read(String(p || ""), String(stamp || "")) }),
+  { onFailure: () => ({ content: null }) }
+);
 // Which tracked files the server is ahead of. One request for the whole
 // library, called on focus and on a timer, so it has to stay cheap and quiet.
 handle("doc-check-updates", () => sync.checkUpdates(), {
@@ -1259,6 +1376,72 @@ function keepCacheOverTruncated(result) {
   return true;
 }
 
+// Join the per-file metadata the Projects taxonomy needs (birthtime, the
+// markie front matter declaration, the containing repo's name) onto index
+// rows. Additive and best-effort: the index has to keep working even if the
+// metadata table is unreadable, so a failure here returns the plain rows.
+// True while the metadata pass still has files to get through.
+let _mdMetaPending = false;
+
+function mdRowsWithMeta(result) {
+  if (!result || !Array.isArray(result.files)) return result;
+  try {
+    const { withMeta } = require("./mdmeta");
+    const metaByPath = new Map(registry.metaAll().map((m) => [m.path, m]));
+    // metaPending says the four extra fields are not all filled in yet. The
+    // renderer needs it: a taxonomy built while repo names are still missing
+    // collapses thousands of files into one enormous folder-derived project,
+    // and showing that confidently for three seconds is worse than saying
+    // "still organizing".
+    return { ...result, metaPending: _mdMetaPending, files: withMeta(result.files, metaByPath) };
+  } catch {
+    return result;
+  }
+}
+
+// Extracting metadata for a whole fresh index is 2+ seconds of synchronous
+// file reads (measured on a 14.5k-file index), so it runs in slices with the
+// event loop free in between rather than freezing the window once. Later
+// passes touch only files whose mtime moved and finish in a millisecond.
+const MD_META_SLICE_MS = 120;
+let _mdMetaSliceTimer = null;
+
+function mdRefreshMetaSliced(rows) {
+  _mdMetaPending = true;
+  if (_mdMetaSliceTimer) {
+    clearTimeout(_mdMetaSliceTimer);
+    _mdMetaSliceTimer = null;
+  }
+  let touched = 0;
+  const step = () => {
+    _mdMetaSliceTimer = null;
+    try {
+      const { refreshMeta } = require("./mdmeta");
+      const { updated, remaining } = refreshMeta(rows, {
+        registry,
+        budgetMs: MD_META_SLICE_MS,
+      });
+      touched += updated;
+      _mdMetaPending = remaining > 0;
+      if (remaining > 0) {
+        _mdMetaSliceTimer = setTimeout(step, 50);
+        return;
+      }
+    } catch (err) {
+      _mdMetaPending = false;
+      logCrash("mdmeta-refresh-failed", err);
+      return;
+    }
+    // The taxonomy the renderer already drew was built without this metadata.
+    // Tell it once, at the end, rather than after every slice.
+    if (touched > 0 && mainWindow && !mainWindow.isDestroyed()) {
+      const cached = mdindex.getCached();
+      if (cached) mainWindow.webContents.send("mdindex-updated", mdRowsWithMeta(cached));
+    }
+  };
+  step();
+}
+
 // Run a fresh index scan, persist the snapshot, and tell the renderer.
 async function mdRescanAndNotify() {
   _mdLastScanAt = Date.now();
@@ -1269,7 +1452,7 @@ async function mdRescanAndNotify() {
       // Broadcast the fuller cache instead of the partial walk.
       const cached = mdindex.getCached();
       if (cached && mainWindow && !mainWindow.isDestroyed())
-        mainWindow.webContents.send("mdindex-updated", cached);
+        mainWindow.webContents.send("mdindex-updated", mdRowsWithMeta(cached));
       return;
     }
     try { registry.saveIndexCache(result.files); } catch { /* cache best-effort */ }
@@ -1277,7 +1460,8 @@ async function mdRescanAndNotify() {
     // this event by calling mdindex-refresh, which walked the disk a second
     // time for the same answer we already had in hand.
     if (mainWindow && !mainWindow.isDestroyed())
-      mainWindow.webContents.send("mdindex-updated", result);
+      mainWindow.webContents.send("mdindex-updated", mdRowsWithMeta(result));
+    mdRefreshMetaSliced(result.files);
   } catch (err) {
     logCrash("mdindex-scan-failed", err);
   }
@@ -1291,13 +1475,20 @@ handle("mdindex-scan", async () => {
     try { mdindex.seed(registry.loadIndexCache(), null); } catch { /* no snapshot yet */ }
   }
   const cached = mdindex.getCached();
+  if (Array.isArray(cached?.files) && cached.files.length) {
+    try {
+      // Cheap: one indexed count against the row total. If metadata is missing
+      // for anything, the taxonomy is not ready to be believed yet.
+      _mdMetaPending = _mdMetaPending || registry.metaAll().length < cached.files.length;
+    } catch { /* meta is additive */ }
+  }
   // Every Browse/Skills mount used to start a device-wide walk. Mounting a
   // panel is not new information about the disk, so honour the same interval
   // the focus-driven rescan does; the cached rows come back either way.
   if (Date.now() - _mdLastScanAt >= MD_RESCAN_INTERVAL_MS) {
     mdRescanAndNotify(); // fire-and-forget refresh
   }
-  return cached || { files: [], scannedAt: null };
+  return mdRowsWithMeta(cached) || { files: [], scannedAt: null };
 }, { onFailure: (err) => ({ files: [], scannedAt: null, error: errorMessage(err) }) });
 
 // An explicit refresh (the Browse panel's own button) still walks now.
@@ -1306,10 +1497,144 @@ handle("mdindex-refresh", async () => {
   _mdLastScanAt = Date.now();
   const result = await mdindex.rescan();
   _mdLastScanAt = Date.now();
-  if (keepCacheOverTruncated(result)) return mdindex.getCached() || result;
+  if (keepCacheOverTruncated(result)) return mdRowsWithMeta(mdindex.getCached() || result);
   try { registry.saveIndexCache(result.files); } catch { /* best-effort */ }
-  return result;
+  mdRefreshMetaSliced(result.files);
+  return mdRowsWithMeta(result);
 }, { onFailure: (err) => ({ files: [], scannedAt: null, error: errorMessage(err) }) });
+
+// ── Projects: virtual organization state ──
+// Thin pass-throughs on purpose. main.js is untyped and untested, so the
+// taxonomy engine lives in src/lib/projects and the decisions live in the
+// registry; nothing here is allowed to have an opinion of its own.
+handle(
+  "projects-state",
+  () => {
+    const cached = registry.loadIndexCache();
+    const fingerprint = registry.indexCacheFingerprint(cached);
+    return {
+      pins: registry.pinsAll(),
+      blocks: registry.blocksAll(),
+      projectNames: registry.projectsAll(),
+      // Assignments written against a different index are stale by
+      // definition, so a fingerprint mismatch reads as "no cache".
+      assignments: registry.assignmentsGet(fingerprint),
+      fingerprint,
+      rulesKnownGood: registry.projectsConfigGet("rules-known-good"),
+      rulesError: registry.projectsConfigGet("rules-error"),
+    };
+  },
+  {
+    onFailure: (err) => ({
+      pins: [],
+      blocks: [],
+      projectNames: [],
+      assignments: [],
+      fingerprint: "",
+      rulesKnownGood: null,
+      rulesError: errorMessage(err),
+    }),
+  }
+);
+
+handle(
+  "projects-save-cache",
+  (_e, { fingerprint, assignments, blocks, rulesKnownGood } = {}) => {
+    if (Array.isArray(blocks)) for (const b of blocks) registry.blockUpsert(b);
+    if (Array.isArray(assignments)) {
+      registry.assignmentsSave(String(fingerprint || ""), assignments);
+    }
+    if (typeof rulesKnownGood === "string") {
+      registry.projectsConfigSet("rules-known-good", rulesKnownGood);
+      registry.projectsConfigSet("rules-error", "");
+    }
+    return { ok: true };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+
+handle(
+  "projects-pin",
+  (_e, args) => {
+    if (args && args.clear) registry.pinClear(args.path);
+    else registry.pinSet(args);
+    return { ok: true };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+
+handle(
+  "projects-config",
+  () => {
+    const workspace = require("./workspace");
+    const { ensureProjectsConfig } = require("./projects-config");
+    const cfg = ensureProjectsConfig({ dir: workspace.defaultRootPath() });
+    // The renderer needs the real home to resolve `~` in the user's rules, and
+    // inferring it from a path is guesswork the main process does not have to
+    // make anyone do.
+    return { ...cfg, home: app.getPath("home") };
+  },
+  {
+    onFailure: (err) => ({
+      path: "",
+      content: "",
+      created: false,
+      home: "",
+      error: errorMessage(err),
+    }),
+  }
+);
+
+// Rewrites only the listing below the overview marker, from whatever is on
+// disk right now, so a rule the user just typed is never clobbered. If they
+// have the document open with unsaved edits, this lands as an ordinary
+// external change and the existing disk-change prompt handles it.
+handle(
+  "projects-write-overview",
+  (_e, { listing } = {}) => {
+    const workspace = require("./workspace");
+    const { ensureProjectsConfig, writeOverviewSection } = require("./projects-config");
+    const cfg = ensureProjectsConfig({ dir: workspace.defaultRootPath() });
+    const next = writeOverviewSection(cfg.content, String(listing ?? ""));
+    writeFileAtomic(cfg.path, next);
+    rememberDisk(cfg.path, next);
+    return { ok: true, path: cfg.path };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+
+// Renaming a project and making one are both decisions about names only. No
+// file is created, moved, or renamed on disk by either, which is the whole
+// reason a virtual project is worth having.
+handle(
+  "projects-project-set",
+  (_e, { project, customName } = {}) => {
+    registry.projectSetName(project, customName ?? null);
+    return { ok: true };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+
+handle(
+  "projects-create",
+  (_e, { name } = {}) => {
+    const project = String(name ?? "").trim();
+    if (!project) return { ok: false, error: "A project needs a name." };
+    registry.projectCreate(project);
+    return { ok: true, project };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+
+handle(
+  "projects-block-set",
+  (_e, { blockId, customName, mergeInto } = {}) => {
+    if (typeof mergeInto === "string") registry.blockMerge(blockId, mergeInto);
+    else registry.blockSetName(blockId, customName ?? null);
+    return { ok: true };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
 
 handle("mdindex-stars", () => registry.listStars(), { onFailure: () => [] });
 handle("mdindex-star-toggle", (_e, { path: p, kind }) =>
@@ -1327,10 +1652,14 @@ handle("mcp-info", () => {
   };
 }, { onFailure: (err) => ({ serverPath: "", packaged: false, error: errorMessage(err) }) });
 
-// ── Auto-update (electron-updater → macOS feed) ──
-// The current production feed is signed + notarized macOS only. Windows and
-// Linux packages can be built and smoke-tested locally, but they must not touch
-// the macOS feed until their signing, feed files, and public URLs are approved.
+// ── Auto-update (electron-updater → the platform's published feed) ──
+// macOS updates from a signed and notarized feed, Windows from the signed NSIS
+// feed the release runbook publishes alongside the installer. Which feed an
+// install reads is baked into app-update.yml at pack time from
+// server/download-manifest.json, so the two never cross. Linux packages can be
+// built and smoke-tested locally but must not touch either feed until their
+// signing, feed files, and public URLs are approved: update-policy.js is where
+// that is enforced.
 let updateState = "idle"; // idle | checking | available | downloading | ready | error
 let manualUpdateCheck = false;
 function sendUpdate(channel, payload) {
@@ -1807,46 +2136,6 @@ function revealCrashLog() {
   }
 }
 
-// Open one of this document's snapshots. Not an IPC channel and not a write:
-// the picked snapshot is handed to the renderer as the buffer for the path
-// that is already open, so the user reads it, compares it, and decides. Nothing
-// touches the file on disk until they save.
-async function revertToSnapshot() {
-  try {
-    const target = currentDocPath;
-    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-    if (!target || !snapshots().has(target)) {
-      dialog.showMessageBox(parent, {
-        type: "info",
-        message: "No snapshots for this document yet.",
-        detail: "Markie keeps a copy of a document each time you save over it. Save once and there will be one here.",
-      });
-      return;
-    }
-    const result = await dialog.showOpenDialog(parent, {
-      title: `Revert "${path.basename(target)}"`,
-      defaultPath: snapshots().dirFor(target),
-      buttonLabel: "Open Snapshot",
-      properties: ["openFile"],
-      filters: [{ name: "Snapshot", extensions: ["md"] }],
-    });
-    if (result.canceled || !result.filePaths[0]) return;
-    const content = fs.readFileSync(result.filePaths[0], "utf-8");
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    // The existing file-opened payload, with the document's own path and name:
-    // the renderer keeps editing the same file. `unsaved` marks the buffer as
-    // not yet written, so the revert is one ⌘S away and one ⌘Z from undone.
-    mainWindow.webContents.send("file-opened", {
-      name: path.basename(target),
-      content,
-      path: target,
-      unsaved: true,
-    });
-  } catch (err) {
-    logCrash("revert-to-snapshot-failed", err);
-  }
-}
-
 // Finder on macOS, File Explorer on Windows, and neither name is right on Linux.
 const crashLogMenuLabel =
   process.platform === "darwin"
@@ -1918,13 +2207,11 @@ const template = [
       },
       {
         id: REVERT_MENU_ID,
-        label: "Revert to Snapshot…",
-        // Enabled by refreshRevertMenuItem() once a document with snapshots is
-        // open; an item that opens an empty folder is worse than a grey one.
+        label: "History…",
+        // Enabled by refreshRevertMenuItem() once the open document has
+        // versions; an item that opens an empty list is worse than a grey one.
         enabled: false,
-        click: () => {
-          void revertToSnapshot();
-        },
+        click: () => mainWindow?.webContents.send("menu-history"),
       },
       {
         label: "Duplicate (Fork)",
@@ -2177,6 +2464,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  quitRequested = true;
   stopWatchingOpenFile();
 });
 

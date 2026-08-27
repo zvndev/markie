@@ -107,7 +107,82 @@ function getDB() {
     db.exec("ALTER TABLE files ADD COLUMN share_role TEXT");
   }
 
+  // Schema versioning starts at 0.5.0. Version 0 is every database that
+  // predates it; the PRAGMA-guarded share_role ALTER above predates versioning
+  // and stays as-is so any skipped-version database still heals.
+  const version = db.pragma("user_version", { simple: true });
+  if (version < 1) {
+    const migrate = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS md_meta (
+          path         TEXT PRIMARY KEY,
+          mtime_ms     REAL NOT NULL,
+          birthtime_ms REAL,
+          fm_project   TEXT,
+          fm_block     TEXT,
+          repo_name    TEXT,
+          scanned_at   TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS project_pins (
+          path       TEXT PRIMARY KEY,
+          project    TEXT NOT NULL,
+          block_id   TEXT,
+          pinned_at  TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS project_blocks (
+          block_id    TEXT PRIMARY KEY,
+          project     TEXT NOT NULL,
+          auto_name   TEXT NOT NULL,
+          custom_name TEXT,
+          merged_into TEXT,
+          created_at  TEXT NOT NULL,
+          updated_at  TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS project_assignments (
+          path        TEXT PRIMARY KEY,
+          project     TEXT NOT NULL,
+          block_id    TEXT,
+          source      TEXT NOT NULL,
+          mtime_ms    REAL NOT NULL,
+          fingerprint TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS projects_config (
+          key   TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      db.pragma("user_version = 1");
+    });
+    migrate();
+  }
+
+  // v2 adds the one thing 0.5.0 could not express: a project the user named,
+  // or made. A project used to exist only as whatever the engine derived, so
+  // there was nowhere to record "I call this one Markie" and no way at all to
+  // have a project before it has files. Both are user decisions and belong
+  // beside pins and block renames, not in the disposable cache.
+  if (version < 2) {
+    const migrate = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS projects (
+          project      TEXT PRIMARY KEY,
+          custom_name  TEXT,
+          user_created INTEGER NOT NULL DEFAULT 0,
+          created_at   TEXT NOT NULL,
+          updated_at   TEXT NOT NULL
+        );
+      `);
+      db.pragma("user_version = 2");
+    });
+    migrate();
+  }
+
   return db;
+}
+
+function schemaVersion() {
+  return getDB().pragma("user_version", { simple: true });
 }
 
 // ── Workspace roots (folders the Files view organizes) ──
@@ -309,6 +384,192 @@ function loadIndexCache() {
     }));
 }
 
+// ── Projects: per-file metadata extracted from the index ──
+// Derived and rebuildable. Dropping this table costs one slow rescan, never a
+// user decision.
+function metaUpsertMany(rows) {
+  const d = getDB();
+  const up = d.prepare(
+    `INSERT INTO md_meta (path, mtime_ms, birthtime_ms, fm_project, fm_block, repo_name, scanned_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(path) DO UPDATE SET
+       mtime_ms = excluded.mtime_ms,
+       birthtime_ms = excluded.birthtime_ms,
+       fm_project = excluded.fm_project,
+       fm_block = excluded.fm_block,
+       repo_name = excluded.repo_name,
+       scanned_at = excluded.scanned_at`
+  );
+  const now = new Date().toISOString();
+  const tx = d.transaction((list) => {
+    for (const r of list) {
+      up.run(
+        canonicalPath(r.path),
+        r.mtimeMs || 0,
+        r.birthtimeMs ?? null,
+        r.fmProject ?? null,
+        r.fmBlock ?? null,
+        r.repoName ?? null,
+        now
+      );
+    }
+  });
+  tx(rows);
+}
+
+function metaAll() {
+  return getDB().prepare("SELECT * FROM md_meta").all();
+}
+
+// ── Projects: user decisions (precious) ──
+// A pin is the top of the assignment ladder: the user said where this file
+// belongs, and nothing derived may argue with it.
+function pinsAll() {
+  return getDB().prepare("SELECT * FROM project_pins").all();
+}
+
+function pinSet({ path: p, project, blockId }) {
+  getDB()
+    .prepare(
+      `INSERT INTO project_pins (path, project, block_id, pinned_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(path) DO UPDATE SET
+         project = excluded.project,
+         block_id = excluded.block_id,
+         pinned_at = excluded.pinned_at`
+    )
+    .run(canonicalPath(p), project, blockId ?? null, new Date().toISOString());
+}
+
+function pinClear(p) {
+  getDB().prepare("DELETE FROM project_pins WHERE path = ?").run(canonicalPath(p));
+}
+
+function blocksAll() {
+  return getDB().prepare("SELECT * FROM project_blocks").all();
+}
+
+// Re-derivation upserts every block it still sees, so this deliberately does
+// NOT overwrite custom_name or merged_into: those are the user's, and the
+// engine has no opinion worth more than theirs.
+function blockUpsert(row) {
+  getDB()
+    .prepare(
+      `INSERT INTO project_blocks (block_id, project, auto_name, custom_name, merged_into, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(block_id) DO UPDATE SET
+         project = excluded.project,
+         auto_name = excluded.auto_name,
+         updated_at = excluded.updated_at`
+    )
+    .run(
+      row.block_id,
+      row.project,
+      row.auto_name,
+      row.custom_name ?? null,
+      row.merged_into ?? null,
+      row.created_at,
+      row.updated_at
+    );
+}
+
+function blockSetName(blockId, customName) {
+  getDB()
+    .prepare("UPDATE project_blocks SET custom_name = ?, updated_at = ? WHERE block_id = ?")
+    .run(customName ?? null, new Date().toISOString(), blockId);
+}
+
+function blockMerge(blockId, intoBlockId) {
+  getDB()
+    .prepare("UPDATE project_blocks SET merged_into = ?, updated_at = ? WHERE block_id = ?")
+    .run(intoBlockId, new Date().toISOString(), blockId);
+}
+
+// ── Projects: project identity (precious) ──
+// The derived key stays the project's identity forever; only the display name
+// changes. Renaming therefore cannot orphan a pin, a block, or an assignment,
+// and it cannot touch a single byte on disk.
+function projectsAll() {
+  return getDB().prepare("SELECT * FROM projects").all();
+}
+
+function projectSetName(project, customName) {
+  const now = new Date().toISOString();
+  const name = customName == null || String(customName).trim() === "" ? null : String(customName).trim();
+  getDB()
+    .prepare(
+      `INSERT INTO projects (project, custom_name, user_created, created_at, updated_at)
+       VALUES (?, ?, 0, ?, ?)
+       ON CONFLICT(project) DO UPDATE SET
+         custom_name = excluded.custom_name,
+         updated_at = excluded.updated_at`
+    )
+    .run(String(project), name, now, now);
+}
+
+// A project with nothing in it yet. Re-derivation cannot produce one of these
+// (there are no files to derive it from), so the row is the only thing keeping
+// it alive until files are pinned into it.
+function projectCreate(project) {
+  const now = new Date().toISOString();
+  const info = getDB()
+    .prepare(
+      `INSERT INTO projects (project, custom_name, user_created, created_at, updated_at)
+       VALUES (?, NULL, 1, ?, ?)
+       ON CONFLICT(project) DO UPDATE SET
+         user_created = 1,
+         updated_at = excluded.updated_at`
+    )
+    .run(String(project), now, now);
+  return { project: String(project), changes: info.changes };
+}
+
+// ── Projects: derived assignment cache (disposable) ──
+// Keyed by the index fingerprint: rows written against a different index are
+// stale by definition, so a mismatch reads as "no cache" rather than as data.
+function assignmentsGet(fingerprint) {
+  return getDB()
+    .prepare("SELECT * FROM project_assignments WHERE fingerprint = ?")
+    .all(fingerprint);
+}
+
+function assignmentsSave(fingerprint, rows) {
+  const d = getDB();
+  const wipe = d.prepare("DELETE FROM project_assignments");
+  const ins = d.prepare(
+    `INSERT OR REPLACE INTO project_assignments (path, project, block_id, source, mtime_ms, fingerprint)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  );
+  const tx = d.transaction((list) => {
+    wipe.run();
+    for (const r of list) {
+      ins.run(
+        canonicalPath(r.path),
+        r.project,
+        r.blockId ?? null,
+        r.source,
+        r.mtimeMs || 0,
+        fingerprint
+      );
+    }
+  });
+  tx(Array.isArray(rows) ? rows : []);
+}
+
+function projectsConfigGet(key) {
+  const row = getDB().prepare("SELECT value FROM projects_config WHERE key = ?").get(key);
+  return row ? row.value : null;
+}
+
+function projectsConfigSet(key, value) {
+  getDB()
+    .prepare(
+      `INSERT INTO projects_config (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    )
+    .run(key, String(value), new Date().toISOString());
+}
+
 // Flush + close the handle deterministically on app quit (WAL checkpoint).
 function close() {
   if (db) {
@@ -344,4 +605,21 @@ module.exports = {
   toggleStar,
   saveIndexCache,
   loadIndexCache,
+  schemaVersion,
+  metaUpsertMany,
+  metaAll,
+  pinsAll,
+  pinSet,
+  pinClear,
+  blocksAll,
+  blockUpsert,
+  projectsAll,
+  projectSetName,
+  projectCreate,
+  blockSetName,
+  blockMerge,
+  assignmentsGet,
+  assignmentsSave,
+  projectsConfigGet,
+  projectsConfigSet,
 };

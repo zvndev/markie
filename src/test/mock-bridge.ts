@@ -176,6 +176,14 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     onFileOpened: vi.fn(subscribe("onFileOpened")),
     onFileChangedOnDisk: vi.fn(subscribe("onFileChangedOnDisk")),
     watchFile: vi.fn(async () => ({ ok: true })),
+    onAppWillClose: vi.fn(subscribe("onAppWillClose")),
+    appCloseReady: vi.fn(() => undefined),
+    draftSave: vi.fn(async () => noopResult),
+    draftCheck: vi.fn(async () => []),
+    draftDiscard: vi.fn(async () => noopResult),
+    historyList: vi.fn(async () => []),
+    historyRead: vi.fn(async () => ({ content: null })),
+    onMenuHistory: vi.fn(subscribe("onMenuHistory")),
 
     // Crash reporting (consent-gated; off and unavailable by default in tests)
     crashConsentGet: vi.fn(async () => ({ enabled: false, available: false })),
@@ -198,6 +206,30 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     mdIndexStars: vi.fn(async () => []),
     mdIndexToggleStar: vi.fn(async () => ({ starred: true })),
     onMdIndexUpdated: vi.fn(subscribe("onMdIndexUpdated")),
+
+    // Projects — the virtual organization layer. Empty state by default: a
+    // component test that wants a taxonomy supplies the index rows itself.
+    projectsState: vi.fn(async () => ({
+      pins: [],
+      blocks: [],
+      projectNames: [],
+      assignments: [],
+      fingerprint: "",
+      rulesKnownGood: null,
+      rulesError: null,
+    })),
+    projectsSaveCache: vi.fn(async () => ({ ok: true })),
+    projectsPin: vi.fn(async () => ({ ok: true })),
+    projectsBlockSet: vi.fn(async () => ({ ok: true })),
+    projectsProjectSet: vi.fn(async () => ({ ok: true })),
+    projectsCreate: vi.fn(async ({ name }: { name: string }) => ({ ok: true, project: name })),
+    projectsConfig: vi.fn(async () => ({
+      path: "/home/u/Documents/Markie/Projects.md",
+      content: "",
+      created: false,
+      home: "/home/u",
+    })),
+    projectsWriteOverview: vi.fn(async () => ({ ok: true, path: "/home/u/Documents/Markie/Projects.md" })),
 
     mcpInfo: vi.fn(async () => ({
       serverPath: "/tmp/markie-mcp.mjs",

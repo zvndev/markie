@@ -1,10 +1,11 @@
 // Pure helpers for the Markie MCP server: path guarding, query matching, and
-// agent-file classification. Kept dependency-light and side-effect-free so they
+// agent-file grouping (classification itself lives in agent-classify.mjs). Kept dependency-light and side-effect-free so they
 // can be unit-tested in isolation (node --test lib.test.mjs).
 import { resolve, join, sep, dirname, basename, win32 as winPath } from "node:path";
 import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
 // Self-contained scan rules (no ../electron dependency — see scan.mjs header).
 import { isExcludedDir, allowlist } from "./scan.mjs";
+import { classifyAgentFile } from "./agent-classify.mjs";
 
 export const MD_RE = /\.(md|markdown|mdx)$/i;
 
@@ -132,16 +133,9 @@ export function matchQuery(row, query) {
   );
 }
 
-// Which agent tool a file belongs to, or null. Mirrors src/lib/agent-files.ts.
-export function classifyAgentFile(path, name) {
-  const n = name.toLowerCase();
-  const p = path.toLowerCase();
-  if (n === "claude.md" || p.includes("/.claude/")) return "claude";
-  if (n === "agents.md" || p.includes("/.codex/")) return "openai";
-  if (n === "gemini.md") return "gemini";
-  if (n === ".cursorrules" || p.includes("/.cursor/rules/")) return "cursor";
-  return null;
-}
+// Which agent tool a file belongs to, or null. ONE definition, shared with the
+// app: re-exported rather than mirrored, because the mirror drifted.
+export { classifyAgentFile, isCachedAgentPath } from "./agent-classify.mjs";
 
 // Group scan rows into agent tools (display order), dropping empty groups.
 export function groupSkills(rows) {

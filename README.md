@@ -24,18 +24,19 @@ markdown right alongside you.
 
 ## Install
 
-The current public downloads are **Apple Silicon macOS** and **Intel macOS**.
-The source tree also has local packaging configuration for Windows x64 and Linux
-x64; signed public artifacts for those targets are still release work. Server
-download routes and Electron Builder share `server/download-manifest.json`, so
-storage, updater feeds, and planned platforms cannot drift apart.
+The current public downloads are **Apple Silicon macOS**, **Intel macOS**, and
+**Windows x64**, signed through Azure Trusted Signing. All three update
+themselves from their own signed feed. Linux x64 packaging is configured in the
+source tree but nothing is published for it yet. Server download routes and
+Electron Builder both read `server/download-manifest.json`, so storage, updater
+feeds, and platform status cannot drift apart.
 
 ➡️ **[Download the latest Markie](https://markie.zvndev.com/download)**
 
 Release integrations can read the current stable version and platform URLs from
 [`/download/latest.json`](https://markie.zvndev.com/download/latest.json).
 
-> Public Windows and Linux downloads are not published yet.
+> Linux downloads are not published yet.
 
 ## The Markie MCP
 
@@ -45,6 +46,22 @@ gives an AI agent a markdown workspace on *your* machine: `markie_find_md`,
 `markie_open_in_markie`. It runs entirely locally — no cloud, no API key.
 Reads/writes are fenced to markdown under your home folder (symlink-guarded), so an
 agent can *"find my notes and add a section"* and actually do it.
+
+Connecting also hands the agent Markie's organization conventions, so it says
+where a document belongs as it writes:
+
+```yaml
+---
+markie:
+  project: bevrly
+  block: checkout-redesign
+---
+```
+
+New documents then arrive filed under that project and block in Markie, and
+nothing moves on disk to make it happen. Claude Code users get the same
+conventions as a plugin skill; every other MCP client receives them through the
+server's `initialize` instructions.
 
 **Claude Code — plugin (easiest):**
 

@@ -7,6 +7,8 @@ import {
   isCachedAgentPath,
   skillRootOf,
 } from "./agent-files";
+import { CACHED_SEGMENTS } from "./agent-files";
+import { classifyAgentFile as mcpClassify } from "../../mcp/agent-classify.mjs";
 
 describe("classifyAgentFile", () => {
   const home = "/Users/x";
@@ -193,5 +195,36 @@ describe("keeping temporary plugin trees out", () => {
 
   it("still keeps the real codex skills", () => {
     expect(isCachedAgentPath("/Users/x/.codex/skills/speech/SKILL.md")).toBe(false);
+  });
+});
+
+// Both entry points now resolve to mcp/agent-classify.mjs, which makes this
+// trivially green today. Its value is the day someone re-forks them: the app
+// and the MCP server must never disagree about what an agent file is again.
+describe("cross-runtime classification parity", () => {
+  it("classifies identically to the MCP server over a fixture table", () => {
+    const cases: Array<[string, string]> = [
+      ["/h/.claude/skills/x/SKILL.md", "SKILL.md"],
+      ["/h/.claude/plugins/cache/y/SKILL.md", "SKILL.md"],
+      ["/h/.codex/plugins/cache/y/SKILL.md", "SKILL.md"],
+      ["/h/repo/CLAUDE.md", "CLAUDE.md"],
+      ["/h/repo/AGENTS.md", "AGENTS.md"],
+      ["/h/.codex/notes.md", "notes.md"],
+      ["/h/repo/GEMINI.md", "GEMINI.md"],
+      ["/h/.cursor/rules/style.md", "style.md"],
+      ["/h/plain.md", "plain.md"],
+      ["/h/backups/CLAUDE.md", "CLAUDE.md"],
+      ["C:\\h\\.codex\\plugins\\cache\\y\\SKILL.md", "SKILL.md"],
+    ];
+    for (const [p, n] of cases) {
+      expect(classifyAgentFile(p, n)).toBe(mcpClassify(p, n));
+    }
+  });
+
+  it("hides every cached segment the MCP server hides", () => {
+    for (const segment of CACHED_SEGMENTS) {
+      expect(isCachedAgentPath(`/h${segment}x/CLAUDE.md`)).toBe(true);
+      expect(classifyAgentFile(`/h${segment}x/CLAUDE.md`, "CLAUDE.md")).toBeNull();
+    }
   });
 });

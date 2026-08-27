@@ -19,6 +19,7 @@ import * as awarenessProtocol from "y-protocols/awareness";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import { getMigrations } from "better-auth/db/migration";
+import { signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-collab-access-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -98,16 +99,8 @@ async function jsonRequest<T>(
 }
 
 async function signUp(name: string, email: string) {
-  const res = await jsonRequest<{ user: { id: string } }>(
-    "POST",
-    "/api/auth/sign-up/email",
-    undefined,
-    { name, email, password: "password-123" }
-  );
-  assert.equal(res.status, 200);
-  const token = res.headers.get("set-auth-token");
-  assert.ok(token, `expected bearer token for ${email}`);
-  return { name, email, token, id: res.data?.user.id ?? "" };
+  const user = await signUpVerified(app, { name, email });
+  return { name, email, token: user.token, id: user.id };
 }
 
 async function createDoc(token: string, docId: string, body = "# Collab access\n") {

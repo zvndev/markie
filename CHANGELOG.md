@@ -8,6 +8,110 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-26
+
+### Added
+
+- **Projects: your markdown organized the way you actually work.** Markie now
+  groups every markdown file it can see into projects, and each project into
+  blocks of work, without moving a single file on disk. The grouping is
+  Markie's own, laid over your files wherever they already live, so you get an
+  organized workspace without reorganizing your computer.
+- **Projects is its own place in the left rail, two levels deep.** The index
+  fills the window with every project, most recently updated first. Open one
+  to see its blocks and files, and a back chevron, a breadcrumb, Command-Up,
+  and Escape all walk you back out. The search field scopes itself to wherever
+  you are and shows which, so a search inside a project stays inside it.
+- **Folders that keep themselves current.** Updated today, in the last three
+  days, and in the last week are there from the start, and you can add your
+  own to `Projects.md` by naming a time window, a path pattern, or both. They
+  are views rather than containers: a folder shows its files grouped by the
+  project each one still belongs to, and every heading walks into that
+  project. Nothing is moved, copied, or duplicated.
+- **Make and rename projects.** Call a project what you actually call it, or
+  start an empty one before its first file exists. A rename changes only what
+  you read: pins, blocks, and assignments keep pointing exactly where they
+  did, and nothing on disk is touched.
+- **`Projects.md`, an organization file you can edit.** Your rules live in a
+  real markdown document in your Markie folder, so you can open it, read it,
+  and change how your work is grouped. Match paths to projects, pin a file
+  somewhere it would not land on its own, or rename and merge blocks in the
+  app and have those choices stick. A broken rule falls back to the last
+  version that worked and tells you, rather than emptying your view.
+- **Blocks are named after work, not dates.** A block called
+  `checkout-redesign` says what it is; one called `2026-08-26` only says when
+  it was filed. Files written close together become a block named for the work
+  itself, and you can rename any of them.
+- **File history with diffs.** Every save keeps a version, stored inside
+  Markie rather than beside your file, so your folders stay clean. Open the
+  history for any document to see what changed line by line, who changed it,
+  and restore any version. Recent history is kept in full and older versions
+  thin out over time.
+- **Agents file their own writing.** The bundled MCP server now tells any
+  connected agent what Markie is, which tool to use when, and how to declare
+  where a document belongs. Claude Code, Codex, and any other MCP client get
+  the same guidance, so documents an agent writes land in the right project
+  and block as they are created.
+- **Windows updates itself.** The signed Windows build has been downloadable
+  since 0.4.2 but could never update. It now checks for and installs updates
+  the way the Mac build does.
+
+### Changed
+
+- **Markie saves as you type.** Edits land on disk about a second after you
+  stop typing, the way a document editor should. Command-S still works and
+  simply saves now rather than later. Switching files, opening a new one,
+  closing the window, and quitting all finish the save first.
+- **Nothing is lost if Markie stops unexpectedly.** Unsaved work is journaled
+  as you type, so a crash or a force quit offers your text back on the next
+  launch.
+- **Rich mode no longer rewrites the rest of your file.** Editing one
+  paragraph now leaves every other line exactly as it was, byte for byte:
+  your front matter, footnotes, raw HTML, comments, table alignment, and your
+  own line wrapping all survive. In the rare document Markie cannot promise to
+  reproduce, rich editing waits and tells you why, and Source is always
+  available and always exact.
+- **The Library is Recent and Folders, with nothing nested inside either.**
+  Picking Files and then picking Projects inside it is gone; Projects has the
+  left rail to itself now, and the panel spends its rows on your files instead
+  of on where you are.
+- **File names come first in every list.** Rows used to open with the whole
+  absolute path, so forty of them began with the same forty characters before
+  reaching the word that told them apart. The name leads now, the folder
+  follows it quietly, and the full path is still on the row and copyable from
+  its menu.
+- **Cards and panels have visible edges in both themes.** Borders were close
+  to invisible in dark mode and faint in light; both now meet a real contrast
+  floor. Documents were given their own, much quieter rule at the same time,
+  so heading underlines and table borders read as typography rather than as
+  panel edges.
+- **`markie_list_skills` stopped reporting noise.** It was listing thousands of
+  cached plugin copies the app itself hides. It now shows the agent files you
+  actually wrote.
+- **`markie_find_md` will not walk forever.** The agent-facing search now
+  respects the same limits the app's own index has always had, and says so
+  when a result set was cut short instead of quietly looking empty.
+
+### Fixed
+
+- **Security: a shared document could be claimed by the wrong person.**
+  Sharing a document with an email address that had no account yet left the
+  invitation waiting. Anyone who registered that address first inherited the
+  document, because signing up did not require proving you own the address.
+  Verification is now required before any pending share is claimed, on every
+  path that could claim one. Existing accounts are unaffected. If you have
+  shared anything to an address that had not yet signed up, this closes it.
+- Signing up with a password and then confirming your address no longer
+  discards that password.
+- Signing in with an unverified address, or signing up with one, now leads
+  somewhere instead of a dead end.
+
+### Security
+
+- Updated `better-auth` (account takeover via pre-account hijacking on
+  emailed-code sign-in) and `@hono/node-server` (an unauthenticated memory
+  leak reachable through the collaboration socket).
+
 ## [0.4.1] - 2026-08-24
 
 ### Added

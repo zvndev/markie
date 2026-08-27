@@ -143,6 +143,17 @@ body {
     inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent);
 }
 
+/* A popover that opens on top of a card needs to read as being in front of it.
+   That is the shadow's job here, not the border's: this used to also darken the
+   edge, which made one element in the app outlined more heavily than everything
+   around it. Elevation is depth, and depth is shadow. */
+.markie-menu-panel.markie-menu-raised {
+  box-shadow:
+    0 12px 26px color-mix(in srgb, #000 30%, transparent),
+    0 2px 6px color-mix(in srgb, #000 18%, transparent),
+    inset 0 1px color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
 .markie-overlay-panel:focus-within {
   box-shadow:
     0 18px 44px color-mix(in srgb, #000 26%, transparent),
@@ -379,7 +390,7 @@ body {
   font-weight: 700;
   margin: 1.5em 0 0.6em;
   padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--doc-rule);
   letter-spacing: 0;
   overflow-wrap: anywhere;
 }
@@ -389,7 +400,7 @@ body {
   font-weight: 650;
   margin: 1.4em 0 0.5em;
   padding-bottom: 0.25em;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--doc-rule);
   letter-spacing: 0;
   overflow-wrap: anywhere;
 }
@@ -481,7 +492,7 @@ body {
   font-size: 0.88em;
   padding: 0.2em 0.4em;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--doc-rule);
   border-radius: 5px;
   color: var(--status-yellow);
 }
@@ -490,7 +501,7 @@ body {
   margin: 1em 0;
   padding: 1em 1.2em;
   background: var(--surface) !important;
-  border: 1px solid var(--border);
+  border: 1px solid var(--doc-rule);
   border-radius: 8px;
   overflow-x: auto;
   max-width: 100%;
@@ -510,7 +521,7 @@ body {
   margin: 2em 0;
   border: none;
   height: 1px;
-  background: var(--border);
+  background: var(--doc-rule);
 }
 
 .markdown-body img {
@@ -533,7 +544,7 @@ body {
   text-align: left;
   padding: 0.6em 1em;
   background: var(--surface);
-  border-bottom: 2px solid var(--border);
+  border-bottom: 2px solid var(--doc-rule);
   font-weight: 600;
   font-size: 0.85em;
   text-transform: uppercase;
@@ -543,7 +554,7 @@ body {
 
 .markdown-body tbody td {
   padding: 0.55em 1em;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--doc-rule);
 }
 
 .markdown-body tbody tr:hover {
@@ -620,9 +631,13 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* The gutter's edge runs the full height of the text you are reading, which
+   makes it the longest continuous line in the app. At the card-border weight
+   it reads as a wall down the middle of the document, so it takes the quiet
+   document rule like every other line drawn inside the reading surface. */
 .cm-editor .cm-gutters {
   background: var(--background) !important;
-  border-right: 1px solid var(--border) !important;
+  border-right: 1px solid var(--doc-rule) !important;
   color: var(--muted) !important;
 }
 

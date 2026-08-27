@@ -57,9 +57,14 @@ export const docs = new Hono();
 docs.get("/", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
-  // Sweep any invites addressed to this email that predate / postdate signup.
+  // Sweep any invites addressed to this email, but only once the caller has
+  // PROVEN the address. Without the emailVerified check this route was a
+  // takeover path in its own right: register someone else's address, list your
+  // documents, and every invite waiting for them became yours.
   try {
-    if (user.email) claimPendingInvites(user.email, user.id);
+    if (user.email && user.emailVerified) {
+      claimPendingInvites(user.email, user.id);
+    }
   } catch (err) {
     console.error("claim-on-list failed:", err);
   }

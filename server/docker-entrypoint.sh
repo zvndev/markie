@@ -12,6 +12,13 @@ if [ -n "$B2_BUCKET" ] && [ -n "$B2_KEY_ID" ]; then
     -config /etc/litestream.yml "$DB_PATH" || true
 fi
 
+# Must run BEFORE the auth migration. better-auth 1.7 refuses to add its new
+# required `issuer` column to a populated `account` table, which means an
+# existing deployment cannot boot at all until every row has a correct value.
+# The refusal is right; this supplies what it is asking for.
+echo "backfilling account issuer if needed"
+node --experimental-strip-types src/backfill-issuer.ts
+
 echo "migrating auth schema"
 node --experimental-strip-types src/migrate.ts
 

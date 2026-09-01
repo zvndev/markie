@@ -48,12 +48,12 @@ export function ActivityBar({
       </NavButton>
       <div className="w-6 h-px bg-border my-1" />
 
-      <NavButton label="Library — recent & files (⌘L)" active={isActive("library")} onClick={() => onSelectView("library")}>
+      <NavButton label="Library: recent and files (⌘L)" active={isActive("library")} onClick={() => onSelectView("library")}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
         </svg>
       </NavButton>
-      <NavButton label="Projects — your work, organized (⇧⌘L)" active={isActive("projects")} onClick={() => onSelectView("projects")}>
+      <NavButton label="Projects: your work, organized (⇧⌘L)" active={isActive("projects")} onClick={() => onSelectView("projects")}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <rect x="3" y="3" width="7" height="7" rx="1" />
           <rect x="14" y="3" width="7" height="7" rx="1" />
@@ -114,7 +114,7 @@ export function ActivityBar({
 
       <button
         onClick={onAccount}
-        title={user ? `${user.name || user.email} — Account` : "Sign in"}
+        title={user ? `${user.name || user.email} (Account)` : "Sign in"}
         aria-label={user ? "Account" : "Sign in"}
         className="mt-0.5 w-8 h-8 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
@@ -151,20 +151,21 @@ function NavButton({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={label}
-      aria-label={label}
-      className={`relative w-8 h-8 rounded-md flex items-center justify-center transition-colors ${
-        active
-          ? "bg-accent text-foreground"
-          : "text-muted hover:text-foreground hover:bg-accent/40"
-      } disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted`}
-    >
-      {active && <span className="absolute left-[-6px] top-1.5 bottom-1.5 w-0.5 rounded-full bg-foreground" />}
-      {children}
-    </button>
+    <RailTip label={label}>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={label}
+        className={`relative w-8 h-8 rounded-md flex items-center justify-center transition-colors ${
+          active
+            ? "bg-accent text-foreground"
+            : "text-muted hover:text-foreground hover:bg-accent/40"
+        } disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted`}
+      >
+        {active && <span className="absolute left-[-6px] top-1.5 bottom-1.5 w-0.5 rounded-full bg-foreground" />}
+        {children}
+      </button>
+    </RailTip>
   );
 }
 
@@ -179,13 +180,40 @@ function IconButton({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      className="w-8 h-8 rounded-md flex items-center justify-center transition-colors text-muted hover:text-foreground hover:bg-accent/40"
-    >
+    <RailTip label={label}>
+      <button
+        onClick={onClick}
+        aria-label={label}
+        className="w-8 h-8 rounded-md flex items-center justify-center transition-colors text-muted hover:text-foreground hover:bg-accent/40"
+      >
+        {children}
+      </button>
+    </RailTip>
+  );
+}
+
+// The rail is a column of bare icons, and an icon only teaches itself if its
+// name arrives while you are still deciding whether to click. The native
+// `title` attribute waits roughly a second, which is comfortably long enough to
+// click the wrong destination first and be surprised by where you land. This
+// says the name immediately instead, on hover and on keyboard focus.
+//
+// `title` is deliberately gone rather than kept alongside: leaving it produces
+// two tooltips saying the same thing a second apart. The name still reaches
+// assistive technology through the button's own aria-label, so nothing is lost
+// by dropping it.
+function RailTip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="group relative flex items-center justify-center">
       {children}
-    </button>
+      <span
+        role="tooltip"
+        // Pointer events off so the tooltip can never sit between the cursor
+        // and the button it describes.
+        className="markie-rail-tip pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-surface-2 px-2 py-1 text-[11.5px] leading-none text-foreground opacity-0 shadow-lg transition-opacity duration-75 group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        {label}
+      </span>
+    </div>
   );
 }

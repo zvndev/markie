@@ -36,7 +36,7 @@ describe("ActivityBar", () => {
     render(<ActivityBar {...props()} />);
     for (const label of [
       "New file (⌘N)",
-      "Library — recent & files (⌘L)",
+      "Library: recent and files (⌘L)",
       "Browse all markdown",
       "Shared with you",
       "Skills & agent files",
@@ -73,7 +73,7 @@ describe("ActivityBar", () => {
   it("marks the open panel's view active and nothing else", () => {
     render(<ActivityBar {...props({ activeView: "shared", panelOpen: true })} />);
     const shared = screen.getByRole("button", { name: "Shared with you" });
-    const library = screen.getByRole("button", { name: "Library — recent & files (⌘L)" });
+    const library = screen.getByRole("button", { name: "Library: recent and files (⌘L)" });
     expect(shared.classList.contains("bg-accent")).toBe(true);
     expect(library.classList.contains("bg-accent")).toBe(false);
   });
@@ -106,7 +106,7 @@ describe("ActivityBar", () => {
     auth = { status: "in", user: { id: "u1", name: "Ada Lovelace", email: "ada@markie.app" } };
     render(<ActivityBar {...props()} />);
     const account = await screen.findByRole("button", { name: "Account" });
-    expect(account).toHaveAttribute("title", "Ada Lovelace — Account");
+    expect(account).toHaveAttribute("title", "Ada Lovelace (Account)");
     expect(account).toHaveTextContent("AL");
   });
 
@@ -114,7 +114,7 @@ describe("ActivityBar", () => {
     auth = { status: "in", user: { id: "u1", name: "", email: "ada@markie.app" } };
     render(<ActivityBar {...props()} />);
     const account = await screen.findByRole("button", { name: "Account" });
-    expect(account).toHaveAttribute("title", "ada@markie.app — Account");
+    expect(account).toHaveAttribute("title", "ada@markie.app (Account)");
     expect(account).toHaveTextContent("AM");
   });
 
@@ -159,9 +159,43 @@ describe("the Projects button", () => {
 
   it("says what it is and which key opens it", () => {
     render(<ActivityBar {...props()} />);
-    expect(screen.getByRole("button", { name: /^Projects/ })).toHaveAttribute(
-      "title",
-      expect.stringContaining("⇧⌘L")
+    expect(screen.getByRole("button", { name: /^Projects/ })).toHaveAccessibleName(
+      expect.stringContaining("⇧⌘L") as unknown as string
     );
+  });
+
+  it("shows its name without waiting for the browser's tooltip delay", () => {
+    // The whole rail is bare icons. `title` takes about a second to appear,
+    // which is long enough to click the wrong destination and be surprised by
+    // where you land, so the name is drawn as a real element instead.
+    render(<ActivityBar {...props()} />);
+    const button = screen.getByRole("button", { name: /^Projects/ });
+    expect(button).not.toHaveAttribute("title");
+
+    const tip = screen
+      .getAllByRole("tooltip", { hidden: true })
+      .find((el) => el.textContent?.startsWith("Projects"));
+    expect(tip).toBeDefined();
+    expect(tip!.textContent).toContain("⇧⌘L");
+  });
+
+  it("names every rail destination in its tooltip, not just Projects", () => {
+    render(<ActivityBar {...props()} />);
+    const names = screen
+      .getAllByRole("tooltip", { hidden: true })
+      .map((el) => el.textContent?.trim() ?? "");
+    for (const expected of ["New file", "Library", "Projects", "Browse", "Shared", "Skills"]) {
+      expect(names.some((n) => n.startsWith(expected))).toBe(true);
+    }
+  });
+
+  it("keeps user-facing rail text free of em dashes", () => {
+    // Kirby's rule: no em dashes in anything a reader sees rendered.
+    render(<ActivityBar {...props()} />);
+    const tips = screen.getAllByRole("tooltip", { hidden: true });
+    expect(tips.length).toBeGreaterThan(0);
+    for (const tip of tips) {
+      expect(tip.textContent ?? "").not.toContain("\u2014");
+    }
   });
 });

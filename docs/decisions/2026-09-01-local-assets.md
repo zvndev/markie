@@ -1,6 +1,6 @@
 # Local images, video and files in Markie
 
-**Status:** proposed, awaiting your call **Date:** 2026-09-01
+**Status:** shipped in 40e3b6f, all four decisions **Date:** 2026-09-01
 
 Everything below was measured against the running app, not read off the source. Where I say something is broken, I watched it break.
 
@@ -136,17 +136,21 @@ wants a conscious decision rather than being discovered by a client.
 
 ---
 
-## The one thing this leaves out
+## The one thing this left out, and what was done about it
 
-Everything above is scoped to the document's **own folder**. A repository that keeps
-`docs/report.md` alongside a top-level `assets/logo.png` will still show a broken image,
-because `../assets/logo.png` climbs out.
+The draft scoped everything to the document's **own folder**, which would have left a
+repository that keeps `docs/report.md` alongside a top-level `assets/logo.png` showing a
+broken image, because `../assets/logo.png` climbs out.
 
-That is already true of exports today, so this changes nothing, but you will hit it. The
-fix is to widen the boundary to the nearest enclosing workspace root or git repository
-root. I have not proposed it here because widening the viewer's reach and the exporter's
-reach are the same decision and should be made once, together, deliberately, rather than
-because a picture did not show up.
+That was widened before shipping, on your "more richness is better", and widened in both
+the viewer and the exporter at once so they cannot disagree: a document may reach the
+folder it was opened from, **and** any of your workspace roots. Nothing else. The
+workspace root is already the boundary the app uses to decide what it may read, so this
+adds no new trust, and `electron/local-assets.js` is the only place that knows the rule.
+
+Video was shipped as deferred, as recommended. It is the only one of the four that would
+have added a new node to the sanitize schema, and the only one that cannot be inlined
+into an export without producing a file nobody can email.
 
 ---
 

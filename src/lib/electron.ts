@@ -156,6 +156,12 @@ export interface ElectronAPI {
   onMenuLibrary(cb: () => void): Unsubscribe;
   onDeepLink(cb: (url: string) => void): Unsubscribe;
   openExternal(url: string): Promise<void>;
+  // A link in a document to a file beside it. Resolved and access-checked in
+  // main, then handed to the OS; the renderer never gets a path back.
+  openLocalFile(payload: {
+    href: string;
+    docDir: string | null;
+  }): Promise<{ ok: boolean; error?: string }>;
   syncConfig(cfg: { token: string | null; serverURL: string }): Promise<void>;
   // Hand the sync engine the share role the renderer resolved for a cloud doc,
   // so a push it cannot land is refused here instead of coming back as a 403.

@@ -81,7 +81,9 @@
     "crash:check": "node scripts/crash-check.mjs",
     "disk:check": "node scripts/disk-change-check.mjs",
     "rail:check": "node scripts/rail-tip-check.mjs",
-    "projects:check": "node scripts/projects-panel-check.mjs"
+    "projects:check": "node scripts/projects-panel-check.mjs",
+    "pdf:check": "node --experimental-strip-types scripts/pdf-export-check.mjs",
+    "assets:check": "node scripts/local-assets-check.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

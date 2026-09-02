@@ -20,6 +20,17 @@ const MATHML = ["math","semantics","annotation","mrow","mi","mo","mn","ms","mtex
 const SVG = ["svg","path","line","g","defs","use","rect","polyline"];
 const sanitizeSchema = {
   ...defaultSchema,
+  // defaultSchema.protocols.src is ["http", "https"], which drops the src off
+  // an inlined image and leaves an <img alt> pointing at nothing. Every export
+  // route runs through here, so a self-contained document came out of Export
+  // HTML and out of the PDF with its pictures gone. data: is safe in an image
+  // position: a script inside an SVG does not run when the SVG is loaded
+  // through <img>, and img-src already allows data: in the app CSP and in the
+  // share renderer's own policy.
+  protocols: {
+    ...defaultSchema.protocols,
+    src: [...(defaultSchema.protocols?.src ?? []), "data"],
+  },
   tagNames: [...(defaultSchema.tagNames ?? []), "span", "div", ...MATHML, ...SVG],
   attributes: {
     ...defaultSchema.attributes,

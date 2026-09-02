@@ -7,6 +7,7 @@ import { TableKit } from "@tiptap/extension-table";
 import { TaskList } from "@tiptap/extension-task-list";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { Image } from "@tiptap/extension-image";
+import { resolveAssetSrc } from "@/lib/asset-url";
 import { Placeholder } from "@tiptap/extension-placeholder";
 import { Highlight } from "@tiptap/extension-highlight";
 import { MarkieKeymap } from "@/lib/rich-keymap";
@@ -20,6 +21,35 @@ import {
 import { Markdown } from "tiptap-markdown";
 import type { AnyExtension } from "@tiptap/react";
 
+// The src that goes into the DOM is not the src that stays in the document.
+// `demo/shot.png` has to become an addressable URL to render at all, but the
+// node keeps what the author wrote, so serializing back to markdown gives the
+// file its own relative path again rather than an absolute one nobody typed.
+const LocalImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      src: {
+        default: null,
+        parseHTML: (element: HTMLElement) =>
+          element.getAttribute("data-markie-src") ?? element.getAttribute("src"),
+        // Both attributes are emitted: `src` for the browser to load, and the
+        // original alongside it so that re-parsing this HTML (a copy, a paste,
+        // a round trip through the clipboard) recovers what was written rather
+        // than the resolved address.
+        renderHTML: (attributes: Record<string, unknown>) => {
+          const original = typeof attributes.src === "string" ? attributes.src : null;
+          if (!original) return {};
+          const resolved = resolveAssetSrc(original);
+          return resolved === original
+            ? { src: original }
+            : { src: resolved, "data-markie-src": original };
+        },
+      },
+    };
+  },
+});
+
 export function richBaseExtensions(
   opts: { collab?: boolean } = {}
 ): AnyExtension[] {
@@ -29,7 +59,12 @@ export function richBaseExtensions(
     TableKit.configure({ table: { resizable: false } }),
     TaskList,
     TaskItem.configure({ nested: true }),
-    Image,
+    // allowBase64 defaults to false, and when it is false the extension's own
+    // parse rule is `img[src]:not([src^="data:"])` — a self-contained document
+    // with its pictures inlined lost every one of them on the way into the
+    // editor, silently, with an empty paragraph where each had been. That is
+    // the format a report arrives in when it has to travel as one file.
+    LocalImage.configure({ allowBase64: true }),
     Placeholder.configure({ placeholder: "Start typing or open a file" }),
     MarkieKeymap,
     // Formatting markdown has no syntax for. These serialize as inline HTML,

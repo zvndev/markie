@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onMenuSettings: (callback) => subscribe("menu-settings", callback),
   onDeepLink: (callback) => subscribe("deep-link", callback, (url) => url),
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  openLocalFile: (payload) => ipcRenderer.invoke("open-local-file", payload),
   syncConfig: (cfg) => ipcRenderer.invoke("sync-config", cfg),
   syncDocRole: (args) => ipcRenderer.invoke("sync-doc-role", args),
   registryTrack: (args) => ipcRenderer.invoke("registry-track", args),

@@ -54,6 +54,17 @@ function createFileGrants({
     return canonicalWorkspaceRoots().some((root) => contains(root, normalized));
   };
 
+  // Which folders a document is allowed to show pictures from. Deliberately
+  // derived from grants rather than declared by the renderer: a folder is
+  // reachable because the user opened a document out of it, which already went
+  // through canRead above. Nothing new is trusted by adding assets.
+  const assetRoots = () => {
+    const dirs = new Set();
+    for (const granted of grantedFiles) dirs.add(path.dirname(granted));
+    for (const root of canonicalWorkspaceRoots()) dirs.add(root);
+    return [...dirs];
+  };
+
   const hasExactFileGrant = (target) => {
     const normalized = normalizeExisting(target);
     return !!normalized && grantedFiles.has(key(normalized));
@@ -123,6 +134,7 @@ function createFileGrants({
     moveGrant,
     isInWorkspaceRoot,
     hasExactFileGrant,
+    assetRoots,
   };
 }
 

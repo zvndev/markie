@@ -19,7 +19,8 @@ const { shareBaseFromSrc } = require("./share-origin");
 const { classifyDeepLink, cloudDocId } = require("./deep-links");
 const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
-const { buildAppCsp } = require("./csp");
+const { ASSET_SCHEME, buildAppCsp } = require("./csp");
+const localAssets = require("./local-assets");
 const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
 const { guardedLogger } = require("./updater-logging");
 const {
@@ -211,6 +212,14 @@ protocol.registerSchemesAsPrivileged([
   {
     scheme: "app",
     privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
+  // Pictures that live next to the document. Standard so the URL parses
+  // predictably; secure so it is not mixed content on the app:// origin.
+  // Deliberately not fetch-enabled: a document displays these, it never reads
+  // them, and there is no reason to hand script a way to pull bytes out.
+  {
+    scheme: ASSET_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: false },
   },
 ]);
 
@@ -806,6 +815,50 @@ function registerProtocol() {
   });
 }
 
+// Serve a picture that lives beside the open document.
+//
+// The renderer resolves a document's relative image against the document's own
+// folder and asks for it here by absolute path. The path is not trusted for
+// being in the URL: local-assets.js decides, against the folders the user has
+// actually opened documents from plus their workspace roots, with realpath on
+// both sides so a symlink cannot climb out. Anything else is 403, including a
+// traversal, a file with the wrong extension, and a path that simply is not in
+// scope. The exporter answers to the same module, so what you see is what
+// travels.
+function registerAssetProtocol() {
+  protocol.handle(ASSET_SCHEME, (request) => {
+    let requested;
+    try {
+      // The path is one percent-encoded segment, so the standard scheme's own
+      // leading slash comes off before decoding. Leave it on and an absolute
+      // path arrives with two slashes in front of it, which resolves to
+      // somewhere real on POSIX and nowhere at all on Windows.
+      requested = decodeURIComponent(new URL(request.url).pathname.replace(/^\//, ""));
+    } catch {
+      return new Response("Bad request", { status: 400 });
+    }
+    // A standard scheme keeps the leading slash of the path; on Windows the
+    // real path starts with a drive letter, so it has to come back off.
+    if (process.platform === "win32" && /^\/[a-z]:/i.test(requested)) {
+      requested = requested.slice(1);
+    }
+    if (!path.isAbsolute(requested)) return new Response("Forbidden", { status: 403 });
+
+    // Bounded only by the folders the user has actually opened documents from,
+    // plus their workspace roots. Nothing the request itself carries is allowed
+    // to widen that: passing the requested file's own directory as a bound
+    // makes every path contained in itself, which is a check that passes
+    // everything. It did, once, for exactly one test run.
+    if (!localAssets.imageMimeFor(requested)) return new Response("Forbidden", { status: 403 });
+    const real = localAssets.allowedRealPath(requested, { roots: fileGrants.assetRoots() });
+    // Checked again on the realpath: a symlink must not be able to swap a .png
+    // for something else between the two.
+    if (!real || !localAssets.imageMimeFor(real)) return new Response("Forbidden", { status: 403 });
+
+    return net.fetch(url.pathToFileURL(real).toString());
+  });
+}
+
 // Strict CSP for the packaged app:// renderer. A backstop behind the markdown
 // sanitizer. Not applied in dev (Next HMR needs a looser policy).
 function setupCSP() {
@@ -1021,7 +1074,9 @@ function inlineExportImages(html, docPath) {
   if (!docPath) return text;
   try {
     const { inlineLocalImages } = require("./inline-images");
-    return inlineLocalImages(text, path.dirname(String(docPath)));
+    return inlineLocalImages(text, path.dirname(String(docPath)), {
+      roots: fileGrants.assetRoots(),
+    });
   } catch (err) {
     logCrash("export-html-inline-failed", err);
     return text;
@@ -1343,6 +1398,35 @@ handle("doc-open-shared", async (_event, { cloudId, suggestedName }) => {
   fileGrants.grantFile(dest);
   openLocalFile(dest);
   return { ok: true, path: dest };
+});
+
+// IPC: open a file the document links to, in whatever the OS opens it with.
+//
+// `[the spec](spec.pdf)` did nothing at all before this: the link resolved
+// against the app's own origin, the window-open handler forwards only http(s),
+// and a click that is silently discarded reads as a broken app. Same access
+// rule as the pictures, so a link cannot reach further than an image can, and
+// shell.openPath rather than shell.openExternal because openExternal would
+// honour whatever scheme the string happens to carry.
+handle("open-local-file", async (_event, { href, docDir } = {}) => {
+  if (!docDir) return { ok: false, error: "Save this document first, then the link will work." };
+
+  const target = localAssets.candidatePath(href, docDir);
+  if (!target) return { ok: false, error: "That link does not point at a file." };
+
+  // docDir resolved the relative href above; it does not authorise anything.
+  // The bounds are the grants, same as the pictures.
+  const allowed = localAssets.allowedRealPath(target, { roots: fileGrants.assetRoots() });
+  if (!allowed) {
+    return {
+      ok: false,
+      error: "Markie only opens files that sit beside the document or inside your workspace.",
+    };
+  }
+
+  const failure = await shell.openPath(allowed);
+  // openPath answers with a message on failure and an empty string on success.
+  return failure ? { ok: false, error: failure } : { ok: true };
 });
 
 // IPC: open an https URL in the system browser (OAuth flows)
@@ -2425,6 +2509,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     registerProtocol();
+    registerAssetProtocol();
     setupCSP();
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
     // The menu is built after the first file may already have been opened.

@@ -35,6 +35,7 @@ import {
   type PeerUser,
 } from "@/lib/collab";
 import { CommentLayer } from "@/components/comments";
+import { handleDocumentClick } from "@/lib/local-link";
 import { findHighlightPlugin, findPluginKey } from "@/lib/rich-find";
 
 interface RichViewProps {
@@ -541,20 +542,32 @@ export function RichView({
   // Comment gutter overlay needs the scroll container element
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
 
+  // Why a link would not open, said out loud. The whole point of handling
+  // these clicks is that silence reads as breakage.
+  const [linkError, setLinkError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!linkError) return;
+    const t = setTimeout(() => setLinkError(null), 6000);
+    return () => clearTimeout(t);
+  }, [linkError]);
+
   return (
     <div className="h-full relative">
-      {collabError && (
+      {(collabError || linkError) && (
         <div
           role="status"
           className="absolute top-2 left-1/2 -translate-x-1/2 z-20 max-w-[90%] rounded-md border border-border/70 bg-background/95 px-2.5 py-1.5 text-[11.5px] text-foreground shadow-sm"
         >
-          {collabError}
+          {collabError || linkError}
         </div>
       )}
       {editor && inTable && !locked && <TableBar editor={editor} />}
       <div ref={setScrollEl} className="markie-document-scroll h-full overflow-y-auto relative">
         <article
           data-markie-rich-canvas
+          // Capture phase, so this runs before TipTap's own link handling
+          // hands a relative href to window.open, where it is discarded.
+          onClickCapture={(e) => handleDocumentClick(e.nativeEvent, setLinkError)}
           className="markdown-body markie-document-canvas mx-auto"
           style={{
             width: "min(100%, var(--doc-width, 768px))",

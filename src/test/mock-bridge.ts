@@ -149,6 +149,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     onDeepLink: vi.fn(subscribe("onDeepLink")),
 
     openExternal: vi.fn(async () => undefined),
+    openLocalFile: vi.fn(async () => ({ ok: true })),
     syncConfig: vi.fn(async () => undefined),
     syncDocRole: vi.fn(async () => undefined),
 

@@ -2,6 +2,11 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
+// The scheme the viewer serves a document's own pictures over. Named here
+// because the CSP has to allow it and main has to register it, and two string
+// literals that must match is one string literal too many.
+const ASSET_SCHEME = "markie-asset";
+
 const INLINE_SCRIPT_RE = /<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
 
 function inlineScriptHashesForHtml(html) {
@@ -51,7 +56,7 @@ function buildAppCsp(outDir) {
     "default-src 'self'",
     scriptSrcDirective(scriptHashes),
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: https:",
+    `img-src 'self' data: https: ${ASSET_SCHEME}:`,
     "font-src 'self' data:",
     "connect-src 'self' https://api-production-602f.up.railway.app wss://api-production-602f.up.railway.app",
     "base-uri 'none'",
@@ -61,6 +66,7 @@ function buildAppCsp(outDir) {
 }
 
 module.exports = {
+  ASSET_SCHEME,
   buildAppCsp,
   collectInlineScriptHashes,
   inlineScriptHashesForHtml,

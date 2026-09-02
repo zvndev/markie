@@ -14,6 +14,10 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Electron main-process code is CommonJS, not part of the Next app
     "electron/**",
+    // A check that drives Electron needs an Electron main entry, and that has
+    // to be CommonJS: an .mjs main starts and then never reaches whenReady in
+    // this version. Same reason as electron/ above, different folder.
+    "scripts/**/*.cjs",
     "dist/**",
   ]),
 ]);

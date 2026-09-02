@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Toolbar } from "@/components/toolbar";
 import { Editor } from "@/components/editor";
 import { RichView, type FlushRich } from "@/components/rich-view";
@@ -107,6 +107,7 @@ import {
 } from "@/lib/electron";
 import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { pathDirname } from "@/lib/path-utils";
+import { setAssetBaseDir } from "@/lib/asset-url";
 import { useDocument, type EditInput } from "@/lib/use-document";
 import { useSaveGuard, type SaveGuard } from "@/lib/use-save-guard";
 import { useDocumentExport } from "@/lib/use-export";
@@ -274,6 +275,14 @@ export default function Home() {
   useEffect(() => {
     docRef.current = { filePath, content, isDirty };
   }, [filePath, content, isDirty]);
+
+  // Where a document's own pictures are, so `![](demo/shot.png)` resolves
+  // against the folder the file came from instead of against the app's origin.
+  // Set before paint: an effect that ran after would render every image once
+  // against the wrong base and only then correct itself.
+  useLayoutEffect(() => {
+    setAssetBaseDir(filePath ? pathDirname(filePath) : null);
+  }, [filePath]);
 
   // Whether rich edits may reach this document. Rendering rich is always safe,
   // so the verdict is resolved after first paint rather than on the open path;

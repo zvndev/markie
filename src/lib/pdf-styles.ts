@@ -4,20 +4,49 @@
 const shared = `
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
+  /* The page margin box cannot be painted by the document. With
+     a 2cm page margin the dark theme filled only the text area and
+     every page came out as a dark rectangle floating in a white frame, which
+     is what a dark export actually looked like. Chromium propagates neither
+     the body background nor the html background into that margin box, and a
+     fixed-position backdrop is clipped to the page area, so all three of the
+     obvious fixes do nothing. Measured, not guessed.
+
+     So the page has no margin at all and the inset is padding on the body,
+     which the background does cover. box-decoration-break: clone is what
+     makes that padding repeat on the second page and every page after it;
+     without it padding applies once at the top of the first fragment and once
+     at the bottom of the last, and page two starts with text against the paper
+     edge. Chromium honours it here. See scripts/pdf-export-check.mjs, which
+     prints a two-page document and reads the corner pixels back. */
   @page {
     size: A4;
-    margin: 2cm 2.2cm;
+    margin: 0;
   }
 
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     font-size: 14px;
     line-height: 1.75;
+    padding: 2cm 2.2cm;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
 
+  /* A line stranded alone at a page boundary reads as a mistake in the export
+     rather than as prose. */
+  .markdown-body p, .markdown-body li { orphans: 2; widows: 2; }
+
   .markdown-body { max-width: 100%; }
+
+  /* Export HTML is read in a browser as often as it is printed, and a body
+     the width of a monitor is a body nobody finishes a line of. Screen only:
+     paper already has its measure from the page size. */
+  @media screen {
+    body { max-width: 46em; margin: 0 auto; }
+  }
 
   .markdown-body h1 {
     font-size: 2em;

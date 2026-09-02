@@ -115,7 +115,7 @@ const REQUIRED_WINDOWS_WORKFLOW_PATHS = [
 ];
 
 const REQUIRED_ELECTRON_MAIN_SNIPPETS = [
-  'const { buildAppCsp } = require("./csp");',
+  'const { ASSET_SCHEME, buildAppCsp } = require("./csp");',
   'const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");',
   'let updateState = "idle"',
   "let manualUpdateCheck = false",

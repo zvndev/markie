@@ -23,14 +23,16 @@ const send = (method, params) =>
 const evaluate = async (expression) =>
   (await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }))?.result?.value;
 
-// Reload first, or this measures whatever CSS was loaded when the window
-// opened rather than what is on disk now. Skipping this produced a false pass
-// that hid a real regression.
-// The renderer mounts asynchronously; wait for the rail rather than assume it.
+// Relaunch the app before running this, do not reload the window: rebuilding
+// does not reach an already-open renderer, and measuring the CSS that was
+// loaded when the window opened produced a false pass that hid a real
+// regression. The renderer mounts asynchronously, so wait for the rail rather
+// than assume it. Browse is the subject because it is a plain panel button
+// with nothing special about it; any rail item would do.
 let box = null;
 for (let i = 0; i < 100 && !box; i++) {
   box = await evaluate(`(() => {
-    const b = document.querySelector('[aria-label^="Projects"]');
+    const b = document.querySelector('[aria-label^="Browse"]');
     if (!b) return null;
     const r = b.getBoundingClientRect();
     return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
@@ -39,14 +41,8 @@ for (let i = 0; i < 100 && !box; i++) {
 }
 if (!box) { console.log("RESULT " + JSON.stringify({ error: "rail button never appeared" })); process.exit(1); }
 
-const _unused = await evaluate(`(() => {
-  const b = document.querySelector('[aria-label^="Projects"]');
-  const r = b.getBoundingClientRect();
-  return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
-})()`);
-
 const tipOpacity = () => evaluate(`(() => {
-  const t = [...document.querySelectorAll('[role="tooltip"]')].find(e => (e.textContent||'').trim().startsWith('Projects'));
+  const t = [...document.querySelectorAll('[role="tooltip"]')].find(e => (e.textContent||'').trim().startsWith('Browse'));
   return t ? getComputedStyle(t).opacity : 'missing';
 })()`);
 
@@ -68,7 +64,7 @@ await new Promise((r) => setTimeout(r, 400));
 const afterClick = await tipOpacity();
 
 // 3. Keyboard focus must still show it, because that is who the label is for.
-await evaluate(`document.querySelector('[aria-label^="Projects"]').focus({ focusVisible: true })`);
+await evaluate(`document.querySelector('[aria-label^="Browse"]').focus({ focusVisible: true })`);
 await send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
 await new Promise((r) => setTimeout(r, 200));
 

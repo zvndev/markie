@@ -12,28 +12,20 @@
 
 // The views that own a side panel...
 export type PanelView = "library" | "browse" | "shared" | "skills";
-// ...one that takes the document area over entirely, because organizing needs
-// room the side panel does not have. The Library panel stays exactly as it
-// was: a full view is additional navigation, never a replacement.
-export type FullView = "projects";
 // ...and everything the activity bar can select, which includes one that owns
 // neither: the formatting rail.
-export type LeftView = PanelView | "edit" | FullView;
+//
+// There was briefly a third kind, a view that took the document area over
+// entirely, added so Projects could spread out. It was removed: a full-width
+// list of every project is a page you visit, and organizing is something you
+// do while reading, which is what a side panel is for. Projects lives in the
+// Library panel now.
+export type LeftView = PanelView | "edit";
 
 export const PANEL_VIEWS: PanelView[] = ["library", "browse", "shared", "skills"];
 
 export function isPanelView(view: LeftView): view is PanelView {
   return (PANEL_VIEWS as LeftView[]).includes(view);
-}
-
-export function isFullView(view: LeftView): view is FullView {
-  return view === "projects";
-}
-
-// The document (editor panes, doc toolbar) renders except while a full-width
-// view holds the document area.
-export function showDocumentArea(state: LeftState): boolean {
-  return !isFullView(state.view);
 }
 
 export interface LeftState {
@@ -71,9 +63,9 @@ export function selectLeftView(
   clicked: LeftView,
   previousPanel: LeftView = "library"
 ): { view: LeftView; panelOpen: boolean } {
-  // A full view and the pencil share one shape: neither has a panel to close,
-  // so clicking either a second time returns you to the last panel you had.
-  if (clicked === "edit" || isFullView(clicked)) {
+  // The pencil has no panel to close, so clicking it a second time returns you
+  // to the last panel you had.
+  if (clicked === "edit") {
     if (current.view === clicked) return { view: previousPanel, panelOpen: true };
     return { view: clicked, panelOpen: false };
   }

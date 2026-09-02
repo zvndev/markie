@@ -34,12 +34,12 @@ function renderLibrary(
     signedIn?: boolean;
     overrides?: Partial<ElectronAPI>;
     props?: Partial<React.ComponentProps<typeof Library>>;
-    // The Library is Recent and Folders, one flat row. Cases below say which
+    // The Library is Recent and Projects, one flat row. Cases below say which
     // one they are about rather than depending on a default.
-    tab?: "recent" | "folders" | "default";
+    tab?: "recent" | "projects" | "default";
   } = {}
 ) {
-  if (tab !== "default") localStorage.setItem("markie.libtab.v3", tab);
+  if (tab !== "default") localStorage.setItem("markie.libtab.v4", tab);
   const api = installBridge({
     libraryState: vi.fn(async () => ({ signedIn, items })),
     wsRoots: vi.fn(async () => ["/Users/test/Markie"]),
@@ -269,58 +269,65 @@ describe("which tab opens", () => {
     expect(recent.className).toContain("bg-accent");
   });
 
-  it("keeps someone who was on the folder tree on the folder tree", async () => {
-    // Files + Folders was the same content under a different label, so nothing
-    // about their landing should move.
-    localStorage.setItem("markie.libtab.v2", "files");
-    localStorage.setItem("markie.filesview.v1", "folders");
+  it("moves someone who was on Folders onto Projects, the same slot renamed", async () => {
+    // That tab listed real directories. It holds Markie's own structure now,
+    // but it is still the not-Recent tab, and someone who picked not-Recent
+    // must not be dropped back on Recent.
+    localStorage.setItem("markie.libtab.v3", "folders");
     renderLibrary([item()], { tab: "default" });
-    const folders = await screen.findByRole("button", { name: "Folders" });
-    expect(folders.className).toContain("bg-accent");
+    const projects = await screen.findByRole("button", { name: "Projects" });
+    expect(projects.className).toContain("bg-accent");
   });
 
-  it("does not strand someone whose tab moved out of the panel", async () => {
-    // Files + Projects is now its own destination in the left rail. Recent is
-    // the Library's own answer; a tab that no longer exists is not an option.
+  it("moves either half of the old Files tab onto Projects", async () => {
     localStorage.setItem("markie.libtab.v2", "files");
     localStorage.setItem("markie.filesview.v1", "projects");
     renderLibrary([item()], { tab: "default" });
-    const recent = await screen.findByRole("button", { name: "Recent" });
-    expect(recent.className).toContain("bg-accent");
+    const projects = await screen.findByRole("button", { name: "Projects" });
+    expect(projects.className).toContain("bg-accent");
   });
 
   it("remembers the tab under the new key once the user picks one", async () => {
     renderLibrary([item()], { tab: "default" });
-    await userEvent.click(await screen.findByRole("button", { name: "Folders" }));
-    expect(localStorage.getItem("markie.libtab.v3")).toBe("folders");
+    await userEvent.click(await screen.findByRole("button", { name: "Projects" }));
+    expect(localStorage.getItem("markie.libtab.v4")).toBe("projects");
   });
 });
 
 describe("the Library's one row of tabs", () => {
   it("has exactly two sections and nothing nested under them", async () => {
     // The panel used to spend two of its first three rows on navigation: you
-    // picked Files, then picked Projects inside it. Projects has its own rail
-    // destination now, and the second row is gone rather than restyled.
+    // picked Files, then picked Projects inside it. Projects is one tab now,
+    // and the second row is gone rather than restyled.
     renderLibrary([item()], { tab: "recent" });
     const tabs = await screen.findByRole("group", { name: "Library sections" });
     expect(within(tabs).getAllByRole("button").map((b) => b.textContent)).toEqual([
       "Recent",
-      "Folders",
+      "Projects",
     ]);
     expect(screen.queryByRole("group", { name: /how to group/i })).not.toBeInTheDocument();
     expect(document.querySelector("[data-files-subview]")).toBeNull();
     expect(document.querySelector("[data-markie-projects-tree]")).toBeNull();
   });
 
-  it("shows the folder tree with its file operations intact", async () => {
-    renderLibrary([item()], { tab: "folders" });
-    expect(await screen.findByRole("button", { name: "Folders" })).toHaveAttribute(
+  it("shows Projects with one search over project and file names", async () => {
+    renderLibrary([item()], { tab: "projects" });
+    expect(await screen.findByRole("button", { name: "Projects" })).toHaveAttribute(
       "aria-pressed",
       "true"
     );
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /new folder/i })).toBeInTheDocument()
+      expect(screen.getByLabelText("Search projects and files")).toBeInTheDocument()
     );
+  });
+
+  it("no longer offers to make a real directory on disk", async () => {
+    // This tab used to be the filesystem, so it had New folder, rename and
+    // delete. Projects is Markie's own structure over files that never move,
+    // so there is nothing here that writes to the disk layout.
+    renderLibrary([item()], { tab: "projects" });
+    await screen.findByRole("button", { name: "Projects" });
+    expect(screen.queryByRole("button", { name: /new folder/i })).toBeNull();
   });
 
   it("offers the filter on Recent, where the list it filters is", async () => {

@@ -35,18 +35,18 @@ export async function readLibrarySnapshot(api: LibraryAPI): Promise<LibrarySnaps
 
 // ── Which Library tab opens ──
 //
-// The Library is Recent and Folders now, one flat row, and that is the whole
+// The Library is Recent and Projects, one flat row, and that is the whole
 // list. Projects used to be a third thing reached by a tab inside a tab: you
 // picked Files, then picked Projects inside it, and the panel spent two rows
-// of its width explaining where you were. Projects is its own destination in
-// the left rail instead, so the nesting is gone rather than restyled.
-export type LibTab = "recent" | "folders";
+// of its width explaining where you were. Then it was a full-width page with
+// its own rail icon, which was worse: a destination you visit instead of a
+// thing you keep open beside what you are reading. It is one tab now.
+export type LibTab = "recent" | "projects";
 
-export const LIB_TAB_KEY = "markie.libtab.v3";
+export const LIB_TAB_KEY = "markie.libtab.v4";
+export const LIB_TAB_KEY_V3 = "markie.libtab.v3";
 export const LIB_TAB_KEY_V2 = "markie.libtab.v2";
 export const LIB_TAB_KEY_V1 = "markie.libtab.v1";
-// Read only by the migration below. Nothing writes it any more.
-export const FILES_SUBVIEW_KEY = "markie.filesview.v1";
 
 // localStorage throws outright in a private window or with site data blocked,
 // and a preference that cannot be read is not worth an unmounted panel.
@@ -61,22 +61,25 @@ function safeRead(readKey: (key: string) => string | null, key: string): string 
 // Nobody may be stranded on a tab that no longer exists, and nobody may be
 // moved off one that does.
 //
-//   v2 "files" + subview "folders"  -> Folders. Same tab, same content, and
-//                                      the only surface with new folder,
-//                                      rename and trash. They keep it.
-//   v2 "files" + subview "projects" -> Recent. The thing they chose moved out
-//                                      of this panel entirely; the Library's
-//                                      own default is the honest landing, and
-//                                      Projects is one rail click away.
-//   v2 "recent"                     -> Recent.
+//   v3 "folders"                    -> Projects. That tab listed directories on
+//                                      disk; it is the same slot, now holding
+//                                      Markie's own structure. Someone who
+//                                      chose "not Recent" still gets not
+//                                      Recent.
+//   v2 "files"                      -> Projects, whichever subview they were
+//                                      on inside it. Both halves of the old
+//                                      Files tab are this one tab now, so the
+//                                      subview key is not consulted at all.
+//   v2 "recent", v3 "recent"        -> Recent.
 //   nothing stored                  -> Recent, which is what the Library is
 //                                      for: what you had open lately.
 export function initialLibTab(readKey: (key: string) => string | null): LibTab {
-  const v3 = safeRead(readKey, LIB_TAB_KEY);
-  if (v3 === "recent" || v3 === "folders") return v3;
+  const v4 = safeRead(readKey, LIB_TAB_KEY);
+  if (v4 === "recent" || v4 === "projects") return v4;
+  const v3 = safeRead(readKey, LIB_TAB_KEY_V3);
+  if (v3 === "recent") return "recent";
+  if (v3 === "folders") return "projects";
   const v2 = safeRead(readKey, LIB_TAB_KEY_V2);
-  if (v2 === "files") {
-    return safeRead(readKey, FILES_SUBVIEW_KEY) === "folders" ? "folders" : "recent";
-  }
+  if (v2 === "files") return "projects";
   return "recent";
 }

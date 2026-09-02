@@ -10,7 +10,7 @@ import {
 } from "react";
 import { matchesFilter, stableOrder } from "@/lib/stable-order";
 import { getElectronAPI, type LibraryItem } from "@/lib/electron";
-import { FilesView } from "@/components/files-view";
+import { ProjectsPanelContainer } from "@/components/projects-panel";
 import { BrowseView } from "@/components/browse-view";
 import { SkillsView } from "@/components/skills-view";
 import { SharedView } from "@/components/shared-view";
@@ -83,7 +83,7 @@ export function plainErrorText(raw: string): string {
   return text;
 }
 
-// The "Library" view has one Recent/Folders toggle; the other views come from
+// The "Library" view has one Recent/Projects toggle; the other views come from
 // the left rail and have no tabs at all.
 
 const VIEW_TITLE: Record<PanelView, string> = {
@@ -208,17 +208,6 @@ export function Library({
     (text: string) => showNotice(text, "error"),
     [showNotice]
   );
-  // FilesView reports failures through this, plus a clipboard acknowledgement.
-  // It has no kind of its own, so the one success message is recognised here
-  // rather than colouring "Path copied." like a failure.
-  const filesNotice = useCallback(
-    (msg: string | null) => {
-      if (msg === null) return setNotice(null);
-      showNotice(msg, /^Path copied/.test(msg) ? "info" : "error");
-    },
-    [showNotice]
-  );
-
   // An acknowledgement has been read the moment it appears; leaving it pinned
   // to the bottom of the panel turns it into furniture. Errors stay.
   useEffect(() => {
@@ -572,7 +561,7 @@ export function Library({
             {(
               [
                 ["recent", "Recent"],
-                ["folders", "Folders"],
+                ["projects", "Projects"],
               ] as Array<[LibTab, string]>
             ).map(([t, label]) => (
               <button
@@ -627,19 +616,18 @@ export function Library({
           />
         ) : loading ? (
           <LibrarySkeleton />
-        ) : libTab === "folders" ? (
-          <FilesView
-            activePath={activePath}
+        ) : libTab === "projects" ? (
+          <ProjectsPanelContainer
             refreshKey={refreshKey}
+            activePath={activePath}
             onOpenPath={onOpenPath}
-            onNotice={filesNotice}
           />
         ) : localFiles.length === 0 &&
           myCloudOnly.length === 0 &&
           sharedCloudOnly.length === 0 ? (
           <RecentEmptyState
             onOpenFile={onOpenFile}
-            onShowFolders={() => pickTab("folders")}
+            onShowProjects={() => pickTab("projects")}
             workspace={workspace}
           />
         ) : (
@@ -804,11 +792,11 @@ function LibraryMetric({ label, value }: { label: string; value: number }) {
 
 function RecentEmptyState({
   onOpenFile,
-  onShowFolders,
+  onShowProjects,
   workspace,
 }: {
   onOpenFile: () => void;
-  onShowFolders: () => void;
+  onShowProjects: () => void;
   workspace: WorkspaceBootstrapResult | null;
 }) {
   const readyPath =
@@ -845,10 +833,10 @@ function RecentEmptyState({
             Open file
           </button>
           <button
-            onClick={onShowFolders}
+            onClick={onShowProjects}
             className="rounded-md border border-border px-2 py-1 text-[11px] text-muted hover:bg-accent/40 hover:text-foreground"
           >
-            Folders
+            Projects
           </button>
         </div>
       </div>

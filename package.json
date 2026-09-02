@@ -80,7 +80,8 @@
     "onboarding:check": "node scripts/onboarding-check.mjs",
     "crash:check": "node scripts/crash-check.mjs",
     "disk:check": "node scripts/disk-change-check.mjs",
-    "rail:check": "node scripts/rail-tip-check.mjs"
+    "rail:check": "node scripts/rail-tip-check.mjs",
+    "projects:check": "node scripts/projects-panel-check.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

@@ -4,7 +4,7 @@ import { useAuth } from "@/lib/auth-store";
 import { colorForName, initials } from "@/lib/collab";
 
 export type { LeftView } from "@/lib/left-rail";
-import { isFullView, type LeftView } from "@/lib/left-rail";
+import type { LeftView } from "@/lib/left-rail";
 
 interface ActivityBarProps {
   // which side-panel view is selected, and whether the panel is open
@@ -32,10 +32,10 @@ export function ActivityBar({
 }: ActivityBarProps) {
   const { user } = useAuth();
 
-  // The pencil and the full-width views have no panel, so "open" is not part
-  // of whether they are the thing on screen.
+  // The pencil has no panel, so "open" is not part of whether it is the thing
+  // on screen.
   const isActive = (v: LeftView) =>
-    v === "edit" || isFullView(v) ? activeView === v : panelOpen && activeView === v;
+    v === "edit" ? activeView === v : panelOpen && activeView === v;
 
   return (
     <div className="markie-activity-bar w-[48px] shrink-0 h-full flex flex-col items-center py-1.5 gap-0.5 border-r border-border bg-surface">
@@ -48,17 +48,9 @@ export function ActivityBar({
       </NavButton>
       <div className="w-6 h-px bg-border my-1" />
 
-      <NavButton label="Library: recent and files (⌘L)" active={isActive("library")} onClick={() => onSelectView("library")}>
+      <NavButton label="Library: recent and projects (⌘L)" active={isActive("library")} onClick={() => onSelectView("library")}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-        </svg>
-      </NavButton>
-      <NavButton label="Projects: your work, organized (⇧⌘L)" active={isActive("projects")} onClick={() => onSelectView("projects")}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="3" y="3" width="7" height="7" rx="1" />
-          <rect x="14" y="3" width="7" height="7" rx="1" />
-          <rect x="3" y="14" width="7" height="7" rx="1" />
-          <rect x="14" y="14" width="7" height="7" rx="1" />
         </svg>
       </NavButton>
       <NavButton label="Browse all markdown" active={isActive("browse")} onClick={() => onSelectView("browse")}>

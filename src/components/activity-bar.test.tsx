@@ -36,7 +36,7 @@ describe("ActivityBar", () => {
     render(<ActivityBar {...props()} />);
     for (const label of [
       "New file (⌘N)",
-      "Library: recent and files (⌘L)",
+      "Library: recent and projects (⌘L)",
       "Browse all markdown",
       "Shared with you",
       "Skills & agent files",
@@ -73,7 +73,7 @@ describe("ActivityBar", () => {
   it("marks the open panel's view active and nothing else", () => {
     render(<ActivityBar {...props({ activeView: "shared", panelOpen: true })} />);
     const shared = screen.getByRole("button", { name: "Shared with you" });
-    const library = screen.getByRole("button", { name: "Library: recent and files (⌘L)" });
+    const library = screen.getByRole("button", { name: "Library: recent and projects (⌘L)" });
     expect(shared.classList.contains("bg-accent")).toBe(true);
     expect(library.classList.contains("bg-accent")).toBe(false);
   });
@@ -134,57 +134,58 @@ describe("ActivityBar", () => {
   });
 });
 
-describe("the Projects button", () => {
-  it("selects the full-width view", async () => {
-    const onSelectView = vi.fn();
-    render(<ActivityBar {...props({ onSelectView })} />);
-    await userEvent.click(screen.getByRole("button", { name: /^Projects/ }));
-    expect(onSelectView).toHaveBeenCalledWith("projects");
+describe("the rail's destinations", () => {
+  it("has no Projects destination of its own", () => {
+    // Projects used to be a full-width page reached from here. It is a tab
+    // inside the Library panel now, so the rail must not offer a second door
+    // to it: an unlabelled icon leading to a page nobody asked for was the
+    // exact complaint.
+    render(<ActivityBar {...props()} />);
+    expect(screen.queryByRole("button", { name: /^Projects/ })).toBeNull();
   });
 
-  it("reads as active without a panel being open, unlike the panel views", () => {
+  it("points at Projects from the Library button, since that is where it lives", () => {
+    render(<ActivityBar {...props()} />);
+    expect(screen.getByRole("button", { name: /^Library/ })).toHaveAccessibleName(
+      expect.stringContaining("projects") as unknown as string
+    );
+  });
+
+  it("reads as active without a panel being open only for the pencil", () => {
     // The active rail item carries a marker bar; that is the tell, not a
     // class name a hover style also happens to contain.
     const marker = (button: HTMLElement) => button.querySelector("span.absolute");
     const { unmount } = render(
-      <ActivityBar {...props({ activeView: "projects", panelOpen: false })} />
+      <ActivityBar {...props({ activeView: "edit", panelOpen: false })} />
     );
-    expect(marker(screen.getByRole("button", { name: /^Projects/ }))).not.toBeNull();
-    expect(marker(screen.getByRole("button", { name: /^Library/ }))).toBeNull();
+    expect(marker(screen.getByRole("button", { name: /^Format/ }))).not.toBeNull();
     unmount();
     // A panel view with the panel shut is not the thing on screen.
     render(<ActivityBar {...props({ activeView: "library", panelOpen: false })} />);
     expect(marker(screen.getByRole("button", { name: /^Library/ }))).toBeNull();
   });
 
-  it("says what it is and which key opens it", () => {
-    render(<ActivityBar {...props()} />);
-    expect(screen.getByRole("button", { name: /^Projects/ })).toHaveAccessibleName(
-      expect.stringContaining("⇧⌘L") as unknown as string
-    );
-  });
-
-  it("shows its name without waiting for the browser's tooltip delay", () => {
+  it("shows each name without waiting for the browser's tooltip delay", () => {
     // The whole rail is bare icons. `title` takes about a second to appear,
     // which is long enough to click the wrong destination and be surprised by
     // where you land, so the name is drawn as a real element instead.
     render(<ActivityBar {...props()} />);
-    const button = screen.getByRole("button", { name: /^Projects/ });
+    const button = screen.getByRole("button", { name: /^Library/ });
     expect(button).not.toHaveAttribute("title");
 
     const tip = screen
       .getAllByRole("tooltip", { hidden: true })
-      .find((el) => el.textContent?.startsWith("Projects"));
+      .find((el) => el.textContent?.startsWith("Library"));
     expect(tip).toBeDefined();
-    expect(tip!.textContent).toContain("⇧⌘L");
+    expect(tip!.textContent).toContain("\u2318L");
   });
 
-  it("names every rail destination in its tooltip, not just Projects", () => {
+  it("names every rail destination in its tooltip", () => {
     render(<ActivityBar {...props()} />);
     const names = screen
       .getAllByRole("tooltip", { hidden: true })
       .map((el) => el.textContent?.trim() ?? "");
-    for (const expected of ["New file", "Library", "Projects", "Browse", "Shared", "Skills"]) {
+    for (const expected of ["New file", "Library", "Browse", "Shared", "Skills"]) {
       expect(names.some((n) => n.startsWith(expected))).toBe(true);
     }
   });

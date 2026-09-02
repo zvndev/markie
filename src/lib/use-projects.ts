@@ -8,14 +8,10 @@ import { getElectronAPI, type MdRow } from "@/lib/electron";
 import { inferHomePath } from "@/lib/path-display";
 import { parseRules, type MarkieRules } from "@/lib/projects/rules";
 import { buildTaxonomy, type Taxonomy } from "@/lib/projects/taxonomy";
-import { computeFolders, type FolderNode } from "@/lib/projects/folders";
 import type { EngineFile } from "@/lib/projects/assign";
 
 export interface ProjectsHandle {
   taxonomy: Taxonomy | null;
-  // Auto folders, recomputed with the taxonomy because they are a question
-  // about the same files and about the clock.
-  folders: FolderNode[];
   // The real home directory, for shortening the paths a row shows.
   home: string;
   // True only until the first taxonomy exists. A recompute over fresh index
@@ -57,7 +53,6 @@ function toEngineFiles(rows: MdRow[]): EngineFile[] {
 
 export function useProjects(refreshKey: number): ProjectsHandle {
   const [taxonomy, setTaxonomy] = useState<Taxonomy | null>(null);
-  const [folders, setFolders] = useState<FolderNode[]>([]);
   const [home, setHome] = useState("");
   // Derived rather than stored: without a desktop bridge there is nothing to
   // load, and setting that synchronously inside the effect is a cascading
@@ -120,7 +115,6 @@ export function useProjects(refreshKey: number): ProjectsHandle {
       if (!alive) return;
       setTaxonomy(next);
       setHome(home);
-      setFolders(computeFolders(next.projects, rules!.folders, { now: Date.now(), home }));
       // "No projects yet" and "we have not looked yet" are different answers,
       // and only one of them is the user's fault. Browse used to say the
       // former while a walk of 12,000 files was still running.
@@ -213,7 +207,6 @@ export function useProjects(refreshKey: number): ProjectsHandle {
   return useMemo(
     () => ({
       taxonomy,
-      folders,
       home,
       loading,
       scanning,
@@ -231,7 +224,6 @@ export function useProjects(refreshKey: number): ProjectsHandle {
     }),
     [
       taxonomy,
-      folders,
       home,
       loading,
       scanning,

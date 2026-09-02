@@ -61,34 +61,36 @@ describe("initialLibTab", () => {
     expect(initialLibTab(store({}))).toBe("recent");
   });
 
-  it("keeps a v3 choice", () => {
-    expect(initialLibTab(store({ "markie.libtab.v3": "folders" }))).toBe("folders");
+  it("keeps a v4 choice", () => {
+    expect(initialLibTab(store({ "markie.libtab.v4": "projects" }))).toBe("projects");
+    expect(initialLibTab(store({ "markie.libtab.v4": "recent" }))).toBe("recent");
+  });
+
+  it("moves someone who was on Folders to Projects, the same slot renamed", () => {
+    // That tab listed real directories on disk. It holds Markie's own
+    // structure now, but it is still "not Recent", and someone who chose not
+    // Recent must not be dropped back on Recent.
+    expect(initialLibTab(store({ "markie.libtab.v3": "folders" }))).toBe("projects");
     expect(initialLibTab(store({ "markie.libtab.v3": "recent" }))).toBe("recent");
   });
 
-  it("keeps someone who was on the folder tree on the folder tree", () => {
-    // Files + Folders is the same content under a new label. Nothing about
-    // that tab moved, so nothing about their landing should.
+  it("moves either half of the old Files tab to Projects", () => {
+    // Files + Folders and Files + Projects were two views of the same content.
+    // They are one tab now, so the subview is not consulted.
     expect(
       initialLibTab(store({ "markie.libtab.v2": "files", "markie.filesview.v1": "folders" }))
-    ).toBe("folders");
-  });
-
-  it("lands someone who was on Files + Projects on Recent, not on a dead tab", () => {
-    // The thing they picked left this panel entirely and became its own rail
-    // destination. Recent is the Library's own answer; stranding them on a tab
-    // that no longer exists is the one option that is not available.
+    ).toBe("projects");
     expect(
       initialLibTab(store({ "markie.libtab.v2": "files", "markie.filesview.v1": "projects" }))
-    ).toBe("recent");
-    expect(initialLibTab(store({ "markie.libtab.v2": "files" }))).toBe("recent");
+    ).toBe("projects");
+    expect(initialLibTab(store({ "markie.libtab.v2": "files" }))).toBe("projects");
   });
 
   it("keeps an explicit v2 recent choice", () => {
     expect(initialLibTab(store({ "markie.libtab.v2": "recent" }))).toBe("recent");
   });
 
-  it("v3 wins over everything older", () => {
+  it("the newest key present wins over everything older", () => {
     expect(
       initialLibTab(
         store({
@@ -99,9 +101,19 @@ describe("initialLibTab", () => {
         })
       )
     ).toBe("recent");
+    expect(
+      initialLibTab(
+        store({
+          "markie.libtab.v2": "files",
+          "markie.libtab.v3": "folders",
+          "markie.libtab.v4": "recent",
+        })
+      )
+    ).toBe("recent");
   });
 
   it("ignores a value no version recognises", () => {
+    expect(initialLibTab(store({ "markie.libtab.v4": "nonsense" }))).toBe("recent");
     expect(initialLibTab(store({ "markie.libtab.v3": "nonsense" }))).toBe("recent");
     expect(initialLibTab(store({ "markie.libtab.v2": "nonsense" }))).toBe("recent");
   });

@@ -8,6 +8,45 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-02
+
+### Added
+
+- **Pictures that live next to your document just show up.** `![](demo/shot.png)`
+  now means what it means in every other markdown tool: the file sitting beside
+  the document. Markie could not display those at all before, so a report full
+  of screenshots was a report full of empty space. A document can reach the
+  folder it was opened from and anywhere inside your workspace, and nothing
+  else: open a file somebody sent you and it cannot show you a picture from
+  elsewhere on your disk, or carry one into a copy you send on.
+- **Documents that carry their own pictures inside them open properly.** A
+  markdown file with its images inlined is how a report travels as a single
+  file. Markie was throwing every one of those images away on the way into the
+  editor, and stripping them again on the way out to HTML, PDF and a shared
+  link. All three now keep them.
+- **Links to files beside the document open them.** `[the spec](spec.pdf)` used
+  to do nothing at all, silently, which is indistinguishable from a broken app.
+  It opens the file in whatever your Mac opens it with, and says why when it
+  cannot.
+
+### Fixed
+
+- **Dark PDFs fill the page.** Every page came out as a dark rectangle floating
+  in a white frame, with the frame reappearing between pages. The whole sheet is
+  the document's colour now, on every page, and the margin holds on page two and
+  after. Light exports are unchanged, and both keep a line from being stranded
+  on its own at a page break.
+- **Projects is a tab in the Library, not a page of its own.** It used to be a
+  full-width view behind an unlabelled icon in the left rail, which meant
+  leaving your document to go and look at a list. It sits in the Library panel
+  beside Recent now, with one search field over project names and file names
+  together. Expand a project to see its files; the project holding whatever you
+  are reading is already open. The tab that listed real folders on your disk is
+  gone: the structure is Markie's own, over files that never move.
+- **Exported HTML is readable on a screen.** It ran the full width of the window
+  before, which is wider than anyone finishes a line of.
+
+
 ## [0.5.1] - 2026-08-28
 
 ### Fixed

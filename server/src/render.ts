@@ -25,6 +25,17 @@ const MATHML = ["math","semantics","annotation","mrow","mi","mo","mn","ms","mtex
 const SVG = ["svg","path","line","g","defs","use","rect","polyline"];
 const sanitizeSchema = {
   ...defaultSchema,
+  // Kept in step with src/lib/markdown-html.ts. defaultSchema.protocols.src is
+  // ["http", "https"], which strips the src off an inlined image and leaves an
+  // <img alt> pointing at nothing, so a self-contained document shared as a
+  // link lost every picture in it. data: is safe in an image position (a script
+  // inside an SVG does not run when the SVG is loaded through <img>) and the
+  // page's own CSP below already allows it. `href` is deliberately not widened:
+  // a data: link is the thing defaultSchema.protocols is there to stop.
+  protocols: {
+    ...defaultSchema.protocols,
+    src: [...(defaultSchema.protocols?.src ?? []), "data"],
+  },
   tagNames: [...(defaultSchema.tagNames ?? []), "span", "div", ...MATHML, ...SVG],
   attributes: {
     ...defaultSchema.attributes,

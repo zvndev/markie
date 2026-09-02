@@ -99,6 +99,23 @@ test("renderNotFoundPage keeps its install CTA on the stable download route", ()
   assert.match(page, /href="https:\/\/markie\.example\.com\/download\/mac"/);
 });
 
+test("renderMarkdownHTML keeps an inlined image, which is how a report travels", () => {
+  // A document shared as a link carries its screenshots inside it or not at
+  // all: the recipient has none of the sender's files. The sanitizer used to
+  // strip the src and leave an <img> pointing at nothing.
+  const html = renderMarkdownHTML("![shot](data:image/png;base64,iVBORw0KGgo=)");
+  assert.match(html, /<img src="data:image\/png;base64,iVBORw0KGgo="/);
+});
+
+test("renderMarkdownHTML still refuses a data: link, which is the actual attack", () => {
+  const html = renderMarkdownHTML("[click](data:text/html;base64,PHNjcmlwdD4=)");
+  assert.doesNotMatch(html, /href="data:/);
+});
+
+test("renderMarkdownHTML drops a javascript: image src as well as a link href", () => {
+  assert.doesNotMatch(renderMarkdownHTML("![x](javascript:alert(1))"), /javascript:/);
+});
+
 test("renderMarkdownHTML drops javascript: link hrefs", () => {
   const html = renderMarkdownHTML("[click](javascript:alert(1))");
   assert.doesNotMatch(html, /javascript:/);

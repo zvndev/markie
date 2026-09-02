@@ -888,3 +888,15 @@ body {
   user-select: none !important;
   -webkit-user-select: none !important;
 }
+
+/* The left rail's icon labels. Shown while the pointer is over the button, and
+   while the button is focused BY KEYBOARD, never merely because it was
+   clicked: a click leaves focus behind, and `:focus-within` would leave the
+   label sitting over the page while the pointer is somewhere else entirely. */
+.markie-rail-tip {
+  opacity: 0;
+}
+.group:hover > .markie-rail-tip,
+.group:has(:focus-visible) > .markie-rail-tip {
+  opacity: 1;
+}

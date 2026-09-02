@@ -79,7 +79,8 @@
     "ui:check": "node scripts/ui-check.mjs",
     "onboarding:check": "node scripts/onboarding-check.mjs",
     "crash:check": "node scripts/crash-check.mjs",
-    "disk:check": "node scripts/disk-change-check.mjs"
+    "disk:check": "node scripts/disk-change-check.mjs",
+    "rail:check": "node scripts/rail-tip-check.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

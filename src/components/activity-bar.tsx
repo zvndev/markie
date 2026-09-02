@@ -202,6 +202,13 @@ function IconButton({
 // two tooltips saying the same thing a second apart. The name still reaches
 // assistive technology through the button's own aria-label, so nothing is lost
 // by dropping it.
+//
+// Visibility is in globals.css rather than here, because it needs
+// `:has(:focus-visible)`. The obvious `group-focus-within` is wrong: a mouse
+// click leaves focus on the button, so the tooltip hangs over the page long
+// after the pointer has moved away. `:focus-visible` is the distinction
+// between "tabbed here and needs the label" and "clicked here and is already
+// looking at the result".
 function RailTip({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="group relative flex items-center justify-center">
@@ -210,7 +217,7 @@ function RailTip({ label, children }: { label: string; children: React.ReactNode
         role="tooltip"
         // Pointer events off so the tooltip can never sit between the cursor
         // and the button it describes.
-        className="markie-rail-tip pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-surface-2 px-2 py-1 text-[11.5px] leading-none text-foreground opacity-0 shadow-lg transition-opacity duration-75 group-hover:opacity-100 group-focus-within:opacity-100"
+        className="markie-rail-tip pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-surface-2 px-2 py-1 text-[11.5px] leading-none text-foreground opacity-0 shadow-lg transition-opacity duration-75"
       >
         {label}
       </span>

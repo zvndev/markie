@@ -8,6 +8,18 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-28
+
+### Fixed
+
+- **The left rail says what each button is, straight away.** The rail is a
+  column of icons, and the one that opens Projects is a grid that looks like
+  nothing in particular. It always carried its name, but through the tooltip
+  the operating system draws after about a second of hovering, which is longer
+  than it takes to click. The name appears immediately now, on hover and on
+  keyboard focus. Projects is `Shift-Command-L`, and the Library is
+  `Command-L`.
+
 ## [0.5.0] - 2026-08-26
 
 ### Added

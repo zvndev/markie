@@ -9,6 +9,7 @@ import remarkRehype from "remark-rehype";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import { rehypeMedia } from "./rehype-media.ts";
 import rehypeStringify from "rehype-stringify";
 import {
   downloadHref,
@@ -23,6 +24,10 @@ import {
 // hardened public variant of the in-app renderer.
 const MATHML = ["math","semantics","annotation","mrow","mi","mo","mn","ms","mtext","mspace","msup","msub","msubsup","mfrac","msqrt","mroot","munder","mover","munderover","mtable","mtr","mtd","mpadded","mphantom","menclose","mstyle","mglyph"];
 const SVG = ["svg","path","line","g","defs","use","rect","polyline"];
+// Kept in step with src/lib/markdown-html.ts. A shared document can carry a
+// clip as a remote or inlined source; a local path was never going to reach
+// the reader anyway.
+const MEDIA = ["video", "audio", "source"];
 const sanitizeSchema = {
   ...defaultSchema,
   // Kept in step with src/lib/markdown-html.ts. defaultSchema.protocols.src is
@@ -36,7 +41,7 @@ const sanitizeSchema = {
     ...defaultSchema.protocols,
     src: [...(defaultSchema.protocols?.src ?? []), "data"],
   },
-  tagNames: [...(defaultSchema.tagNames ?? []), "span", "div", ...MATHML, ...SVG],
+  tagNames: [...(defaultSchema.tagNames ?? []), "span", "div", ...MATHML, ...SVG, ...MEDIA],
   attributes: {
     ...defaultSchema.attributes,
     "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "ariaHidden", "ariaLabel"],
@@ -49,6 +54,9 @@ const sanitizeSchema = {
     svg: ["xmlns", "width", "height", "viewBox", "preserveAspectRatio", "style", "ariaHidden"],
     path: ["d"],
     line: ["x1", "y1", "x2", "y2"],
+    video: ["src", "controls", "preload", "width", "height", "poster"],
+    audio: ["src", "controls", "preload"],
+    source: ["src", "type"],
   },
 };
 
@@ -57,6 +65,7 @@ const processor = unified()
   .use(remarkGfm)
   .use(remarkMath)
   .use(remarkRehype)
+  .use(rehypeMedia)
   .use(rehypeHighlight)
   .use(rehypeKatex)
   .use(rehypeSanitize, sanitizeSchema)
@@ -176,7 +185,7 @@ export function renderPublicPage(opts: {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src * data: https:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src * data: https:; media-src * data: https:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; base-uri 'none'; form-action 'none'">
   <title>${safeTitle} · Markie</title>
   ${HEAD_CSS}
   <style>${PAGE_CSS}</style>
@@ -319,7 +328,7 @@ export function renderSharedDocPage(opts: {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src * data: https:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src * data: https:; media-src * data: https:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; base-uri 'none'; form-action 'none'">
   <title>${safeTitle} · Markie</title>
   ${HEAD_CSS}
   <style>${PAGE_CSS}</style>

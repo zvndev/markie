@@ -7,7 +7,7 @@ import { TableKit } from "@tiptap/extension-table";
 import { TaskList } from "@tiptap/extension-task-list";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { Image } from "@tiptap/extension-image";
-import { resolveAssetSrc } from "@/lib/asset-url";
+import { mediaKindOf, resolveAssetSrc } from "@/lib/asset-url";
 import { Placeholder } from "@tiptap/extension-placeholder";
 import { Highlight } from "@tiptap/extension-highlight";
 import { MarkieKeymap } from "@/lib/rich-keymap";
@@ -26,6 +26,31 @@ import type { AnyExtension } from "@tiptap/react";
 // node keeps what the author wrote, so serializing back to markdown gives the
 // file its own relative path again rather than an absolute one nobody typed.
 const LocalImage = Image.extend({
+  // A video is still the image node: markdown has one embed syntax, the
+  // serializer writes `![alt](src)` from this node, and that is what keeps a
+  // document with a clip in it a plain markdown document. Only the rendered
+  // element differs.
+  parseHTML() {
+    return [
+      { tag: "img[src]" },
+      { tag: "video[data-markie-src]" },
+      { tag: "audio[data-markie-src]" },
+    ];
+  },
+  renderHTML({ HTMLAttributes }: { HTMLAttributes: Record<string, unknown> }) {
+    const original =
+      typeof HTMLAttributes["data-markie-src"] === "string"
+        ? (HTMLAttributes["data-markie-src"] as string)
+        : typeof HTMLAttributes.src === "string"
+          ? (HTMLAttributes.src as string)
+          : "";
+    const kind = mediaKindOf(original);
+    if (kind === "image") return ["img", HTMLAttributes];
+    // `controls` because a clip nobody can pause is a decoration, and
+    // `preload="metadata"` so opening a document with five videos in it does
+    // not pull five whole files off the disk before you have read a word.
+    return [kind, { ...HTMLAttributes, controls: "true", preload: "metadata" }];
+  },
   addAttributes() {
     return {
       ...this.parent?.(),

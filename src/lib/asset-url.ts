@@ -80,6 +80,23 @@ export function resolveAssetSrc(src: string | null | undefined): string {
   return `${ASSET_ORIGIN}/${encodeURIComponent(absolute)}`;
 }
 
+// What to draw for a given source. Markdown has one syntax for embedded media
+// and it is the image one, so `![](clip.mp4)` is what a person writes and what
+// an agent produces. Deciding by extension here means the markdown stays plain
+// markdown: no Markie-only directive, and the file opens in any other editor
+// as the image reference it already was.
+const VIDEO_EXT = /\.(mp4|m4v|webm|ogv|mov)(\?|#|$)/i;
+const AUDIO_EXT = /\.(mp3|m4a|aac|wav|flac|oga|opus)(\?|#|$)/i;
+
+export type MediaKind = "image" | "video" | "audio";
+
+export function mediaKindOf(src: string | null | undefined): MediaKind {
+  const raw = typeof src === "string" ? src.trim() : "";
+  if (VIDEO_EXT.test(raw)) return "video";
+  if (AUDIO_EXT.test(raw)) return "audio";
+  return "image";
+}
+
 /** True when a URL is one this module produced. */
 export function isAssetUrl(value: string | null | undefined): boolean {
   return typeof value === "string" && value.startsWith(`${ASSET_SCHEME}://`);

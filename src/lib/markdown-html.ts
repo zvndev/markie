@@ -6,6 +6,7 @@ import remarkRehype from "remark-rehype";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import { rehypeMedia } from "@/lib/rehype-media";
 import rehypeStringify from "rehype-stringify";
 
 // The same hardened schema the public share renderer uses (server/src/render.ts).
@@ -18,6 +19,11 @@ import rehypeStringify from "rehype-stringify";
 // would silently strip every highlight and every equation.
 const MATHML = ["math","semantics","annotation","mrow","mi","mo","mn","ms","mtext","mspace","msup","msub","msubsup","mfrac","msqrt","mroot","munder","mover","munderover","mtable","mtr","mtd","mpadded","mphantom","menclose","mstyle","mglyph"];
 const SVG = ["svg","path","line","g","defs","use","rect","polyline"];
+// A clip beside the document plays in an exported HTML file that is still
+// beside it. Deliberately never inlined the way images are: base64 of a video
+// produces a file nobody can email, so an export that travels loses the
+// player and keeps everything else.
+const MEDIA = ["video", "audio", "source"];
 const sanitizeSchema = {
   ...defaultSchema,
   // defaultSchema.protocols.src is ["http", "https"], which drops the src off
@@ -31,7 +37,7 @@ const sanitizeSchema = {
     ...defaultSchema.protocols,
     src: [...(defaultSchema.protocols?.src ?? []), "data"],
   },
-  tagNames: [...(defaultSchema.tagNames ?? []), "span", "div", ...MATHML, ...SVG],
+  tagNames: [...(defaultSchema.tagNames ?? []), "span", "div", ...MATHML, ...SVG, ...MEDIA],
   attributes: {
     ...defaultSchema.attributes,
     "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "ariaHidden", "ariaLabel"],
@@ -44,6 +50,9 @@ const sanitizeSchema = {
     svg: ["xmlns", "width", "height", "viewBox", "preserveAspectRatio", "style", "ariaHidden"],
     path: ["d"],
     line: ["x1", "y1", "x2", "y2"],
+    video: ["src", "controls", "preload", "width", "height", "poster"],
+    audio: ["src", "controls", "preload"],
+    source: ["src", "type"],
   },
 };
 
@@ -54,6 +63,7 @@ const processor = unified()
   .use(remarkGfm)
   .use(remarkMath)
   .use(remarkRehype)
+  .use(rehypeMedia)
   .use(rehypeHighlight)
   .use(rehypeKatex)
   .use(rehypeSanitize, sanitizeSchema)

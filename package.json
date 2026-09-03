@@ -82,7 +82,7 @@
     "disk:check": "node scripts/disk-change-check.mjs",
     "rail:check": "node scripts/rail-tip-check.mjs",
     "projects:check": "node scripts/projects-panel-check.mjs",
-    "pdf:check": "node --experimental-strip-types scripts/pdf-export-check.mjs",
+    "pdf:check": "node --experimental-strip-types --import ./scripts/lib/alias-hook.mjs scripts/pdf-export-check.mjs",
     "assets:check": "node scripts/local-assets-check.mjs"
   },
   "dependencies": {

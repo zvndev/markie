@@ -42,8 +42,51 @@ const IMAGE_MIME_BY_EXT = {
   ".ico": "image/x-icon",
 };
 
+// Video and audio a browser plays without a plugin. Deliberately narrower than
+// what ffmpeg would accept: .mkv and .avi are containers Chromium will not open,
+// and a player that renders a black rectangle is worse than a link.
+const VIDEO_MIME_BY_EXT = {
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".webm": "video/webm",
+  ".ogv": "video/ogg",
+  ".mov": "video/quicktime",
+};
+
+const AUDIO_MIME_BY_EXT = {
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".wav": "audio/wav",
+  ".flac": "audio/flac",
+  ".oga": "audio/ogg",
+  ".opus": "audio/ogg",
+};
+
+const MEDIA_MIME_BY_EXT = {
+  ...IMAGE_MIME_BY_EXT,
+  ...VIDEO_MIME_BY_EXT,
+  ...AUDIO_MIME_BY_EXT,
+};
+
+const extOf = (filePath) => nodePath.extname(String(filePath || "")).toLowerCase();
+
 function imageMimeFor(filePath) {
-  return IMAGE_MIME_BY_EXT[nodePath.extname(String(filePath || "")).toLowerCase()] || null;
+  return IMAGE_MIME_BY_EXT[extOf(filePath)] || null;
+}
+
+function mediaMimeFor(filePath) {
+  return MEDIA_MIME_BY_EXT[extOf(filePath)] || null;
+}
+
+// What a document is asking for, so the renderer knows whether to draw an
+// <img>, a <video> or an <audio> and the exporter knows what it may inline.
+function mediaKindFor(filePath) {
+  const ext = extOf(filePath);
+  if (IMAGE_MIME_BY_EXT[ext]) return "image";
+  if (VIDEO_MIME_BY_EXT[ext]) return "video";
+  if (AUDIO_MIME_BY_EXT[ext]) return "audio";
+  return null;
 }
 
 // The src is a URL, not a path: `my%20image.png` names a file with a space, and
@@ -98,13 +141,25 @@ function containedIn(realDir, realFile) {
  * @param {object} opts      { docDir, roots, fs, realpath }
  * @returns {string|null}    the realpath to serve, or null
  */
-function allowedRealPath(absPath, { docDir = null, roots = [], realpath = (p) => nodeFs.realpathSync(p) } = {}) {
+function allowedRealPath(absPath, { docDir = null, roots = [], files = [], realpath = (p) => nodeFs.realpathSync(p) } = {}) {
   if (!absPath) return null;
   let real;
   try {
     real = realpath(absPath);
   } catch {
     return null; // missing, or a broken symlink
+  }
+  // A file the user dragged in by hand is a file the user chose, exactly like
+  // one picked through the Open dialog, so it is reachable wherever it lives.
+  // This is per-file and comes from a real gesture: a document that merely
+  // names a path still gets nothing, which is what keeps a shared document
+  // from displaying something off your desktop.
+  for (const granted of files) {
+    try {
+      if (realpath(granted) === real) return real;
+    } catch {
+      // A grant whose file has gone is not a grant.
+    }
   }
   const bounds = [];
   for (const dir of [docDir, ...roots]) {
@@ -126,25 +181,43 @@ function allowedRealPath(absPath, { docDir = null, roots = [], realpath = (p) =>
  * @returns {{path: string, mime: string}|null}
  */
 function resolveImage(src, opts = {}) {
+  const found = resolveMedia(src, opts);
+  return found && found.kind === "image" ? found : null;
+}
+
+/**
+ * Resolve a document's media reference to a file that may be shown or played.
+ *
+ * @param {string} src       the src as written in the document
+ * @param {object} opts      { docDir, roots, files, realpath }
+ * @returns {{path: string, mime: string, kind: string}|null}
+ */
+function resolveMedia(src, opts = {}) {
   const { docDir } = opts;
   if (!docDir) return null;
   const abs = candidatePath(src, docDir);
   if (!abs) return null;
   // Checked before the filesystem is touched and again on the realpath, so a
   // symlink cannot swap a .png for something else on the way through.
-  if (!imageMimeFor(abs)) return null;
+  if (!mediaMimeFor(abs)) return null;
   const real = allowedRealPath(abs, opts);
   if (!real) return null;
-  const mime = imageMimeFor(real);
-  return mime ? { path: real, mime } : null;
+  const mime = mediaMimeFor(real);
+  return mime ? { path: real, mime, kind: mediaKindFor(real) } : null;
 }
 
 module.exports = {
+  AUDIO_MIME_BY_EXT,
   IMAGE_MIME_BY_EXT,
+  MEDIA_MIME_BY_EXT,
+  VIDEO_MIME_BY_EXT,
   allowedRealPath,
   candidatePath,
   containedIn,
   imageMimeFor,
+  mediaKindFor,
+  mediaMimeFor,
   resolveImage,
+  resolveMedia,
   urlToRelativePath,
 };

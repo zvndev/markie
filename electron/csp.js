@@ -57,6 +57,9 @@ function buildAppCsp(outDir) {
     scriptSrcDirective(scriptHashes),
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' data: https: ${ASSET_SCHEME}:`,
+    // Video and audio beside the document, played through the same scheme and
+    // the same access rule as the pictures.
+    `media-src 'self' data: ${ASSET_SCHEME}:`,
     "font-src 'self' data:",
     "connect-src 'self' https://api-production-602f.up.railway.app wss://api-production-602f.up.railway.app",
     "base-uri 'none'",

@@ -214,3 +214,19 @@ test("no page a reader sees carries an em dash", () => {
   ];
   for (const page of pages) assert.doesNotMatch(page, /—/);
 });
+
+test("renderMarkdownHTML plays a clip instead of drawing a broken picture", () => {
+  // Markdown has one embed syntax and it is the image one, so a video arrives
+  // as ![](clip.mp4) and remark makes an <img> of it.
+  const html = renderMarkdownHTML("![clip](https://example.com/clip.mp4)");
+  assert.match(html, /<video src="https:\/\/example\.com\/clip\.mp4" controls/);
+  assert.doesNotMatch(html, /<img/);
+});
+
+test("renderMarkdownHTML plays audio the same way", () => {
+  assert.match(renderMarkdownHTML("![t](https://example.com/a.mp3)"), /<audio /);
+});
+
+test("renderMarkdownHTML leaves a picture a picture", () => {
+  assert.match(renderMarkdownHTML("![p](https://example.com/a.png)"), /<img /);
+});

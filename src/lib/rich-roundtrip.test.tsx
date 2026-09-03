@@ -278,7 +278,13 @@ describe("the block memo is shared, not per caller", () => {
       .filter((b) => b.text !== "")
       .map((b) => b.text.replace(/(?:\r?\n)+$/, ""));
 
-  it("hands a later normalizer the work the probe already did", () => {
+  // Three full round trips over a 300-paragraph document, on purpose: the
+  // negative control has to do the cold work again for the comparison to mean
+  // anything. That is more than vitest's 5s default was sized for, and it timed
+  // out during a release build when the machine was busy. What the test
+  // actually asserts is two ratios, which do not move with load; only the wall
+  // clock does, so only the wall clock is relaxed.
+  it("hands a later normalizer the work the probe already did", { timeout: 30000 }, () => {
     const big =
       Array.from(
         { length: 300 },

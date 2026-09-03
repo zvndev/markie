@@ -7,6 +7,7 @@ import {
   type ShareMember,
 } from "@/lib/auth-client";
 import { useAuth } from "@/lib/auth-store";
+import { localAssetCount } from "@/lib/attach";
 import { colorForName, initials } from "@/lib/collab";
 import { getDocTheme, setDocTheme } from "@/lib/theme-sync";
 import { findTheme, loadThemeStore } from "@/lib/theme";
@@ -29,6 +30,9 @@ import { getElectronAPI } from "@/lib/electron";
 interface ShareDialogProps {
   docId: string;
   fileName: string;
+  // The document's markdown, so the dialog can say what will not travel with
+  // it. Sharing sends the text and nothing else.
+  body?: string;
   onClose: () => void;
   // Membership changed — the page re-evaluates whether the doc is live
   onChanged: () => void;
@@ -37,6 +41,7 @@ interface ShareDialogProps {
 export function ShareDialog({
   docId,
   fileName,
+  body = "",
   onClose,
   onChanged,
 }: ShareDialogProps) {
@@ -225,6 +230,7 @@ export function ShareDialog({
         </div>
         <div className="text-[11px] text-muted mb-4 truncate">{fileName}</div>
         <ShareAccessSummary access={access} checking={accessChecking} />
+        <LocalFilesNotice count={localAssetCount(body)} />
 
         {/* The standing answer to "who can see this". Above the controls,
             because it is the thing you came here to find out, and loudest when
@@ -616,6 +622,33 @@ function MemberRow({
           ×
         </button>
       )}
+    </div>
+  );
+}
+
+/**
+ * Said before either sharing control, not after, because the moment to learn
+ * that a picture will be missing is before somebody else opens the link.
+ *
+ * The plan is to upload these to storage of our own and rewrite the links, at
+ * which point this notice goes away. Until then the honest thing is to say what
+ * happens rather than let the recipient discover it.
+ */
+function LocalFilesNotice({ count }: { count: number }) {
+  if (count < 1) return null;
+  return (
+    <div
+      className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-[11px] leading-[1.5] text-muted"
+      role="note"
+    >
+      <span className="text-foreground font-medium">
+        {count === 1 ? "1 file on this computer" : `${count} files on this computer`}
+      </span>{" "}
+      {count === 1 ? "is" : "are"} linked from this document. Sharing sends the
+      text, so whoever opens it will see a gap where{" "}
+      {count === 1 ? "it is" : "they are"}. To send{" "}
+      {count === 1 ? "it" : "them"} along, use Export, which folds pictures into
+      the file itself.
     </div>
   );
 }

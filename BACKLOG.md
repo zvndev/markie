@@ -4,6 +4,30 @@
 > evidence; do not delete history. Move completed items to Done with the verification record.
 
 ## Open
+- [ ] Carry a document's attachments when it is shared: upload them to our own B2 Backblaze
+      bucket and rewrite the links to point there, so a shared or published document is not
+      full of holes where the pictures were. Today the share dialog counts the local files
+      and says out loud that they will not travel (`localAssetCount` in `src/lib/attach.ts`,
+      the note in `share-dialog.tsx`), which is the honest stopgap, not the answer.
+      type: product
+      severity: medium
+      rationale: Kirby: "If it goes to cloud, then we will need to warn for now that it will
+        not be transferred, but eventually we will upload to secure B2 Backblaze and link to
+        it from there on. This may turn into a bit of a Google Drive / cloud doc thing at
+        that point."
+      acceptance_criteria: A document with a local picture, shared by link, shows that
+        picture to somebody who opens it on another machine.
+      source: attachments work 2026-09-02
+- [ ] Pasting an image from the clipboard has nowhere to put it. Dropping a file links it
+      where it already lives, which is the rule everywhere else, but a screenshot on the
+      clipboard is not a file yet, so honouring that rule means writing one first (beside
+      the document, or into a per-document folder). Needs a decision on where before it is
+      built, because that choice is visible in every document it touches.
+      type: product
+      severity: medium
+      acceptance_criteria: ⌘V with a screenshot on the clipboard puts the picture in the
+        document and the markdown still opens in any other editor.
+      source: attachments work 2026-09-02
 - [ ] Wire the safe CDP window-checks (crash:check, disk:check, onboarding:check,
       panel-resize, overlay) into CI with `MARKIE_ALLOW_E2E=1` on a throwaway runner, now
       that they direct-kill and gate on consent. Was blocked on the Finder-crash risk.

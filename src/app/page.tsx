@@ -108,6 +108,7 @@ import {
 import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { pathDirname } from "@/lib/path-utils";
 import { setAssetBaseDir } from "@/lib/asset-url";
+import { opensAsDocument } from "@/lib/attach";
 import { useDocument, type EditInput } from "@/lib/use-document";
 import { useSaveGuard, type SaveGuard } from "@/lib/use-save-guard";
 import { useDocumentExport } from "@/lib/use-export";
@@ -1038,6 +1039,12 @@ export default function Home() {
         openPath(realPath);
         return;
       }
+      // A file Markie does not open as a document reaches here with no path,
+      // because the grant refused it. Reading it anyway used to load a PNG's
+      // bytes into the editor as text. Dropping one onto the document attaches
+      // it instead (rich-view handles that and stops the event); dropping one
+      // out here has nothing to attach it to.
+      if (!opensAsDocument(file.name)) return;
       const text = await file.text();
       loadFile({ name: file.name, content: text, path: null });
     };

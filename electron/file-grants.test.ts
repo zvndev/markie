@@ -22,6 +22,19 @@ function fixture() {
 // rather than every call site repeating the same cast.
 const rootsAre = (list: string[]) => (() => list) as unknown as () => never[];
 
+// An attachment is any file the user drags in, so the fixture deliberately uses
+// types the document grant would reject: a screenshot and a zip, both living
+// outside every workspace root.
+function attachmentFixture() {
+  const { workspace, outside: outsideDir } = fixture();
+  const outside = path.join(outsideDir, "screenshot.png");
+  const zip = path.join(outsideDir, "bundle.zip");
+  fs.writeFileSync(outside, "png");
+  fs.writeFileSync(zip, "zip");
+  const grants = createFileGrants({ workspaceRoots: rootsAre([workspace]) });
+  return { grants, outside, zip, workspace };
+}
+
 describe("Electron file grants", () => {
   it("refuses ungranted paths outside workspace roots", () => {
     const { workspace, outside } = fixture();
@@ -120,5 +133,44 @@ describe("Electron file grants", () => {
       ok: false,
       error: "Invalid file name",
     });
+  });
+});
+
+describe("attachments", () => {
+  it("makes a dropped file reachable wherever it lives", () => {
+    // Kirby: "If a local file, then just make sure it's linked even if the
+    // file moves outside." A file dragged in by hand is a file the user chose,
+    // which is the same gesture as the Open dialog.
+    const { grants, outside } = attachmentFixture();
+    expect(grants.grantedFilePaths()).not.toContain(outside);
+    expect(grants.grantAttachment(outside)).toEqual({ ok: true, path: outside });
+    expect(grants.grantedFilePaths()).toContain(outside);
+  });
+
+  it("takes any file type, since an attachment is not a document", () => {
+    const { grants, zip } = attachmentFixture();
+    expect(grants.grantAttachment(zip).ok).toBe(true);
+  });
+
+  it("refuses a file that is not there", () => {
+    const { grants } = attachmentFixture();
+    expect(grants.grantAttachment("/nowhere/at/all.pdf").ok).toBe(false);
+  });
+
+  it("does not make an attachment openable or writable as a document", () => {
+    // The whole reason attachments are their own set: dropping a PDF is
+    // permission to show it, never permission to load or overwrite it.
+    const { grants, zip } = attachmentFixture();
+    grants.grantAttachment(zip);
+    expect(grants.canRead(zip).ok).toBe(false);
+    expect(grants.canWrite(zip).ok).toBe(false);
+  });
+
+  it("does not make the dropped file's whole folder readable", () => {
+    // Otherwise dragging one screenshot off the Desktop would let any open
+    // document display everything else on it.
+    const { grants, outside } = attachmentFixture();
+    grants.grantAttachment(outside);
+    expect(grants.assetRoots()).not.toContain(path.dirname(outside));
   });
 });

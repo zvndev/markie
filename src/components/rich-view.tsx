@@ -36,6 +36,13 @@ import {
 } from "@/lib/collab";
 import { CommentLayer } from "@/components/comments";
 import { handleDocumentClick } from "@/lib/local-link";
+import {
+  attachmentContent,
+  attachmentFor,
+  opensAsDocument,
+} from "@/lib/attach";
+import { getAssetBaseDir } from "@/lib/asset-url";
+import { getElectronAPI } from "@/lib/electron";
 import { findHighlightPlugin, findPluginKey } from "@/lib/rich-find";
 
 interface RichViewProps {
@@ -279,9 +286,73 @@ export function RichView({
   const serializeNowRef = useRef(serializeNow);
   serializeNowRef.current = serializeNow;
 
+  // Why a link would not open, said out loud. The whole point of handling
+  // these clicks is that silence reads as breakage.
+  const [linkError, setLinkError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!linkError) return;
+    const t = setTimeout(() => setLinkError(null), 6000);
+    return () => clearTimeout(t);
+  }, [linkError]);
+
+  // Dropping a file onto the document attaches it where you dropped it.
+  //
+  // It lives in editorProps rather than on the window because only the editor
+  // knows the position under the cursor, and it stops the event because the
+  // window's own drop handler is the "open this document" path: left to bubble,
+  // it would try to read a PNG as markdown. Documents are deliberately left to
+  // bubble, so dropping a .md still opens it the way it always has.
+  const attachDroppedFiles = useCallback(
+    (view: Editor["view"], event: DragEvent): boolean => {
+      if (!view.editable) return false;
+      const dropped = Array.from(event.dataTransfer?.files ?? []);
+      const attachable = dropped.filter((file) => !opensAsDocument(file.name));
+      if (attachable.length === 0) return false;
+
+      // Only the desktop app can name a file's place on disk, and a link to a
+      // file the browser cannot see would point at nothing.
+      const api = getElectronAPI();
+      if (!api?.attachFile) return false;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const docDir = getAssetBaseDir();
+      const content: Record<string, unknown>[] = [];
+      const missing: string[] = [];
+      for (const file of attachable) {
+        const real = api.attachFile(file);
+        if (!real) {
+          missing.push(file.name);
+          continue;
+        }
+        content.push(...attachmentContent(attachmentFor(real, docDir)));
+      }
+
+      if (content.length > 0) {
+        const at =
+          view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ??
+          view.state.selection.to;
+        editorRef.current?.chain().focus().insertContentAt(at, content).run();
+      }
+      if (missing.length > 0) {
+        setLinkError(
+          missing.length === 1
+            ? `Markie could not find ${missing[0]} on disk.`
+            : `Markie could not find ${missing.length} of those files on disk.`
+        );
+      }
+      return true;
+    },
+    []
+  );
+
   const editor = useEditor({
     immediatelyRender: false,
     editable: !locked,
+    editorProps: {
+      handleDrop: (view, event) => attachDroppedFiles(view, event as DragEvent),
+    },
     // One shared list (src/lib/rich-extensions.ts) so the round-trip probe and
     // the block normalizer test the exact editor configuration, never a copy.
     extensions: [
@@ -541,15 +612,6 @@ export function RichView({
 
   // Comment gutter overlay needs the scroll container element
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
-
-  // Why a link would not open, said out loud. The whole point of handling
-  // these clicks is that silence reads as breakage.
-  const [linkError, setLinkError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!linkError) return;
-    const t = setTimeout(() => setLinkError(null), 6000);
-    return () => clearTimeout(t);
-  }, [linkError]);
 
   return (
     <div className="h-full relative">

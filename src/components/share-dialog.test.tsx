@@ -334,3 +334,37 @@ describe("ShareDialog", () => {
     expect(onClose).toHaveBeenCalledTimes(3);
   });
 });
+
+describe("files that will not travel", () => {
+  beforeEach(() => {
+    access.mockResolvedValue(OWNER);
+    list.mockResolvedValue([]);
+    getPublicLink.mockResolvedValue(null);
+  });
+
+  it("says so, and counts them, before anything is shared", async () => {
+    renderDialog({ body: "![a](shot.png)\n\n[spec](spec.pdf)" });
+    const note = await screen.findByRole("note");
+    expect(note).toHaveTextContent("2 files on this computer");
+    expect(note).toHaveTextContent(/gap where they are/i);
+  });
+
+  it("reads as one file when there is one", async () => {
+    renderDialog({ body: "![a](shot.png)" });
+    expect(await screen.findByRole("note")).toHaveTextContent("1 file on this computer");
+  });
+
+  it("stays quiet for a document of plain words", async () => {
+    renderDialog({ body: "# Title\n\nJust words." });
+    await screen.findByRole("dialog");
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
+  it("stays quiet when the pictures are already inlined", async () => {
+    // Export folds them in, and a document that has been through it carries
+    // everything it needs.
+    renderDialog({ body: "![a](data:image/png;base64,AAAA)" });
+    await screen.findByRole("dialog");
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+});

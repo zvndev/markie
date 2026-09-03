@@ -11,7 +11,7 @@
 //
 // So this asks the browser the only question that matters: did the image load,
 // and is it the right size.
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -164,10 +164,9 @@ async function cdpConnect() {
 
 
 
-// A 1x1 red PNG. Non-zero naturalWidth is the whole assertion: an <img> with a
-// src that 403s is still an <img> in the DOM, and only the browser knows the
-// difference between a picture and a broken one.
-// A real 240x120 picture rather than a 1x1 pixel: naturalWidth is what the
+// Non-zero naturalWidth is the whole assertion: an <img> with a src that 403s
+// is still an <img> in the DOM, and only the browser knows the difference
+// between a picture and a broken one. A real 240x120 picture rather than a 1x1 pixel: naturalWidth is what the
 // checks assert on, but the screenshot this leaves behind is only worth
 // looking at if there is something in it to see.
 const PNG = Buffer.from(
@@ -182,7 +181,35 @@ const imageReport = `(() => [...document.querySelectorAll('.markdown-body img')]
   loaded: i.complete && i.naturalWidth > 0,
 })))()`;
 
+// Video and audio are the same document node as a picture; only the element
+// differs. readyState >= 1 is HAVE_METADATA, which Chromium only reaches after
+// main actually served the bytes and the decoder read a header, so it is the
+// one assertion that cannot pass on a 403.
+const mediaReport = `(() => [...document.querySelectorAll('.markdown-body video, .markdown-body audio')].map((m) => ({
+  tag: m.tagName.toLowerCase(),
+  alt: m.getAttribute('alt'),
+  scheme: (m.getAttribute('src') || '').split(':')[0].slice(0, 24),
+  kept: m.getAttribute('data-markie-src'),
+  controls: m.hasAttribute('controls'),
+  preload: m.getAttribute('preload'),
+  ready: m.readyState,
+  duration: Number.isFinite(m.duration) ? Math.round(m.duration * 100) / 100 : null,
+  error: m.error ? m.error.code : null,
+})))()`;
+
 const bodyText = `document.querySelector('.markdown-body')?.innerText || ''`;
+
+// A real clip, because the point of the check is that Chromium decodes what
+// main served. Without ffmpeg the media checks say so and stand down rather
+// than passing on a file nothing could play.
+function makeMedia(target, args) {
+  const out = spawnSync("ffmpeg", ["-y", "-loglevel", "error", ...args, target], {
+    encoding: "utf-8",
+  });
+  return out.status === 0;
+}
+
+const haveFfmpeg = spawnSync("ffmpeg", ["-version"], { encoding: "utf-8" }).status === 0;
 
 async function main() {
   const userDataDir = await mkdtemp(path.join(tmpdir(), "markie-assets-profile-"));
@@ -202,6 +229,20 @@ async function main() {
   await write("private/secret.png", PNG);
   await write("report/spec.pdf", Buffer.from("%PDF-1.4\n"));
 
+  if (haveFfmpeg) {
+    await mkdir(path.join(homeDir, "report", "demo"), { recursive: true });
+    await mkdir(path.join(homeDir, "private"), { recursive: true });
+    const clipArgs = [
+      "-f", "lavfi", "-i", "color=c=navy:s=160x90:d=1", "-pix_fmt", "yuv420p",
+      "-movflags", "+faststart",
+    ];
+    makeMedia(path.join(homeDir, "report", "demo", "clip.mp4"), clipArgs);
+    makeMedia(path.join(homeDir, "private", "secret.mp4"), clipArgs);
+    makeMedia(path.join(homeDir, "report", "demo", "take.m4a"), [
+      "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+    ]);
+  }
+
   const dataUri = `data:image/png;base64,${PNG.toString("base64")}`;
   const docPath = await write(
     "report/report.md",
@@ -218,6 +259,12 @@ async function main() {
         "![remote](https://example.invalid/nope.png)",
         "",
         "[the spec](spec.pdf)",
+        "",
+        "![clip](demo/clip.mp4)",
+        "",
+        "![take](demo/take.m4a)",
+        "",
+        "![hiddenclip](../private/secret.mp4)",
         "",
       ].join("\n"),
       "utf-8"
@@ -288,13 +335,75 @@ async function main() {
 
   check("a remote picture is left to the network", byAlt.remote?.scheme === "https");
 
+  // ── Video and audio ──────────────────────────────────────────────────────
+  if (!haveFfmpeg) {
+    check("media checks need ffmpeg, which is not installed", false, "brew install ffmpeg");
+  } else {
+    await waitFor(
+      "media metadata",
+      async () => {
+        const m = await cdp.ev(mediaReport);
+        return m.length >= 3 && m.every((x) => x.ready > 0 || x.error !== null);
+      },
+      30000
+    );
+    const media = await cdp.ev(mediaReport);
+    const byName = Object.fromEntries(media.map((m) => [m.alt, m]));
+
+    check(
+      "a clip beside the document is a video element, not a broken picture",
+      byName.clip?.tag === "video",
+      JSON.stringify(byName.clip)
+    );
+    check(
+      "it plays: Chromium read a header off what main served",
+      byName.clip?.ready >= 1 && byName.clip?.duration > 0,
+      JSON.stringify(byName.clip)
+    );
+    check(
+      "it is served over the asset scheme",
+      byName.clip?.scheme === "markie-asset",
+      String(byName.clip?.scheme)
+    );
+    check(
+      "it carries controls, so it is not a decoration",
+      byName.clip?.controls === true && byName.clip?.preload === "metadata"
+    );
+    check(
+      "audio beside the document plays too",
+      byName.take?.tag === "audio" && byName.take?.ready >= 1,
+      JSON.stringify(byName.take)
+    );
+    check(
+      "a clip outside the document's folder is refused",
+      byName.hiddenclip !== undefined && byName.hiddenclip.ready === 0,
+      JSON.stringify(byName.hiddenclip)
+    );
+
+    // Seeking is the whole reason main answers Range requests: without a 206
+    // the player can only start from the beginning.
+    const seeked = await cdp.ev(`(() => {
+      const v = [...document.querySelectorAll('.markdown-body video')].find((x) => x.getAttribute('alt') === 'clip');
+      if (!v) return Promise.resolve('no clip');
+      return new Promise((resolve) => {
+        const done = () => resolve(Math.round(v.currentTime * 100) / 100);
+        v.addEventListener('seeked', done, { once: true });
+        setTimeout(() => resolve('timed out at ' + v.currentTime), 5000);
+        v.currentTime = 0.5;
+      });
+    })()`);
+    check("seeking into the middle of a clip works", seeked >= 0.4, String(seeked));
+  }
+
   await shootTo(cdp, "01-assets");
 
   // ── The document's markdown is not rewritten ─────────────────────────────
   const onDisk = await readFile(docPath, "utf-8");
   check(
     "nothing on disk was touched by rendering it",
-    onDisk.includes("![beside](demo/shot.png)") && !onDisk.includes("markie-asset"),
+    onDisk.includes("![beside](demo/shot.png)") &&
+      (!haveFfmpeg || onDisk.includes("![clip](demo/clip.mp4)")) &&
+      !onDisk.includes("markie-asset"),
   );
 
   // ── Links to files beside the document ───────────────────────────────────

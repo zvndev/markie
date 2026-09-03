@@ -40,6 +40,7 @@ function inlineLocalImages(html, docDir, opts = {}) {
 
   const {
     roots = [],
+    files = [],
     fs = nodeFs,
     realpath = (p) => fs.realpathSync(p),
     maxImageBytes = MAX_IMAGE_BYTES,
@@ -53,7 +54,7 @@ function inlineLocalImages(html, docDir, opts = {}) {
     if (cache.has(src)) return cache.get(src);
     let uri = null;
     try {
-      const found = resolveImage(src, { docDir, roots, realpath });
+      const found = resolveImage(src, { docDir, roots, files, realpath });
       if (found) {
         const bytes = fs.readFileSync(found.path);
         const size = bytes.length;

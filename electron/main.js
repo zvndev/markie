@@ -845,17 +845,90 @@ function registerAssetProtocol() {
     if (!path.isAbsolute(requested)) return new Response("Forbidden", { status: 403 });
 
     // Bounded only by the folders the user has actually opened documents from,
-    // plus their workspace roots. Nothing the request itself carries is allowed
-    // to widen that: passing the requested file's own directory as a bound
-    // makes every path contained in itself, which is a check that passes
-    // everything. It did, once, for exactly one test run.
-    if (!localAssets.imageMimeFor(requested)) return new Response("Forbidden", { status: 403 });
-    const real = localAssets.allowedRealPath(requested, { roots: fileGrants.assetRoots() });
+    // their workspace roots, and files they dragged in by hand. Nothing the
+    // request itself carries is allowed to widen that: passing the requested
+    // file's own directory as a bound makes every path contained in itself,
+    // which is a check that passes everything. It did, once, for exactly one
+    // test run.
+    if (!localAssets.mediaMimeFor(requested)) return new Response("Forbidden", { status: 403 });
+    const real = localAssets.allowedRealPath(requested, {
+      roots: fileGrants.assetRoots(),
+      files: fileGrants.grantedFilePaths(),
+    });
     // Checked again on the realpath: a symlink must not be able to swap a .png
     // for something else between the two.
-    if (!real || !localAssets.imageMimeFor(real)) return new Response("Forbidden", { status: 403 });
+    const mime = real ? localAssets.mediaMimeFor(real) : null;
+    if (!real || !mime) return new Response("Forbidden", { status: 403 });
 
-    return net.fetch(url.pathToFileURL(real).toString());
+    // A video needs ranges or it cannot be seeked, and Chromium asks for one
+    // the moment you drag the scrubber. Serving the whole file for every range
+    // request also means reading a 200 MB clip into memory per seek, so this
+    // streams the window that was asked for and nothing else.
+    return serveFileRange(real, mime, request.headers.get("range"));
+  });
+}
+
+// One file, honouring a Range header if there is one. Returns 206 with the
+// slice, 200 with the whole file, or 416 when the range cannot be satisfied,
+// which is what a media element expects at each of those points.
+function serveFileRange(filePath, mime, rangeHeader) {
+  let size;
+  try {
+    size = fs.statSync(filePath).size;
+  } catch {
+    return new Response("Not found", { status: 404 });
+  }
+
+  const headers = {
+    "Content-Type": mime,
+    "Accept-Ranges": "bytes",
+    // The renderer is the only reader and the file is local; caching a stale
+    // copy of something the user just edited is the only thing this could buy.
+    "Cache-Control": "no-cache",
+  };
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader || "").trim());
+  if (!match || size === 0) {
+    return new Response(streamOf(filePath), {
+      status: 200,
+      headers: { ...headers, "Content-Length": String(size) },
+    });
+  }
+
+  // "bytes=-500" means the last 500 bytes, not "from 0 to 500".
+  const suffix = match[1] === "";
+  let start = suffix ? Math.max(0, size - Number(match[2] || 0)) : Number(match[1]);
+  let end = suffix || match[2] === "" ? size - 1 : Number(match[2]);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) {
+    return new Response("Range not satisfiable", {
+      status: 416,
+      headers: { "Content-Range": `bytes */${size}` },
+    });
+  }
+  end = Math.min(end, size - 1);
+
+  return new Response(streamOf(filePath, start, end), {
+    status: 206,
+    headers: {
+      ...headers,
+      "Content-Range": `bytes ${start}-${end}/${size}`,
+      "Content-Length": String(end - start + 1),
+    },
+  });
+}
+
+// A Node read stream as a web ReadableStream, which is what Response wants.
+function streamOf(filePath, start, end) {
+  const node = fs.createReadStream(filePath, start === undefined ? {} : { start, end });
+  return new ReadableStream({
+    start(controller) {
+      node.on("data", (chunk) => controller.enqueue(new Uint8Array(chunk)));
+      node.on("end", () => controller.close());
+      node.on("error", (err) => controller.error(err));
+    },
+    cancel() {
+      node.destroy();
+    },
   });
 }
 
@@ -915,6 +988,10 @@ const pdfExporter = createPdfExporter({
   fs,
   os: require("os"),
   path,
+  // The same containment rule the viewer and the HTML export use. The
+  // exporter's own default knows nothing about workspace roots or attachments,
+  // so a report whose logo lives one folder up printed with a hole in it.
+  inlineImages: (html, docDir) => inlineExportImagesFrom(html, docDir),
   onError: (err) => logCrash("export-pdf-failed", err),
 });
 
@@ -1070,12 +1147,20 @@ handle("rename-file", async (_event, { oldPath, newName }) => {
 // may be absent in a partial checkout, and a missing picture must never be the
 // reason an export fails.
 function inlineExportImages(html, docPath) {
+  return inlineExportImagesFrom(html, docPath ? path.dirname(String(docPath)) : null);
+}
+
+function inlineExportImagesFrom(html, docDir) {
   const text = String(html == null ? "" : html);
-  if (!docPath) return text;
+  if (!docDir) return text;
   try {
     const { inlineLocalImages } = require("./inline-images");
-    return inlineLocalImages(text, path.dirname(String(docPath)), {
+    return inlineLocalImages(text, String(docDir), {
       roots: fileGrants.assetRoots(),
+      // Attachments too: a picture dragged in from the Desktop is one the user
+      // chose, and an export that silently dropped it would be worse than one
+      // that carries it.
+      files: fileGrants.grantedFilePaths(),
     });
   } catch (err) {
     logCrash("export-html-inline-failed", err);
@@ -1416,7 +1501,10 @@ handle("open-local-file", async (_event, { href, docDir } = {}) => {
 
   // docDir resolved the relative href above; it does not authorise anything.
   // The bounds are the grants, same as the pictures.
-  const allowed = localAssets.allowedRealPath(target, { roots: fileGrants.assetRoots() });
+  const allowed = localAssets.allowedRealPath(target, {
+    roots: fileGrants.assetRoots(),
+    files: fileGrants.grantedFilePaths(),
+  });
   if (!allowed) {
     return {
       ok: false,
@@ -2187,6 +2275,17 @@ handle("crash-log-reveal", () => {
 ipcMain.on("grant-file-path", (event, filePath) => {
   const grant = fileGrants.grantFile(filePath);
   event.returnValue = grant.ok;
+});
+
+// A file dragged onto a document, which is a different thing from a file
+// dragged into the app to open. Any type is allowed, because an attachment is
+// a picture, a clip, a PDF or a zip, and the grant it earns is only "this one
+// file may be shown or opened", never "this file may be loaded or written".
+// Synchronous to match grant-file-path: the drop handler needs an answer before
+// it decides whether it handled the drop, and the work is a stat.
+ipcMain.on("attach-file-path", (event, filePath) => {
+  const grant = fileGrants.grantAttachment(filePath);
+  event.returnValue = grant.ok ? grant.path : null;
 });
 
 // App menu

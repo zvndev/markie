@@ -14,6 +14,11 @@ function createFileGrants({
   platform = process.platform,
 } = {}) {
   const grantedFiles = new Set();
+  // Files the user dragged into a document. Deliberately a separate set from
+  // grantedFiles: dropping a PDF onto a document is permission to show or open
+  // that one file, and must never become permission to load it as a document
+  // or write over it. Only the asset rule reads this.
+  const attachedFiles = new Set();
   const isWindows = platform === "win32";
 
   const key = (target) => (isWindows ? target.toLowerCase() : target);
@@ -64,6 +69,22 @@ function createFileGrants({
     for (const root of canonicalWorkspaceRoots()) dirs.add(root);
     return [...dirs];
   };
+
+  // Any file type, because an attachment is a picture, a clip, a PDF or a zip.
+  // The gate is that a person dragged it in, which is the same gesture as
+  // choosing it in the Open dialog and is the only thing that makes it
+  // reachable at all.
+  const grantAttachment = (target) => {
+    const normalized = normalizeExisting(target);
+    if (!normalized) return { ok: false, error: "File not found" };
+    attachedFiles.add(key(normalized));
+    return { ok: true, path: normalized };
+  };
+
+  // Every file the user has explicitly opened or dropped, for the asset rule.
+  // Their folders are not included on purpose: dropping one file off the
+  // Desktop must not make the whole Desktop readable by any open document.
+  const grantedFilePaths = () => [...grantedFiles, ...attachedFiles];
 
   const hasExactFileGrant = (target) => {
     const normalized = normalizeExisting(target);
@@ -135,6 +156,8 @@ function createFileGrants({
     isInWorkspaceRoot,
     hasExactFileGrant,
     assetRoots,
+    grantAttachment,
+    grantedFilePaths,
   };
 }
 

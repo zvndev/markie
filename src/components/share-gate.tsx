@@ -170,6 +170,7 @@ export function ShareGate({
         key={stage.docId}
         docId={stage.docId}
         fileName={fileName ?? "Untitled"}
+        body={content}
         onClose={onClose}
         onChanged={onChanged}
       />

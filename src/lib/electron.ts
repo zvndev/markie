@@ -60,6 +60,9 @@ export interface ElectronAPI {
   openFilePath(path: string): Promise<FilePayload | null>;
   // resolve a dropped File to its on-disk path (Electron webUtils)
   pathForFile(file: File): string | null;
+  // resolve a file dropped onto a document and grant it for display; returns
+  // the real path, or null when it is gone or the drop carried no path
+  attachFile(file: File): string | null;
   // make Markie the default app for .md files (macOS)
   setDefaultMarkdownApp(): Promise<{ ok: boolean; error?: string }>;
   // whether Markie is already the default .md handler (macOS, packaged only)

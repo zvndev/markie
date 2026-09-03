@@ -25,6 +25,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
       return null;
     }
   },
+  // Resolve a file dropped onto a document and grant it for display. Separate
+  // from pathForFile because that one only answers for files Markie can open
+  // as documents, and an attachment is usually not one.
+  attachFile: (file) => {
+    try {
+      const filePath = webUtils.getPathForFile(file) || null;
+      if (!filePath) return null;
+      return ipcRenderer.sendSync("attach-file-path", filePath) || null;
+    } catch {
+      return null;
+    }
+  },
   setDefaultMarkdownApp: () => ipcRenderer.invoke("set-default-md"),
   defaultMarkdownStatus: () => ipcRenderer.invoke("default-md-status"),
   // Workspace / Files view

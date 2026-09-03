@@ -83,7 +83,8 @@
     "rail:check": "node scripts/rail-tip-check.mjs",
     "projects:check": "node scripts/projects-panel-check.mjs",
     "pdf:check": "node --experimental-strip-types --import ./scripts/lib/alias-hook.mjs scripts/pdf-export-check.mjs",
-    "assets:check": "node scripts/local-assets-check.mjs"
+    "assets:check": "node scripts/local-assets-check.mjs",
+    "preview:check": "node scripts/link-preview-check.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

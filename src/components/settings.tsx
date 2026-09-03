@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   getServerURL,
   setServerURL,
@@ -10,6 +10,12 @@ import {
 import { authStore, useAuth } from "@/lib/auth-store";
 import { SignInForm } from "@/components/sign-in";
 import { getElectronAPI } from "@/lib/electron";
+import {
+  getLinkPreviewsEnabled,
+  linkPreviewsEnabledOnServer,
+  setLinkPreviewsEnabled,
+  subscribeLinkPreviews,
+} from "@/lib/link-previews";
 import {
   allThemes,
   applyTheme,
@@ -135,6 +141,7 @@ export function Settings({ onClose, initialSection = "account" }: SettingsProps)
         {section === "advanced" && (
           <div>
             <BetaChannelSetting />
+            <LinkPreviewSetting />
             <CrashReportingSetting />
 
             <div className="markie-overlay-section mb-2">Server &amp; sync settings</div>
@@ -225,6 +232,40 @@ function BetaChannelSetting() {
         </div>
       )}
       {error && <div className="text-[11px] text-[var(--status-red)] mt-1">{error}</div>}
+    </div>
+  );
+}
+
+// On by default, because a preview is the useful behaviour. Off is a real
+// position though: with previews on, the sites a document links to learn that
+// somebody paused over them.
+function LinkPreviewSetting() {
+  // The switch reads the preference itself rather than holding a copy, so a
+  // second window moving it is reflected here without a reload.
+  const enabled = useSyncExternalStore(
+    subscribeLinkPreviews,
+    getLinkPreviewsEnabled,
+    linkPreviewsEnabledOnServer
+  );
+
+  return (
+    <div className="mb-5">
+      <div className="markie-overlay-section mb-2">Links</div>
+      <label className="flex items-start justify-between gap-3 text-[12px] text-muted py-1">
+        <span>
+          Preview links on hover
+          <span className="block text-[11px] text-muted/80 mt-0.5 leading-relaxed">
+            Rest the pointer on a link and Markie fetches the page&rsquo;s title, summary
+            and picture. Nothing is fetched when you open a document, only when you
+            point at a link, and the site you point at can tell that somebody looked.
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => setLinkPreviewsEnabled(e.target.checked)}
+        />
+      </label>
     </div>
   );
 }

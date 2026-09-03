@@ -35,6 +35,7 @@ import {
   type PeerUser,
 } from "@/lib/collab";
 import { CommentLayer } from "@/components/comments";
+import { LinkPreviewCard } from "@/components/link-preview-card";
 import { handleDocumentClick } from "@/lib/local-link";
 import {
   attachmentContent,
@@ -641,6 +642,7 @@ export function RichView({
         >
           <EditorContent editor={editor} />
         </article>
+        <LinkPreviewCard container={scrollEl} />
         {editor && session && collab && (
           <CommentLayer
             editor={editor}

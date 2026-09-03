@@ -54,6 +54,15 @@ export interface TerminalContext {
   filePath?: string | null;
 }
 
+export interface LinkPreview {
+  url: string;
+  title: string | null;
+  description: string | null;
+  siteName: string | null;
+  /** A data URI, because main fetches the picture so the renderer need not. */
+  image: string | null;
+}
+
 export interface ElectronAPI {
   platform: string;
   openFile(args?: { near?: string | null }): Promise<FilePayload | null>;
@@ -161,6 +170,9 @@ export interface ElectronAPI {
   openExternal(url: string): Promise<void>;
   // A link in a document to a file beside it. Resolved and access-checked in
   // main, then handed to the OS; the renderer never gets a path back.
+  // The card for a hovered link. Fetched in main, on hover only, and never
+  // when a document opens. Null when there is nothing worth showing.
+  linkPreview(url: string): Promise<LinkPreview | null>;
   openLocalFile(payload: {
     href: string;
     docDir: string | null;

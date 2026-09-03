@@ -86,6 +86,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     openFilePath: vi.fn(async () => null),
     pathForFile: vi.fn(() => null),
     attachFile: vi.fn(() => null),
+    linkPreview: vi.fn(async () => null),
     setDefaultMarkdownApp: vi.fn(async () => ({ ok: true })),
     defaultMarkdownStatus: vi.fn(async () => ({
       supported: true,

@@ -36,6 +36,7 @@ const {
 } = require("./crash-reporting");
 const { createCrashLog } = require("./crash-log");
 const { createPdfExporter, ensureExtension } = require("./export-pdf");
+const { createLinkPreviews } = require("./link-preview");
 const { createIpcHandler, errorMessage } = require("./ipc-result");
 const { writeFileAtomic } = require("./atomic-write");
 const { createHistory } = require("./history");
@@ -1515,6 +1516,21 @@ handle("open-local-file", async (_event, { href, docDir } = {}) => {
   const failure = await shell.openPath(allowed);
   // openPath answers with a message on failure and an empty string on success.
   return failure ? { ok: false, error: failure } : { ok: true };
+});
+
+// IPC: the card that appears when somebody hovers a link.
+//
+// Main does the fetching because the renderer's connect-src is locked to
+// Markie's own API on purpose, and widening it to the whole web to draw a
+// preview card would be a poor trade. Nothing is fetched when a document opens,
+// only when a person points at a link: see electron/link-preview.js.
+const linkPreviews = createLinkPreviews({
+  // The end-to-end check serves its own page on loopback, which the guard
+  // refuses by design. Nothing else ever sets this.
+  allowPrivate: process.env.MARKIE_E2E === "1",
+});
+handle("link-preview", async (_event, url) => linkPreviews.get(url), {
+  onFailure: () => null,
 });
 
 // IPC: open an https URL in the system browser (OAuth flows)

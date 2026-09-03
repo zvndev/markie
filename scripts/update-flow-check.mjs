@@ -7,7 +7,13 @@
 // release from the same URL a user would, runs it against the *live* feed with
 // a clean profile, and waits for the update-ready notice to appear on its own.
 //
-// Nothing is stubbed: real DMG, real signature, real feed, real timer.
+// Nothing is stubbed: real artifact, real signature, real feed, real timer.
+//
+// It runs on macOS and on Windows. The assertions are the same on both, because
+// they are the same claim; only obtaining the previous release, judging its
+// signature, and reading the version back off disk differ, and those four live
+// in scripts/lib/update-targets.mjs. Windows has no updater hardware of its own
+// here, so it runs on a GitHub Windows runner, which is a real Windows.
 //
 //   node scripts/update-flow-check.mjs                 # against the live feed
 //   node scripts/update-flow-check.mjs --from 0.3.1    # pin the starting version
@@ -20,14 +26,18 @@ import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createServer } from "node:net";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+import { targetFor } from "./lib/update-targets.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("update-flow-check", import.meta.url);
 
 
-const root = path.resolve(new URL("..", import.meta.url).pathname);
+// fileURLToPath, not URL.pathname: on Windows a file URL's pathname is
+// "/C:/..." and resolving that produces a path nothing exists at.
+const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const require = createRequire(path.join(root, "server", "package.json"));
 const WebSocket = require("ws");
 const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
@@ -35,9 +45,21 @@ const artifactDir = path.join(root, ".autoloop", "runs", `update-flow-${stamp}`)
 const children = [];
 const tempPaths = [];
 const mounted = [];
-// Set once the run has asked Squirrel to swap the bundle, so cleanup knows it
+// Set once the run has asked the updater to swap the app, so cleanup knows it
 // has shared state to tidy rather than guessing.
 let installed = false;
+
+// At module scope because cleanup runs from signal handlers, outside main().
+// `run` is a function declaration below, so it is hoisted by the time this is
+// called rather than by the time it is built.
+const platform = targetFor(process.platform, {
+  run: (...a) => run(...a),
+  mkdir,
+  mkdtemp,
+  stat,
+  tmpdir,
+  mounted,
+});
 
 await mkdir(artifactDir, { recursive: true });
 
@@ -89,25 +111,6 @@ function start(command, args, options = {}) {
   return child;
 }
 
-// Anything running out of our temp directory, whoever started it. After an
-// install, Squirrel relaunches the app itself, so the new process is nobody's
-// child and would otherwise survive this script.
-async function killStrays() {
-  for (const dir of tempPaths) {
-    const out = await run("bash", [
-      "-lc",
-      `pgrep -f ${JSON.stringify(dir)} || true`,
-    ]).catch(() => "");
-    for (const pid of out.split(/\s+/).filter(Boolean)) {
-      try {
-        process.kill(Number(pid), "SIGKILL");
-      } catch {
-        // Already gone.
-      }
-    }
-  }
-}
-
 async function cleanup() {
   await Promise.all(
     children.map(
@@ -120,19 +123,13 @@ async function cleanup() {
         })
     )
   );
-  await killStrays().catch(() => {});
-  // Squirrel keys its state on the bundle id, so a run that installs leaves
-  // state behind pointing at a temp bundle this script is about to delete. The
-  // installed Markie shares that file; a stale entry is its problem, not ours
-  // to leave lying around.
+  await platform.killStrays(tempPaths).catch(() => {});
+  // A run that installs can leave the installer's own state behind pointing at
+  // a copy this script is about to delete. The installed Markie shares that
+  // file; a stale entry is its problem, not ours to leave lying around.
   if (installed) {
-    await rm(
-      path.join(
-        process.env.HOME ?? "",
-        "Library/Caches/com.zvn.markie.ShipIt/ShipItState.plist"
-      ),
-      { force: true }
-    ).catch(() => {});
+    const statePath = platform.installerStatePath();
+    if (statePath) await rm(statePath, { force: true }).catch(() => {});
   }
   for (const point of mounted) {
     await run("hdiutil", ["detach", point, "-force"]).catch(() => {});
@@ -218,8 +215,15 @@ async function main() {
     await readFile(path.join(root, "package.json"), "utf-8")
   ).version;
 
-  // The version to start from: whatever the feed said before this release.
-  const previousFeed = path.join(root, ".release", target, "previous-latest-mac.yml");
+  const { writeFile } = await import("node:fs/promises");
+
+  // The version to start from: whatever the feed said before this release. The
+  // saved feed is named after the platform's own feed file, so a Windows run
+  // does not read the macOS one and try to update from a version that never
+  // shipped there.
+  const previousFeedName =
+    process.platform === "win32" ? "previous-latest.yml" : "previous-latest-mac.yml";
+  const previousFeed = path.join(root, ".release", target, previousFeedName);
   const from =
     arg("--from") ??
     (await readFile(previousFeed, "utf-8").catch(() => ""))
@@ -236,12 +240,11 @@ async function main() {
   // Read the bucket and feed path out of the manifest rather than repeating
   // them here: it is the single source of truth for the stable channel, and a
   // check that hardcodes the URL would keep passing after the real one moved.
-  const primary = manifest.platforms.find(
-    (p) => p.id === manifest.primaryPlatformId
-  );
+  const entry = manifest.platforms.find((p) => p.id === platform.platformId);
+  if (!entry) throw new Error(`no ${platform.platformId} entry in the download manifest`);
   const base = manifest.storage.publicBaseUrl.replace(/\/$/, "");
-  const feedUrl = `${base}/${primary.feed.path}`;
-  const dmgUrl = `${base}/${path.posix.dirname(primary.feed.path)}/Markie-${from}-${primary.arch}.dmg`;
+  const feedUrl = `${base}/${entry.feed.path}`;
+  const artifactUrl = platform.artifactUrl(base, entry.feed.path, from, entry.arch);
   console.log(`  updating Markie ${from} -> ${target}`);
   console.log(`  feed: ${feedUrl}\n`);
 
@@ -256,65 +259,33 @@ async function main() {
   );
 
   const workDir = await mkdtemp(path.join(tmpdir(), "markie-update-"));
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "markie-update-profile-"));
+  const userDataDir = await platform.profileDir();
   tempPaths.push(workDir, userDataDir);
 
   // Downloaded from the same public URL a user would get, so this exercises
   // the real artifact rather than something rebuilt locally.
-  const dmgPath = path.join(workDir, `Markie-${from}-arm64.dmg`);
-  console.log(`  downloading ${dmgUrl}`);
-  const dmg = await fetch(dmgUrl);
-  if (!dmg.ok) throw new Error(`download failed: ${dmg.status} ${dmgUrl}`);
-  const { writeFile } = await import("node:fs/promises");
-  await writeFile(dmgPath, Buffer.from(await dmg.arrayBuffer()));
-  const dmgSize = (await stat(dmgPath)).size;
+  const artifactPath = path.join(workDir, path.posix.basename(artifactUrl));
+  console.log(`  downloading ${artifactUrl}`);
+  const download = await fetch(artifactUrl);
+  if (!download.ok) throw new Error(`download failed: ${download.status} ${artifactUrl}`);
+  await writeFile(artifactPath, Buffer.from(await download.arrayBuffer()));
+  const size = (await stat(artifactPath)).size;
   check(
     `the previous release is still downloadable`,
-    dmgSize > 50_000_000,
-    `${from} DMG is ${(dmgSize / 1e6).toFixed(1)} MB`
+    size > platform.minBytes,
+    `${from} ${platform.artifactLabel} is ${(size / 1e6).toFixed(1)} MB`
   );
 
-  const mountPoint = path.join(workDir, "mnt");
-  await mkdir(mountPoint, { recursive: true });
-  await run("hdiutil", [
-    "attach",
-    dmgPath,
-    "-mountpoint",
-    mountPoint,
-    "-nobrowse",
-    "-quiet",
-  ]);
-  mounted.push(mountPoint);
+  const { appPath, binary } = await platform.stage({ artifactPath, workDir });
 
-  const appDir = path.join(workDir, "Applications");
-  await mkdir(appDir, { recursive: true });
-  await run("ditto", [path.join(mountPoint, "Markie.app"), path.join(appDir, "Markie.app")]);
-  await run("hdiutil", ["detach", mountPoint, "-quiet"]);
-  mounted.pop();
+  const trust = await platform.trust({ appPath });
+  check(trust.label, trust.ok, trust.detail);
 
-  const appPath = path.join(appDir, "Markie.app");
-  const binary = path.join(appPath, "Contents", "MacOS", "Markie");
-
-  // Gatekeeper's verdict on the copy that is about to run. A build that cannot
-  // launch cannot update.
-  const gatekeeper = await run("spctl", ["-a", "-vvv", "-t", "install", appPath]).catch(
-    (e) => e.message
-  );
-  check(
-    "the previous release is still accepted by Gatekeeper",
-    /Notarized Developer ID/.test(gatekeeper),
-    gatekeeper.split("\n").find((l) => l.includes("source=")) ?? ""
-  );
-
-  const plist = await run("defaults", [
-    "read",
-    path.join(appPath, "Contents", "Info.plist"),
-    "CFBundleShortVersionString",
-  ]);
+  const onDisk = await platform.versionOnDisk({ appPath });
   check(
     "the app under test really is the previous version",
-    plist.trim() === from,
-    `Info.plist reports ${plist.trim()}`
+    onDisk === from,
+    `the copy on disk reports ${onDisk}`
   );
 
   const debugPort = await pickPort();
@@ -415,34 +386,24 @@ async function main() {
   cdp.close();
 
   const installedVersion = await waitFor(
-    "the bundle to be replaced",
+    "the installed app to be replaced",
     async () => {
-      const v = await run("defaults", [
-        "read",
-        path.join(appPath, "Contents", "Info.plist"),
-        "CFBundleShortVersionString",
-      ]).catch(() => "");
-      return v.trim() === target ? v.trim() : null;
+      const v = await platform.versionOnDisk({ appPath });
+      return v === target ? v : null;
     },
     180000
   );
   check(
     "Restart & update replaces the installed app",
     installedVersion === target,
-    `the bundle on disk now reports ${installedVersion}`
+    `the copy on disk now reports ${installedVersion}`
   );
 
   // It relaunches itself afterwards, which is the difference between "the files
   // changed" and "the user got their app back".
   const relaunched = await waitFor(
     "the new version to relaunch",
-    async () => {
-      const out = await run("bash", [
-        "-lc",
-        `pgrep -f ${JSON.stringify(path.join(appPath, "Contents/MacOS/Markie"))} || true`,
-      ]).catch(() => "");
-      return out.trim() ? out.trim().split(/\s+/)[0] : null;
-    },
+    () => platform.runningPid({ appPath }),
     120000
   );
   check(

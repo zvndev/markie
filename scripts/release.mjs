@@ -1012,6 +1012,26 @@ async function publishWindows(confirmVersion) {
   const dist = windowsDistDir();
   const publicBase = releaseManifest().storage.publicBaseUrl.replace(/\/+$/, "");
   const artifactBaseUrl = `${publicBase}/${path.posix.dirname(windowsPlatform().feed.path)}`;
+
+  // The feed as it stands before this release is saved for the same two reasons
+  // it is on macOS: a rollback needs the exact bytes to restore, and the update
+  // check needs to know which version an installed app is updating *from*. This
+  // was missing, which is part of why the Windows update leg had no automation
+  // to run even once there was a runner to run it on.
+  const previousFeedText = await (
+    await fetchRequired(`${artifactBaseUrl}/${path.posix.basename(windowsPlatform().feed.path)}`, {
+      cache: "no-store",
+    })
+  ).text();
+  const previousVersion = parseElectronBuilderFeed(previousFeedText).version;
+  assertVersion(previousVersion);
+  assert(
+    compareVersions(version, previousVersion) > 0,
+    `release ${version} must be newer than public Windows feed ${previousVersion}`
+  );
+  mkdirSync(evidenceDir(version), { recursive: true });
+  writeFileSync(evidencePath(version, "previous-latest.yml"), previousFeedText);
+
   const artifactFiles = local.files.flatMap((file) =>
     file.blockmap ? [path.join(dist, file.name), path.join(dist, file.blockmap)] : [path.join(dist, file.name)]
   );

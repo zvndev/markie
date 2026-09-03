@@ -47,7 +47,8 @@
       type: infra
       severity: medium
       source: e2e crash fix 2026-08-24
-- [ ] Confirm the Windows update path on real hardware: a previous public Windows version
+- [ ] (superseded by the Windows update check workflow, keep until it has passed once)
+      Confirm the Windows update path on real hardware: a previous public Windows version
       finds, downloads, installs, and relaunches through Check for Updates. Everything else
       this item asked for is now in place: Authenticode signing runs in CI
       (`windows-release.yml`, Azure Trusted Signing), `windows-x64` is `public` in the

@@ -365,10 +365,21 @@ npm run release:verify:public:win -- --version="$MARKIE_RELEASE_VERSION" --deep
 
 ### 5. Verify the update as a user
 
-On real Windows hardware, run the **previous** public Markie version, choose **Check for Updates**,
-and confirm it finds, downloads, installs, and relaunches into the new version. There is no
-`update:check` automation for Windows, so this step is entirely by hand. A Windows release is not
-complete until it passes.
+Dispatch `.github/workflows/windows-update-check.yml`. It runs the same
+`scripts/update-flow-check.mjs` macOS uses, on a Windows runner, which is real Windows: it downloads
+the **previous** public installer from the same URL a user would, installs it, launches it against
+the **live** feed with a clean profile, waits for the app to find and download the update on its
+own, clicks **Restart & update**, and confirms the executable on disk reports the new version and
+the app came back.
+
+The assertions are shared with macOS on purpose (`scripts/lib/update-targets.mjs` holds the four
+things that genuinely differ: obtaining the previous release, judging its signature, reading the
+version off disk, and finding the relaunched process). A claim that holds on one platform and not
+the other is then a real difference rather than a difference in what was checked.
+
+The version to update from comes from `.release/<version>/previous-latest.yml`, saved by
+`release:publish:win`; override with the workflow's `from` input. A Windows release is not complete
+until this passes.
 
 ### Withdrawing a Windows release
 

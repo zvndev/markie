@@ -212,10 +212,50 @@ jobs:
           Write-Host "installer: $($installer.Name)"
           Assert-MarkieSignature (Get-AuthenticodeSignature $installer.FullName) "Installer"
 
+          # Windows Error Reporting has to be armed before the crash, not after,
+          # so this is set up ahead of the install rather than in a failure
+          # handler. On 0.5.3 the installer died with 0xC0000005 here and left
+          # nothing behind but the exit code, so the only way to tell a runner
+          # fault from a broken installer was to run it again.
+          $dumpDir = Join-Path $env:RUNNER_TEMP "crash-dumps"
+          New-Item -ItemType Directory -Force -Path $dumpDir | Out-Null
+          $wer = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps"
+          New-Item -Path $wer -Force | Out-Null
+          Set-ItemProperty -Path $wer -Name DumpFolder -Value $dumpDir -Type ExpandString
+          Set-ItemProperty -Path $wer -Name DumpCount -Value 10 -Type DWord
+          Set-ItemProperty -Path $wer -Name DumpType -Value 2 -Type DWord
+          $installStartedAt = Get-Date
+
           # /S is NSIS silent mode. A signed installer that cannot actually
           # install is not a release, so this runs the real thing.
           $install = Start-Process $installer.FullName -ArgumentList "/S" -PassThru -Wait
-          if ($install.ExitCode -ne 0) { throw "installer exited with code $($install.ExitCode)" }
+          if ($install.ExitCode -ne 0) {
+            $code = $install.ExitCode
+            # Negative codes are NTSTATUS values read as signed. The hex is what
+            # is searchable, and 0xC0000005 in particular is an access violation
+            # rather than anything the installer chose to report.
+            $hex = "0x{0:X8}" -f [uint32]($code -band 0xFFFFFFFF)
+            Write-Host "::group::installer failure evidence"
+            Write-Host "exit code $code ($hex)"
+            if ($hex -eq "0xC0000005") { Write-Host "0xC0000005 is an access violation: the installer crashed rather than failing" }
+
+            Write-Host "--- Application event log since the install started ---"
+            Get-WinEvent -FilterHashtable @{ LogName = "Application"; StartTime = $installStartedAt } -ErrorAction SilentlyContinue |
+              Where-Object { $_.LevelDisplayName -in @("Error", "Warning") } |
+              Select-Object -First 25 TimeCreated, ProviderName, Id, Message |
+              Format-List | Out-String -Width 200 | Write-Host
+
+            Write-Host "--- crash dumps written ---"
+            Get-ChildItem $dumpDir -ErrorAction SilentlyContinue |
+              Select-Object Name, Length | Format-Table | Out-String | Write-Host
+
+            Write-Host "--- what landed on disk before it died ---"
+            Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -First 40 FullName, Length | Format-Table | Out-String -Width 200 | Write-Host
+            Write-Host "::endgroup::"
+
+            throw "installer exited with code $code ($hex)"
+          }
 
           $executable = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Filter "Markie.exe" -Recurse -ErrorAction SilentlyContinue |
             Select-Object -First 1
@@ -262,6 +302,17 @@ jobs:
           } else {
             Write-Host "no uninstaller found next to the executable; skipping the uninstall leg"
           }
+
+      # Only on failure, and only then: a dump is hundreds of megabytes and
+      # there is nothing to learn from one when the install worked.
+      - name: Keep the crash evidence
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: windows-install-crash-${{ env.MARKIE_VERSION }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/crash-dumps
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload the installer as a build artifact
         if: always()

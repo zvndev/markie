@@ -1,0 +1,66 @@
+# Does an installed Windows Markie actually receive a release?
+#
+# This was "entirely by hand, on real Windows hardware" for every release up to
+# 0.5.3, which in practice meant it was the one gate that never ran. A GitHub
+# Windows runner is real Windows: it can install the previous public installer,
+# launch it, let the app find the update on its own against the live feed, click
+# the button, and check the executable on disk changed version.
+#
+# It runs against what is published, so it is a post-publish gate, the same way
+# `npm run update:check` is on macOS.
+name: Windows update check
+
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: The version to update from. Defaults to the feed saved at publish time.
+        required: false
+        type: string
+      install:
+        description: Click Restart & update and verify the swap, rather than stopping at the notice.
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  update-check:
+    name: Update from the previous public release
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Update from the previous public release
+        shell: pwsh
+        env:
+          # The check launches a real signed Markie. That is the whole point
+          # here, and a runner is a throwaway machine, but the consent gate is
+          # deliberate everywhere else so it is set deliberately here too.
+          MARKIE_ALLOW_E2E: "1"
+        run: |
+          $arguments = @("scripts/update-flow-check.mjs")
+          if ("${{ inputs.from }}") { $arguments += @("--from", "${{ inputs.from }}") }
+          if ("${{ inputs.install }}" -eq "true") { $arguments += "--install" }
+          Write-Host "node $($arguments -join ' ')"
+          & node @arguments
+
+      - name: Keep the run's logs
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: windows-update-check-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .autoloop/runs/update-flow-*
+          if-no-files-found: warn
+          retention-days: 14

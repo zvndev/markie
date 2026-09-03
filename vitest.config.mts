@@ -26,6 +26,9 @@ export default defineConfig({
         test: {
           name: "node",
           environment: "node",
+          // A handful of these opt into jsdom with a per-file directive, and
+          // they need the same web-storage repair the dom project does.
+          setupFiles: ["./src/test/web-storage.ts"],
           include: ["{src,electron}/**/*.{test,spec}.ts"],
         },
       },
@@ -35,7 +38,7 @@ export default defineConfig({
           name: "dom",
           environment: "jsdom",
           globals: true,
-          setupFiles: ["./src/test/setup.ts"],
+          setupFiles: ["./src/test/web-storage.ts", "./src/test/setup.ts"],
           include: ["src/**/*.{test,spec}.tsx"],
         },
       },

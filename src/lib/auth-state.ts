@@ -37,6 +37,14 @@ function defaultStorage(): AuthStateStorage | null {
   }
 }
 
+// Not provided means "find the browser's storage". Provided as null means the
+// caller is telling us there is none, and honouring that is the difference
+// between a test that proves the fail-closed path and one that only passes on
+// a machine whose Node has no localStorage global.
+function resolveStorage(storage: AuthStateStorage | null | undefined): AuthStateStorage | null {
+  return storage === undefined ? defaultStorage() : storage;
+}
+
 function randomNonce(): string {
   const bytes = new Uint8Array(NONCE_BYTES);
   // Fail closed: without a real CSPRNG a predictable nonce is worse than no
@@ -73,7 +81,7 @@ export function createAuthState(opts?: {
   storage?: AuthStateStorage | null;
   now?: number;
 }): string | null {
-  const storage = opts?.storage ?? defaultStorage();
+  const storage = resolveStorage(opts?.storage);
   if (!storage) return null;
   let value: string;
   try {
@@ -99,7 +107,7 @@ export function consumeAuthState(
   candidate: string | null | undefined,
   opts?: { storage?: AuthStateStorage | null; now?: number }
 ): boolean {
-  const storage = opts?.storage ?? defaultStorage();
+  const storage = resolveStorage(opts?.storage);
   if (!storage) return false;
   const pending = read(storage);
   clearAuthState({ storage });
@@ -109,7 +117,7 @@ export function consumeAuthState(
 }
 
 export function clearAuthState(opts?: { storage?: AuthStateStorage | null }): void {
-  const storage = opts?.storage ?? defaultStorage();
+  const storage = resolveStorage(opts?.storage);
   if (!storage) return;
   try {
     storage.removeItem(STATE_KEY);

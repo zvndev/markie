@@ -4,6 +4,19 @@
 > evidence; do not delete history. Move completed items to Done with the verification record.
 
 ## Open
+- [ ] The Windows release job's install/launch/uninstall step is not reliable. On the 0.5.3
+      release the signed installer crashed under `/S` with `-1073741819` (0xC0000005, an
+      access violation) on the GitHub runner; an unchanged re-run of the same job on the
+      same commit passed and produced a good build. Nothing in the packaging config had
+      changed since 0.5.2. Left as-is for 0.5.3 because a retry proved the artifact, but a
+      release gate that fails at random teaches people to retry through real failures.
+      Worth capturing the installer log on failure so the next occurrence can be diagnosed
+      rather than re-run.
+      type: release
+      severity: medium
+      acceptance_criteria: A failing Windows install step leaves enough evidence to tell a
+        runner fault from a broken installer without re-running.
+      source: 0.5.3 Windows release, run 33720230091
 - [ ] Carry a document's attachments when it is shared: upload them to our own B2 Backblaze
       bucket and rewrite the links to point there, so a shared or published document is not
       full of holes where the pictures were. Today the share dialog counts the local files

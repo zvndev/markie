@@ -1,6 +1,6 @@
 {
   "name": "markie",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "private": true,
   "description": "A fast, native desktop markdown editor for local files, sharing, and AI agents.",
   "author": "ZVN",

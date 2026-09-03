@@ -8,6 +8,49 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-09-03
+
+### Added
+
+- **Video, audio and GIFs play in the document.** Write `![](demo/clip.mp4)`,
+  the same way you write a picture, and you get a player with controls where
+  the image would have been. Same for a voice memo or a recording. Markdown has
+  only one syntax for embedding a file, so this keeps your document a plain
+  markdown document that opens anywhere: nothing Markie-only is written into
+  it. Clips load only their first moments until you press play, so a document
+  with five recordings in it opens as fast as one without, and you can drag the
+  scrubber straight into the middle.
+- **Drop a file onto a document to attach it.** A screenshot, a clip, a PDF, a
+  zip: drop it in and it is linked where it already lives on your disk, with no
+  copy made and nothing moved. Pictures and clips appear in place, everything
+  else becomes a link that opens the file. Drop something from beside the
+  document and you get a short relative link, so the two travel together if you
+  send them on; drop something from your Desktop and you get the full path, so
+  the link still works. Dropping a markdown or text file still opens it, as
+  before.
+- **Hovering a link shows you what is on the other end.** Rest the pointer on a
+  link and Markie fetches the page's title, summary and picture, the way Slack
+  does. Nothing is fetched when you open a document, only when you deliberately
+  point at one link, so opening something somebody sent you does not quietly
+  call out to every address in it. Click the card to open the page. It is on by
+  default, and there is a switch in Settings, Advanced, because the site you
+  point at can tell that somebody looked.
+
+### Fixed
+
+- **Dropping a picture on Markie no longer fills the editor with gibberish.**
+  A PNG dropped onto the app was read as if it were text, and its bytes went
+  straight into the document.
+- **PDF exports keep pictures that live one folder up.** A report whose logo sat
+  in a shared `assets/` folder printed with a hole where the logo should have
+  been. Exporting to HTML already handled this; the PDF exporter now uses the
+  same rule.
+- **Sharing a document says what will not travel with it.** Sharing sends the
+  text, so a picture sitting beside the document on your disk is not something
+  the other person can see. The share window now counts those files and tells
+  you before you send the link, and points at Export, which folds pictures into
+  the file itself.
+
 ## [0.5.2] - 2026-09-02
 
 ### Added

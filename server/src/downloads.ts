@@ -138,11 +138,16 @@ export function downloadHref(platform: DownloadPlatform, siteUrl = ""): string {
   return `${stripTrailingSlash(siteUrl)}${platform.route}`;
 }
 
+// The button that offers Markie from somewhere that is not the download page:
+// a shared document, an invite email, a page that could not be found. The
+// platform's own label belongs on a card next to three other cards, where the
+// architecture is the thing being chosen. On its own it reads as an
+// instruction to somebody who was not choosing anything.
 export function primaryDownloadCta(siteUrl = ""): { href: string; label: string; platform: DownloadPlatform } {
   const platform = primaryDownloadPlatform();
   return {
     href: downloadHref(platform, siteUrl),
-    label: platform.ctaLabel,
+    label: "Get Markie",
     platform,
   };
 }

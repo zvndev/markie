@@ -282,7 +282,7 @@ shares.post("/:id/shares", async (c) => {
   await sendEmail({
     to: cleanEmail,
     subject: `📄 ${inviter} tossed you a doc`,
-    text: `${inviter} shared "${doc.name}" with you on Markie.\n\nRead it right now (no account needed): ${previewUrl}\n\nReading raw markdown in a browser is a small tragedy — Markie fixes that. Make an account with this email and "${doc.name}" will be waiting in your Library.\n\nThis link was sent to you alone. Don't forward it.`,
+    text: `${inviter} shared "${doc.name}" with you on Markie.\n\nRead it right now (no account needed): ${previewUrl}\n\nReading raw markdown in a browser is a small tragedy, and Markie fixes that. Make an account with this email and "${doc.name}" will be waiting in your Library.\n\nThis link was sent to you alone. Don't forward it.`,
     html: inviteHtml(inviter, doc.name, previewUrl, docRawLink(docId, inviteToken)),
   });
   return c.json({ ok: true, status: "invited", email: cleanEmail, role });
@@ -368,12 +368,12 @@ function inviteHtml(
   <div style="font-size:32px;font-weight:800;color:#f59e0b">M</div>
   <h2 style="font-size:19px;margin:8px 0 4px">${escapeHtml(inviter)} tossed you a doc 📄</h2>
   <p style="font-size:14px;line-height:1.5;color:#3f3f46">They shared <strong>${escapeHtml(docName)}</strong> with you on Markie.</p>
-  <p style="font-size:14px;line-height:1.5;color:#3f3f46">No account needed to read it — it's right here, rendered nicely:</p>
+  <p style="font-size:14px;line-height:1.5;color:#3f3f46">No account needed to read it. It's right here, rendered nicely:</p>
   <p style="margin:20px 0">
     <a href="${escapeHtml(previewUrl)}" style="background:#f59e0b;color:#000;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;display:inline-block">Open it →</a>
   </p>
   <p style="font-size:13px;line-height:1.7;color:#3f3f46">Or get the app: <a href="${escapeHtml(download.href)}" style="color:#b45309;font-weight:600">${escapeHtml(download.label)}</a> · <a href="${escapeHtml(rawUrl)}" style="color:#b45309">Download the .md</a></p>
-  <p style="font-size:13px;color:#3f3f46">Make an account with this email to keep <strong>${escapeHtml(docName)}</strong> in your Library — your markdown will thank you.</p>
+  <p style="font-size:13px;color:#3f3f46">Make an account with this email to keep <strong>${escapeHtml(docName)}</strong> in your Library, and your markdown will thank you.</p>
   <p style="font-size:12px;line-height:1.6;color:#71717a">This link was sent to you alone and opens nothing else. Please don't forward it.</p>
 </div>`;
 }

@@ -190,14 +190,17 @@ export function renderPublicPage(opts: {
   </div>
   <main>${content}</main>
   <div class="cta">
-    These look even better in <a href="${esc(siteUrl)}">Markie</a> — it's free,
+    These look even better in <a href="${esc(siteUrl)}">Markie</a>. It's free,
     it's fast, and your markdown will thank you.
   </div>
 </body></html>`;
 }
 
+// Only says something when there is something to say. A row of chips reading
+// "Published" over every download tells a visitor nothing they cannot see from
+// the button underneath it.
 function platformStatusLabel(platform: DownloadPlatform) {
-  return platform.status === "public" ? "Published" : "Planned";
+  return platform.status === "public" ? null : "Coming soon";
 }
 
 export function renderDownloadPage(opts: {
@@ -208,18 +211,23 @@ export function renderDownloadPage(opts: {
   const { siteUrl, selectedPlatform, status } = opts;
   const primary = primaryDownloadCta();
   const platforms = downloadPlatforms();
+  // Written for somebody who wants the app, not for the build system. This
+  // page used to explain the release process to its visitors: it named the
+  // artifact filename and internal route on every card, chipped each one
+  // "Published", and closed with a line about signing and updater feeds being
+  // human-gated work. None of that is a download page.
   const headline =
     status === "missing"
-      ? "Download Not Found"
+      ? "Page not found"
       : selectedPlatform?.status === "planned"
-        ? `${selectedPlatform.label} Is Not Published Yet`
+        ? `Markie for ${selectedPlatform.label} is coming`
         : "Download Markie";
   const summary =
     status === "missing"
-      ? "That download route is not in Markie's platform manifest."
+      ? "That link does not go anywhere. The downloads are below."
       : selectedPlatform?.status === "planned"
-        ? `${selectedPlatform.description} The current public build remains ${primary.platform.label}.`
-        : "Markie's desktop release surface is manifest-driven: published artifacts link directly, while upcoming platforms stay visible without pretending they are ready.";
+        ? `It is not ready yet. Markie runs on ${primary.platform.label} today.`
+        : "A fast markdown reader and editor for your own files. Free, and it opens what is already on your machine.";
   return `<!doctype html>
 <html lang="en"><head>
   <meta charset="utf-8">
@@ -243,24 +251,21 @@ export function renderDownloadPage(opts: {
       ${platforms
         .map((platform) => {
           const isPublic = platform.status === "public";
+          const badge = platformStatusLabel(platform);
           return `<section class="platform-card">
-        <span class="status${isPublic ? " public" : ""}">${platformStatusLabel(platform)}</span>
+        ${badge ? `<span class="status">${esc(badge)}</span>` : ""}
         <h2>${esc(platform.label)}</h2>
         <p>${esc(platform.description)}</p>
-        <div class="artifact">
-          <span>Artifact <code>${esc(platform.artifactPattern ?? "unknown")}</code></span>
-          <span>Route <code>${esc(platform.route)}</code></span>
-        </div>
         ${
           isPublic
             ? `<a class="btn primary" href="${esc(downloadHref(platform))}">${esc(platform.ctaLabel)}</a>`
-            : `<span class="btn ghost" aria-disabled="true">Not published yet</span>`
+            : `<span class="btn ghost" aria-disabled="true">Not yet</span>`
         }
       </section>`;
         })
         .join("")}
     </div>
-    <p class="download-note">Signing, notarization, updater feeds, and public storage changes remain human-gated release work.</p>
+    <p class="download-note">Every build is signed, and Markie updates itself once installed.</p>
   </main>
 </body></html>`;
 }
@@ -336,7 +341,7 @@ export function renderSharedDocPage(opts: {
     ${
       invitedEmail
         ? `<div class="cta-invite">Get Markie and make an account with
-             <strong>${esc(invitedEmail)}</strong> — this document will already be
+             <strong>${esc(invitedEmail)}</strong>, and this document will already be
              in your Library when you sign in. Nothing to copy across.</div>`
         : ""
     }

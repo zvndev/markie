@@ -180,7 +180,7 @@ test("download manifest covers public and planned desktop targets", () => {
   assert.equal(findDownloadPlatform("/download/linux")?.status, "planned");
   assert.deepEqual(primaryDownloadCta(), {
     href: "/download/mac",
-    label: "Get Markie for macOS",
+    label: "Get Markie",
     platform: findDownloadPlatform("mac-arm64"),
   });
 });
@@ -271,8 +271,8 @@ test("planned download routes render an honest unavailable page", async () => {
   const body = await res.text();
 
   assert.equal(res.status, 404);
-  assert.match(body, /Linux x64 Is Not Published Yet/);
-  assert.match(body, /current public build remains macOS Apple Silicon/i);
+  assert.match(body, /Markie for Linux x64 is coming/i);
+  assert.match(body, /Markie runs on macOS Apple Silicon today/i);
 });
 
 test("the Intel download route redirects to the x64 artifact", async (t) => {

@@ -36,7 +36,7 @@ test("renderPublicPage offers the manifest primary download", () => {
     siteUrl: "https://markie.example.com",
   });
   assert.match(page, /href="\/download\/mac"/);
-  assert.match(page, /Get Markie for macOS/);
+  assert.match(page, /Get Markie/);
 });
 
 test("renderDownloadPage lists public and planned platforms", () => {
@@ -45,14 +45,31 @@ test("renderDownloadPage lists public and planned platforms", () => {
   assert.match(page, /Download Markie/);
   assert.match(page, /macOS Apple Silicon/);
   assert.match(page, /Windows x64/);
-  assert.match(page, /Not published yet/);
-  assert.match(page, /Markie-\*-arm64\.dmg/);
-  assert.match(page, /Markie-\*-x64\.dmg/);
-  assert.match(page, /Markie-\*-x64\.exe/);
-  assert.match(page, /Markie-\*-x64\.AppImage/);
+  assert.match(page, /Not yet/);
   assert.match(page, /\/download\/mac-intel/);
   assert.match(page, /\/download\/windows/);
-  assert.match(page, /\/download\/linux/);
+});
+
+test("the download page is written for a visitor, not for the release process", () => {
+  // It used to print the artifact filename and the internal route on every
+  // card, chip each one "Published", and close by explaining that signing and
+  // updater feeds were human-gated work. A person who wants a markdown app
+  // needs none of that, and some of it reads as a status board left switched on.
+  const page = renderDownloadPage({ siteUrl: "https://markie.example.com" });
+
+  for (const leak of [
+    /human-gated/i,
+    /manifest-driven/i,
+    /release surface/i,
+    /notariz/i,
+    /updater feed/i,
+    /public storage/i,
+    /Artifact <code>/,
+    /Route <code>/,
+    /Markie-\*-/,
+  ]) {
+    assert.doesNotMatch(page, leak, String(leak));
+  }
 });
 
 test("renderDownloadPage offers every signed build and gates the rest", () => {
@@ -64,20 +81,21 @@ test("renderDownloadPage offers every signed build and gates the rest", () => {
     );
 
   // Both macOS architectures are signed and notarized; Windows is signed by
-  // Azure Artifact Signing. All three are downloadable.
+  // Azure Artifact Signing. All three are downloadable, and a card that offers
+  // a download does not also need a badge saying it is available.
   for (const label of ["macOS Apple Silicon", "macOS Intel", "Windows x64"]) {
-    assert.match(card(label), /Published/, label);
-    assert.doesNotMatch(card(label), /Not published yet/, label);
+    assert.doesNotMatch(card(label), /Not yet/, label);
+    assert.doesNotMatch(card(label), /class="status"/, label);
   }
   assert.match(card("macOS Intel"), /href="\/download\/mac-intel"/);
-  assert.match(card("macOS Intel"), /Get Markie for Intel Mac/);
+  assert.match(card("macOS Intel"), /Download for Intel Mac/);
   assert.match(card("Windows x64"), /href="\/download\/windows"/);
-  assert.match(card("Windows x64"), /Get Markie for Windows/);
+  assert.match(card("Windows x64"), /Download for Windows/);
 
-  // Linux is still packaging-only, and the page has to keep saying so rather
-  // than offering a link to something that was never built.
-  assert.match(card("Linux x64"), /Not published yet/);
-  assert.match(card("Linux x64"), /Planned/);
+  // Linux is still packaging-only, and the page has to keep refusing to offer
+  // a link to something that was never built.
+  assert.match(card("Linux x64"), /Not yet/);
+  assert.match(card("Linux x64"), /Coming soon/);
 });
 
 test("renderPublicPage's Open in Markie deep link carries the token + source", () => {
@@ -179,4 +197,20 @@ test("the shared doc page links downloads through the stable site route", () => 
   // Release protocol: never a versioned artifact URL in a page or an email.
   const page = renderSharedDocPage({ ...SHARED, invitedEmail: "alice@example.com" });
   assert.doesNotMatch(page, /Markie-\d+\.\d+\.\d+/);
+});
+
+test("no page a reader sees carries an em dash", () => {
+  // Kirby's rule, and it had leaked into three live surfaces: the shared-doc
+  // footer, the invite line, and the download page.
+  const pages = [
+    renderDownloadPage({ siteUrl: "https://markie.example.com" }),
+    renderPublicPage({
+      title: "Doc",
+      markdown: "# Hi",
+      token: "tok",
+      siteUrl: "https://markie.example.com",
+    }),
+    renderNotFoundPage("https://markie.example.com"),
+  ];
+  for (const page of pages) assert.doesNotMatch(page, /—/);
 });

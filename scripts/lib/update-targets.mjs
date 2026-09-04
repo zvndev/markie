@@ -114,8 +114,24 @@ export function windowsTarget(deps) {
   // PowerShell rather than cmd: the version of a Windows binary lives in its
   // resource block, and Get-Item is the only way to read it without shipping a
   // tool. -NoProfile so a runner's profile cannot print into stdout.
-  const ps = (script) =>
-    run("powershell", ["-NoProfile", "-NonInteractive", "-Command", script]).catch(() => "");
+  //
+  // PowerShell 7 (pwsh) when it is there, Windows PowerShell 5.1 otherwise.
+  // Not a preference: a 5.1 process spawned from inside a pwsh session
+  // inherits pwsh's PSModulePath and then cannot load its own
+  // Microsoft.PowerShell.Security, so Get-AuthenticodeSignature fails while
+  // Get-Item, a snap-in cmdlet, keeps working. On a GitHub runner every step
+  // is a pwsh session. The release workflow verifies signatures with pwsh, and
+  // a check that judges the same file with a different tool is a check that
+  // can disagree with the gate it is meant to confirm.
+  let shell = null;
+  const pickShell = async () => {
+    if (shell) return shell;
+    const probe = await run("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.Major"]).catch(() => "");
+    shell = /^\d+/.test(probe.trim()) ? "pwsh" : "powershell";
+    return shell;
+  };
+  const ps = async (script) =>
+    run(await pickShell(), ["-NoProfile", "-NonInteractive", "-Command", script]).catch(() => "");
 
   return {
     platformId: "windows-x64",
@@ -129,7 +145,7 @@ export function windowsTarget(deps) {
     // there. That is also the only way the updater's own swap is exercised: it
     // replaces what NSIS laid down, not a copy we placed.
     async stage({ artifactPath }) {
-      const out = await run("powershell", [
+      const out = await run(await pickShell(), [
         "-NoProfile",
         "-NonInteractive",
         "-Command",

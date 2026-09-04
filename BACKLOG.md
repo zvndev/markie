@@ -47,23 +47,6 @@
       type: infra
       severity: medium
       source: e2e crash fix 2026-08-24
-- [ ] (superseded by the Windows update check workflow, keep until it has passed once)
-      Confirm the Windows update path on real hardware: a previous public Windows version
-      finds, downloads, installs, and relaunches through Check for Updates. Everything else
-      this item asked for is now in place: Authenticode signing runs in CI
-      (`windows-release.yml`, Azure Trusted Signing), `windows-x64` is `public` in the
-      manifest with the `windows/latest.yml` feed path, `update-policy.js` supports packaged
-      win32 so `setupAutoUpdate` runs there, a locally packaged Windows build's
-      `app-update.yml` points at the `windows` directory, and the release commands
-      (`release:prepare:win`, `release:publish:win`, `release:verify:public:win`) exist and
-      are written up under "Windows release runbook" in `docs/RELEASING.md`.
-      type: release
-      severity: high
-      rationale: The last gate is the only one that cannot be met from this machine. It needs
-        a published feed and a real PC, and it is a human release step by design.
-      acceptance_criteria: A previous public Windows version updates itself through Check for
-        Updates on real hardware.
-      source: sprint 2026-08-23 (Windows audit); narrowed by 0.5.0 Windows updater work
 - [ ] Server should force a resync (or replay) on a connection whose seed update it dropped.
       The seed lock drops a losing racer's first update; that client must currently reconnect
       before its edits land again.
@@ -115,6 +98,15 @@
       source: long-agent-loop initializer 2026-06-28
 
 ## Done
+- [x] Confirm the Windows update path from a previous public version. Done on a GitHub
+      Windows runner, which is real Windows, rather than by hand: `windows-update-check.yml`
+      runs the same `scripts/update-flow-check.mjs` as macOS. Run 33843439589 on 0.5.3:
+      12/12, including a public 0.5.2 finding 0.5.3 on its own, Authenticode Valid for
+      `CN=ZVN DEV LLC`, Restart & update replacing the executable on disk, and the app
+      relaunching as 0.5.3. Two earlier runs each passed 11/12 with the swap itself fine;
+      the single failure each time was in the check (PowerShell quoting, then
+      powershell.exe under a pwsh step), both fixed and both recorded in memory.
+      closed: 2026-09-04
 <!-- moved here with closing evidence -->
 
 - [x] Surface owner comment-moderation in the UI (delete anybody's comment).

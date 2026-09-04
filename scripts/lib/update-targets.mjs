@@ -98,6 +98,16 @@ export function macTarget(deps) {
   };
 }
 
+// PowerShell has no backslash escapes, so JSON.stringify is the wrong quoting
+// for it: a Windows path comes out with every separator doubled. .NET quietly
+// normalises that for some cmdlets and not others, which is worse than an
+// outright failure, because it means the mistake shows up as one check failing
+// rather than as everything failing. A single-quoted PowerShell string is
+// literal all the way through; the only escape is a doubled quote.
+export function psQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
 export function windowsTarget(deps) {
   const { run, tmpdir, mkdtemp } = deps;
 
@@ -123,7 +133,7 @@ export function windowsTarget(deps) {
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        `$p = Start-Process ${JSON.stringify(artifactPath)} -ArgumentList '/S' -PassThru -Wait; ` +
+        `$p = Start-Process ${psQuote(artifactPath)} -ArgumentList '/S' -PassThru -Wait; ` +
           `Write-Output $p.ExitCode`,
       ]);
       const code = Number.parseInt(out.trim(), 10);
@@ -151,21 +161,27 @@ export function windowsTarget(deps) {
     // Authenticode is the Windows answer to the Gatekeeper question: would this
     // machine run it without a warning. Valid is the only status that means yes.
     async trust({ appPath }) {
-      const status = (await ps(`(Get-AuthenticodeSignature ${JSON.stringify(appPath)}).Status`)).trim();
-      const subject = (
-        await ps(`(Get-AuthenticodeSignature ${JSON.stringify(appPath)}).SignerCertificate.Subject`)
+      // One call, not two: a second Get-AuthenticodeSignature can read a
+      // different answer if anything touched the file in between, and the
+      // subject would then be describing a signature the status did not.
+      const raw = (
+        await ps(
+          `$s = Get-AuthenticodeSignature ${psQuote(appPath)}; ` +
+            `Write-Output $s.Status; Write-Output $s.SignerCertificate.Subject`
+        )
       ).trim();
+      const [status = "", subject = ""] = raw.split(/\r?\n/).map((l) => l.trim());
       return {
         label: "the previous release is still signed and trusted by Windows",
         ok: status === "Valid",
-        detail: `${status}${subject ? ` — ${subject}` : ""}`,
+        detail: status
+          ? [status, subject].filter(Boolean).join(", ")
+          : `Get-AuthenticodeSignature said nothing about ${appPath}`,
       };
     },
 
     async versionOnDisk({ appPath }) {
-      const v = (
-        await ps(`(Get-Item ${JSON.stringify(appPath)}).VersionInfo.ProductVersion`)
-      ).trim();
+      const v = (await ps(`(Get-Item ${psQuote(appPath)}).VersionInfo.ProductVersion`)).trim();
       // Windows pads a resource version to four parts; the feed speaks three.
       return v ? v.split("+")[0].split(/\s/)[0].replace(/^(\d+\.\d+\.\d+)\.0$/, "$1") : null;
     },
@@ -186,7 +202,7 @@ export function windowsTarget(deps) {
       for (const dir of dirs) {
         await ps(
           `Get-CimInstance Win32_Process -Filter "Name='Markie.exe'" -ErrorAction SilentlyContinue | ` +
-            `Where-Object { $_.CommandLine -like ${JSON.stringify(`*${dir}*`)} } | ` +
+            `Where-Object { $_.CommandLine -like ${psQuote(`*${dir}*`)} } | ` +
             `ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
         );
       }

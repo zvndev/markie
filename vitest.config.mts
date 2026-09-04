@@ -29,7 +29,10 @@ export default defineConfig({
           // A handful of these opt into jsdom with a per-file directive, and
           // they need the same web-storage repair the dom project does.
           setupFiles: ["./src/test/web-storage.ts"],
-          include: ["{src,electron}/**/*.{test,spec}.ts"],
+          // scripts/ too: the release and check scripts hold real logic, and
+          // "it is only a script" is how a one-line quoting bug reached a
+          // release gate.
+          include: ["{src,electron,scripts}/**/*.{test,spec}.ts"],
         },
       },
       {

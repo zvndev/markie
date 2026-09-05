@@ -32,7 +32,7 @@ export function UpdateToast() {
     const timer = setTimeout(() => {
       setInstalling(false);
       setFailed(
-        "Markie is still running, so the update did not install. Try again, or download the latest version from markie.zvndev.com."
+        "Markie is still running, so the update did not install. Try again, or download the latest version from markiedocs.com."
       );
     }, 20_000);
     return () => clearTimeout(timer);

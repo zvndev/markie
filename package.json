@@ -5,7 +5,7 @@
   "description": "A fast, native desktop markdown editor for local files, sharing, and AI agents.",
   "author": "ZVN",
   "license": "MIT",
-  "homepage": "https://markie.zvndev.com",
+  "homepage": "https://markiedocs.com",
   "repository": {
     "type": "git",
     "url": "https://github.com/zvndev/markie.git"

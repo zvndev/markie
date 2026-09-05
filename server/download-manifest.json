@@ -9,7 +9,7 @@
       "path": "mac/beta-mac.yml"
     }
   },
-  "siteUrl": "https://markie.zvndev.com",
+  "siteUrl": "https://markiedocs.com",
   "latestManifestRoute": "/download/latest.json",
   "storage": {
     "provider": "s3",

@@ -3,7 +3,7 @@
 ## Supported versions
 
 Markie auto-updates, and only the latest release receives fixes. The current
-released version is shown on <https://markie.zvndev.com/download>.
+released version is shown on <https://markiedocs.com/download>.
 
 ## Reporting a vulnerability
 

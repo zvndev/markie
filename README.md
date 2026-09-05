@@ -2,7 +2,7 @@
 
 **The Google Docs of Markdown — except your files live on your machine.** Native desktop markdown.
 
-[![Markie](https://markie.zvndev.com/markie-demo-poster.jpg)](https://markie.zvndev.com)
+[![Markie](https://markiedocs.com/markie-demo-poster.jpg)](https://markiedocs.com)
 
 Markie is a desktop markdown app that gets out of your way: a clean editor with
 live preview, a device-wide index of every markdown file you own, painless
@@ -31,10 +31,10 @@ source tree but nothing is published for it yet. Server download routes and
 Electron Builder both read `server/download-manifest.json`, so storage, updater
 feeds, and platform status cannot drift apart.
 
-➡️ **[Download the latest Markie](https://markie.zvndev.com/download)**
+➡️ **[Download the latest Markie](https://markiedocs.com/download)**
 
 Release integrations can read the current stable version and platform URLs from
-[`/download/latest.json`](https://markie.zvndev.com/download/latest.json).
+[`/download/latest.json`](https://markiedocs.com/download/latest.json).
 
 > Linux downloads are not published yet.
 

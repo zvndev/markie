@@ -12,7 +12,7 @@ import {
 describe("what the world can do", () => {
   it("is restricted until a public link exists", () => {
     expect(generalAccessFor(null)).toBe("restricted");
-    expect(generalAccessFor("https://markie.zvndev.com/s/abc")).toBe("link");
+    expect(generalAccessFor("https://markiedocs.com/s/abc")).toBe("link");
   });
 
   it("names the two states the way the owner will read them", () => {

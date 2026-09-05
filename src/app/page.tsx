@@ -115,7 +115,7 @@ import { useDocumentExport } from "@/lib/use-export";
 
 const SAMPLE = `# Northstar Sprint Brief
 
-A calm launch room needs one source of truth: \`decisions\`, owners, evidence, and [source links](https://markie.zvndev.com). This brief keeps the work legible without turning it into a status meeting.
+A calm launch room needs one source of truth: \`decisions\`, owners, evidence, and [source links](https://markiedocs.com). This brief keeps the work legible without turning it into a status meeting.
 
 ## Signal
 

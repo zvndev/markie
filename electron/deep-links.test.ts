@@ -7,7 +7,7 @@ describe("markie:// deep link routing", () => {
   });
 
   it("sends a public link to the token-credentialed opener", () => {
-    expect(classifyDeepLink("markie://open?token=t&src=https://markie.zvndev.com")).toBe(
+    expect(classifyDeepLink("markie://open?token=t&src=https://markiedocs.com")).toBe(
       "shared-token"
     );
   });
@@ -27,7 +27,7 @@ describe("markie:// deep link routing", () => {
 
   it("ignores anything that is not a markie link", () => {
     for (const link of [
-      "https://markie.zvndev.com/d/abc",
+      "https://markiedocs.com/d/abc",
       "file:///etc/passwd",
       "javascript:alert(1)",
       "",
@@ -79,8 +79,8 @@ describe("reading a shared document link", () => {
   });
 
   it("reads the source hint used to pick an allowlisted server", () => {
-    expect(sourceHint("markie://doc?id=x&src=https://markie.zvndev.com")).toBe(
-      "https://markie.zvndev.com"
+    expect(sourceHint("markie://doc?id=x&src=https://markiedocs.com")).toBe(
+      "https://markiedocs.com"
     );
     expect(sourceHint("markie://doc?id=x")).toBeNull();
   });

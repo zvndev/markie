@@ -59,7 +59,7 @@ describe("release preflight", () => {
   it("keeps storage, updater feeds, and stable download routes in one manifest", () => {
     expect(validateReleaseManifest(rootDir)).toEqual({
       channel: "stable",
-      siteUrl: "https://markie.zvndev.com",
+      siteUrl: "https://markiedocs.com",
       latestManifestRoute: "/download/latest.json",
       feedPath: "mac/latest-mac.yml",
       bucket: "markie-releases",
@@ -115,7 +115,7 @@ describe("release preflight", () => {
         "npm run release:prepare:mac",
         "regenerates DMG blockmaps and updater hashes after stapling",
         'npm run release:verify:public -- --version="$MARKIE_RELEASE_VERSION" --deep',
-        "https://markie.zvndev.com/download/latest.json",
+        "https://markiedocs.com/download/latest.json",
         "Check for Updates",
         // 0.5.0 turned the Windows updater on. The doc has to describe a
         // recurring release runbook now, not a platform waiting for approval.

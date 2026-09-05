@@ -174,7 +174,7 @@ const REQUIRED_RELEASE_DOC_SNIPPETS = [
   'npm run release:publish:mac -- --confirm-public-release="$MARKIE_RELEASE_VERSION"',
   'npm run release:verify:public -- --version="$MARKIE_RELEASE_VERSION" --deep',
   'npm run release:rollback:mac -- --confirm-rollback="$MARKIE_RELEASE_VERSION"',
-  "https://markie.zvndev.com/download/latest.json",
+  "https://markiedocs.com/download/latest.json",
   "uploads `latest-mac.yml` last",
   "Check for Updates",
   // Windows went from "disabled until the contracts exist" to a per-release
@@ -288,7 +288,7 @@ export function validateReleaseManifest(rootDir) {
 
   assert(manifest.schemaVersion === 2, "release manifest schemaVersion must be 2");
   assert(manifest.channel === "stable", "release manifest channel must be stable");
-  assert(manifest.siteUrl === "https://markie.zvndev.com", "release manifest must own the canonical site URL");
+  assert(manifest.siteUrl === "https://markiedocs.com", "release manifest must own the canonical site URL");
   assert(manifest.latestManifestRoute === "/download/latest.json", "release manifest must own the latest JSON route");
   assert(manifest.storage?.provider === "s3", "release storage provider must be s3");
   assert(Boolean(manifest.storage?.bucket), "release storage bucket is required");

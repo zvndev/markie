@@ -54,7 +54,7 @@ Use only trailers that add real decision context.
 - A release is not complete until `npm run release:verify:public -- --version=<semver> --deep`
   passes and the previous app version visibly receives, downloads, installs, and relaunches through
   **Check for Updates**.
-- Websites and emails link to `https://markie.zvndev.com/download` or a stable manifest route,
+- Websites and emails link to `https://markiedocs.com/download` or a stable manifest route,
   never a versioned artifact URL.
 
 ## The Loop Protocol

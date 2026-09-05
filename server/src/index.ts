@@ -39,7 +39,7 @@ const CONTENT_SECURITY_POLICY = [
 
 // Defence in depth on the origin itself.
 //
-// markie.zvndev.com sits behind Vercel, which sets these, and every share link
+// markiedocs.com sits behind Vercel, which sets these, and every share link
 // points there. But the Railway origin is publicly reachable and was serving
 // the same HTML with no CSP, no HSTS and no frame protection at all. A header
 // that exists only on the CDN is not a header the application has.

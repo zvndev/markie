@@ -24,7 +24,7 @@ describe("desktop launch intent helpers", () => {
     expect(findDeepLinkArg(["Markie.exe", "--some-electron-flag", "markie://open?token=abc"])).toBe(
       "markie://open?token=abc"
     );
-    expect(findDeepLinkArg(["Markie.exe", "https://markie.zvndev.com"])).toBeNull();
+    expect(findDeepLinkArg(["Markie.exe", "https://markiedocs.com"])).toBeNull();
   });
 
   it("finds openable markdown/text/csv files and ignores missing or unsupported paths", () => {

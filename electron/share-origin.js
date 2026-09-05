@@ -9,7 +9,7 @@ const DEFAULT_SERVER = "https://api-production-602f.up.railway.app";
 // Hosts we will talk to. Add the custom domain here when it ships.
 const ALLOWED_HOSTS = new Set([
   "api-production-602f.up.railway.app",
-  // "markie.zvndev.com",
+  // "markiedocs.com",
 ]);
 
 function isLocalhost(host) {

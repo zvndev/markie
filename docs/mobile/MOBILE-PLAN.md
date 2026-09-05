@@ -54,7 +54,7 @@ email already carries a "get the app" CTA (`primaryDownloadCta()`, `server/src/d
 
 ### 1.1 — In scope for v1
 
-1. **Open a share link natively.** A tap on `markie.zvndev.com/d/:id?k=…` or `markie.zvndev.com/s/:token`
+1. **Open a share link natively.** A tap on `markiedocs.com/d/:id?k=…` or `markiedocs.com/s/:token`
    from Mail, Slack, or Messages opens the app (universal links / app links, §3), not Safari/Chrome.
 2. **Sign in.** Email + password, email OTP code, and Google — all three already exist on the server
    (`server/src/auth.ts`). See §3.
@@ -279,7 +279,7 @@ not mint — because any web page can fire a `markie://` URL.
 
 ### Universal links / app links
 
-The real routes (all on `https://markie.zvndev.com` — `siteUrl` in `server/download-manifest.json`,
+The real routes (all on `https://markiedocs.com` — `siteUrl` in `server/download-manifest.json`,
 read by `markieSiteUrl()` in `server/src/downloads.ts`):
 
 | Route | Source | Meaning |
@@ -290,7 +290,7 @@ read by `markieSiteUrl()` in `server/src/downloads.ts`):
 | `/s/:token/raw` | `server/src/public.ts` | public `.md` download |
 | `/download`, `/download/:platform`, `/download/latest.json` | `server/src/public.ts` | must **not** be claimed by the app |
 
-48. **`apple-app-site-association`** served from `https://markie.zvndev.com/.well-known/apple-app-site-association`,
+48. **`apple-app-site-association`** served from `https://markiedocs.com/.well-known/apple-app-site-association`,
     `Content-Type: application/json`, no redirect, no auth:
     ```json
     { "applinks": { "details": [ { "appIDs": ["TEAMID.com.zvndev.markie"],
@@ -298,17 +298,17 @@ read by `markieSiteUrl()` in `server/src/downloads.ts`):
                         { "/": "/download*", "exclude": true },
                         { "/": "*", "exclude": true } ] } ] } }
     ```
-    Entitlement `applinks:markie.zvndev.com`. Exclude `/download*` explicitly — otherwise tapping the
+    Entitlement `applinks:markiedocs.com`. Exclude `/download*` explicitly — otherwise tapping the
     download CTA in an invite email opens the phone app instead of the download page.
-49. **`assetlinks.json`** at `https://markie.zvndev.com/.well-known/assetlinks.json` with
+49. **`assetlinks.json`** at `https://markiedocs.com/.well-known/assetlinks.json` with
     `delegate_permission/common.handle_all_urls`, the package name, and the **Play App Signing**
     SHA-256 fingerprint (not the local upload key — the single most common app-links failure).
-    Intent filter: `android:autoVerify="true"`, `https`, host `markie.zvndev.com`, `pathPrefix`
+    Intent filter: `android:autoVerify="true"`, `https`, host `markiedocs.com`, `pathPrefix`
     `/d/` and `/s/`.
 50. **Where these files get served.** `/d/` and `/s/` are Hono routes, but `server/src/doc-view.ts`
     notes the page "is served through a rewrite" — the site is a Next static export
     (`next.config.ts: output: "export"`) fronting the API. So the `.well-known` files must be served
-    by whatever terminates `markie.zvndev.com` (the static site / its rewrite config, or
+    by whatever terminates `markiedocs.com` (the static site / its rewrite config, or
     `deploy/Caddyfile`). Safest belt-and-braces: also add two literal routes to
     `server/src/public.ts` so the JSON exists whichever layer answers.
 51. **Custom schemes stay, as fallback and for OAuth.** Register `markie://` on both platforms
@@ -650,7 +650,7 @@ needs sign-off before implementation. Ordered by milestone need.
 
 | # | Change | File(s) | Needed by |
 |---|---|---|---|
-| 8.1 | Serve `/.well-known/apple-app-site-association` (JSON, no redirect, no auth) | site/rewrite layer for `markie.zvndev.com`; belt-and-braces route in `server/src/public.ts` | M1 |
+| 8.1 | Serve `/.well-known/apple-app-site-association` (JSON, no redirect, no auth) | site/rewrite layer for `markiedocs.com`; belt-and-braces route in `server/src/public.ts` | M1 |
 | 8.2 | Serve `/.well-known/assetlinks.json` with the Play App Signing SHA-256 | same as 8.1 | M1 |
 | 8.3 | Generalise the OAuth bridge: accept a validated `client` (`desktop`\|`ios`\|`android`) on `/auth/google-start`, carry it to `/auth/desktop-bridge`, and have `desktopAuthDeepLink()` emit the matching scheme | `server/src/index.ts`, `server/src/desktop-auth.ts` (keep `STATE_PATTERN` as-is; allowlist the scheme, never reflect a client-supplied URL) | M1 (only if Google ships in M1) |
 | 8.4 | Add the mobile schemes to `trustedOrigins`; add `apple` to `socialProviders` if Google ships (Guideline 4.8, §44) | `server/src/auth.ts` | M1 |
@@ -697,9 +697,9 @@ document with what was actually observed.
   401 → sign-in screen with the pending destination preserved.
 - 9.7 Library lists owned + shared docs from `GET /api/docs`, badged by `role` and `shared_by`;
   "Shared by me" from `GET /api/docs/shared-by-me`.
-- 9.8 Tapping `https://markie.zvndev.com/d/:id?k=…` in Mail opens the app to that document. Tapping
-  `https://markie.zvndev.com/s/:token` opens it **without an account**. Tapping
-  `https://markie.zvndev.com/download` still opens the browser.
+- 9.8 Tapping `https://markiedocs.com/d/:id?k=…` in Mail opens the app to that document. Tapping
+  `https://markiedocs.com/s/:token` opens it **without an account**. Tapping
+  `https://markiedocs.com/download` still opens the browser.
 - 9.9 Native GFM rendering with tables, task lists, highlighted code, images; light and dark both
   legible; Dynamic Type / font-scale respected.
 - 9.10 Offline: an opened doc reopens with no network; the UI says "offline", not "failed".
@@ -843,7 +843,7 @@ nothing outside this list exists.
 - `GET /api/docs/:id/shares` → members (+ pending invites, owner only)
 - `POST /api/docs/:id/shares` `{ email, role: "viewer"|"editor" }` → `{ status: "member"|"invited" }`
 - `DELETE /api/docs/:id/shares/:idOrEmail` (owner only; also hangs up that user's collab socket)
-- `GET|POST|DELETE /api/docs/:id/public-link` → `{ url: "https://markie.zvndev.com/s/<token>" | null }`
+- `GET|POST|DELETE /api/docs/:id/public-link` → `{ url: "https://markiedocs.com/s/<token>" | null }`
 
 **Comments** (`server/src/comments.ts`)
 - `GET /api/docs/:id/threads` → threads with parsed `anchor` + nested comments
@@ -862,6 +862,6 @@ nothing outside this list exists.
 
 **Client config note:** `src/lib/auth-client.ts` defaults `SERVER` to
 `https://api-production-602f.up.railway.app` (overridable via `localStorage`), while share links use
-`https://markie.zvndev.com` (`server/download-manifest.json` → `markieSiteUrl()`). Mobile needs both:
+`https://markiedocs.com` (`server/download-manifest.json` → `markieSiteUrl()`). Mobile needs both:
 an API base URL and a site base URL, and the `src=` origin allowlist from `electron/share-origin.js`
 applies to both.

@@ -110,7 +110,7 @@ test("parseFeedVersion reads the stable feed version", () => {
 });
 
 test("production site URLs cannot drift from the stable release manifest", () => {
-  assert.equal(markieSiteUrl(undefined, "production"), "https://markie.zvndev.com");
+  assert.equal(markieSiteUrl(undefined, "production"), "https://markiedocs.com");
   assert.equal(markieSiteUrl("https://markie.test/", "test"), "https://markie.test");
   assert.throws(
     () => markieSiteUrl("https://stale.example.com", "production"),
@@ -222,7 +222,7 @@ test("latest release JSON is a stable machine-readable source for sites and emai
     channel: "stable",
     version: "0.4.0",
     primaryPlatformId: "mac-arm64",
-    downloadPageUrl: "https://markie.zvndev.com/download",
+    downloadPageUrl: "https://markiedocs.com/download",
     platforms: [
       {
         id: "mac-arm64",
@@ -230,7 +230,7 @@ test("latest release JSON is a stable machine-readable source for sites and emai
         os: "macos",
         arch: "arm64",
         version: "0.4.0",
-        downloadUrl: "https://markie.zvndev.com/download/mac",
+        downloadUrl: "https://markiedocs.com/download/mac",
         artifactUrl:
           "https://f005.backblazeb2.com/file/markie-releases/mac/Markie-0.4.0-arm64.dmg",
       },
@@ -240,7 +240,7 @@ test("latest release JSON is a stable machine-readable source for sites and emai
         os: "macos",
         arch: "x64",
         version: "0.4.0",
-        downloadUrl: "https://markie.zvndev.com/download/mac-intel",
+        downloadUrl: "https://markiedocs.com/download/mac-intel",
         artifactUrl:
           "https://f005.backblazeb2.com/file/markie-releases/mac/Markie-0.4.0-x64.dmg",
       },
@@ -250,7 +250,7 @@ test("latest release JSON is a stable machine-readable source for sites and emai
         os: "windows",
         arch: "x64",
         version: "0.4.0",
-        downloadUrl: "https://markie.zvndev.com/download/windows",
+        downloadUrl: "https://markiedocs.com/download/windows",
         artifactUrl:
           "https://f005.backblazeb2.com/file/markie-releases/windows/Markie-0.4.0-x64.exe",
       },

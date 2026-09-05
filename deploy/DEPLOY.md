@@ -8,7 +8,7 @@ Estimated cost: ~€4/mo VPS + pennies of B2 storage.
 
 1. **Hetzner** — CAX11 (ARM, 2 vCPU / 4 GB), Ubuntu 24.04. Install Docker
    (`curl -fsSL https://get.docker.com | sh`).
-2. **DNS** — A record for the API host (suggest `api.markie.zvndev.com`
+2. **DNS** — A record for the API host (suggest `api.markiedocs.com`
    until a product domain is chosen) → the VPS IP.
 3. **Backblaze B2** — create a bucket (private) + an app key with access
    to it. Note the S3 endpoint for the bucket's region.

@@ -169,8 +169,8 @@ describe("renderMarkdownHTML sanitization", () => {
   });
 
   it("keeps ordinary http(s) links intact", () => {
-    const html = renderMarkdownHTML("[markie](https://markie.zvndev.com)");
-    expect(html).toContain('href="https://markie.zvndev.com"');
+    const html = renderMarkdownHTML("[markie](https://markiedocs.com)");
+    expect(html).toContain('href="https://markiedocs.com"');
   });
 
   it("keeps highlight.js class names on code", () => {

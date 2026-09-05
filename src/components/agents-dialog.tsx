@@ -13,6 +13,8 @@ const TOOLS: [string, string][] = [
   ["markie_write_md", "write a markdown file, inside your home folder only"],
   ["markie_list_skills", "list your agent and skill files, grouped by tool"],
   ["markie_open_in_markie", "open a file rendered in Markie"],
+  ["markie_check_md", "say which pictures, clips and tags in a document will not show"],
+  ["markie_guide", "what Markie renders, so an agent writes richer documents"],
 ];
 
 // The front matter an agent writes when it declares where a document belongs.

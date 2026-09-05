@@ -26,6 +26,34 @@ describe("extractHoldAsides", () => {
     expect(back).toBe(md);
   });
 
+  it("leaves one sized picture or clip on its own line to the editor", () => {
+    // The editor has a node for these (rich-extensions.ts) and writes them
+    // back the same way. Held aside, the picture would vanish from the pane.
+    for (const tag of [
+      '<img src="demo/shot.png" alt="beside" width="240">',
+      '<video src="demo/clip.mp4" width="320" controls></video>',
+    ]) {
+      const md = `before\n\n${tag}\n\nafter\n`;
+      const { holds, text } = extractHoldAsides(md);
+      expect(holds).toHaveLength(0);
+      expect(text).toBe(md);
+    }
+  });
+
+  it("still holds a media tag that is part of something wider", () => {
+    for (const block of [
+      '<img src="a.png">\n<img src="b.png">\n',
+      '<div><img src="a.png"></div>\n',
+      '<img src="a.png"> with words after it\n',
+    ]) {
+      const md = `before\n\n${block}\nafter\n`;
+      const { holds, back } = roundTrip(md);
+      expect(holds, block).toHaveLength(1);
+      expect(holds[0].kind).toBe("raw-html");
+      expect(back).toBe(md);
+    }
+  });
+
   it("lifts a footnote definition with its indented continuation", () => {
     const md = "Text.[^1]\n\n[^1]: the note\n    continued\n\nmore\n";
     const { holds, back } = roundTrip(md);

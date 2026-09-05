@@ -18,8 +18,9 @@ const app = new Hono();
 //
 // script-src stays 'unsafe-inline' for one reason: /auth/desktop-bridge hands
 // the session back with an inline redirect. Nothing else here runs script, and
-// no user content can introduce any — render.ts sanitizes without rehype-raw,
-// so a <script> in somebody's markdown never survives to the page.
+// no user content can introduce any — render.ts parses a document's own HTML
+// and then sanitizes it, so a <script> in somebody's markdown never survives
+// to the page.
 //
 // img-src has to allow https: because shared documents legitimately embed
 // remote images, and a policy that blanks them is a policy someone turns off.

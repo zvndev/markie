@@ -6,6 +6,8 @@
 // protects them in untouched blocks; an edited block takes the serializer's
 // rewrite, confined to that block).
 
+import { isEditorOwnHtmlBlock } from "@/lib/rich-media-html";
+
 export type HoldKind = "html-comment" | "raw-html" | "footnote-def";
 
 export interface HoldAside {
@@ -80,6 +82,15 @@ export function extractHoldAsides(body: string): {
       // CommonMark-style HTML block: runs to the next blank line.
       let j = i + 1;
       while (j < lines.length && lines[j].trim() !== "") j++;
+      // One picture or clip tag on a line of its own, or one aligned
+      // paragraph or heading, is the editor's own node written as HTML
+      // (rich-media-html.ts). Held aside it would vanish from the rich pane;
+      // left in, the extension parses it and writes it back the same way.
+      if (j === i + 1 && isEditorOwnHtmlBlock(bare)) {
+        out.push(lines[i]);
+        i++;
+        continue;
+      }
       i = take("raw-html", i, j);
       continue;
     }

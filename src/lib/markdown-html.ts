@@ -3,20 +3,25 @@ import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import remarkRehype from "remark-rehype";
+import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { rehypeMedia } from "@/lib/rehype-media";
+import { rehypeEmbeds } from "@/lib/rehype-embeds";
 import rehypeStringify from "rehype-stringify";
 
 // The same hardened schema the public share renderer uses (server/src/render.ts).
-// Markdown itself is not the threat — the pipeline runs without rehype-raw, so a
-// document's own <script> arrives as text — but the output of this function is
-// written into an export, a print window, and a PDF, and a link is enough:
-// defaultSchema.protocols is what drops [x](javascript:…) and data: URLs. The
-// additions below are exactly what rehype-highlight (hljs class names) and
-// rehype-katex (MathML + SVG + inline styles) emit; without them, sanitizing
-// would silently strip every highlight and every equation.
+// A document's own HTML is parsed (rehype-raw) and then sanitized against this
+// schema, in that order, so a <script>, an iframe, or an onerror= in somebody's
+// markdown never reaches an export, a print window, or a PDF, while the
+// inline HTML every markdown renderer accepts (a highlight, a colour, a
+// centred heading, a picture with a chosen width) survives. A link is enough
+// of a threat on its own: defaultSchema.protocols is what drops
+// [x](javascript:…) and data: URLs. The additions below are exactly what
+// rehype-highlight (hljs class names), rehype-katex (MathML + SVG + inline
+// styles) and the rich editor's own marks emit; without them, sanitizing would
+// silently strip every highlight and every equation.
 const MATHML = ["math","semantics","annotation","mrow","mi","mo","mn","ms","mtext","mspace","msup","msub","msubsup","mfrac","msqrt","mroot","munder","mover","munderover","mtable","mtr","mtd","mpadded","mphantom","menclose","mstyle","mglyph"];
 const SVG = ["svg","path","line","g","defs","use","rect","polyline"];
 // A clip beside the document plays in an exported HTML file that is still
@@ -37,12 +42,25 @@ const sanitizeSchema = {
     ...defaultSchema.protocols,
     src: [...(defaultSchema.protocols?.src ?? []), "data"],
   },
-  tagNames: [...(defaultSchema.tagNames ?? []), "span", "div", ...MATHML, ...SVG, ...MEDIA],
+  // `mark` and `u` are what the editor writes for a highlight and an
+  // underline; neither is in the GitHub-derived default list.
+  tagNames: [...(defaultSchema.tagNames ?? []), "span", "div", "mark", "u", ...MATHML, ...SVG, ...MEDIA],
   attributes: {
     ...defaultSchema.attributes,
     "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "ariaHidden", "ariaLabel"],
     span: ["className", "style", "ariaHidden"],
     div: ["className", "style"],
+    // A highlight colour, and text alignment on the blocks the editor can
+    // align. `style` was already allowed on span and div, so this widens
+    // where an inline style may sit, not what one may do.
+    mark: ["style"],
+    p: ["style"],
+    h1: ["style"],
+    h2: ["style"],
+    h3: ["style"],
+    h4: ["style"],
+    h5: ["style"],
+    h6: ["style"],
     code: ["className"],
     pre: ["className"],
     math: ["xmlns", "display"],
@@ -62,8 +80,13 @@ const processor = unified()
   .use(remarkParse)
   .use(remarkGfm)
   .use(remarkMath)
-  .use(remarkRehype)
+  // allowDangerousHtml only means "keep the HTML nodes for the next plugin".
+  // rehype-raw parses them, and rehype-sanitize below is what decides what
+  // stays; nothing between the two writes output.
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeRaw)
   .use(rehypeMedia)
+  .use(rehypeEmbeds)
   .use(rehypeHighlight)
   .use(rehypeKatex)
   .use(rehypeSanitize, sanitizeSchema)

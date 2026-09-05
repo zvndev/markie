@@ -230,3 +230,62 @@ test("renderMarkdownHTML plays audio the same way", () => {
 test("renderMarkdownHTML leaves a picture a picture", () => {
   assert.match(renderMarkdownHTML("![p](https://example.com/a.png)"), /<img /);
 });
+
+// A document's own HTML is parsed and then sanitized, in that order. The
+// public page is where this matters most: it is served to strangers.
+test("renderMarkdownHTML keeps the inline HTML the rich editor writes", () => {
+  const html = renderMarkdownHTML(
+    [
+      'a <mark style="background-color: #ff0">lit</mark> word, an <u>under</u> one,',
+      'and a <span style="color: red">red</span> one.',
+      "",
+      '<p style="text-align: center">centred</p>',
+      "",
+      '<img src="https://example.com/shot.png" alt="beside" width="240">',
+      "",
+      '<video src="https://example.com/clip.mp4" width="320" controls></video>',
+    ].join("\n")
+  );
+  assert.match(html, /<mark style="background-color: #ff0">lit<\/mark>/);
+  assert.match(html, /<u>under<\/u>/);
+  assert.match(html, /<span style="color: red">red<\/span>/);
+  assert.match(html, /<p style="text-align: center">centred<\/p>/);
+  assert.match(html, /<img src="https:\/\/example.com\/shot.png" alt="beside" width="240">/);
+  assert.match(html, /<video src="https:\/\/example.com\/clip.mp4" width="320" controls>/);
+});
+
+test("renderMarkdownHTML drops raw HTML that could run, frame, or call out", () => {
+  const html = renderMarkdownHTML(
+    [
+      "<script>alert(1)</script>",
+      "",
+      '<img src="https://example.com/x.png" onerror="alert(1)">',
+      "",
+      '<iframe src="https://example.com"></iframe>',
+      "",
+      "<style>body{display:none}</style>",
+      "",
+      '<a href="javascript:alert(1)">no</a>',
+      "",
+      '<form action="https://example.com"><input name="x"></form>',
+    ].join("\n")
+  );
+  assert.doesNotMatch(html, /<script/);
+  assert.doesNotMatch(html, /alert\(1\)/);
+  assert.doesNotMatch(html, /onerror/);
+  assert.doesNotMatch(html, /<iframe/);
+  assert.doesNotMatch(html, /<style/);
+  assert.doesNotMatch(html, /javascript:/);
+  assert.doesNotMatch(html, /<form/);
+  // The picture itself stays, minus the handler.
+  assert.match(html, /<img src="https:\/\/example.com\/x.png">/);
+});
+
+test("renderMarkdownHTML draws a video link alone on its line as a linked thumbnail", () => {
+  const html = renderMarkdownHTML("https://www.youtube.com/watch?v=dQw4w9WgXcQ\n\nSee https://youtu.be/dQw4w9WgXcQ inline.");
+  assert.match(html, /<p class="markie-embed"><a href="https:\/\/www.youtube.com\/watch\?v=dQw4w9WgXcQ"><img src="https:\/\/i.ytimg.com\/vi\/dQw4w9WgXcQ\/hqdefault.jpg" alt="Watch on YouTube"/);
+  // A share page runs no script and frames nothing, so the card is a picture
+  // that goes to the video; the sentence link stays a link.
+  assert.doesNotMatch(html, /<iframe/);
+  assert.match(html, /See <a href="https:\/\/youtu.be\/dQw4w9WgXcQ">https:\/\/youtu.be\/dQw4w9WgXcQ<\/a> inline/);
+});

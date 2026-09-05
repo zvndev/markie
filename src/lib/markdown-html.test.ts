@@ -58,15 +58,69 @@ describe("renderMarkdownHTML resilience", () => {
     expect(html).toContain("\\frac{1}{");
   });
 
-  // Documented behavior, not a preference: the pipeline runs without
-  // allowDangerousHtml and without rehype-raw, so raw HTML in a document is
-  // dropped entirely from exports — block tags and their content disappear,
-  // inline tags are stripped down to their text.
-  it("drops raw HTML from the output", () => {
-    const html = renderMarkdownHTML('<div class="x">hi</div>\n\ntext <b>bold</b>');
-    expect(html).not.toContain("<div");
-    expect(html).not.toContain("<b>");
-    expect(html).toContain("text bold");
+  // A document's own HTML is parsed and then sanitized, in that order. What
+  // every markdown renderer accepts survives; what could run, or frame, or
+  // call out, does not, however it is written.
+  describe("raw HTML in a document", () => {
+    it("keeps the inline HTML the rich editor writes", () => {
+      const html = renderMarkdownHTML(
+        [
+          'a <mark style="background-color: #ff0">lit</mark> word,',
+          "an <u>underlined</u> one,",
+          'and a <span style="color: red; font-size: 18px">red</span> one.',
+          "",
+          '<p style="text-align: center">centred</p>',
+          "",
+          '<h2 style="text-align: right">right</h2>',
+        ].join("\n")
+      );
+      expect(html).toContain('<mark style="background-color: #ff0">lit</mark>');
+      expect(html).toContain("<u>underlined</u>");
+      expect(html).toContain('<span style="color: red; font-size: 18px">red</span>');
+      expect(html).toContain('<p style="text-align: center">centred</p>');
+      expect(html).toContain('<h2 style="text-align: right">right</h2>');
+    });
+
+    it("keeps a picture with a chosen width, and a clip", () => {
+      const html = renderMarkdownHTML(
+        '<img src="demo/shot.png" alt="beside" width="240">\n\n<video src="demo/clip.mp4" width="320" controls></video>'
+      );
+      expect(html).toContain('<img src="demo/shot.png" alt="beside" width="240">');
+      expect(html).toContain('<video src="demo/clip.mp4" width="320" controls>');
+    });
+
+    it("drops what could run, frame, or call out", () => {
+      const html = renderMarkdownHTML(
+        [
+          "<script>alert(1)</script>",
+          "",
+          '<img src="x.png" onerror="alert(1)">',
+          "",
+          '<iframe src="https://example.com"></iframe>',
+          "",
+          "<style>body{display:none}</style>",
+          "",
+          '<a href="javascript:alert(1)">no</a>',
+          "",
+          '<object data="x"></object>',
+        ].join("\n")
+      );
+      expect(html).not.toContain("<script");
+      expect(html).not.toContain("alert(1)");
+      expect(html).not.toContain("onerror");
+      expect(html).not.toContain("<iframe");
+      expect(html).not.toContain("<style");
+      expect(html).not.toContain("javascript:");
+      expect(html).not.toContain("<object");
+      // The picture itself is still there, minus the handler.
+      expect(html).toContain('<img src="x.png">');
+    });
+
+    it("keeps plain block HTML that any renderer shows", () => {
+      const html = renderMarkdownHTML('<div class="x">hi</div>\n\ntext <b>bold</b>');
+      expect(html).toContain('<div class="x">hi</div>');
+      expect(html).toContain("<b>bold</b>");
+    });
   });
 
   it("renders a 5k-line document", () => {
@@ -130,5 +184,30 @@ describe("renderMarkdownHTML sanitization", () => {
     const html = renderMarkdownHTML("$E = mc^2$");
     expect(html).toContain('class="katex"');
     expect(html).toContain("<math");
+  });
+});
+
+// A video link alone on its line is a card in an export: the thumbnail,
+// linked to the video. The file keeps the bare URL.
+describe("a video link in an export", () => {
+  it("becomes a linked thumbnail when it is alone on its line", () => {
+    const html = renderMarkdownHTML("Watch this:\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nThen read on.");
+    expect(html).toContain('<p class="markie-embed">');
+    expect(html).toContain('<p class="markie-embed"><a href="https://youtu.be/dQw4w9WgXcQ">');
+    expect(html).toContain('<img src="https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg" alt="Watch on YouTube"');
+    // No player: an export runs no script and a share page frames nothing.
+    expect(html).not.toContain("<iframe");
+  });
+
+  it("stays a link inside a sentence, or when words were chosen for it", () => {
+    expect(renderMarkdownHTML("See https://youtu.be/dQw4w9WgXcQ for the talk.")).not.toContain("markie-embed");
+    expect(renderMarkdownHTML("[the talk](https://youtu.be/dQw4w9WgXcQ)")).not.toContain("markie-embed");
+    expect(renderMarkdownHTML("https://example.com/watch?v=dQw4w9WgXcQ")).not.toContain("markie-embed");
+  });
+
+  it("leaves a provider with no guessable thumbnail as the link it was", () => {
+    const html = renderMarkdownHTML("https://vimeo.com/148751763");
+    expect(html).not.toContain("markie-embed");
+    expect(html).toContain('<a href="https://vimeo.com/148751763">');
   });
 });

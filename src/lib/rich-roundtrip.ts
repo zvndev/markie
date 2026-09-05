@@ -8,6 +8,7 @@ import { formatMarkdownTables } from "@/lib/format-tables";
 import { splitFrontMatter, joinFrontMatter } from "@/lib/front-matter";
 import { extractHoldAsides, restoreHoldAsides } from "@/lib/rich-hold-aside";
 import { preserveBlocks } from "@/lib/rich-block-preserve";
+import { isEditorOwnHtmlBlock } from "@/lib/rich-media-html";
 
 export type LossRisk =
   | "front-matter"
@@ -81,8 +82,16 @@ export function describeLossRisks(markdown: string): LossRisk[] {
     risks.push("footnotes");
   }
   if (/<!--[\s\S]*?-->/.test(md)) risks.push("html-comments");
-  // An HTML tag at line start that is not a comment.
-  if (/^<(?!!--)[a-zA-Z][^>]*>/m.test(md)) risks.push("raw-html");
+  // An HTML tag at line start that is not a comment, and not one of the
+  // blocks the editor writes as HTML itself (a sized picture or clip, an
+  // aligned paragraph or heading), which it has a node for.
+  if (
+    md
+      .split(/\r?\n/)
+      .some((line) => /^<(?!!--)[a-zA-Z][^>]*>/.test(line) && !isEditorOwnHtmlBlock(line))
+  ) {
+    risks.push("raw-html");
+  }
   if (/^\$\$/m.test(md)) risks.push("display-math");
   // A delimiter row cell with alignment colons.
   if (/^\s*\|?\s*:-{2,}|-{2,}:\s*(\||$)/m.test(md)) risks.push("table-alignment");

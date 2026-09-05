@@ -8,10 +8,14 @@ describe("richBaseExtensions", () => {
   it("contains the full editing surface, in a stable order", () => {
     expect(names()).toEqual([
       "starterKit",
+      // Paragraph and heading are ours, so an aligned one reaches the file.
+      "paragraph",
+      "heading",
       "tableKit",
       "taskList",
       "taskItem",
       "image",
+      "embed",
       "placeholder",
       "markieKeymap",
       "highlight",

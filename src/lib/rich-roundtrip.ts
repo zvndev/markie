@@ -8,7 +8,7 @@ import { formatMarkdownTables } from "@/lib/format-tables";
 import { splitFrontMatter, joinFrontMatter } from "@/lib/front-matter";
 import { extractHoldAsides, restoreHoldAsides } from "@/lib/rich-hold-aside";
 import { preserveBlocks } from "@/lib/rich-block-preserve";
-import { isLoneMediaTag } from "@/lib/rich-media-html";
+import { isEditorOwnHtmlBlock } from "@/lib/rich-media-html";
 
 export type LossRisk =
   | "front-matter"
@@ -82,12 +82,13 @@ export function describeLossRisks(markdown: string): LossRisk[] {
     risks.push("footnotes");
   }
   if (/<!--[\s\S]*?-->/.test(md)) risks.push("html-comments");
-  // An HTML tag at line start that is not a comment, and not a sized picture
-  // or clip on its own line, which the editor has a node for.
+  // An HTML tag at line start that is not a comment, and not one of the
+  // blocks the editor writes as HTML itself (a sized picture or clip, an
+  // aligned paragraph or heading), which it has a node for.
   if (
     md
       .split(/\r?\n/)
-      .some((line) => /^<(?!!--)[a-zA-Z][^>]*>/.test(line) && !isLoneMediaTag(line))
+      .some((line) => /^<(?!!--)[a-zA-Z][^>]*>/.test(line) && !isEditorOwnHtmlBlock(line))
   ) {
     risks.push("raw-html");
   }

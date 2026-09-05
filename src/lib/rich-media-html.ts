@@ -77,3 +77,22 @@ const LONE_MEDIA_TAG =
 export function isLoneMediaTag(line: string): boolean {
   return LONE_MEDIA_TAG.test(line.replace(/\r?\n$/, ""));
 }
+
+// A paragraph or heading the editor aligned, written on one line with its
+// inline content as HTML (rich-aligned-blocks.ts). The same rule as a media
+// tag: one block the editor has a node for, left in rather than held aside.
+const ALIGNED_BLOCK =
+  /^\s{0,3}<(p|h[1-6])\s+style="text-align:\s*(?:center|right|justify|left);?"\s*>.*<\/\1\s*>\s*$/i;
+
+export function isAlignedBlockTag(line: string): boolean {
+  return ALIGNED_BLOCK.test(line.replace(/\r?\n$/, ""));
+}
+
+/**
+ * True for an HTML line the rich editor writes itself and reads back as one
+ * of its own nodes: a sized picture or clip, or an aligned paragraph or
+ * heading. Everything else that starts with a tag is raw HTML to the editor.
+ */
+export function isEditorOwnHtmlBlock(line: string): boolean {
+  return isLoneMediaTag(line) || isAlignedBlockTag(line);
+}

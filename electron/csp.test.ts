@@ -4,11 +4,13 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  EMBED_FRAME_ORIGINS,
   buildAppCsp,
   collectInlineScriptHashes,
   inlineScriptHashesForHtml,
   scriptSrcDirective,
 } from "./csp.js";
+import { EMBED_FRAME_ORIGINS as PROVIDER_FRAME_ORIGINS } from "../src/lib/embeds";
 
 const hash = (script: string) =>
   `'sha256-${createHash("sha256").update(script, "utf8").digest("base64")}'`;
@@ -43,6 +45,19 @@ describe("packaged app CSP", () => {
     expect(csp).toContain("script-src 'self'");
     expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+  });
+
+  it("frames exactly the players a video card can open, and nothing else", () => {
+    const csp = buildAppCsp("missing-out-dir");
+    const frame = csp.split("; ").find((d) => d.startsWith("frame-src "));
+    expect(frame).toBeDefined();
+    const allowed = frame!.replace("frame-src ", "").split(" ").sort();
+    // The provider list is what decides which players exist; the policy
+    // has to say the same thing or a card opens to a blank rectangle.
+    expect(allowed).toEqual([...PROVIDER_FRAME_ORIGINS].sort());
+    expect(allowed).toEqual([...EMBED_FRAME_ORIGINS].sort());
+    expect(csp).not.toContain("frame-src *");
+    expect(csp).toContain("frame-ancestors 'none'");
   });
 
   it("includes collected script hashes in script-src", () => {

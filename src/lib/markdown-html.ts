@@ -8,6 +8,7 @@ import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { rehypeMedia } from "@/lib/rehype-media";
+import { rehypeEmbeds } from "@/lib/rehype-embeds";
 import rehypeStringify from "rehype-stringify";
 
 // The same hardened schema the public share renderer uses (server/src/render.ts).
@@ -85,6 +86,7 @@ const processor = unified()
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(rehypeRaw)
   .use(rehypeMedia)
+  .use(rehypeEmbeds)
   .use(rehypeHighlight)
   .use(rehypeKatex)
   .use(rehypeSanitize, sanitizeSchema)

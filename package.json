@@ -76,6 +76,7 @@
     "reveal:check": "node scripts/reveal-check.mjs",
     "find:check": "node scripts/find-check.mjs",
     "update:check": "node scripts/update-flow-check.mjs",
+    "embed:check": "node scripts/embed-check.mjs",
     "ui:check": "node scripts/ui-check.mjs",
     "onboarding:check": "node scripts/onboarding-check.mjs",
     "crash:check": "node scripts/crash-check.mjs",

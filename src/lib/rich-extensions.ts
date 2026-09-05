@@ -15,6 +15,8 @@ import {
 } from "prosemirror-markdown";
 import { mediaKindOf, resolveAssetSrc } from "@/lib/asset-url";
 import { normalizeWidth, sizedMediaHtml } from "@/lib/rich-media-html";
+import { EmbedNode } from "@/lib/rich-embed";
+import { AlignedHeading, AlignedParagraph } from "@/lib/rich-aligned-blocks";
 import { Placeholder } from "@tiptap/extension-placeholder";
 import { Highlight } from "@tiptap/extension-highlight";
 import { MarkieKeymap } from "@/lib/rich-keymap";
@@ -192,8 +194,16 @@ export function richBaseExtensions(
   opts: { collab?: boolean } = {}
 ): AnyExtension[] {
   return [
-    // Collaboration replaces local undo history with the shared Yjs one
-    StarterKit.configure(opts.collab ? { undoRedo: false } : {}),
+    // Collaboration replaces local undo history with the shared Yjs one.
+    // Paragraph and heading come from rich-aligned-blocks.ts instead, so an
+    // aligned one reaches the file.
+    StarterKit.configure({
+      paragraph: false,
+      heading: false,
+      ...(opts.collab ? { undoRedo: false } : {}),
+    }),
+    AlignedParagraph,
+    AlignedHeading,
     TableKit.configure({ table: { resizable: false } }),
     TaskList,
     TaskItem.configure({ nested: true }),
@@ -203,6 +213,9 @@ export function richBaseExtensions(
     // editor, silently, with an empty paragraph where each had been. That is
     // the format a report arrives in when it has to travel as one file.
     LocalImage.configure({ allowBase64: true }),
+    // A video link alone on its line, as a card. The file keeps the bare
+    // URL; see rich-embed.ts.
+    EmbedNode,
     Placeholder.configure({ placeholder: "Start typing or open a file" }),
     MarkieKeymap,
     // Formatting markdown has no syntax for. These serialize as inline HTML,
@@ -211,7 +224,9 @@ export function richBaseExtensions(
     // markup has to live somewhere. A document that uses none of them is
     // untouched, which is why they are opt-in per selection rather than a
     // document mode. Underline is not listed: StarterKit already registers
-    // it, and registering the same mark twice makes TipTap warn.
+    // it, and registering the same mark twice makes TipTap warn. Alignment
+    // is a block attribute, so its HTML is written by the paragraph and
+    // heading nodes above rather than by a mark.
     Highlight.configure({ multicolor: true }),
     TextStyle,
     Color,

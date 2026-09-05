@@ -186,3 +186,28 @@ describe("renderMarkdownHTML sanitization", () => {
     expect(html).toContain("<math");
   });
 });
+
+// A video link alone on its line is a card in an export: the thumbnail,
+// linked to the video. The file keeps the bare URL.
+describe("a video link in an export", () => {
+  it("becomes a linked thumbnail when it is alone on its line", () => {
+    const html = renderMarkdownHTML("Watch this:\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nThen read on.");
+    expect(html).toContain('<p class="markie-embed">');
+    expect(html).toContain('<p class="markie-embed"><a href="https://youtu.be/dQw4w9WgXcQ">');
+    expect(html).toContain('<img src="https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg" alt="Watch on YouTube"');
+    // No player: an export runs no script and a share page frames nothing.
+    expect(html).not.toContain("<iframe");
+  });
+
+  it("stays a link inside a sentence, or when words were chosen for it", () => {
+    expect(renderMarkdownHTML("See https://youtu.be/dQw4w9WgXcQ for the talk.")).not.toContain("markie-embed");
+    expect(renderMarkdownHTML("[the talk](https://youtu.be/dQw4w9WgXcQ)")).not.toContain("markie-embed");
+    expect(renderMarkdownHTML("https://example.com/watch?v=dQw4w9WgXcQ")).not.toContain("markie-embed");
+  });
+
+  it("leaves a provider with no guessable thumbnail as the link it was", () => {
+    const html = renderMarkdownHTML("https://vimeo.com/148751763");
+    expect(html).not.toContain("markie-embed");
+    expect(html).toContain('<a href="https://vimeo.com/148751763">');
+  });
+});

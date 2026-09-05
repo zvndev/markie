@@ -14,11 +14,12 @@ export interface LightboxImage {
 // be a second player drawn over the first.
 //
 // Pictures inside a link are left out. Clicking one of those is how you follow
-// the link, and a viewer that opened on the same click would swallow it.
+// the link, and a viewer that opened on the same click would swallow it. So is
+// a video card's thumbnail, which is a play button drawn large.
 export function collectImages(root: ParentNode): LightboxImage[] {
   const out: LightboxImage[] = [];
   for (const img of root.querySelectorAll<HTMLImageElement>(".markdown-body img")) {
-    if (img.closest("a")) continue;
+    if (img.closest("a, [data-markie-embed]")) continue;
     const src = img.getAttribute("src");
     if (!src) continue;
     out.push({ src, alt: img.getAttribute("alt") ?? "" });
@@ -80,7 +81,7 @@ export function ImageLightbox({
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
       const target = event.target as HTMLElement | null;
       if (!(target instanceof HTMLImageElement)) return;
-      if (!target.closest(".markdown-body") || target.closest("a")) return;
+      if (!target.closest(".markdown-body") || target.closest("a, [data-markie-embed]")) return;
       const src = target.getAttribute("src");
       if (!src) return;
       const images = collectImages(container);

@@ -280,3 +280,12 @@ test("renderMarkdownHTML drops raw HTML that could run, frame, or call out", () 
   // The picture itself stays, minus the handler.
   assert.match(html, /<img src="https:\/\/example.com\/x.png">/);
 });
+
+test("renderMarkdownHTML draws a video link alone on its line as a linked thumbnail", () => {
+  const html = renderMarkdownHTML("https://www.youtube.com/watch?v=dQw4w9WgXcQ\n\nSee https://youtu.be/dQw4w9WgXcQ inline.");
+  assert.match(html, /<p class="markie-embed"><a href="https:\/\/www.youtube.com\/watch\?v=dQw4w9WgXcQ"><img src="https:\/\/i.ytimg.com\/vi\/dQw4w9WgXcQ\/hqdefault.jpg" alt="Watch on YouTube"/);
+  // A share page runs no script and frames nothing, so the card is a picture
+  // that goes to the video; the sentence link stays a link.
+  assert.doesNotMatch(html, /<iframe/);
+  assert.match(html, /See <a href="https:\/\/youtu.be\/dQw4w9WgXcQ">https:\/\/youtu.be\/dQw4w9WgXcQ<\/a> inline/);
+});

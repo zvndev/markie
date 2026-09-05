@@ -11,6 +11,7 @@ import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { rehypeMedia } from "./rehype-media.ts";
+import { rehypeEmbeds } from "./rehype-embeds.ts";
 import rehypeStringify from "rehype-stringify";
 import {
   downloadHref,
@@ -86,6 +87,7 @@ const processor = unified()
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(rehypeRaw)
   .use(rehypeMedia)
+  .use(rehypeEmbeds)
   .use(rehypeHighlight)
   .use(rehypeKatex)
   .use(rehypeSanitize, sanitizeSchema)

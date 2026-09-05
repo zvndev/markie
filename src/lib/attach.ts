@@ -108,6 +108,10 @@ export function opensAsDocument(name: string): boolean {
 // Image and link targets in a markdown document, both `![a](x)` and `[a](x)`,
 // including the angle-bracket form a path with spaces needs.
 const MD_TARGET = /!?\[[^\]]*\]\(\s*(<[^>]*>|[^\s)]+)/g;
+// A picture or clip with a chosen width is written as its HTML tag
+// (rich-media-html.ts), and it is just as absent from a share as one written
+// with the markdown syntax.
+const HTML_SRC = /<(?:img|video|audio|source)\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+))/gi;
 
 /**
  * How many things the document points at that live on this machine.
@@ -119,9 +123,17 @@ const MD_TARGET = /!?\[[^\]]*\]\(\s*(<[^>]*>|[^\s)]+)/g;
  */
 export function localAssetCount(markdown: string): number {
   const seen = new Set<string>();
-  for (const match of String(markdown ?? "").matchAll(MD_TARGET)) {
+  const text = String(markdown ?? "");
+  const targets: string[] = [];
+  for (const match of text.matchAll(MD_TARGET)) {
     let target = match[1];
     if (target.startsWith("<") && target.endsWith(">")) target = target.slice(1, -1);
+    targets.push(target);
+  }
+  for (const match of text.matchAll(HTML_SRC)) {
+    targets.push(match[1] ?? match[2] ?? match[3] ?? "");
+  }
+  for (const target of targets) {
     if (!target) continue;
     // Anything that names where it lives travels fine: a URL is a URL from
     // anywhere, and an inlined data URI is carried in the text itself.

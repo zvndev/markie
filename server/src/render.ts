@@ -6,6 +6,7 @@ import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import remarkRehype from "remark-rehype";
+import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -20,8 +21,12 @@ import {
 
 // rehype-sanitize schema: drops scripts, event handlers, and javascript:/data:
 // hrefs (defaultSchema.protocols) while preserving what rehype-highlight (hljs
-// class names) and rehype-katex (MathML tags + inline styles) emit. This is the
-// hardened public variant of the in-app renderer.
+// class names), rehype-katex (MathML tags + inline styles) and the rich
+// editor's own marks emit. This is the hardened public variant of the in-app
+// renderer. A document's own HTML is parsed by rehype-raw and then sanitized
+// against this schema, in that order, so what could run or frame never
+// reaches the page however it is written, and a highlight, a colour, a
+// centred heading or a picture with a chosen width survives.
 const MATHML = ["math","semantics","annotation","mrow","mi","mo","mn","ms","mtext","mspace","msup","msub","msubsup","mfrac","msqrt","mroot","munder","mover","munderover","mtable","mtr","mtd","mpadded","mphantom","menclose","mstyle","mglyph"];
 const SVG = ["svg","path","line","g","defs","use","rect","polyline"];
 // Kept in step with src/lib/markdown-html.ts. A shared document can carry a
@@ -41,12 +46,24 @@ const sanitizeSchema = {
     ...defaultSchema.protocols,
     src: [...(defaultSchema.protocols?.src ?? []), "data"],
   },
-  tagNames: [...(defaultSchema.tagNames ?? []), "span", "div", ...MATHML, ...SVG, ...MEDIA],
+  // Kept in step with src/lib/markdown-html.ts: `mark` and `u` are what the
+  // editor writes for a highlight and an underline, and `style` on the blocks
+  // it can align. `style` was already allowed on span and div, so this widens
+  // where an inline style may sit, not what one may do.
+  tagNames: [...(defaultSchema.tagNames ?? []), "span", "div", "mark", "u", ...MATHML, ...SVG, ...MEDIA],
   attributes: {
     ...defaultSchema.attributes,
     "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "ariaHidden", "ariaLabel"],
     span: ["className", "style", "ariaHidden"],
     div: ["className", "style"],
+    mark: ["style"],
+    p: ["style"],
+    h1: ["style"],
+    h2: ["style"],
+    h3: ["style"],
+    h4: ["style"],
+    h5: ["style"],
+    h6: ["style"],
     code: ["className"],
     pre: ["className"],
     math: ["xmlns", "display"],
@@ -64,7 +81,10 @@ const processor = unified()
   .use(remarkParse)
   .use(remarkGfm)
   .use(remarkMath)
-  .use(remarkRehype)
+  // allowDangerousHtml only keeps the HTML nodes for rehype-raw to parse;
+  // rehype-sanitize below is what decides what stays.
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeRaw)
   .use(rehypeMedia)
   .use(rehypeHighlight)
   .use(rehypeKatex)

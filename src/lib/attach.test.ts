@@ -152,6 +152,14 @@ describe("what would not travel with a shared document", () => {
     expect(count("[next](chapter-two.md)")).toBe(0);
   });
 
+  it("counts a picture or clip written as its HTML tag, which is how a sized one is kept", () => {
+    expect(count('<img src="shot.png" alt="a" width="240">')).toBe(1);
+    expect(count("<video src='clip.mp4' width=320 controls></video>")).toBe(1);
+    expect(count('<img src="https://example.com/shot.png" width="240">')).toBe(0);
+    // The same file, once as markdown and once sized, is still one file.
+    expect(count('![a](shot.png)\n\n<img src="shot.png" width="240">')).toBe(1);
+  });
+
   it("counts each distinct file once, however often it appears", () => {
     expect(count("![a](shot.png)\n\n![again](shot.png)\n\n![b](clip.mp4)")).toBe(2);
   });

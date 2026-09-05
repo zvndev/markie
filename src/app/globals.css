@@ -560,6 +560,78 @@ body {
   margin: 1em 0;
 }
 
+/* ── Pictures and clips in the rich pane ──
+   The editor wraps each one in a frame that carries the corner handles. The
+   frame takes the block's margin so the picture inside sits flush with its
+   outline and its handles, and the handles only show themselves for the
+   picture that is selected or under the pointer: a page of pictures with
+   sixteen blue squares on it is not a document. */
+.markdown-body .markie-media {
+  margin: 1em 0;
+  max-width: 100%;
+}
+
+.markdown-body .markie-media img,
+.markdown-body .markie-media video {
+  display: block;
+  margin: 0;
+  max-width: 100%;
+}
+
+.markdown-body .markie-media-frame {
+  border-radius: 8px;
+  max-width: 100%;
+}
+
+.markdown-body .markie-media.ProseMirror-selectednode .markie-media-frame {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.markie-media-handle {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--blue);
+  border: 2px solid var(--background);
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 35%, transparent);
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 1;
+}
+
+.markie-media.ProseMirror-selectednode .markie-media-handle,
+.markie-media:hover .markie-media-handle {
+  opacity: 1;
+}
+
+.markie-media-handle[data-resize-handle="top-left"] {
+  transform: translate(-50%, -50%);
+  cursor: nwse-resize;
+}
+.markie-media-handle[data-resize-handle="top-right"] {
+  transform: translate(50%, -50%);
+  cursor: nesw-resize;
+}
+.markie-media-handle[data-resize-handle="bottom-left"] {
+  transform: translate(-50%, 50%);
+  cursor: nesw-resize;
+}
+.markie-media-handle[data-resize-handle="bottom-right"] {
+  transform: translate(50%, 50%);
+  cursor: nwse-resize;
+}
+
+/* A read-only document has nothing to drag. */
+.ProseMirror[contenteditable="false"] .markie-media-handle {
+  display: none;
+}
+
+.markie-media.is-resizing,
+.markie-media.is-resizing * {
+  user-select: none;
+}
+
 .markdown-body table {
   width: 100%;
   max-width: 100%;

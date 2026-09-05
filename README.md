@@ -14,6 +14,10 @@ markdown right alongside you.
 
 - **Editor + live preview** — edit, preview, or split view; GitHub-flavored
   markdown, tables, code highlighting, and KaTeX math.
+- **Pictures, clips and video** — `![](shot.png)` or `![](clip.mp4)` beside the
+  document just works; double-click a picture to see it full size, drag a corner to
+  resize it, and a YouTube or Vimeo link on its own line becomes a playable card.
+  The file stays plain markdown throughout.
 - **Browse** — a device-wide index of every `.md` on your machine, so your notes and
   docs are one search away.
 - **Agent & skill files** — surfaces `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,

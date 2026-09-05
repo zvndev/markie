@@ -153,6 +153,16 @@ const shared = `
     page-break-inside: avoid;
   }
 
+  /* A video card (rehype-embeds.ts) is its thumbnail, linked. The one YouTube
+     serves is 4:3 with black bars, so it is cropped to the player's shape. */
+  .markdown-body p.markie-embed img {
+    display: block;
+    width: 100%;
+    max-width: 640px;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+  }
+
   .markdown-body table {
     width: 100%;
     margin: 1em 0;

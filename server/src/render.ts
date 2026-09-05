@@ -166,6 +166,9 @@ const PAGE_CSS = `
   main table { border-collapse: collapse; }
   main th, main td { border: 1px solid var(--line); padding: 6px 12px; }
   main img { max-width: 100%; border-radius: 8px; }
+  /* A video card (rehype-embeds.ts): the thumbnail YouTube serves is 4:3 with
+     black bars, so it is cropped to the player's shape. */
+  main p.markie-embed img { display: block; width: 100%; max-width: 640px; aspect-ratio: 16 / 9; object-fit: cover; }
   .cta { max-width: 760px; margin: 0 auto; padding: 24px; border-top: 1px solid var(--line);
     color: var(--muted); font-size: 14px; }
   .cta a { color: var(--accent); font-weight: 600; }

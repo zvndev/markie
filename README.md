@@ -42,10 +42,11 @@ Release integrations can read the current stable version and platform URLs from
 
 Markie ships a dependency-free [MCP](https://modelcontextprotocol.io) server that
 gives an AI agent a markdown workspace on *your* machine: `markie_find_md`,
-`markie_read_md`, `markie_write_md`, `markie_list_skills`, and
-`markie_open_in_markie`. It runs entirely locally — no cloud, no API key.
-Reads/writes are fenced to markdown under your home folder (symlink-guarded), so an
-agent can *"find my notes and add a section"* and actually do it.
+`markie_read_md`, `markie_write_md`, `markie_check_md`, `markie_list_skills`,
+`markie_guide`, and `markie_open_in_markie`. It runs entirely locally — no cloud,
+no API key. Reads/writes are fenced to markdown under your home folder
+(symlink-guarded), so an agent can *"find my notes and add a section"* and
+actually do it.
 
 Connecting also hands the agent Markie's organization conventions, so it says
 where a document belongs as it writes:
@@ -62,6 +63,12 @@ New documents then arrive filed under that project and block in Markie, and
 nothing moves on disk to make it happen. Claude Code users get the same
 conventions as a plugin skill; every other MCP client receives them through the
 server's `initialize` instructions.
+
+It also hands over what Markie actually renders: how a picture, a clip or a
+recording is written, where those files have to live to display at all, and
+which inline HTML survives a save. `markie_guide` and the
+`markie://guide/markdown` resource serve the whole of it, and `markie_check_md`
+reads a finished document back and names anything in it that will not show up.
 
 **Claude Code — plugin (easiest):**
 

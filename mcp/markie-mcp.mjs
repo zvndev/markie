@@ -17,6 +17,8 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { guardPath, matchQuery, groupSkills, markieOpenCommand } from "./lib.mjs";
 import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
+import { MARKDOWN_GUIDE, GUIDE_URI } from "./markdown-guide.mjs";
+import { checkMarkdown } from "./check-md.mjs";
 import { walk } from "./scan.mjs";
 import { createRequire } from "node:module";
 
@@ -106,6 +108,38 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "markie_check_md",
+    description:
+      "Check a markdown file against what Markie can actually display, and say what will not. Reports every image and link target (does the file exist, is the extension one Markie draws, does it sit beside the document) and every HTML tag that gets dropped, with line numbers. Static analysis of the text plus one existence check per local file: nothing is rendered and the app is never opened. Run it after writing a document that has a picture, a clip, or inline HTML in it.",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string", description: "Absolute path, ~ allowed" } },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "markie_guide",
+    description:
+      "What Markie renders, with an example of each: the markdown and the inline HTML that survive a save, where a picture has to live to display at all, and what is dropped silently. Read it before writing a document with pictures, video, audio or formatting in it. Static text, no arguments.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+];
+
+// The same guide, addressable. A resource is the right MCP shape for a document
+// the model may want to pull in on its own, but resources are optional in the
+// protocol and some clients never surface them, and this server may assume no
+// particular client (see the conventions.mjs header). So the guide is a tool as
+// well, and both read the one string.
+const RESOURCES = [
+  {
+    uri: GUIDE_URI,
+    name: "What Markie renders",
+    description:
+      "The markdown and inline HTML Markie displays, where local pictures, video and audio have to live, and what is silently dropped.",
+    mimeType: "text/markdown",
+  },
 ];
 
 async function runTool(name, args) {
@@ -182,6 +216,13 @@ async function runTool(name, args) {
       child.unref();
       return launcher.message;
     }
+    case "markie_check_md": {
+      const g = guardPath(args.path, HOME);
+      if (!g.ok) throw new Error(g.error);
+      return checkMarkdown(await readFile(g.path, "utf8"), g.path);
+    }
+    case "markie_guide":
+      return MARKDOWN_GUIDE;
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -208,7 +249,7 @@ rl.on("line", async (line) => {
         id,
         result: {
           protocolVersion: params?.protocolVersion ?? "2024-11-05",
-          capabilities: { tools: {} },
+          capabilities: { tools: {}, resources: {} },
           serverInfo: { name: "markie-mcp", version: SERVER_VERSION },
           // Clients hand this to the model at connect time: what Markie is,
           // which tool to reach for, and how to file what it writes.
@@ -219,6 +260,30 @@ rl.on("line", async (line) => {
       // notification — no response
     } else if (method === "tools/list") {
       send({ jsonrpc: "2.0", id, result: { tools: TOOLS } });
+    } else if (method === "resources/list") {
+      send({ jsonrpc: "2.0", id, result: { resources: RESOURCES } });
+    } else if (method === "resources/templates/list") {
+      // Nothing here is parameterized, but a client that asks must get a list
+      // rather than "method not found", which some of them treat as a fault.
+      send({ jsonrpc: "2.0", id, result: { resourceTemplates: [] } });
+    } else if (method === "resources/read") {
+      if (params?.uri !== GUIDE_URI) {
+        send({
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32602, message: `Unknown resource: ${params?.uri}` },
+        });
+      } else {
+        send({
+          jsonrpc: "2.0",
+          id,
+          result: {
+            contents: [
+              { uri: GUIDE_URI, mimeType: "text/markdown", text: MARKDOWN_GUIDE },
+            ],
+          },
+        });
+      }
     } else if (method === "tools/call") {
       const out = await runTool(params.name, params.arguments ?? {});
       send({

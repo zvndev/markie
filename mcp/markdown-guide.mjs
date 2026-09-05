@@ -1,62 +1,26 @@
----
-name: markie-conventions
-description: How to write markdown for Markie through its MCP server. Covers where a document is filed (project, block) and what Markie actually renders: pictures, video, audio, where those files have to live, and the inline HTML that survives a save. Use whenever writing documents for the user via markie_write_md, or when the user asks to organize, file, or find their markdown.
----
+// What Markie draws, written for the agent that is about to write a document.
+//
+// The filing conventions in conventions.mjs say where a document belongs. This
+// says what will actually appear when somebody opens it, which is a different
+// question and the one that goes wrong silently. An agent that does not know a
+// picture has to sit beside the document saves a screenshot to /tmp, references
+// it by absolute path, and produces a report with a hole in it and no error
+// anywhere.
+//
+// ONE source, three surfaces: the essentials are folded into the MCP
+// initialize instructions (every client hands those to the model), the whole
+// text is served as the markie://guide/markdown resource and by the
+// markie_guide tool, and skills/markie-conventions/SKILL.md embeds it between
+// markers. lib.test.mjs fails if the copy in SKILL.md drifts from this string.
+//
+// Every claim below was measured against the real code on 2026-09-05, by
+// round-tripping documents through src/lib/rich-extensions.ts (the editor's own
+// extension list) and through src/lib/markdown-html.ts (the export, print, PDF
+// and share renderer). Nothing here is written from memory, and a claim that
+// stops being true is a bug in the guide.
+// Self-contained: no imports from outside mcp/ (see the scan.mjs header).
 
-# Markie conventions
-
-Markie is the user's local markdown workspace. It organizes files into projects
-(a repo or a product) containing blocks (units of work). Files never move on
-disk; organization is metadata.
-
-## Writing documents
-
-1. Search before you write: `markie_find_md` with a few keywords. Update the
-   document that already exists instead of creating `plan-v2-final.md` beside
-   it. If the search says it was truncated, it did not see the whole disk, so
-   do not read a miss as proof the document is new.
-2. Declare where the document belongs. Either pass `project` and `block` to
-   `markie_write_md`, or write the front matter yourself:
-
-   ```yaml
-   ---
-   markie:
-     project: bevrly
-     block: checkout-redesign
-   ---
-   ```
-
-3. One block per unit of work: a feature, an investigation, a report series.
-   Reuse the block name across every document from that work.
-4. Name blocks after the work, not the date: `auth-flow`, not `march-notes`.
-   A date says when you filed something and never what it was, and Markie
-   strips leading date stamps out of the names it derives for that reason.
-5. Match existing project names. A document about a repo belongs to a project
-   named like the repo folder.
-6. Project, then block, then file is the whole tree. Do not invent deeper
-   levels, and do not move, rename, or restructure files on disk to organize
-   them. Declaring the project and block is the organizing.
-
-## Checking a document
-
-`markie_check_md` reads a document back and reports what will not display: an
-image or link target that is not where the document says it is, an embed of a
-kind Markie cannot draw, a target outside the document's folder, and every HTML
-tag that gets dropped, with line numbers. It is static analysis, so it costs a
-read and one existence check per local file, and it never opens the app.
-
-Run it whenever a document has a picture, a clip or inline HTML in it. A missing
-picture is the failure with no symptom: the document opens with a hole and
-nothing anywhere says why.
-
-## Showing results
-
-When the user asked for a document, finish with `markie_open_in_markie` on the
-file you wrote, so it renders in front of them.
-
-<!-- markdown-guide:start (one source: mcp/markdown-guide.mjs; lib.test.mjs fails when this drifts) -->
-
-# What Markie renders
+export const MARKDOWN_GUIDE = `# What Markie renders
 
 Markie reads ordinary markdown: GFM, plus the handful of inline HTML tags every
 markdown renderer already accepts. Write it the way you would write any .md
@@ -69,19 +33,19 @@ go through a second renderer, and where the two disagree it is said below.
 
 ## The short version
 
-- A picture, a clip or a recording is all `![alt](path)`. Markdown has one
+- A picture, a clip or a recording is all \`![alt](path)\`. Markdown has one
   embed syntax, and Markie decides by file extension what to draw.
 - The file has to sit beside the document, or inside a folder the user has
   added to Markie as a workspace. A path anywhere else displays nothing at all,
   with no error. Never point a document at /tmp.
-- `<mark>`, `<u>` and `<span style="color|font-family|font-size">` render in
+- \`<mark>\`, \`<u>\` and \`<span style="color|font-family|font-size">\` render in
   Rich and survive a save. Every other tag is dropped.
 - No raw HTML survives an export, a PDF or a shared link: that renderer drops
   it. An inline tag keeps its text and loses its formatting. A tag that starts
   a line loses the whole block, contents and all.
 - Math and footnotes are the other way round. They render in exports, PDFs and
   shared links, and stay as literal text in Rich.
-- Run `markie_check_md` on a document before handing it over. It names every
+- Run \`markie_check_md\` on a document before handing it over. It names every
   target that will not display and every tag that will not render.
 
 ## Plain markdown
@@ -91,9 +55,9 @@ code and fenced code with a language, thematic breaks, and links: all ordinary
 markdown, all rendered in both views. Name a fence's language after its opening
 backticks and exports, PDFs and shared links syntax highlight it.
 
-GFM on top of that, in both views: tables (a header row, a `---` delimiter
-row, then the rows), task lists (`- [ ] todo` and `- [x] done`),
-strikethrough (`~~gone~~`), and a bare `https://example.com`, which becomes a
+GFM on top of that, in both views: tables (a header row, a \`---\` delimiter
+row, then the rows), task lists (\`- [ ] todo\` and \`- [x] done\`),
+strikethrough (\`~~gone~~\`), and a bare \`https://example.com\`, which becomes a
 link on its own.
 
 Column alignment, the colons in a delimiter row, renders in both views and stays
@@ -104,21 +68,21 @@ in the file. Editing that table in Rich is what drops the colons.
 One syntax for all three. Markie draws a player for a clip and a picture for a
 picture, by extension:
 
-```markdown
+\`\`\`markdown
 ![the dashboard](demo/shot.png)
 ![the walkthrough](demo/clip.mp4)
 ![the voice memo](demo/memo.mp3)
-```
+\`\`\`
 
-- Pictures: `.png` `.jpg` `.jpeg` `.gif` `.webp` `.svg` `.avif` `.bmp` `.ico`.
+- Pictures: \`.png\` \`.jpg\` \`.jpeg\` \`.gif\` \`.webp\` \`.svg\` \`.avif\` \`.bmp\` \`.ico\`.
   An animated GIF animates.
-- Video: `.mp4` `.m4v` `.webm` `.ogv` `.mov`. Deliberately narrower than what
+- Video: \`.mp4\` \`.m4v\` \`.webm\` \`.ogv\` \`.mov\`. Deliberately narrower than what
   a converter accepts, because a player that draws a black rectangle is worse
   than a link.
-- Audio: `.mp3` `.m4a` `.aac` `.wav` `.flac` `.oga` `.opus`.
+- Audio: \`.mp3\` \`.m4a\` \`.aac\` \`.wav\` \`.flac\` \`.oga\` \`.opus\`.
 
-Anything else is a link, not an embed. `![](report.pdf)` displays nothing;
-write `[the report](report.pdf)` instead.
+Anything else is a link, not an embed. \`![](report.pdf)\` displays nothing;
+write \`[the report](report.pdf)\` instead.
 
 ## Where the file has to live
 
@@ -127,11 +91,11 @@ of the user's Markie workspace folders. Nothing else, ever: this is what stops
 a document somebody sent you from displaying a picture off your disk and then
 carrying it into a copy you send on.
 
-```markdown
+\`\`\`markdown
 ![beside the document](shot.png)
 ![in a folder beside it](assets/shot.png)
 ![up in a shared folder, only inside a workspace](../assets/logo.png)
-```
+\`\`\`
 
 So, in order of preference:
 
@@ -140,16 +104,16 @@ So, in order of preference:
 2. An absolute path works only when the file is inside a Markie workspace. The
    MCP cannot see which folders those are, so it can never promise you this
    one, and neither should you.
-3. `/tmp`, a system temp folder, or anywhere outside both: nothing displays,
+3. \`/tmp\`, a system temp folder, or anywhere outside both: nothing displays,
    and nothing says why. Move the file next to the document first.
 
 ## A document that has to travel alone
 
 Inline the picture as a data URI and the document carries it in its own text:
 
-```markdown
+\`\`\`markdown
 ![dot](data:image/png;base64,iVBORw0KGgo=)
-```
+\`\`\`
 
 That renders in Rich and in every export. It is the right answer for a report
 that will be shared as one file, and the wrong answer for a clip: base64 of a
@@ -158,12 +122,12 @@ a picture sitting beside it on disk does not go with it.
 
 ## Links to files beside the document
 
-`[the spec](spec.pdf)` opens the file in whatever the user's system opens it
+\`[the spec](spec.pdf)\` opens the file in whatever the user's system opens it
 with. The same containment rule as the pictures applies: beside the document,
 or inside a workspace. The document must have been saved, because an unsaved
 document has no folder to be relative to.
 
-A plain `https://` link needs nothing extra. Hovering one shows a preview card
+A plain \`https://\` link needs nothing extra. Hovering one shows a preview card
 with the page's title, summary and picture, fetched only on that hover.
 
 ## The inline HTML that survives
@@ -173,23 +137,23 @@ Markie writes those as inline HTML and reads them back:
 
 | Formatting | Write it |
 | --- | --- |
-| Highlight | `<mark>flagged</mark>` |
-| Underline | `<u>underlined</u>` |
-| Colour | `<span style="color: #b91c1c">red</span>` |
-| Font | `<span style="font-family: Georgia">serif</span>` |
-| Size | `<span style="font-size: 24px">big</span>` |
+| Highlight | \`<mark>flagged</mark>\` |
+| Underline | \`<u>underlined</u>\` |
+| Colour | \`<span style="color: #b91c1c">red</span>\` |
+| Font | \`<span style="font-family: Georgia">serif</span>\` |
+| Size | \`<span style="font-size: 24px">big</span>\` |
 
 Keep them inline, in the middle of a line of prose. That is the whole surviving
 set, measured. In particular:
 
-- `<span style="background-color: ...">` does NOT survive. Use `<mark>` for a
+- \`<span style="background-color: ...">\` does NOT survive. Use \`<mark>\` for a
   background.
-- `text-align` does NOT survive a save. Markie can centre a paragraph on
+- \`text-align\` does NOT survive a save. Markie can centre a paragraph on
   screen, and the alignment is gone the moment the file is written, so do not
   write centred text and expect it to come back.
-- `<sub>`, `<sup>`, `<kbd>`, `<abbr>`, `<small>` and friends are unwrapped:
+- \`<sub>\`, \`<sup>\`, \`<kbd>\`, \`<abbr>\`, \`<small>\` and friends are unwrapped:
   the text stays, the tag goes.
-- `<div>`, `<details>`, `<iframe>`, `<style>` and `<script>` are not markup
+- \`<div>\`, \`<details>\`, \`<iframe>\`, \`<style>\` and \`<script>\` are not markup
   Markie renders at all.
 
 ## What a tag on its own line does
@@ -202,7 +166,7 @@ placeholder token where the block was, and the export renderer drops the block
 entirely, contents included. An HTML comment is held the same way, which is
 what you want from a comment.
 
-The practical rule: never start a line with `<`.
+The practical rule: never start a line with \`<\`.
 
 ## Math and footnotes
 
@@ -212,8 +176,8 @@ document is going to be exported or shared, and expect to see the source in the
 app. Editing a formula's own paragraph in Rich escapes its backslashes, so
 change a formula in Source.
 
-```markdown
-Euler: $e^{i\pi} + 1 = 0$
+\`\`\`markdown
+Euler: $e^{i\\pi} + 1 = 0$
 
 $$
 E = mc^2
@@ -222,6 +186,26 @@ $$
 A claim that needs a source[^1]
 
 [^1]: The source.
-```
+\`\`\`
+`;
 
-<!-- markdown-guide:end -->
+// The digest that goes into the MCP initialize instructions. Sliced out of the
+// guide above rather than written twice, so the short version can never drift
+// from the long one. The heading it starts at is part of the contract, and
+// guideEssentials() throws if it moves.
+const SHORT_HEADING = "## The short version\n";
+
+export function guideEssentials() {
+  const start = MARKDOWN_GUIDE.indexOf(SHORT_HEADING);
+  if (start === -1) {
+    throw new Error(`markdown-guide: "${SHORT_HEADING.trim()}" section is gone`);
+  }
+  const from = start + SHORT_HEADING.length;
+  const next = MARKDOWN_GUIDE.indexOf("\n## ", from);
+  return MARKDOWN_GUIDE.slice(from, next === -1 ? undefined : next).trim();
+}
+
+// The URI the guide is served under. Named as a constant because the resource
+// list and the resource read both have to agree, and a typo in one of them
+// looks exactly like a client bug.
+export const GUIDE_URI = "markie://guide/markdown";

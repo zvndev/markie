@@ -3,14 +3,20 @@
 // the write path. Client-agnostic on purpose: Claude Code, Codex, and any other
 // MCP client read the same text, so nothing here may assume one of them.
 // Self-contained: no imports from outside mcp/ (see the scan.mjs header).
+import { GUIDE_URI, guideEssentials } from "./markdown-guide.mjs";
 
 export const INSTRUCTIONS = `Markie is the user's local markdown workspace: a desktop app over the .md files already on this computer. These tools touch the user's real files.
 
 When to reach for each tool:
 - markie_find_md: search the device-wide markdown index (name or path, newest first). Run it before writing anything new so you update the document that already exists instead of leaving a second copy beside it.
 - markie_read_md, markie_write_md: read or write one file by absolute path. Writes are limited to markdown inside the user's home folder.
+- markie_check_md: read a document back and report what will not display: a picture that is not where it says it is, an embed of a kind Markie cannot draw, markup that renders nowhere, and every tag the editor and an export treat differently. Run it after writing anything with a picture, a clip or inline HTML in it.
 - markie_open_in_markie: render a file in front of the user. Use it after writing, when they asked to see the result.
 - markie_list_skills: the user's agent instruction files (CLAUDE.md, AGENTS.md, skills, Cursor rules), grouped by tool.
+- markie_guide: the whole of what Markie renders, with an example of each. Also served as the ${GUIDE_URI} resource.
+
+What Markie renders, in short:
+${guideEssentials()}
 
 How Markie organizes, and what it needs from you:
 Markie groups files into projects (a repo or a product) and blocks (one unit of work inside a project). Declare where a document belongs as you write it, either with the optional project and block arguments to markie_write_md or by writing the front matter yourself:

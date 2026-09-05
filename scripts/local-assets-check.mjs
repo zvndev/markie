@@ -397,6 +397,85 @@ async function main() {
 
   await shootTo(cdp, "01-assets");
 
+  // ── The picture viewer ───────────────────────────────────────────────────
+  // Real input through CDP rather than a synthetic event: Chromium decides
+  // what a double-click is from two presses in one place, and the editor
+  // underneath sees the same presses and gets its say first.
+  const lightbox = `document.querySelector('[data-markie-lightbox]')`;
+  const viewerReport = `(() => {
+    const box = ${lightbox};
+    if (!box) return null;
+    const img = box.querySelector('img');
+    return {
+      scheme: (img?.getAttribute('src') || '').split(':')[0].slice(0, 24),
+      alt: img?.getAttribute('alt') ?? null,
+      loaded: !!img && img.complete && img.naturalWidth > 0,
+      counter: box.querySelector('[data-markie-lightbox-caption]')?.textContent ?? '',
+      focused: document.activeElement === box,
+    };
+  })()`;
+  const centerOf = await cdp.ev(`(() => {
+    const img = [...document.querySelectorAll('.markdown-body img')].find((i) => i.getAttribute('alt') === 'beside');
+    if (!img) return null;
+    img.scrollIntoView({ block: 'center' });
+    const r = img.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  })()`);
+  check("the picture is somewhere a pointer can reach", !!centerOf, JSON.stringify(centerOf));
+  if (centerOf) {
+    const mouse = async (type, clickCount) =>
+      cdp.send("Input.dispatchMouseEvent", {
+        type,
+        x: centerOf.x,
+        y: centerOf.y,
+        button: "left",
+        clickCount,
+      });
+    await mouse("mousePressed", 1);
+    await mouse("mouseReleased", 1);
+    check("one click does not open the viewer while editing", (await cdp.ev(viewerReport)) === null);
+    await mouse("mousePressed", 2);
+    await mouse("mouseReleased", 2);
+    const opened = await waitFor("viewer", () => cdp.ev(viewerReport), 5000).catch(() => null);
+    check(
+      "a double-click opens the viewer on that picture",
+      opened?.alt === "beside" && opened?.loaded === true && opened?.scheme === "markie-asset",
+      JSON.stringify(opened)
+    );
+    check("the viewer has the keyboard", opened?.focused === true);
+    check("it counts every picture in the document", opened?.counter?.includes("1 / 4") === true, String(opened?.counter));
+    await shootTo(cdp, "02-lightbox");
+
+    const key = async (name, code) => {
+      for (const type of ["keyDown", "keyUp"]) {
+        await cdp.send("Input.dispatchKeyEvent", {
+          type,
+          key: name,
+          code: name,
+          windowsVirtualKeyCode: code,
+          nativeVirtualKeyCode: code,
+        });
+      }
+    };
+    await key("ArrowRight", 39);
+    let now = await cdp.ev(viewerReport);
+    check(
+      "the right arrow moves to the next picture",
+      now?.alt === "inlined" && now?.scheme === "data" && now?.counter?.includes("2 / 4"),
+      JSON.stringify(now)
+    );
+    await key("ArrowLeft", 37);
+    now = await cdp.ev(viewerReport);
+    check("the left arrow moves back", now?.alt === "beside", JSON.stringify(now));
+    await key("Escape", 27);
+    await new Promise((r) => setTimeout(r, 300));
+    check("Escape closes it", (await cdp.ev(viewerReport)) === null);
+    check(
+      "the document is still there underneath, untouched by the arrows",
+      (await cdp.ev(bodyText)).includes("Report") && (await cdp.ev(imageReport))?.length >= 4
+    );
+  }
+
   // ── The document's markdown is not rewritten ─────────────────────────────
   const onDisk = await readFile(docPath, "utf-8");
   check(

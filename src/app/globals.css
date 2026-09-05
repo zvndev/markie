@@ -299,6 +299,36 @@ body {
   transform-origin: center;
 }
 
+/* ── Picture viewer ──
+   The controls sit on the scrim over whatever the picture is, so they carry
+   their own surface rather than borrowing the page's. Disabled means "no
+   picture that way", which is information, so it stays visible but quiet. */
+.markie-lightbox-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  box-shadow: 0 6px 18px color-mix(in srgb, #000 22%, transparent);
+  transition: background-color 0.15s, color 0.15s, opacity 0.15s;
+  outline: none;
+}
+
+.markie-lightbox-control:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.markie-lightbox-control:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 70%, transparent);
+}
+
+.markie-lightbox-control:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .overlay-command-enter {
   animation: markie-command-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
   transform-origin: top center;

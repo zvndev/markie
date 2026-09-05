@@ -36,6 +36,7 @@ import {
 } from "@/lib/collab";
 import { CommentLayer } from "@/components/comments";
 import { LinkPreviewCard } from "@/components/link-preview-card";
+import { ImageLightbox } from "@/components/image-lightbox";
 import { handleDocumentClick } from "@/lib/local-link";
 import {
   attachmentContent,
@@ -643,6 +644,10 @@ export function RichView({
           <EditorContent editor={editor} />
         </article>
         <LinkPreviewCard container={scrollEl} />
+        {/* A single click on a picture already means "select it" while
+            editing, so the viewer waits for a double there. Read-only has no
+            selection to protect. */}
+        <ImageLightbox container={scrollEl} openOn={locked ? "click" : "dblclick"} />
         {editor && session && collab && (
           <CommentLayer
             editor={editor}

@@ -12,12 +12,14 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Agents writing for Markie are told what Markie draws.** Connecting an agent
   now hands it what Markie actually renders: how a picture, a clip or a
-  recording is written, where those files have to sit to display at all, and
-  which formatting survives a save. The failure it removes had no symptom. An
-  agent that saved a screenshot to a temp folder and linked to it produced a
-  report with a hole in it, and nothing anywhere said why. There is a new check
-  too, `markie_check_md`, which reads a finished document back and names every
-  picture, link and tag in it that will not show up.
+  recording is written, how to size one, how to centre a line, what a video
+  address alone on a line turns into, where those files have to sit to display
+  at all, and which formatting comes back after a save. The failure it removes
+  had no symptom. An agent that saved a screenshot to a temp folder and linked
+  to it produced a report with a hole in it, and nothing anywhere said why.
+  There is a new check too, `markie_check_md`, which reads a finished document
+  back and names every picture, link and tag in it that will not show up where
+  you expect it.
 
 ## [0.5.3] - 2026-09-03
 

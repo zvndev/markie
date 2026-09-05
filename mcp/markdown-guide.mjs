@@ -13,23 +13,26 @@
 // markie_guide tool, and skills/markie-conventions/SKILL.md embeds it between
 // markers. lib.test.mjs fails if the copy in SKILL.md drifts from this string.
 //
-// Every claim below was measured against the real code on 2026-09-05, by
+// Every claim below was measured against the real code, most recently on
+// 2026-09-05 after the resize, embed and alignment work landed, by
 // round-tripping documents through src/lib/rich-extensions.ts (the editor's own
 // extension list) and through src/lib/markdown-html.ts (the export, print, PDF
 // and share renderer). Nothing here is written from memory, and a claim that
-// stops being true is a bug in the guide.
+// stops being true is a bug in the guide. Two of them were the opposite of what
+// the code comments said at the time, so re-measure rather than re-read.
 // Self-contained: no imports from outside mcp/ (see the scan.mjs header).
 
 export const MARKDOWN_GUIDE = `# What Markie renders
 
-Markie reads ordinary markdown: GFM, plus the handful of inline HTML tags every
-markdown renderer already accepts. Write it the way you would write any .md
-file and it stays portable, because nothing here is Markie-only.
+Markie reads ordinary markdown: GFM, plus the HTML every markdown renderer
+already accepts. Write it the way you would write any .md file and it stays
+portable, because nothing here is Markie-only.
 
-Markie shows a document two ways, and a few things render in one and not the
-other. Rich (Command-1) is the view it opens with, an editor over the file.
-Source (Command-2) is the file's own bytes. Export, print, PDF and a shared link
-go through a second renderer, and where the two disagree it is said below.
+Two things draw a document and they do not agree about everything, so the rules
+below say both. Rich (Command-1) is the editor Markie opens with, and Source
+(Command-2) is the file's own bytes. Export, print, PDF and a shared link go
+through a second renderer, which parses the document's own HTML and then
+sanitizes it.
 
 ## The short version
 
@@ -38,13 +41,19 @@ go through a second renderer, and where the two disagree it is said below.
 - The file has to sit beside the document, or inside a folder the user has
   added to Markie as a workspace. A path anywhere else displays nothing at all,
   with no error. Never point a document at /tmp.
-- \`<mark>\`, \`<u>\` and \`<span style="color|font-family|font-size">\` render in
-  Rich and survive a save. Every other tag is dropped.
-- No raw HTML survives an export, a PDF or a shared link: that renderer drops
-  it. An inline tag keeps its text and loses its formatting. A tag that starts
-  a line loses the whole block, contents and all.
-- Math and footnotes are the other way round. They render in exports, PDFs and
-  shared links, and stay as literal text in Rich.
+- To size a picture, write its tag alone on a line:
+  \`<img src="demo/shot.png" width="240">\`. Width only, never height.
+- To centre a line, write its tag alone on a line:
+  \`<p style="text-align: center;">middle</p>\`, or the same on a heading. What
+  is inside is HTML, not markdown.
+- A YouTube or Vimeo link alone on a line becomes a card. Write the bare
+  address and nothing else.
+- \`<mark>\`, \`<u>\` and \`<span style="color|font-family|font-size">\` are the
+  inline tags Rich keeps exactly as written. Other tags render in exports and
+  shared pages, and Rich rewrites or unwraps them the next time it saves that
+  paragraph.
+- \`<script>\`, \`<iframe>\`, \`<style>\`, \`<object>\`, \`<form>\`, any \`on...=\`
+  handler and a \`javascript:\` link render nowhere at all.
 - Run \`markie_check_md\` on a document before handing it over. It names every
   target that will not display and every tag that will not render.
 
@@ -84,12 +93,34 @@ picture, by extension:
 Anything else is a link, not an embed. \`![](report.pdf)\` displays nothing;
 write \`[the report](report.pdf)\` instead.
 
+## Choosing how big a picture is
+
+Markdown has nowhere to put a width, so a sized picture is written as the tag
+itself, which is the one form that renders everywhere, GitHub included:
+
+\`\`\`markdown
+<img src="demo/shot.png" alt="the dashboard" width="240">
+
+<video src="demo/clip.mp4" width="320" controls></video>
+\`\`\`
+
+Alone on its line, with nothing else on that line: that exact shape is the one
+Rich reads back as its own picture, at that width and with drag handles on the
+corners. Exports and shared pages honour the width too. Put words on the same
+line and it stops being a picture to Rich and becomes ordinary raw HTML, held
+aside (see below).
+
+Only the width. A browser scales the height from the picture's own proportions,
+and a stored height goes stale the moment the file behind it is recropped.
+Audio has no width worth choosing, so leave a recording as \`![](memo.mp3)\`.
+
 ## Where the file has to live
 
 A document may reach a file inside the folder it was opened from, or inside one
 of the user's Markie workspace folders. Nothing else, ever: this is what stops
 a document somebody sent you from displaying a picture off your disk and then
-carrying it into a copy you send on.
+carrying it into a copy you send on. The \`src\` of an \`<img>\` or \`<video>\` tag
+is held to exactly the same rule as \`![](...)\`.
 
 \`\`\`markdown
 ![beside the document](shot.png)
@@ -130,43 +161,89 @@ document has no folder to be relative to.
 A plain \`https://\` link needs nothing extra. Hovering one shows a preview card
 with the page's title, summary and picture, fetched only on that hover.
 
-## The inline HTML that survives
+## A video from YouTube or Vimeo
+
+Put the bare address alone on its line and nothing else:
+
+\`\`\`markdown
+https://youtu.be/dQw4w9WgXcQ
+\`\`\`
+
+Rich draws a card with the thumbnail and the title, and loads the player only
+when somebody clicks it. An export or a shared page draws the thumbnail linked
+to the video (YouTube only, because Vimeo has no thumbnail address that can be
+guessed; a Vimeo link stays a link there). The file keeps the bare URL and
+nothing else, so any other renderer shows an ordinary link.
+
+The address has to be the whole paragraph and its own words. A link inside a
+sentence stays a link, and so does \`[watch this](https://youtu.be/...)\`, which
+is somebody choosing words for it.
+
+## Centring a line
+
+Markdown has no alignment, so an aligned block is written as its tag, alone on
+its line, opening and closing:
+
+\`\`\`markdown
+<p style="text-align: center;">Signed off by the team</p>
+
+<h2 style="text-align: right;">Appendix</h2>
+\`\`\`
+
+\`center\`, \`right\`, \`justify\` and \`left\` on \`<p>\` and on \`<h1>\` through
+\`<h6>\`. Rich draws these as the paragraph or heading they are, and exports and
+shared pages render them too.
+
+Two things to get right. What is inside the tag is HTML, not markdown, because
+the content of an HTML block is not markdown to any renderer: write
+\`<strong>bold</strong>\`, since \`**bold**\` in there shows up as asterisks.
+And write the tag plainly, with double quotes and no other attributes: add a
+\`class\`, or use single quotes, and Markie reads it as ordinary raw HTML
+instead, which still exports but shows a placeholder in Rich.
+
+## The inline HTML, and where it survives
 
 Markdown has no syntax for highlighting, underline, colour, font or size, so
-Markie writes those as inline HTML and reads them back:
+Markie writes those as inline HTML and reads them back. Rich only rewrites a
+paragraph when that paragraph is edited, so until then the file keeps whatever
+you wrote either way.
 
-| Formatting | Write it |
-| --- | --- |
-| Highlight | \`<mark>flagged</mark>\` |
-| Underline | \`<u>underlined</u>\` |
-| Colour | \`<span style="color: #b91c1c">red</span>\` |
-| Font | \`<span style="font-family: Georgia">serif</span>\` |
-| Size | \`<span style="font-size: 24px">big</span>\` |
+| Written | In Rich | In an export or a shared page |
+| --- | --- | --- |
+| \`<mark>flagged</mark>\` | kept | kept |
+| \`<u>underlined</u>\` | kept | kept |
+| \`<span style="color: #b91c1c">red</span>\` | kept | kept |
+| \`<span style="font-family: Georgia">\` | kept | kept |
+| \`<span style="font-size: 24px">\` | kept | kept |
+| \`<b>\` \`<i>\` \`<del>\` \`<code>\` \`<br>\` \`<a href>\` | rewritten as the markdown that means the same | kept |
+| \`<span style="background-color: ...">\` \`<kbd>\` \`<sub>\` \`<sup>\` \`<ins>\` | tag dropped, text kept | kept |
+| \`<small>\` \`<abbr>\` | tag dropped, text kept | tag dropped, text kept |
 
-Keep them inline, in the middle of a line of prose. That is the whole surviving
-set, measured. In particular:
+Use \`<mark>\` for a background: \`background-color\` on a \`<span>\` is the one
+that does not come back.
 
-- \`<span style="background-color: ...">\` does NOT survive. Use \`<mark>\` for a
-  background.
-- \`text-align\` does NOT survive a save. Markie can centre a paragraph on
-  screen, and the alignment is gone the moment the file is written, so do not
-  write centred text and expect it to come back.
-- \`<sub>\`, \`<sup>\`, \`<kbd>\`, \`<abbr>\`, \`<small>\` and friends are unwrapped:
-  the text stays, the tag goes.
-- \`<div>\`, \`<details>\`, \`<iframe>\`, \`<style>\` and \`<script>\` are not markup
-  Markie renders at all.
+## A tag that starts a line
 
-## What a tag on its own line does
+A tag at the start of a line makes an HTML block, and a block is not inline
+markup. Markie lifts the whole block out before the editor sees it and puts the
+original bytes back on save, so the file keeps exactly what you wrote, and Rich
+shows a placeholder token where the block was. Exports, PDFs and shared pages
+render it, sanitized: \`<div>\`, \`<details>\` and \`<summary>\`, \`<table>\`,
+\`<blockquote>\`, \`<section>\`, \`<pre>\`, lists, and the ordinary text tags all
+come out. A few do not, and lose the tag while keeping the text inside it:
+\`<figure>\`, \`<figcaption>\`, \`<center>\`, \`<header>\`, \`<footer>\`, \`<aside>\`.
 
-A tag at the start of a line is a block, and blocks are treated differently
-from inline tags. Markie lifts the whole block out before the editor sees it
-and puts the original bytes back on save, so nothing is corrupted: the file
-keeps exactly what you wrote. What it does not do is render. Rich shows a
-placeholder token where the block was, and the export renderer drops the block
-entirely, contents included. An HTML comment is held the same way, which is
-what you want from a comment.
+The two exceptions are the shapes above, which Rich has a node for and draws
+properly: a lone picture or clip tag, and an aligned \`<p>\` or heading. Write
+anything else that starts with \`<\` only when you want it in the export and can
+live with a placeholder in the app.
 
-The practical rule: never start a line with \`<\`.
+## What renders nowhere
+
+\`<script>\`, \`<iframe>\`, \`<style>\`, \`<object>\`, \`<form>\`, any \`on...=\` handler
+attribute, and a \`javascript:\` link. The file keeps them and no reader ever
+sees them, in either place. \`<style>\` is the worst of these: an export drops
+the tag and keeps the CSS inside it as visible text on the page.
 
 ## Math and footnotes
 

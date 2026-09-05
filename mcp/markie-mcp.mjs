@@ -111,7 +111,7 @@ const TOOLS = [
   {
     name: "markie_check_md",
     description:
-      "Check a markdown file against what Markie can actually display, and say what will not. Reports every image and link target (does the file exist, is the extension one Markie draws, does it sit beside the document) and every HTML tag that gets dropped, with line numbers. Static analysis of the text plus one existence check per local file: nothing is rendered and the app is never opened. Run it after writing a document that has a picture, a clip, or inline HTML in it.",
+      "Check a markdown file against what Markie can actually display, and say what will not. Reports every image and link target (does the file exist, is the extension one Markie draws, does it sit beside the document) and every HTML tag whose fate differs between the editor and an export, with line numbers and both halves. ok is false only for something that renders nowhere: a missing local file, an embed of a kind Markie cannot draw, or markup the sanitizer drops. Static analysis of the text plus one existence check per local file: nothing is rendered and the app is never opened. Run it after writing a document that has a picture, a clip, or inline HTML in it.",
     inputSchema: {
       type: "object",
       properties: { path: { type: "string", description: "Absolute path, ~ allowed" } },
@@ -122,7 +122,7 @@ const TOOLS = [
   {
     name: "markie_guide",
     description:
-      "What Markie renders, with an example of each: the markdown and the inline HTML that survive a save, where a picture has to live to display at all, and what is dropped silently. Read it before writing a document with pictures, video, audio or formatting in it. Static text, no arguments.",
+      "What Markie renders, with an example of each: how to size a picture, centre a line, or turn a video address into a card, where a picture has to live to display at all, which inline HTML the editor keeps, and what is dropped silently. Read it before writing a document with pictures, video, audio or formatting in it. Static text, no arguments.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
 ];

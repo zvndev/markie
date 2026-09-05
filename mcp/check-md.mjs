@@ -1,18 +1,25 @@
 // Reading a document the way Markie will, without a renderer.
 //
 // The failure this exists for is silent. A document that points at a picture in
-// /tmp, or embeds a .pdf with image syntax, or wraps a heading in a <div>, opens
-// with a hole in it and says nothing: nothing throws, nothing is logged, and the
-// agent that wrote it has no way to find out. So the answer is computed from the
-// text plus one stat per local target, which is cheap enough to run on every
-// document before it is handed over.
+// /tmp, or embeds a .pdf with image syntax, or carries a <script> nothing will
+// ever run, opens with a hole in it and says nothing: nothing throws, nothing is
+// logged, and the agent that wrote it has no way to find out. So the answer is
+// computed from the text plus one stat per local target, which is cheap enough
+// to run on every document before it is handed over.
+//
+// Two places render a document and they do not agree, so every HTML finding
+// says both halves: what Rich does with the tag, and what an export or a shared
+// page does. Only a tag that renders in neither is a failure; the rest are
+// warnings, because "your kbd will come back as plain text once you edit that
+// paragraph" is worth knowing and is not a broken document.
 //
 // The rules here are copies, and copies only stay correct if the original is
-// named. Targets are found with the regex from src/lib/attach.ts (localAssetCount),
-// the displayable extensions come from the MIME maps in electron/local-assets.js,
-// containment is the docDir half of its containedIn, block HTML is the line rule
-// from src/lib/rich-hold-aside.ts, and the surviving inline set was measured
-// against src/lib/rich-extensions.ts.
+// named. Targets are found with the two regexes from src/lib/attach.ts
+// (localAssetCount), the displayable extensions come from the MIME maps in
+// electron/local-assets.js, containment is the docDir half of its containedIn,
+// block HTML is the line rule from src/lib/rich-hold-aside.ts, the two shapes
+// the editor owns are src/lib/rich-media-html.ts, and both HTML fates were
+// measured against src/lib/rich-extensions.ts and src/lib/markdown-html.ts.
 //
 // Deliberately NOT a copy in one place: fenced code is skipped. localAssetCount
 // counts targets inside fences because it is warning about sharing and would
@@ -38,6 +45,9 @@ const DOCUMENT_RE = /\.(md|markdown|mdx|txt|csv)$/i;
 // angle-bracket form a path with spaces needs. Straight from src/lib/attach.ts;
 // the leading `!` is captured here because an embed and a link fail differently.
 const MD_TARGET = /(!?)\[[^\]]*\]\(\s*(<[^>]*>|[^\s)]+)/g;
+// A picture or clip with a chosen width is written as its HTML tag, so its src
+// is a local file exactly as much as `![](…)` is. Also from src/lib/attach.ts.
+const HTML_SRC = /<(?:img|video|audio|source)\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+))/gi;
 
 // A fence opens a code block; nothing inside one is markup. From
 // src/lib/rich-block-preserve.ts.
@@ -48,6 +58,18 @@ const FENCE_OPEN = /^\s{0,3}(`{3,}|~{3,})/;
 // patterns decide what gets lifted out of the text.
 const BLOCK_HTML_OPEN = /^\s{0,3}<[a-zA-Z!/]/;
 const BLOCK_COMMENT_OPEN = /^\s{0,3}<!--/;
+
+// The two block shapes the rich editor writes itself and reads back as its own
+// nodes, so they are drawn rather than held aside. Copied from
+// src/lib/rich-media-html.ts (isLoneMediaTag, isAlignedBlockTag); the quoting
+// and the "nothing else on the line" part are load-bearing, which is why the
+// guide tells an author to write exactly this shape.
+const LONE_MEDIA_TAG =
+  /^\s{0,3}<(img|video|audio)\b(?:\s+[^\s"'<>=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>`]+))?)*\s*\/?>(?:\s*<\/(?:video|audio)\s*>)?\s*$/i;
+const ALIGNED_BLOCK =
+  /^\s{0,3}<(p|h[1-6])\s+style="text-align:\s*(?:center|right|justify|left);?"\s*>.*<\/\1\s*>\s*$/i;
+
+const isEditorOwnHtmlBlock = (line) => LONE_MEDIA_TAG.test(line) || ALIGNED_BLOCK.test(line);
 
 // An opening tag, as CommonMark defines one: a name, then attributes, then an
 // optional slash and the bracket. The strictness is load-bearing rather than
@@ -60,14 +82,52 @@ const OPEN_TAG =
 
 // The CSS properties a <span> can carry into the file and back out again. Color,
 // FontFamily and FontSize are the three text-style extensions in
-// src/lib/rich-extensions.ts; a span whose style names none of them is unwrapped
-// on the way in, which is why background-color is not here. Use <mark> for that.
+// src/lib/rich-extensions.ts; a span whose style names none of them loses the
+// style on the way in, which is why background-color is not here. Use <mark>.
 const SURVIVING_STYLE_PROPS = new Set(["color", "font-family", "font-size"]);
 
-// Tags the editor parses back into marks, so they survive a save. Measured
-// 2026-09-05 by round-tripping through richBaseExtensions: everything else
-// inline is unwrapped (its text stays, the tag goes).
+// Tags the editor parses back into marks, so the file keeps them as written.
 const SURVIVING_TAGS = new Set(["mark", "u"]);
+
+// Tags the editor turns into the markdown that means the same thing. Nothing is
+// lost: `<b>x</b>` comes back as `**x**` once that paragraph is edited.
+const REWRITTEN_TAGS = new Set(["b", "i", "strong", "em", "del", "s", "strike", "code", "br", "a"]);
+
+// Never rendered, anywhere: not by the editor, and dropped by the sanitizer that
+// every export, print, PDF and shared page runs through
+// (src/lib/markdown-html.ts, server/src/render.ts). The document keeps the bytes
+// and no reader ever sees them, which is the worst of both. Measured, not
+// assumed: <input> is NOT here, because the default schema keeps it (that is
+// how a task list gets its checkbox), and neither is <svg>, which the schema
+// allows for equations.
+const DROPPED_TAGS = new Set(["script", "iframe", "style", "object", "embed", "form", "link", "meta", "base", "noscript"]);
+
+// A picture or clip in the middle of a line. Neither dropped nor unwrapped: the
+// editor has a node for it and gives it a line of its own.
+const MEDIA_TAGS = new Set(["img", "video", "audio", "source"]);
+
+// What survives the export sanitizer: hast-util-sanitize's GitHub-derived
+// default tagNames (as re-exported by rehype-sanitize), plus the tags
+// src/lib/markdown-html.ts adds for the editor's own marks and for media. A tag
+// outside this set has its element dropped and its text kept, so `<small>x`
+// exports as a bare x. Pinned by a test rather than imported, because mcp/ ships
+// without dependencies and must run from a bare Node.
+const EXPORT_RENDERS = new Set([
+  "a", "b", "blockquote", "br", "code", "dd", "del", "details", "div", "dl", "dt", "em",
+  "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "input", "ins", "kbd", "li", "ol",
+  "p", "picture", "pre", "q", "rp", "rt", "ruby", "s", "samp", "section", "source", "span",
+  "strike", "strong", "sub", "summary", "sup", "table", "tbody", "td", "tfoot", "th",
+  "thead", "tr", "tt", "ul", "var",
+  // What src/lib/markdown-html.ts adds on top. The MathML element names are in
+  // that list too and are left out here: rehype-katex emits them from `$x$`,
+  // nobody writes them by hand.
+  "mark", "u", "video", "audio", "source", "div", "span",
+  "svg", "path", "line", "g", "defs", "use", "rect", "polyline", "math",
+]);
+
+// An attribute that runs script. The sanitizer drops it and the editor never
+// keeps it, so it is dead weight wherever it is written.
+const EVENT_ATTR = /\son[a-z]+\s*=/i;
 
 const kindForExt = (ext) => {
   if (IMAGE_EXT.has(ext)) return "image";
@@ -85,10 +145,45 @@ function spanSurvives(attrs) {
     .some((decl) => SURVIVING_STYLE_PROPS.has(decl.split(":")[0].trim().toLowerCase()));
 }
 
-function tagSurvives(tag, attrs) {
+// Why a tag renders nowhere. <style> earns its own sentence: the sanitizer drops
+// the element and keeps its children, so the CSS itself comes out as visible
+// text in an export, which is worse than losing it.
+function droppedNote(name) {
+  if (name === "style") {
+    return "<style> renders nowhere, and worse: the export keeps the CSS inside it as visible text on the page. Style a document with the inline forms Markie writes.";
+  }
+  return `<${name}> renders nowhere. The editor never draws it and the export sanitizer drops it, so the markup sits in the file and no reader ever sees it.`;
+}
+
+// What becomes of one inline tag, as a pair: what Rich does, and what an export
+// does. Returns null when the tag is kept as written on both sides, which is the
+// only case worth saying nothing about.
+function inlineFate(tag, attrs) {
   const name = tag.toLowerCase();
-  if (SURVIVING_TAGS.has(name)) return true;
-  return name === "span" && spanSurvives(attrs);
+  const exported = EXPORT_RENDERS.has(name);
+  if (DROPPED_TAGS.has(name)) {
+    return { effect: "dropped", note: droppedNote(name) };
+  }
+  const keptByRich = SURVIVING_TAGS.has(name) || (name === "span" && spanSurvives(attrs));
+  if (keptByRich && exported) return null;
+  if (MEDIA_TAGS.has(name)) {
+    return {
+      effect: "moved",
+      note: `<${name}> renders in exports and shared pages where it stands. Rich has a node for it and pulls it onto a line of its own when that block is edited, so write it alone on its line if that is where you want it.`,
+    };
+  }
+  if (REWRITTEN_TAGS.has(name)) {
+    return {
+      effect: "rewritten",
+      note: `<${name}> renders in exports and shared pages, and Rich rewrites it as the markdown that means the same thing when it next saves that paragraph. Nothing is lost.`,
+    };
+  }
+  return {
+    effect: "unwrapped",
+    note: exported
+      ? `<${name}> renders in exports and shared pages, but Rich drops the tag and keeps the text when it next saves that paragraph. Only <mark>, <u> and a <span> styled with color, font-family or font-size come back.`
+      : `<${name}> is dropped by exports and shared pages (the text stays), and Rich drops the tag too when it next saves that paragraph.`,
+  };
 }
 
 // Blank out what is not markup, keeping every character position so line and
@@ -167,6 +262,7 @@ function classifyTarget(raw, embed, docDir, exists) {
   if (target.startsWith("#")) return { ...base, kind: "anchor" };
   if (target.startsWith("//")) return { ...base, kind: "remote" };
   if (/^data:/i.test(target)) return { ...base, kind: "data" };
+  if (/^javascript:/i.test(target)) return { ...base, kind: "remote", unsafe: true };
   const isFileUrl = /^file:\/\//i.test(target);
   if (!isFileUrl && /^[a-z][a-z0-9+.-]*:/i.test(target)) return { ...base, kind: "remote" };
 
@@ -189,6 +285,12 @@ function classifyTarget(raw, embed, docDir, exists) {
 
 function warningsFor(t) {
   const warnings = [];
+  if (t.unsafe) {
+    warnings.push(
+      "A javascript: link works nowhere. The export sanitizer strips the address and leaves the words behind with nothing to click."
+    );
+    return warnings;
+  }
   if (t.resolved === undefined) return warnings;
   if (!t.exists) {
     warnings.push("No file at this path, so nothing will display.");
@@ -206,19 +308,37 @@ function warningsFor(t) {
   return warnings;
 }
 
-// Every tag that will not render, with the line it is on. Two shapes of loss,
-// and they are not the same thing for an author: an inline tag outside the
-// surviving set keeps its text and loses its formatting, while a tag that starts
-// a line makes a block, and a block keeps its bytes in the file but renders
-// nowhere.
+// Every tag whose two fates are worth saying, with the line it is on. The two
+// shapes the editor owns, a sized picture or clip and an aligned paragraph or
+// heading, are drawn properly on both sides and are not findings at all.
 //
 // Takes the blanked text, so code fences are already spaces and need no handling
 // of their own here.
 function findHtml(text) {
   const found = [];
   const lines = text.split(/(?<=\n)/);
-  let skipUntilBlank = false;
   let skipUntilCommentEnd = false;
+
+  const scanInline = (bare, line, onlyDropped) => {
+    // Comments render nowhere and are meant to render nowhere, so they are not
+    // findings. Markie keeps their bytes exactly as written.
+    const stripped = bare.replace(/<!--[\s\S]*?-->/g, "");
+    for (const m of stripped.matchAll(OPEN_TAG)) {
+      if (EVENT_ATTR.test(m[2] ?? "")) {
+        found.push({
+          tag: m[1].toLowerCase(),
+          line,
+          form: "attribute",
+          effect: "dropped",
+          note: `An on...= handler on <${m[1].toLowerCase()}> runs nowhere. The export sanitizer strips it and the editor never keeps it.`,
+        });
+      }
+      const fate = inlineFate(m[1], m[2]);
+      if (!fate) continue;
+      if (onlyDropped && fate.effect !== "dropped") continue;
+      found.push({ tag: m[1].toLowerCase(), line, form: "inline", ...fate });
+    }
+  };
 
   for (let i = 0; i < lines.length; i++) {
     const bare = lines[i].replace(/\r?\n$/, "");
@@ -226,39 +346,47 @@ function findHtml(text) {
       if (bare.includes("-->")) skipUntilCommentEnd = false;
       continue;
     }
-    if (skipUntilBlank) {
-      if (bare.trim() === "") skipUntilBlank = false;
-      continue;
-    }
-    // A comment renders nowhere and is meant to render nowhere, so it is not a
-    // finding. Markie keeps its bytes exactly as written.
     if (BLOCK_COMMENT_OPEN.test(bare)) {
       if (!bare.includes("-->")) skipUntilCommentEnd = true;
       continue;
     }
-    if (BLOCK_HTML_OPEN.test(bare)) {
-      const first = /<\/?([a-zA-Z][a-zA-Z0-9-]*)/.exec(bare);
-      found.push({
-        tag: first ? first[1].toLowerCase() : "?",
-        line: i + 1,
-        form: "block",
-        note: "A tag at the start of a line makes an HTML block. Markie keeps the bytes exactly as written but renders nothing: the editor shows a placeholder where the block was, and exports, PDFs and shared links drop it entirely, contents included.",
-      });
-      skipUntilBlank = true;
+    if (!BLOCK_HTML_OPEN.test(bare)) {
+      scanInline(bare, i + 1, false);
       continue;
     }
-    // The line-start cases are gone, so anything left is inline. Comments in the
-    // middle of a line are skipped for the same reason as block ones.
-    const inline = bare.replace(/<!--[\s\S]*?-->/g, "");
-    for (const m of inline.matchAll(OPEN_TAG)) {
-      if (tagSurvives(m[1], m[2])) continue;
+    // A CommonMark HTML block runs to the next blank line. One line of it that
+    // is a shape the editor owns is not a block at all: it is a node the editor
+    // draws, so it is left alone here exactly as rich-hold-aside.ts leaves it.
+    let j = i + 1;
+    while (j < lines.length && lines[j].replace(/\r?\n$/, "").trim() !== "") j++;
+    if (j === i + 1 && isEditorOwnHtmlBlock(bare)) {
+      // The shape is fine, but an on...= handler written on it still runs
+      // nowhere, and nothing else would ever say so.
+      scanInline(bare, i + 1, true);
+      continue;
+    }
+
+    const first = /<\/?([a-zA-Z][a-zA-Z0-9-]*)/.exec(bare);
+    const tag = first ? first[1].toLowerCase() : "?";
+    if (DROPPED_TAGS.has(tag)) {
+      found.push({ tag, line: i + 1, form: "block", effect: "dropped", note: droppedNote(tag) });
+    } else {
       found.push({
-        tag: m[1].toLowerCase(),
+        tag,
         line: i + 1,
-        form: "inline",
-        note: `<${m[1].toLowerCase()}> is not markup Markie keeps. The text inside it stays and the tag is dropped on the next save.`,
+        form: "block",
+        effect: "held",
+        note: EXPORT_RENDERS.has(tag)
+          ? `A tag at the start of a line makes an HTML block. Exports, PDFs and shared pages render it, and Rich shows a placeholder token where the block is because it holds the bytes aside untouched. Only a lone picture or clip tag, and an aligned <p> or heading, are drawn in Rich.`
+          : `A tag at the start of a line makes an HTML block. Rich shows a placeholder token where the block is, and exports drop the <${tag}> element itself and keep what is inside it.`,
       });
     }
+    // The block is held whole, but a <script> inside it still renders nowhere,
+    // and that is the half worth saying. The opening line is skipped when its
+    // own tag is what was just reported, so a lone <script> is one finding.
+    const scanFrom = DROPPED_TAGS.has(tag) ? i + 1 : i;
+    for (let k = scanFrom; k < j; k++) scanInline(lines[k].replace(/\r?\n$/, ""), k + 1, true);
+    i = j - 1;
   }
   return found;
 }
@@ -267,6 +395,10 @@ function summarize(report) {
   const { counts } = report;
   const problems = [];
   for (const t of report.targets) {
+    if (t.unsafe) {
+      problems.push(`${t.raw} (works nowhere)`);
+      continue;
+    }
     if (t.resolved === undefined) continue;
     // Both reasons, because a .mkv that is also missing needs moving AND
     // relinking, and hearing only the first one costs a second round trip.
@@ -275,17 +407,23 @@ function summarize(report) {
     if (t.embed && !t.displayable) why.push("not a kind Markie embeds");
     if (why.length) problems.push(`${t.raw} (${why.join(", ")})`);
   }
-  for (const h of report.html) problems.push(`<${h.tag}> on line ${h.line} (${h.form})`);
+  for (const h of report.html) {
+    if (h.effect === "dropped") problems.push(`<${h.tag}> on line ${h.line} (renders nowhere)`);
+  }
 
-  const scanned = `${counts.targets} target${counts.targets === 1 ? "" : "s"}, ${counts.html} HTML problem${counts.html === 1 ? "" : "s"}`;
+  const notes = counts.html - counts.htmlDropped;
   const head = report.ok
-    ? `Everything in this document displays: ${scanned}.`
+    ? `Everything in this document displays: ${counts.targets} target${counts.targets === 1 ? "" : "s"} checked.`
     : `${problems.length} problem${problems.length === 1 ? "" : "s"}: ${problems.join("; ")}.`;
   const outside =
     counts.outsideFolder > 0
       ? ` ${counts.outsideFolder} target${counts.outsideFolder === 1 ? " sits" : "s sit"} outside the document's folder and will display only from inside a Markie workspace folder.`
       : "";
-  return head + outside;
+  const html =
+    notes > 0
+      ? ` ${notes} tag${notes === 1 ? " renders" : "s render"} differently in Rich and in exports; see html[] for which.`
+      : "";
+  return head + outside + html;
 }
 
 /**
@@ -309,14 +447,23 @@ export function checkMarkdown(markdown, docPath, { exists = existsSync } = {}) {
   const scannable = blankNonMarkup(src);
 
   const targets = [];
-  const lineOf = lineNumberer(scannable);
-  for (const m of scannable.matchAll(MD_TARGET)) {
-    const t = classifyTarget(m[2], m[1] === "!", docDir, exists);
-    t.line = lineOf(m.index);
+  const addTarget = (raw, embed, index, lineOf) => {
+    const t = classifyTarget(raw, embed, docDir, exists);
+    t.line = lineOf(index);
     const warnings = warningsFor(t);
     if (warnings.length) t.warnings = warnings;
     targets.push(t);
+  };
+  const mdLines = lineNumberer(scannable);
+  for (const m of scannable.matchAll(MD_TARGET)) addTarget(m[2], m[1] === "!", m.index, mdLines);
+  // A media tag's src is a local file exactly as much as `![](…)` is, and it is
+  // always an embed: the tag is the picture, not a link to it. Its own line
+  // numberer because each walks its matches in order from the top.
+  const htmlLines = lineNumberer(scannable);
+  for (const m of scannable.matchAll(HTML_SRC)) {
+    addTarget(m[1] ?? m[2] ?? m[3] ?? "", true, m.index, htmlLines);
   }
+  targets.sort((a, b) => a.line - b.line);
 
   const html = findHtml(scannable);
   const local = targets.filter((t) => t.resolved !== undefined);
@@ -327,10 +474,16 @@ export function checkMarkdown(markdown, docPath, { exists = existsSync } = {}) {
     missing: local.filter((t) => !t.exists).length,
     undisplayable: local.filter((t) => t.embed && !t.displayable).length,
     outsideFolder: local.filter((t) => !t.insideDocFolder).length,
+    unsafe: targets.filter((t) => t.unsafe).length,
     html: html.length,
+    htmlDropped: html.filter((h) => h.effect === "dropped").length,
   };
   const report = {
-    ok: counts.missing === 0 && counts.undisplayable === 0 && counts.html === 0,
+    ok:
+      counts.missing === 0 &&
+      counts.undisplayable === 0 &&
+      counts.unsafe === 0 &&
+      counts.htmlDropped === 0,
     path: docPath,
     counts,
     targets,

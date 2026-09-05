@@ -716,6 +716,21 @@ test("the guide states the rules an agent gets wrong, in one place", () => {
   assert.match(MARKDOWN_GUIDE, /data:image\/png;base64/);
   assert.match(MARKDOWN_GUIDE, /footnote/i);
   assert.match(MARKDOWN_GUIDE, /markie_check_md/);
+  // The three shapes an agent cannot invent: a width, an alignment, a video.
+  assert.match(MARKDOWN_GUIDE, /<img src="demo\/shot\.png" alt="the dashboard" width="240">/);
+  assert.match(MARKDOWN_GUIDE, /<p style="text-align: center;">/);
+  assert.match(MARKDOWN_GUIDE, /youtu\.be/);
+  // And the one thing that is true of nothing else: dropped in both places.
+  assert.match(MARKDOWN_GUIDE, /renders nowhere/i);
+});
+
+// Exports parse and sanitize the document's own HTML (src/lib/markdown-html.ts
+// runs remark-rehype with allowDangerousHtml, then rehype-raw). The guide said
+// the opposite before that landed, which is the kind of claim that has to be
+// re-measured rather than re-read.
+test("the guide does not claim raw HTML is lost in an export", () => {
+  assert.doesNotMatch(MARKDOWN_GUIDE, /No raw HTML survives/i);
+  assert.match(MARKDOWN_GUIDE, /Exports, PDFs and shared pages\s+render it/);
 });
 
 test("the guide stays client-agnostic prose, like the instructions it folds into", () => {
@@ -840,30 +855,82 @@ test("check-md warns about a target outside the document's folder without guessi
   assert.match(r.summary, /outside the document's folder/);
 });
 
-test("check-md reports the tags that get dropped, with line numbers", () => {
+// A sized picture is written as its tag (src/lib/rich-media-html.ts), so the
+// file behind it is exactly as missing as one written with markdown syntax.
+test("check-md checks the src of a lone picture or clip tag, and never flags the tag", () => {
   const md = [
-    "# Title",                              // 1
-    "",                                     // 2
-    "A <sub>2</sub> and a <kbd>Cmd</kbd>.", // 3
-    "",                                     // 4
-    "A <span>bare</span> span.",            // 5
-    "",                                     // 6
-    '<div class="wrap">',                   // 7
-    "block content",                        // 8
-    "</div>",                               // 9
+    '<img src="demo/shot.png" alt="beside" width="240">',
+    "",
+    '<video src="demo/clip.mp4" width="320" controls></video>',
+  ].join("\n");
+  const ok = checkMarkdown(md, DOC, checkOpts("/home/u/notes/demo/shot.png", "/home/u/notes/demo/clip.mp4"));
+  assert.deepEqual(ok.html, []);
+  assert.deepEqual(ok.targets.map((t) => [t.kind, t.embed, t.exists]), [
+    ["image", true, true],
+    ["video", true, true],
+  ]);
+  assert.equal(ok.ok, true);
+
+  const missing = checkMarkdown(md, DOC, checkOpts());
+  assert.equal(missing.ok, false);
+  assert.equal(missing.counts.missing, 2);
+  assert.deepEqual(missing.html, []);
+});
+
+// An aligned paragraph or heading is the other block the editor owns.
+test("check-md leaves an aligned block alone, and holds one that is written loosely", () => {
+  const clean = [
+    '<p style="text-align: center;">Signed off</p>',
+    "",
+    '<h2 style="text-align: right;">Appendix</h2>',
+    "",
+    '<p style="text-align: center">no semicolon is fine</p>',
+  ].join("\n");
+  assert.deepEqual(checkMarkdown(clean, DOC, checkOpts()).html, []);
+
+  // A class, or single quotes, and it is ordinary raw HTML again: still fine in
+  // an export, a placeholder in Rich.
+  const loose = "<p class=\"x\" style=\"text-align: center;\">centered</p>\n";
+  const r = checkMarkdown(loose, DOC, checkOpts());
+  assert.deepEqual(r.html.map((h) => [h.tag, h.effect]), [["p", "held"]]);
+  assert.match(r.html[0].note, /placeholder/);
+  assert.match(r.html[0].note, /render it/);
+  assert.equal(r.ok, true);
+});
+
+test("check-md says both halves for an inline tag Rich does not keep", () => {
+  const md = [
+    "Press <kbd>Cmd</kbd> and H<sub>2</sub>O.",       // 1
+    "",                                                // 2
+    "A <b>bold</b> word.",                             // 3
+    "",                                                // 4
+    "A <small>small</small> word.",                    // 5
+    "",                                                // 6
+    'A <span style="background-color: #fee">bg</span> word.', // 7
   ].join("\n");
   const r = checkMarkdown(md, DOC, checkOpts());
   assert.deepEqual(
-    r.html.map((h) => [h.tag, h.line, h.form]),
-    [["sub", 3, "inline"], ["kbd", 3, "inline"], ["span", 5, "inline"], ["div", 7, "block"]]
+    r.html.map((h) => [h.tag, h.line, h.effect]),
+    [
+      ["kbd", 1, "unwrapped"],
+      ["sub", 1, "unwrapped"],
+      ["b", 3, "rewritten"],
+      ["small", 5, "unwrapped"],
+      ["span", 7, "unwrapped"],
+    ]
   );
-  assert.match(r.html[0].note, /text inside it stays/);
-  assert.match(r.html[3].note, /renders nothing/);
-  assert.equal(r.counts.html, 4);
-  assert.equal(r.ok, false);
+  // A kbd renders in an export; a small does not. Both halves, every time.
+  assert.match(r.html[0].note, /renders in exports and shared pages/);
+  assert.match(r.html[0].note, /Rich drops the tag/);
+  assert.match(r.html[3].note, /dropped by exports/);
+  assert.match(r.html[2].note, /Nothing is lost/);
+  // None of this is a broken document.
+  assert.equal(r.ok, true);
+  assert.equal(r.counts.htmlDropped, 0);
+  assert.match(r.summary, /render differently in Rich and in exports/);
 });
 
-test("check-md leaves the surviving set alone", () => {
+test("check-md leaves the tags Rich keeps exactly as written alone", () => {
   const md = [
     "A <mark>flagged</mark> word.",
     "",
@@ -879,12 +946,56 @@ test("check-md leaves the surviving set alone", () => {
   ].join("\n");
   const r = checkMarkdown(md, DOC, checkOpts());
   // The last one starts its line, which makes it a block whatever the tag is.
-  assert.deepEqual(r.html.map((h) => [h.tag, h.form]), [["mark", "block"]]);
+  assert.deepEqual(r.html.map((h) => [h.tag, h.form, h.effect]), [["mark", "block", "held"]]);
+  assert.equal(r.ok, true);
 });
 
-test("check-md knows background-color does not survive on a span", () => {
-  const r = checkMarkdown('A <span style="background-color: #fee">bg</span> word.\n', DOC, checkOpts());
-  assert.deepEqual(r.html.map((h) => h.tag), ["span"]);
+test("check-md fails a document carrying markup that renders nowhere", () => {
+  const md = [
+    "# Report",                                  // 1
+    "",                                          // 2
+    "<script>alert(1)</script>",                 // 3
+    "",                                          // 4
+    '<iframe src="https://example.com"></iframe>', // 5
+    "",                                          // 6
+    "<style>p{color:red}</style>",               // 7
+    "",                                          // 8
+    '<img src="shot.png" onerror="alert(1)">',   // 9
+  ].join("\n");
+  const r = checkMarkdown(md, DOC, checkOpts("/home/u/notes/shot.png"));
+  assert.deepEqual(
+    r.html.map((h) => [h.tag, h.line, h.effect]),
+    [
+      ["script", 3, "dropped"],
+      ["iframe", 5, "dropped"],
+      ["style", 7, "dropped"],
+      ["img", 9, "dropped"],
+    ]
+  );
+  assert.match(r.html[3].note, /on\.\.\.= handler/);
+  // The CSS in a <style> comes out as visible text, which is worse than losing it.
+  assert.match(r.html[2].note, /visible text/);
+  assert.equal(r.counts.htmlDropped, 4);
+  assert.equal(r.ok, false);
+  assert.match(r.summary, /renders nowhere/);
+});
+
+test("check-md finds a script hiding inside a block it would otherwise just hold", () => {
+  const md = ['<div class="wrap">', "<script>alert(1)</script>", "</div>"].join("\n");
+  const r = checkMarkdown(md, DOC, checkOpts());
+  assert.deepEqual(
+    r.html.map((h) => [h.tag, h.line, h.effect]),
+    [["div", 1, "held"], ["script", 2, "dropped"]]
+  );
+  assert.equal(r.ok, false);
+});
+
+test("check-md fails a javascript: link, which works in neither place", () => {
+  const r = checkMarkdown("[click](javascript:alert(1))\n", DOC, checkOpts());
+  assert.equal(r.targets[0].unsafe, true);
+  assert.equal(r.counts.unsafe, 1);
+  assert.match(r.targets[0].warnings[0], /works nowhere/);
+  assert.equal(r.ok, false);
 });
 
 test("check-md ignores comments and anything inside code", () => {
@@ -926,20 +1037,30 @@ test("check-md says nothing is wrong with a document that is fine", () => {
     "",
     "![the dashboard](demo/shot.png)",
     "",
+    '<img src="demo/detail.png" alt="detail" width="240">',
+    "",
+    '<p style="text-align: center;">Signed off by the team</p>',
+    "",
+    "https://youtu.be/dQw4w9WgXcQ",
+    "",
     "| a | b |",
     "| --- | --- |",
     "| 1 | 2 |",
   ].join("\n");
-  const r = checkMarkdown(md, DOC, checkOpts("/home/u/notes/demo/shot.png"));
+  const r = checkMarkdown(md, DOC, checkOpts("/home/u/notes/demo/shot.png", "/home/u/notes/demo/detail.png"));
   assert.equal(r.ok, true);
   assert.deepEqual(r.html, []);
   assert.equal(r.counts.missing, 0);
+  // Two pictures and one link. A bare address is not a target: it names where
+  // it lives, exactly as localAssetCount treats it.
+  assert.equal(r.counts.targets, 3);
   assert.match(r.summary, /Everything in this document displays/);
 });
 
 test("check-md needs the document's path, because relative targets have nothing else", () => {
   assert.throws(() => checkMarkdown("![a](x.png)", ""), /absolute path/);
 });
+
 
 test("MCP serves the guide as a resource and as a tool, and checks a real file", async () => {
   const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
@@ -967,17 +1088,25 @@ test("MCP serves the guide as a resource and as a tool, and checks a real file",
     const guide = await client.callTool("markie_guide", {});
     assert.equal(guide.result.content[0].text, MARKDOWN_GUIDE);
 
-    // A real document, on disk, with one picture that exists and one that does not.
+    // A real document, on disk: one picture that exists, one that does not, a
+    // block that renders in an export but not in Rich, and one that renders
+    // nowhere.
     mkdirSync(pjoin(home, "notes"), { recursive: true });
     writeFileSync(pjoin(home, "notes", "here.png"), "not really a png");
     const doc = pjoin(home, "notes", "report.md");
-    writeFileSync(doc, "![a](here.png)\n\n![b](gone.png)\n\n<div>x</div>\n");
+    writeFileSync(
+      doc,
+      "![a](here.png)\n\n<img src=\"gone.png\" width=\"240\">\n\n<div>x</div>\n\n<script>x</script>\n"
+    );
     const res = await client.callTool("markie_check_md", { path: doc });
     const report = JSON.parse(res.result.content[0].text);
     assert.equal(report.ok, false);
     assert.equal(report.counts.missing, 1);
-    assert.equal(report.counts.html, 1);
+    assert.equal(report.counts.html, 2);
+    assert.equal(report.counts.htmlDropped, 1);
     assert.equal(report.targets[0].exists, true);
+    // The width tag's src is checked exactly like the markdown form's.
+    assert.equal(report.targets[1].raw, "gone.png");
     assert.equal(report.targets[1].exists, false);
 
     // The read guard is the same one markie_read_md uses.

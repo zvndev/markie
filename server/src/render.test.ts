@@ -275,6 +275,7 @@ test("renderMarkdownHTML drops raw HTML that could run, frame, or call out", () 
   assert.doesNotMatch(html, /onerror/);
   assert.doesNotMatch(html, /<iframe/);
   assert.doesNotMatch(html, /<style/);
+  assert.doesNotMatch(html, /display:none/);
   assert.doesNotMatch(html, /javascript:/);
   assert.doesNotMatch(html, /<form/);
   // The picture itself stays, minus the handler.

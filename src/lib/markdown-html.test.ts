@@ -110,6 +110,9 @@ describe("renderMarkdownHTML resilience", () => {
       expect(html).not.toContain("onerror");
       expect(html).not.toContain("<iframe");
       expect(html).not.toContain("<style");
+      // The style block's contents too, not just its tag: unwrapped, the CSS
+      // came out as a paragraph of the page.
+      expect(html).not.toContain("display:none");
       expect(html).not.toContain("javascript:");
       expect(html).not.toContain("<object");
       // The picture itself is still there, minus the handler.

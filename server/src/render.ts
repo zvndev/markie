@@ -47,6 +47,10 @@ const sanitizeSchema = {
     ...defaultSchema.protocols,
     src: [...(defaultSchema.protocols?.src ?? []), "data"],
   },
+  // A disallowed element is normally unwrapped, its text kept, which is right
+  // for a <small> and wrong for a <style>: the CSS inside came out as a
+  // paragraph of the page. Its contents go the way a script's do.
+  strip: [...(defaultSchema.strip ?? []), "style"],
   // Kept in step with src/lib/markdown-html.ts: `mark` and `u` are what the
   // editor writes for a highlight and an underline, and `style` on the blocks
   // it can align. `style` was already allowed on span and div, so this widens

@@ -973,8 +973,9 @@ test("check-md fails a document carrying markup that renders nowhere", () => {
     ]
   );
   assert.match(r.html[3].note, /on\.\.\.= handler/);
-  // The CSS in a <style> comes out as visible text, which is worse than losing it.
-  assert.match(r.html[2].note, /visible text/);
+  // A <style> block is gone with its contents; the renderers strip it the way
+  // they strip a script.
+  assert.match(r.html[2].note, /renders nowhere/);
   assert.equal(r.counts.htmlDropped, 4);
   assert.equal(r.ok, false);
   assert.match(r.summary, /renders nowhere/);

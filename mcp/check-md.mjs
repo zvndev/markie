@@ -145,14 +145,13 @@ function spanSurvives(attrs) {
     .some((decl) => SURVIVING_STYLE_PROPS.has(decl.split(":")[0].trim().toLowerCase()));
 }
 
-// Why a tag renders nowhere. <style> earns its own sentence: the sanitizer drops
-// the element and keeps its children, so the CSS itself comes out as visible
-// text in an export, which is worse than losing it.
+// Why a tag renders nowhere. Everything in DROPPED_TAGS is gone in both
+// places, tag and contents alike, so the reason is the same for all of them.
 function droppedNote(name) {
   if (name === "style") {
-    return "<style> renders nowhere, and worse: the export keeps the CSS inside it as visible text on the page. Style a document with the inline forms Markie writes.";
+    return "<style> renders nowhere. Style a document with the inline forms Markie writes.";
   }
-  return `<${name}> renders nowhere. The editor never draws it and the export sanitizer drops it, so the markup sits in the file and no reader ever sees it.`;
+  return `<${name}> renders nowhere: the rich editor holds it aside and the export sanitizer drops it, contents included.`;
 }
 
 // What becomes of one inline tag, as a pair: what Rich does, and what an export

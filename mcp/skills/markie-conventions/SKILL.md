@@ -278,8 +278,7 @@ live with a placeholder in the app.
 
 `<script>`, `<iframe>`, `<style>`, `<object>`, `<form>`, any `on...=` handler
 attribute, and a `javascript:` link. The file keeps them and no reader ever
-sees them, in either place. `<style>` is the worst of these: an export drops
-the tag and keeps the CSS inside it as visible text on the page.
+sees them, in either place, contents included.
 
 ## Math and footnotes
 

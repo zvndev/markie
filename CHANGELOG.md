@@ -10,6 +10,25 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Double-click a picture to see it full size.** It opens over the document,
+  as large as the window allows, and the left and right arrow keys walk every
+  picture in the document. Escape closes it and puts the keyboard back where it
+  was; a click on the picture itself toggles actual size, for the screenshot
+  you opened to read rather than admire. In a read-only document a single click
+  does the same. Clips are left to their own controls and full-screen button.
+- **Drag a corner to resize a picture or a clip.** Click one in the document and
+  handles appear on its corners; drag and it follows, shape kept. The width is
+  written to the file as `<img src="shot.png" width="240">`, the one form
+  every markdown renderer, GitHub included, draws at that size. A picture nobody
+  resized stays `![alt](shot.png)` exactly as it was. Exports, PDFs and shared
+  pages honour the width.
+- **A YouTube or Vimeo link alone on its line becomes a card.** The thumbnail,
+  the title and a play button; the video itself loads only when you click, from
+  YouTube's cookie-free player, so a document with six videos in it does not
+  open six of them to be read. The file keeps the bare address and nothing
+  else, so it still opens anywhere as a link. Exports and shared pages show the
+  thumbnail, linked to the video. A link inside a sentence stays a link. Press
+  Enter after typing an address and the card appears there and then.
 - **Agents writing for Markie are told what Markie draws.** Connecting an agent
   now hands it what Markie actually renders: how a picture, a clip or a
   recording is written, how to size one, how to centre a line, what a video
@@ -20,6 +39,29 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   There is a new check too, `markie_check_md`, which reads a finished document
   back and names every picture, link and tag in it that will not show up where
   you expect it.
+
+### Fixed
+
+- **Centring a paragraph or heading now reaches the file.** It showed on screen
+  and was gone on the next open, with nothing to say so. An aligned block is
+  written as `<p style="text-align: center;">…</p>`, which every renderer
+  understands, and read back the same way.
+- **Exports, PDFs and shared pages keep your formatting.** A highlight, an
+  underline, a colour, a font, a centred heading, a resized picture: all of
+  these are written as the small inline HTML every markdown renderer accepts,
+  and until now the export renderer dropped every one of them, contents
+  included. It now renders them, and still refuses anything that could run or
+  frame another page: scripts, iframes, style blocks, event handlers and
+  `javascript:` links never reach an export or a shared page, however they are
+  written.
+- **Words typed right after a picture no longer land on the picture's line**
+  when that part of the document is rewritten.
+
+### Changed
+
+- **Markie's home is markiedocs.com.** Download links, shared links and the
+  manifest name it. Every old markie.zvndev.com link redirects there, so
+  nothing you have sent stops working.
 
 ## [0.5.3] - 2026-09-03
 

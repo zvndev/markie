@@ -377,9 +377,16 @@ things that genuinely differ: obtaining the previous release, judging its signat
 version off disk, and finding the relaunched process). A claim that holds on one platform and not
 the other is then a real difference rather than a difference in what was checked.
 
-The version to update from comes from `.release/<version>/previous-latest.yml`, saved by
-`release:publish:win`; override with the workflow's `from` input. A Windows release is not complete
-until this passes.
+Pass the previous public version as the workflow's `from` input:
+
+```sh
+gh workflow run windows-update-check.yml --ref main -f from=<previous version>
+```
+
+The runner has no `.release/` directory, so without `from` the check stops at "cannot tell which
+version to update from" (the 0.5.4 release lost one run to this). Locally the version would be
+read from `.release/<version>/previous-latest.yml`, saved by `release:publish:win`. A Windows
+release is not complete until this passes.
 
 ### Withdrawing a Windows release
 

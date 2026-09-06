@@ -8,6 +8,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-09-06
+
 ### Added
 
 - **Double-click a picture to see it full size.** It opens over the document,

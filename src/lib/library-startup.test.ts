@@ -18,6 +18,7 @@ describe("library startup", () => {
       signedIn: false,
       items: [],
       error: null,
+      cloudError: null,
       workspace: {
         roots: ["/Users/me/Documents/Markie"],
         defaultPath: "/Users/me/Documents/Markie",
@@ -67,6 +68,7 @@ describe("library startup", () => {
       signedIn: false,
       items: [],
       error: null,
+      cloudError: null,
       workspace: null,
     });
   });

@@ -207,10 +207,45 @@ function removeRoot(rootPath) {
 
 // Move/rename a tracked file's path (keeps cloud linkage). Returns silently if
 // the old path wasn't tracked.
+// Every table keyed by path follows a file when it moves. Leaving the pin, the
+// star, or the extracted metadata behind at the old path is how a renamed file
+// used to change project on its own, and how the Library kept calling it by
+// its old name until it was opened again.
+const PATH_KEYED_TABLES = [
+  "files",
+  "md_stars",
+  "md_meta",
+  "project_pins",
+  "project_assignments",
+];
+
+// The derived tables are rebuildable and may be missing on a database whose
+// migration has not run; a move must not fail on their account.
+function pathKeyedTables(d) {
+  const present = new Set(
+    d.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name)
+  );
+  return PATH_KEYED_TABLES.filter((t) => present.has(t));
+}
+
 function movePath(oldPath, newPath) {
-  getDB()
-    .prepare("UPDATE files SET path = ? WHERE path = ?")
-    .run(canonicalPath(newPath), canonicalPath(oldPath));
+  const d = getDB();
+  const from = canonicalPath(oldPath);
+  const to = canonicalPath(newPath);
+  const tx = d.transaction(() => {
+    // The name column is what the Library shows; a rename is the one move
+    // where it changes. OR REPLACE lets a stale row at the destination lose.
+    d.prepare("UPDATE OR REPLACE files SET path = ?, name = ? WHERE path = ?").run(
+      to,
+      path.basename(newPath),
+      from
+    );
+    for (const table of pathKeyedTables(d)) {
+      if (table === "files") continue;
+      d.prepare(`UPDATE OR REPLACE ${table} SET path = ? WHERE path = ?`).run(to, from);
+    }
+  });
+  tx();
 }
 
 // Re-point any tracked file under an old directory prefix to a new prefix
@@ -229,13 +264,14 @@ function movePrefix(oldPrefix, newPrefix, platform = process.platform) {
     platform === "win32"
       ? "lower(substr(path, 1, ?)) = lower(?)"
       : "substr(path, 1, ?) = ?";
-  const rows = getDB()
-    .prepare(`SELECT path FROM files WHERE ${clause}`)
-    .all(oldP.length, oldP);
-  const update = getDB().prepare("UPDATE files SET path = ? WHERE path = ?");
-  const tx = getDB().transaction(() => {
-    for (const { path: p } of rows) {
-      update.run(newP + p.slice(oldP.length), p);
+  const d = getDB();
+  const tx = d.transaction(() => {
+    for (const table of pathKeyedTables(d)) {
+      const rows = d.prepare(`SELECT path FROM ${table} WHERE ${clause}`).all(oldP.length, oldP);
+      const update = d.prepare(`UPDATE OR REPLACE ${table} SET path = ? WHERE path = ?`);
+      for (const { path: p } of rows) {
+        update.run(newP + p.slice(oldP.length), p);
+      }
     }
   });
   tx();

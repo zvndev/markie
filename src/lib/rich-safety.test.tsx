@@ -47,7 +47,10 @@ describe("reconstruction verdict cache", () => {
     }
   });
 
-  it("re-answers from cache without running the probe again", () => {
+  // The cold probe of 400 paragraphs takes two to four seconds on a laptop
+  // and longer under the full suite's load, so the default five-second limit
+  // made this a flake. The assertion is the cache hit, not the wall clock.
+  it("re-answers from cache without running the probe again", { timeout: 30_000 }, () => {
     // A second resolve of a big document is orders of magnitude faster than
     // the first: the assertion is the cache hit, not a wall-clock threshold.
     const big = Array.from({ length: 400 }, (_, i) => `Para ${i} is\nwrapped by hand.`).join("\n\n") + "\n";

@@ -1134,6 +1134,7 @@ handle("rename-file", async (_event, { oldPath, newName }) => {
     fs.renameSync(access.oldPath, access.newPath);
     fileGrants.moveGrant(access.oldPath, access.newPath);
     try { registry.movePath(access.oldPath, access.newPath); } catch { /* registry best-effort */ }
+    mdIndexMoved(access.oldPath, access.newPath);
     return { success: true, path: access.newPath, name: access.name };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -1218,8 +1219,12 @@ handle("ws-remove-root", (_e, p) => wsTry(() => workspace.removeRoot(p)));
 handle("ws-list-dir", (_e, p) => wsTry(() => workspace.listDir(p)));
 handle("ws-mkdir", (_e, { parent, name }) => wsTry(() => workspace.mkdir(parent, name)));
 handle("ws-new-file", (_e, { parent, name }) => wsTry(() => workspace.newFile(parent, name)));
-handle("ws-move", (_e, { src, destDir }) => wsTry(() => workspace.move(src, destDir)));
-handle("ws-rename", (_e, { target, newName }) => wsTry(() => workspace.rename(target, newName)));
+handle("ws-move", (_e, { src, destDir }) =>
+  wsTry(() => afterWorkspaceMove(src, workspace.move(src, destDir)))
+);
+handle("ws-rename", (_e, { target, newName }) =>
+  wsTry(() => afterWorkspaceMove(target, workspace.rename(target, newName)))
+);
 handle("ws-trash", async (_e, target) => {
   try {
     return await workspace.trash(target);
@@ -1653,6 +1658,30 @@ async function mdRescanAndNotify() {
   } catch (err) {
     logCrash("mdindex-scan-failed", err);
   }
+}
+
+// A rename or move Markie made itself is one row changing in the index, not a
+// reason to walk the disk again. Patch the cache and tell the panels that draw
+// it (Browse, Projects), which otherwise showed the old name until the next
+// five-minute rescan.
+function mdIndexMoved(from, to) {
+  try {
+    let isDir = false;
+    try { isDir = fs.statSync(to).isDirectory(); } catch { /* gone already */ }
+    const cached = mdindex.moved(from, to, { isDir });
+    if (!cached) return;
+    try { registry.saveIndexCache(cached.files); } catch { /* cache best-effort */ }
+    if (mainWindow && !mainWindow.isDestroyed())
+      mainWindow.webContents.send("mdindex-updated", mdRowsWithMeta(cached));
+  } catch (err) {
+    logCrash("mdindex-move-failed", err);
+  }
+}
+
+// The workspace module moves the registry rows itself; the index is main's.
+function afterWorkspaceMove(from, result) {
+  if (result && result.ok && result.path && result.path !== from) mdIndexMoved(from, result.path);
+  return result;
 }
 
 // Return cached rows immediately (seeding from the DB snapshot on first call),

@@ -3,10 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import {
+  getCached,
   isBundleDir,
   isExcludedDir,
+  moved,
   rescan,
   scanTargets,
+  seed,
   shouldDescend,
   skippedDirs,
   walk,
@@ -360,5 +363,47 @@ describe("rescan budget", () => {
     expect(res.files.length).toBeLessThanOrEqual(3);
     expect(res.truncated).toBe(true);
     expect(res.truncatedReason).toBe("files");
+  });
+});
+
+describe("a rename Markie made itself", () => {
+  type Row = { path: string; name: string; dir: string; mtimeMs: number };
+  const rows = () => (getCached() as { files: Row[] }).files;
+  const seedRows = (...paths: string[]) =>
+    seed(
+      paths.map((p) => ({ path: p, name: path.basename(p), dir: path.dirname(p), mtimeMs: 5 })),
+      "2026-09-01T00:00:00.000Z"
+    );
+
+  it("patches the row in place rather than walking the disk again", () => {
+    seedRows("/h/notes/a.md", "/h/notes/b.md");
+    const patched = moved("/h/notes/a.md", "/h/notes/renamed.md");
+    expect(patched).not.toBeNull();
+    expect(rows().map((r) => r.path)).toEqual(["/h/notes/renamed.md", "/h/notes/b.md"]);
+    expect(rows()[0]).toMatchObject({ name: "renamed.md", dir: "/h/notes", mtimeMs: 5 });
+  });
+
+  it("carries everything under a renamed folder", () => {
+    seedRows("/h/old/a.md", "/h/old/deep/b.md", "/h/other/c.md");
+    moved("/h/old", "/h/new", { isDir: true });
+    expect(rows().map((r) => r.path)).toEqual(["/h/new/a.md", "/h/new/deep/b.md", "/h/other/c.md"]);
+    expect(rows()[1].dir).toBe("/h/new/deep");
+  });
+
+  it("drops a file renamed out of markdown, and says nothing when nothing changed", () => {
+    seedRows("/h/a.md", "/h/b.md");
+    expect(moved("/h/a.md", "/h/a.txt")).not.toBeNull();
+    expect(rows().map((r) => r.path)).toEqual(["/h/b.md"]);
+    expect(moved("/h/nowhere.txt", "/h/elsewhere.txt")).toBeNull();
+  });
+
+  it("adds a file renamed into markdown", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mdmoved-"));
+    const target = path.join(dir, "now.md");
+    fs.writeFileSync(target, "x");
+    seedRows("/h/b.md");
+    moved(path.join(dir, "was.txt"), target);
+    expect(rows().map((r) => r.path)).toEqual(["/h/b.md", target]);
+    expect(rows()[1].mtimeMs).toBeGreaterThan(0);
   });
 });

@@ -6,6 +6,9 @@ export interface LibrarySnapshot {
   signedIn: boolean;
   items: LibraryItem[];
   error: string | null;
+  // The rows are real but the cloud half is missing or stale; shown as a
+  // notice, never as an empty panel.
+  cloudError: string | null;
 }
 
 export function libraryLoadErrorMessage(error: unknown): string {
@@ -25,11 +28,17 @@ export async function readLibrarySnapshot(api: LibraryAPI): Promise<LibrarySnaps
         signedIn: false,
         items: [],
         error: libraryLoadErrorMessage(state?.error ?? "Unknown error"),
+        cloudError: null,
       };
     }
-    return { signedIn: state.signedIn, items: state.items, error: null };
+    return {
+      signedIn: state.signedIn,
+      items: state.items,
+      error: null,
+      cloudError: typeof state.cloudError === "string" && state.cloudError ? state.cloudError : null,
+    };
   } catch (error) {
-    return { signedIn: false, items: [], error: libraryLoadErrorMessage(error) };
+    return { signedIn: false, items: [], error: libraryLoadErrorMessage(error), cloudError: null };
   }
 }
 

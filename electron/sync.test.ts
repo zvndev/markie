@@ -505,7 +505,63 @@ describe("viewer access", () => {
   });
 });
 
+describe("checkUpdates", () => {
+  const listing = async () => (await sync.checkUpdates()).listing as string | null;
+
+  it("fingerprints the account's list, and the fingerprint moves when a document appears", async () => {
+    respondWith(
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 1 }] } },
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 1 }] } },
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 1 }, { id: "cloud-2", version: 1, name: "b.md" }] } }
+    );
+    const first = await listing();
+    expect(first).toMatch(/^[0-9a-f]{40}$/);
+    expect(await listing()).toBe(first);
+    expect(await listing()).not.toBe(first);
+  });
+
+  it("moves when a document is edited elsewhere or renamed", async () => {
+    respondWith(
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 1, name: "a.md" }] } },
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 2, name: "a.md" }] } },
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 2, name: "b.md" }] } }
+    );
+    const v1 = await listing();
+    const v2 = await listing();
+    const renamed = await listing();
+    expect(new Set([v1, v2, renamed]).size).toBe(3);
+  });
+
+  it("reports no fingerprint for a list it never received, so nothing refreshes off a failure", async () => {
+    respondWith({ status: 500 }, new Error("offline"));
+    expect(await listing()).toBeNull();
+    expect(await listing()).toBeNull();
+    sync.setConfig({ token: null, serverURL: null });
+    expect(await listing()).toBeNull();
+  });
+});
+
 describe("libraryState", () => {
+  it("says the cloud list did not load rather than showing an empty cloud", async () => {
+    seedRow({ path: "/docs/a.md" });
+    respondWith({ status: 401 });
+
+    const state = await sync.libraryState();
+
+    expect(state.items.map((i: { path: string }) => i.path)).toEqual(["/docs/a.md"]);
+    expect(state.signedIn).toBe(true);
+    expect(state.cloudError).toMatch(/sign-in has expired/);
+  });
+
+  it("tells offline apart from a refused sign-in", async () => {
+    respondWith(new Error("offline"));
+    expect((await sync.libraryState()).cloudError).toMatch(/reach the server/);
+    respondWith({ status: 503 });
+    expect((await sync.libraryState()).cloudError).toMatch(/HTTP 503/);
+    respondWith({ status: 200, body: { docs: [] } });
+    expect((await sync.libraryState()).cloudError).toBeNull();
+  });
+
   const syncedRow = () =>
     seedRow({
       path: "/docs/a.md",

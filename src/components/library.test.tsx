@@ -335,3 +335,19 @@ describe("the Library's one row of tabs", () => {
     expect(await screen.findByLabelText("Filter documents")).toBeInTheDocument();
   });
 });
+
+describe("the cloud half failing to load", () => {
+  it("says so beside the rows it has, instead of showing an empty cloud", async () => {
+    renderLibrary([item({ name: "here.md", path: "/notes/here.md" })], {
+      overrides: {
+        libraryState: vi.fn(async () => ({
+          signedIn: true,
+          items: [item({ name: "here.md", path: "/notes/here.md" })],
+          cloudError: "Your sign-in has expired. Sign in again to see your cloud documents.",
+        })),
+      },
+    });
+    expect(await screen.findByText("here.md")).toBeInTheDocument();
+    expect(await screen.findByText(/Your sign-in has expired/)).toBeInTheDocument();
+  });
+});

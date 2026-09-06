@@ -163,14 +163,35 @@ async function putDoc(token, docId, name, content, baseVersion) {
   return (await res.json()).version;
 }
 
+// Sign-up no longer hands back a session: the address has to be proven with
+// the emailed code first. Locally the server prints that email to its own
+// stdout, which this run is already capturing, so read the code back from the
+// log the way a person reads it from the inbox, prove the address, and sign in.
 async function signUp(name, email, password) {
-  const res = await fetch(`${SERVER}/api/auth/sign-up/email`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...ORIGIN },
-    body: JSON.stringify({ name, email, password }),
-  });
+  const post = (p, body) =>
+    fetch(`${SERVER}${p}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...ORIGIN },
+      body: JSON.stringify(body),
+    });
+  const res = await post("/api/auth/sign-up/email", { name, email, password });
   if (!res.ok) throw new Error(`signup: ${res.status} ${await res.text()}`);
-  return res.headers.get("set-auth-token");
+  const otp = await waitFor(
+    "verification code in the server log",
+    () => {
+      const log = readFileSync(logPath("server"), "utf-8");
+      const m = log.match(new RegExp(`to=${email.replace(/[.+]/g, "\\$&")} subject="(\\d{6}) is your Markie verification code"`));
+      return m ? m[1] : null;
+    },
+    20000
+  );
+  const verified = await post("/api/auth/email-otp/verify-email", { email, otp });
+  if (!verified.ok) throw new Error(`verify-email: ${verified.status} ${await verified.text()}`);
+  const signedIn = await post("/api/auth/sign-in/email", { email, password });
+  if (!signedIn.ok) throw new Error(`sign-in: ${signedIn.status} ${await signedIn.text()}`);
+  const token = signedIn.headers.get("set-auth-token");
+  if (!token) throw new Error("sign-in returned no bearer token");
+  return token;
 }
 
 const STRIP = `document.querySelector('[data-markie-update-strip]')?.innerText ?? null`;
@@ -324,7 +345,14 @@ async function main() {
       return t && t.includes("Review") ? t : null;
     },
     20000
-  );
+  ).catch(async (err) => {
+    // Say what the window was showing instead, so a timeout here is diagnosable.
+    const seen = await cdp.ev(
+      `JSON.stringify({ strip: ${STRIP}, title: document.title, banner: document.querySelector('[role="alert"], [data-markie-fork-error]')?.innerText ?? null, dialog: document.querySelector('[role="dialog"]')?.innerText?.slice(0, 200) ?? null })`
+    );
+    const row = await cdp.ev(`window.electronAPI.registryGet(${JSON.stringify(docPath)}).then(r => JSON.stringify({ s: r?.sync_state, v: r?.cloud_version }))`);
+    throw new Error(`${err.message}; window: ${seen}; registry: ${row}`);
+  });
   check("local changes route through the dialog, not a one-click pull", dirtyStrip.includes("Review changes"), JSON.stringify(dirtyStrip));
 
   await cdp.ev(`${STRIP_BUTTON}.click()`);
@@ -390,6 +418,54 @@ async function main() {
     "Retry backup pushes a tracked file the renderer never opened for it",
     retried?.ok === true,
     JSON.stringify(retried)
+  );
+
+  // ── The Library hears about the rest of the account ─────────────────────
+  // A document synced from another machine used to appear here only when the
+  // panel was closed and reopened. The once-a-minute look at the server (and
+  // the one on focus) now refreshes the list.
+  await cdp.ev(`document.querySelector('[aria-label^="Library"]').click()`);
+  const rowsNamed = (name) =>
+    `[...document.querySelectorAll("div.group")].filter(g => g.textContent.includes(${JSON.stringify(name)})).length`;
+  check(
+    "the Library lists the open document",
+    (await waitFor("library row", () => cdp.ev(rowsNamed("sync-down.md")), 20000)) === 1
+  );
+  const laptopDocId = `laptop-${Date.now()}`;
+  await putDoc(token, laptopDocId, "from-the-laptop.md", "# From the laptop\n", 0);
+  check("the new document is not listed until the app looks", (await cdp.ev(rowsNamed("from-the-laptop.md"))) === 0);
+  await focus();
+  check(
+    "a document synced from another machine appears without reopening the panel",
+    (await waitFor("laptop row", () => cdp.ev(rowsNamed("from-the-laptop.md")), 20000)) === 1
+  );
+  check(
+    "it is listed as in the cloud, not on this device",
+    await cdp.ev(`[...document.querySelectorAll("*")].some(el => el.childElementCount === 0 && el.textContent.trim() === "In your cloud")`)
+  );
+
+  // ── A rename reaches the Library at once ────────────────────────────────
+  // Through the toolbar, the way a person does it: click the name, type, Return.
+  await cdp.ev(`document.querySelector('[title="Click to rename"]').click()`);
+  await waitFor("rename field", () => cdp.ev(`document.activeElement?.tagName === "INPUT"`), 5000);
+  await cdp.ev(`document.activeElement.select()`);
+  await cdp.send("Input.insertText", { text: "renamed-live.md" });
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+  const renamedPath = path.join(dir, "renamed-live.md");
+  check(
+    "the file on disk carries the new name",
+    await waitFor("renamed on disk", async () => existsSync(renamedPath) || null, 10000),
+    renamedPath
+  );
+  check(
+    "the Library row shows the new name without leaving the panel",
+    (await waitFor("renamed row", () => cdp.ev(rowsNamed("renamed-live.md")), 20000)) === 1
+  );
+  check("the old name is gone from the Library", (await cdp.ev(rowsNamed("sync-down.md"))) === 0);
+  check(
+    "the window title follows",
+    await waitFor("title", () => cdp.ev(`document.title.includes("renamed-live.md")`), 10000)
   );
 
   cdp.close();

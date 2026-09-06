@@ -327,13 +327,17 @@ async function resolve(filePath, strategy) {
 // content only matters once someone opens the prompt, and fetching it here
 // would mean downloading every out-of-date document on a timer.
 async function checkUpdates() {
-  if (!isConfigured()) return { updates: [] };
+  if (!isConfigured()) return { updates: [], listing: null };
   const res = await api("GET", "/api/docs");
   // A list we never received says nothing about who is ahead. Reporting
   // "no updates" is right: it is the same as the state before the check, and
   // the alternative is a background failure interrupting someone's writing.
-  if (res.status !== 200 || !Array.isArray(res.data?.docs)) return { updates: [] };
+  if (res.status !== 200 || !Array.isArray(res.data?.docs)) return { updates: [], listing: null };
   const remote = new Map(res.data.docs.map((d) => [d.id, d]));
+  // What the list looked like, in one string. The renderer keeps the previous
+  // one and refreshes the Library when it moves, which is how a document synced
+  // from another machine appears here without anyone reopening the panel.
+  const listing = listingFingerprint(res.data.docs);
   const updates = [];
   for (const row of registry.list()) {
     if (!row.cloud_doc_id) continue;
@@ -357,7 +361,14 @@ async function checkUpdates() {
       });
     }
   }
-  return { updates };
+  return { updates, listing };
+}
+
+function listingFingerprint(docs) {
+  const parts = docs
+    .map((d) => `${d.id}:${d.version ?? 0}:${d.shared ? 1 : 0}:${d.name ?? ""}`)
+    .sort();
+  return crypto.createHash("sha1").update(parts.join("\n")).digest("hex");
 }
 
 // The server's copy of a doc, for showing what a pull would cost before it
@@ -471,11 +482,17 @@ async function libraryState() {
   // A list request that failed is not the same as a server with no docs. Without
   // this flag one transient error relabels every synced row as deleted remotely.
   let remoteLoaded = false;
+  // A list that did not load used to look exactly like an account with no
+  // documents: "signed in", nothing in the cloud, no word about why. On a
+  // second machine that reads as "sync is broken".
+  let cloudError = null;
   if (isConfigured()) {
     const res = await api("GET", "/api/docs");
     if (res.status === 200 && Array.isArray(res.data?.docs)) {
       remote = res.data.docs;
       remoteLoaded = true;
+    } else {
+      cloudError = listFailure(res.status);
     }
   }
   // The list already says what this user may do with each doc, so record it and
@@ -527,7 +544,17 @@ async function libraryState() {
       });
     }
   }
-  return { signedIn: isConfigured(), items };
+  return { signedIn: isConfigured(), items, cloudError };
+}
+
+function listFailure(status) {
+  if (status === 401 || status === 403) {
+    return "Your sign-in has expired. Sign in again to see your cloud documents.";
+  }
+  if (status === NO_RESPONSE) {
+    return "Couldn't reach the server, so your cloud documents may be out of date.";
+  }
+  return `Couldn't load your cloud documents (HTTP ${status}).`;
 }
 
 module.exports = {

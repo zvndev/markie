@@ -43,6 +43,7 @@ describe("library state loader", () => {
       signedIn: false,
       items: [],
       error: "Library couldn't load: native module failed to load",
+      cloudError: null,
     });
   });
 
@@ -124,5 +125,23 @@ describe("initialLibTab", () => {
         throw new Error("blocked");
       })
     ).toBe("recent");
+  });
+});
+
+describe("the cloud half of the list", () => {
+  it("passes a failed cloud list through beside the rows that did load", async () => {
+    await expect(
+      readLibrarySnapshot({
+        libraryState: async () => ({
+          signedIn: true,
+          items: [],
+          cloudError: "Your sign-in has expired. Sign in again to see your cloud documents.",
+        }),
+      })
+    ).resolves.toMatchObject({
+      signedIn: true,
+      error: null,
+      cloudError: "Your sign-in has expired. Sign in again to see your cloud documents.",
+    });
   });
 });

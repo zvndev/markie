@@ -42,6 +42,28 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A document synced from another machine now shows up in the Library on
+  its own.** The Library only ever asked the server for the account's list
+  when it opened, so a file synced on the laptop never appeared on the desktop
+  until the panel was closed and reopened. The app already looked at the
+  server once a minute and whenever the window came back; that look now
+  refreshes the Library too, and runs with no document open. A cloud list that
+  fails to load (an expired sign-in, being offline) now says so beside the
+  local rows instead of looking like an empty cloud.
+- **Opening a synced document no longer pushes it to the cloud on its own.**
+  The rich pane took an update event the editor raises while applying the
+  document's role for an edit, so every document was autosaved and pushed the
+  moment it opened. The push carried the version this machine last saw, and
+  when another machine had moved the document on the row came back "conflict"
+  and the strip asked to review changes nobody had made. Only an update that
+  changed the document counts as an edit now. And when a real push is refused
+  for a stale version, the strip asks the server again straight away, so it
+  offers a review rather than a one-click Update over your own changes.
+- **Renaming a file updates the Library, Browse and Projects straight away.**
+  The row kept the old name until you went somewhere else and came back, and
+  the file's star, project pin and extracted metadata stayed behind at the old
+  path. A rename now moves all of them, and patches the markdown index instead
+  of waiting for the next five-minute walk of the disk.
 - **Centring a paragraph or heading now reaches the file.** It showed on screen
   and was gone on the next open, with nothing to say so. An aligned block is
   written as `<p style="text-align: center;">…</p>`, which every renderer

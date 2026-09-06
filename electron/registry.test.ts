@@ -176,7 +176,57 @@ describe("stars", () => {
   });
 });
 
+describe("movePath", () => {
+  it("renames the row, so the Library shows the new name without reopening the file", () => {
+    registry.track("/tmp/draft.md", "draft.md", "x");
+
+    registry.movePath("/tmp/draft.md", "/tmp/final.md");
+
+    expect(registry.get("/tmp/draft.md")).toBeFalsy();
+    expect((registry.get("/tmp/final.md") as FileRow).name).toBe("final.md");
+  });
+
+  it("carries the star, the pin, and the extracted metadata to the new path", () => {
+    registry.track("/tmp/a.md", "a.md", "x");
+    registry.toggleStar("/tmp/a.md", "file");
+    registry.pinSet({ path: "/tmp/a.md", project: "P", blockId: null });
+    registry.metaUpsertMany([{ path: "/tmp/a.md", mtimeMs: 1, fmProject: "P", repoName: "r" }]);
+
+    registry.movePath("/tmp/a.md", "/tmp/b.md");
+
+    expect((registry.listStars() as Array<{ path: string }>).map((s) => s.path)).toEqual(["/tmp/b.md"]);
+    expect((registry.pinsAll() as Array<{ path: string }>).map((s) => s.path)).toEqual(["/tmp/b.md"]);
+    const meta = registry.metaAll() as Array<{ path: string; fm_project: string | null }>;
+    expect(meta.find((m) => m.path === "/tmp/b.md")?.fm_project).toBe("P");
+    expect(meta.find((m) => m.path === "/tmp/a.md")).toBeUndefined();
+    registry.pinClear("/tmp/b.md");
+  });
+
+  it("wins over a stale row already sitting at the destination", () => {
+    registry.track("/tmp/old.md", "old.md", "new text");
+    registry.track("/tmp/new.md", "new.md", "stale");
+    registry.update("/tmp/old.md", { sync_state: "synced" });
+
+    registry.movePath("/tmp/old.md", "/tmp/new.md");
+
+    const rows = (registry.list() as FileRow[]).filter((r) => r.path === "/tmp/new.md");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sync_state).toBe("synced");
+  });
+});
+
 describe("movePrefix", () => {
+  it("carries a pin under a renamed folder", () => {
+    registry.pinSet({ path: "/tmp/old/pinned.md", project: "P", blockId: null });
+
+    registry.movePrefix("/tmp/old/", "/tmp/new/");
+
+    expect((registry.pinsAll() as Array<{ path: string }>).map((s) => s.path)).toEqual([
+      "/tmp/new/pinned.md",
+    ]);
+    registry.pinClear("/tmp/new/pinned.md");
+  });
+
   it("moves every tracked file under a renamed folder", () => {
     registry.track("/tmp/old/a.md", "a.md", "x");
     registry.track("/tmp/old/deep/b.md", "b.md", "x");

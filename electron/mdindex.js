@@ -352,8 +352,53 @@ function seed(files, scannedAt) {
   if (Array.isArray(files)) _cache = { files, scannedAt: scannedAt || null };
 }
 
+// A rename or move Markie made itself is one row changing, not a reason to
+// walk the disk again: patch the cache and let the caller broadcast it. A
+// folder carries everything under it. A file renamed to something that is not
+// markdown leaves the index, and one renamed into markdown joins it.
+//
+// Returns the patched cache when anything changed, else null.
+function moved(oldPath, newPath, { isDir = false } = {}) {
+  if (!_cache || !Array.isArray(_cache.files)) return null;
+  const oldPrefix = oldPath + path.sep;
+  const newPrefix = newPath + path.sep;
+  let changed = false;
+  let found = false;
+  const files = [];
+  for (const row of _cache.files) {
+    if (isDir) {
+      if (row.path.startsWith(oldPrefix)) {
+        const next = newPrefix + row.path.slice(oldPrefix.length);
+        files.push({ ...row, path: next, dir: path.dirname(next) });
+        changed = true;
+      } else {
+        files.push(row);
+      }
+      continue;
+    }
+    if (row.path !== oldPath) {
+      files.push(row);
+      continue;
+    }
+    found = true;
+    changed = true;
+    if (MD_RE.test(newPath)) {
+      files.push({ ...row, path: newPath, name: path.basename(newPath), dir: path.dirname(newPath) });
+    }
+  }
+  if (!isDir && !found && MD_RE.test(newPath)) {
+    let mtimeMs = 0;
+    try { mtimeMs = fs.statSync(newPath).mtimeMs; } catch { /* keep 0 */ }
+    files.push({ path: newPath, name: path.basename(newPath), dir: path.dirname(newPath), mtimeMs });
+    changed = true;
+  }
+  if (!changed) return null;
+  _cache = { ..._cache, files };
+  return _cache;
+}
+
 module.exports = {
   isExcludedDir, isBundleDir, EXCLUDED_NAMES, BUNDLE_RE, DEFAULT_BUDGET, registeredRoots,
   shouldDescend, allowlist, icloudDesktopDocuments, skippedDirs, scanTargets, nearestRoot,
-  walk, rescan, getCached, seed,
+  walk, rescan, getCached, seed, moved,
 };

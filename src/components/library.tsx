@@ -294,6 +294,7 @@ export function Library({
       setWorkspace(s.workspace);
       setLoading(false);
       if (s.error) noticeError(s.error);
+      else if (s.cloudError) noticeError(s.cloudError);
     });
   }, [noticeError]);
 
@@ -310,6 +311,7 @@ export function Library({
       setWorkspace(s.workspace);
       setLoading(false);
       if (s.error) noticeError(s.error);
+      else if (s.cloudError) noticeError(s.cloudError);
     });
     return () => {
       alive = false;

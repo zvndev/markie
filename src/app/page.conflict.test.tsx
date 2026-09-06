@@ -112,9 +112,12 @@ describe("page conflict", () => {
 
   it("finishes a clean update in one click, with no dialog", async () => {
     const docResolve = vi.fn(async () => ({ ok: true, content: REMOTE }));
-    await bootWithUpdate({ docResolve } as Partial<ElectronAPI>, [
-      update({ syncState: "behind" }),
-    ]);
+    // Once the pull lands the registry is current, and the next look at the
+    // server (the Library refresh that follows asks for one) finds nothing.
+    const docCheckUpdates = vi.fn(async () => ({
+      updates: docResolve.mock.calls.length ? [] : [update({ syncState: "behind" })],
+    }));
+    await bootWithUpdate({ docResolve, docCheckUpdates } as Partial<ElectronAPI>);
     const button = await screen.findByRole("button", { name: "Update" });
     await userEvent.click(button);
     await waitFor(() =>
@@ -130,6 +133,34 @@ describe("page conflict", () => {
       expect(screen.queryByRole("button", { name: "Update" })).not.toBeInTheDocument()
     );
   });
+
+  it("re-asks the server when a push comes back stale, so the strip offers a review", async () => {
+    // Nothing waiting until this machine's own push is refused; from then on
+    // the registry row reads "conflict", which is what the next check reports.
+    const docPush = vi.fn(async () => ({ conflict: true }));
+    const saveFile = vi.fn(async () => ({ success: true, path: OPEN.path }));
+    const docCheckUpdates = vi.fn(async () => ({
+      updates: docPush.mock.calls.length ? [update({ syncState: "conflict" })] : [],
+      listing: "same",
+    }));
+    await bootWithUpdate({ docPush, saveFile, docCheckUpdates } as Partial<ElectronAPI>, []);
+    await waitFor(() =>
+      expect(
+        (window as unknown as { __markieEditor?: { isEditable: boolean } }).__markieEditor
+          ?.isEditable
+      ).toBe(true)
+    );
+    expect(screen.queryByRole("button", { name: "Update" })).not.toBeInTheDocument();
+
+    await act(async () => {
+      (window as unknown as { __markieEditor: { commands: { setContent(c: string): void } } })
+        .__markieEditor.commands.setContent("mine, edited");
+    });
+    // The autosave lands, the push is refused, and the strip says so.
+    await waitFor(() => expect(docPush).toHaveBeenCalled(), { timeout: 5000 });
+    expect(await screen.findByRole("button", { name: "Review changes…" }, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update" })).not.toBeInTheDocument();
+  }, 15000);
 
   it("ignores an update for a document that is not open", async () => {
     await bootWithUpdate({}, [update({ path: "/notes/other.md" })]);

@@ -364,11 +364,17 @@ export function RichView({
     // In collab mode the Yjs doc is the source of truth from the first sync.
     // Solo mode gets the held-aside body, never the raw file.
     content: session ? undefined : initialSplit.held.text,
-    onUpdate: ({ editor }) => {
+    onUpdate: ({ editor, transaction }) => {
       // Belt and braces alongside emitUpdate:false — an update raised while we
       // are loading an external value is never the user's edit, and echoing it
       // back would overwrite the file with the serializer's approximation.
       if (applyingExternal.current) return;
+      // An "update" that changed nothing is not an edit either. TipTap raises
+      // one from setEditable, and treating it as typing armed an autosave and
+      // a cloud push for every document the moment it opened: harmless on
+      // disk, but the push carried a stale version, so a file another device
+      // had moved on came back "conflict" without anyone touching it.
+      if (!transaction.docChanged) return;
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       debounceTimer.current = setTimeout(() => {
         debounceTimer.current = null;
@@ -397,7 +403,9 @@ export function RichView({
   // takes effect if it is applied by hand.
   useEffect(() => {
     const shouldEdit = !locked;
-    if (editor && editor.isEditable !== shouldEdit) editor.setEditable(shouldEdit);
+    // The second argument is emitUpdate. Left at its default, applying the
+    // role raised an update event, which the handler above took for an edit.
+    if (editor && editor.isEditable !== shouldEdit) editor.setEditable(shouldEdit, false);
   }, [editor, locked]);
 
   // Settle the debounce now and hand back what the document currently says.

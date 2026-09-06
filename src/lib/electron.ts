@@ -198,6 +198,9 @@ export interface ElectronAPI {
     signedIn: boolean;
     items: LibraryItem[];
     error?: string;
+    // The local rows loaded but the server's list did not (expired sign-in,
+    // offline, a 500). The panel shows this beside the rows it has.
+    cloudError?: string | null;
   }>;
   docSyncOn(args: {
     path: string;
@@ -225,7 +228,10 @@ export interface ElectronAPI {
   // "unpushed" is not a state with a badge and no way out.
   docRetryPush?(args: { path: string }): Promise<SyncResult>;
   // Which tracked files the server is ahead of. One request for all of them.
-  docCheckUpdates?(): Promise<{ updates: DocUpdate[]; error?: string }>;
+  // `listing` fingerprints the account's whole document list, so a caller can
+  // tell when it changed without being told what changed. Null when the list
+  // could not be read.
+  docCheckUpdates?(): Promise<{ updates: DocUpdate[]; listing?: string | null; error?: string }>;
   // The server's copy, for costing a pull before making it.
   docRemoteContent?(args: {
     path: string;

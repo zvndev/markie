@@ -458,17 +458,33 @@ export default function Home() {
   // A live collab session is excluded on purpose: there the Yjs room is the
   // transport, updates arrive continuously, and the snapshot version moving is
   // not news anyone needs a strip about.
+  //
+  // The same request also says what the account's document list looks like,
+  // so it doubles as the Library's ear on the server: a document synced from
+  // another machine shows up here without anyone reopening the panel. That
+  // part runs with no document open too.
+  const listingRef = useRef<string | null>(null);
   const checkUpdates = useCallback(() => {
     const api = getElectronAPI();
-    if (!api?.docCheckUpdates || !filePath || collabCfg) {
+    if (!api?.docCheckUpdates) {
       setUpdateWaiting(null);
       return;
     }
+    const wantStrip = !!filePath && !collabCfg;
+    if (!wantStrip) setUpdateWaiting(null);
     api
       .docCheckUpdates()
       .then((res) => {
         const updates = Array.isArray(res?.updates) ? res.updates : [];
-        setUpdateWaiting(updates.find((u) => u.path === filePath) ?? null);
+        if (wantStrip) setUpdateWaiting(updates.find((u) => u.path === filePath) ?? null);
+        const listing = typeof res?.listing === "string" ? res.listing : null;
+        // A list we never received says nothing. The first one seen is the
+        // baseline: the Library fetched its own on mount.
+        if (listing === null) return;
+        if (listingRef.current !== null && listingRef.current !== listing) {
+          setLibRefreshKey((k) => k + 1);
+        }
+        listingRef.current = listing;
       })
       // A background check that fails means no strip appears, which is exactly
       // the state before the check ran. It must never interrupt writing.
@@ -480,6 +496,13 @@ export default function Home() {
     setUpdateError(null);
     checkUpdates();
   }, [checkUpdates]);
+
+  // Every Library refresh re-reads the list, so the baseline is whatever the
+  // panel just saw and nothing synced in the meantime slips between the two.
+  useEffect(() => {
+    if (libRefreshKey === 0) return;
+    checkUpdates();
+  }, [libRefreshKey, checkUpdates]);
 
   // On focus and on a timer, but only while the window is focused: the answer
   // is only ever acted on by someone looking at the screen, so a backgrounded
@@ -882,10 +905,14 @@ export default function Home() {
           setForkError(push.error);
           return push.error;
         }
+        // A push refused for a stale version means the strip's answer is out
+        // of date: the row is "conflict" now, and a strip drawn a moment ago
+        // still offers a one-click Update. Ask again so it offers a review.
+        if (push?.conflict) checkUpdates();
       }
     }
     return null;
-  }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg, assessRichSafety, applyExternalDoc, markSaved]);
+  }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg, assessRichSafety, applyExternalDoc, markSaved, checkUpdates]);
 
   // Autosave arms only where a write is provably safe: a real file to write,
   // the right to write it, no unresolved disk conflict, and either Source
@@ -985,6 +1012,8 @@ export default function Home() {
     });
     if (res.success && res.path && res.name) {
       setLocation(res.path, res.name);
+      // The Library row is the file's name; it changed.
+      setLibRefreshKey((k) => k + 1);
     }
   }, [filePath, setLocation]);
 

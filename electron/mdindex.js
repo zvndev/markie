@@ -397,8 +397,26 @@ function moved(oldPath, newPath, { isDir = false } = {}) {
   return _cache;
 }
 
+// A markdown file Markie itself just wrote (a document landing from the cloud)
+// joins the index at once rather than at the next walk. Returns the patched
+// cache when a row was added, else null.
+function noteFile(filePath) {
+  if (!_cache || !Array.isArray(_cache.files) || !MD_RE.test(filePath)) return null;
+  if (_cache.files.some((row) => row.path === filePath)) return null;
+  let mtimeMs = 0;
+  try { mtimeMs = fs.statSync(filePath).mtimeMs; } catch { /* keep 0 */ }
+  _cache = {
+    ..._cache,
+    files: [
+      ..._cache.files,
+      { path: filePath, name: path.basename(filePath), dir: path.dirname(filePath), mtimeMs },
+    ],
+  };
+  return _cache;
+}
+
 module.exports = {
   isExcludedDir, isBundleDir, EXCLUDED_NAMES, BUNDLE_RE, DEFAULT_BUDGET, registeredRoots,
   shouldDescend, allowlist, icloudDesktopDocuments, skippedDirs, scanTargets, nearestRoot,
-  walk, rescan, getCached, seed, moved,
+  walk, rescan, getCached, seed, moved, noteFile,
 };

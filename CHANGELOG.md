@@ -8,6 +8,16 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **A document you sync on one machine lands on your others by itself.**
+  Sign in on the laptop, and everything you synced from the desktop arrives
+  under `Documents/Markie/Cloud` as real files, registered as synced and listed
+  in the Library beside everything else on that machine. Before, it was a row
+  under "In your cloud" with a button to click and a place to choose, every
+  time. Documents shared with you are not landed: they open into Downloads
+  when you ask, as before. A file you delete or pause stays gone.
+
 ## [0.5.4] - 2026-09-06
 
 ### Added

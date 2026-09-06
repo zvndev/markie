@@ -7,6 +7,7 @@ import {
   isBundleDir,
   isExcludedDir,
   moved,
+  noteFile,
   rescan,
   scanTargets,
   seed,
@@ -405,5 +406,23 @@ describe("a rename Markie made itself", () => {
     moved(path.join(dir, "was.txt"), target);
     expect(rows().map((r) => r.path)).toEqual(["/h/b.md", target]);
     expect(rows()[1].mtimeMs).toBeGreaterThan(0);
+  });
+});
+
+describe("a file Markie wrote itself", () => {
+  type Row = { path: string; name: string; dir: string };
+  const rows = () => (getCached() as { files: Row[] }).files;
+
+  it("joins the index at once", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mdnote-"));
+    const landed = path.join(dir, "from-the-laptop.md");
+    fs.writeFileSync(landed, "x");
+    seed([{ path: "/h/a.md", name: "a.md", dir: "/h", mtimeMs: 1 }], null);
+    expect(noteFile(landed)).not.toBeNull();
+    expect(rows().map((r) => r.path)).toEqual(["/h/a.md", landed]);
+    expect(rows()[1]).toMatchObject({ name: "from-the-laptop.md", dir });
+    // Once is enough, and a text file is not markdown.
+    expect(noteFile(landed)).toBeNull();
+    expect(noteFile(path.join(dir, "notes.txt"))).toBeNull();
   });
 });

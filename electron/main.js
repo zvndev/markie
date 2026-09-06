@@ -1450,9 +1450,18 @@ handle(
 );
 // Which tracked files the server is ahead of. One request for the whole
 // library, called on focus and on a timer, so it has to stay cheap and quiet.
-handle("doc-check-updates", () => sync.checkUpdates(), {
-  onFailure: (err) => ({ updates: [], error: errorMessage(err) }),
-});
+handle(
+  "doc-check-updates",
+  async () => {
+    const result = await sync.checkUpdates();
+    // A document that just landed from another machine is a new file under
+    // the workspace: Browse and Projects should list it now, not after the
+    // next walk of the disk.
+    for (const doc of result?.landed ?? []) mdIndexAdded(doc.path);
+    return result;
+  },
+  { onFailure: (err) => ({ updates: [], error: errorMessage(err) }) }
+);
 // The server's copy, for showing what a pull would cost before doing it.
 handle("doc-remote-content", (_event, { path: p }) =>
   sync.remoteContent(p)
@@ -1675,6 +1684,18 @@ function mdIndexMoved(from, to) {
       mainWindow.webContents.send("mdindex-updated", mdRowsWithMeta(cached));
   } catch (err) {
     logCrash("mdindex-move-failed", err);
+  }
+}
+
+function mdIndexAdded(filePath) {
+  try {
+    const cached = mdindex.noteFile(filePath);
+    if (!cached) return;
+    try { registry.saveIndexCache(cached.files); } catch { /* cache best-effort */ }
+    if (mainWindow && !mainWindow.isDestroyed())
+      mainWindow.webContents.send("mdindex-updated", mdRowsWithMeta(cached));
+  } catch (err) {
+    logCrash("mdindex-add-failed", err);
   }
 }
 

@@ -464,6 +464,7 @@ export default function Home() {
   // another machine shows up here without anyone reopening the panel. That
   // part runs with no document open too.
   const listingRef = useRef<string | null>(null);
+  const landedRef = useRef("");
   const checkUpdates = useCallback(() => {
     const api = getElectronAPI();
     if (!api?.docCheckUpdates) {
@@ -477,11 +478,17 @@ export default function Home() {
       .then((res) => {
         const updates = Array.isArray(res?.updates) ? res.updates : [];
         if (wantStrip) setUpdateWaiting(updates.find((u) => u.path === filePath) ?? null);
+        // A document that landed from another machine is a new file here, and
+        // the Library should show it as one. Main reports a landing once; the
+        // comparison is so a repeat could never turn a refresh into a loop.
+        const landedNow = (Array.isArray(res?.landed) ? res.landed : []).map((d) => d.path).join("\n");
+        const landed = landedNow !== "" && landedNow !== landedRef.current;
+        landedRef.current = landedNow;
         const listing = typeof res?.listing === "string" ? res.listing : null;
         // A list we never received says nothing. The first one seen is the
         // baseline: the Library fetched its own on mount.
         if (listing === null) return;
-        if (listingRef.current !== null && listingRef.current !== listing) {
+        if (landed || (listingRef.current !== null && listingRef.current !== listing)) {
           setLibRefreshKey((k) => k + 1);
         }
         listingRef.current = listing;

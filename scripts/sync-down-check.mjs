@@ -202,7 +202,11 @@ async function main() {
   const dbDir = await mkdtemp(path.join(tmpdir(), "markie-syncdown-db-"));
   const userDataDir = await mkdtemp(path.join(tmpdir(), "markie-syncdown-user-"));
   const workDir = await mkdtemp(path.join(tmpdir(), "markie-syncdown-docs-"));
-  tempPaths.push(dbDir, userDataDir, workDir);
+  // The app's home for this run. A document landing from "another machine"
+  // is written under Documents/Markie/Cloud, and that must be this run's
+  // folder, never the real one.
+  const homeDir = await mkdtemp(path.join(tmpdir(), "markie-syncdown-home-"));
+  tempPaths.push(dbDir, userDataDir, workDir, homeDir);
   const dbPath = path.join(dbDir, "markie.db");
   const serverEnv = { ...baseEnv, DB_PATH: dbPath, PORT: String(SERVER_PORT) };
 
@@ -244,7 +248,7 @@ async function main() {
     electronBin,
     [".", docPath, `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],
     {
-      env: { ...baseEnv, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
+      env: { ...baseEnv, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
       log: logPath("electron"),
     }
   );
@@ -420,10 +424,11 @@ async function main() {
     JSON.stringify(retried)
   );
 
-  // ── The Library hears about the rest of the account ─────────────────────
-  // A document synced from another machine used to appear here only when the
-  // panel was closed and reopened. The once-a-minute look at the server (and
-  // the one on focus) now refreshes the list.
+  // ── A document from another machine lands here ──────────────────────────
+  // Syncing on one machine means the file turns up on the others: under
+  // Documents/Markie/Cloud, registered as synced, listed by the Library as a
+  // file of this device. It used to be a row in "In your cloud" with a button,
+  // and only after the panel was closed and reopened.
   await cdp.ev(`document.querySelector('[aria-label^="Library"]').click()`);
   const rowsNamed = (name) =>
     `[...document.querySelectorAll("div.group")].filter(g => g.textContent.includes(${JSON.stringify(name)})).length`;
@@ -439,9 +444,31 @@ async function main() {
     "a document synced from another machine appears without reopening the panel",
     (await waitFor("laptop row", () => cdp.ev(rowsNamed("from-the-laptop.md")), 20000)) === 1
   );
+  const landedPath = path.join(await realpath(homeDir), "Documents", "Markie", "Cloud", "from-the-laptop.md");
   check(
-    "it is listed as in the cloud, not on this device",
-    await cdp.ev(`[...document.querySelectorAll("*")].some(el => el.childElementCount === 0 && el.textContent.trim() === "In your cloud")`)
+    "it landed on disk under Documents/Markie/Cloud",
+    await waitFor("landed file", async () => existsSync(landedPath) || null, 10000),
+    landedPath
+  );
+  check(
+    "with the text the other machine wrote",
+    existsSync(landedPath) && readFileSync(landedPath, "utf-8") === "# From the laptop\n"
+  );
+  // By cloud id through the Library's own list: the app spells the home
+  // folder the way $HOME does, and the registry keys on that spelling.
+  const landedRow = JSON.parse(
+    await cdp.ev(
+      `window.electronAPI.libraryState().then(s => JSON.stringify(s.items.find(i => i.cloudId === ${JSON.stringify(laptopDocId)}) ?? {}))`
+    )
+  );
+  check(
+    "and this device calls it synced",
+    landedRow.state === "synced" && landedRow.kind === "local" && !!landedRow.path && existsSync(landedRow.path),
+    JSON.stringify(landedRow)
+  );
+  check(
+    "it is listed as a file of this device, not as something to fetch",
+    !(await cdp.ev(`[...document.querySelectorAll("*")].some(el => el.childElementCount === 0 && el.textContent.trim() === "In your cloud")`))
   );
 
   // ── A rename reaches the Library at once ────────────────────────────────

@@ -327,12 +327,17 @@ async function resolve(filePath, strategy) {
 // content only matters once someone opens the prompt, and fetching it here
 // would mean downloading every out-of-date document on a timer.
 async function checkUpdates() {
-  if (!isConfigured()) return { updates: [], listing: null };
+  if (!isConfigured()) return { updates: [], listing: null, landed: [] };
   const res = await api("GET", "/api/docs");
   // A list we never received says nothing about who is ahead. Reporting
   // "no updates" is right: it is the same as the state before the check, and
   // the alternative is a background failure interrupting someone's writing.
-  if (res.status !== 200 || !Array.isArray(res.data?.docs)) return { updates: [], listing: null };
+  if (res.status !== 200 || !Array.isArray(res.data?.docs)) {
+    return { updates: [], listing: null, landed: [] };
+  }
+  // Before anything else: a document synced from another machine lands here
+  // by itself, so the loop below sees it as a file of this device's own.
+  const landed = await landCloudDocs(res.data.docs);
   const remote = new Map(res.data.docs.map((d) => [d.id, d]));
   // What the list looked like, in one string. The renderer keeps the previous
   // one and refreshes the Library when it moves, which is how a document synced
@@ -361,7 +366,83 @@ async function checkUpdates() {
       });
     }
   }
-  return { updates, listing };
+  return { updates, listing, landed };
+}
+
+// ── Landing ────────────────────────────────────────────────────────────────
+// "Sync to cloud" on one machine means the document turns up on the others,
+// not that a row appears in a list with a button to click. Owned documents
+// this device has never seen land under <default workspace>/Cloud, the way
+// they arrived: a file on disk, registered as synced, that the Library shows
+// beside everything else on this device.
+//
+// Two things are deliberately not landed. A document shared with you opens
+// into Downloads when you ask, and is not yours to keep a copy of unasked. And
+// a document this device already knows by cloud id, whether its file is
+// present, paused, or deleted by hand, is never landed again: deleting the
+// file is a decision, and re-creating it every minute would be a haunting.
+const LANDING_FOLDER = "Cloud";
+let landingNow = false;
+
+function landingDir() {
+  // Required lazily: workspace pulls in Electron's app for the Windows
+  // Documents folder, and nothing else here needs it.
+  const workspace = require("./workspace");
+  return path.join(workspace.defaultRootPath(), LANDING_FOLDER);
+}
+
+// A file name the document can be written under. Names come from whichever
+// machine synced it, so anything that is not a plain base name is reduced to
+// one, and a document with no extension becomes markdown, which is what it is.
+function landingName(name) {
+  let base = path.basename(String(name ?? "").replace(/[\\/]/g, "/")).replace(/[\u0000-\u001f]/g, "").trim();
+  if (!base || base === "." || base === "..") base = "document.md";
+  if (!path.extname(base)) base = `${base}.md`;
+  return base;
+}
+
+// "notes.md", then "notes (2).md": a file already there is someone's, and a
+// landing must never write over it.
+function freePath(dir, base, exists = fs.existsSync) {
+  const dot = base.lastIndexOf(".");
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const ext = dot > 0 ? base.slice(dot) : "";
+  for (let n = 1; n < 1000; n++) {
+    const candidate = path.join(dir, n === 1 ? base : `${stem} (${n})${ext}`);
+    if (!exists(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function landCloudDocs(docs) {
+  if (landingNow) return [];
+  const known = new Set(registry.list().map((r) => r.cloud_doc_id).filter(Boolean));
+  const arriving = docs.filter((d) => d && !d.shared && d.id && !known.has(d.id));
+  if (arriving.length === 0) return [];
+  landingNow = true;
+  const landed = [];
+  try {
+    const dir = landingDir();
+    fs.mkdirSync(dir, { recursive: true });
+    // The folder is under the default workspace. A machine with no workspace
+    // root yet gets the default one, the same way opening the Library would;
+    // a machine whose roots were chosen by hand keeps them as they are.
+    const workspace = require("./workspace");
+    if (workspace.roots().length === 0) workspace.createDefaultRoot();
+    for (const doc of arriving) {
+      const target = freePath(dir, landingName(doc.name));
+      if (!target) continue;
+      // A failure is left for the next check: the document stays "in your
+      // cloud" in the Library, with the same pull a click would make.
+      const pulled = await pull(doc.id, target);
+      if (pulled?.ok) landed.push({ path: pulled.path, name: pulled.name, cloudId: doc.id });
+    }
+  } catch {
+    // The workspace could not be made or read; nothing landed, nothing lost.
+  } finally {
+    landingNow = false;
+  }
+  return landed;
 }
 
 function listingFingerprint(docs) {
@@ -571,4 +652,7 @@ module.exports = {
   resolveKeepBoth,
   keepBothPath,
   libraryState,
+  landCloudDocs,
+  landingName,
+  freePath,
 };

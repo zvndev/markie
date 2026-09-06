@@ -81,9 +81,17 @@ function respondWith(...replies: Array<Reply | Error>): Call[] {
   return calls;
 }
 
+let realHome: string | undefined;
+
 beforeEach(() => {
   rows = new Map();
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "markie-sync-"));
+  // Landing writes under the default workspace, which hangs off the home
+  // directory. Every test gets a throwaway one.
+  realHome = process.env.HOME;
+  process.env.HOME = tmpDir;
+  registry.listRoots = () => [];
+  registry.addRoot = () => {};
   registry.get = (p: string) => rows.get(p);
   registry.update = (p: string, fields: Partial<Row>) => {
     const row = rows.get(p);
@@ -98,6 +106,8 @@ beforeEach(() => {
 
 afterEach(() => {
   Object.assign(registry, realRegistry);
+  if (realHome === undefined) delete process.env.HOME;
+  else process.env.HOME = realHome;
   fs.rmSync(tmpDir, { recursive: true, force: true });
   vi.unstubAllGlobals();
 });
@@ -505,8 +515,14 @@ describe("viewer access", () => {
   });
 });
 
-describe("checkUpdates", () => {
+describe("checkUpdates listing", () => {
   const listing = async () => (await sync.checkUpdates()).listing as string | null;
+  // Rows for every id below, so the check has nothing to land and the queued
+  // replies are consumed by the list requests alone.
+  beforeEach(() => {
+    seedRow({ path: "/docs/one.md", sync_state: "synced", cloud_doc_id: "cloud-1", cloud_version: 1 });
+    seedRow({ path: "/docs/two.md", sync_state: "synced", cloud_doc_id: "cloud-2", cloud_version: 1 });
+  });
 
   it("fingerprints the account's list, and the fingerprint moves when a document appears", async () => {
     respondWith(
@@ -1064,5 +1080,114 @@ describe("resolve('cloud') failures", () => {
 
     expect(res.error).toMatch(/unreadable/i);
     expect(fs.readFileSync(p, "utf-8")).toBe("mine\n");
+  });
+});
+
+describe("landing", () => {
+  const TEXT = "# From the laptop\n";
+  const cloudDir = () => path.join(tmpDir, "Documents", "Markie", "Cloud");
+  const list = (docs: unknown[]) => ({ status: 200, body: { docs } });
+  const doc = (id: string, name: string, version = 1) => ({
+    status: 200,
+    body: { doc: { id, name, version, content: TEXT } },
+  });
+
+  beforeEach(() => {
+    // The stand-in registry learns a pulled file the way the real one does.
+    registry.track = (p: string, name: string, content: string) => {
+      seedRow({ path: p, name, content_hash: `hash:${content}` });
+    };
+  });
+
+  it("lands an owned document from another machine under Documents/Markie/Cloud", async () => {
+    const calls = respondWith(
+      list([{ id: "cloud-9", name: "from-the-laptop.md", version: 1 }]),
+      doc("cloud-9", "from-the-laptop.md")
+    );
+
+    const res = await sync.checkUpdates();
+
+    const target = path.join(cloudDir(), "from-the-laptop.md");
+    expect(res.landed).toEqual([{ path: target, name: "from-the-laptop.md", cloudId: "cloud-9" }]);
+    expect(fs.readFileSync(target, "utf-8")).toBe(TEXT);
+    expect(rows.get(target)).toMatchObject({
+      sync_state: "synced",
+      cloud_doc_id: "cloud-9",
+      cloud_version: 1,
+    });
+    expect(calls.map((c) => c.url)).toEqual([`${SERVER}/api/docs`, `${SERVER}/api/docs/cloud-9`]);
+    // It just arrived, so it is not also "behind".
+    expect(res.updates).toEqual([]);
+  });
+
+  it("does not land what was shared with you", async () => {
+    const calls = respondWith(list([{ id: "s1", name: "theirs.md", version: 3, shared: true, role: "viewer" }]));
+
+    const res = await sync.checkUpdates();
+
+    expect(res.landed).toEqual([]);
+    expect(calls).toHaveLength(1);
+    expect(fs.existsSync(cloudDir())).toBe(false);
+  });
+
+  it("never lands a document this device already knows, even when its file is gone", async () => {
+    seedRow({ path: "/docs/deleted-by-hand.md", sync_state: "synced", cloud_doc_id: "cloud-1", cloud_version: 2 });
+    seedRow({ path: "/docs/paused.md", sync_state: "paused", cloud_doc_id: "cloud-2", cloud_version: 2 });
+    const calls = respondWith(
+      list([{ id: "cloud-1", name: "deleted-by-hand.md", version: 2 }, { id: "cloud-2", name: "paused.md", version: 2 }])
+    );
+
+    const res = await sync.checkUpdates();
+
+    expect(res.landed).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("never writes over a file already there", async () => {
+    fs.mkdirSync(cloudDir(), { recursive: true });
+    fs.writeFileSync(path.join(cloudDir(), "notes.md"), "mine, from before\n");
+    respondWith(list([{ id: "cloud-2", name: "notes.md", version: 1 }]), doc("cloud-2", "notes.md"));
+
+    const res = await sync.checkUpdates();
+
+    expect(res.landed[0].path).toBe(path.join(cloudDir(), "notes (2).md"));
+    expect(fs.readFileSync(path.join(cloudDir(), "notes.md"), "utf-8")).toBe("mine, from before\n");
+    expect(fs.readFileSync(path.join(cloudDir(), "notes (2).md"), "utf-8")).toBe(TEXT);
+  });
+
+  it("leaves a document the server would not hand over for the next check", async () => {
+    respondWith(list([{ id: "cloud-3", name: "later.md", version: 1 }]), { status: 500 });
+    expect((await sync.checkUpdates()).landed).toEqual([]);
+    expect(fs.existsSync(path.join(cloudDir(), "later.md"))).toBe(false);
+    expect([...rows.keys()]).toEqual([]);
+
+    respondWith(list([{ id: "cloud-3", name: "later.md", version: 1 }]), doc("cloud-3", "later.md"));
+    expect((await sync.checkUpdates()).landed).toHaveLength(1);
+    expect(fs.readFileSync(path.join(cloudDir(), "later.md"), "utf-8")).toBe(TEXT);
+  });
+
+  it("lands nothing while signed out, and nothing when the list did not load", async () => {
+    respondWith({ status: 401 });
+    expect((await sync.checkUpdates()).landed).toEqual([]);
+    sync.setConfig({ token: null, serverURL: null });
+    expect((await sync.checkUpdates()).landed).toEqual([]);
+  });
+
+  it("reduces a name from elsewhere to one this disk accepts", () => {
+    expect(sync.landingName("notes.md")).toBe("notes.md");
+    expect(sync.landingName("notes")).toBe("notes.md");
+    expect(sync.landingName("../../etc/passwd")).toBe("passwd.md");
+    expect(sync.landingName("a/b\\c.md")).toBe("c.md");
+    expect(sync.landingName("")).toBe("document.md");
+    expect(sync.landingName("..")).toBe("document.md");
+    expect(sync.landingName(" spaced .md ")).toBe("spaced .md");
+  });
+
+  it("numbers a name that is taken", () => {
+    const taken = new Set(["/d/notes.md", "/d/notes (2).md"]);
+    const exists = (p: string) => taken.has(p);
+    expect(sync.freePath("/d", "notes.md", exists)).toBe("/d/notes (3).md");
+    expect(sync.freePath("/d", "fresh.md", exists)).toBe("/d/fresh.md");
+    expect(sync.freePath("/d", "README", exists)).toBe("/d/README");
   });
 });

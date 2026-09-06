@@ -127,6 +127,30 @@ describe("the Library staying current", () => {
     expect(libraryState.mock.calls.length).toBeGreaterThan(listedBefore);
   });
 
+  it("shows a document that landed from another machine as a file of this device", async () => {
+    let items = [local()];
+    let landed: Array<{ path: string; name: string; cloudId: string }> = [];
+    const libraryState = vi.fn(async () => ({ signedIn: true, items }));
+    // The account's list did not move between checks; the landing itself is
+    // what changed this machine. Main reports a landing once, so the mock does.
+    const docCheckUpdates = vi.fn(async () => {
+      const report = landed;
+      landed = [];
+      return { updates: [], listing: "same", landed: report };
+    });
+    await boot({ libraryState, docCheckUpdates } as Partial<ElectronAPI>);
+    await findLibraryRow("notes.md");
+    await waitFor(() => expect(docCheckUpdates).toHaveBeenCalled());
+
+    items = [local(), local({ path: "/home/Documents/Markie/Cloud/laptop.md", name: "laptop.md", cloudId: "c9", state: "synced" })];
+    landed = [{ path: "/home/Documents/Markie/Cloud/laptop.md", name: "laptop.md", cloudId: "c9" }];
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await findLibraryRow("laptop.md");
+  });
+
   it("does not refetch the Library while the server's list stands still", async () => {
     const libraryState = vi.fn(async () => ({ signedIn: true, items: [local()] }));
     const docCheckUpdates = vi.fn(async () => ({ updates: [], listing: "same" }));

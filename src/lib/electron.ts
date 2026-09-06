@@ -231,7 +231,14 @@ export interface ElectronAPI {
   // `listing` fingerprints the account's whole document list, so a caller can
   // tell when it changed without being told what changed. Null when the list
   // could not be read.
-  docCheckUpdates?(): Promise<{ updates: DocUpdate[]; listing?: string | null; error?: string }>;
+  // `landed` names the documents that arrived from another machine during
+  // this check and are now files on this one.
+  docCheckUpdates?(): Promise<{
+    updates: DocUpdate[];
+    listing?: string | null;
+    landed?: LandedDoc[];
+    error?: string;
+  }>;
   // The server's copy, for costing a pull before making it.
   docRemoteContent?(args: {
     path: string;
@@ -522,6 +529,12 @@ export interface SyncResult {
 }
 
 // A tracked file the server has a newer snapshot of.
+export interface LandedDoc {
+  path: string;
+  name: string;
+  cloudId: string;
+}
+
 export interface DocUpdate {
   path: string;
   cloudId: string;

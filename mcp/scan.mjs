@@ -47,6 +47,11 @@ export function allowlist(home) {
   return [
     path.join(home, ".claude", "skills"),
     path.join(home, ".codex"),
+    // Mirrors electron/mdindex.js: the other folders Markie installs skills
+    // into. Read-only here, and guardPath refuses to write into any of them.
+    path.join(home, ".agents", "skills"),
+    path.join(home, ".cursor", "skills"),
+    path.join(home, ".gemini", "skills"),
   ];
 }
 

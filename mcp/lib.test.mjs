@@ -114,7 +114,14 @@ test("guardPath expands ~ against home", () => {
 test("guardPath allows the skill/agent allowlist roots despite the dot-dir", () => {
   const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
   try {
-    for (const rel of [".claude/skills/kirby/SKILL.md", ".codex/AGENTS.md", ".codex/notes/todo.md"]) {
+    for (const rel of [
+      ".claude/skills/kirby/SKILL.md",
+      ".codex/AGENTS.md",
+      ".codex/notes/todo.md",
+      ".agents/skills/pdf/SKILL.md",
+      ".cursor/skills/pdf/SKILL.md",
+      ".gemini/skills/pdf/SKILL.md",
+    ]) {
       assert.equal(guardPath(pjoin(home, rel), home).ok, true, `${rel} should be allowed`);
     }
   } finally {
@@ -334,11 +341,17 @@ test("guardPath allows an ordinary real .md under a real home", () => {
 test("guardPath write-mode denies the allowlist skill roots (no agent-file implant)", () => {
   const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
   try {
-    mkdirSync(pjoin(home, ".claude", "skills"), { recursive: true });
-    const r = guardPath(pjoin(home, ".claude", "skills", "x.md"), home, { mode: "write" });
-    assert.equal(r.ok, false, "writing under ~/.claude/skills must be denied");
-    // but reading is still fine
-    assert.equal(guardPath(pjoin(home, ".claude", "skills", "x.md"), home).ok, true);
+    for (const tool of [".claude", ".agents", ".cursor", ".gemini"]) {
+      mkdirSync(pjoin(home, tool, "skills"), { recursive: true });
+      const file = pjoin(home, tool, "skills", "x.md");
+      assert.equal(
+        guardPath(file, home, { mode: "write" }).ok,
+        false,
+        `writing under ~/${tool}/skills must be denied`,
+      );
+      // but reading is still fine
+      assert.equal(guardPath(file, home).ok, true);
+    }
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

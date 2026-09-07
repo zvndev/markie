@@ -87,6 +87,15 @@ describe("shouldDescend", () => {
     expect(shouldDescend(path.join(home, ".codex"), ".codex", home)).toBe(true);
     expect(shouldDescend(path.join(home, ".codex", "sub"), "sub", home)).toBe(true);
   });
+  it("re-includes the other tools Markie installs skills into", () => {
+    for (const tool of [".agents", ".cursor", ".gemini"]) {
+      expect(shouldDescend(path.join(home, tool), tool, home)).toBe(true);
+      expect(shouldDescend(path.join(home, tool, "skills"), "skills", home)).toBe(true);
+      expect(shouldDescend(path.join(home, tool, "skills", "pdf"), "pdf", home)).toBe(true);
+    }
+    // Only the skills folder: the rest of a tool's dot-dir stays out.
+    expect(shouldDescend(path.join(home, ".cursor", "extensions"), "extensions", home)).toBe(false);
+  });
   it("still prunes node_modules and nested dot-dirs INSIDE an allowlisted root", () => {
     // allowlisting ~/.codex must not drag in its node_modules / nested .git
     expect(shouldDescend(path.join(home, ".codex", "node_modules"), "node_modules", home)).toBe(false);

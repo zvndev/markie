@@ -105,6 +105,12 @@ function allowlist(home) {
   return [
     path.join(home, ".claude", "skills"),
     path.join(home, ".codex"), // OpenAI Codex agent files (AGENTS.md, etc.)
+    // The other tools Markie can install a skill into. The Skills panel reads
+    // what is installed through this index, so a folder missing from this list
+    // is a folder the user cannot see.
+    path.join(home, ".agents", "skills"),
+    path.join(home, ".cursor", "skills"),
+    path.join(home, ".gemini", "skills"),
   ];
 }
 

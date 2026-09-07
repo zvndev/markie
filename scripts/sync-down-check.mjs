@@ -228,7 +228,8 @@ async function main() {
   start("npm", ["run", "start"], { cwd: serverDir, env: serverEnv, log: logPath("server") });
   await waitFor("server health", async () => (await fetch(`${SERVER}/health`).catch(() => null))?.ok);
 
-  const token = await signUp("Alice", `alice.${Date.now()}@test.local`, "password-123");
+  const aliceEmail = `alice.${Date.now()}@test.local`;
+  const token = await signUp("Alice", aliceEmail, "password-123");
   const V1 = "# Notes\n\nline one\nline two\nline three\n";
   // Written into a temp dir this run owns. An earlier version of this script
   // used docOpenShared, which writes to the OS Downloads folder; Electron
@@ -523,6 +524,50 @@ async function main() {
     "the window title follows",
     await waitFor("title", () => cdp.ev(`document.title.includes("renamed-live.md")`), 10000)
   );
+
+  // ── The Cloud page ──────────────────────────────────────────────────────
+  // The rail's third destination is no longer "docs other people shared with
+  // you": it is everything the account holds, in four sections. The two
+  // documents this run has produced belong in two different ones, and which
+  // section a document lands in is the whole point of the page.
+  const bobToken = await signUp("Bob", `bob.${Date.now()}@test.local`, "password-123");
+  const bobDocId = `bob-${Date.now()}`;
+  await putDoc(bobToken, bobDocId, "from-bob.md", "# From Bob\n", 0);
+  const invited = await fetch(`${SERVER}/api/docs/${bobDocId}/shares`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bobToken}`,
+      ...ORIGIN,
+    },
+    body: JSON.stringify({ email: aliceEmail, role: "editor" }),
+  });
+  if (!invited.ok) throw new Error(`share: ${invited.status} ${await invited.text()}`);
+
+  await cdp.ev(`document.querySelector('[aria-label="Cloud: synced and shared"]').click()`);
+  const inSection = (section, name) =>
+    `[...document.querySelectorAll('[data-cloud-section="${section}"] div.group')]` +
+    `.filter(g => g.textContent.includes(${JSON.stringify(name)})).length`;
+  // The invite reaches this device the same way anything else does: the next
+  // listing the app asks for.
+  await focus();
+  check(
+    "the document that landed from another machine is under Synced from this device",
+    (await waitFor("synced row", () => cdp.ev(inSection("synced", "from-the-laptop.md")), 20000)) === 1,
+    await cdp.ev(`document.querySelector('.markie-side-panel')?.innerText?.slice(0, 300) ?? "no panel"`)
+  );
+  check(
+    "a document someone else shared is under Shared with me",
+    (await waitFor("shared row", () => cdp.ev(inSection("with-me", "from-bob.md")), 20000)) === 1,
+    await cdp.ev(`document.querySelector('.markie-side-panel')?.innerText?.slice(0, 300) ?? "no panel"`)
+  );
+
+  // Kept outside the run's artifact directory, which is deleted on success:
+  // this one is evidence of what the page looks like, not of a failure.
+  const shot = await cdp.send("Page.captureScreenshot", { format: "png" });
+  const shotPath = path.join(root, ".autoloop", "runs", "cloud-page.png");
+  await writeFile(shotPath, Buffer.from(shot.data, "base64"));
+  process.stdout.write(`\n  cloud page: ${shotPath}\n\n`);
 
   cdp.close();
 }

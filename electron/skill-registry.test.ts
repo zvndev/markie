@@ -207,7 +207,7 @@ describe("skill registry", () => {
 
   it("falls back to master when there is no main branch", async () => {
     fetchImpl.mockImplementation(async (url: string) => {
-      if (url.endsWith("/refs/heads/main")) return response(null, { status: 404 });
+      if (url.endsWith("/main")) return response(null, { status: 404 });
       if (url.startsWith("https://codeload.github.com/")) return response(null, { bytes: tarball });
       return response({ sha: COMMIT });
     });
@@ -306,6 +306,76 @@ describe("skill registry", () => {
       .map((e) => e.name);
     expect(dirs.length).toBe(2);
     expect(dirs).toContain("c".repeat(40));
+  });
+
+  // ── The archive is the commit it is filed under ──────────────────────────
+  // A branch tarball is whatever the branch holds at the moment of the
+  // download, and the head query is a second request. Between the two the
+  // branch can move, and then the cache folder is named after one commit and
+  // holds another.
+
+  const NEXT = "b".repeat(40);
+
+  // The same repository with one file gone, the way an upstream commit
+  // removes it.
+  function revisedTarball() {
+    const files = { ...REPO_FILES };
+    delete files["skills/pdf/reference.md"];
+    return buildRepoTarball(path.join(tmp, "revised"), files, ["skills/pdf/scripts/run.sh"]);
+  }
+
+  it("downloads the commit the head query named, not whatever the branch serves now", async () => {
+    const revised = revisedTarball();
+    fetchImpl.mockImplementation(async (url: string) => {
+      if (url.startsWith("https://api.github.com/")) return response({ sha: NEXT });
+      // The branch has moved on past what the head query answered.
+      if (url.includes("/refs/heads/")) return response(null, { bytes: tarball });
+      if (url.startsWith("https://codeload.github.com/")) return response(null, { bytes: revised });
+      throw new Error(`unexpected request to ${url}`);
+    });
+    const { catalog } = await load();
+    const downloads = fetchImpl.mock.calls
+      .map((call) => String(call[0]))
+      .filter((url) => url.startsWith("https://codeload.github.com/"));
+    expect(downloads).toEqual([`https://codeload.github.com/acme/kit/tar.gz/${NEXT}`]);
+    expect(catalog.sources.find((s: { id: string }) => s.id === "acme/kit").commit).toBe(NEXT);
+    const dir = path.join(cacheDir, "acme", "kit", NEXT, "skills", "pdf");
+    expect(fs.existsSync(path.join(dir, "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, "reference.md"))).toBe(false);
+  });
+
+  it("extracts a new head into a fresh folder, without a file the commit removed", async () => {
+    const { skills } = await load();
+    const revised = revisedTarball();
+    fetchImpl.mockImplementation(async (url: string) => {
+      if (url.startsWith("https://api.github.com/")) return response({ sha: NEXT });
+      return response(null, { bytes: revised });
+    });
+    const catalog = await skills.refresh("acme/kit");
+    expect(catalog.sources.find((s: { id: string }) => s.id === "acme/kit").commit).toBe(NEXT);
+    const pdf = catalog.skills.find((s: { name: string }) => s.name === "pdf");
+    expect(pdf.files.map((f: { path: string }) => f.path)).not.toContain("reference.md");
+    expect(fs.existsSync(path.join(cacheDir, "acme", "kit", NEXT, "skills", "pdf", "reference.md"))).toBe(false);
+    expect(skills.readSkill("acme/kit/skills/pdf").files.map((f: { path: string }) => f.path)).not.toContain(
+      "reference.md"
+    );
+    // The commit it replaced is kept for a while, and untouched.
+    expect(fs.existsSync(path.join(cacheDir, "acme", "kit", COMMIT, "skills", "pdf", "reference.md"))).toBe(true);
+  });
+
+  it("does not download again when the head is the commit it already has", async () => {
+    const clock = { at: new Date("2026-09-07T10:00:00Z") };
+    const { skills } = await load({ clock: () => clock.at });
+    const before = fetchImpl.mock.calls.length;
+    clock.at = new Date("2026-09-08T12:00:00Z");
+    const catalog = await skills.refresh("acme/kit");
+    const since = fetchImpl.mock.calls.slice(before).map((call) => String(call[0]));
+    expect(since.some((url) => url.startsWith("https://api.github.com/"))).toBe(true);
+    expect(since.some((url) => url.startsWith("https://codeload.github.com/"))).toBe(false);
+    const source = catalog.sources.find((s: { id: string }) => s.id === "acme/kit");
+    expect(source).toMatchObject({ commit: COMMIT, error: null, fetchedAt: "2026-09-08T12:00:00.000Z" });
+    expect(catalog.skills.some((s: { name: string }) => s.name === "pdf")).toBe(true);
+    expect(fs.existsSync(path.join(cacheDir, "acme", "kit", COMMIT, "skills", "pdf", "reference.md"))).toBe(true);
   });
 
   it("discovers a large repository in time proportional to its size", () => {

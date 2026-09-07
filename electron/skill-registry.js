@@ -358,55 +358,73 @@ function createSkillRegistry(deps = {}) {
     }
   }
 
-  async function downloadTarball(owner, repo) {
-    let lastStatus = 0;
+  // One archive, as GitHub serves it: a commit's tarball when the head is
+  // known, else whatever the branch holds right now.
+  async function downloadArchive(owner, repo, ref) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetchImpl(`https://codeload.github.com/${owner}/${repo}/tar.gz/${ref}`, {
+        headers: { "User-Agent": userAgent },
+        signal: controller.signal,
+      });
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error(`GitHub answered ${response.status} for ${owner}/${repo}.`);
+      return await readCapped(response, controller);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function downloadBranch(owner, repo) {
+    let missing = false;
     for (const branch of BRANCHES) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-      try {
-        const response = await fetchImpl(
-          `https://codeload.github.com/${owner}/${repo}/tar.gz/refs/heads/${branch}`,
-          { headers: { "User-Agent": userAgent }, signal: controller.signal }
-        );
-        if (response.status === 404) {
-          lastStatus = 404;
-          continue;
-        }
-        if (!response.ok) throw new Error(`GitHub answered ${response.status} for ${owner}/${repo}.`);
-        return { bytes: await readCapped(response, controller), branch };
-      } finally {
-        clearTimeout(timer);
-      }
+      const bytes = await downloadArchive(owner, repo, `refs/heads/${branch}`);
+      if (bytes) return { bytes, branch };
+      missing = true;
     }
     throw new Error(
-      lastStatus === 404
+      missing
         ? `${owner}/${repo} has no main or master branch, or it is not a public repository.`
         : `${owner}/${repo} could not be downloaded.`
     );
   }
 
-  // The repository's head commit, which names the cache folder. The API is
-  // rate-limited without a token, and being rate-limited must not stop a
-  // catalog from being built, so the tarball's own digest stands in.
-  async function headCommit(owner, repo, branch, bytes) {
-    try {
-      const response = await fetchImpl(
-        `https://api.github.com/repos/${owner}/${repo}/commits/${branch}`,
-        {
-          headers: { "User-Agent": userAgent, Accept: "application/vnd.github+json" },
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  // The commit at the head of the first branch that exists, or null when the
+  // API will not say: it is rate-limited without a token, and being
+  // rate-limited must not stop a catalog from being built. A branch that is
+  // not there answers 404 (no such repository) or 422 (no such ref), and
+  // both mean "try the next one"; when neither branch exists, that is the
+  // answer, and it is the same one the tarball download would have given.
+  async function resolveHead(owner, repo) {
+    let missing = false;
+    for (const branch of BRANCHES) {
+      try {
+        const response = await fetchImpl(
+          `https://api.github.com/repos/${owner}/${repo}/commits/${branch}`,
+          {
+            headers: { "User-Agent": userAgent, Accept: "application/vnd.github+json" },
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          }
+        );
+        if (response.status === 404 || response.status === 422) {
+          missing = true;
+          continue;
         }
-      );
-      if (response.ok) {
+        if (!response.ok) return null;
         const body = await response.json();
         if (body && typeof body.sha === "string" && /^[0-9a-f]{7,40}$/.test(body.sha)) {
-          return { commit: body.sha, commitSource: "api" };
+          return { commit: body.sha, branch };
         }
+        return null;
+      } catch {
+        return null; // offline, or answering something that is not JSON
       }
-    } catch {
-      // offline, rate-limited, or answering something that is not JSON
     }
-    return { commit: crypto.createHash("sha1").update(bytes).digest("hex"), commitSource: "tarball" };
+    if (missing) {
+      throw new Error(`${owner}/${repo} has no main or master branch, or it is not a public repository.`);
+    }
+    return null;
   }
 
   // Everything a skill folder holds, under `<cache>/<owner>/<repo>/<commit>/`.
@@ -462,11 +480,58 @@ function createSkillRegistry(deps = {}) {
     }
   }
 
+  function writeCatalog(catalog) {
+    fs.mkdirSync(sourceDir(catalog.owner, catalog.repo), { recursive: true });
+    fs.writeFileSync(
+      catalogFile(catalog.owner, catalog.repo),
+      `${JSON.stringify(catalog, null, 2)}\n`,
+      "utf8"
+    );
+  }
+
+  // The head is resolved first and that commit's own archive is what gets
+  // downloaded, so the folder named after a commit holds that commit and
+  // nothing else. Downloading the branch and asking for its head afterwards
+  // let the branch move in between: the folder was named after the new
+  // commit but held the old files, and a later refresh of the new commit
+  // found its folder already there and kept files upstream had removed.
+  //
+  // When the head is the commit already on disk there is nothing to fetch:
+  // a commit's archive never changes, so the catalog is re-dated and kept.
   async function fetchSource(source) {
     const { owner, repo } = source;
-    const { bytes, branch } = await downloadTarball(owner, repo);
+    const head = await resolveHead(owner, repo);
+    const previous = readCatalog(owner, repo);
+    if (
+      head &&
+      previous &&
+      previous.commit === head.commit &&
+      previous.commitSource === "api" &&
+      fs.existsSync(path.join(sourceDir(owner, repo), head.commit))
+    ) {
+      const catalog = { ...previous, ref: head.branch, fetchedAt: nowIso(), error: null };
+      writeCatalog(catalog);
+      errors.delete(`${owner}/${repo}`);
+      return catalog;
+    }
+    let bytes;
+    let branch;
+    let commit;
+    let commitSource;
+    if (head) {
+      bytes = await downloadArchive(owner, repo, head.commit);
+      if (!bytes) throw new Error(`${owner}/${repo} could not be downloaded.`);
+      branch = head.branch;
+      commit = head.commit;
+      commitSource = "api";
+    } else {
+      // No head to name the folder after, so the archive's own digest does:
+      // it is bound to these exact bytes just as a commit id is.
+      ({ bytes, branch } = await downloadBranch(owner, repo));
+      commit = crypto.createHash("sha1").update(bytes).digest("hex");
+      commitSource = "tarball";
+    }
     const discovered = discoverSkills(parseTar(inflate(bytes, owner, repo)), { owner, repo });
-    const { commit, commitSource } = await headCommit(owner, repo, branch, bytes);
     const dir = path.join(sourceDir(owner, repo), commit);
     fs.mkdirSync(dir, { recursive: true });
     extract(dir, discovered);
@@ -480,8 +545,7 @@ function createSkillRegistry(deps = {}) {
       error: null,
       skills: discovered.map((entry) => entry.skill),
     };
-    fs.mkdirSync(sourceDir(owner, repo), { recursive: true });
-    fs.writeFileSync(catalogFile(owner, repo), `${JSON.stringify(catalog, null, 2)}\n`, "utf8");
+    writeCatalog(catalog);
     pruneCommits(owner, repo, commit);
     errors.delete(`${owner}/${repo}`);
     return catalog;

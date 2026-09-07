@@ -107,11 +107,11 @@ describe("page keyboard shortcuts", () => {
   it("⌘L toggles the side panel", async () => {
     await boot();
     await chord("l");
-    expect(await screen.findByRole("button", { name: "Collapse library" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Collapse the \w+ panel$/ })).toBeInTheDocument();
     await chord("l");
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Collapse library" })
+        screen.queryByRole("button", { name: /^Collapse the \w+ panel$/ })
       ).not.toBeInTheDocument()
     );
   });

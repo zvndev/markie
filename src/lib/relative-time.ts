@@ -37,3 +37,35 @@ export function longAgo(ms: number, now: number = Date.now()): string {
   if (!Number.isFinite(ms)) return "";
   return relativeTime(new Date(ms).toISOString(), now);
 }
+
+// The Browse column: short enough to sit beside a filename, specific enough to
+// be worth the space. Minutes and hours while that is what you mean, then the
+// day by name, then the date, then just the year.
+export function updatedAgo(ms: number, now: number = Date.now()): string {
+  if (!Number.isFinite(ms)) return "";
+  const delta = Math.max(0, now - ms);
+  if (delta < MINUTE) return "just now";
+  if (delta < HOUR) return `${Math.floor(delta / MINUTE)}m ago`;
+  if (delta < DAY) return `${Math.floor(delta / HOUR)}h ago`;
+  const then = new Date(ms);
+  const today = new Date(now);
+  // Calendar days, not 24-hour blocks: something saved at 11pm is "yesterday"
+  // all through the next morning, which is how anyone reads it.
+  const days = Math.round(
+    (startOfDay(today) - startOfDay(then)) / DAY
+  );
+  if (days <= 1) return "yesterday";
+  if (then.getFullYear() === today.getFullYear())
+    return then.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return String(then.getFullYear());
+}
+
+// The whole thing, for the tooltip over a date that had to be short.
+export function updatedOn(ms: number): string {
+  if (!Number.isFinite(ms)) return "";
+  return new Date(ms).toLocaleString();
+}
+
+function startOfDay(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}

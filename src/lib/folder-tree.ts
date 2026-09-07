@@ -15,6 +15,7 @@ export interface FileEntry {
   path: string;
   name: string;
   dir: string;
+  mtimeMs: number;
 }
 
 export interface FolderNode {
@@ -28,6 +29,9 @@ export interface FolderNode {
   // Markdown at or below this folder, which is the number worth showing: a
   // count of what you would find by opening it, not of one level.
   total: number;
+  // When anything at or below this folder last changed, so sorting by Updated
+  // can put a folder where its newest file would go. 0 when it holds nothing.
+  latestMtimeMs: number;
 }
 
 const SEPARATOR = /[\\/]/;
@@ -95,6 +99,11 @@ function collapse(node: Building): FolderNode {
     files,
     children,
     total: files.length + children.reduce((sum, c) => sum + c.total, 0),
+    latestMtimeMs: Math.max(
+      0,
+      ...files.map((f) => f.mtimeMs),
+      ...children.map((c) => c.latestMtimeMs)
+    ),
   };
 }
 
@@ -116,4 +125,43 @@ export function pathsToFiles(nodes: readonly FolderNode[]): string[] {
 // everything for a filter is reasonable.
 export function countNodes(nodes: readonly FolderNode[]): number {
   return nodes.reduce((sum, n) => sum + 1 + countNodes(n.children), 0);
+}
+
+// Where Browse opens to when nobody has told it otherwise.
+//
+// Everything used to start closed, so the panel's first offer was a row you had
+// to click before it said anything. Open each root, and keep walking while a
+// folder holds exactly one thing, because a folder with one thing in it is a
+// step on the way somewhere rather than a place to stop. The first folder that
+// offers a choice is opened too, so its contents are what you land on.
+//
+// Collapsing usually puts that branch at the root already; the walk is here for
+// the shapes it does not, and so the rule holds wherever it is called.
+export function initialOpenSet(nodes: readonly FolderNode[]): Set<string> {
+  const open = new Set<string>();
+  for (const root of nodes) {
+    let node: FolderNode | undefined = root;
+    while (node) {
+      open.add(node.path);
+      if (node.files.length + node.children.length !== 1) break;
+      node = node.children[0];
+    }
+  }
+  return open;
+}
+
+export type SortOrder = "name" | "updated";
+
+// Build order is already by name, so only "updated" has work to do: files by
+// their own time, folders by the newest file anywhere beneath them. Names break
+// ties, otherwise two files saved in the same second swap places on a rescan.
+export function sortTree(nodes: readonly FolderNode[], order: SortOrder): FolderNode[] {
+  if (order === "name") return [...nodes];
+  return [...nodes]
+    .sort((a, b) => b.latestMtimeMs - a.latestMtimeMs || a.label.localeCompare(b.label))
+    .map((node) => ({
+      ...node,
+      files: [...node.files].sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name)),
+      children: sortTree(node.children, order),
+    }));
 }

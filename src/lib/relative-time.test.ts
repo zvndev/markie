@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { longAgo, relativeTime, shortAgo } from "@/lib/relative-time";
+import { longAgo, relativeTime, shortAgo, updatedAgo, updatedOn } from "@/lib/relative-time";
 
 const NOW = Date.parse("2026-08-26T12:00:00Z");
 const ago = (ms: number) => NOW - ms;
@@ -51,5 +51,41 @@ describe("shortAgo", () => {
 describe("longAgo", () => {
   it("reads a numeric timestamp the same way relativeTime reads an ISO one", () => {
     expect(longAgo(ago(3 * HOUR), NOW)).toBe("3 hours ago");
+  });
+});
+
+describe("updatedAgo", () => {
+  const MONTH_DAY = { month: "short", day: "numeric" } as const;
+
+  it("counts minutes and hours, then names the day", () => {
+    expect(updatedAgo(ago(20 * 1000), NOW)).toBe("just now");
+    expect(updatedAgo(ago(5 * MIN), NOW)).toBe("5m ago");
+    expect(updatedAgo(ago(2 * HOUR), NOW)).toBe("2h ago");
+    expect(updatedAgo(ago(26 * HOUR), NOW)).toBe("yesterday");
+  });
+
+  it("falls back to the date within this year and to the year before that", () => {
+    const march = Date.parse("2026-03-03T15:00:00Z");
+    expect(updatedAgo(march, NOW)).toBe(new Date(march).toLocaleDateString(undefined, MONTH_DAY));
+    expect(updatedAgo(Date.parse("2025-11-02T15:00:00Z"), NOW)).toBe("2025");
+  });
+
+  it("treats a timestamp from the future as now", () => {
+    expect(updatedAgo(NOW + DAY, NOW)).toBe("just now");
+  });
+
+  it("says nothing for a missing timestamp", () => {
+    expect(updatedAgo(NaN, NOW)).toBe("");
+  });
+});
+
+describe("updatedOn", () => {
+  it("spells the whole local date and time out for a tooltip", () => {
+    const t = Date.parse("2026-03-03T15:00:00Z");
+    expect(updatedOn(t)).toBe(new Date(t).toLocaleString());
+  });
+
+  it("says nothing for a missing timestamp", () => {
+    expect(updatedOn(NaN)).toBe("");
   });
 });

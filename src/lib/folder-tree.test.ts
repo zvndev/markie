@@ -1,10 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { buildFolderTree, countNodes, pathsToFiles, type FolderNode } from "./folder-tree";
+import {
+  buildFolderTree,
+  countNodes,
+  initialOpenSet,
+  pathsToFiles,
+  sortTree,
+  type FolderNode,
+} from "./folder-tree";
 
-const file = (path: string) => {
+const file = (path: string, mtimeMs = 0) => {
   const cut = path.lastIndexOf("/");
-  return { path, name: path.slice(cut + 1), dir: path.slice(0, cut) };
+  return { path, name: path.slice(cut + 1), dir: path.slice(0, cut), mtimeMs };
 };
+
+// A tree written by hand, for the shapes buildFolderTree's collapsing rule
+// never produces but the open rule still has to survive.
+const node = (path: string, parts: Partial<FolderNode> = {}): FolderNode => ({
+  path,
+  label: path.slice(path.lastIndexOf("/") + 1),
+  files: [],
+  children: [],
+  total: 0,
+  latestMtimeMs: 0,
+  ...parts,
+});
 
 // Flattens to "label (total)" lines so a test reads like the sidebar looks.
 function render(nodes: readonly FolderNode[], depth = 0): string[] {
@@ -98,7 +117,7 @@ describe("building the folder tree", () => {
 
   it("handles Windows paths", () => {
     const tree = buildFolderTree([
-      { path: "C:\\work\\notes\\a.md", name: "a.md", dir: "C:\\work\\notes" },
+      { path: "C:\\work\\notes\\a.md", name: "a.md", dir: "C:\\work\\notes", mtimeMs: 0 },
     ]);
     expect(tree[0].label).toBe("C:/work/notes");
   });
@@ -108,7 +127,7 @@ describe("building the folder tree", () => {
   });
 
   it("ignores a file with no directory rather than inventing a root", () => {
-    expect(buildFolderTree([{ path: "a.md", name: "a.md", dir: "" }])).toEqual([]);
+    expect(buildFolderTree([{ path: "a.md", name: "a.md", dir: "", mtimeMs: 0 }])).toEqual([]);
   });
 });
 
@@ -124,5 +143,86 @@ describe("opening the tree to a filter's matches", () => {
       file("/a/c/two.md"),
     ]);
     expect(countNodes(tree)).toBe(3);
+  });
+});
+
+describe("the level Browse opens at", () => {
+  it("opens every root", () => {
+    const tree = buildFolderTree([file("/a/one.md"), file("/b/two.md")]);
+    expect([...initialOpenSet(tree)].sort()).toEqual(["/a", "/b"]);
+  });
+
+  // Collapsing means a real tree hands us the branch at the root, but the rule
+  // is written for the general shape so a chain is never left half open.
+  it("follows a single-child chain down to the first folder with a choice", () => {
+    const deep = node("/r/one/two", { children: [node("/r/one/two/x"), node("/r/one/two/y")] });
+    const tree = [node("/r", { children: [node("/r/one", { children: [deep] })] })];
+    expect([...initialOpenSet(tree)].sort()).toEqual(["/r", "/r/one", "/r/one/two"]);
+  });
+
+  it("stops at the branching folder rather than opening what is under it", () => {
+    const branch = node("/r/one", {
+      children: [node("/r/one/x", { children: [node("/r/one/x/deeper")] }), node("/r/one/y")],
+    });
+    const open = initialOpenSet([node("/r", { children: [branch] })]);
+    expect(open.has("/r/one")).toBe(true);
+    expect(open.has("/r/one/x")).toBe(false);
+  });
+
+  // One file is not a choice, and there is nothing below it to walk into.
+  it("counts a file as an entry, so a folder holding two files is the stop", () => {
+    const tree = buildFolderTree([file("/a/b/one.md"), file("/a/b/two.md")]);
+    expect([...initialOpenSet(tree)]).toEqual(["/a/b"]);
+  });
+
+  it("is empty for an empty tree", () => {
+    expect(initialOpenSet([])).toEqual(new Set());
+  });
+});
+
+describe("the newest file beneath a folder", () => {
+  it("carries the newest time at or below each folder", () => {
+    const tree = buildFolderTree([
+      file("/a/b/old.md", 100),
+      file("/a/b/c/new.md", 900),
+    ]);
+    expect(tree[0].latestMtimeMs).toBe(900);
+    expect(tree[0].children[0].latestMtimeMs).toBe(900);
+  });
+
+  it("is the folder's own newest file when nothing below it is newer", () => {
+    const tree = buildFolderTree([
+      file("/a/b/recent.md", 900),
+      file("/a/b/c/stale.md", 100),
+    ]);
+    expect(tree[0].latestMtimeMs).toBe(900);
+    expect(tree[0].children[0].latestMtimeMs).toBe(100);
+  });
+});
+
+describe("sorting the tree", () => {
+  const tree = () =>
+    buildFolderTree([
+      file("/r/alpha/aaa.md", 100),
+      file("/r/alpha/zzz.md", 500),
+      file("/r/zeta/newest.md", 900),
+    ]);
+
+  it("leaves name order alone", () => {
+    const sorted = sortTree(tree(), "name");
+    expect(sorted[0].children.map((c) => c.label)).toEqual(["alpha", "zeta"]);
+    expect(sorted[0].children[0].files.map((f) => f.name)).toEqual(["aaa.md", "zzz.md"]);
+  });
+
+  it("puts the newest file first and the folder with the newest file first", () => {
+    const sorted = sortTree(tree(), "updated");
+    expect(sorted[0].children.map((c) => c.label)).toEqual(["zeta", "alpha"]);
+    expect(sorted[0].children[1].files.map((f) => f.name)).toEqual(["zzz.md", "aaa.md"]);
+  });
+
+  it("does not disturb the tree it was given", () => {
+    const original = tree();
+    sortTree(original, "updated");
+    expect(original[0].children.map((c) => c.label)).toEqual(["alpha", "zeta"]);
   });
 });

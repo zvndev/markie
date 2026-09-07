@@ -48,6 +48,10 @@ interface LibraryProps {
   // pull) — lets the page recompute share/collab eligibility for the open doc
   onSyncChanged?: () => void;
   activePath: string | null;
+  // The account the auth store has confirmed, or null while nobody is. The
+  // Cloud page keys its per-account state on it; signedIn here only says
+  // main holds a token, which does not change when the account does.
+  accountId: string | null;
   // bump to force a refresh (file opened/saved/sync changed)
   refreshKey: number;
 }
@@ -128,6 +132,7 @@ export function Library({
   onManageShare,
   onSyncChanged,
   activePath,
+  accountId,
   refreshKey,
 }: LibraryProps) {
   const [items, setItems] = useState<LibraryItem[]>([]);
@@ -609,6 +614,7 @@ export function Library({
             loading={loading}
             renderRow={fileRow}
             signedIn={signedIn}
+            accountId={accountId}
             onManage={onManageShare}
             onOpenPath={onOpenPath}
             cloudError={cloudError}

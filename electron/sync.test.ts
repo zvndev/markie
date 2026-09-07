@@ -119,6 +119,9 @@ beforeEach(() => {
   registry.list = () => [...rows.values()];
   registry.pruneMissing = () => 0;
   registry.track = () => {};
+  registry.forget = (p: string) => {
+    rows.delete(p);
+  };
   signIn("test-token", ME);
 });
 
@@ -944,6 +947,99 @@ describe("libraryState", () => {
     });
   });
 
+  // Rows from before share_role_user existed have a role and nobody beside it,
+  // and a role with nobody beside it is refused offline. Opening the document
+  // online writes the account in; a document never opened again would stay
+  // unconfirmed for ever. The list the server sends names the same rows, so
+  // it can do the writing.
+  describe("healing rows the migration left unconfirmed", () => {
+    const migrated = (role: "owner" | "editor" = "owner") =>
+      seedRow({
+        path: "/docs/old.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-11",
+        cloud_version: 4,
+        share_role: role,
+        share_role_user: null,
+      });
+
+    it("writes the live role and this account back to a row the list names", async () => {
+      migrated();
+      respondWith(
+        { status: 200, body: { docs: [{ id: "cloud-11", version: 4 }] } },
+        { status: 503 }
+      );
+
+      await sync.libraryState();
+      expect(rows.get("/docs/old.md")).toMatchObject({ share_role: "owner", share_role_user: ME });
+
+      // And the next outage no longer takes the document away.
+      expect((await sync.libraryState()).items[0].owned).toBe(true);
+    });
+
+    it("records a shared document's live role the same way", async () => {
+      migrated("owner");
+      respondWith(
+        {
+          status: 200,
+          body: { docs: [{ id: "cloud-11", version: 4, shared: true, role: "editor" }] },
+        },
+        new Error("offline")
+      );
+
+      await sync.libraryState();
+      expect(rows.get("/docs/old.md")).toMatchObject({
+        share_role: "editor",
+        share_role_user: ME,
+      });
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        owned: false,
+        shared: true,
+        role: "editor",
+      });
+    });
+
+    it("leaves a row the list omits alone", async () => {
+      // Absent from a loaded list already reads as "not this account's";
+      // writing anything to it would be inventing an answer.
+      migrated();
+      respondWith({ status: 200, body: { docs: [] } });
+
+      await sync.libraryState();
+      expect(rows.get("/docs/old.md")).toMatchObject({ share_role: "owner", share_role_user: null });
+    });
+
+    it("writes nothing before this account is confirmed", async () => {
+      migrated();
+      sync.setConfig({ token: "b-token", serverURL: SERVER, userId: ME });
+      respondWith({ status: 200, body: { docs: [{ id: "cloud-11", version: 4 }] } });
+
+      await sync.libraryState();
+      expect(rows.get("/docs/old.md")).toMatchObject({ share_role: "owner", share_role_user: null });
+    });
+
+    it("does not rewrite a row that already says the same thing", async () => {
+      seedRow({
+        path: "/docs/fine.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-12",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: ME,
+      });
+      const writes: string[] = [];
+      const update = registry.update;
+      registry.update = (p: string, fields: Partial<Row>) => {
+        writes.push(p);
+        update(p, fields);
+      };
+      respondWith({ status: 200, body: { docs: [{ id: "cloud-12", version: 4 }] } });
+
+      await sync.libraryState();
+      expect(writes).toEqual([]);
+    });
+  });
+
   it("leaves an unpushed row unpushed even when the server list loads", async () => {
     seedRow({
       path: "/docs/a.md",
@@ -1307,6 +1403,59 @@ describe("pull", () => {
       "not signed in"
     );
     expect(calls).toHaveLength(0);
+  });
+
+  // Bringing back a synced file that was deleted from disk. The save dialog
+  // may put the copy anywhere, and a document must end up with one row per
+  // file, not one per attempt: two rows on one cloud document are two files
+  // that push over each other.
+  describe("bringing a deleted file back", () => {
+    const linkedRows = () => [...rows.values()].filter((r) => r.cloud_doc_id === "cloud-1");
+
+    beforeEach(() => {
+      // The real track inserts the pulled path; the default fake does not.
+      registry.track = (p: string, name: string) => {
+        if (!rows.has(p)) seedRow({ path: p, name });
+      };
+      respondWith({
+        status: 200,
+        body: { doc: { content: "cloud text\n", name: "old.md", version: 3 } },
+      });
+    });
+
+    it("forgets the dead row when the copy lands at a new path", async () => {
+      const old = path.join(tmpDir, "old.md");
+      seedRow({ path: old, sync_state: "synced", cloud_doc_id: "cloud-1", cloud_version: 2 });
+      const restored = path.join(tmpDir, "restored.md");
+
+      expect((await sync.pull("cloud-1", restored)).ok).toBe(true);
+
+      expect(linkedRows().map((r) => r.path)).toEqual([restored]);
+      expect(rows.has(old)).toBe(false);
+    });
+
+    it("leaves a row alone while its file is still on disk", async () => {
+      // Two live copies is a different situation, and not one to resolve by
+      // forgetting either of them.
+      const old = path.join(tmpDir, "old.md");
+      fs.writeFileSync(old, "still here\n");
+      seedRow({ path: old, sync_state: "synced", cloud_doc_id: "cloud-1", cloud_version: 2 });
+      const restored = path.join(tmpDir, "restored.md");
+
+      await sync.pull("cloud-1", restored);
+
+      expect(linkedRows().map((r) => r.path).sort()).toEqual([old, restored].sort());
+    });
+
+    it("needs nothing when the copy lands back at the old path", async () => {
+      const old = path.join(tmpDir, "old.md");
+      seedRow({ path: old, sync_state: "synced", cloud_doc_id: "cloud-1", cloud_version: 2 });
+
+      await sync.pull("cloud-1", old);
+
+      expect(linkedRows().map((r) => r.path)).toEqual([old]);
+      expect(rows.get(old)).toMatchObject({ sync_state: "synced", cloud_version: 3 });
+    });
   });
 });
 

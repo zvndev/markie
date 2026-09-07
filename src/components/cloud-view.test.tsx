@@ -71,6 +71,7 @@ function props(over: Partial<React.ComponentProps<typeof CloudView>> = {}) {
     loading: false,
     renderRow: (i: LibraryItem) => <div key={i.name}>{i.name}</div>,
     signedIn: true,
+    accountId: "user-a",
     onManage: vi.fn(),
     onOpenPath: vi.fn(),
     cloudError: null,
@@ -95,6 +96,7 @@ function renderView(props: Partial<React.ComponentProps<typeof CloudView>> = {})
       loading={false}
       renderRow={renderRow}
       signedIn
+      accountId="user-a"
       onManage={onManage}
       onOpenPath={onOpenPath}
       cloudError={null}
@@ -406,6 +408,7 @@ describe("documents I have shared", () => {
         loading={false}
         renderRow={(i) => <div key={i.name}>{i.name}</div>}
         signedIn
+        accountId="user-a"
         onManage={vi.fn()}
         onOpenPath={vi.fn()}
         cloudError={null}
@@ -425,13 +428,42 @@ describe("changing accounts under an open panel", () => {
     const view = render(<CloudView {...props()} />);
     expect(await screen.findByText("alice-brief.md")).toBeInTheDocument();
 
-    view.rerender(<CloudView {...props({ signedIn: false, refreshKey: 1 })} />);
+    view.rerender(
+      <CloudView {...props({ signedIn: false, accountId: null, refreshKey: 1 })} />
+    );
     expect(screen.queryByText("alice-brief.md")).not.toBeInTheDocument();
 
     let settle: (docs: SharedByMeDoc[]) => void = () => {};
     sharedByMe.mockReturnValue(new Promise<SharedByMeDoc[]>((r) => (settle = r)));
-    view.rerender(<CloudView {...props({ signedIn: true, refreshKey: 2 })} />);
+    view.rerender(
+      <CloudView {...props({ signedIn: true, accountId: "user-b", refreshKey: 2 })} />
+    );
     expect(screen.queryByText("alice-brief.md")).not.toBeInTheDocument();
+    expect(screen.getByText("Checking your cloud…")).toBeInTheDocument();
+
+    settle([doc({ id: "d9", name: "bob-plan.md" })]);
+    expect(await screen.findByText("bob-plan.md")).toBeInTheDocument();
+    expect(screen.queryByText("alice-brief.md")).not.toBeInTheDocument();
+  });
+
+  it("drops them when the account is replaced without ever being signed out", async () => {
+    // A's token expired and B signed in over it: signedIn never flips, but
+    // the account did. A's names, people counts and Manage controls must be
+    // gone in the same render B arrives in, not after A's list has been drawn
+    // once more under B, and not only if B's request ever answers.
+    sharedByMe.mockResolvedValue([doc({ name: "alice-brief.md", memberCount: 2 })]);
+    const view = render(<CloudView {...props({ accountId: "user-a" })} />);
+    expect(await screen.findByText("alice-brief.md")).toBeInTheDocument();
+    expect(screen.getByText(/2 people/)).toBeInTheDocument();
+    expect(screen.getByTitle("Manage who can access alice-brief.md")).toBeInTheDocument();
+
+    let settle: (docs: SharedByMeDoc[]) => void = () => {};
+    sharedByMe.mockReturnValue(new Promise<SharedByMeDoc[]>((r) => (settle = r)));
+    view.rerender(<CloudView {...props({ accountId: "user-b" })} />);
+
+    expect(screen.queryByText("alice-brief.md")).not.toBeInTheDocument();
+    expect(screen.queryByText(/2 people/)).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Manage who can access alice-brief.md")).not.toBeInTheDocument();
     expect(screen.getByText("Checking your cloud…")).toBeInTheDocument();
 
     settle([doc({ id: "d9", name: "bob-plan.md" })]);

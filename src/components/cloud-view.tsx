@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { LibraryItem } from "@/lib/electron";
 import { sharesClient, type SharedByMeDoc } from "@/lib/auth-client";
 import { organizeLibraryItems } from "@/lib/library-overview";
@@ -23,6 +23,12 @@ interface CloudViewProps {
   // in one place.
   renderRow: (item: LibraryItem) => ReactNode;
   signedIn: boolean;
+  // The account the auth store has confirmed, or null while nobody is. What
+  // this page fetched belongs to that account and to no other, so it is the
+  // key everything account-derived is dropped on. signedIn cannot be: an
+  // expired token for one account followed by a sign-in as another never
+  // flips it.
+  accountId: string | null;
   // Open the share dialog to manage people on a doc I own.
   onManage: (docId: string, name: string) => void;
   // Open a document that is on this device.
@@ -152,6 +158,7 @@ export function CloudView({
   loading,
   renderRow,
   signedIn,
+  accountId,
   onManage,
   onOpenPath,
   cloudError,
@@ -171,24 +178,24 @@ export function CloudView({
   // refreshKey for something only this panel knows went wrong.
   const [byMeNonce, setByMeNonce] = useState(0);
 
-  // Whether the account changed under a panel that stayed open. Signing out and
-  // back in as somebody else is the case that matters: the names and people
-  // counts on screen belong to the account that left.
-  const wasSignedIn = useRef(signedIn);
+  // Whose list is on screen. When the account changes under an open panel
+  // (A to B, or to nobody), A's names, people counts and Manage controls are
+  // dropped in this same render, before anything is asked for B: an effect
+  // would run only after A's list had been drawn once more under B's name,
+  // and would leave it there for good if B's request never answered. Only on
+  // a change of account: doing it on every refresh would blank the list each
+  // time somebody's membership changed.
+  const [byMeFor, setByMeFor] = useState(accountId);
+  if (byMeFor !== accountId) {
+    setByMeFor(accountId);
+    setByMe(null);
+    setByMeError(false);
+  }
 
-  // Fetch "shared by me" on mount and whenever something changed (refreshKey).
-  // Cheap metadata-only call, and no polling: the page already learns about
-  // everything else through the same bump.
+  // Fetch "shared by me" on mount and whenever something changed (refreshKey),
+  // and again for each account. Cheap metadata-only call, and no polling: the
+  // page already learns about everything else through the same bump.
   useEffect(() => {
-    // Drop the last account's documents before asking for this one's, so they
-    // are never on screen while another account's request is in flight, or for
-    // ever if it never answers. Only on a change of account: doing it on every
-    // refresh would blank the list each time somebody's membership changed.
-    if (wasSignedIn.current !== signedIn) {
-      wasSignedIn.current = signedIn;
-      setByMe(null);
-      setByMeError(false);
-    }
     if (!signedIn) return;
     let alive = true;
     sharesClient
@@ -209,7 +216,7 @@ export function CloudView({
     return () => {
       alive = false;
     };
-  }, [signedIn, refreshKey, byMeNonce]);
+  }, [signedIn, accountId, refreshKey, byMeNonce]);
 
   const { syncedFromDevice, myCloudOnly, sharedItems } = useMemo(
     () => organizeLibraryItems(items),

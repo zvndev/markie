@@ -69,7 +69,7 @@ import {
   sharesClient,
 } from "@/lib/auth-client";
 import { consumeAuthState } from "@/lib/auth-state";
-import { authStore } from "@/lib/auth-store";
+import { authStore, useAuth } from "@/lib/auth-store";
 import { markWelcomeSeen, shouldShowWelcome } from "@/lib/first-run";
 import { WELCOME_DOC } from "@/lib/welcome-doc";
 import { SignInDialog } from "@/components/sign-in";
@@ -178,6 +178,11 @@ const toDisk = (name: string | null, md: string) =>
   isCSVName(name) ? markdownTableToCSV(md) : md;
 
 export default function Home() {
+  // The confirmed account, for the surfaces that keep state per account. The
+  // Library's own signedIn only says main holds a token, which stays true
+  // when one account's token is replaced by another's.
+  const { user: account } = useAuth();
+
   // One owner for the buffer, its path, and whether it is dirty, so autosave,
   // drafts, and flush-on-transition attach to one place instead of five
   // useStates whose invariants nothing enforced. The transitions come out by
@@ -1627,6 +1632,7 @@ export default function Home() {
             onManageShare={handleManageShare}
             onSyncChanged={refreshCollab}
             activePath={filePath}
+            accountId={account?.id ?? null}
             refreshKey={libRefreshKey}
           />
         )}

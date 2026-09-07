@@ -62,6 +62,7 @@ function renderLibrary(
       view="library"
       {...handlers}
       activePath={null}
+      accountId={null}
       refreshKey={0}
       {...props}
     />

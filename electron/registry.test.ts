@@ -188,6 +188,20 @@ describe("tracking files", () => {
     registry.update("/tmp/a.md", { path: "/tmp/hijacked.md" });
     expect(registry.get("/tmp/a.md")).toBeTruthy();
   });
+
+  it("forgets one row and leaves the rest", () => {
+    // pruneMissing only ever drops rows the cloud never heard of. A row that
+    // is cloud-linked and dead on disk needs to be let go of by name, which
+    // is what a pull that lands the document at a new path does.
+    registry.track("/tmp/a.md", "a.md", "x");
+    registry.track("/tmp/b.md", "b.md", "y");
+    registry.update("/tmp/a.md", { cloud_doc_id: "cloud-1", sync_state: "synced" });
+
+    registry.forget("/tmp/a.md");
+
+    expect(registry.get("/tmp/a.md")).toBeUndefined();
+    expect((registry.get("/tmp/b.md") as FileRow).name).toBe("b.md");
+  });
 });
 
 describe("stars", () => {

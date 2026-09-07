@@ -269,6 +269,16 @@ async function pull(cloudId, targetPath) {
     sync_state: "synced",
     last_synced_at: new Date().toISOString(),
   });
+  // This is also how a synced file that was deleted from disk comes back,
+  // and the save dialog may have put it anywhere. One document, one file, one
+  // row: the dead row for the old path is let go of, because left beside the
+  // new one it is a second file that pushes over the first the moment it is
+  // restored. A row whose file is still on disk is a different situation
+  // (two live copies) and is left alone.
+  for (const row of registry.list()) {
+    if (row.cloud_doc_id !== cloudId || row.path === targetPath) continue;
+    if (!fs.existsSync(row.path)) registry.forget(row.path);
+  }
   return { ok: true, path: targetPath, name };
 }
 
@@ -630,6 +640,24 @@ async function libraryState() {
   // is shared but arrives without a role reads as view-only, not as an editor.
   for (const d of remote) {
     setDocRole(d.id, d.shared ? d.role ?? "viewer" : "owner");
+  }
+  // Rows from before share_role_user existed carry a role and nobody beside
+  // it, which offline reads as nobody having said. Opening the document
+  // online writes the account in, and a document never opened again would
+  // stay unconfirmed for ever; the list names the same rows, so it does the
+  // writing. Only rows it names: a row it omits is already read as not this
+  // account's while the list is loaded, and gets nothing written.
+  if (remoteLoaded && principal) {
+    const named = new Map(remote.map((d) => [d.id, d]));
+    for (const f of local) {
+      const d = f.cloud_doc_id ? named.get(f.cloud_doc_id) : null;
+      if (!d) continue;
+      const role = d.shared ? (d.role === "editor" ? "editor" : "viewer") : "owner";
+      if (f.share_role === role && f.share_role_user === principal) continue;
+      registry.update(f.path, { share_role: role, share_role_user: principal });
+      f.share_role = role;
+      f.share_role_user = principal;
+    }
   }
   const byCloudId = new Map(local.filter((f) => f.cloud_doc_id).map((f) => [f.cloud_doc_id, f]));
   const items = local.map((f) => {

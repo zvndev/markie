@@ -67,34 +67,96 @@ function setToken(token: string | null): void {
   // that paired the new token with the old account is how one account's
   // remembered roles came to speak for another. me() sets it again once the
   // server says who this token belongs to. No token at all is a sign-out.
-  if (!token || token !== before) principal = null;
+  if (!token || token !== before) {
+    principal = null;
+    writeBinding(null);
+  }
   pushSyncConfig();
+}
+
+// The confirmed account, kept beside the token it was confirmed for, so a
+// launch with no network still knows whose remembered roles this device
+// holds: without it every one of them was refused for the length of the
+// outage, and the Cloud page had nothing to file. The token is already in
+// storage under TOKEN_KEY, so this adds no new secret.
+const PRINCIPAL_KEY = "markie.auth.principal.v1";
+
+interface PrincipalBinding {
+  token: string;
+  userId: string;
+}
+
+function readBinding(): PrincipalBinding | null {
+  try {
+    const raw = localStorage.getItem(PRINCIPAL_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PrincipalBinding> | null;
+    return parsed && typeof parsed.token === "string" && typeof parsed.userId === "string"
+      ? { token: parsed.token, userId: parsed.userId }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeBinding(binding: PrincipalBinding | null): void {
+  try {
+    if (binding) localStorage.setItem(PRINCIPAL_KEY, JSON.stringify(binding));
+    else localStorage.removeItem(PRINCIPAL_KEY);
+  } catch {
+    // storage unavailable
+  }
+}
+
+// The account from the last launch, when it was confirmed for exactly the
+// token in storage now. A binding for any other token is stale and dropped.
+function restorePrincipal(): string | null {
+  const bound = readBinding();
+  if (!bound) return null;
+  if (bound.token !== getToken()) {
+    writeBinding(null);
+    return null;
+  }
+  return bound.userId;
 }
 
 // Who the token belongs to, as the session store last confirmed. It lives here
 // because pushSyncConfig is called from places that do not have the user in
 // hand, and main needs the two together: a token with no principal cannot say
 // whose remembered roles it is reading.
-let principal: string | null = null;
+let principal: string | null = restorePrincipal();
 
 // Set from `me()` below and nowhere else, because that is the one call where
 // the server says who is signed in. A probe that failed says nothing about
 // that, and letting it erase the answer would throw away the evidence the
 // offline path depends on the moment the wifi drops. Signing out clears the
 // token, and setToken clears this with it.
-function setSyncPrincipal(userId: string): void {
+function confirmPrincipal(token: string, userId: string): void {
+  writeBinding({ token, userId });
   if (principal === userId) return;
   principal = userId;
   pushSyncConfig();
 }
 
+// The token main was last told about in this session. Main refuses a user
+// named in the same push as a token it has not seen, because that push cannot
+// prove the user was confirmed for it (see setConfig in electron/sync.js). So
+// a new token goes alone first and the account follows under it. Main's own
+// record starts empty, the same as this.
+let lastPushedToken: string | null = null;
+
 // Mirror the current token + server URL into the main-process sync engine.
 export function pushSyncConfig(): void {
-  getElectronAPI()?.syncConfig?.({
-    token: getToken(),
-    serverURL: getServerURL(),
-    userId: principal,
-  });
+  const bridge = getElectronAPI();
+  if (!bridge?.syncConfig) return;
+  const token = getToken();
+  const serverURL = getServerURL();
+  if (token !== lastPushedToken) {
+    lastPushedToken = token;
+    void bridge.syncConfig({ token, serverURL, userId: null });
+    if (!principal) return;
+  }
+  void bridge.syncConfig({ token, serverURL, userId: principal });
 }
 
 async function api<T>(
@@ -137,12 +199,21 @@ export const authClient = {
   health: () => api<{ ok: boolean }>("/health"),
 
   me: async (): Promise<MarkieUser | null> => {
+    // The answer is about the token that asked. When the session has moved
+    // to another token, or another server, by the time it lands, it describes
+    // a session this app no longer has, and publishing it would pair the old
+    // account with the new token in main. The auth store's ticket check sits
+    // above this and discards the answer too; this is the layer that keeps
+    // main honest, since the push used to happen before that check.
+    const asked = { token: getToken(), serverURL: getServerURL() };
     const res = await api<{ user: MarkieUser | null }>("/api/me");
+    if (getToken() !== asked.token || getServerURL() !== asked.serverURL) return null;
     const user = res.data?.user ?? null;
     // Main remembers what the server said about each document, and a role
     // means nothing without the account it was said to. This answer is the
-    // only place the account is confirmed, so it is where main is told.
-    if (user) setSyncPrincipal(user.id);
+    // only place the account is confirmed, so it is where main is told, and
+    // where the account is kept for the next launch.
+    if (user && asked.token) confirmPrincipal(asked.token, user.id);
     return user;
   },
 

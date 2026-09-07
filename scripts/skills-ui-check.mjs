@@ -5,12 +5,14 @@
 // The component tests drive the panel against the mock bridge, which proves the
 // wiring but not that the panel and the main process agree once a real catalog
 // is on the other side of the preload boundary. This one downloads
-// anthropics/skills for real, installs a skill into a throwaway HOME, and then
-// looks at the panel the way a person would.
+// anthropics/skills for real, installs a skill into a throwaway HOME, looks at
+// the panel the way a person would, and installs a second copy from the detail
+// pane itself so the button's enabled, working and done states are real ones.
 //
 // Nothing here may touch the developer's own ~/.claude, ~/.agents or ~/.codex,
 // which is why HOME is a fresh temp directory and the app runs with its own
 // profile.
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -202,8 +204,8 @@ async function main() {
   await waitFor("the catalog list", () => cdp.ev(`!!${PANEL}.querySelector('[data-skills-row]')`), 30000);
   const listText = await cdp.ev(text(`${PANEL}`));
   check("Discover lists the catalog, with its sources named", listText.includes("anthropics/skills"));
-  check("and says when it was last checked", /checked .* ago|checked just now/.test(listText),
-    (listText.match(/checked[^A-Z]{0,24}/) || [""])[0]);
+  check("and says when the catalog was last updated", /Catalog updated .* ago|Catalog updated just now/.test(listText),
+    (listText.match(/Catalog updated[^A-Z]{0,24}/) || [""])[0]);
   const discoverShot = await shoot(cdp, "discover");
   check("Discover screenshot written", true, discoverShot);
 
@@ -220,19 +222,68 @@ async function main() {
   const detailText = await cdp.ev(text(PANEL));
   check("the detail pane renders the SKILL.md body", detailText.length > 400, `${detailText.length} characters`);
   check("with the targets it can be added to", detailText.includes("Claude Code") && detailText.includes("Universal"));
+
+  // The pane is three parts: the identity pinned at the top, the document in
+  // the middle, and the install controls pinned at the bottom. The first and
+  // the last stay put; only the middle scrolls.
+  const IDENTITY = `${PANEL}.querySelector('[data-skills-identity]')`;
+  const INSTALL = `${PANEL}.querySelector('[data-skills-install]')`;
+  const SCROLLER = `${PANEL}.querySelector('[data-skills-preview]').closest('.overflow-y-auto')`;
+  const BUTTON = `${INSTALL}.querySelector('button')`;
+  const box = (label) => `${INSTALL}.querySelector('input[aria-label=${JSON.stringify(label)}]')`;
+  // Fully inside the panel's own box, so it is on screen without any scrolling.
+  const inView = (selector) =>
+    `(() => { const el = ${selector}; if (!el) return false; const r = el.getBoundingClientRect(); const p = ${PANEL}.getBoundingClientRect(); return r.height > 0 && r.top >= p.top - 1 && r.bottom <= p.bottom + 1; })()`;
+
   check(
-    "and Add to… is offered rather than an Add that says nothing",
-    await cdp.ev(`!!${PANEL}.querySelector('button')`) && /Add skill|Update/.test(detailText)
+    "the install button is in view before the document is scrolled",
+    (await cdp.ev(`${SCROLLER}.scrollTop`)) === 0 && (await cdp.ev(inView(BUTTON)))
+  );
+  check(
+    "the target Markie already installed to reads as Installed, not as a choice",
+    (await cdp.ev(`(() => { const b = ${box("Claude Code")}; return !!b && b.disabled && b.checked; })()`)) &&
+      (await cdp.ev(text(INSTALL))).includes("Installed")
+  );
+  check(
+    "and with nothing new ticked, the button waits and says why",
+    (await cdp.ev(`${BUTTON}.disabled`)) &&
+      (await cdp.ev(text(INSTALL))).includes("already has the current copy")
   );
   const detailShot = await shoot(cdp, "detail");
   check("detail screenshot written", true, detailShot);
 
-  // The Add to… block sits under the file list, so it takes a scroll to see.
-  await cdp.ev(
-    `(() => { const el = ${PANEL}.querySelector('[data-skills-preview]').closest('.overflow-y-auto'); el.scrollTop = el.scrollHeight; return true; })()`
+  await cdp.ev(`(() => { const el = ${SCROLLER}; el.scrollTop = el.scrollHeight; return true; })()`);
+  check(
+    "the skill's name stays in view when the document scrolls",
+    (await cdp.ev(inView(IDENTITY))) && (await cdp.ev(text(IDENTITY))).includes(pdf.name)
   );
+
+  // Ticking a target the skill is not in yet makes the button say where it is
+  // about to go, and lights it.
+  await cdp.ev(`${box("Codex")}.click(), true`);
+  await waitFor("the button to name Codex", () => cdp.ev(`${text(BUTTON)}.includes("Add to Codex")`), 10000);
+  check("ticking Codex makes the button say so, and enables it", !(await cdp.ev(`${BUTTON}.disabled`)));
   const addShot = await shoot(cdp, "detail-add-to");
-  check("Add to… screenshot written", true, addShot);
+  check("Add to Codex screenshot written", true, addShot);
+
+  // A real install from the pane, into the throwaway home.
+  await cdp.ev(`${BUTTON}.click(), true`);
+  await waitFor("the install to report", () => cdp.ev(`${text(INSTALL)}.includes("Added to")`), 30000);
+  const rows = await cdp.ev(`window.electronAPI.skillsInstalled()`);
+  const codexRow = (rows || []).find((r) => r.target === "codex" && r.name === pdf.name);
+  check(
+    "a skill installs from the pane, and the folder is where the registry says",
+    Boolean(codexRow) && existsSync(path.join(codexRow.path, "SKILL.md")),
+    codexRow?.path ?? "no registry row"
+  );
+  const codexSettled = await waitFor(
+    "Codex to read as Installed",
+    () => cdp.ev(`(() => { const b = ${box("Codex")}; return !!b && b.disabled && b.checked; })()`),
+    20000
+  ).catch(() => false);
+  check("and Codex now reads as Installed", Boolean(codexSettled));
+  const addedShot = await shoot(cdp, "detail-added");
+  check("added screenshot written", true, addedShot);
 
   // Back is a way out, not a dead end.
   await cdp.ev(

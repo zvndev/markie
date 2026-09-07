@@ -81,6 +81,24 @@ describe("which tool a file belongs to", () => {
   it("says nothing about a file that is not an agent file", () => {
     expect(skillGroupFor("/home/me/notes/today.md", "today.md")).toBeNull();
   });
+
+  it("takes the tool main decided from its roots, where the path says nothing", () => {
+    // CODEX_HOME moved to ~/.config/codex: there is no /.codex/ to read.
+    const path = "/home/me/.config/codex/skills/x/SKILL.md";
+    expect(skillGroupFor(path, "SKILL.md", { tool: "codex", description: "Does x" })).toBe("codex");
+    // Pinned so the fallback stays visible: a row without the field is
+    // classified by its path, and this path classifies as nothing.
+    expect(skillGroupFor(path, "SKILL.md")).toBeNull();
+  });
+
+  it("keeps a project skill under Claude when main calls it no tool's", () => {
+    expect(
+      skillGroupFor("/home/me/work/app/.claude/skills/x/SKILL.md", "SKILL.md", {
+        tool: null,
+        description: null,
+      })
+    ).toBe("claude");
+  });
 });
 
 describe("targets", () => {

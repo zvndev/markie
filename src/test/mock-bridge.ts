@@ -251,6 +251,9 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     skillsInstall: vi.fn(async () => ({ installed: [], errors: [] })),
     skillsRemove: vi.fn(async () => ({ ok: true })),
     skillsInstalled: vi.fn(async () => []),
+    // No cached folder by default, so a preview resolves its pictures the way
+    // it did before the channel existed; a test that wants one supplies it.
+    skillsSkillDir: vi.fn(async () => ({ error: "not cached" })),
   } as unknown as ElectronAPI;
 
   return Object.assign(bridge, overrides);

@@ -6,7 +6,7 @@ import { StarterKit } from "@tiptap/starter-kit";
 import { TableKit } from "@tiptap/extension-table";
 import { TaskList } from "@tiptap/extension-task-list";
 import { TaskItem } from "@tiptap/extension-task-item";
-import { Image } from "@tiptap/extension-image";
+import { Image, type ImageOptions } from "@tiptap/extension-image";
 import { ResizableNodeView, type NodeViewRendererProps } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import {
@@ -30,11 +30,24 @@ import {
 import { Markdown } from "tiptap-markdown";
 import type { AnyExtension } from "@tiptap/react";
 
+interface LocalImageOptions extends ImageOptions {
+  // Where a relative src resolves when this editor is not showing the open
+  // document. A SKILL.md previewed out of the catalog cache has its pictures
+  // beside its own file, and the module-level base in asset-url.ts belongs to
+  // the document in the editor. Null means that document's folder.
+  assetBaseDir: string | null;
+}
+
 // The src that goes into the DOM is not the src that stays in the document.
 // `demo/shot.png` has to become an addressable URL to render at all, but the
 // node keeps what the author wrote, so serializing back to markdown gives the
 // file its own relative path again rather than an absolute one nobody typed.
-const LocalImage = Image.extend({
+const LocalImage = Image.extend<LocalImageOptions>({
+  addOptions() {
+    // The parent is Image's own addOptions, always present; the type cannot
+    // see that.
+    return { ...(this.parent?.() as ImageOptions), assetBaseDir: null };
+  },
   // A video is still the image node: markdown has one embed syntax, the
   // serializer writes `![alt](src)` from this node, and that is what keeps a
   // document with a clip in it a plain markdown document. Only the rendered
@@ -68,6 +81,9 @@ const LocalImage = Image.extend({
     return [kind, { ...HTMLAttributes, controls: "true", preload: "metadata" }];
   },
   addAttributes() {
+    // Read here, once per editor: the attribute's renderHTML is called by
+    // ProseMirror with no extension context of its own.
+    const { assetBaseDir } = this.options;
     return {
       ...this.parent?.(),
       src: {
@@ -81,7 +97,7 @@ const LocalImage = Image.extend({
         renderHTML: (attributes: Record<string, unknown>) => {
           const original = typeof attributes.src === "string" ? attributes.src : null;
           if (!original) return {};
-          const resolved = resolveAssetSrc(original);
+          const resolved = resolveAssetSrc(original, assetBaseDir);
           return resolved === original
             ? { src: original }
             : { src: resolved, "data-markie-src": original };
@@ -191,7 +207,7 @@ const LocalImage = Image.extend({
 });
 
 export function richBaseExtensions(
-  opts: { collab?: boolean } = {}
+  opts: { collab?: boolean; assetBaseDir?: string | null } = {}
 ): AnyExtension[] {
   return [
     // Collaboration replaces local undo history with the shared Yjs one.
@@ -212,7 +228,7 @@ export function richBaseExtensions(
     // with its pictures inlined lost every one of them on the way into the
     // editor, silently, with an empty paragraph where each had been. That is
     // the format a report arrives in when it has to travel as one file.
-    LocalImage.configure({ allowBase64: true }),
+    LocalImage.configure({ allowBase64: true, assetBaseDir: opts.assetBaseDir ?? null }),
     // A video link alone on its line, as a card. The file keeps the bare
     // URL; see rich-embed.ts.
     EmbedNode,

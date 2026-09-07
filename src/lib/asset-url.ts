@@ -56,13 +56,19 @@ function hasScheme(src: string): boolean {
 
 /**
  * The URL to put in the DOM for a document's image reference.
+ *
+ * Resolves against `base` when one is handed in, else against the open
+ * document's folder. The module-level base is the open document's by design,
+ * and a file previewed from somewhere else (a SKILL.md out of the catalog
+ * cache) has its pictures beside its own file, not beside whatever is open.
  * Returns the src unchanged when it is not a local file reference, or when
- * there is no open document to resolve it against.
+ * there is nothing to resolve it against.
  */
-export function resolveAssetSrc(src: string | null | undefined): string {
+export function resolveAssetSrc(src: string | null | undefined, base?: string | null): string {
   const raw = typeof src === "string" ? src.trim() : "";
   if (!raw || hasScheme(raw)) return raw;
-  if (!baseDir) return raw;
+  const dir = base && base.trim() ? base : baseDir;
+  if (!dir) return raw;
 
   // Strip the query and hash the way a browser would before treating what is
   // left as a path, then put nothing back: a local file has no cache buster.
@@ -76,7 +82,7 @@ export function resolveAssetSrc(src: string | null | undefined): string {
     decoded = bare; // a stray % is not a reason to drop the picture
   }
 
-  const absolute = decoded.startsWith("/") ? decoded : joinPath(baseDir, decoded);
+  const absolute = decoded.startsWith("/") ? decoded : joinPath(dir, decoded);
   return `${ASSET_ORIGIN}/${encodeURIComponent(absolute)}`;
 }
 

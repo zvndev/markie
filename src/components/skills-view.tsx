@@ -466,7 +466,7 @@ function InstalledTab({
     const perGroup = new Map<SkillGroupId, MdRow[]>();
     for (const r of rows) {
       if (agentFileKind(r.path, r.name) !== "skill") continue;
-      const group = skillGroupFor(r.path, r.name);
+      const group = skillGroupFor(r.path, r.name, r.skill);
       if (!group) continue;
       const list = perGroup.get(group);
       if (list) list.push(r);
@@ -480,7 +480,10 @@ function InstalledTab({
           group,
           label,
           openPath: file.path,
-          description: null,
+          // The front matter's description, when the index read it. A skill
+          // installed by hand is not in the registry, so this is the only
+          // place its description can come from.
+          description: file.skill?.description ?? null,
           installed: null,
           projectName: null,
           destinations: [],
@@ -503,7 +506,7 @@ function InstalledTab({
       const destinations = places.get(`${row.source ?? ""}::${row.name}`) ?? [];
       if (existing) {
         existing.installed = row;
-        existing.description = row.description;
+        existing.description = row.description ?? existing.description;
         existing.projectName = projectName;
         existing.destinations = destinations;
         // The recorded target beats the path: Claude Code and Codex both let
@@ -1016,31 +1019,44 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
   // the hit's id straight into the catalog opened an empty detail and made the
   // install fail, for the default source and every other container-based
   // repository. So the hit is matched against the catalog it belongs to, and
-  // when the source had to be added first, against the catalog that came back.
+  // when that catalog had to be fetched first, against the one that came back.
+  //
+  // A chip is not a catalog, either. After a partial refresh a built-in source
+  // keeps its chip whether or not its download succeeded, so "is it a source"
+  // was the wrong question: a source is loaded when its catalog is here
+  // (fetched, and the fetch did not fail). One that is not gets fetched by
+  // name before the hit is resolved, the way an unknown one is added first.
   const openHit = (hit: SearchHit) => {
-    const known = catalog.sources.some((s) => s.id === hit.source);
-    if (known || !api.skillsCatalogAddSource) {
-      const found = resolveHit(hit, catalog.skills);
+    const open = (skills: CatalogSkill[]) => {
+      const found = resolveHit(hit, skills);
       setSelected({
         id: found?.id ?? null,
         name: found?.name ?? hit.name,
         source: hit.source,
       });
+    };
+    const source = catalog.sources.find((s) => s.id === hit.source);
+    const loaded = !!source && !!source.fetchedAt && !source.error;
+    // What is here already answers, whatever the last fetch said about it.
+    if (loaded || resolveHit(hit, catalog.skills)) {
+      open(catalog.skills);
       return;
     }
     // A repository has to be a source before its skills can be read, and
     // adding one is also what fetches it.
+    const fetched = source
+      ? api.skillsCatalogRefresh?.(hit.source)
+      : api.skillsCatalogAddSource?.(hit.source);
+    if (!fetched) {
+      open(catalog.skills);
+      return;
+    }
     setRefreshing(true);
-    api.skillsCatalogAddSource(hit.source)
+    fetched
       .then((next) => {
         apply(next);
         if (!mounted.current) return;
-        const found = next ? resolveHit(hit, next.skills ?? []) : null;
-        setSelected({
-          id: found?.id ?? null,
-          name: found?.name ?? hit.name,
-          source: hit.source,
-        });
+        open(next?.skills ?? []);
       })
       .catch(() => {
         if (mounted.current) setSelected({ id: null, name: hit.name, source: hit.source });
@@ -1055,10 +1071,13 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
     [catalog.skills, query]
   );
 
-  const extraHits = useMemo(() => {
-    const local = new Set(shown.map((s) => s.id));
-    return hits.filter((h) => !local.has(h.id));
-  }, [hits, shown]);
+  // A hit that resolves to a row already on screen is that row. Comparing
+  // ids drew `anthropics/skills/pdf` under the loaded
+  // `anthropics/skills/skills/pdf`, which is the same skill twice.
+  const extraHits = useMemo(
+    () => hits.filter((hit) => !resolveHit(hit, shown)),
+    [hits, shown]
+  );
 
   const checked = describeChecked(newestFetchedAt(catalog.sources), now);
 
@@ -1325,7 +1344,13 @@ function SkillDetail({
   onBack: () => void;
   onInstalled: () => void;
 }) {
-  const [doc, setDoc] = useState<{ body: string; files: SkillFile[] } | null>(null);
+  // The SKILL.md, its files, and the cached folder they sit in, which is what
+  // the preview resolves the document's own pictures against.
+  const [doc, setDoc] = useState<{
+    body: string;
+    files: SkillFile[];
+    dir: string | null;
+  } | null>(null);
   const [loading, setLoading] = useState(!!id);
   // What was ticked last time, read once. The tool targets are taken as they
   // were; the project one is a target only if that folder is still open, which
@@ -1346,6 +1371,9 @@ function SkillDetail({
     ReturnType<NonNullable<ElectronAPI["skillsInstall"]>>
   > | null>(null);
 
+  const name = skill?.name ?? fallbackName;
+  const source = skill?.source ?? fallbackSource;
+
   useEffect(() => {
     if (!id) {
       setDoc(null);
@@ -1354,23 +1382,41 @@ function SkillDetail({
     }
     let alive = true;
     setLoading(true);
-    api.skillsRead?.(id)
-      .then((read) => {
+    // The folder is asked for alongside the body and waited for with it,
+    // because the preview reads its base once, when it is built. A main
+    // without the channel, or without this skill cached, leaves the preview
+    // resolving pictures the way it always did: against the open document.
+    const folder: Promise<string | null> = api.skillsSkillDir
+      ? api.skillsSkillDir(source, id)
+          .then((answer) =>
+            answer && "dir" in answer && typeof answer.dir === "string" && answer.dir
+              ? answer.dir
+              : null
+          )
+          .catch(() => null)
+      : Promise.resolve(null);
+    const body = api.skillsRead ? api.skillsRead(id) : Promise.resolve(null);
+    Promise.all([body, folder])
+      .then(([read, dir]) => {
         if (!alive) return;
         // A failure answers `{ body: "", files: [] }`, which draws as the empty
         // state below rather than as a crash.
-        setDoc(read && typeof read.body === "string" ? read : { body: "", files: [] });
+        setDoc(
+          read && typeof read.body === "string"
+            ? { body: read.body, files: read.files ?? [], dir }
+            : { body: "", files: [], dir }
+        );
         setLoading(false);
       })
       .catch(() => {
         if (!alive) return;
-        setDoc({ body: "", files: [] });
+        setDoc({ body: "", files: [], dir: null });
         setLoading(false);
       });
     return () => {
       alive = false;
     };
-  }, [api, id]);
+  }, [api, id, source]);
 
   useEffect(() => {
     let alive = true;
@@ -1475,8 +1521,6 @@ function SkillDetail({
       .finally(() => setRunning(false));
   };
 
-  const name = skill?.name ?? fallbackName;
-  const source = skill?.source ?? fallbackSource;
   const chip = licenseChip(skill?.license);
 
   return (
@@ -1545,7 +1589,7 @@ function SkillDetail({
               {loading ? (
                 <div className={`${EDGE} py-3 text-[12px] text-muted`}>Reading SKILL.md…</div>
               ) : doc && doc.body ? (
-                <RichView value={doc.body} onChange={() => {}} readOnly />
+                <RichView value={doc.body} onChange={() => {}} readOnly assetBaseDir={doc.dir} />
               ) : (
                 <div className={`${EDGE} py-3 text-[12px] text-muted`}>
                   Markie couldn&apos;t read this skill&apos;s SKILL.md. Refresh its source and try

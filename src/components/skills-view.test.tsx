@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Catalog,
   CatalogSkill,
@@ -11,6 +11,7 @@ import type {
   SkillSource,
 } from "@/lib/electron";
 import { installBridge } from "@/test/mock-bridge";
+import { getAssetBaseDir, setAssetBaseDir } from "@/lib/asset-url";
 import { SkillsView } from "./skills-view";
 
 const HOME = "/Users/me";
@@ -98,6 +99,12 @@ const catalogRow = (id: string) =>
 beforeEach(() => {
   localStorage.clear();
 });
+
+afterEach(() => setAssetBaseDir(null));
+
+/** The path a markie-asset:// url addresses. */
+const assetPath = (src: string | null) =>
+  decodeURIComponent(String(src ?? "").replace("markie-asset://local/", ""));
 
 describe("the two tabs", () => {
   it("opens on Installed and moves to Discover", async () => {
@@ -318,6 +325,30 @@ describe("Installed", () => {
     expect(await screen.findByText("Markie did not install that folder.")).toBeInTheDocument();
   });
 
+  it("groups a skill in a moved Codex home by what main says, and shows its description", async () => {
+    const user = userEvent.setup();
+    // Nothing in this path says Codex; the row does.
+    const path = "/home/me/.config/codex/skills/x/SKILL.md";
+    renderSkills({
+      mdIndexScan: vi.fn(async () =>
+        scan([{ ...mdRow(path), skill: { tool: "codex", description: "Does x" } }])
+      ),
+    });
+    expect(await screen.findByText("x")).toBeInTheDocument();
+    expect(screen.getByText("Codex")).toBeInTheDocument();
+    expect(screen.getByText("Does x")).toBeInTheDocument();
+    // A description the index supplied is one the filter can find.
+    await user.type(screen.getByLabelText("Filter skills and agent files"), "does");
+    expect(screen.getByText("x")).toBeInTheDocument();
+  });
+
+  it("shows nothing for that path when the row does not carry the field", async () => {
+    renderSkills({
+      mdIndexScan: vi.fn(async () => scan([mdRow("/home/me/.config/codex/skills/x/SKILL.md")])),
+    });
+    expect(await screen.findByText(/No agent files found/)).toBeInTheDocument();
+  });
+
   it("opens with Skills showing and everything else folded", async () => {
     renderSkills({ mdIndexScan: vi.fn(async () => scan(rows)) });
     await screen.findByText("pdf");
@@ -453,7 +484,7 @@ describe("Discover", () => {
   it("opens a skills.sh hit at the catalog entry it means, not at its own id", async () => {
     const user = userEvent.setup();
     const skillsRead = vi.fn(async () => ({ body: "Fill in PDF forms.", files: [] }));
-    renderSkills({
+    const { api } = renderSkills({
       // The hit's own id would find nothing here; only the entry does.
       skillsCatalogList: vi.fn(async () => containerCatalog()),
       skillsSearch: vi.fn(async () => [{ ...PDF_HIT, name: "pdf forms" }]),
@@ -461,10 +492,15 @@ describe("Discover", () => {
     });
     await openDiscover(user);
     await screen.findByText("xlsx");
-    await user.type(screen.getByLabelText("Search skills"), "forms");
+    // A word skills.sh knows and the catalog's own name and description do
+    // not, so the hit is listed rather than folded into the loaded row.
+    await user.type(screen.getByLabelText("Search skills"), "acroform");
 
     await user.click(await screen.findByText("pdf forms"));
     await waitFor(() => expect(skillsRead).toHaveBeenCalledWith("anthropics/skills/skills/pdf"));
+    // The source's catalog is here, so nothing is fetched on the way.
+    expect(api.skillsCatalogRefresh).not.toHaveBeenCalled();
+    expect(api.skillsCatalogAddSource).not.toHaveBeenCalled();
   });
 
   it("adds the repository behind a hit, then resolves against the catalog that came back", async () => {
@@ -505,6 +541,70 @@ describe("Discover", () => {
     await waitFor(() =>
       expect(skillsRead).toHaveBeenCalledWith("obra/superpowers/skills/brainstorming")
     );
+  });
+
+  it("refreshes a source whose catalog never arrived, then opens the hit in what came back", async () => {
+    const user = userEvent.setup();
+    // A partial refresh leaves every built-in source with a chip, catalog or
+    // no catalog. The chip alone used to count as "loaded", and the hit
+    // opened a dead end instead of fetching the repository it names.
+    const skillsCatalogRefresh = vi.fn(async () => containerCatalog());
+    const skillsCatalogAddSource = vi.fn(async () => containerCatalog());
+    const skillsRead = vi.fn(async () => ({ body: "Fill in PDF forms.", files: [] }));
+    renderSkills({
+      skillsCatalogList: vi.fn(async () =>
+        catalog({
+          sources: [
+            source("anthropics/skills", { fetchedAt: null, commit: null, error: "GitHub answered 403." }),
+            source("obra/superpowers", { builtin: false }),
+          ],
+          // Something from another source, so the tab's own first-open
+          // catch-up does not fetch everything before the click.
+          skills: [
+            skill({
+              id: "obra/superpowers/skills/brainstorming",
+              source: "obra/superpowers",
+              skillPath: "skills/brainstorming",
+              name: "brainstorming",
+              description: "How to brainstorm.",
+            }),
+          ],
+        })
+      ),
+      skillsCatalogRefresh,
+      skillsCatalogAddSource,
+      skillsSearch: vi.fn(async () => [PDF_HIT]),
+      skillsRead,
+    });
+    await openDiscover(user);
+    await screen.findByText("brainstorming");
+    await user.type(screen.getByLabelText("Search skills"), "pdf");
+
+    await user.click(await screen.findByText("pdf"));
+    expect(skillsCatalogRefresh).toHaveBeenCalledWith("anthropics/skills");
+    // It is a source already; it does not get added twice.
+    expect(skillsCatalogAddSource).not.toHaveBeenCalled();
+    await waitFor(() => expect(skillsRead).toHaveBeenCalledWith("anthropics/skills/skills/pdf"));
+  });
+
+  it("shows a loaded skill once, not beside its own skills.sh listing", async () => {
+    const user = userEvent.setup();
+    renderSkills({
+      skillsCatalogList: vi.fn(async () => containerCatalog()),
+      // The catalog's pdf and skills.sh's pdf are the same skill under two
+      // ids; the second hit is there so the group's arrival can be awaited.
+      skillsSearch: vi.fn(async () => [
+        PDF_HIT,
+        { id: "someone/else/pdf-tools", name: "pdf-tools", source: "someone/else", installs: 4 },
+      ]),
+    });
+    await openDiscover(user);
+    await screen.findByText("xlsx");
+    await user.type(screen.getByLabelText("Search skills"), "pdf");
+
+    expect(await screen.findByText("pdf-tools")).toBeInTheDocument();
+    expect(screen.getAllByText("pdf")).toHaveLength(1);
+    expect(document.querySelector('[data-skills-hit="anthropics/skills/pdf"]')).toBeNull();
   });
 
   it("says so in the detail area when a hit matches nothing in its source", async () => {
@@ -791,6 +891,53 @@ describe("one skill, in full", () => {
       "/Users/me/Work/Beta"
     );
     expect(screen.getByRole("button", { name: "Add to Beta" })).toBeEnabled();
+  });
+
+  const withPicture = "Fill in forms.\n\n![demo](assets/demo.png)\n";
+  const previewImage = () =>
+    waitFor(() => {
+      const el = document.querySelector("[data-skills-preview] img");
+      expect(el).not.toBeNull();
+      return el as HTMLImageElement;
+    });
+
+  it("shows the skill's own pictures, and leaves the open document's base alone", async () => {
+    setAssetBaseDir("/Users/me/report");
+    const dir = "/Users/me/Library/Application Support/Markie/skill-cache/anthropics/skills/41bbe19d/pdf";
+    const skillsSkillDir = vi.fn(async () => ({ dir }));
+    const user = userEvent.setup();
+    renderSkills(
+      detailApi({
+        skillsRead: vi.fn(async () => ({ body: withPicture, files: [] })),
+        skillsSkillDir,
+      })
+    );
+    await open(user);
+
+    await screen.findByText("Fill in forms.");
+    expect(skillsSkillDir).toHaveBeenCalledWith("anthropics/skills", "anthropics/skills/pdf");
+    expect(assetPath((await previewImage()).getAttribute("src"))).toBe(`${dir}/assets/demo.png`);
+    expect(getAssetBaseDir()).toBe("/Users/me/report");
+  });
+
+  it("resolves pictures the way it always did when main has no folder to offer", async () => {
+    // An older main has no channel; a newer one may not have the skill cached.
+    for (const skillsSkillDir of [undefined, vi.fn(async () => ({ error: "not cached" }))]) {
+      cleanup();
+      setAssetBaseDir("/Users/me/report");
+      const user = userEvent.setup();
+      renderSkills(
+        detailApi({
+          skillsRead: vi.fn(async () => ({ body: withPicture, files: [] })),
+          skillsSkillDir,
+        })
+      );
+      await open(user);
+      await screen.findByText("Fill in forms.");
+      expect(assetPath((await previewImage()).getAttribute("src"))).toBe(
+        "/Users/me/report/assets/demo.png"
+      );
+    }
   });
 
   it("comes back to the list", async () => {

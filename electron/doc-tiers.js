@@ -39,24 +39,29 @@ function tierForSize(size) {
  * open it in Source view. One descriptor serves both the measurement and the
  * read: an editor or agent renaming a different file over the path between a
  * stat and a read would otherwise hand back that file's bytes under the first
- * file's size, which is how something over the cap could slip through. `io`
- * exists for tests, which must not need a 100 MB file.
+ * file's size, which is how something over the cap could slip through. The
+ * bytes that came back are classified again before they are decoded: a file
+ * appended to in place between the stat and the read is not the size that
+ * was measured, and the tier has to describe what the renderer would get.
+ * `io` exists for tests, which must not need a 100 MB file.
  *
  * Returns `{ tooLarge: true, size }` or `{ content, size, large }`. Throws
  * what fs throws for a path that cannot be opened; the caller already turns
  * that into "nothing opened".
  *
  * @param {string} filePath
- * @param {{ openSync(p: string, flags: "r"): number, fstatSync(fd: number): { size: number }, readFileSync(fd: number, encoding: "utf-8"): string, closeSync(fd: number): void }} [io]
+ * @param {{ openSync(p: string, flags: "r"): number, fstatSync(fd: number): { size: number }, readFileSync(fd: number): Buffer, closeSync(fd: number): void }} [io]
  */
 function readDocumentTiered(filePath, io = fs) {
   const fd = io.openSync(filePath, "r");
   try {
-    const size = io.fstatSync(fd).size;
+    const measured = io.fstatSync(fd).size;
+    if (tierForSize(measured) === "tooLarge") return { tooLarge: true, size: measured };
+    const bytes = io.readFileSync(fd);
+    const size = bytes.length;
     const tier = tierForSize(size);
     if (tier === "tooLarge") return { tooLarge: true, size };
-    const content = io.readFileSync(fd, "utf-8");
-    return { content, size, large: tier === "large" };
+    return { content: bytes.toString("utf-8"), size, large: tier === "large" };
   } finally {
     io.closeSync(fd);
   }

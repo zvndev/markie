@@ -47,10 +47,10 @@ describe("document size tiers", () => {
 
   // A fake descriptor: the read must come from the descriptor that was
   // measured, never from the path again.
-  const fdIo = (size: number, text: string) => ({
+  const fdIo = (size: number, bytes: string | Buffer) => ({
     openSync: vi.fn(() => 7),
     fstatSync: vi.fn(() => ({ size })),
-    readFileSync: vi.fn(() => text),
+    readFileSync: vi.fn(() => (typeof bytes === "string" ? Buffer.from(bytes, "utf-8") : bytes)),
     closeSync: vi.fn(),
   });
 
@@ -62,19 +62,34 @@ describe("document size tiers", () => {
   });
 
   it("reads and flags a large file through the descriptor it measured", () => {
-    const io = fdIo(4_400_000, "# big\n");
+    const io = fdIo(4_400_000, Buffer.alloc(4_400_000, "#"));
     expect(readDocumentTiered("/big/file.md", io)).toEqual({
-      content: "# big\n",
+      content: "#".repeat(4_400_000),
       size: 4_400_000,
       large: true,
     });
-    expect(io.readFileSync).toHaveBeenCalledWith(7, "utf-8");
+    expect(io.readFileSync).toHaveBeenCalledWith(7);
     expect(io.closeSync).toHaveBeenCalledWith(7);
   });
 
   it("reads an ordinary file and says it is not large", () => {
-    const io = fdIo(12, "# small\n");
-    expect(readDocumentTiered("/notes.md", io)).toEqual({ content: "# small\n", size: 12, large: false });
+    const io = fdIo(8, "# small\n");
+    expect(readDocumentTiered("/notes.md", io)).toEqual({ content: "# small\n", size: 8, large: false });
+  });
+
+  it("tiers the bytes it read, not the size it measured a moment earlier", () => {
+    // Something appended in place between the stat and the read: the bytes
+    // that came back are what the renderer would get, so they set the tier.
+    const grownPastCap = fdIo(12, Buffer.alloc(143_000_000));
+    expect(readDocumentTiered("/growing.md", grownPastCap)).toEqual({ tooLarge: true, size: 143_000_000 });
+    expect(grownPastCap.closeSync).toHaveBeenCalledWith(7);
+
+    const grownLarge = fdIo(12, Buffer.alloc(LARGE_DOC_BYTES, "x"));
+    expect(readDocumentTiered("/growing.md", grownLarge)).toEqual({
+      content: "x".repeat(LARGE_DOC_BYTES),
+      size: LARGE_DOC_BYTES,
+      large: true,
+    });
   });
 
   it("reads the bytes of the file it measured, not whatever the path names by then", () => {

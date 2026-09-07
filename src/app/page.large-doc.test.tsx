@@ -263,4 +263,65 @@ describe("large documents", () => {
     await waitFor(() => expect(largeStrip()).toBeNull(), { timeout: 3000 });
     expect(modeButton(/rich mode/i).disabled).toBe(false);
   });
+
+  it("keeps saving a document edited past the cap, and the strip says what that means", async () => {
+    const saveFile = vi.fn(async () => ({ success: true, path: SMALL.path }));
+    installBridge({ getInitialFile: vi.fn(async () => SMALL), saveFile } as Partial<ElectronAPI>);
+    render(<Home />);
+    await waitFor(() => expect(richPane()).not.toBeNull());
+    fireEvent.keyDown(window, { key: "2", metaKey: true });
+    await waitFor(() => expect(sourceEditor()).not.toBeNull());
+    const view = EditorView.findFromDOM(sourceEditor() as HTMLElement)!;
+
+    // A paste that takes the document past the cap. Refusing to write the
+    // user's bytes would be the loss; a file Markie will not reopen is not.
+    const pasted = "HUGE:" + "x".repeat(340_000);
+    view.dispatch({ changes: { from: 0, insert: pasted } });
+    await waitFor(() => expect(largeStrip()).not.toBeNull(), { timeout: 3000 });
+    expect(largeStrip()!.textContent).toContain(
+      "This document is now 143 MB, more than Markie opens (100 MB). It still saves, but Markie will not open it again until it is smaller."
+    );
+    expect(refusalStrip()).toBeNull();
+    expect(richPane()).toBeNull();
+    expect(modeButton(/rich mode/i).disabled).toBe(true);
+
+    emit("onMenuSave", undefined);
+    await waitFor(() => expect(saveFile).toHaveBeenCalled());
+    expect((saveFile.mock.calls[0] as unknown as [{ content: string }])[0].content.startsWith("HUGE:")).toBe(true);
+
+    // Trimmed back below the line: an ordinary document again.
+    view.dispatch({ changes: { from: 0, to: pasted.length, insert: "" } });
+    await waitFor(() => expect(largeStrip()).toBeNull(), { timeout: 3000 });
+    expect(modeButton(/rich mode/i).disabled).toBe(false);
+  });
+
+  it("tiers a converted file by what was converted, not by the file", async () => {
+    // A 600 KB CSV whose markdown table is 1.2 MB: every cell gains its
+    // separators on the way in (src/lib/csv.ts). Main sent the file's size;
+    // the buffer is measured for real.
+    const row = Array(100).fill("x").join(",") + "\n";
+    const csv = row.repeat(3000);
+    const registryTrack = vi.fn(async () => ({ ok: true }));
+    installBridge({
+      getInitialFile: vi.fn(async () => ({
+        name: "data.csv",
+        path: "/notes/data.csv",
+        content: csv,
+        size: csv.length,
+        large: false,
+      })),
+      registryTrack,
+    } as Partial<ElectronAPI>);
+    render(<Home />);
+    await waitFor(() => expect(largeStrip()).not.toBeNull());
+    expect(largeStrip()!.textContent).toContain("Large document (1.2 MB)");
+    expect(richPane()).toBeNull();
+    expect(modeButton(/source mode/i).getAttribute("aria-pressed")).toBe("true");
+    expect(modeButton(/rich mode/i).disabled).toBe(true);
+    await waitFor(() => expect(sourceEditor()).not.toBeNull());
+    // Never offered to the rich pipeline, so nothing was probed; and main read
+    // a 600 KB file it did not call large, so the registry row is made here.
+    expect(probe).not.toHaveBeenCalled();
+    expect(registryTrack).toHaveBeenCalledTimes(1);
+  });
 });

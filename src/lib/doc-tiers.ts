@@ -42,6 +42,12 @@ export function tooLargeMessage(size: number): string {
 
 /** The quiet strip above a document that opened in Source view. */
 export function largeDocumentNote(size: number): string {
+  // A document is over the cap in memory only: a file that size is refused
+  // before it is read, so this is a buffer edited or converted past it. It
+  // still saves; what it cannot do is come back in through that refusal.
+  if (tierForSize(size) === "tooLarge") {
+    return `This document is now ${formatMegabytes(size)}, more than Markie opens (${formatMegabytes(MAX_DOC_BYTES)}). It still saves, but Markie will not open it again until it is smaller.`;
+  }
   return `Large document (${formatMegabytes(size)}). Opened in source view; rich editing and live collaboration are off for files over ${formatMegabytes(LARGE_DOC_BYTES)}.`;
 }
 

@@ -41,7 +41,14 @@ import { ConflictDialog } from "@/components/conflict-dialog";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
 import { DraftStrip } from "@/components/draft-strip";
 import { LargeDocStrip, TooLargeStrip } from "@/components/large-doc";
-import { LARGE_DOC_BYTES, measureBytes, tierForSize, type RefusalVerb } from "@/lib/doc-tiers";
+import {
+  LARGE_DOC_BYTES,
+  MAX_DOC_BYTES,
+  measureBytes,
+  tierForSize,
+  type DocTier,
+  type RefusalVerb,
+} from "@/lib/doc-tiers";
 import { isTooLarge, type OpenResult, type TooLargePayload } from "@/lib/electron";
 import { HistoryDialog } from "@/components/history-dialog";
 import { diskChangeKind } from "@/lib/disk-change";
@@ -262,6 +269,10 @@ export default function Home() {
   const [largeDocSize, setLargeDocSize] = useState<number | null>(null);
   const [refusedDoc, setRefusedDoc] = useState<{ name: string; size: number; verb?: RefusalVerb } | null>(null);
   const largeDocRef = useRef(false);
+  // The tier itself, kept apart from the boolean because an edit can carry
+  // a document past the cap as well as past the large line, and the
+  // re-tiering effect below has to tell those apart.
+  const tierRef = useRef<DocTier>("ok");
   const modeRef = useRef<ViewMode>("preview");
   // The mode a large document displaced, given back with the next ordinary one.
   const modeBeforeLargeRef = useRef<ViewMode | null>(null);
@@ -586,11 +597,15 @@ export default function Home() {
   // still a large document. A large one opens in Source view and stays there:
   // no rich pane, so no probe, no warm-up and no journal, and no live session
   // (see refreshCollab). The mode it displaced comes back with the next
-  // ordinary document. Returns whether the document is large.
+  // ordinary document. A buffer over the cap (only an edit or a conversion
+  // can get one there; a file that size is refused unread) is a large one
+  // whose strip says what that means. Returns whether the document is large.
   const enterTier = useCallback(
     (md: string, path: string | null, size?: number): boolean => {
       const bytes = size ?? measureBytes(md);
-      const large = tierForSize(bytes) !== "ok";
+      const tier = tierForSize(bytes);
+      tierRef.current = tier;
+      const large = tier !== "ok";
       largeDocRef.current = large;
       if (large) {
         setLargeDocSize(bytes);
@@ -617,23 +632,31 @@ export default function Home() {
     refreshCollabRef.current();
   }, [largeTier]);
 
-  // Edits can carry a document across the line in either direction: a paste
-  // that takes a source document past it must not leave Rich on offer (that
-  // is the freeze the tier exists to prevent), and a large document trimmed
-  // below it gets Rich back. Measured a beat after typing stops, and only
-  // when the character count cannot settle it: UTF-8 spends one to three
-  // bytes per character, so a document under a third of the line in
-  // characters is under it in bytes, and one past the line in characters is
-  // past it in bytes. Nearly every keystroke in nearly every document exits
-  // here without touching the text.
+  // Edits can carry a document across either line in either direction: a
+  // paste that takes a source document past the large line must not leave
+  // Rich on offer (that is the freeze the tier exists to prevent), a large
+  // document trimmed below it gets Rich back, and one edited past the cap
+  // keeps its buffer and its saves while the strip says what that means
+  // (largeDocumentNote). Measured a beat after typing stops, and only when
+  // the character count cannot settle it: UTF-8 spends one to three bytes
+  // per character, so a document under a third of a line in characters is
+  // under it in bytes, and one past a line in characters is past it in
+  // bytes. Nearly every keystroke in nearly every document exits here
+  // without touching the text.
   useEffect(() => {
     if (!booted) return;
     const timer = setTimeout(() => {
       const chars = content.length;
-      if (largeDocRef.current ? chars >= LARGE_DOC_BYTES : chars * 3 < LARGE_DOC_BYTES) return;
+      const tier = tierRef.current;
+      const settledByLength =
+        tier === "ok"
+          ? chars * 3 < LARGE_DOC_BYTES
+          : tier === "large"
+            ? chars >= LARGE_DOC_BYTES && chars * 3 < MAX_DOC_BYTES
+            : chars >= MAX_DOC_BYTES;
+      if (settledByLength) return;
       const bytes = measureBytes(content);
-      const large = tierForSize(bytes) !== "ok";
-      if (large !== largeDocRef.current) enterTier(content, filePath, bytes);
+      if (tierForSize(bytes) !== tierRef.current) enterTier(content, filePath, bytes);
     }, EDIT_TIER_DELAY_MS);
     return () => clearTimeout(timer);
   }, [content, filePath, booted, enterTier]);
@@ -802,10 +825,17 @@ export default function Home() {
       // must show as dirty until the user saves (or discards) the revert.
       loadDoc({ name: data.name, content: md, path: data.path, unsaved: data.unsaved });
       // Main sends the size of a file it read; a restore of text already in
-      // memory is measured (enterTier). A large document was registered by
-      // main when it read it, so its text is not sent back to be hashed.
-      const large = enterTier(md, data.path, bytes);
-      if (!large && data.path) {
+      // memory is measured (enterTier), and so is a file converted on the way
+      // in (a CSV becomes a markdown table, and every cell gains its
+      // separators): the buffer is what the pane has to hold, and it can be
+      // large where the file was not. The cap was checked on the file above.
+      const converted = md !== data.content;
+      const large = enterTier(md, data.path, converted ? undefined : bytes);
+      // A large document was registered by main when it read it, so its text
+      // is not sent back to be hashed. Anything else is registered here,
+      // including a converted buffer that measured large: main read an
+      // ordinary file and did not register it.
+      if (data.path && !data.large && (!large || converted)) {
         getElectronAPI()?.registryTrack?.({
           path: data.path,
           name: data.name,

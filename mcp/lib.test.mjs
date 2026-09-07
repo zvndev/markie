@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, realp
 import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { MARKDOWN_GUIDE, GUIDE_URI, guideEssentials } from "./markdown-guide.mjs";
 import { checkMarkdown } from "./check-md.mjs";
-import { walk, DEFAULT_BUDGET } from "./scan.mjs";
+import { walk, scanTargets, DEFAULT_BUDGET } from "./scan.mjs";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { dirname as pdirname, join as pjoin } from "node:path";
@@ -284,6 +284,53 @@ test("a scan of a home with every skills folder lists every skill, moved Codex h
     if (previous === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = previous;
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// A configured Codex or Claude home outside the user's home is allowlisted,
+// but a scan that starts at home never reaches it.
+test("scanTargets starts at home and at each configured skills folder outside it", () => {
+  const home = "/home/u";
+  assert.deepEqual(scanTargets(home, {}), [home]);
+  assert.deepEqual(
+    scanTargets(home, { CODEX_HOME: "/home/u/.config/codex", CLAUDE_CONFIG_DIR: "/home/u/.claude" }),
+    [home],
+  );
+  assert.deepEqual(
+    scanTargets(home, { CODEX_HOME: "/opt/codex", CLAUDE_CONFIG_DIR: "/srv/claude" }),
+    [home, "/srv/claude/skills", "/opt/codex/skills"],
+  );
+});
+
+test("markie_list_skills lists a skill under a CODEX_HOME outside the home folder", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const codexHome = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-codex-")));
+  const previous = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = codexHome;
+  const client = startMcpClient(home);
+  try {
+    mkdirSync(pjoin(codexHome, "skills", "pdf"), { recursive: true });
+    writeFileSync(pjoin(codexHome, "skills", "pdf", "SKILL.md"), "---\nname: pdf\ndescription: y\n---\n");
+    mkdirSync(pjoin(home, ".claude", "skills", "mine"), { recursive: true });
+    writeFileSync(pjoin(home, ".claude", "skills", "mine", "SKILL.md"), "---\nname: mine\ndescription: y\n---\n");
+    await client.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "markie-test", version: "0.0.0" },
+    });
+    const res = await client.callTool("markie_list_skills", {});
+    const groups = JSON.parse(res.result.content[0].text);
+    const codex = groups.find((g) => g.tool === "OpenAI · Codex");
+    assert.ok(codex, "the Codex group is listed");
+    assert.deepEqual(codex.files.map((f) => f.path), [pjoin(codexHome, "skills", "pdf", "SKILL.md")]);
+    const claude = groups.find((g) => g.tool === "Claude");
+    assert.deepEqual(claude.files.map((f) => f.path), [pjoin(home, ".claude", "skills", "mine", "SKILL.md")]);
+  } finally {
+    client.close();
+    if (previous === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
   }
 });
 

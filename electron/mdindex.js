@@ -105,6 +105,21 @@ function skippedDirs({ home, platform = process.platform, realpath = fs.realpath
   return skip;
 }
 
+// The skills folder of each config folder the user has moved. Claude Code
+// and Codex both let the user move theirs, and Markie installs into the
+// folder they actually read. Leaving the moved one out meant the skill landed
+// somewhere the index would never look, so the Installed tab could not open
+// or reveal what it had just written.
+function configuredSkillDirs(env = process.env) {
+  const dirs = [];
+  for (const configured of [env?.CLAUDE_CONFIG_DIR, env?.CODEX_HOME]) {
+    if (typeof configured === "string" && configured.trim()) {
+      dirs.push(path.join(path.resolve(configured), "skills"));
+    }
+  }
+  return dirs;
+}
+
 // Directories explicitly re-included even though the rules above would prune
 // them (they live under a dot-dir). Absolute paths, resolved against home.
 function allowlist(home, env = process.env) {
@@ -117,16 +132,8 @@ function allowlist(home, env = process.env) {
     path.join(home, ".agents", "skills"),
     path.join(home, ".cursor", "skills"),
     path.join(home, ".gemini", "skills"),
+    ...configuredSkillDirs(env),
   ];
-  // Claude Code and Codex both let the user move their config folder, and
-  // Markie installs into the folder they actually read. Leaving the moved one
-  // out meant the skill landed somewhere the index would never look, so the
-  // Installed tab could not open or reveal what it had just written.
-  for (const configured of [env?.CLAUDE_CONFIG_DIR, env?.CODEX_HOME]) {
-    if (typeof configured === "string" && configured.trim()) {
-      dirs.push(path.join(path.resolve(configured), "skills"));
-    }
-  }
   return [...new Set(dirs)];
 }
 
@@ -364,7 +371,15 @@ function rescan(options = {}) {
   // when the user had explicitly registered it as a workspace root.
   const roots = Array.isArray(options.roots) ? options.roots : registeredRoots();
   const includeHome = options.includeHome !== false;
-  const targets = scanTargets(includeHome || !roots.length ? [home, ...roots] : roots, roots);
+  // A moved config folder outside home is allowlisted, but allowlisting only
+  // lets the walk descend into a folder it arrives at, and a walk from home
+  // never arrives outside it. So each configured skills folder is a start of
+  // its own; one inside home is dropped as sitting inside that target.
+  const configured = configuredSkillDirs(options.env || process.env);
+  const targets = scanTargets(
+    [...(includeHome || !roots.length ? [home] : []), ...roots, ...configured],
+    roots
+  );
 
   _scanning = (async () => {
     const files = [];

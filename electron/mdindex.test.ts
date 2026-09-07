@@ -464,6 +464,42 @@ describe("rescan budget", () => {
   });
 });
 
+describe("a configured home outside the home folder", () => {
+  // Allowlisting a folder only lets the walk descend into it; a walk that
+  // starts at home never arrives at a CODEX_HOME that is not under it.
+  it("is scanned as its own start point, and its skills are codex", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "mdconfigured-"));
+    const home = path.join(base, "home");
+    const codexHome = path.join(base, "codex-home");
+    const mk = (p: string, body = "x") => {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, body);
+    };
+    mk(path.join(home, "notes.md"));
+    mk(path.join(codexHome, "skills", "pdf", "SKILL.md"), "---\nname: pdf\ndescription: PDFs.\n---\n");
+    mk(path.join(codexHome, "sessions", "log.md"));
+    try {
+      const res = (await rescan({ home, roots: [], env: { CODEX_HOME: codexHome } })) as {
+        files: SkillRow[];
+        roots: string[];
+      };
+      const skill = res.files.find((r) => r.path === path.join(codexHome, "skills", "pdf", "SKILL.md"));
+      expect(skill?.skill).toEqual({ tool: "codex", description: "PDFs." });
+      expect(res.files.some((r) => r.name === "notes.md")).toBe(true);
+      // Only its skills folder, as for every other tool.
+      expect(res.files.some((r) => r.name === "log.md")).toBe(false);
+      expect(res.roots).toEqual([path.resolve(home), path.join(codexHome, "skills")]);
+      // One inside home is reached through home and is not a second start.
+      const inside = (await rescan({ home, roots: [], env: { CODEX_HOME: path.join(home, ".config", "codex") } })) as {
+        roots: string[];
+      };
+      expect(inside.roots).toEqual([path.resolve(home)]);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("a rename Markie made itself", () => {
   type Row = { path: string; name: string; dir: string; mtimeMs: number };
   const rows = () => (getCached() as { files: Row[] }).files;

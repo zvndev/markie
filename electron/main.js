@@ -1930,7 +1930,17 @@ handle("skills-read", (_e, id) => skillRegistry().readSkill(id), {
 // onFailure that cannot see which targets were asked for.
 handle("skills-install", (_e, { id, targets } = {}) => {
   try {
-    return skillRegistry().install(id, targets);
+    const result = skillRegistry().install(id, targets);
+    // open-file-path and reveal-file both refuse a path the app never
+    // advertised, and the only thing that advertises a SKILL.md is the index.
+    // A skill installed into a config folder the user moved may never be
+    // walked at all, so Open and Reveal answered "File access was not granted"
+    // for a file Markie had just written itself. Granting it here is the same
+    // grant opening the file would have produced.
+    for (const entry of result.installed || []) {
+      fileGrants.grantFile(path.join(entry.path, "SKILL.md"));
+    }
+    return result;
   } catch (err) {
     return {
       installed: [],

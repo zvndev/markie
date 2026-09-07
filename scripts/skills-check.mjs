@@ -188,6 +188,18 @@ async function main() {
     );
   }
 
+  // The index has not walked the new folder yet, so this is the install's own
+  // grant answering. Without it Open and Reveal both refuse the file Markie
+  // has only just written.
+  const opened = await cdp.ev(
+    `window.electronAPI.openFilePath(${JSON.stringify(path.join(dest, "SKILL.md"))})`
+  );
+  check(
+    "the new SKILL.md opens straight away, before any rescan",
+    typeof opened?.content === "string" && opened.content.length > 0,
+    opened?.error ?? `${opened?.name ?? "no payload"}`
+  );
+
   const installed = await cdp.ev(`window.electronAPI.skillsInstalled()`);
   const row = (installed || []).find((s) => s.path === dest);
   check(

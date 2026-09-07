@@ -125,6 +125,10 @@ async function main() {
     env: {
       ...process.env,
       HOME: homeDir,
+      // A developer's own moved config folders must not receive the check's
+      // installs: the app reads these two before it falls back to HOME.
+      CLAUDE_CONFIG_DIR: path.join(homeDir, ".claude"),
+      CODEX_HOME: path.join(homeDir, ".codex"),
       NODE_ENV: "development",
       MARKIE_E2E: "1",
       MARKIE_DEV_URL: devOrigin,

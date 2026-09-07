@@ -73,11 +73,14 @@ export function skillGroupFor(
   name: string,
   skill?: MdRow["skill"]
 ): SkillGroupId | null {
+  // A clone under a tool's cache (~/.codex/vendor_imports, plugins/cache) is
+  // inside that tool's root, so main labels it with the tool; it is still a
+  // cache, not an install, and stays out whatever the label says.
+  const p = path.replace(/\\/g, "/").toLowerCase();
+  if (isCachedAgentPath(p)) return null;
   if (skill?.tool) return skill.tool;
   const tool = classifyAgentFile(path, name);
   if (tool) return tool === "openai" ? "codex" : tool;
-  const p = path.replace(/\\/g, "/").toLowerCase();
-  if (isCachedAgentPath(p)) return null;
   if (p.includes("/.cursor/")) return "cursor";
   if (p.includes("/.gemini/")) return "gemini";
   if (p.includes("/.agents/")) return "universal";

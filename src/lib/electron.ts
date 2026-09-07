@@ -69,6 +69,9 @@ export interface LinkPreview {
 // root's own `.claude/skills`, and that root is the only path main will accept.
 export type SkillTarget = "claude" | "codex" | "cursor" | "gemini" | "universal" | { project: string };
 
+// The tool a skills folder belongs to. A project folder is not a tool.
+export type SkillTool = "claude" | "codex" | "cursor" | "gemini" | "universal";
+
 export interface SkillSource {
   id: string;
   owner: string;
@@ -125,6 +128,11 @@ export interface SearchHit {
 export interface InstalledSkill {
   name: string;
   target: SkillTarget;
+  // Every known target whose skills directory resolves to this row's folder.
+  // Two targets can share one folder (CLAUDE_CONFIG_DIR pointed at ~/.agents,
+  // say), and both are then installed here. Absent from rows older than the
+  // field; read it as [target].
+  targets?: SkillTarget[];
   path: string;
   description: string | null;
   source: string | null;
@@ -448,6 +456,9 @@ export interface ElectronAPI {
   }>;
   skillsRemove?(target: SkillTarget, name: string): Promise<{ ok: boolean; error?: string }>;
   skillsInstalled?(): Promise<InstalledSkill[]>;
+  // The cached folder of a catalog skill, granted for reading through
+  // markie-asset:// so a SKILL.md preview can show the images beside it.
+  skillsSkillDir?(sourceId: string, skillId: string): Promise<{ dir: string } | { error: string }>;
   // Report a renderer crash to the main process's crash log. Fire-and-forget:
   // the caller is an error boundary that has nothing to do with an answer.
   logRendererError?(detail: {
@@ -472,6 +483,12 @@ export interface MdRow {
   fmProject?: string | null;
   fmBlock?: string | null;
   repoName?: string | null;
+  // Set for a SKILL.md at scan time: which tool's folder it sits in, decided
+  // from the configured roots (CLAUDE_CONFIG_DIR, CODEX_HOME and the five
+  // conventional folders) rather than from the path's spelling, and the
+  // description from its front matter. Absent on rows indexed before the
+  // field existed and on files that are not a SKILL.md.
+  skill?: { tool: SkillTool | null; description: string | null };
 }
 
 // What main knows about the taxonomy: the user's decisions, plus the derived

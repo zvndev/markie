@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -163,9 +163,44 @@ describe("Installed", () => {
   it("folds a skill folder to one row", async () => {
     renderSkills({ mdIndexScan: vi.fn(async () => scan(rows)) });
     await screen.findByText("pdf");
-    // Two files in the pdf folder, one row, and the row says so.
+    // Two files in the pdf folder, one row.
     expect(screen.getAllByText("pdf")).toHaveLength(1);
-    expect(screen.getByText("+1")).toBeInTheDocument();
+  });
+
+  it("says where else the same skill lives, and stays quiet when it lives in one place", async () => {
+    renderSkills({
+      mdIndexScan: vi.fn(async () => scan(rows)),
+      skillsInstalled: vi.fn(async () => [installedSkill()]),
+    });
+    await screen.findByText("from anthropics/skills");
+    expect(screen.queryByText(/Claude Code/)).not.toBeInTheDocument();
+
+    cleanup();
+    renderSkills({
+      mdIndexScan: vi.fn(async () => scan(rows)),
+      skillsInstalled: vi.fn(async () => [
+        installedSkill(),
+        installedSkill({ target: "codex", path: `${HOME}/.codex/skills/pdf` }),
+        installedSkill({ target: "cursor", path: `${HOME}/.cursor/skills/pdf` }),
+      ]),
+    });
+    expect(await screen.findAllByText("Claude Code, Codex and 1 more")).toHaveLength(3);
+  });
+
+  it("merges one Windows install into one row, however the two sides spelled it", async () => {
+    renderSkills({
+      platform: "win32",
+      mdIndexScan: vi.fn(async () =>
+        scan([mdRow("C:\\Users\\Me\\.claude\\skills\\pdf\\SKILL.md")])
+      ),
+      // The registry canonicalizes a Windows path to lower case; the index does not.
+      skillsInstalled: vi.fn(async () => [
+        installedSkill({ path: "c:\\users\\me\\.claude\\skills\\pdf" }),
+      ]),
+    } as Partial<ElectronAPI>);
+
+    expect(await screen.findByText("from anthropics/skills")).toBeInTheDocument();
+    expect(screen.getAllByText("pdf")).toHaveLength(1);
   });
 
   it("shows a skill Markie installed with its source and its description", async () => {
@@ -206,7 +241,10 @@ describe("Installed", () => {
     const user = userEvent.setup();
     const revealFile = vi.fn(async () => ({ ok: true }));
     renderSkills({ mdIndexScan: vi.fn(async () => scan(rows)), revealFile });
-    await user.click(await screen.findByRole("button", { name: "Show in Finder: pdf" }));
+    const reveal = await screen.findByRole("button", { name: "Show in Finder: pdf" });
+    // "Finder" on its own read as a noun in a row of verbs.
+    expect(reveal).toHaveTextContent("Show in Finder");
+    await user.click(reveal);
     expect(revealFile).toHaveBeenCalledWith(`${HOME}/.claude/skills/pdf/SKILL.md`);
   });
 
@@ -390,7 +428,46 @@ describe("Discover", () => {
     expect(screen.queryByText("From skills.sh")).not.toBeInTheDocument();
   });
 
-  it("adds the repository behind a skills.sh hit before opening it", async () => {
+  // skills.sh names the pdf skill `anthropics/skills/pdf`; discovery finds it
+  // inside the repository's `skills/` container and calls it
+  // `anthropics/skills/skills/pdf`. These are the real shapes.
+  const PDF_HIT = {
+    id: "anthropics/skills/pdf",
+    name: "pdf",
+    source: "anthropics/skills",
+    installs: 812,
+  };
+  const containerCatalog = () =>
+    catalog({
+      skills: [
+        skill({ id: "anthropics/skills/skills/pdf", skillPath: "skills/pdf" }),
+        skill({
+          id: "anthropics/skills/skills/xlsx",
+          skillPath: "skills/xlsx",
+          name: "xlsx",
+          description: "Read and write spreadsheets.",
+        }),
+      ],
+    });
+
+  it("opens a skills.sh hit at the catalog entry it means, not at its own id", async () => {
+    const user = userEvent.setup();
+    const skillsRead = vi.fn(async () => ({ body: "Fill in PDF forms.", files: [] }));
+    renderSkills({
+      // The hit's own id would find nothing here; only the entry does.
+      skillsCatalogList: vi.fn(async () => containerCatalog()),
+      skillsSearch: vi.fn(async () => [{ ...PDF_HIT, name: "pdf forms" }]),
+      skillsRead,
+    });
+    await openDiscover(user);
+    await screen.findByText("xlsx");
+    await user.type(screen.getByLabelText("Search skills"), "forms");
+
+    await user.click(await screen.findByText("pdf forms"));
+    await waitFor(() => expect(skillsRead).toHaveBeenCalledWith("anthropics/skills/skills/pdf"));
+  });
+
+  it("adds the repository behind a hit, then resolves against the catalog that came back", async () => {
     const user = userEvent.setup();
     const hit = {
       id: "obra/superpowers/brainstorming",
@@ -401,14 +478,23 @@ describe("Discover", () => {
     const skillsCatalogAddSource = vi.fn(async () =>
       catalog({
         sources: [source("anthropics/skills"), source("obra/superpowers", { builtin: false })],
-        skills: [skill(), skill({ id: hit.id, source: hit.source, skillPath: "brainstorming", name: "brainstorming" })],
+        skills: [
+          skill(),
+          skill({
+            id: "obra/superpowers/skills/brainstorming",
+            source: "obra/superpowers",
+            skillPath: "skills/brainstorming",
+            name: "brainstorming",
+          }),
+        ],
       })
     );
+    const skillsRead = vi.fn(async () => ({ body: "How to brainstorm.", files: [] }));
     renderSkills({
       skillsCatalogList: vi.fn(async () => catalog()),
       skillsSearch: vi.fn(async () => [hit]),
       skillsCatalogAddSource,
-      skillsRead: vi.fn(async () => ({ body: "How to brainstorm.", files: [] })),
+      skillsRead,
     });
     await openDiscover(user);
     await screen.findByText("pdf");
@@ -416,7 +502,31 @@ describe("Discover", () => {
 
     await user.click(await screen.findByText("brainstorming"));
     expect(skillsCatalogAddSource).toHaveBeenCalledWith("obra/superpowers");
-    expect(await screen.findByRole("button", { name: "‹ Back to skills" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(skillsRead).toHaveBeenCalledWith("obra/superpowers/skills/brainstorming")
+    );
+  });
+
+  it("says so in the detail area when a hit matches nothing in its source", async () => {
+    const user = userEvent.setup();
+    const skillsRead = vi.fn(async () => ({ body: "", files: [] }));
+    renderSkills({
+      skillsCatalogList: vi.fn(async () => containerCatalog()),
+      skillsSearch: vi.fn(async () => [
+        { id: "anthropics/skills/nowhere", name: "nowhere", source: "anthropics/skills", installs: 3 },
+      ]),
+      skillsRead,
+    });
+    await openDiscover(user);
+    await screen.findByText("pdf");
+    await user.type(screen.getByLabelText("Search skills"), "nowhere");
+
+    await user.click(await screen.findByText("nowhere"));
+    expect(await screen.findByText(/has no skill by that name/)).toBeInTheDocument();
+    expect(skillsRead).not.toHaveBeenCalled();
+    // Nothing to install, so nothing pretends there is.
+    expect(screen.queryByRole("checkbox", { name: "Claude Code" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Review the licence before installing")).not.toBeInTheDocument();
   });
 
   it("refreshes on demand", async () => {
@@ -428,6 +538,36 @@ describe("Discover", () => {
 
     await user.click(screen.getByRole("button", { name: "Refresh" }));
     expect(skillsCatalogRefresh).toHaveBeenCalledWith();
+  });
+
+  it("labels the chips row, so the repositories read as sources", async () => {
+    const user = userEvent.setup();
+    renderSkills({ skillsCatalogList: vi.fn(async () => catalog()) });
+    await openDiscover(user);
+    expect(await screen.findByText("Sources")).toBeInTheDocument();
+  });
+
+  it("keeps a licence name on a row and leaves a licence sentence to the detail pane", async () => {
+    const user = userEvent.setup();
+    renderSkills({
+      skillsCatalogList: vi.fn(async () =>
+        catalog({
+          skills: [
+            skill({ license: "Complete terms in LICENSE.txt" }),
+            skill({
+              id: "anthropics/skills/xlsx",
+              skillPath: "xlsx",
+              name: "xlsx",
+              license: "MIT",
+            }),
+          ],
+        })
+      ),
+    });
+    await openDiscover(user);
+    await screen.findByText("pdf");
+    expect(screen.queryByText("Complete terms in LICENSE.txt")).not.toBeInTheDocument();
+    expect(screen.getByText("MIT")).toBeInTheDocument();
   });
 
   it("shows a source's own error where the source is named", async () => {
@@ -518,10 +658,139 @@ describe("one skill, in full", () => {
     await open(user);
 
     expect(await screen.findByText("Use this skill to fill in PDF forms.")).toBeInTheDocument();
-    expect(screen.getByText("Claude Code, Codex")).toBeInTheDocument();
+    expect(screen.getByText("Works with Claude Code, Codex")).toBeInTheDocument();
     expect(screen.getByText("Tools: Bash(git:*) Read")).toBeInTheDocument();
     expect(screen.getByText("scripts/extract.py")).toBeInTheDocument();
     expect(screen.getByText("2.0 KB")).toBeInTheDocument();
+  });
+
+  it("keeps the identity and the install controls out of the scrolling document", async () => {
+    const user = userEvent.setup();
+    renderSkills(detailApi());
+    await open(user);
+
+    const preview = (await screen.findByText(
+      "Use this skill to fill in PDF forms."
+    )).closest("[data-skills-preview]") as HTMLElement;
+    const scroller = preview.closest(".overflow-y-auto") as HTMLElement;
+    const footer = document.querySelector("[data-skills-install]") as HTMLElement;
+
+    expect(footer).not.toBeNull();
+    // Neither the name of the thing nor the button that installs it moves when
+    // the document does.
+    expect(scroller.contains(footer)).toBe(false);
+    expect(scroller.contains(screen.getByText("Skill"))).toBe(false);
+    expect(scroller.contains(screen.getByText("pdf"))).toBe(false);
+  });
+
+  it("says once, next to the button, that the licence wants reading", async () => {
+    const user = userEvent.setup();
+    renderSkills(detailApi());
+    await open(user);
+    expect(
+      await screen.findByText("Review the licence before installing")
+    ).toBeInTheDocument();
+  });
+
+  it("shows a target that already has this copy as installed, not as a choice", async () => {
+    const user = userEvent.setup();
+    renderSkills(
+      detailApi({
+        skillsCatalogList: vi.fn(async () =>
+          catalog({
+            skills: [
+              skill({
+                installedTo: [
+                  { target: "claude", path: `${HOME}/.claude/skills/pdf`, upToDate: true },
+                ],
+              }),
+            ],
+          })
+        ),
+      })
+    );
+    await open(user);
+
+    expect(await screen.findByRole("checkbox", { name: "Claude Code" })).toBeDisabled();
+    const footer = document.querySelector("[data-skills-install]") as HTMLElement;
+    expect(within(footer).getByText("Installed")).toBeInTheDocument();
+    // The remembered tick was Claude Code, and Claude Code has nothing to do.
+    expect(screen.getByRole("button", { name: "Add skill" })).toBeDisabled();
+    expect(
+      screen.getByText("Everything you picked already has the current copy.")
+    ).toBeInTheDocument();
+  });
+
+  it("explains the two targets nobody can infer from the name", async () => {
+    const user = userEvent.setup();
+    renderSkills(detailApi());
+    await open(user);
+    expect(
+      await screen.findByText("~/.agents/skills, read by every tool that looks there")
+    ).toBeInTheDocument();
+    expect(screen.getByText("this workspace's .claude/skills folder")).toBeInTheDocument();
+  });
+
+  it("follows the project selector rather than keeping the project first ticked", async () => {
+    const user = userEvent.setup();
+    const skillsInstall = vi.fn(async () => ({ installed: [], errors: [] }));
+    renderSkills(
+      detailApi({
+        skillsInstall,
+        wsRoots: vi.fn(async () => ["/Users/me/Work/Alpha", "/Users/me/Work/Beta"]),
+      })
+    );
+    await open(user);
+
+    await user.click(await screen.findByRole("checkbox", { name: "Claude Code" }));
+    await user.click(screen.getByRole("checkbox", { name: "Project" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Project folder" }), [
+      "/Users/me/Work/Beta",
+    ]);
+    expect(screen.getByRole("checkbox", { name: "Project" })).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "Add to Beta" }));
+    expect(skillsInstall).toHaveBeenCalledWith("anthropics/skills/pdf", [
+      { project: "/Users/me/Work/Beta" },
+    ]);
+  });
+
+  it("drops a remembered project whose folder is no longer open, rather than aiming at another", async () => {
+    localStorage.setItem(
+      "markie.skills.targets.v1",
+      JSON.stringify(["claude", { project: "/Users/me/Work/Old" }])
+    );
+    const user = userEvent.setup();
+    const skillsInstall = vi.fn(async () => ({ installed: [], errors: [] }));
+    renderSkills(
+      detailApi({
+        skillsInstall,
+        wsRoots: vi.fn(async () => ["/Users/me/Work/Alpha", "/Users/me/Work/Beta"]),
+      })
+    );
+    await open(user);
+
+    expect(await screen.findByRole("checkbox", { name: "Project" })).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Add to Claude Code" }));
+    expect(skillsInstall).toHaveBeenCalledWith("anthropics/skills/pdf", ["claude"]);
+  });
+
+  it("keeps a remembered project that is still open, and shows which one", async () => {
+    localStorage.setItem(
+      "markie.skills.targets.v1",
+      JSON.stringify([{ project: "/Users/me/Work/Beta" }])
+    );
+    const user = userEvent.setup();
+    renderSkills(
+      detailApi({ wsRoots: vi.fn(async () => ["/Users/me/Work/Alpha", "/Users/me/Work/Beta"]) })
+    );
+    await open(user);
+
+    expect(await screen.findByRole("checkbox", { name: "Project" })).toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Project folder" })).toHaveValue(
+      "/Users/me/Work/Beta"
+    );
+    expect(screen.getByRole("button", { name: "Add to Beta" })).toBeEnabled();
   });
 
   it("comes back to the list", async () => {
@@ -542,7 +811,7 @@ describe("one skill, in full", () => {
     await open(user);
 
     await user.click(await screen.findByRole("checkbox", { name: "Codex" }));
-    await user.click(screen.getByRole("button", { name: "Add skill" }));
+    await user.click(screen.getByRole("button", { name: "Add to 2 targets" }));
 
     expect(skillsInstall).toHaveBeenCalledWith("anthropics/skills/pdf", ["claude", "codex"]);
     expect(await screen.findByText("Added to")).toBeInTheDocument();
@@ -561,7 +830,7 @@ describe("one skill, in full", () => {
       })
     );
     await open(user);
-    await user.click(await screen.findByRole("button", { name: "Add skill" }));
+    await user.click(await screen.findByRole("button", { name: "Add to Claude Code" }));
     await waitFor(() => expect(mdIndexRefresh).toHaveBeenCalled());
   });
 
@@ -573,7 +842,7 @@ describe("one skill, in full", () => {
 
     await user.click(await screen.findByRole("checkbox", { name: "Claude Code" }));
     await user.click(screen.getByRole("checkbox", { name: "Project" }));
-    await user.click(screen.getByRole("button", { name: "Add skill" }));
+    await user.click(screen.getByRole("button", { name: "Add to Bevrly" }));
 
     expect(skillsInstall).toHaveBeenCalledWith("anthropics/skills/pdf", [
       { project: "/Users/me/Work/Bevrly" },
@@ -619,7 +888,8 @@ describe("one skill, in full", () => {
       })
     );
     await open(user);
-    expect(await screen.findByRole("button", { name: "Update" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Update in Claude Code" })).toBeInTheDocument();
+    expect(screen.getByText("Update ready")).toBeInTheDocument();
   });
 
   it("shows the message main gave for a folder it refused to overwrite", async () => {
@@ -634,7 +904,28 @@ describe("one skill, in full", () => {
       })
     );
     await open(user);
-    await user.click(await screen.findByRole("button", { name: "Add skill" }));
+    await user.click(await screen.findByRole("button", { name: "Add to Claude Code" }));
     expect(await screen.findByText(message)).toBeInTheDocument();
+  });
+
+  it("reports what landed alongside what did not", async () => {
+    const user = userEvent.setup();
+    const message = "Codex's skills folder could not be written.";
+    renderSkills(
+      detailApi({
+        skillsInstall: vi.fn(async () => ({
+          installed: [{ target: "claude" as const, path: `${HOME}/.claude/skills/pdf` }],
+          errors: [{ target: "codex" as const, error: "copy-failed" as const, message }],
+        })),
+      })
+    );
+    await open(user);
+    await user.click(await screen.findByRole("checkbox", { name: "Codex" }));
+    await user.click(screen.getByRole("button", { name: "Add to 2 targets" }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    const added = screen.getByText("Added to").parentElement as HTMLElement;
+    expect(added).toHaveTextContent("Claude Code");
+    expect(added).not.toHaveTextContent("Codex");
   });
 });

@@ -30,19 +30,27 @@ import {
 import { compactHomePath, inferHomePath } from "@/lib/path-display";
 import { RichView } from "@/components/rich-view";
 import {
+  LICENSE_NOTE,
+  PROJECT_HINT,
+  PROPRIETARY_NOTE,
   SKILLS_KIND_OPEN,
   SKILLS_KIND_ORDER,
   SKILLS_TAB_KEY,
   SKILL_GROUPS,
+  UNIVERSAL_HINT,
+  canonicalFolder,
   describeChecked,
+  formatDestinations,
   formatSize,
   groupForTarget,
   initialSkillsTab,
-  licenseBadge,
+  installLabel,
+  licenseChip,
   matchesSkill,
   newestFetchedAt,
   ownerRepoError,
   readRememberedTargets,
+  resolveHit,
   skillGroupFor,
   targetKey,
   targetLabel,
@@ -61,11 +69,22 @@ const FULL_KEY = "markie.skills.fullpath.v1";
 const FOCUS_RING =
   "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[color:var(--status-blue)]";
 
+/** A target that is a tool's own folder, as opposed to a project's. */
+type ToolTarget = Exclude<SkillTarget, { project: string }>;
+
 // The five targets a skill can be added to, in the order the detail pane and
 // the Installed groups both use.
-const TOOL_TARGETS: SkillTarget[] = ["claude", "codex", "cursor", "gemini", "universal"];
+const TOOL_TARGETS: ToolTarget[] = ["claude", "codex", "cursor", "gemini", "universal"];
 
 const KIND_LABEL = new Map(AGENT_KINDS.map((k) => [k.id, k.label]));
+
+// One left edge for the whole panel: tabs, fields, headings, rows, the detail
+// metadata and the document all start here. Rows inside a section indent one
+// step from it, and nothing else does.
+const EDGE = "px-2";
+
+// The section label, in the treatment Library and Browse already use.
+const SECTION_LABEL = "text-[9px] uppercase tracking-wide text-muted";
 
 const EMPTY_CATALOG: Catalog = { sources: [], skills: [] };
 
@@ -77,17 +96,14 @@ function persist(key: string, value: string) {
   }
 }
 
-/** Trailing slashes and Windows separators folded, so one folder is one key. */
-function folderKey(path: string): string {
-  return path.replace(/\\/g, "/").replace(/\/+$/, "");
-}
-
 /** The SKILL.md inside a folder, spelled with the folder's own separator. */
 function skillMdIn(folder: string): string {
   const sep = folder.includes("\\") ? "\\" : "/";
   return `${folder.replace(/[\\/]+$/, "")}${sep}SKILL.md`;
 }
 
+// "Finder" on its own reads as a noun in a row of verbs. The label says what
+// the click does, and names the thing the platform calls it.
 function revealWord(platform: string): { text: string; label: string } {
   if (platform === "win32") return { text: "Explorer", label: "Show in Explorer" };
   if (platform === "darwin") return { text: "Finder", label: "Show in Finder" };
@@ -99,9 +115,11 @@ function revealWord(platform: string): { text: string; label: string } {
 function Badge({
   children,
   tone = "muted",
+  title,
 }: {
   children: ReactNode;
   tone?: "muted" | "blue" | "yellow";
+  title?: string;
 }) {
   const colors =
     tone === "blue"
@@ -110,7 +128,9 @@ function Badge({
         ? "border-[color:var(--status-yellow)] text-[var(--status-yellow)]"
         : "border-border/70 text-muted";
   return (
-    <span className={`shrink-0 rounded border px-1 py-px text-[9px] ${colors}`}>{children}</span>
+    <span title={title} className={`shrink-0 rounded border px-1 py-px text-[9px] ${colors}`}>
+      {children}
+    </span>
   );
 }
 
@@ -289,7 +309,7 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
   return (
     <div className="flex flex-col h-full">
       <div
-        className="flex items-center gap-0.5 px-2 py-1.5 shrink-0 border-b border-border/60"
+        className={`flex items-center gap-0.5 ${EDGE} py-1.5 shrink-0 border-b border-border/60`}
         role="group"
         aria-label="Skills sections"
       >
@@ -341,10 +361,11 @@ interface SkillRow {
   group: SkillGroupId;
   label: string;
   openPath: string;
-  contains: number;
   description: string | null;
   installed: InstalledSkill | null;
   projectName: string | null;
+  /** Every place this same skill is installed, when there is more than one. */
+  destinations: SkillTarget[];
 }
 
 interface PlainRow {
@@ -422,10 +443,10 @@ function InstalledTab({
   const catalogByFolder = useMemo(() => {
     const out = new Map<string, CatalogSkill>();
     for (const skill of catalog.skills) {
-      for (const entry of skill.installedTo) out.set(folderKey(entry.path), skill);
+      for (const entry of skill.installedTo) out.set(canonicalFolder(entry.path, api.platform), skill);
     }
     return out;
-  }, [catalog]);
+  }, [catalog, api.platform]);
 
   const toggleStar = (p: string) =>
     api.mdIndexToggleStar?.(p, "file")
@@ -452,28 +473,39 @@ function InstalledTab({
       else perGroup.set(group, [r]);
     }
     for (const [group, files] of perGroup) {
-      for (const { file, label, contains } of collapseSkills(files)) {
-        const key = folderKey(skillRootOf(file.path) ?? file.dir);
+      for (const { file, label } of collapseSkills(files)) {
+        const key = canonicalFolder(skillRootOf(file.path) ?? file.dir, api.platform);
         byKey.set(key, {
           key,
           group,
           label,
           openPath: file.path,
-          contains,
           description: null,
           installed: null,
           projectName: null,
+          destinations: [],
         });
       }
     }
+    // Every place one skill was installed to, so a row can say where else it
+    // lives. Only registry rows, which are the only ones that name a target.
+    const places = new Map<string, SkillTarget[]>();
     for (const row of installed) {
-      const key = folderKey(row.path);
+      const identity = `${row.source ?? ""}::${row.name}`;
+      const list = places.get(identity);
+      if (list) list.push(row.target);
+      else places.set(identity, [row.target]);
+    }
+    for (const row of installed) {
+      const key = canonicalFolder(row.path, api.platform);
       const existing = byKey.get(key);
       const projectName = typeof row.target === "object" ? targetLabel(row.target) : null;
+      const destinations = places.get(`${row.source ?? ""}::${row.name}`) ?? [];
       if (existing) {
         existing.installed = row;
         existing.description = row.description;
         existing.projectName = projectName;
+        existing.destinations = destinations;
         // The recorded target beats the path: Claude Code and Codex both let
         // the user move their config folder, and then the path says nothing.
         existing.group = groupForTarget(row.target);
@@ -483,10 +515,10 @@ function InstalledTab({
           group: groupForTarget(row.target),
           label: row.name,
           openPath: skillMdIn(row.path),
-          contains: 1,
           description: row.description,
           installed: row,
           projectName,
+          destinations,
         });
       }
     }
@@ -507,7 +539,7 @@ function InstalledTab({
     }
     for (const list of out.values()) list.sort((a, b) => a.label.localeCompare(b.label));
     return out;
-  }, [rows, installed, filter]);
+  }, [rows, installed, filter, api.platform]);
 
   // Everything that is not a skill, grouped the way this panel always has.
   const otherByGroup = useMemo(() => {
@@ -589,7 +621,7 @@ function InstalledTab({
 
   return (
     <>
-      <div className="px-2 py-1.5 flex items-center gap-1.5 border-b border-border shrink-0">
+      <div className={`${EDGE} py-1.5 flex items-center gap-1.5 border-b border-border shrink-0`}>
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -616,7 +648,7 @@ function InstalledTab({
       {notice && (
         <div
           role="status"
-          className="px-3 py-1.5 text-[11px] text-[var(--status-red)] border-b border-border shrink-0"
+          className={`${EDGE} py-1.5 text-[11px] text-[var(--status-red)] border-b border-border shrink-0`}
         >
           {notice}
         </div>
@@ -624,16 +656,16 @@ function InstalledTab({
 
       <div className="flex-1 overflow-y-auto">
         {error ? (
-          <div className="p-4 text-[12px] text-[var(--status-red)]">
+          <div className={`${EDGE} py-4 text-[12px] text-[var(--status-red)]`}>
             {error}{" "}
             <button onClick={onRetry} className="underline hover:no-underline">
               Try again
             </button>
           </div>
         ) : loading ? (
-          <div className="p-4 text-[12px] text-muted">Looking for agent files…</div>
+          <div className={`${EDGE} py-4 text-[12px] text-muted`}>Looking for agent files…</div>
         ) : total === 0 ? (
-          <div className="p-4 text-[12px] text-muted leading-relaxed">
+          <div className={`${EDGE} py-4 text-[12px] text-muted leading-relaxed`}>
             No agent files found{filter ? " for this filter" : ""}. Markie looks for
             CLAUDE.md, AGENTS.md, GEMINI.md, and the skills folders of Claude Code,
             Codex, Cursor, Gemini and <code>~/.agents</code>.
@@ -643,7 +675,7 @@ function InstalledTab({
             <div key={g.tool.id}>
               <div
                 data-skills-group={g.tool.id}
-                className="text-[9px] uppercase tracking-wide text-muted px-2 pt-3 pb-1 border-b border-border/60 sticky top-0 bg-surface"
+                className={`${SECTION_LABEL} ${EDGE} pt-3 pb-1 border-b border-border/60 sticky top-0 bg-surface`}
               >
                 <span>{g.tool.label}</span>
                 <span className="ml-1 text-muted">{g.total}</span>
@@ -676,7 +708,7 @@ function InstalledTab({
                           return n;
                         })
                       }
-                      className={`w-full text-left text-[10px] text-muted/80 px-2 pt-2 pb-0.5 flex items-center gap-1 hover:text-foreground ${FOCUS_RING}`}
+                      className={`w-full text-left text-[10px] text-muted/80 ${EDGE} pt-2 pb-0.5 flex items-center gap-1 hover:text-foreground ${FOCUS_RING}`}
                     >
                       <span className="w-2.5">{isOpen ? "▾" : "▸"}</span>
                       {KIND_LABEL.get(kind) ?? kind}
@@ -778,9 +810,6 @@ function InstalledSkillRow({
       <div className="flex items-center gap-1">
         <div className="min-w-0 flex-1 truncate text-[12px] text-foreground/90">
           <span>{row.label}</span>
-          {row.contains > 1 && (
-            <span className="ml-1 text-[9px] text-muted">+{row.contains - 1}</span>
-          )}
         </div>
         {updatable ? (
           <Badge tone="blue">update available</Badge>
@@ -789,6 +818,14 @@ function InstalledSkillRow({
         ) : null}
         <Star on={starred} onClick={onStar} />
       </div>
+      {/* Where else this same skill lives. Under a tool's own heading, saying
+          it is installed there is not news; saying it is also in two other
+          tools is. */}
+      {row.destinations.length > 1 && (
+        <div className="truncate text-[10px] text-muted">
+          {formatDestinations(row.destinations)}
+        </div>
+      )}
       {row.description && (
         <div className="truncate text-[10px] text-muted">{row.description}</div>
       )}
@@ -797,7 +834,7 @@ function InstalledSkillRow({
       )}
       <div className="flex items-center gap-2 pt-0.5">
         <LinkButton onClick={onReveal} title={word.label} ariaLabel={`${word.label}: ${row.label}`}>
-          {word.text}
+          {word.label}
         </LinkButton>
         {updatable && (
           <LinkButton
@@ -809,8 +846,10 @@ function InstalledSkillRow({
             {busy ? "Updating…" : "Update"}
           </LinkButton>
         )}
+        {/* Deleting a folder is not the same kind of thing as opening one, so
+            it does not sit in the same run of links. */}
         {skill?.installedByMarkie && (
-          <>
+          <span className="ml-auto flex items-center gap-2 border-l border-border/70 pl-2">
             <LinkButton
               tone="red"
               onClick={onRemove}
@@ -821,7 +860,7 @@ function InstalledSkillRow({
               {busy ? "Removing…" : confirming ? "Yes, remove" : "Remove"}
             </LinkButton>
             {confirming && <LinkButton onClick={onCancel}>Cancel</LinkButton>}
-          </>
+          </span>
         )}
       </div>
     </div>
@@ -836,7 +875,14 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
-  const [selected, setSelected] = useState<{ id: string; name: string } | null>(null);
+  // A resolved catalog id, or an id of null when a skills.sh hit could not be
+  // matched to anything in the source's catalog. Both open the detail pane;
+  // only one of them has a document to show.
+  const [selected, setSelected] = useState<{
+    id: string | null;
+    name: string;
+    source: string;
+  } | null>(null);
   const [adding, setAdding] = useState(false);
   const [sourceInput, setSourceInput] = useState("");
   const [sourceError, setSourceError] = useState<string | null>(null);
@@ -964,22 +1010,43 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
       });
   };
 
+  // A hit's id is not a catalog id. skills.sh calls the pdf skill
+  // `anthropics/skills/pdf`; discovery finds it inside that repository's
+  // `skills/` container and calls it `anthropics/skills/skills/pdf`. Passing
+  // the hit's id straight into the catalog opened an empty detail and made the
+  // install fail, for the default source and every other container-based
+  // repository. So the hit is matched against the catalog it belongs to, and
+  // when the source had to be added first, against the catalog that came back.
   const openHit = (hit: SearchHit) => {
     const known = catalog.sources.some((s) => s.id === hit.source);
     if (known || !api.skillsCatalogAddSource) {
-      setSelected({ id: hit.id, name: hit.name });
+      const found = resolveHit(hit, catalog.skills);
+      setSelected({
+        id: found?.id ?? null,
+        name: found?.name ?? hit.name,
+        source: hit.source,
+      });
       return;
     }
     // A repository has to be a source before its skills can be read, and
     // adding one is also what fetches it.
     setRefreshing(true);
     api.skillsCatalogAddSource(hit.source)
-      .then(apply)
-      .catch(() => {})
-      .finally(() => {
+      .then((next) => {
+        apply(next);
         if (!mounted.current) return;
-        setRefreshing(false);
-        setSelected({ id: hit.id, name: hit.name });
+        const found = next ? resolveHit(hit, next.skills ?? []) : null;
+        setSelected({
+          id: found?.id ?? null,
+          name: found?.name ?? hit.name,
+          source: hit.source,
+        });
+      })
+      .catch(() => {
+        if (mounted.current) setSelected({ id: null, name: hit.name, source: hit.source });
+      })
+      .finally(() => {
+        if (mounted.current) setRefreshing(false);
       });
   };
 
@@ -1001,6 +1068,7 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
         api={api}
         id={selected.id}
         fallbackName={selected.name}
+        fallbackSource={selected.source}
         skill={catalog.skills.find((s) => s.id === selected.id) ?? null}
         onBack={() => setSelected(null)}
         onInstalled={() => {
@@ -1013,7 +1081,8 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
 
   return (
     <>
-      <div className="px-2 py-1.5 border-b border-border shrink-0 flex flex-col gap-1.5">
+      <div className={`${EDGE} py-1.5 border-b border-border shrink-0 flex flex-col gap-1.5`}>
+        <div className={SECTION_LABEL}>Sources</div>
         <div className="flex flex-wrap items-center gap-1">
           {catalog.sources.map((source) => (
             <span
@@ -1044,7 +1113,9 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
               setAdding((v) => !v);
               setSourceError(null);
             }}
-            className={`rounded border border-dashed border-border/70 px-1.5 py-px text-[10px] text-muted hover:text-foreground ${FOCUS_RING}`}
+            aria-expanded={adding}
+            title="Add a GitHub repository as a source"
+            className={`rounded border border-border px-1.5 py-px text-[10px] text-foreground/80 hover:bg-accent/40 hover:text-foreground ${FOCUS_RING}`}
           >
             + repository
           </button>
@@ -1107,7 +1178,7 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
         />
 
         <div className="flex items-center gap-2 text-[10.5px] text-muted">
-          <span>{refreshing ? "Checking…" : (checked ?? "not checked yet")}</span>
+          <span>{refreshing ? "Updating the catalog…" : (checked ?? "Catalog not fetched yet")}</span>
           <div className="flex-1" />
           <button
             type="button"
@@ -1122,9 +1193,9 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
 
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="p-4 text-[12px] text-muted">Reading the catalog…</div>
+          <div className={`${EDGE} py-4 text-[12px] text-muted`}>Reading the catalog…</div>
         ) : shown.length === 0 && extraHits.length === 0 ? (
-          <div className="p-4 text-[12px] text-muted leading-relaxed">
+          <div className={`${EDGE} py-4 text-[12px] text-muted leading-relaxed`}>
             {query
               ? // skills.sh answers an empty list for "nothing matched" and for
                 // "the site is down" alike, so this has to read sensibly either
@@ -1140,12 +1211,14 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
               <CatalogRow
                 key={skill.id}
                 skill={skill}
-                onOpen={() => setSelected({ id: skill.id, name: skill.name })}
+                onOpen={() =>
+                  setSelected({ id: skill.id, name: skill.name, source: skill.source })
+                }
               />
             ))}
             {extraHits.length > 0 && (
               <>
-                <div className="text-[9px] uppercase tracking-wide text-muted px-2 pt-3 pb-1 border-b border-border/60">
+                <div className={`${SECTION_LABEL} ${EDGE} pt-3 pb-1 border-b border-border/60`}>
                   <span>From skills.sh</span>
                   <span className="ml-1">{extraHits.length}</span>
                 </div>
@@ -1155,7 +1228,7 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
                     type="button"
                     data-skills-hit={hit.id}
                     onClick={() => openHit(hit)}
-                    className={`w-full text-left px-2 py-1.5 hover:bg-accent/30 ${FOCUS_RING}`}
+                    className={`group w-full text-left ${EDGE} py-1.5 hover:bg-accent/40 ${FOCUS_RING}`}
                   >
                     <div className="flex items-center gap-1">
                       <span className="min-w-0 flex-1 truncate text-[12px] text-foreground/90">
@@ -1164,6 +1237,7 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
                       <span className="shrink-0 text-[10px] tabular-nums text-muted">
                         {hit.installs} installs
                       </span>
+                      <Chevron />
                     </div>
                     <div className="truncate text-[10px] text-muted">{hit.source}</div>
                   </button>
@@ -1177,13 +1251,29 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
   );
 }
 
+/** A row opens something. Without this it read as a paragraph of static text. */
+function Chevron() {
+  return (
+    <span
+      aria-hidden="true"
+      className="shrink-0 text-[11px] text-muted transition-colors group-hover:text-foreground"
+    >
+      ›
+    </span>
+  );
+}
+
 function CatalogRow({ skill, onOpen }: { skill: CatalogSkill; onOpen: () => void }) {
+  // A licence name is a badge. A whole sentence about where the terms live is
+  // not, and one under every row was the loudest thing in the catalog; that
+  // belongs in the detail pane, once, next to the button it is about.
+  const chip = licenseChip(skill.license);
   return (
     <button
       type="button"
       data-skills-row={skill.id}
       onClick={onOpen}
-      className={`w-full text-left px-2 py-1.5 hover:bg-accent/30 ${FOCUS_RING}`}
+      className={`group w-full text-left ${EDGE} py-1.5 hover:bg-accent/40 ${FOCUS_RING}`}
     >
       <div className="flex items-center gap-1">
         <span className="min-w-0 flex-1 truncate text-[12px] text-foreground/90">{skill.name}</span>
@@ -1192,11 +1282,16 @@ function CatalogRow({ skill, onOpen }: { skill: CatalogSkill; onOpen: () => void
             {skill.installs} installs
           </span>
         )}
+        <Chevron />
       </div>
       <div className="text-[10.5px] text-muted leading-snug line-clamp-2">{skill.description}</div>
       <div className="flex flex-wrap items-center gap-1 pt-0.5">
         <span className="text-[10px] text-muted">{skill.source}</span>
-        <Badge>{licenseBadge(skill.license)}</Badge>
+        {chip && (
+          <Badge title={chip === "Proprietary" ? PROPRIETARY_NOTE : (skill.license ?? undefined)}>
+            {chip}
+          </Badge>
+        )}
         {skill.installedTo.map((entry) => (
           <Badge key={targetKey(entry.target)} tone={entry.upToDate ? "muted" : "blue"}>
             {targetLabel(entry.target)}
@@ -1209,26 +1304,41 @@ function CatalogRow({ skill, onOpen }: { skill: CatalogSkill; onOpen: () => void
 
 // ── One skill, in full ──
 
+/** What a target is currently holding, which decides how its row is drawn. */
+type TargetState = "free" | "installed" | "stale";
+
 function SkillDetail({
   api,
   id,
   fallbackName,
+  fallbackSource,
   skill,
   onBack,
   onInstalled,
 }: {
   api: ElectronAPI;
-  id: string;
+  /** null when a skills.sh hit could not be matched to anything in its source. */
+  id: string | null;
   fallbackName: string;
+  fallbackSource: string;
   skill: CatalogSkill | null;
   onBack: () => void;
   onInstalled: () => void;
 }) {
   const [doc, setDoc] = useState<{ body: string; files: SkillFile[] } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [targets, setTargets] = useState<SkillTarget[]>(() =>
-    readRememberedTargets((key) => localStorage.getItem(key))
-  );
+  const [loading, setLoading] = useState(!!id);
+  // What was ticked last time, read once. The tool targets are taken as they
+  // were; the project one is a target only if that folder is still open, which
+  // the roots effect below decides.
+  const [remembered] = useState(() => {
+    const list = readRememberedTargets((key) => localStorage.getItem(key));
+    return {
+      tools: list.filter((t): t is ToolTarget => typeof t === "string"),
+      project: list.find((t): t is { project: string } => typeof t === "object")?.project ?? null,
+    };
+  });
+  const [tools, setTools] = useState<ToolTarget[]>(remembered.tools);
+  const [projectTicked, setProjectTicked] = useState(false);
   const [roots, setRoots] = useState<string[]>([]);
   const [project, setProject] = useState<string>("");
   const [running, setRunning] = useState(false);
@@ -1237,6 +1347,11 @@ function SkillDetail({
   > | null>(null);
 
   useEffect(() => {
+    if (!id) {
+      setDoc(null);
+      setLoading(false);
+      return;
+    }
     let alive = true;
     setLoading(true);
     api.skillsRead?.(id)
@@ -1264,47 +1379,91 @@ function SkillDetail({
         if (!alive) return;
         const found = Array.isArray(list) ? list : [];
         setRoots(found);
-        setProject((current) => current || found[0] || "");
+        // A remembered project counts only while that folder is still open.
+        // Otherwise the tick would quietly aim at whichever workspace came
+        // first in the list, which is a stale target by another route.
+        const kept =
+          remembered.project !== null && found.includes(remembered.project)
+            ? remembered.project
+            : null;
+        setProject((current) => current || kept || found[0] || "");
+        if (kept) setProjectTicked(true);
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [api]);
+  }, [api, remembered]);
 
-  const chosen = useMemo(() => {
-    // A project checkbox with no project selected is not a target.
-    return targets.filter((t) => typeof t === "string" || t.project);
-  }, [targets]);
+  // A target already holding the current copy of this skill is not something
+  // to tick; it is a fact about the target. One holding an older copy can be
+  // ticked, and that is an update.
+  const stateOf = useCallback(
+    (target: SkillTarget): TargetState => {
+      const entry = skill?.installedTo.find(
+        (e) => targetKey(e.target) === targetKey(target)
+      );
+      if (!entry) return "free";
+      return entry.upToDate ? "installed" : "stale";
+    },
+    [skill]
+  );
 
-  const has = (target: SkillTarget) =>
-    targets.some((t) => targetKey(t) === targetKey(target));
+  // The project target exists only while its box is ticked and a folder is
+  // chosen, so there is never a second project in the list and never a stale
+  // one: choosing another folder in the select changes which one it is. Keeping
+  // the project inside the list instead let ticking A and then choosing B draw
+  // B unticked while the install still wrote to A.
+  const targets = useMemo<SkillTarget[]>(
+    () => (projectTicked && project ? [...tools, { project }] : tools),
+    [tools, projectTicked, project]
+  );
 
-  const toggle = (target: SkillTarget) => {
-    setTargets((current) => {
-      const key = targetKey(target);
-      const next = current.some((t) => targetKey(t) === key)
-        ? current.filter((t) => targetKey(t) !== key)
-        : [...current, target];
-      writeRememberedTargets((k, v) => localStorage.setItem(k, v), next);
-      return next;
-    });
-  };
-
-  // "Update" only when every box that is ticked already holds this skill and
-  // holds an older copy of it. Anything else is an add, even when one of the
-  // targets happens to be up to date.
-  const isUpdate =
-    chosen.length > 0 &&
-    !!skill &&
-    chosen.every((target) =>
-      skill.installedTo.some(
-        (entry) => targetKey(entry.target) === targetKey(target) && !entry.upToDate
-      )
+  const remember = (nextTools: ToolTarget[], ticked: boolean, folder: string) =>
+    writeRememberedTargets(
+      (k, v) => localStorage.setItem(k, v),
+      ticked && folder ? [...nextTools, { project: folder }] : nextTools
     );
 
+  // A new pick starts a new outcome: the last install's report was about the
+  // boxes that were ticked then.
+  const toggleTool = (target: ToolTarget) => {
+    const next = tools.includes(target) ? tools.filter((t) => t !== target) : [...tools, target];
+    setTools(next);
+    setResult(null);
+    remember(next, projectTicked, project);
+  };
+
+  const toggleProject = () => {
+    setProjectTicked(!projectTicked);
+    setResult(null);
+    remember(tools, !projectTicked, project);
+  };
+
+  const pickProject = (next: string) => {
+    setProject(next);
+    setResult(null);
+    remember(tools, projectTicked, next);
+  };
+
+  // What the button will actually write: a target that already holds this
+  // exact copy is not one of them.
+  const chosen = useMemo(
+    () => targets.filter((t) => stateOf(t) !== "installed"),
+    [targets, stateOf]
+  );
+
+  // "Update" only when every box that counts already holds an older copy.
+  // Anything else is an add.
+  const isUpdate = chosen.length > 0 && chosen.every((t) => stateOf(t) === "stale");
+  const landed = result?.installed ?? [];
+  const failures = result?.errors ?? [];
+  // Nothing to do and nothing just done: say why the button waits.
+  const blockedByInstalled =
+    chosen.length === 0 && landed.length === 0 && targets.some((t) => stateOf(t) === "installed");
+
   const install = () => {
-    if (!api.skillsInstall || chosen.length === 0) return;
+    if (!api.skillsInstall || !id || chosen.length === 0) return;
     setRunning(true);
     setResult(null);
     api.skillsInstall(id, chosen)
@@ -1317,10 +1476,12 @@ function SkillDetail({
   };
 
   const name = skill?.name ?? fallbackName;
+  const source = skill?.source ?? fallbackSource;
+  const chip = licenseChip(skill?.license);
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="px-2 py-1.5 border-b border-border shrink-0">
+      <div className={`${EDGE} py-1.5 border-b border-border shrink-0`}>
         <button
           type="button"
           onClick={onBack}
@@ -1330,126 +1491,227 @@ function SkillDetail({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="px-3 pt-2 pb-1">
-          <div className="text-[13px] text-foreground">{name}</div>
-          <div className="text-[10.5px] text-muted">{skill?.source ?? id}</div>
-          <div className="flex flex-wrap items-center gap-1 pt-1">
-            <Badge>{licenseBadge(skill?.license)}</Badge>
-            {skill?.compatibility && <Badge>{skill.compatibility}</Badge>}
-          </div>
-          {skill?.allowedTools && (
-            <div className="pt-1 text-[10.5px] text-muted leading-snug">
-              Tools: {skill.allowedTools}
-            </div>
+      {/* The identity of the thing being installed, pinned. Scrolling the
+          document used to leave the pane with nothing on it but "Back". */}
+      <div data-skills-identity className={`${EDGE} pt-1.5 pb-2 border-b border-border shrink-0`}>
+        <div className={SECTION_LABEL}>Skill</div>
+        <div className="flex items-center gap-1 pt-px">
+          <span className="min-w-0 flex-1 truncate text-[13px] text-foreground" title={name}>
+            {name}
+          </span>
+          {chip && (
+            <Badge title={chip === "Proprietary" ? PROPRIETARY_NOTE : (skill?.license ?? undefined)}>
+              {chip}
+            </Badge>
           )}
         </div>
-
-        <div
-          data-skills-preview
-          className="border-y border-border/60 px-1 h-[45vh] min-h-[160px]"
-          style={{ "--doc-font-size": "12.5px" } as CSSProperties}
-        >
-          {loading ? (
-            <div className="p-3 text-[12px] text-muted">Reading SKILL.md…</div>
-          ) : doc && doc.body ? (
-            <RichView value={doc.body} onChange={() => {}} readOnly />
-          ) : (
-            <div className="p-3 text-[12px] text-muted">
-              Markie couldn&apos;t read this skill&apos;s SKILL.md. Refresh its source and try again.
-            </div>
-          )}
+        <div className="truncate text-[10.5px] text-muted" title={source}>
+          {source}
         </div>
-
-        {doc && doc.files.length > 0 && (
-          <div className="px-3 py-2">
-            <div className="text-[9px] uppercase tracking-wide text-muted pb-1">
-              Files
-              <span className="ml-1">{doc.files.length}</span>
-            </div>
-            {doc.files.map((file) => (
-              <div key={file.path} className="flex items-center gap-2 py-px">
-                <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted" title={file.path}>
-                  {file.path}
-                </span>
-                <span className="shrink-0 text-[10px] tabular-nums text-muted">
-                  {formatSize(file.size)}
-                </span>
-              </div>
-            ))}
+        {/* Only where there is something to install. */}
+        {id && (
+          <div className="pt-0.5 text-[10.5px] text-muted" title={skill?.license ?? undefined}>
+            {LICENSE_NOTE}
           </div>
         )}
+        {skill?.compatibility && (
+          <div className="truncate pt-0.5 text-[10.5px] text-muted">
+            Works with {skill.compatibility}
+          </div>
+        )}
+        {skill?.allowedTools && (
+          <div className="pt-0.5 text-[10.5px] text-muted leading-snug">
+            Tools: {skill.allowedTools}
+          </div>
+        )}
+      </div>
 
-        <div className="px-3 py-2 border-t border-border/60">
-          <div className="text-[9px] uppercase tracking-wide text-muted pb-1">Add to…</div>
-          {TOOL_TARGETS.map((target) => (
-            <label
-              key={targetKey(target)}
-              className="flex cursor-pointer select-none items-center gap-1.5 py-px text-[11.5px] text-foreground/90"
+      {!id ? (
+        <div className="flex-1 overflow-y-auto min-h-0">
+          <div className={`${EDGE} py-3 text-[12px] text-muted leading-relaxed`}>
+            skills.sh lists {name} in {source}, but Markie&apos;s copy of that
+            repository has no skill by that name. Refresh the source and try again.
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="flex-1 overflow-y-auto min-h-0">
+            <div className={`${SECTION_LABEL} ${EDGE} pt-2 pb-1`}>SKILL.md</div>
+            <div
+              data-skills-preview
+              className="border-y border-border/60 h-[38vh] min-h-[140px]"
+              style={{ "--doc-font-size": "12.5px" } as CSSProperties}
             >
-              <input
-                type="checkbox"
-                checked={has(target)}
-                onChange={() => toggle(target)}
-                className="accent-current"
-              />
-              {targetLabel(target)}
-            </label>
-          ))}
-          {roots.length > 0 && (
-            <div className="flex items-center gap-1.5 py-px text-[11.5px] text-foreground/90">
-              <input
-                type="checkbox"
-                aria-label="Project"
-                checked={has({ project })}
-                disabled={!project}
-                onChange={() => toggle({ project })}
-                className="accent-current"
-              />
-              <span>Project</span>
-              <select
-                aria-label="Project folder"
-                value={project}
-                onChange={(e) => setProject(e.target.value)}
-                className="min-w-0 flex-1 text-[11px] bg-background border border-border rounded-md px-1 py-0.5 text-foreground"
-              >
-                {roots.map((root) => (
-                  <option key={root} value={root}>
-                    {targetLabel({ project: root })}
-                  </option>
-                ))}
-              </select>
+              {loading ? (
+                <div className={`${EDGE} py-3 text-[12px] text-muted`}>Reading SKILL.md…</div>
+              ) : doc && doc.body ? (
+                <RichView value={doc.body} onChange={() => {}} readOnly />
+              ) : (
+                <div className={`${EDGE} py-3 text-[12px] text-muted`}>
+                  Markie couldn&apos;t read this skill&apos;s SKILL.md. Refresh its source and try
+                  again.
+                </div>
+              )}
             </div>
-          )}
 
-          <button
-            type="button"
-            onClick={install}
-            disabled={running || chosen.length === 0}
-            className={`mt-2 w-full rounded-md bg-accent px-2 py-1.5 text-[12px] text-foreground disabled:opacity-50 ${FOCUS_RING}`}
+            {doc && doc.files.length > 0 && (
+              <div className={`${EDGE} py-2`}>
+                <div className={`${SECTION_LABEL} pb-1`}>
+                  Files
+                  <span className="ml-1">{doc.files.length}</span>
+                </div>
+                {doc.files.map((file) => (
+                  <div key={file.path} className="flex items-center gap-2 py-px">
+                    <span
+                      className="min-w-0 flex-1 truncate text-[10.5px] text-muted"
+                      title={file.path}
+                    >
+                      {file.path}
+                    </span>
+                    <span className="shrink-0 text-[10px] tabular-nums text-muted">
+                      {formatSize(file.size)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* The reason for opening this pane, kept where it can be reached
+              without reading the whole document first. */}
+          <div
+            data-skills-install
+            className="shrink-0 border-t border-border bg-surface"
           >
-            {running ? "Working…" : isUpdate ? "Update" : "Add skill"}
-          </button>
+            <div className={`max-h-[42vh] overflow-y-auto ${EDGE} pt-2`}>
+              <div className={`${SECTION_LABEL} pb-1`}>Add to</div>
+              {TOOL_TARGETS.map((target) => (
+                <TargetRow
+                  key={targetKey(target)}
+                  label={targetLabel(target)}
+                  hint={target === "universal" ? UNIVERSAL_HINT : undefined}
+                  state={stateOf(target)}
+                  checked={tools.includes(target)}
+                  onChange={() => toggleTool(target)}
+                />
+              ))}
+              {roots.length > 0 && (
+                <TargetRow
+                  label="Project"
+                  hint={PROJECT_HINT}
+                  state={stateOf({ project })}
+                  checked={projectTicked}
+                  disabled={!project}
+                  onChange={toggleProject}
+                  trailing={
+                    <select
+                      aria-label="Project folder"
+                      value={project}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => pickProject(e.target.value)}
+                      className="min-w-0 max-w-[55%] flex-1 rounded-md border border-border bg-background px-1 py-0.5 text-[11px] text-foreground"
+                    >
+                      {roots.map((root) => (
+                        <option key={root} value={root}>
+                          {targetLabel({ project: root })}
+                        </option>
+                      ))}
+                    </select>
+                  }
+                />
+              )}
+            </div>
 
-          {result && result.installed.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1 pt-2">
-              <span className="text-[10.5px] text-muted">Added to</span>
-              {result.installed.map((entry) => (
-                <Badge key={targetKey(entry.target)}>{targetLabel(entry.target)}</Badge>
+            <div className={`${EDGE} py-2`}>
+              <button
+                type="button"
+                onClick={install}
+                disabled={running || chosen.length === 0}
+                className={`w-full rounded-md border px-2 py-1.5 text-[12px] transition-opacity ${FOCUS_RING} ${
+                  running || chosen.length === 0
+                    ? "border-border bg-transparent text-muted opacity-60"
+                    : "border-foreground/30 bg-accent font-medium text-foreground hover:opacity-90"
+                }`}
+              >
+                {running ? "Working…" : installLabel(chosen, isUpdate)}
+              </button>
+
+              {blockedByInstalled && (
+                <div className="pt-1 text-[10.5px] text-muted">
+                  Everything you picked already has the current copy.
+                </div>
+              )}
+              {/* What landed is reported even when something else did not:
+                  one target failing is no reason to hide the other's copy. */}
+              {landed.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1 pt-2">
+                  <span className="text-[10.5px] text-[var(--status-green)]">Added to</span>
+                  {landed.map((entry) => (
+                    <Badge key={targetKey(entry.target)}>{targetLabel(entry.target)}</Badge>
+                  ))}
+                </div>
+              )}
+              {failures.map((entry) => (
+                <div
+                  key={targetKey(entry.target)}
+                  role="alert"
+                  className="pt-1 text-[10.5px] leading-snug text-[var(--status-red)]"
+                >
+                  {entry.message}
+                </div>
               ))}
             </div>
-          )}
-          {result?.errors.map((entry) => (
-            <div
-              key={targetKey(entry.target)}
-              role="alert"
-              className="pt-1 text-[10.5px] leading-snug text-[var(--status-red)]"
-            >
-              {entry.message}
-            </div>
-          ))}
-        </div>
-      </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One place a skill can go. A target already holding the current copy says so
+ * and cannot be picked; one holding an older copy can be, and that is an
+ * update. Everything else is an ordinary checkbox.
+ */
+function TargetRow({
+  label,
+  hint,
+  state,
+  checked,
+  disabled,
+  onChange,
+  trailing,
+}: {
+  label: string;
+  hint?: string;
+  state: TargetState;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+  trailing?: ReactNode;
+}) {
+  const settled = state === "installed";
+  return (
+    <div className="py-px">
+      <label
+        className={`flex items-center gap-1.5 text-[11.5px] ${
+          settled ? "text-muted" : "cursor-pointer select-none text-foreground/90"
+        }`}
+      >
+        <input
+          type="checkbox"
+          aria-label={label}
+          checked={settled || checked}
+          disabled={settled || disabled}
+          onChange={onChange}
+          className="accent-current"
+        />
+        <span className="shrink-0">{label}</span>
+        {settled && <Badge>Installed</Badge>}
+        {state === "stale" && <Badge tone="blue">Update ready</Badge>}
+        {trailing}
+      </label>
+      {hint && <div className="pl-[22px] text-[10px] leading-snug text-muted">{hint}</div>}
     </div>
   );
 }

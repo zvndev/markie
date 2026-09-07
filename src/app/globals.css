@@ -131,7 +131,9 @@ body {
    from --doc-font-size, which the panel sets; only the margins and the heading
    rhythm need saying here. */
 [data-skills-preview] .markie-document-scroll {
-  padding: 0.5rem 0.75rem;
+  /* 0.5rem is the panel's own left edge, so the document lines up with the
+     tabs, the fields, the rows and the install controls above and below it. */
+  padding: 0.5rem;
   scroll-padding: 0.5rem;
 }
 

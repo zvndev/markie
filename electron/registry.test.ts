@@ -104,6 +104,7 @@ interface FileRow {
   sync_state: string;
   cloud_doc_id: string | null;
   share_role: string | null;
+  share_role_user: string | null;
 }
 
 function wipe() {
@@ -154,16 +155,52 @@ describe("tracking files", () => {
 
   it("stores the last confirmed share role so an offline session can honour it", () => {
     registry.track("/tmp/a.md", "a.md", "x");
-    registry.update("/tmp/a.md", { share_role: "owner", sync_state: "synced" });
+    registry.update("/tmp/a.md", {
+      share_role: "owner",
+      share_role_user: "user-1",
+      sync_state: "synced",
+    });
     const row = registry.get("/tmp/a.md") as FileRow;
     expect(row.share_role).toBe("owner");
     expect(row.sync_state).toBe("synced");
+  });
+
+  it("stores the account the role was confirmed for, so it cannot speak for another", () => {
+    // A role is evidence about one user. Without the account beside it, a
+    // second account on the same machine inherits the first one's answer.
+    registry.track("/tmp/b.md", "b.md", "x");
+    registry.update("/tmp/b.md", { share_role: "owner", share_role_user: "user-1" });
+    expect((registry.get("/tmp/b.md") as FileRow).share_role_user).toBe("user-1");
+  });
+
+  it("leaves a row that predates the column without an account", () => {
+    // The migration adds the column to existing databases, and every row it
+    // finds keeps a null principal, which reads as nobody having said.
+    registry.track("/tmp/c.md", "c.md", "x");
+    registry.update("/tmp/c.md", { share_role: "owner" });
+    const row = registry.get("/tmp/c.md") as FileRow;
+    expect(row.share_role).toBe("owner");
+    expect(row.share_role_user ?? null).toBeNull();
   });
 
   it("ignores fields that are not on the allowlist", () => {
     registry.track("/tmp/a.md", "a.md", "x");
     registry.update("/tmp/a.md", { path: "/tmp/hijacked.md" });
     expect(registry.get("/tmp/a.md")).toBeTruthy();
+  });
+
+  it("forgets one row and leaves the rest", () => {
+    // pruneMissing only ever drops rows the cloud never heard of. A row that
+    // is cloud-linked and dead on disk needs to be let go of by name, which
+    // is what a pull that lands the document at a new path does.
+    registry.track("/tmp/a.md", "a.md", "x");
+    registry.track("/tmp/b.md", "b.md", "y");
+    registry.update("/tmp/a.md", { cloud_doc_id: "cloud-1", sync_state: "synced" });
+
+    registry.forget("/tmp/a.md");
+
+    expect(registry.get("/tmp/a.md")).toBeUndefined();
+    expect((registry.get("/tmp/b.md") as FileRow).name).toBe("b.md");
   });
 });
 

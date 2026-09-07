@@ -107,6 +107,16 @@ function getDB() {
     db.exec("ALTER TABLE files ADD COLUMN share_role TEXT");
   }
 
+  // Who the remembered role was granted to. A role is evidence about one
+  // account and no other: without this, signing into a second account on the
+  // same machine let the first account's "owner" answer speak for it. Existing
+  // rows get a null principal, which counts as nobody having said, so a role
+  // learned before this column existed can no longer claim ownership on its
+  // own. The next time the server confirms it, it is written back with a name.
+  if (!fileCols.some((c) => c.name === "share_role_user")) {
+    db.exec("ALTER TABLE files ADD COLUMN share_role_user TEXT");
+  }
+
   // Schema versioning starts at 0.5.0. Version 0 is every database that
   // predates it; the PRAGMA-guarded share_role ALTER above predates versioning
   // and stays as-is so any skipped-version database still heals.
@@ -323,6 +333,15 @@ function pruneMissing(fileExists = fs.existsSync) {
   return gone.length;
 }
 
+// Drop one row by path. pruneMissing lets go only of rows the cloud never
+// heard of; a cloud-linked row whose file is gone stays, on purpose, so the
+// Cloud page can offer the copy back. Once a pull has brought the document
+// back at some other path, that row is a second file on one cloud document,
+// and this is how the pull lets go of it.
+function forget(filePath) {
+  getDB().prepare("DELETE FROM files WHERE path = ?").run(canonicalPath(filePath));
+}
+
 function list() {
   return getDB()
     .prepare("SELECT * FROM files ORDER BY last_opened_at DESC")
@@ -338,8 +357,10 @@ function update(filePath, fields) {
     "sync_state",
     "last_synced_at",
     // Last role the server confirmed for this doc, so an offline session can
-    // keep honouring it instead of locking the owner out of their own file.
+    // keep honouring it instead of locking the owner out of their own file,
+    // and the account it confirmed it for.
     "share_role",
+    "share_role_user",
   ];
   const sets = [];
   const values = [];
@@ -628,6 +649,7 @@ module.exports = {
   track,
   get,
   list,
+  forget,
   pruneMissing,
   update,
   hashContent,

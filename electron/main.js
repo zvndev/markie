@@ -1265,10 +1265,13 @@ handle("registry-track", (_event, { path: p, name, content }) => {
 });
 // Remember the role the server confirmed for a file, so a later offline
 // session can honour it instead of locking the owner out of their own document.
-handle("registry-set-role", (_event, { path: p, role }) => {
+// The account it was confirmed for is stored with it: a role is evidence about
+// one user, and read back for anyone else it is worth nothing.
+handle("registry-set-role", (_event, { path: p, role, userId }) => {
   try {
     if (!["owner", "editor", "viewer"].includes(role)) return { error: "bad role" };
-    registry.update(p, { share_role: role });
+    if (typeof userId !== "string" || !userId) return { error: "no account" };
+    registry.update(p, { share_role: role, share_role_user: userId });
     return { ok: true };
   } catch (err) {
     return { error: String(err) };

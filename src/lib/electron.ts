@@ -177,7 +177,13 @@ export interface ElectronAPI {
     href: string;
     docDir: string | null;
   }): Promise<{ ok: boolean; error?: string }>;
-  syncConfig(cfg: { token: string | null; serverURL: string }): Promise<void>;
+  syncConfig(cfg: {
+    token: string | null;
+    serverURL: string;
+    // Who the token belongs to, when a confirmed session has said. Main needs
+    // it to know whose persisted roles it is looking at.
+    userId?: string | null;
+  }): Promise<void>;
   // Hand the sync engine the share role the renderer resolved for a cloud doc,
   // so a push it cannot land is refused here instead of coming back as a 403.
   syncDocRole?(args: {
@@ -191,7 +197,11 @@ export interface ElectronAPI {
   }): Promise<{ ok?: boolean; error?: string }>;
   registryGet(path: string): Promise<RegistryEntry | null>;
   // Remember a server-confirmed share role so an offline launch can honour it.
-  registrySetRole?(args: { path: string; role: "owner" | "editor" | "viewer" }): Promise<{ ok?: boolean; error?: string }>;
+  registrySetRole?(args: {
+    path: string;
+    role: "owner" | "editor" | "viewer";
+    userId: string;
+  }): Promise<{ ok?: boolean; error?: string }>;
   // A failure answers the same shape with an empty list and `error`, so a
   // caller that maps over `items` never meets `undefined`.
   libraryState(): Promise<{
@@ -483,6 +493,10 @@ export interface RegistryEntry {
   last_synced_at: string | null;
   // Last role the server confirmed; used when the server is unreachable.
   share_role?: "owner" | "editor" | "viewer" | null;
+  // The account that role was confirmed for. A role read back for anyone else
+  // proves nothing, so a row whose principal is null or someone else's counts
+  // as unconfirmed.
+  share_role_user?: string | null;
 }
 
 export interface LibraryItem {
@@ -502,6 +516,11 @@ export interface LibraryItem {
   lastOpenedAt: string | null;
   remoteVersion: number | null;
   exists: boolean;
+  // Whether this account owns the cloud document: true mine, false someone
+  // else's, null nobody has said. Only ever what the server's list said, or
+  // failing that the last role it confirmed, so an unreachable server cannot
+  // turn a document you were given into one you own.
+  owned?: boolean | null;
   // shared-with-me info (present when someone invited you to this doc)
   shared?: boolean;
   role?: "viewer" | "editor" | null;

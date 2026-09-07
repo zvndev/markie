@@ -69,7 +69,7 @@ import {
   sharesClient,
 } from "@/lib/auth-client";
 import { consumeAuthState } from "@/lib/auth-state";
-import { authStore } from "@/lib/auth-store";
+import { authStore, useAuth } from "@/lib/auth-store";
 import { markWelcomeSeen, shouldShowWelcome } from "@/lib/first-run";
 import { WELCOME_DOC } from "@/lib/welcome-doc";
 import { SignInDialog } from "@/components/sign-in";
@@ -177,6 +177,11 @@ const toDisk = (name: string | null, md: string) =>
   isCSVName(name) ? markdownTableToCSV(md) : md;
 
 export default function Home() {
+  // The confirmed account, for the surfaces that keep state per account. The
+  // Library's own signedIn only says main holds a token, which stays true
+  // when one account's token is replaced by another's.
+  const { user: account } = useAuth();
+
   // One owner for the buffer, its path, and whether it is dirty, so autosave,
   // drafts, and flush-on-transition attach to one place instead of five
   // useStates whose invariants nothing enforced. The transitions come out by
@@ -222,7 +227,7 @@ export default function Home() {
   const [libRefreshKey, setLibRefreshKey] = useState(0);
   const [showShare, setShowShare] = useState(false);
   const [canShare, setCanShare] = useState(false);
-  // Manage sharing on an arbitrary owned doc (from the Shared → "by me" tab),
+  // Manage sharing on an arbitrary owned doc (from the Cloud page's "Shared by me"),
   // independent of whichever doc is currently open.
   const [manageShare, setManageShare] = useState<{ docId: string; name: string } | null>(null);
   const [showAgents, setShowAgents] = useState(false);
@@ -355,7 +360,8 @@ export default function Home() {
         setRoleState(role);
         // Remember it: Markie is local-first, so the next launch may have no
         // network, and a role we already proved should survive that.
-        if (filePath) void api?.registrySetRole?.({ path: filePath, role });
+        if (filePath && me)
+          void api?.registrySetRole?.({ path: filePath, role, userId: me.id });
         // Same answer, same doc: the sync engine can now refuse a push the
         // server would only reject.
         api?.syncDocRole?.({ cloudId: cid, role });
@@ -604,7 +610,7 @@ export default function Home() {
     setShowShare(true);
   }, []);
 
-  // Open the share dialog to manage people on a doc I own (Shared → "by me").
+  // Open the share dialog to manage people on a doc I own (Cloud, "Shared by me").
   const handleManageShare = useCallback((docId: string, name: string) => {
     setManageShare({ docId, name });
   }, []);
@@ -1470,6 +1476,7 @@ export default function Home() {
       { id: "settings", title: "Settings…", group: "File", shortcut: "⌘,", keywords: "account sign in sync login", run: () => setShowSettings(true) },
       { id: "library", title: "Library…", group: "File", shortcut: "⌘L", keywords: "documents cloud sync files recent projects organize workspace group", run: () => selectView("library") },
       { id: "browse", title: "Browse all markdown…", group: "File", keywords: "all files device skills index find", run: () => selectView("browse") },
+      { id: "cloud", title: "Cloud…", group: "File", keywords: "synced shared sharing people cloud sync backup invited", run: () => selectView("cloud") },
       { id: "skills", title: "Skills & agent files…", group: "File", keywords: "claude agents codex gemini cursor instructions", run: () => selectView("skills") },
       { id: "new-file", title: "New file", group: "File", shortcut: "⌘N", keywords: "blank create empty document", run: handleNewFile },
       // Ungated on purpose: this used to vanish from the palette exactly when
@@ -1619,7 +1626,7 @@ export default function Home() {
           onAccount={() => setShowSettings(true)}
         />
 
-        {/* Docked side panel (Library / Browse / Shared / Skills) */}
+        {/* Docked side panel (Library / Browse / Cloud / Skills) */}
         {showSidePanel(leftState) && isPanelView(leftView) && (
           <Library
             key={leftView}
@@ -1632,6 +1639,7 @@ export default function Home() {
             onManageShare={handleManageShare}
             onSyncChanged={refreshCollab}
             activePath={filePath}
+            accountId={account?.id ?? null}
             refreshKey={libRefreshKey}
           />
         )}
@@ -1916,7 +1924,7 @@ export default function Home() {
           docId={manageShare.docId}
           fileName={manageShare.name}
           onClose={() => setManageShare(null)}
-          // membership changed → refresh the Shared lists' counts
+          // membership changed → refresh the Cloud page's counts
           onChanged={() => setLibRefreshKey((k) => k + 1)}
         />
       )}

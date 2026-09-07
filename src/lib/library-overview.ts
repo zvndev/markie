@@ -12,10 +12,45 @@ export interface LibraryOverview {
 
 export interface OrganizedLibraryItems {
   localFiles: LibraryItem[];
+  // My own files that the cloud also knows about, in any of its states. The
+  // Library shows every local file together; the Cloud page shows only this
+  // subset, because a file the cloud has never heard of has nothing to say
+  // there. Ownership decides the group and a local copy does not: someone
+  // else's document is theirs whether or not this device holds it, so it
+  // belongs under the heading about their documents, not under mine.
+  //
+  // Ownership has to be confirmed rather than assumed. A row whose owner
+  // nobody has vouched for is in neither ownership section: it is still in the
+  // Library's list of what is on this device, and it joins this one the moment
+  // the server's list says it is mine.
+  //
+  // A cloud id is required for the same reason. When the first attempt to sync
+  // a file fails, the row is left unpushed with no cloud document behind it,
+  // and a heading that says the file is synced from this device would be
+  // describing a copy that does not exist.
+  //
+  // And the file has to still be here. Once it is deleted from disk, the cloud
+  // copy is the only one left, which is what "In your cloud" means; a row
+  // under this heading would open nothing and offer nothing.
+  syncedFromDevice: LibraryItem[];
+  // My documents the cloud holds and this device does not: the ones the
+  // server's list named with no file here, and the ones whose file was here
+  // and has since been deleted. Either way the row's job is to get the copy
+  // back.
   myCloudOnly: LibraryItem[];
   sharedItems: LibraryItem[];
   sharedCloudOnly: LibraryItem[];
 }
+
+// Every state that means "the cloud holds a copy of this file". "local-only" is
+// the one state a local file can be in that the cloud knows nothing about.
+const CLOUD_STATES: ReadonlyArray<LibraryItem["state"]> = [
+  "synced",
+  "unpushed",
+  "conflict",
+  "behind",
+  "paused",
+];
 
 export function summarizeLibrary(items: LibraryItem[]): LibraryOverview {
   return items.reduce<LibraryOverview>(
@@ -43,14 +78,37 @@ export function summarizeLibrary(items: LibraryItem[]): LibraryOverview {
   );
 }
 
+// A file of my own that the cloud holds a copy of, whether or not the file is
+// still on the disk.
+function myCloudBacked(item: LibraryItem): boolean {
+  return (
+    !!item.path && !!item.cloudId && item.owned === true && CLOUD_STATES.includes(item.state)
+  );
+}
+
 export function organizeLibraryItems(items: LibraryItem[]): OrganizedLibraryItems {
   const sharedItems = sortLibraryItems(items.filter((item) => item.shared));
   return {
     localFiles: sortLibraryItems(items.filter((item) => item.path)),
-    myCloudOnly: sortLibraryItems(items.filter((item) => !item.path && !item.shared)),
+    syncedFromDevice: sortLibraryItems(
+      items.filter((item) => myCloudBacked(item) && item.exists)
+    ),
+    myCloudOnly: sortLibraryItems(
+      items.filter(
+        (item) => (!item.path && !item.shared) || (myCloudBacked(item) && !item.exists)
+      )
+    ),
     sharedItems,
     sharedCloudOnly: sharedItems.filter((item) => !item.path),
   };
+}
+
+// Whether the cloud holds a copy of this document and this device does not: a
+// document the list named with no file here, or one of my own synced files
+// that has since been deleted from disk. The way back is the same for both.
+export function cloudCopyOnly(item: LibraryItem): boolean {
+  if (!item.cloudId) return false;
+  return item.state === "cloud-only" || (myCloudBacked(item) && !item.exists);
 }
 
 export function libraryItemNeedsAttention(item: LibraryItem): boolean {
@@ -62,7 +120,7 @@ export function libraryItemNeedsAttention(item: LibraryItem): boolean {
   );
 }
 
-function sortLibraryItems(items: LibraryItem[]): LibraryItem[] {
+export function sortLibraryItems(items: LibraryItem[]): LibraryItem[] {
   return [...items].sort((a, b) => {
     const attention = attentionRank(b) - attentionRank(a);
     if (attention !== 0) return attention;

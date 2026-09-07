@@ -38,7 +38,7 @@ describe("ActivityBar", () => {
       "New file (⌘N)",
       "Library: recent and projects (⌘L)",
       "Browse all markdown",
-      "Shared with you",
+      "Cloud: synced and shared",
       "Skills & agent files",
       "Formatting tools",
       "Connect an agent (MCP)",
@@ -71,17 +71,17 @@ describe("ActivityBar", () => {
   });
 
   it("marks the open panel's view active and nothing else", () => {
-    render(<ActivityBar {...props({ activeView: "shared", panelOpen: true })} />);
-    const shared = screen.getByRole("button", { name: "Shared with you" });
+    render(<ActivityBar {...props({ activeView: "cloud", panelOpen: true })} />);
+    const cloud = screen.getByRole("button", { name: "Cloud: synced and shared" });
     const library = screen.getByRole("button", { name: "Library: recent and projects (⌘L)" });
-    expect(shared.classList.contains("bg-accent")).toBe(true);
+    expect(cloud.classList.contains("bg-accent")).toBe(true);
     expect(library.classList.contains("bg-accent")).toBe(false);
   });
 
   it("shows no panel view as active while the panel is closed", () => {
-    render(<ActivityBar {...props({ activeView: "shared", panelOpen: false })} />);
+    render(<ActivityBar {...props({ activeView: "cloud", panelOpen: false })} />);
     expect(
-      screen.getByRole("button", { name: "Shared with you" }).classList.contains("bg-accent")
+      screen.getByRole("button", { name: "Cloud: synced and shared" }).classList.contains("bg-accent")
     ).toBe(false);
   });
 
@@ -185,7 +185,7 @@ describe("the rail's destinations", () => {
     const names = screen
       .getAllByRole("tooltip", { hidden: true })
       .map((el) => el.textContent?.trim() ?? "");
-    for (const expected of ["New file", "Library", "Browse", "Shared", "Skills"]) {
+    for (const expected of ["New file", "Library", "Browse", "Cloud", "Skills"]) {
       expect(names.some((n) => n.startsWith(expected))).toBe(true);
     }
   });

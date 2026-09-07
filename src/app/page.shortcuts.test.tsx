@@ -84,6 +84,23 @@ describe("page keyboard shortcuts", () => {
     );
   });
 
+  // The rail's Cloud icon has a keyboard-free twin: someone who never learned
+  // the rail should still be able to reach the page by name.
+  it("opens the Cloud page from the command palette", async () => {
+    await boot();
+    await chord("k");
+    await userEvent.type(
+      await screen.findByPlaceholderText(/Type a command/i),
+      "Cloud"
+    );
+    await userEvent.click(await screen.findByRole("option", { name: /Cloud/ }));
+    // The side panel's own title, which only the Cloud view carries.
+    expect(await screen.findByText("Cloud")).toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText(/Type a command/i)
+    ).not.toBeInTheDocument();
+  });
+
   it("⌘/ toggles the shortcuts sheet", async () => {
     await boot();
     await chord("/");

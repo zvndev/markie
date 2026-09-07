@@ -17,6 +17,12 @@ let config = { token: null, serverURL: null };
 // Nothing is inferred locally, so an unreported doc stays unknown.
 const docRoles = new Map();
 
+// Who is signed in, as the renderer last confirmed with the server. The roles
+// the registry remembers were granted to one account, so reading them back for
+// any other is worth nothing. Unknown until a confirmed session says, and
+// unknown never claims ownership.
+let principal = null;
+
 function setDocRole(cloudId, role) {
   if (!cloudId) return;
   if (role) docRoles.set(cloudId, role);
@@ -30,10 +36,23 @@ function setConfig(next) {
   const allowed = isAllowedServerOrigin(serverURL, {
     allowDev: process.env.NODE_ENV === "development",
   });
-  config = { token: next.token ?? null, serverURL: allowed ? serverURL : null };
+  const token = next.token ?? null;
+  const tokenChanged = token !== config.token;
+  config = { token, serverURL: allowed ? serverURL : null };
   // Roles belong to whoever was signed in. Another account's grants on the same
   // doc are a different answer entirely.
   docRoles.clear();
+  // The principal is evidence about one token. A different token is a
+  // different session, whether or not anyone signed out in between, so the
+  // old answer goes at once, and a user named in the same push cannot have
+  // been confirmed for the new token yet: the renderer sends whatever it last
+  // heard, which was said for the token before. The principal comes back only
+  // with a later push made after /api/me answered under this token. A push
+  // that carries no user and the same token leaves it alone: that usually
+  // means nobody has asked the server yet, and offline nobody can. No token
+  // at all is a sign-out, and nobody is signed in.
+  if (tokenChanged || !token) principal = null;
+  else if (next.userId) principal = next.userId;
 }
 
 function isConfigured() {
@@ -250,6 +269,16 @@ async function pull(cloudId, targetPath) {
     sync_state: "synced",
     last_synced_at: new Date().toISOString(),
   });
+  // This is also how a synced file that was deleted from disk comes back,
+  // and the save dialog may have put it anywhere. One document, one file, one
+  // row: the dead row for the old path is let go of, because left beside the
+  // new one it is a second file that pushes over the first the moment it is
+  // restored. A row whose file is still on disk is a different situation
+  // (two live copies) and is left alone.
+  for (const row of registry.list()) {
+    if (row.cloud_doc_id !== cloudId || row.path === targetPath) continue;
+    if (!fs.existsSync(row.path)) registry.forget(row.path);
+  }
   return { ok: true, path: targetPath, name };
 }
 
@@ -553,6 +582,36 @@ async function resolveKeepBoth(filePath, localContent) {
   return { ok: true, keptAt: copyPath, content: doc.content, version: doc.version };
 }
 
+// The role the registry remembers for this document, when it is the only word
+// there is. A list that loaded outranks it entirely: a complete list that
+// omits a document is the server saying the document is not this account's
+// now, whatever it once was (deleted, access revoked, or it belongs to the
+// account that was signed in before this one). Without a list, the last thing
+// the server said is all an offline session has, and it counts only for the
+// account it was said to, and only once this session has confirmed who that
+// is. Anything else is null: nobody has said.
+function rememberedRole(row, remoteLoaded) {
+  if (remoteLoaded) return null;
+  if (!principal || row.share_role_user !== principal) return null;
+  const role = row.share_role;
+  return role === "owner" || role === "editor" || role === "viewer" ? role : null;
+}
+
+// Who owns a cloud document, as far as anything can actually say. The list the
+// server just sent is the live answer. Without one, the remembered role is the
+// last answer the server gave. With neither, ownership is unknown, and unknown
+// must not read as "mine": a list that failed used to make someone else's
+// document look like your own.
+function ownership(remoteRecord, row, remoteLoaded) {
+  if (remoteRecord) return !remoteRecord.shared;
+  // Nothing in the cloud to own.
+  if (!row.cloud_doc_id) return true;
+  const role = rememberedRole(row, remoteLoaded);
+  if (role === "owner") return true;
+  if (role === "editor" || role === "viewer") return false;
+  return null;
+}
+
 // Merged local + remote view for the Library.
 async function libraryState() {
   // vanished local-only files (deleted agent worktrees, temp scratch docs)
@@ -582,6 +641,24 @@ async function libraryState() {
   for (const d of remote) {
     setDocRole(d.id, d.shared ? d.role ?? "viewer" : "owner");
   }
+  // Rows from before share_role_user existed carry a role and nobody beside
+  // it, which offline reads as nobody having said. Opening the document
+  // online writes the account in, and a document never opened again would
+  // stay unconfirmed for ever; the list names the same rows, so it does the
+  // writing. Only rows it names: a row it omits is already read as not this
+  // account's while the list is loaded, and gets nothing written.
+  if (remoteLoaded && principal) {
+    const named = new Map(remote.map((d) => [d.id, d]));
+    for (const f of local) {
+      const d = f.cloud_doc_id ? named.get(f.cloud_doc_id) : null;
+      if (!d) continue;
+      const role = d.shared ? (d.role === "editor" ? "editor" : "viewer") : "owner";
+      if (f.share_role === role && f.share_role_user === principal) continue;
+      registry.update(f.path, { share_role: role, share_role_user: principal });
+      f.share_role = role;
+      f.share_role_user = principal;
+    }
+  }
   const byCloudId = new Map(local.filter((f) => f.cloud_doc_id).map((f) => [f.cloud_doc_id, f]));
   const items = local.map((f) => {
     const r = f.cloud_doc_id ? remote.find((d) => d.id === f.cloud_doc_id) : null;
@@ -593,6 +670,14 @@ async function libraryState() {
     if (remoteLoaded && state === "synced" && f.cloud_doc_id && !r) {
       state = "paused"; // deleted remotely
     }
+    // A document somebody else owns stays shared with you while the server is
+    // unreachable. The list is the live answer; without one, a viewer or
+    // editor role this account remembers is the server having said so, and
+    // reading its absence as "not shared" left the document in no section of
+    // the Cloud page for the length of an outage. Who shared it is not
+    // remembered, so that stays unknown until the list comes back.
+    const remembered = r || !f.cloud_doc_id ? null : rememberedRole(f, remoteLoaded);
+    const sharedFromMemory = remembered === "editor" || remembered === "viewer";
     return {
       kind: "local",
       path: f.path,
@@ -602,9 +687,11 @@ async function libraryState() {
       lastOpenedAt: f.last_opened_at,
       remoteVersion: r?.version ?? null,
       exists: fs.existsSync(f.path),
+      // true mine, false someone else's, null nobody has said
+      owned: ownership(r, f, remoteLoaded),
       // a synced copy of a doc that was shared with you
-      shared: !!r?.shared,
-      role: r?.role ?? null,
+      shared: !!r?.shared || sharedFromMemory,
+      role: r?.role ?? (sharedFromMemory ? remembered : null),
       sharedBy: r?.shared_by ?? null,
     };
   });
@@ -619,6 +706,8 @@ async function libraryState() {
         lastOpenedAt: d.updated_at,
         remoteVersion: d.version,
         exists: false,
+        // Straight off the list that just loaded, so never in doubt.
+        owned: !d.shared,
         shared: !!d.shared,
         role: d.role ?? null,
         sharedBy: d.shared_by ?? null,

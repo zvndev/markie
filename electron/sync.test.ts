@@ -15,6 +15,18 @@ const sync = load("./sync.js");
 // The only origin setConfig will accept outside dev mode.
 const SERVER = "https://api-production-602f.up.railway.app";
 
+// Whoever is signed in for these tests, and somebody else.
+const ME = "user-me";
+const THEM = "user-them";
+
+// The renderer's sequence, in two pushes: the token is stored, and only later
+// does /api/me say who it belongs to. The first push carries whatever principal
+// the renderer had before, which is why the engine must not trust it.
+function signIn(token: string, userId: string) {
+  sync.setConfig({ token, serverURL: SERVER });
+  sync.setConfig({ token, serverURL: SERVER, userId });
+}
+
 interface Row {
   path: string;
   name: string;
@@ -24,6 +36,10 @@ interface Row {
   content_hash: string | null;
   last_synced_at: string | null;
   last_opened_at: string | null;
+  // The last role the server confirmed for this file, and the account it was
+  // confirmed for.
+  share_role?: "owner" | "editor" | "viewer" | null;
+  share_role_user?: string | null;
 }
 
 const realRegistry = { ...registry };
@@ -42,6 +58,8 @@ function seedRow(overrides: Partial<Row> & { path: string }): Row {
     content_hash: null,
     last_synced_at: null,
     last_opened_at: "2026-08-01T00:00:00.000Z",
+    share_role: null,
+    share_role_user: null,
     ...overrides,
   };
   rows.set(row.path, row);
@@ -101,7 +119,10 @@ beforeEach(() => {
   registry.list = () => [...rows.values()];
   registry.pruneMissing = () => 0;
   registry.track = () => {};
-  sync.setConfig({ token: "test-token", serverURL: SERVER });
+  registry.forget = (p: string) => {
+    rows.delete(p);
+  };
+  signIn("test-token", ME);
 });
 
 afterEach(() => {
@@ -633,6 +654,392 @@ describe("libraryState", () => {
     expect(state.items[0].state).toBe("behind");
   });
 
+  // Who owns a document decides which half of the Cloud page it appears under,
+  // and getting it wrong offers owner's actions on somebody else's file. The
+  // only honest sources are the list the server just sent and the last role it
+  // confirmed; with neither, the answer is "nobody has said".
+  describe("who owns each document", () => {
+    it("takes ownership from the list when the list loads", async () => {
+      syncedRow();
+      respondWith({ status: 200, body: { docs: [{ id: "cloud-1", version: 4 }] } });
+
+      expect((await sync.libraryState()).items[0].owned).toBe(true);
+    });
+
+    it("calls a shared document someone else's, list or no list", async () => {
+      syncedRow();
+      respondWith({
+        status: 200,
+        body: { docs: [{ id: "cloud-1", version: 4, shared: true, role: "editor" }] },
+      });
+
+      expect((await sync.libraryState()).items[0].owned).toBe(false);
+    });
+
+    it("keeps someone else's document theirs when the list cannot be fetched", async () => {
+      // Offline, or the server is down: no remote record either way. Reading
+      // that silence as "mine" is what filed a shared file under my own.
+      seedRow({
+        path: "/docs/theirs.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-2",
+        cloud_version: 4,
+        share_role: "editor",
+        share_role_user: ME,
+      });
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0].owned).toBe(false);
+    });
+
+    it("still calls my own document mine when the list cannot be fetched", async () => {
+      // The wifi dropping mid-session must not take my own documents away from
+      // me: this is the whole reason the remembered role is kept.
+      seedRow({
+        path: "/docs/mine.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-3",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: ME,
+      });
+      respondWith({ status: 503 });
+
+      expect((await sync.libraryState()).items[0].owned).toBe(true);
+    });
+
+    it("will not read another account's remembered role as its own", async () => {
+      // Two accounts on one machine. The role was proved by somebody else, so
+      // for this session it says nothing at all.
+      seedRow({
+        path: "/docs/hers.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-4",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: THEM,
+      });
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0].owned).toBeNull();
+    });
+
+    it("will not read a role remembered before principals were stored", async () => {
+      // Databases that predate the column have a role and no account beside it.
+      seedRow({
+        path: "/docs/old.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-5",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: null,
+      });
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0].owned).toBeNull();
+    });
+
+    it("drops a previous account's documents when this account's list loads", async () => {
+      // A signed in as owner, then B signed in. B's list is complete and does
+      // not mention the document, which is the server saying it is not B's.
+      seedRow({
+        path: "/docs/from-a.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-6",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: THEM,
+      });
+      signIn("b-token", ME);
+      respondWith({ status: 200, body: { docs: [] } });
+
+      expect((await sync.libraryState()).items[0].owned).toBeNull();
+    });
+
+    // A's remembered roles are evidence about A's token. The moment another
+    // token arrives, nothing has been confirmed for it, and the roles say
+    // nothing until /api/me answers under the new token.
+    const mineByA = () =>
+      seedRow({
+        path: "/docs/mine-by-a.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-7",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: ME,
+      });
+
+    it("stops reading A's remembered roles the moment B's token arrives", async () => {
+      // A is confirmed. B's token replaces A's with no sign-out in between,
+      // and the renderer's push still names A, because that is the last thing
+      // it heard. B's list then fails to load.
+      mineByA();
+      sync.setConfig({ token: "b-token", serverURL: SERVER, userId: ME });
+      respondWith({ status: 503 });
+
+      expect((await sync.libraryState()).items[0].owned).toBeNull();
+    });
+
+    it("reads B's remembered roles once B's token is confirmed, and not A's", async () => {
+      mineByA();
+      seedRow({
+        path: "/docs/mine-by-b.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-8",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: "user-b",
+      });
+      signIn("b-token", "user-b");
+      respondWith({ status: 503 });
+
+      const owned = Object.fromEntries(
+        (await sync.libraryState()).items.map((i: { path: string; owned: boolean | null }) => [
+          i.path,
+          i.owned,
+        ])
+      );
+      expect(owned).toEqual({ "/docs/mine-by-a.md": null, "/docs/mine-by-b.md": true });
+    });
+
+    it("keeps the confirmed account through a push that only repeats the token", async () => {
+      // A server URL change, or the boot push, sends the same token with no
+      // user. That is not a new session and must not throw the answer away.
+      mineByA();
+      sync.setConfig({ token: "test-token", serverURL: SERVER });
+      respondWith({ status: 503 });
+
+      expect((await sync.libraryState()).items[0].owned).toBe(true);
+    });
+
+    it("forgets the account on sign-out until the next token is confirmed", async () => {
+      mineByA();
+      sync.setConfig({ token: null, serverURL: null });
+      sync.setConfig({ token: "test-token", serverURL: SERVER });
+      respondWith({ status: 503 });
+
+      expect((await sync.libraryState()).items[0].owned).toBeNull();
+    });
+
+    it("says nobody has told it, rather than guessing", async () => {
+      syncedRow();
+      respondWith({ status: 500 });
+
+      expect((await sync.libraryState()).items[0].owned).toBeNull();
+    });
+
+    it("has nothing to wonder about for a file that was never in the cloud", async () => {
+      seedRow({ path: "/docs/local.md" });
+      respondWith({ status: 500 });
+
+      expect((await sync.libraryState()).items[0].owned).toBe(true);
+    });
+  });
+
+  // Whether a document is shared with this account decides the other half of
+  // the Cloud page. The list says so when it loads; when it does not, the
+  // role the server last confirmed for this account is the only word there
+  // is, and a document that was shared with me yesterday is still shared with
+  // me during today's outage.
+  describe("what a remembered role says about sharing", () => {
+    const sharedWithMe = (role: "editor" | "viewer", user: string = ME) =>
+      seedRow({
+        path: "/docs/theirs.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-9",
+        cloud_version: 4,
+        share_role: role,
+        share_role_user: user,
+      });
+
+    it("keeps a document shared with me shared when the list cannot be fetched", async () => {
+      sharedWithMe("editor");
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        owned: false,
+        shared: true,
+        role: "editor",
+        // Nobody remembers who shared it; the list will say when it is back.
+        sharedBy: null,
+      });
+    });
+
+    it("carries a remembered viewer role the same way", async () => {
+      sharedWithMe("viewer");
+      respondWith({ status: 503 });
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        owned: false,
+        shared: true,
+        role: "viewer",
+      });
+    });
+
+    it("prefers the list over memory when the list loads", async () => {
+      sharedWithMe("viewer");
+      respondWith({
+        status: 200,
+        body: {
+          docs: [{ id: "cloud-9", version: 4, shared: true, role: "editor", shared_by: "Grace" }],
+        },
+      });
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        shared: true,
+        role: "editor",
+        sharedBy: "Grace",
+      });
+    });
+
+    it("does not call a document shared when the list loaded without it", async () => {
+      // Access was revoked, or the document was deleted. Memory does not get a
+      // vote once the server has answered.
+      sharedWithMe("editor");
+      respondWith({ status: 200, body: { docs: [] } });
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        shared: false,
+        role: null,
+        owned: null,
+      });
+    });
+
+    it("does not read another account's remembered share as mine", async () => {
+      sharedWithMe("editor", THEM);
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        shared: false,
+        role: null,
+        owned: null,
+      });
+    });
+
+    it("does not read a remembered share before this account is confirmed", async () => {
+      sharedWithMe("editor");
+      sync.setConfig({ token: "b-token", serverURL: SERVER, userId: ME });
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        shared: false,
+        role: null,
+        owned: null,
+      });
+    });
+
+    it("does not call my own document shared with me", async () => {
+      seedRow({
+        path: "/docs/mine.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-10",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: ME,
+      });
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        owned: true,
+        shared: false,
+        role: null,
+      });
+    });
+  });
+
+  // Rows from before share_role_user existed have a role and nobody beside it,
+  // and a role with nobody beside it is refused offline. Opening the document
+  // online writes the account in; a document never opened again would stay
+  // unconfirmed for ever. The list the server sends names the same rows, so
+  // it can do the writing.
+  describe("healing rows the migration left unconfirmed", () => {
+    const migrated = (role: "owner" | "editor" = "owner") =>
+      seedRow({
+        path: "/docs/old.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-11",
+        cloud_version: 4,
+        share_role: role,
+        share_role_user: null,
+      });
+
+    it("writes the live role and this account back to a row the list names", async () => {
+      migrated();
+      respondWith(
+        { status: 200, body: { docs: [{ id: "cloud-11", version: 4 }] } },
+        { status: 503 }
+      );
+
+      await sync.libraryState();
+      expect(rows.get("/docs/old.md")).toMatchObject({ share_role: "owner", share_role_user: ME });
+
+      // And the next outage no longer takes the document away.
+      expect((await sync.libraryState()).items[0].owned).toBe(true);
+    });
+
+    it("records a shared document's live role the same way", async () => {
+      migrated("owner");
+      respondWith(
+        {
+          status: 200,
+          body: { docs: [{ id: "cloud-11", version: 4, shared: true, role: "editor" }] },
+        },
+        new Error("offline")
+      );
+
+      await sync.libraryState();
+      expect(rows.get("/docs/old.md")).toMatchObject({
+        share_role: "editor",
+        share_role_user: ME,
+      });
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        owned: false,
+        shared: true,
+        role: "editor",
+      });
+    });
+
+    it("leaves a row the list omits alone", async () => {
+      // Absent from a loaded list already reads as "not this account's";
+      // writing anything to it would be inventing an answer.
+      migrated();
+      respondWith({ status: 200, body: { docs: [] } });
+
+      await sync.libraryState();
+      expect(rows.get("/docs/old.md")).toMatchObject({ share_role: "owner", share_role_user: null });
+    });
+
+    it("writes nothing before this account is confirmed", async () => {
+      migrated();
+      sync.setConfig({ token: "b-token", serverURL: SERVER, userId: ME });
+      respondWith({ status: 200, body: { docs: [{ id: "cloud-11", version: 4 }] } });
+
+      await sync.libraryState();
+      expect(rows.get("/docs/old.md")).toMatchObject({ share_role: "owner", share_role_user: null });
+    });
+
+    it("does not rewrite a row that already says the same thing", async () => {
+      seedRow({
+        path: "/docs/fine.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-12",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: ME,
+      });
+      const writes: string[] = [];
+      const update = registry.update;
+      registry.update = (p: string, fields: Partial<Row>) => {
+        writes.push(p);
+        update(p, fields);
+      };
+      respondWith({ status: 200, body: { docs: [{ id: "cloud-12", version: 4 }] } });
+
+      await sync.libraryState();
+      expect(writes).toEqual([]);
+    });
+  });
+
   it("leaves an unpushed row unpushed even when the server list loads", async () => {
     seedRow({
       path: "/docs/a.md",
@@ -996,6 +1403,59 @@ describe("pull", () => {
       "not signed in"
     );
     expect(calls).toHaveLength(0);
+  });
+
+  // Bringing back a synced file that was deleted from disk. The save dialog
+  // may put the copy anywhere, and a document must end up with one row per
+  // file, not one per attempt: two rows on one cloud document are two files
+  // that push over each other.
+  describe("bringing a deleted file back", () => {
+    const linkedRows = () => [...rows.values()].filter((r) => r.cloud_doc_id === "cloud-1");
+
+    beforeEach(() => {
+      // The real track inserts the pulled path; the default fake does not.
+      registry.track = (p: string, name: string) => {
+        if (!rows.has(p)) seedRow({ path: p, name });
+      };
+      respondWith({
+        status: 200,
+        body: { doc: { content: "cloud text\n", name: "old.md", version: 3 } },
+      });
+    });
+
+    it("forgets the dead row when the copy lands at a new path", async () => {
+      const old = path.join(tmpDir, "old.md");
+      seedRow({ path: old, sync_state: "synced", cloud_doc_id: "cloud-1", cloud_version: 2 });
+      const restored = path.join(tmpDir, "restored.md");
+
+      expect((await sync.pull("cloud-1", restored)).ok).toBe(true);
+
+      expect(linkedRows().map((r) => r.path)).toEqual([restored]);
+      expect(rows.has(old)).toBe(false);
+    });
+
+    it("leaves a row alone while its file is still on disk", async () => {
+      // Two live copies is a different situation, and not one to resolve by
+      // forgetting either of them.
+      const old = path.join(tmpDir, "old.md");
+      fs.writeFileSync(old, "still here\n");
+      seedRow({ path: old, sync_state: "synced", cloud_doc_id: "cloud-1", cloud_version: 2 });
+      const restored = path.join(tmpDir, "restored.md");
+
+      await sync.pull("cloud-1", restored);
+
+      expect(linkedRows().map((r) => r.path).sort()).toEqual([old, restored].sort());
+    });
+
+    it("needs nothing when the copy lands back at the old path", async () => {
+      const old = path.join(tmpDir, "old.md");
+      seedRow({ path: old, sync_state: "synced", cloud_doc_id: "cloud-1", cloud_version: 2 });
+
+      await sync.pull("cloud-1", old);
+
+      expect(linkedRows().map((r) => r.path)).toEqual([old]);
+      expect(rows.get(old)).toMatchObject({ sync_state: "synced", cloud_version: 3 });
+    });
   });
 });
 

@@ -501,18 +501,22 @@ function rememberDisk(filePath, content) {
   }
 }
 
-// Returns the current on-disk content when it differs from what we last saw,
-// or null when it matches, is unknown to us, or cannot be read.
+// What is on disk when it differs from what we last saw: the text and its
+// size (the renderer settles the document's tier again from it, see
+// electron/doc-tiers.js), or, for a file that has grown past the cap, a
+// refusal without reading it. Null when it matches, is unknown to us, or
+// cannot be read.
 function diskChangedSince(filePath) {
   const known = lastSeenOnDisk.get(filePath);
   if (!known) return null; // never read it here; nothing to compare against
-  let current;
+  let doc;
   try {
-    current = fs.readFileSync(filePath, "utf-8");
+    doc = docTiers.readDocumentTiered(filePath);
   } catch {
     return null; // gone or unreadable; the write itself will report the failure
   }
-  return hashOf(current) === known ? null : current;
+  if (doc.tooLarge) return { tooLarge: true, size: doc.size };
+  return hashOf(doc.content) === known ? null : { content: doc.content, size: doc.size };
 }
 
 // ── Watching the open document ──
@@ -551,17 +555,17 @@ function watchOpenFile(filePath) {
       if (changed === null) return;
       // Somebody else's write is a version too. Recording it here is what puts
       // an agent's edit of the open document into the history list; the store
-      // dedupes, so the user's own save over it does not record it twice.
-      try {
-        history().captureExternal(filePath);
-      } catch {
-        // A missing version is a smaller loss than a missed change notice.
+      // dedupes, so the user's own save over it does not record it twice. A
+      // file that outgrew the cap is not read, so it is not recorded either.
+      if (!changed.tooLarge) {
+        try {
+          history().captureExternal(filePath);
+        } catch {
+          // A missing version is a smaller loss than a missed change notice.
+        }
       }
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("file-changed-on-disk", {
-          path: filePath,
-          content: changed,
-        });
+        mainWindow.webContents.send("file-changed-on-disk", { path: filePath, ...changed });
       }
     });
   } catch {
@@ -1064,9 +1068,21 @@ handle("save-file", async (_event, { filePath, content, force = false, autosave 
     // writer's work, so it refuses and hands the newer bytes back for the
     // renderer's own non-modal strip. saveConflictAction owns that decision.
     const newer = force ? null : diskChangedSince(access.path);
-    const action = saveConflictAction({ autosave, force, changed: newer });
+    if (newer?.tooLarge) {
+      // The file on disk outgrew what Markie opens, so the conflict dialog
+      // could not show what it would overwrite. Nothing is written; the
+      // buffer is still theirs to save under another name.
+      return {
+        success: false,
+        error:
+          `${path.basename(access.path)} on disk is now ${docTiers.formatMegabytes(newer.size)}, ` +
+          `more than Markie opens (${docTiers.formatMegabytes(docTiers.MAX_DOC_BYTES)}). ` +
+          "Save your copy under another name.",
+      };
+    }
+    const action = saveConflictAction({ autosave, force, changed: newer?.content ?? null });
     if (action === "refuse") {
-      return { success: false, code: "disk-changed", path: access.path, content: newer };
+      return { success: false, code: "disk-changed", path: access.path, content: newer.content, size: newer.size };
     }
     if (action === "ask") {
       const { response } = await dialog.showMessageBox(mainWindow, {
@@ -1081,8 +1097,8 @@ handle("save-file", async (_event, { filePath, content, force = false, autosave 
       });
       if (response === 2) return { success: false, canceled: true };
       if (response === 0) {
-        rememberDisk(access.path, newer);
-        return { success: false, code: "reloaded", path: access.path, content: newer };
+        rememberDisk(access.path, newer.content);
+        return { success: false, code: "reloaded", path: access.path, content: newer.content, size: newer.size };
       }
       // response === 1: the user chose to overwrite, so fall through.
     }

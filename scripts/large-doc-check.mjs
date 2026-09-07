@@ -264,7 +264,7 @@ async function main() {
   const largeNamedMs = firstSeen(samples, (v) => String(v.title).startsWith("big.md"));
   note(`4.4 MB named in the toolbar by the ${largeNamedMs === null ? "end of the samples" : `${largeNamedMs} ms sample`} (one-second granularity)`);
   const strip = await cdp.ev(LARGE_STRIP);
-  check("large document strip explains Source view", /Large document \(4\.4 MB\)\. Opened in source view; rich editing is off for files over 1\.0 MB\./.test(strip), JSON.stringify(strip));
+  check("large document strip explains Source view", /Large document \(4\.4 MB\)\. Opened in source view; rich editing and live collaboration are off for files over 1\.0 MB\./.test(strip), JSON.stringify(strip));
   check("large document shows the source pane and no rich pane", (await cdp.ev(SOURCE_PANE)) === true && (await cdp.ev(RICH_PANE)) === false);
   const richButton = await cdp.ev(RICH_BUTTON);
   check("Rich mode button is disabled with the reason", richButton?.disabled === true && richButton?.title === "Too large for rich view", JSON.stringify(richButton));

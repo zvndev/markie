@@ -53,4 +53,20 @@ function readDocumentTiered(filePath, io = fs) {
   return { content, size, large: tier === "large" };
 }
 
-module.exports = { LARGE_DOC_BYTES, MAX_DOC_BYTES, tierForSize, readDocumentTiered };
+/**
+ * "4.4 MB", "143 MB", "1.0 MB": one decimal under 10 MB, none above. The
+ * renderer formats sizes the same way (src/lib/doc-tiers.ts), so a size named
+ * in copy reads the same from either side.
+ */
+function formatMegabytes(bytes) {
+  const mb = bytes / 1_000_000;
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb).toString()} MB`;
+}
+
+module.exports = {
+  LARGE_DOC_BYTES,
+  MAX_DOC_BYTES,
+  tierForSize,
+  readDocumentTiered,
+  formatMegabytes,
+};

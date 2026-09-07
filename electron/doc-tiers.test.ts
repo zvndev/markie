@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   LARGE_DOC_BYTES,
   MAX_DOC_BYTES,
+  formatMegabytes,
   readDocumentTiered,
   tierForSize,
 } from "./doc-tiers.js";
@@ -20,6 +21,24 @@ describe("document size tiers", () => {
   it("keeps the renderer's copy of the constants in step", () => {
     expect(rendererTiers.LARGE_DOC_BYTES).toBe(LARGE_DOC_BYTES);
     expect(rendererTiers.MAX_DOC_BYTES).toBe(MAX_DOC_BYTES);
+  });
+
+  it("draws the same lines and formats the same sizes as the renderer", () => {
+    for (const size of [0, LARGE_DOC_BYTES - 1, LARGE_DOC_BYTES, MAX_DOC_BYTES - 1, MAX_DOC_BYTES, -1, Number.NaN]) {
+      expect(rendererTiers.tierForSize(size)).toBe(tierForSize(size));
+    }
+    for (const size of [1_000_000, 4_400_000, 9_950_000, 143_000_000]) {
+      expect(rendererTiers.formatMegabytes(size)).toBe(formatMegabytes(size));
+    }
+    expect(formatMegabytes(143_000_000)).toBe("143 MB");
+  });
+
+  it("measures text already in memory in UTF-8 bytes, like the stat would", () => {
+    expect(rendererTiers.measureBytes("")).toBe(0);
+    expect(rendererTiers.measureBytes("abc")).toBe(3);
+    expect(rendererTiers.measureBytes("ü")).toBe(2);
+    expect(rendererTiers.measureBytes("日本")).toBe(6);
+    expect(rendererTiers.tierForSize(rendererTiers.measureBytes("ü".repeat(500_000)))).toBe("large");
   });
 
   it("refuses a file over the cap without reading it", () => {

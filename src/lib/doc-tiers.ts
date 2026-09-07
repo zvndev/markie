@@ -7,6 +7,26 @@
 export const LARGE_DOC_BYTES = 1_000_000;
 export const MAX_DOC_BYTES = 100_000_000;
 
+export type DocTier = "ok" | "large" | "tooLarge";
+
+/** "ok" below the large line, "large" from there, "tooLarge" from the cap. */
+export function tierForSize(size: number): DocTier {
+  if (!Number.isFinite(size) || size < 0) return "ok";
+  if (size >= MAX_DOC_BYTES) return "tooLarge";
+  if (size >= LARGE_DOC_BYTES) return "large";
+  return "ok";
+}
+
+// Text that is already in memory (a history version, a recovered draft, a
+// cloud pull, an edit the disk watcher handed over) has no stat to go by, so
+// it is measured. UTF-8, because the lines are drawn in file bytes and a
+// document must land in the same tier whether it came from disk or from a
+// snapshot of the same disk. A few milliseconds for the largest text that can
+// reach here, and nothing worth noticing for an ordinary document.
+export function measureBytes(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
 /** "4.4 MB", "143 MB", "1.0 MB": one decimal under 10 MB, none above. */
 export function formatMegabytes(bytes: number): string {
   const mb = bytes / 1_000_000;
@@ -20,7 +40,7 @@ export function tooLargeMessage(size: number): string {
 
 /** The quiet strip above a document that opened in Source view. */
 export function largeDocumentNote(size: number): string {
-  return `Large document (${formatMegabytes(size)}). Opened in source view; rich editing is off for files over ${formatMegabytes(LARGE_DOC_BYTES)}.`;
+  return `Large document (${formatMegabytes(size)}). Opened in source view; rich editing and live collaboration are off for files over ${formatMegabytes(LARGE_DOC_BYTES)}.`;
 }
 
 /** The mode buttons' explanation while a large document is open. */

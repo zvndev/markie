@@ -72,7 +72,7 @@ describe("large documents", () => {
     render(<Home />);
     await waitFor(() => expect(largeStrip()).not.toBeNull());
     expect(largeStrip()!.textContent).toContain(
-      "Large document (4.4 MB). Opened in source view; rich editing is off for files over 1.0 MB."
+      "Large document (4.4 MB). Opened in source view; rich editing and live collaboration are off for files over 1.0 MB."
     );
     expect(richPane()).toBeNull();
     await waitFor(() => expect(sourceEditor()).not.toBeNull());
@@ -131,5 +131,68 @@ describe("large documents", () => {
     render(<Home />);
     await waitFor(() => expect(refusalStrip()).not.toBeNull());
     expect(document.title).not.toContain("huge.md");
+  });
+
+  it("gives New File an ordinary document again", async () => {
+    installBridge({ getInitialFile: vi.fn(async () => LARGE) } as Partial<ElectronAPI>);
+    render(<Home />);
+    await waitFor(() => expect(largeStrip()).not.toBeNull());
+
+    emit("onMenuNewFile", undefined);
+    await waitFor(() => expect(largeStrip()).toBeNull());
+    expect(modeButton(/rich mode/i).disabled).toBe(false);
+    expect(modeButton(/split mode/i).disabled).toBe(false);
+    await waitFor(() => expect(richPane()).not.toBeNull());
+  });
+
+  it("re-settles the tier from the size of a disk change, both ways", async () => {
+    installBridge({ getInitialFile: vi.fn(async () => SMALL) } as Partial<ElectronAPI>);
+    render(<Home />);
+    await waitFor(() => expect(richPane()).not.toBeNull());
+
+    // The file grew past the line on disk; main sends the new size with the
+    // text and the reload lands in Source view.
+    emit("onFileChangedOnDisk", { path: SMALL.path, content: "# Grown\n", size: 2_500_000 });
+    await userEvent.click(await screen.findByRole("button", { name: /reload/i }));
+    await waitFor(() => expect(largeStrip()).not.toBeNull());
+    expect(largeStrip()!.textContent).toContain("Large document (2.5 MB)");
+    expect(richPane()).toBeNull();
+    expect(modeButton(/rich mode/i).disabled).toBe(true);
+
+    // And shrank back: the mode it displaced returns.
+    emit("onFileChangedOnDisk", { path: SMALL.path, content: "# Trimmed\n", size: 10 });
+    await userEvent.click(await screen.findByRole("button", { name: /reload/i }));
+    await waitFor(() => expect(largeStrip()).toBeNull());
+    await waitFor(() => expect(richPane()).not.toBeNull());
+    expect(modeButton(/rich mode/i).disabled).toBe(false);
+  });
+
+  it("keeps the open document when the file on disk outgrows the cap", async () => {
+    installBridge({ getInitialFile: vi.fn(async () => SMALL) } as Partial<ElectronAPI>);
+    render(<Home />);
+    await waitFor(() => expect(richPane()).not.toBeNull());
+
+    emit("onFileChangedOnDisk", { path: SMALL.path, tooLarge: true, size: 143_000_000 });
+    await waitFor(() => expect(refusalStrip()).not.toBeNull());
+    expect(refusalStrip()!.textContent).toContain(
+      "notes.md was not reloaded. Markie opens markdown files up to 100 MB. This one is 143 MB."
+    );
+    expect(screen.queryByRole("button", { name: /reload/i })).toBeNull();
+    expect(richPane()).not.toBeNull();
+    expect(document.title).toBe("notes.md — Markie");
+  });
+
+  it("measures text that arrives without a size, so a snapshot of a large document stays large", async () => {
+    installBridge({ getInitialFile: vi.fn(async () => SMALL) } as Partial<ElectronAPI>);
+    render(<Home />);
+    await waitFor(() => expect(richPane()).not.toBeNull());
+
+    // A history version or a recovered draft: same shape, no size from main.
+    // Multi-byte text, because the line is drawn in file bytes.
+    const big = "# Snapshot\n\n" + "ünïcödé ".repeat(120_000);
+    emit("onFileOpened", { name: "notes.md", path: SMALL.path, content: big, unsaved: true });
+    await waitFor(() => expect(largeStrip()).not.toBeNull());
+    expect(largeStrip()!.textContent).toContain("Large document (1.4 MB)");
+    expect(richPane()).toBeNull();
   });
 });

@@ -41,6 +41,7 @@ import { ConflictDialog } from "@/components/conflict-dialog";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
 import { DraftStrip } from "@/components/draft-strip";
 import { LargeDocStrip, TooLargeStrip } from "@/components/large-doc";
+import { measureBytes, tierForSize } from "@/lib/doc-tiers";
 import { isTooLarge, type OpenResult, type TooLargePayload } from "@/lib/electron";
 import { HistoryDialog } from "@/components/history-dialog";
 import { diskChangeKind } from "@/lib/disk-change";
@@ -252,12 +253,12 @@ export default function Home() {
   const [showConflict, setShowConflict] = useState(false);
   // Set when something else edited the open file. Holds the new on-disk text so
   // a reload does not have to go back to the filesystem and race the next edit.
-  const [diskChange, setDiskChange] = useState<string | null>(null);
+  const [diskChange, setDiskChange] = useState<{ content: string; size?: number } | null>(null);
   const [showDiskConflict, setShowDiskConflict] = useState(false);
   // The open document's size tier (src/lib/doc-tiers.ts): its size while a
   // large document is open in Source view, and the last file main refused.
   const [largeDocSize, setLargeDocSize] = useState<number | null>(null);
-  const [refusedDoc, setRefusedDoc] = useState<{ name: string; size: number } | null>(null);
+  const [refusedDoc, setRefusedDoc] = useState<{ name: string; size: number; verb?: "opened" | "reloaded" } | null>(null);
   const largeDocRef = useRef(false);
   const modeRef = useRef<ViewMode>("preview");
   // The mode a large document displaced, given back with the next ordinary one.
@@ -405,7 +406,10 @@ export default function Home() {
         } else {
           setSharedBy(null);
         }
-        if (!me || !members || members.length === 0) {
+        // No live session for a large document (enterTier): Source is
+        // read-only under one, and the rich pane that would carry it never
+        // mounts, so a session would only lock the owner out of their file.
+        if (largeDocRef.current || !me || !members || members.length === 0) {
           setCollabCfg(null);
           return;
         }
@@ -556,6 +560,45 @@ export default function Home() {
     };
   }, [checkUpdates]);
 
+  // Every text that lands in the buffer passes through here, whichever way it
+  // arrived (a file main read, a history version, a recovered draft, a cloud
+  // pull, an edit the disk watcher handed over), and its size settles the tier
+  // (src/lib/doc-tiers.ts). Main sends the size of a file it read; text that
+  // was already in memory is measured, so a snapshot of a large document is
+  // still a large document. A large one opens in Source view and stays there:
+  // no rich pane, so no probe, no warm-up and no journal, and no live session
+  // (see refreshCollab). The mode it displaced comes back with the next
+  // ordinary document. Returns whether the document is large.
+  const enterTier = useCallback(
+    (md: string, path: string | null, size?: number): boolean => {
+      const bytes = size ?? measureBytes(md);
+      const large = tierForSize(bytes) !== "ok";
+      largeDocRef.current = large;
+      if (large) {
+        setLargeDocSize(bytes);
+        if (modeRef.current !== "edit") modeBeforeLargeRef.current = modeRef.current;
+        setMode("edit");
+        skipRichSafety(path);
+      } else {
+        setLargeDocSize(null);
+        if (modeBeforeLargeRef.current !== null) {
+          setMode(modeBeforeLargeRef.current);
+          modeBeforeLargeRef.current = null;
+        }
+        assessRichSafety(md, path);
+      }
+      return large;
+    },
+    [assessRichSafety, skipRichSafety]
+  );
+
+  // The live session depends on the tier, so a document that changed tier in
+  // place (grew past the line on disk, or shrank back) re-resolves it.
+  const largeTier = largeDocSize !== null;
+  useEffect(() => {
+    refreshCollabRef.current();
+  }, [largeTier]);
+
   // The clean case: nothing local is at risk, so this finishes in one click.
   const handlePullUpdate = useCallback(async () => {
     const api = getElectronAPI();
@@ -572,7 +615,7 @@ export default function Home() {
         // What came back is what is now on disk, and a CSV on disk is CSV.
         const pulled = fromDisk(fileName, res.content);
         applyExternalDoc(pulled);
-        assessRichSafety(pulled, docRef.current.filePath);
+        enterTier(pulled, docRef.current.filePath);
       }
       setUpdateWaiting(null);
       setLibRefreshKey((k) => k + 1);
@@ -581,18 +624,18 @@ export default function Home() {
     } finally {
       setUpdateBusy(false);
     }
-  }, [filePath, fileName, assessRichSafety, applyExternalDoc]);
+  }, [filePath, fileName, enterTier, applyExternalDoc]);
 
   // Whatever the dialog did, the file on disk now holds this content.
   const handleConflictResolved = useCallback(
     (next: string) => {
       const pulled = fromDisk(fileName, next);
       applyExternalDoc(pulled);
-      assessRichSafety(pulled, docRef.current.filePath);
+      enterTier(pulled, docRef.current.filePath);
       setUpdateWaiting(null);
       setUpdateError(null);
     },
-    [fileName, assessRichSafety, applyExternalDoc]
+    [fileName, enterTier, applyExternalDoc]
   );
 
   // A document that is being swapped out must not leave its access behind for
@@ -671,8 +714,8 @@ export default function Home() {
     resetDocAccess();
     resetDoc();
     setCanShare(false);
-    assessRichSafety("", null);
-  }, [dismissDocumentUI, resetDocAccess, assessRichSafety, resetDoc, settleDocument]);
+    enterTier("", null, 0);
+  }, [dismissDocumentUI, resetDocAccess, enterTier, resetDoc, settleDocument]);
 
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
@@ -707,35 +750,20 @@ export default function Home() {
       // version while the file on disk still holds the new one, so the document
       // must show as dirty until the user saves (or discards) the revert.
       loadDoc({ name: data.name, content: md, path: data.path, unsaved: data.unsaved });
-      // A large document (src/lib/doc-tiers.ts) opens in Source view and stays
-      // there: no rich pane, so no probe, no warm-up and no journal, and main
-      // has already registered it, so the text is not sent back to be hashed.
-      // The mode it displaced comes back with the next ordinary document.
-      const large = data.large === true;
-      largeDocRef.current = large;
-      if (large) {
-        setLargeDocSize(data.size ?? 0);
-        if (modeRef.current !== "edit") modeBeforeLargeRef.current = modeRef.current;
-        setMode("edit");
-        skipRichSafety(data.path);
-      } else {
-        setLargeDocSize(null);
-        if (modeBeforeLargeRef.current !== null) {
-          setMode(modeBeforeLargeRef.current);
-          modeBeforeLargeRef.current = null;
-        }
-        if (data.path) {
-          getElectronAPI()?.registryTrack?.({
-            path: data.path,
-            name: data.name,
-            content: data.content,
-          });
-        }
-        assessRichSafety(md, data.path);
+      // Main sends the size of a file it read; a restore of text already in
+      // memory is measured (enterTier). A large document was registered by
+      // main when it read it, so its text is not sent back to be hashed.
+      const large = enterTier(md, data.path, data.size);
+      if (!large && data.path) {
+        getElectronAPI()?.registryTrack?.({
+          path: data.path,
+          name: data.name,
+          content: data.content,
+        });
       }
       setLibRefreshKey((k) => k + 1);
     },
-    [dismissDocumentUI, resetDocAccess, assessRichSafety, skipRichSafety, loadDoc, settleDocument]
+    [dismissDocumentUI, resetDocAccess, enterTier, loadDoc, settleDocument]
   );
 
   const openPath = useCallback(
@@ -919,14 +947,14 @@ export default function Home() {
     if (res.code === "reloaded" && typeof res.content === "string") {
       const reloaded = fromDisk(fileName, res.content);
       applyExternalDoc(reloaded);
-      assessRichSafety(reloaded, filePath);
+      enterTier(reloaded, filePath, res.size);
       return null;
     }
     // An autosave found the same collision. Nothing was written and nobody was
     // interrupted: raise the strip the user already knows, and let the gate
     // below hold autosave off until they resolve it.
     if (res.code === "disk-changed" && typeof res.content === "string") {
-      setDiskChange(res.content);
+      setDiskChange({ content: res.content, size: res.size });
       return DISK_CHANGED;
     }
     if (res.success) {
@@ -969,7 +997,7 @@ export default function Home() {
       }
     }
     return null;
-  }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg, assessRichSafety, applyExternalDoc, markSaved, checkUpdates]);
+  }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg, enterTier, applyExternalDoc, markSaved, checkUpdates]);
 
   // Autosave arms only where a write is provably safe: a real file to write,
   // the right to write it, no unresolved disk conflict, and either Source
@@ -1271,12 +1299,12 @@ export default function Home() {
   // the buffer always holds markdown.
   const reloadFromDisk = useCallback(() => {
     if (diskChange === null) return;
-    const md = fromDisk(fileName, diskChange);
+    const md = fromDisk(fileName, diskChange.content);
     applyExternalDoc(md);
-    assessRichSafety(md, docRef.current.filePath);
+    enterTier(md, docRef.current.filePath, diskChange.size);
     setDiskChange(null);
     setShowDiskConflict(false);
-  }, [diskChange, fileName, assessRichSafety, applyExternalDoc]);
+  }, [diskChange, fileName, enterTier, applyExternalDoc]);
 
   // Keep both: save the buffer under a new name and leave the changed file
   // alone. The only resolution that destroys nothing.
@@ -1468,7 +1496,14 @@ export default function Home() {
         // Ignore a change to a file we are no longer showing: the watcher can
         // fire once more between opening a new document and re-pointing.
         if (data.path !== filePathRef.current) return;
-        setDiskChange(data.content);
+        if (data.tooLarge) {
+          // The file outgrew the cap on disk. Main did not read it, so there
+          // is nothing to reload; the buffer stays, and the strip says why.
+          const name = data.path.split(/[\\/]/).pop() || data.path;
+          setRefusedDoc({ name, size: data.size, verb: "reloaded" });
+          return;
+        }
+        setDiskChange({ content: data.content, size: data.size });
       }),
     ];
     return () => offs.forEach((off) => off?.());
@@ -1758,6 +1793,7 @@ export default function Home() {
           {refusedDoc !== null && (
             <TooLargeStrip
               size={refusedDoc.size}
+              verb={refusedDoc.verb}
               fileName={refusedDoc.name}
               onDismiss={() => setRefusedDoc(null)}
             />
@@ -1946,7 +1982,7 @@ export default function Home() {
           // Compare disk-form to disk-form: the buffer holds markdown, the
           // file may be CSV or another to-disk format.
           localContent={toDisk(fileName, currentMarkdown())}
-          diskContent={diskChange}
+          diskContent={diskChange.content}
           onClose={() => setShowDiskConflict(false)}
           onSaveCopy={saveCopyOfMine}
           onOverwrite={() => {

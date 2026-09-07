@@ -30,10 +30,12 @@ export function LargeDocStrip({ size }: { size: number }) {
 interface TooLargeStripProps {
   size: number;
   fileName: string;
+  /** What did not happen: an open, or a reload of the document that is open. */
+  verb?: "opened" | "reloaded";
   onDismiss: () => void;
 }
 
-export function TooLargeStrip({ size, fileName, onDismiss }: TooLargeStripProps) {
+export function TooLargeStrip({ size, fileName, verb = "opened", onDismiss }: TooLargeStripProps) {
   return (
     <div
       data-markie-too-large-strip
@@ -44,7 +46,7 @@ export function TooLargeStrip({ size, fileName, onDismiss }: TooLargeStripProps)
         !
       </span>
       <span className="text-[11px] min-w-0 truncate text-muted">
-        <span className="text-foreground">{fileName}</span> was not opened. {tooLargeMessage(size)}
+        <span className="text-foreground">{fileName}</span> was not {verb}. {tooLargeMessage(size)}
       </span>
       <button
         onClick={onDismiss}

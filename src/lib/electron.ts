@@ -28,6 +28,10 @@ export interface TooLargePayload {
 
 export type OpenResult = FilePayload | TooLargePayload;
 
+export type DiskChangeEvent =
+  | { path: string; content: string; size?: number; tooLarge?: undefined }
+  | { path: string; tooLarge: true; size: number; content?: undefined };
+
 export function isTooLarge(result: unknown): result is TooLargePayload {
   return typeof result === "object" && result !== null && (result as { tooLarge?: unknown }).tooLarge === true;
 }
@@ -46,6 +50,8 @@ export interface SaveResult {
   // a dialog in front of anyone. `content` carries the newer disk copy so the
   // renderer can raise its own strip. Nothing was written.
   code?: "reloaded" | "disk-changed";
+  /** With `content`: its size in bytes, so the renderer can settle the tier again. */
+  size?: number;
   content?: string;
 }
 
@@ -276,10 +282,12 @@ export interface ElectronAPI {
   onSetMode(cb: (mode: ViewMode) => void): Unsubscribe;
   onToggleStats(cb: () => void): Unsubscribe;
   onFileOpened(cb: (data: OpenResult) => void): Unsubscribe;
-  /** Something else edited the open document. Carries the new on-disk text. */
-  onFileChangedOnDisk(
-    cb: (data: { path: string; content: string }) => void
-  ): Unsubscribe;
+  /**
+   * Something else edited the open document. Carries the new on-disk text and
+   * its size, or a refusal when the file has grown past what Markie opens
+   * (electron/doc-tiers.js), in which case it was not read.
+   */
+  onFileChangedOnDisk(cb: (data: DiskChangeEvent) => void): Unsubscribe;
   /** Follow this path for external edits (after Save As, or a new document). */
   watchFile(filePath: string | null): Promise<{ ok: boolean } | { error: string } | null>;
   // Main is holding the window open until the renderer answers appCloseReady,

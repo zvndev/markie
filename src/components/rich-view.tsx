@@ -670,16 +670,39 @@ function RichViewInner({
 // The live-session runtime (yjs, the websocket provider, the collaboration
 // extensions, comment anchoring) loads on first use; see
 // src/lib/collab-loader.ts. A shared document shows this until it is in, once
-// per launch, and a solo document never waits for any of it.
+// per launch, and a solo document never waits for any of it. A load that
+// fails does not take the document with it: the editor opens on the local
+// copy, under one line saying there is no live session behind it.
 export function RichView(props: RichViewProps) {
-  const runtime = useCollabRuntime(!!props.collab);
-  if (props.collab && !runtime) {
+  const { runtime, failed } = useCollabRuntime(!!props.collab);
+  const { onCollabStatus } = props;
+  // Nothing is going to connect, so the toolbar must not keep saying so.
+  useEffect(() => {
+    if (failed) onCollabStatus?.("disconnected");
+  }, [failed, onCollabStatus]);
+  if (props.collab && !runtime && !failed) {
     return (
       <div
         data-markie-live-loading
         className="flex-1 flex items-center justify-center text-[12px] text-muted"
       >
         Joining the live session…
+      </div>
+    );
+  }
+  if (props.collab && failed) {
+    return (
+      <div className="h-full flex flex-col">
+        <div
+          data-markie-live-failed
+          role="status"
+          className="markie-banner shrink-0 flex items-center px-3 py-1.5 text-[11px] text-muted"
+        >
+          The live session could not load. You are editing your copy alone.
+        </div>
+        <div className="flex-1 min-h-0">
+          <RichViewInner {...props} runtime={null} />
+        </div>
       </div>
     );
   }

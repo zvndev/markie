@@ -12,6 +12,21 @@ import { getElectronAPI, type DraftEntry } from "@/lib/electron";
 // where the file write is up to a second behind. That gap is the kill window.
 const DRAFT_DEBOUNCE_MS = 250;
 
+// Past this much text, the journal waits longer between writes. Every write
+// posts the whole buffer across the IPC boundary for main to put on disk, so
+// the cost of one is proportional to the document while the interval is not.
+// A quarter of a megabyte four times a second is a stall you can feel; the
+// same document journalled every two seconds is not, and two seconds is still
+// far inside the window a crash would take away.
+//
+// Measured in characters rather than UTF-8 bytes on purpose: this runs on
+// every keystroke, and encoding the buffer to count it would cost more than
+// the write it is trying to pace. The size tiers (src/lib/doc-tiers.ts) draw
+// their lines in bytes because a file on disk has bytes; this only needs to
+// know "big enough to hurt".
+const BIG_DRAFT_CHARS = 256 * 1024;
+const BIG_DRAFT_DEBOUNCE_MS = 2000;
+
 export interface SaveGuardInputs {
   /** Runs one save. Resolves true when the bytes committed. */
   save: () => Promise<boolean>;
@@ -92,16 +107,21 @@ export function useSaveGuard({
   }, [docKey]);
 
   // Journal the buffer while it is dirty. Debounced, so a burst of keystrokes
-  // is one write, and cleared on the way past a committed save.
+  // is one write, and cleared on the way past a committed save. A big buffer
+  // waits longer, because the write itself is what costs.
   useEffect(() => {
     if (!doc.dirty || !journal) return;
+    const wait =
+      doc.content.length > BIG_DRAFT_CHARS
+        ? BIG_DRAFT_DEBOUNCE_MS
+        : DRAFT_DEBOUNCE_MS;
     const timer = setTimeout(() => {
       void getElectronAPI()?.draftSave?.({
         path: docRef.current.path,
         name: docRef.current.name,
         content: docRef.current.content,
       });
-    }, DRAFT_DEBOUNCE_MS);
+    }, wait);
     return () => clearTimeout(timer);
   }, [doc.content, doc.dirty, doc.path, doc.name, journal]);
 

@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Catalog,
   CatalogSkill,
@@ -11,6 +11,7 @@ import type {
   SkillSource,
 } from "@/lib/electron";
 import { installBridge } from "@/test/mock-bridge";
+import { getAssetBaseDir, setAssetBaseDir } from "@/lib/asset-url";
 import { SkillsView } from "./skills-view";
 
 const HOME = "/Users/me";
@@ -98,6 +99,12 @@ const catalogRow = (id: string) =>
 beforeEach(() => {
   localStorage.clear();
 });
+
+afterEach(() => setAssetBaseDir(null));
+
+/** The path a markie-asset:// url addresses. */
+const assetPath = (src: string | null) =>
+  decodeURIComponent(String(src ?? "").replace("markie-asset://local/", ""));
 
 describe("the two tabs", () => {
   it("opens on Installed and moves to Discover", async () => {
@@ -884,6 +891,53 @@ describe("one skill, in full", () => {
       "/Users/me/Work/Beta"
     );
     expect(screen.getByRole("button", { name: "Add to Beta" })).toBeEnabled();
+  });
+
+  const withPicture = "Fill in forms.\n\n![demo](assets/demo.png)\n";
+  const previewImage = () =>
+    waitFor(() => {
+      const el = document.querySelector("[data-skills-preview] img");
+      expect(el).not.toBeNull();
+      return el as HTMLImageElement;
+    });
+
+  it("shows the skill's own pictures, and leaves the open document's base alone", async () => {
+    setAssetBaseDir("/Users/me/report");
+    const dir = "/Users/me/Library/Application Support/Markie/skill-cache/anthropics/skills/41bbe19d/pdf";
+    const skillsSkillDir = vi.fn(async () => ({ dir }));
+    const user = userEvent.setup();
+    renderSkills(
+      detailApi({
+        skillsRead: vi.fn(async () => ({ body: withPicture, files: [] })),
+        skillsSkillDir,
+      })
+    );
+    await open(user);
+
+    await screen.findByText("Fill in forms.");
+    expect(skillsSkillDir).toHaveBeenCalledWith("anthropics/skills", "anthropics/skills/pdf");
+    expect(assetPath((await previewImage()).getAttribute("src"))).toBe(`${dir}/assets/demo.png`);
+    expect(getAssetBaseDir()).toBe("/Users/me/report");
+  });
+
+  it("resolves pictures the way it always did when main has no folder to offer", async () => {
+    // An older main has no channel; a newer one may not have the skill cached.
+    for (const skillsSkillDir of [undefined, vi.fn(async () => ({ error: "not cached" }))]) {
+      cleanup();
+      setAssetBaseDir("/Users/me/report");
+      const user = userEvent.setup();
+      renderSkills(
+        detailApi({
+          skillsRead: vi.fn(async () => ({ body: withPicture, files: [] })),
+          skillsSkillDir,
+        })
+      );
+      await open(user);
+      await screen.findByText("Fill in forms.");
+      expect(assetPath((await previewImage()).getAttribute("src"))).toBe(
+        "/Users/me/report/assets/demo.png"
+      );
+    }
   });
 
   it("comes back to the list", async () => {

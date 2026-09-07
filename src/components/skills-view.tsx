@@ -1344,7 +1344,13 @@ function SkillDetail({
   onBack: () => void;
   onInstalled: () => void;
 }) {
-  const [doc, setDoc] = useState<{ body: string; files: SkillFile[] } | null>(null);
+  // The SKILL.md, its files, and the cached folder they sit in, which is what
+  // the preview resolves the document's own pictures against.
+  const [doc, setDoc] = useState<{
+    body: string;
+    files: SkillFile[];
+    dir: string | null;
+  } | null>(null);
   const [loading, setLoading] = useState(!!id);
   // What was ticked last time, read once. The tool targets are taken as they
   // were; the project one is a target only if that folder is still open, which
@@ -1365,6 +1371,9 @@ function SkillDetail({
     ReturnType<NonNullable<ElectronAPI["skillsInstall"]>>
   > | null>(null);
 
+  const name = skill?.name ?? fallbackName;
+  const source = skill?.source ?? fallbackSource;
+
   useEffect(() => {
     if (!id) {
       setDoc(null);
@@ -1373,23 +1382,41 @@ function SkillDetail({
     }
     let alive = true;
     setLoading(true);
-    api.skillsRead?.(id)
-      .then((read) => {
+    // The folder is asked for alongside the body and waited for with it,
+    // because the preview reads its base once, when it is built. A main
+    // without the channel, or without this skill cached, leaves the preview
+    // resolving pictures the way it always did: against the open document.
+    const folder: Promise<string | null> = api.skillsSkillDir
+      ? api.skillsSkillDir(source, id)
+          .then((answer) =>
+            answer && "dir" in answer && typeof answer.dir === "string" && answer.dir
+              ? answer.dir
+              : null
+          )
+          .catch(() => null)
+      : Promise.resolve(null);
+    const body = api.skillsRead ? api.skillsRead(id) : Promise.resolve(null);
+    Promise.all([body, folder])
+      .then(([read, dir]) => {
         if (!alive) return;
         // A failure answers `{ body: "", files: [] }`, which draws as the empty
         // state below rather than as a crash.
-        setDoc(read && typeof read.body === "string" ? read : { body: "", files: [] });
+        setDoc(
+          read && typeof read.body === "string"
+            ? { body: read.body, files: read.files ?? [], dir }
+            : { body: "", files: [], dir }
+        );
         setLoading(false);
       })
       .catch(() => {
         if (!alive) return;
-        setDoc({ body: "", files: [] });
+        setDoc({ body: "", files: [], dir: null });
         setLoading(false);
       });
     return () => {
       alive = false;
     };
-  }, [api, id]);
+  }, [api, id, source]);
 
   useEffect(() => {
     let alive = true;
@@ -1494,8 +1521,6 @@ function SkillDetail({
       .finally(() => setRunning(false));
   };
 
-  const name = skill?.name ?? fallbackName;
-  const source = skill?.source ?? fallbackSource;
   const chip = licenseChip(skill?.license);
 
   return (
@@ -1564,7 +1589,7 @@ function SkillDetail({
               {loading ? (
                 <div className={`${EDGE} py-3 text-[12px] text-muted`}>Reading SKILL.md…</div>
               ) : doc && doc.body ? (
-                <RichView value={doc.body} onChange={() => {}} readOnly />
+                <RichView value={doc.body} onChange={() => {}} readOnly assetBaseDir={doc.dir} />
               ) : (
                 <div className={`${EDGE} py-3 text-[12px] text-muted`}>
                   Markie couldn&apos;t read this skill&apos;s SKILL.md. Refresh its source and try

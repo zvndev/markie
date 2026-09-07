@@ -58,6 +58,12 @@ interface RichViewProps {
   readOnly?: boolean;
   /** The viewer owns this document, so may moderate (delete) others' comments. */
   canModerate?: boolean;
+  // Where the document's relative image paths resolve when this is not the
+  // open document: a SKILL.md previewed out of the catalog cache shows the
+  // pictures beside its own file rather than the ones beside whatever is open
+  // in the editor. Read when the editor is built, so a parent that learns the
+  // folder later mounts the view after it has.
+  assetBaseDir?: string | null;
   onPeersChange?: (peers: PeerUser[]) => void;
   onCollabStatus?: (status: "connecting" | "connected" | "disconnected") => void;
   // Hands the parent a way to settle the 250 ms debounce on demand and get the
@@ -126,6 +132,7 @@ export function RichView({
   collab,
   readOnly = false,
   canModerate = false,
+  assetBaseDir = null,
   onPeersChange,
   onCollabStatus,
   onFlushReady,
@@ -356,7 +363,7 @@ export function RichView({
     // One shared list (src/lib/rich-extensions.ts) so the round-trip probe and
     // the block normalizer test the exact editor configuration, never a copy.
     extensions: [
-      ...richBaseExtensions({ collab: !!session }),
+      ...richBaseExtensions({ collab: !!session, assetBaseDir }),
       ...init.extensions,
     ],
     // In collab mode the Yjs doc is the source of truth from the first sync.

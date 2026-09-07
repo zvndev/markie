@@ -1016,31 +1016,44 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
   // the hit's id straight into the catalog opened an empty detail and made the
   // install fail, for the default source and every other container-based
   // repository. So the hit is matched against the catalog it belongs to, and
-  // when the source had to be added first, against the catalog that came back.
+  // when that catalog had to be fetched first, against the one that came back.
+  //
+  // A chip is not a catalog, either. After a partial refresh a built-in source
+  // keeps its chip whether or not its download succeeded, so "is it a source"
+  // was the wrong question: a source is loaded when its catalog is here
+  // (fetched, and the fetch did not fail). One that is not gets fetched by
+  // name before the hit is resolved, the way an unknown one is added first.
   const openHit = (hit: SearchHit) => {
-    const known = catalog.sources.some((s) => s.id === hit.source);
-    if (known || !api.skillsCatalogAddSource) {
-      const found = resolveHit(hit, catalog.skills);
+    const open = (skills: CatalogSkill[]) => {
+      const found = resolveHit(hit, skills);
       setSelected({
         id: found?.id ?? null,
         name: found?.name ?? hit.name,
         source: hit.source,
       });
+    };
+    const source = catalog.sources.find((s) => s.id === hit.source);
+    const loaded = !!source && !!source.fetchedAt && !source.error;
+    // What is here already answers, whatever the last fetch said about it.
+    if (loaded || resolveHit(hit, catalog.skills)) {
+      open(catalog.skills);
       return;
     }
     // A repository has to be a source before its skills can be read, and
     // adding one is also what fetches it.
+    const fetched = source
+      ? api.skillsCatalogRefresh?.(hit.source)
+      : api.skillsCatalogAddSource?.(hit.source);
+    if (!fetched) {
+      open(catalog.skills);
+      return;
+    }
     setRefreshing(true);
-    api.skillsCatalogAddSource(hit.source)
+    fetched
       .then((next) => {
         apply(next);
         if (!mounted.current) return;
-        const found = next ? resolveHit(hit, next.skills ?? []) : null;
-        setSelected({
-          id: found?.id ?? null,
-          name: found?.name ?? hit.name,
-          source: hit.source,
-        });
+        open(next?.skills ?? []);
       })
       .catch(() => {
         if (mounted.current) setSelected({ id: null, name: hit.name, source: hit.source });
@@ -1055,10 +1068,13 @@ function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => vo
     [catalog.skills, query]
   );
 
-  const extraHits = useMemo(() => {
-    const local = new Set(shown.map((s) => s.id));
-    return hits.filter((h) => !local.has(h.id));
-  }, [hits, shown]);
+  // A hit that resolves to a row already on screen is that row. Comparing
+  // ids drew `anthropics/skills/pdf` under the loaded
+  // `anthropics/skills/skills/pdf`, which is the same skill twice.
+  const extraHits = useMemo(
+    () => hits.filter((hit) => !resolveHit(hit, shown)),
+    [hits, shown]
+  );
 
   const checked = describeChecked(newestFetchedAt(catalog.sources), now);
 

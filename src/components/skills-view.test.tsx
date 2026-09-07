@@ -453,7 +453,7 @@ describe("Discover", () => {
   it("opens a skills.sh hit at the catalog entry it means, not at its own id", async () => {
     const user = userEvent.setup();
     const skillsRead = vi.fn(async () => ({ body: "Fill in PDF forms.", files: [] }));
-    renderSkills({
+    const { api } = renderSkills({
       // The hit's own id would find nothing here; only the entry does.
       skillsCatalogList: vi.fn(async () => containerCatalog()),
       skillsSearch: vi.fn(async () => [{ ...PDF_HIT, name: "pdf forms" }]),
@@ -461,10 +461,15 @@ describe("Discover", () => {
     });
     await openDiscover(user);
     await screen.findByText("xlsx");
-    await user.type(screen.getByLabelText("Search skills"), "forms");
+    // A word skills.sh knows and the catalog's own name and description do
+    // not, so the hit is listed rather than folded into the loaded row.
+    await user.type(screen.getByLabelText("Search skills"), "acroform");
 
     await user.click(await screen.findByText("pdf forms"));
     await waitFor(() => expect(skillsRead).toHaveBeenCalledWith("anthropics/skills/skills/pdf"));
+    // The source's catalog is here, so nothing is fetched on the way.
+    expect(api.skillsCatalogRefresh).not.toHaveBeenCalled();
+    expect(api.skillsCatalogAddSource).not.toHaveBeenCalled();
   });
 
   it("adds the repository behind a hit, then resolves against the catalog that came back", async () => {
@@ -505,6 +510,70 @@ describe("Discover", () => {
     await waitFor(() =>
       expect(skillsRead).toHaveBeenCalledWith("obra/superpowers/skills/brainstorming")
     );
+  });
+
+  it("refreshes a source whose catalog never arrived, then opens the hit in what came back", async () => {
+    const user = userEvent.setup();
+    // A partial refresh leaves every built-in source with a chip, catalog or
+    // no catalog. The chip alone used to count as "loaded", and the hit
+    // opened a dead end instead of fetching the repository it names.
+    const skillsCatalogRefresh = vi.fn(async () => containerCatalog());
+    const skillsCatalogAddSource = vi.fn(async () => containerCatalog());
+    const skillsRead = vi.fn(async () => ({ body: "Fill in PDF forms.", files: [] }));
+    renderSkills({
+      skillsCatalogList: vi.fn(async () =>
+        catalog({
+          sources: [
+            source("anthropics/skills", { fetchedAt: null, commit: null, error: "GitHub answered 403." }),
+            source("obra/superpowers", { builtin: false }),
+          ],
+          // Something from another source, so the tab's own first-open
+          // catch-up does not fetch everything before the click.
+          skills: [
+            skill({
+              id: "obra/superpowers/skills/brainstorming",
+              source: "obra/superpowers",
+              skillPath: "skills/brainstorming",
+              name: "brainstorming",
+              description: "How to brainstorm.",
+            }),
+          ],
+        })
+      ),
+      skillsCatalogRefresh,
+      skillsCatalogAddSource,
+      skillsSearch: vi.fn(async () => [PDF_HIT]),
+      skillsRead,
+    });
+    await openDiscover(user);
+    await screen.findByText("brainstorming");
+    await user.type(screen.getByLabelText("Search skills"), "pdf");
+
+    await user.click(await screen.findByText("pdf"));
+    expect(skillsCatalogRefresh).toHaveBeenCalledWith("anthropics/skills");
+    // It is a source already; it does not get added twice.
+    expect(skillsCatalogAddSource).not.toHaveBeenCalled();
+    await waitFor(() => expect(skillsRead).toHaveBeenCalledWith("anthropics/skills/skills/pdf"));
+  });
+
+  it("shows a loaded skill once, not beside its own skills.sh listing", async () => {
+    const user = userEvent.setup();
+    renderSkills({
+      skillsCatalogList: vi.fn(async () => containerCatalog()),
+      // The catalog's pdf and skills.sh's pdf are the same skill under two
+      // ids; the second hit is there so the group's arrival can be awaited.
+      skillsSearch: vi.fn(async () => [
+        PDF_HIT,
+        { id: "someone/else/pdf-tools", name: "pdf-tools", source: "someone/else", installs: 4 },
+      ]),
+    });
+    await openDiscover(user);
+    await screen.findByText("xlsx");
+    await user.type(screen.getByLabelText("Search skills"), "pdf");
+
+    expect(await screen.findByText("pdf-tools")).toBeInTheDocument();
+    expect(screen.getAllByText("pdf")).toHaveLength(1);
+    expect(document.querySelector('[data-skills-hit="anthropics/skills/pdf"]')).toBeNull();
   });
 
   it("says so in the detail area when a hit matches nothing in its source", async () => {

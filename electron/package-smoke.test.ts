@@ -29,6 +29,10 @@ const peHeader = Buffer.from("4d5a900000000000", "hex");
 
 function writeMacFixture(rootDir: string, appDir: string) {
   writeFixtureFile(rootDir, path.join(appDir, "Contents", "MacOS", "Markie"), 0o755, machoHeader);
+  writeFixtureFile(
+    rootDir,
+    path.join(appDir, "Contents", "Frameworks", "Electron Framework.framework", "Resources", "en.lproj", "locale.pak")
+  );
   writeFixtureFile(rootDir, path.join(appDir, "Contents", "Info.plist"));
   writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "app.asar"));
   writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "mcp", "markie-mcp.mjs"));
@@ -61,6 +65,7 @@ function writeMacFixture(rootDir: string, appDir: string) {
 
 function writeWindowsFixture(rootDir: string, appDir: string, betterSqliteHeader = peHeader) {
   writeFixtureFile(rootDir, path.join(appDir, "Markie.exe"), undefined, peHeader);
+  writeFixtureFile(rootDir, path.join(appDir, "locales", "en-US.pak"));
   writeFixtureFile(rootDir, path.join(appDir, "resources", "app.asar"));
   writeFixtureFile(rootDir, path.join(appDir, "resources", "mcp", "markie-mcp.mjs"));
   writeFixtureFile(rootDir, path.join(appDir, "resources", "mcp", "lib.mjs"));
@@ -219,6 +224,55 @@ describe("package smoke checker", () => {
         "Release",
         "better_sqlite3.node"
       ) + " (macho, expected pe)",
+    ]);
+  });
+
+  // electronLanguages prunes locale packs by exact basename, and the English
+  // pack is called en.lproj on macOS and en-US.pak everywhere else. Pruning
+  // with the wrong name empties the directory, and a Chromium with no locale
+  // pack does not start.
+  it("fails a Windows package whose locales directory was emptied", () => {
+    const rootDir = makeTempDir();
+    const appDir = path.join("dist", "win-unpacked");
+
+    writeWindowsFixture(rootDir, appDir);
+    rmSync(path.join(rootDir, appDir, "locales", "en-US.pak"));
+
+    const result = verifyPackageLayout(rootDir, { platform: "windows", arch: "x64" });
+
+    expect(result.ok).toBe(false);
+    expect(result.localeFailures).toEqual([`${path.join(appDir, "locales")} (no .pak locale packs)`]);
+  });
+
+  it("fails a Windows package that kept other locales but dropped English", () => {
+    const rootDir = makeTempDir();
+    const appDir = path.join("dist", "win-unpacked");
+
+    writeWindowsFixture(rootDir, appDir);
+    rmSync(path.join(rootDir, appDir, "locales", "en-US.pak"));
+    writeFixtureFile(rootDir, path.join(appDir, "locales", "de.pak"));
+
+    const result = verifyPackageLayout(rootDir, { platform: "windows", arch: "x64" });
+
+    expect(result.ok).toBe(false);
+    expect(result.localeFailures).toEqual([path.join(appDir, "locales", "en-US.pak")]);
+  });
+
+  it("fails a macOS app whose framework kept no English locale", () => {
+    const rootDir = makeTempDir();
+    const appDir = path.join("dist", "mac-arm64", "Markie.app");
+
+    writeMacFixture(rootDir, appDir);
+    rmSync(
+      path.join(rootDir, appDir, "Contents", "Frameworks", "Electron Framework.framework", "Resources", "en.lproj"),
+      { recursive: true }
+    );
+
+    const result = verifyPackageLayout(rootDir, { platform: "mac", arch: "arm64" });
+
+    expect(result.ok).toBe(false);
+    expect(result.localeFailures).toEqual([
+      `${path.join(appDir, "Contents", "Frameworks", "Electron Framework.framework", "Resources")} (no .lproj locale packs)`,
     ]);
   });
 

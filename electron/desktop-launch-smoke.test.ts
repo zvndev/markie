@@ -59,6 +59,10 @@ function writeFixtureFile(rootDir: string, relativePath: string, mode?: number, 
 function writeMacFixture(rootDir: string, appDir: string) {
   writeFixtureFile(rootDir, "package.json", undefined, JSON.stringify({ name: "markie", version: "0.2.8" }));
   writeFixtureFile(rootDir, path.join(appDir, "Contents", "MacOS", "Markie"), 0o755, machoHeader);
+  writeFixtureFile(
+    rootDir,
+    path.join(appDir, "Contents", "Frameworks", "Electron Framework.framework", "Resources", "en.lproj", "locale.pak")
+  );
   writeFixtureFile(rootDir, path.join(appDir, "Contents", "Info.plist"));
   writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "app.asar"));
   writeFixtureFile(rootDir, path.join(appDir, "Contents", "Resources", "mcp", "markie-mcp.mjs"));

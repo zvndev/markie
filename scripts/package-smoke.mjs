@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -76,6 +76,28 @@ function nativeModuleFiles(resourcesDir, platform, arch) {
   return files;
 }
 
+// Chromium will not start without a locale pack, so shipping "English only"
+// has to still leave an English one behind. electron-builder's
+// electronLanguages prunes by exact file basename, and that basename differs
+// per platform: Resources/en.lproj inside the framework on macOS, and
+// locales/en-US.pak beside resources/ everywhere else. Listing only "en" once
+// deleted every .pak and left Windows with an empty locales directory, which
+// looks like a normal build until it is launched.
+function localeProfile(platform, appDir, resourcesDir) {
+  if (platform === "mac") {
+    return {
+      dir: path.join(appDir, "Contents", "Frameworks", "Electron Framework.framework", "Resources"),
+      ext: ".lproj",
+      required: ["en.lproj"],
+    };
+  }
+  return {
+    dir: path.join(resourcesDir, "..", "locales"),
+    ext: ".pak",
+    required: ["en-US.pak"],
+  };
+}
+
 function binaryChecksFor(files, kind) {
   return files.map((file) => ({ file, kind }));
 }
@@ -129,6 +151,7 @@ export function packageProfile({
         ...nativeFiles,
       ],
       binaryChecks: binaryChecksFor([executable, ...nativeFiles], "macho"),
+      locales: localeProfile(targetPlatform, appDir, resourcesDir),
     };
   }
 
@@ -156,6 +179,7 @@ export function packageProfile({
         ...nativeFiles,
       ],
       binaryChecks: binaryChecksFor([executable, ...nativeFiles], "pe"),
+      locales: localeProfile(targetPlatform, appDir, resourcesDir),
     };
   }
 
@@ -178,6 +202,7 @@ export function packageProfile({
       ...nativeFiles,
     ],
     binaryChecks: binaryChecksFor([...executableCandidates, ...nativeFiles], "elf"),
+    locales: localeProfile(targetPlatform, appDir, resourcesDir),
   };
 }
 
@@ -242,11 +267,32 @@ export function verifyPackageLayout(rootDir, options = {}) {
     }
   }
 
+  const localeFailures = [];
+  const locales = profile.locales;
+  if (locales) {
+    const localeDir = path.join(rootDir, locales.dir);
+    if (!existsSync(localeDir) || !statSync(localeDir).isDirectory()) {
+      localeFailures.push(`${locales.dir} (missing)`);
+    } else {
+      const packs = readdirSync(localeDir).filter((name) => name.endsWith(locales.ext));
+      if (packs.length === 0) {
+        // One message, not one per expected name: an empty directory is a
+        // single mistake, and listing every name it lacks buries that.
+        localeFailures.push(`${locales.dir} (no ${locales.ext} locale packs)`);
+      } else {
+        for (const name of locales.required) {
+          if (!packs.includes(name)) localeFailures.push(path.join(locales.dir, name));
+        }
+      }
+    }
+  }
+
   return {
-    ok: missing.length === 0 && binaryFailures.length === 0,
+    ok: missing.length === 0 && binaryFailures.length === 0 && localeFailures.length === 0,
     profile,
     missing,
     binaryFailures,
+    localeFailures,
     executable,
     host: hostSmokeMode(profile),
   };
@@ -297,6 +343,7 @@ export function runPackageSmokeCli(argv = process.argv.slice(2), rootDir = path.
       console.error(`[package:smoke] missing package files for ${result.profile.id}:`);
       for (const item of result.missing) console.error(`  - ${item}`);
       for (const item of result.binaryFailures) console.error(`  - ${item}`);
+      for (const item of result.localeFailures) console.error(`  - ${item}`);
     }
   }
 

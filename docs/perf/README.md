@@ -112,9 +112,12 @@ are one poll and three polls, not a real 26x difference.
 ### largeDoc
 
 The 4.4 MB document is opened from the Library the same way a person opens it.
-From the moment of the click, `Runtime.evaluate` of `1+1` is sent once a second
-for 20 seconds with a 200 ms deadline, and each sample records whether the
-renderer answered in time.
+From the moment of the click, one `Runtime.evaluate` is sent per second for 20
+seconds with a 200 ms deadline, and each sample records whether the renderer
+answered in time. The expression reads the toolbar name and the editor's
+document size (it is the landing probe, folded in so that watching the document
+land costs no extra requests), which is a trivially cheap read either way: what
+the sample measures is whether the main thread was free enough to answer at all.
 
 * `responsiveSeconds` / `unresponsiveSeconds`: how many of the 20 answered.
 * `firstResponsiveAfterOpenMs`: how long after the open before the first sample
@@ -122,16 +125,41 @@ renderer answered in time.
   20 second cap rather than dropping (see below).
 * `longestUnresponsiveStretchSeconds`: the longest run of consecutive samples
   that did not answer.
-* `toolbarNamedMs` and `editorReadyMs`: how long from the click until the
-  document actually lands, capped at `landCapMs` (120 s). `landed` is false,
-  with an explicit `note`, if it never did.
+* `toolbarNamedMs` and `editorReadyMs`: **not** the landing time. These are the
+  first moments the toolbar was observed naming the document and the editor was
+  observed holding a document of its size. Both are state signals, and on 0.5.4
+  they arrive about a minute before the app is usable. `settledMs` below is the
+  landing.
 
-  The watcher for these starts at the click and runs alongside the sampling
-  loop, not after it. That matters for the build this baseline exists to
-  compare against: if 0.6 lands the 4.4 MB fixture in three seconds, an observer
-  that could not look until the twenty second window closed would report it as
-  twenty, and the whole improvement would vanish into the sampling window. It is
-  polled every 150 ms, one request per poll for both signals.
+  Observation starts at the click, not after the responsiveness window. That
+  matters for the build this baseline exists to compare against: if 0.6 lands
+  the 4.4 MB fixture in three seconds, an observer that could not look until the
+  twenty second window closed would report it as twenty, and the whole
+  improvement would vanish into the sampling window.
+
+  While the window is open these signals ride on the sampler's own once-a-second
+  evaluate rather than being polled separately, so watching costs no extra
+  requests. That is deliberate: a client-side timeout only drops the local
+  callback, and the `Runtime.evaluate` it abandoned still runs when the renderer
+  recovers, so a separate poller running through a minute-long freeze would leave
+  dozens of stale evaluations queued and the 200 ms liveness samples behind them
+  would be measuring the observer.
+
+  The samples that miss their deadline are used too. One that the renderer could
+  not answer inside 200 ms still runs when it frees up, and the moment its answer
+  arrives is exactly "the first moment the renderer reported the new document".
+  Keeping those replies instead of discarding them is what gives `stateSeenMs`
+  sub-second resolution off a once-a-second sampler, and it changes no
+  responsiveness number, because a late answer is still a second the renderer did
+  not respond in.
+
+  After the window closes, observation continues with exactly one outstanding
+  probe whose deadline is the whole remaining budget, so nothing is ever
+  abandoned to run later.
+
+  Everything here is capped at `landCapMs` (120 s), every probe is bounded by
+  what is left of it, and a settle confirmation that only completes after the cap
+  is rejected rather than recorded.
 
 * `stateSeenMs` and `settledMs`: landing is two events, and the first one alone
   lies. Both probe signals above are state, not paint:
@@ -148,14 +176,17 @@ renderer answered in time.
   `landed`, and the gate on the switch back, are `settledMs`.
 
   The gap between the two is the most useful thing in this capture. On 0.5.4 the
-  4.4 MB document is parsed and in the editor's state after about 1.6 seconds,
-  and the app is not usable again for about another minute. Whatever costs that
-  minute, it is not the markdown parser.
+  4.4 MB document is parsed and in the editor's state after about 1.6 seconds
+  (1,577, 1,621 and 1,680 ms across the three runs), and the app is not usable
+  again for about another minute. Whatever costs that minute, it is not the
+  markdown parser.
 
-  This matters when comparing captures: on a contended machine the renderer is
-  descheduled more, which gives probes more windows to slip through, so a loaded
-  run reports a *smaller* `stateSeenMs` than a quiet one. `settledMs` does not
-  move that way. Compare captures with similar `host.loadAverage` regardless.
+  Both are read off the sampler, including the samples that missed their
+  deadline, so neither depends on how many windows a probe happened to find.
+  `stateSeenMs` has held between 1.58 s and 1.68 s across captures taken at very
+  different machine loads. `settledMs` moves more, roughly 54 s to 70 s, which is
+  the number to compare between builds and the one to compare only against
+  captures with a similar `host.loadAverage`.
 
 ### switchBack
 
@@ -221,22 +252,23 @@ Only a launch that reads the app bundle from disk is a cold launch. Once the
 bundle is in the OS page cache the app comes up in roughly a third of the time,
 and the cache stays warm for a long while.
 
-**The capture in `2026-09-07-baseline.json` contains no cold launch.** Earlier
-runs of the same bundle preceded it, so all three found it in the page cache and
-report 559 ms, 767 ms and 636 ms. Cold launches of this same build on this
-machine measured 1,803 ms, 1,894 ms, 2,067 ms and 2,196 ms. To capture a cold
-one, do not launch that bundle for a while before the run, and treat run 1 alone
-as the cold number. Purging the page cache needs `sudo purge` and is
-deliberately not done here.
+In `2026-09-07-baseline.json` run 1 is a cold launch at 2,552 ms and runs 2 and
+3 are warm at 647 ms and 617 ms, so the 647 ms median describes a warm launch and
+run 1 alone is the cold number. Other cold launches of this build on this machine
+have measured 1,803 ms, 1,894 ms, 2,067 ms and 2,196 ms. Note that run 1 also has
+no `first-paint` entry: the paint timeline is read as soon as `loadEventEnd` is
+available, and on a slow cold start the first paint has not happened yet.
+
+To get a cold run 1, do not launch that bundle for a while before the capture.
+Purging the page cache needs `sudo purge` and is deliberately not done here.
 
 ## Captures
 
 * `2026-09-07-baseline.json`: Markie 0.5.4, packaged `dist/mac-arm64`, macOS 26.5
   on an 18 core Apple M5 Max, 3 runs, `--inspect-main` on, `host.loadAverage`
-  around 7.9.
-  `launch 636ms · rss idle 525MB · rss doc 753MB · 4.4MB: responsive 0/20s, first response 1/3 runs, 11.0s when it did · landed 3/3 runs, 63.3s · switch 3/3 runs, 0.4s`
+  around 6.3.
+  `launch 647ms · rss idle 526MB · rss doc 753MB · 4.4MB: responsive 0/20s, first response 0/3 runs (>20s) · landed 3/3 runs, 57.3s · switch 3/3 runs, 0.4s`
 
   The 4.4 MB document is in the editor's state at about 1.6 s
-  (`largeDocStateSeenMs`) and the app is usable again at about 63 s
-  (`largeDocLandedMs`), answering none to one of the 20 liveness samples in
-  between.
+  (`largeDocStateSeenMs`) and the app is usable again at about 57 s
+  (`largeDocLandedMs`), answering none of the 20 liveness samples in between.

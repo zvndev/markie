@@ -281,14 +281,21 @@ async function openCdp(webSocketDebuggerUrl) {
   });
 
   // Never rejects. A frozen renderer is a result, not an exception.
-  const send = (method, params = {}, timeoutMs = 30000) =>
+  //
+  // `onLateReply` keeps the callback registered past the deadline. A client-side
+  // timeout only drops the local handler: the Runtime.evaluate it gave up on is
+  // still queued and runs when the renderer recovers. Throwing that answer away
+  // loses real evidence about when the renderer came back, and keeping it costs
+  // nothing, because it sends no additional request.
+  const send = (method, params = {}, timeoutMs = 30000, onLateReply = null) =>
     new Promise((resolve) => {
       const id = nextId++;
       let settled = false;
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
-        pending.delete(id);
+        if (onLateReply) pending.set(id, (message) => onLateReply(message));
+        else pending.delete(id);
         resolve({ ok: false, timedOut: true });
       }, timeoutMs);
       timer.unref?.();
@@ -425,8 +432,9 @@ const LANDING_POLL_MS = 150;
 const SETTLE_CONFIRMATIONS = 3;
 const SETTLE_DEADLINE_MS = 200;
 
-// Both landing signals in one probe, so watching for them costs one request per
-// poll rather than two.
+// Both landing signals in one probe, so observing them costs one request rather
+// than two. This is also the expression the responsiveness sampler evaluates,
+// so watching the document land adds no traffic of its own; see below.
 const landingProbe = (name) =>
   `(() => {
     let editorSize = 0;
@@ -435,81 +443,119 @@ const landingProbe = (name) =>
     return JSON.stringify({ named: label.startsWith(${JSON.stringify(name)}), editorSize });
   })()`;
 
-// Watch a document land, from the moment it was asked for.
+// Watching a document land, from the moment it was asked for.
 //
-// Starting at the click rather than after the sampling window is the point: an
-// observer that cannot look until the twenty second window closes would report a
-// build that lands the fixture in three seconds as twenty, and that improvement
-// is exactly what this baseline exists to detect.
-//
-// Landing is deliberately two events, because the first one alone lies. Both
-// probe signals are state, not paint: `state.doc.content.size` becomes millions
-// as soon as the ProseMirror document is built, which is long before the DOM for
-// 33,700 blocks exists. On 0.5.4 the renderer reports the new document and then
-// wedges for another minute building that DOM, and a capture that called the
-// first moment "landed" recorded 1.7 s for a document the app could not then
-// accept a click about for another thirty seconds.
+// Two events, because the first one alone lies. Both probe signals are state,
+// not paint: `state.doc.content.size` becomes millions as soon as the
+// ProseMirror document is built, which is long before the DOM for 33,700 blocks
+// exists. On 0.5.4 the renderer reports the new document and then wedges for
+// another minute building that DOM, and a capture that called the first moment
+// "landed" recorded 1.7 s for a document the app could not then accept a click
+// about for another thirty seconds.
 //
 //   stateSeenMs — the first moment the renderer reported the new document.
 //   settledMs   — the first moment after that when it answered
 //                 SETTLE_CONFIRMATIONS quick probes in a row, which is when a
 //                 person would say the document is open.
 //
-// Returns a promise; start it at the click, await it after the samples.
-function watchLanding(cdp, { name, minEditorSize, capMs, since }) {
+// Observation starts at the click, not after the responsiveness window: an
+// observer that cannot look until the window closes would report a build that
+// lands the fixture in three seconds as twenty, and that improvement is exactly
+// what this baseline exists to detect.
+//
+// It gets there without adding a single request. A client-side timeout only
+// drops the local callback; the Runtime.evaluate it abandoned still runs when
+// the renderer recovers. A separate watcher polling through a minute-long freeze
+// therefore leaves dozens of stale evaluations queued, and the 200 ms liveness
+// samples that follow them measure the observer as much as the app. So the
+// landing signals ride along on the sampler's own once-a-second evaluate, which
+// the run has to send anyway.
+//
+// Including the ones that missed their deadline. A sample the renderer could not
+// answer inside 200 ms still runs when it frees up, and the moment that answer
+// arrives is exactly "the first moment the renderer reported the new document".
+// Keeping those replies rather than discarding them is what gives stateSeenMs
+// sub-second resolution without a second poller: on 0.5.4 the document is in the
+// editor's state around 1.6 s, which a 200 ms deadline alone cannot see. It
+// changes no responsiveness number, because a late answer is still a second the
+// renderer did not respond in.
+function landingObserver({ name, minEditorSize, since }) {
   const observed = { toolbarNamedMs: null, editorReadyMs: null, stateSeenMs: null, settledMs: null };
-  const done = (async () => {
-    const deadline = since + capMs;
-    let streak = 0;
-    while (Date.now() < deadline) {
-      const reply = await cdp.evaluate(landingProbe(name), 1000);
-      const at = Date.now() - since;
-      let state = null;
-      if (reply.ok && typeof reply.value === "string") {
-        try {
-          state = JSON.parse(reply.value);
-        } catch {
-          state = null;
-        }
-      }
-      if (state) {
-        if (observed.toolbarNamedMs === null && state.named) observed.toolbarNamedMs = at;
-        if (observed.editorReadyMs === null && state.editorSize >= minEditorSize) {
-          observed.editorReadyMs = at;
-        }
-        if (
-          observed.stateSeenMs === null &&
-          observed.toolbarNamedMs !== null &&
-          observed.editorReadyMs !== null
-        ) {
-          observed.stateSeenMs = at;
-        }
-      }
-      if (observed.stateSeenMs !== null) {
-        // Confirm the renderer is actually usable, not just momentarily
-        // reachable between two long blocks of work.
-        streak = 0;
-        for (let i = 0; i < SETTLE_CONFIRMATIONS; i += 1) {
-          const beat = await cdp.send(
-            "Runtime.evaluate",
-            { expression: "1+1", returnByValue: true },
-            SETTLE_DEADLINE_MS
-          );
-          if (!beat.ok) break;
-          streak += 1;
-          if (streak < SETTLE_CONFIRMATIONS) await sleep(SETTLE_DEADLINE_MS);
-        }
-        if (streak === SETTLE_CONFIRMATIONS) {
-          observed.settledMs = Date.now() - since;
-          break;
-        }
-      }
-      await sleep(LANDING_POLL_MS);
+  const note = (raw, at) => {
+    if (typeof raw !== "string") return;
+    let state;
+    try {
+      state = JSON.parse(raw);
+    } catch {
+      return;
     }
-    return observed;
-  })();
-  done.catch(() => {});
-  return done;
+    if (observed.toolbarNamedMs === null && state.named) observed.toolbarNamedMs = at;
+    if (observed.editorReadyMs === null && state.editorSize >= minEditorSize) {
+      observed.editorReadyMs = at;
+    }
+    if (
+      observed.stateSeenMs === null &&
+      observed.toolbarNamedMs !== null &&
+      observed.editorReadyMs !== null
+    ) {
+      observed.stateSeenMs = at;
+    }
+  };
+  return { observed, note, expression: landingProbe(name), since };
+}
+
+// Three quick answers in a row, every probe bounded by what is left of the
+// overall budget. Returns the wall-clock moment it finished, or null if it could
+// not be confirmed inside the budget. A streak that only completes after the
+// deadline is not a landing: reporting it would put settledMs past landCapMs
+// while still calling the run landed, and the aggregation would count an
+// out-of-cap observation as a completed one.
+async function confirmSettled(cdp, deadline) {
+  for (let i = 0; i < SETTLE_CONFIRMATIONS; i += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return null;
+    const beat = await cdp.send(
+      "Runtime.evaluate",
+      { expression: "1+1", returnByValue: true },
+      Math.min(SETTLE_DEADLINE_MS, remaining)
+    );
+    if (!beat.ok) return null;
+    if (i < SETTLE_CONFIRMATIONS - 1) {
+      const gap = Math.min(SETTLE_DEADLINE_MS, deadline - Date.now());
+      if (gap <= 0) return null;
+      await sleep(gap);
+    }
+  }
+  const at = Date.now();
+  return at <= deadline ? at : null;
+}
+
+// Carry on watching after the sampling window closed.
+//
+// Each iteration begins with a landing probe whose deadline is the whole
+// remaining budget, so it waits for the renderer rather than being abandoned to
+// run later behind the run's back. Because CDP replies in order, that probe also
+// drains any settle confirmation a previous iteration gave up on, which is what
+// keeps the number of outstanding requests bounded instead of growing with the
+// length of the freeze.
+async function finishLanding(cdp, observer, capMs) {
+  const deadline = observer.since + capMs;
+  while (Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const reply = await cdp.evaluate(observer.expression, remaining);
+    if (!reply.ok) break; // the budget ran out waiting for the renderer
+    observer.note(reply.value, Date.now() - observer.since);
+    if (observer.observed.stateSeenMs !== null) {
+      const settledAt = await confirmSettled(cdp, deadline);
+      if (settledAt !== null) {
+        observer.observed.settledMs = settledAt - observer.since;
+        break;
+      }
+    }
+    await sleep(Math.min(LANDING_POLL_MS, Math.max(0, deadline - Date.now())));
+  }
+  return observer.observed;
 }
 
 // Wait until the toolbar names the document. Each poll carries its own deadline
@@ -725,12 +771,12 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
     // Nothing awaits this before the samples run; keep a rejection from
     // reaching the process as an unhandled one.
     largeClickPromise.catch(() => {});
-    // Started here, awaited after the samples: the landing clock has to run
-    // from the click even when the document lands inside the sampling window.
-    const landingWatch = watchLanding(cdp, {
+    // The landing observer rides on these samples rather than polling of its
+    // own; see landingObserver for why a second poller would corrupt the
+    // responsiveness numbers it sits next to.
+    const observer = landingObserver({
       name: path.basename(largePath),
       minEditorSize: LARGE_EDITOR_MIN,
-      capMs: LARGE_LAND_CAP_MS,
       since: largeStart,
     });
     const samples = [];
@@ -741,13 +787,20 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
       const askedAt = Date.now();
       const reply = await cdp.send(
         "Runtime.evaluate",
-        { expression: "1+1", returnByValue: true },
-        SAMPLE_DEADLINE_MS
+        { expression: observer.expression, returnByValue: true },
+        SAMPLE_DEADLINE_MS,
+        // A sample that missed its 200 ms deadline still runs when the renderer
+        // frees up, and its answer says when that was. It counts as an
+        // unresponsive second either way; it is only the landing observation
+        // that takes it.
+        (late) => observer.note(late.result?.result?.value, Date.now() - largeStart)
       );
+      const responded = reply.ok === true;
+      if (responded) observer.note(reply.result?.result?.value, Date.now() - largeStart);
       samples.push({
         second: i + 1,
         atMsAfterOpen: askedAt - largeStart,
-        responded: reply.ok === true,
+        responded,
         roundTripMs: Date.now() - askedAt,
       });
     }
@@ -762,18 +815,16 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
         if (stall > longestStall) longestStall = stall;
       }
     }
-    // The sampling window is over. Collect what the watcher saw, which may
-    // already be everything if the document landed while the samples ran.
+    // The sampling window is over. Carry on watching, with the observer's
+    // clock still running from the click.
     //
-    // The switch back cannot be timed until the document has landed: until React
-    // commits it the toolbar is still naming the small one, and a toolbar
+    // The switch back cannot be timed until the document has settled: until
+    // React commits it the toolbar is still naming the small one, and a toolbar
     // reading a click later would then "prove" a switch that never happened.
-    // Landing is the toolbar naming the large document, confirmed by the editor
-    // holding a document of its size.
-    const landing = await landingWatch;
+    const landing = await finishLanding(cdp, observer, LARGE_LAND_CAP_MS);
     const largeNamedMs = landing.toolbarNamedMs;
     const largeEditorMs = landing.editorReadyMs;
-    // Settled, not merely reported: see watchLanding.
+    // Settled, not merely reported: see landingObserver.
     const largeLanded = landing.settledMs !== null;
     result.largeDoc = {
       path: largePath,
@@ -792,6 +843,7 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
       stateSeenMs: landing.stateSeenMs,
       settledMs: landing.settledMs,
       landCapMs: LARGE_LAND_CAP_MS,
+      sampleGranularityMs: SAMPLE_INTERVAL_MS,
       landed: largeLanded,
       ...(largeLanded ? {} : { note: "large document never settled within the cap" }),
     };

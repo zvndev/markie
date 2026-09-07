@@ -70,6 +70,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
   projectsConfig: () => ipcRenderer.invoke("projects-config"),
   projectsWriteOverview: (args) => ipcRenderer.invoke("projects-write-overview", args),
   mcpInfo: () => ipcRenderer.invoke("mcp-info"),
+  // Skills — the catalog of installable skills, and what is installed
+  skillsCatalogList: () => ipcRenderer.invoke("skills-catalog-list"),
+  skillsCatalogRefresh: (source) => ipcRenderer.invoke("skills-catalog-refresh", source),
+  skillsCatalogAddSource: (ownerRepo) =>
+    ipcRenderer.invoke("skills-catalog-add-source", ownerRepo),
+  skillsCatalogRemoveSource: (ownerRepo) =>
+    ipcRenderer.invoke("skills-catalog-remove-source", ownerRepo),
+  skillsSearch: (query) => ipcRenderer.invoke("skills-search", query),
+  skillsRead: (id) => ipcRenderer.invoke("skills-read", id),
+  skillsInstall: (id, targets) => ipcRenderer.invoke("skills-install", { id, targets }),
+  skillsRemove: (target, name) => ipcRenderer.invoke("skills-remove", { target, name }),
+  skillsInstalled: () => ipcRenderer.invoke("skills-installed"),
   // Fire-and-forget: the error boundary calls this while the renderer is
   // already broken, so there is nothing to wait for and nothing to answer.
   logRendererError: (detail) => ipcRenderer.send("log-renderer-error", detail),

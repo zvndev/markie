@@ -63,6 +63,72 @@ export interface LinkPreview {
   image: string | null;
 }
 
+// ── Skills ──
+// A skill is a folder with a SKILL.md, installed by copying it into whichever
+// agent tool's folder the user picks. `{ project }` installs into a workspace
+// root's own `.claude/skills`, and that root is the only path main will accept.
+export type SkillTarget = "claude" | "codex" | "cursor" | "gemini" | "universal" | { project: string };
+
+export interface SkillSource {
+  id: string;
+  owner: string;
+  repo: string;
+  ref: string | null;
+  commit: string | null;
+  fetchedAt: string | null;
+  /** One of the three sources Markie ships with, which cannot be removed for good. */
+  builtin: boolean;
+  /** Why the last fetch failed, when it did. */
+  error?: string | null;
+}
+
+export interface SkillFile {
+  path: string;
+  size: number;
+  executable: boolean;
+}
+
+export interface CatalogSkill {
+  /** `owner/repo/<skillPath>`, the same id skills.sh uses. */
+  id: string;
+  source: string;
+  skillPath: string;
+  name: string;
+  description: string;
+  license: string | null;
+  compatibility: string | null;
+  allowedTools: string | null;
+  metadata: Record<string, string>;
+  files: SkillFile[];
+  /** SHA-256 over the folder's contents; an install records the one it copied. */
+  folderHash: string;
+  installs?: number | null;
+  installedTo: { target: SkillTarget; path: string; upToDate: boolean }[];
+}
+
+export interface Catalog {
+  sources: SkillSource[];
+  skills: CatalogSkill[];
+}
+
+export interface SearchHit {
+  id: string;
+  name: string;
+  source: string;
+  installs: number;
+}
+
+export interface InstalledSkill {
+  name: string;
+  target: SkillTarget;
+  path: string;
+  description: string | null;
+  source: string | null;
+  folderHash: string | null;
+  updateAvailable: boolean;
+  installedByMarkie: boolean;
+}
+
 export interface ElectronAPI {
   platform: string;
   openFile(args?: { near?: string | null }): Promise<FilePayload | null>;
@@ -354,6 +420,30 @@ export interface ElectronAPI {
   }): Promise<ProjectsWriteResult & { path?: string }>;
   // Markie MCP server location, for the Agents setup dialog
   mcpInfo?(): Promise<{ serverPath: string; packaged: boolean; error?: string }>;
+  // Skills — the catalog, and installing out of it. Reading never touches the
+  // network; refreshing and searching do.
+  skillsCatalogList?(): Promise<Catalog>;
+  skillsCatalogRefresh?(source?: string): Promise<Catalog>;
+  skillsCatalogAddSource?(ownerRepo: string): Promise<Catalog>;
+  skillsCatalogRemoveSource?(ownerRepo: string): Promise<Catalog>;
+  skillsSearch?(query: string): Promise<SearchHit[]>;
+  skillsRead?(id: string): Promise<{ body: string; files: SkillFile[] }>;
+  // Per target, because installing to four tools can fail for three of them and
+  // the user needs to know which. "exists" means a folder Markie did not write
+  // is already there, and nothing was touched.
+  skillsInstall?(
+    id: string,
+    targets: SkillTarget[]
+  ): Promise<{
+    installed: { target: SkillTarget; path: string }[];
+    errors: {
+      target: SkillTarget;
+      error: "exists" | "invalid-name" | "no-such-target" | "copy-failed";
+      message: string;
+    }[];
+  }>;
+  skillsRemove?(target: SkillTarget, name: string): Promise<{ ok: boolean; error?: string }>;
+  skillsInstalled?(): Promise<InstalledSkill[]>;
   // Report a renderer crash to the main process's crash log. Fire-and-forget:
   // the caller is an error boundary that has nothing to do with an answer.
   logRendererError?(detail: {

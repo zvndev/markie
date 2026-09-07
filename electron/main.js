@@ -1886,6 +1886,67 @@ handle("mcp-info", () => {
   };
 }, { onFailure: (err) => ({ serverPath: "", packaged: false, error: errorMessage(err) }) });
 
+// ── Skills: the catalog, and installing out of it ──
+// skill-registry.js owns every decision. main resolves the two things that
+// need Electron (where the download cache lives, and the version the
+// User-Agent carries) and passes the renderer's arguments straight through.
+let skills = null;
+function skillRegistry() {
+  if (!skills) {
+    skills = require("./skill-registry").createSkillRegistry({
+      cacheDir: path.join(app.getPath("userData"), "skill-cache"),
+      version: app.getVersion(),
+      // A project install may only land in a folder the user registered, and
+      // this is the only list of those.
+      roots: () => workspace.roots(),
+    });
+  }
+  return skills;
+}
+
+// A catalog that could not be read is an empty one; a source that failed
+// carries its own reason, and there is no source at all when the failure is
+// the registry itself.
+const noCatalog = () => ({ sources: [], skills: [] });
+
+handle("skills-catalog-list", () => skillRegistry().listCatalog(), { onFailure: noCatalog });
+handle("skills-catalog-refresh", (_e, source) => skillRegistry().refresh(source), {
+  onFailure: noCatalog,
+});
+handle("skills-catalog-add-source", (_e, ownerRepo) => skillRegistry().addSource(ownerRepo), {
+  onFailure: noCatalog,
+});
+handle(
+  "skills-catalog-remove-source",
+  (_e, ownerRepo) => skillRegistry().removeSource(ownerRepo),
+  { onFailure: noCatalog }
+);
+handle("skills-search", (_e, query) => skillRegistry().search(query), { onFailure: () => [] });
+handle("skills-read", (_e, id) => skillRegistry().readSkill(id), {
+  onFailure: () => ({ body: "", files: [] }),
+});
+
+// The failure shape is per target, so it is built here rather than in an
+// onFailure that cannot see which targets were asked for.
+handle("skills-install", (_e, { id, targets } = {}) => {
+  try {
+    return skillRegistry().install(id, targets);
+  } catch (err) {
+    return {
+      installed: [],
+      errors: (targets || []).map((target) => ({
+        target,
+        error: "copy-failed",
+        message: errorMessage(err),
+      })),
+    };
+  }
+});
+handle("skills-remove", (_e, { target, name } = {}) => skillRegistry().remove(target, name), {
+  onFailure: (err) => ({ ok: false, error: errorMessage(err) }),
+});
+handle("skills-installed", () => skillRegistry().installed(), { onFailure: () => [] });
+
 // ── Auto-update (electron-updater → the platform's published feed) ──
 // macOS updates from a signed and notarized feed, Windows from the signed NSIS
 // feed the release runbook publishes alongside the installer. Which feed an

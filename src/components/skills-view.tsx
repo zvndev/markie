@@ -748,7 +748,7 @@ function InstalledSkillRow({
   const updatable = !!skill?.updateAvailable;
   return (
     <div
-      data-skill-row={row.key}
+      data-skills-installed={row.key}
       onClick={onOpen}
       title={row.key}
       className={`pl-4 pr-2 py-1 cursor-pointer hover:bg-accent/30 ${
@@ -1362,13 +1362,13 @@ function SkillDetail({
           {TOOL_TARGETS.map((target) => (
             <label
               key={targetKey(target)}
-              className="flex items-center gap-1.5 py-px text-[11.5px] text-foreground/90"
+              className="flex cursor-pointer select-none items-center gap-1.5 py-px text-[11.5px] text-foreground/90"
             >
               <input
                 type="checkbox"
                 checked={has(target)}
                 onChange={() => toggle(target)}
-                className="accent-[color:var(--status-blue)]"
+                className="accent-current"
               />
               {targetLabel(target)}
             </label>
@@ -1381,7 +1381,7 @@ function SkillDetail({
                 checked={has({ project })}
                 disabled={!project}
                 onChange={() => toggle({ project })}
-                className="accent-[color:var(--status-blue)]"
+                className="accent-current"
               />
               <span>Project</span>
               <select

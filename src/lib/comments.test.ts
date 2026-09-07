@@ -6,7 +6,7 @@ import Collaboration from "@tiptap/extension-collaboration";
 import StarterKit from "@tiptap/starter-kit";
 import * as Y from "yjs";
 import { afterEach, describe, expect, it } from "vitest";
-import { anchorToAbsolute, selectionToAnchor } from "./comments";
+import { anchorToAbsolute, selectionToAnchor } from "./comment-anchors";
 
 let editor: Editor | null = null;
 let ydoc: Y.Doc | null = null;

@@ -12,13 +12,14 @@ const {
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const crypto = require("crypto");
 const url = require("url");
 const { autoUpdater } = require("electron-updater");
 const { shareBaseFromSrc } = require("./share-origin");
 const { classifyDeepLink, cloudDocId } = require("./deep-links");
 const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
+const docTiers = require("./doc-tiers");
+const { createDiskMemory } = require("./disk-memory");
 const { ASSET_SCHEME, buildAppCsp } = require("./csp");
 const localAssets = require("./local-assets");
 const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
@@ -475,44 +476,11 @@ function waitForSignIn(timeoutMs) {
   });
 }
 
-// What Markie last saw on disk for a path. A save compares against this so we
-// can tell "nothing moved underneath me" from "something rewrote this file
-// while it was open" — which is the normal case when an agent is working in the
-// same repo. Without it, saving blind-writes the buffer over the newer file.
-// Bounded: one entry per file the session has read, and a long session in a
-// large repo reads a lot of them.
-const lastSeenOnDisk = new Map();
-const LAST_SEEN_LIMIT = 500;
-
-function hashOf(content) {
-  return crypto.createHash("sha256").update(content, "utf8").digest("hex");
-}
-
-function rememberDisk(filePath, content) {
-  // Delete-then-set moves the key to the end, so the eviction below drops the
-  // least recently written path rather than an arbitrary one.
-  lastSeenOnDisk.delete(filePath);
-  lastSeenOnDisk.set(filePath, hashOf(content));
-  while (lastSeenOnDisk.size > LAST_SEEN_LIMIT) {
-    const oldest = lastSeenOnDisk.keys().next();
-    if (oldest.done) break;
-    lastSeenOnDisk.delete(oldest.value);
-  }
-}
-
-// Returns the current on-disk content when it differs from what we last saw,
-// or null when it matches, is unknown to us, or cannot be read.
-function diskChangedSince(filePath) {
-  const known = lastSeenOnDisk.get(filePath);
-  if (!known) return null; // never read it here; nothing to compare against
-  let current;
-  try {
-    current = fs.readFileSync(filePath, "utf-8");
-  } catch {
-    return null; // gone or unreadable; the write itself will report the failure
-  }
-  return hashOf(current) === known ? null : current;
-}
+// What Markie last saw on disk for a path, so a save or a watcher poll can
+// tell "nothing moved underneath me" from "something rewrote this file while
+// it was open" (electron/disk-memory.js). Records of Markie's own writes say
+// so, which is what lets a file it wrote past the cap stay its own.
+const diskMemory = createDiskMemory();
 
 // ── Watching the open document ──
 // Markie already knew a file had changed underneath the user, but only at the
@@ -543,24 +511,25 @@ function watchOpenFile(filePath) {
   watchedPath = filePath;
   try {
     fs.watchFile(filePath, { interval: WATCH_INTERVAL_MS }, () => {
-      // stat changing is only a hint. diskChangedSince compares content
-      // hashes, so a touch, a no-op rewrite, or Markie's own save does not
-      // interrupt the user with a conflict that does not exist.
-      const changed = diskChangedSince(filePath);
+      // stat changing is only a hint. changedSince compares content hashes
+      // (and, over the cap, the stat of Markie's own write), so a touch, a
+      // no-op rewrite, or Markie's own save does not interrupt the user with
+      // a conflict that does not exist.
+      const changed = diskMemory.changedSince(filePath);
       if (changed === null) return;
       // Somebody else's write is a version too. Recording it here is what puts
       // an agent's edit of the open document into the history list; the store
-      // dedupes, so the user's own save over it does not record it twice.
-      try {
-        history().captureExternal(filePath);
-      } catch {
-        // A missing version is a smaller loss than a missed change notice.
+      // dedupes, so the user's own save over it does not record it twice. A
+      // file that outgrew the cap is not read, so it is not recorded either.
+      if (!changed.tooLarge) {
+        try {
+          history().captureExternal(filePath);
+        } catch {
+          // A missing version is a smaller loss than a missed change notice.
+        }
       }
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("file-changed-on-disk", {
-          path: filePath,
-          content: changed,
-        });
+        mainWindow.webContents.send("file-changed-on-disk", { path: filePath, ...changed });
       }
     });
   } catch {
@@ -594,17 +563,37 @@ function refreshRevertMenuItem() {
   }
 }
 
+// Every way a file reaches the renderer ends here, so this is where its size
+// is settled (electron/doc-tiers.js). A file over the cap comes back as a
+// refusal the renderer shows instead of a document; a large one comes back
+// flagged so the renderer opens it in Source view and skips the rich pipeline.
+// A large document is registered from here as well: the renderer used to send
+// the whole text back over IPC just so the registry could hash it, and for a
+// file this size that copy is worth skipping.
 function readFilePayload(filePath, { grant = false } = {}) {
   try {
     const access = grant ? fileGrants.grantFile(filePath) : fileGrants.canRead(filePath);
     if (!access.ok) return null;
-    const content = fs.readFileSync(access.path, "utf-8");
-    rememberDisk(access.path, content);
+    const name = path.basename(access.path);
+    const doc = docTiers.readDocumentTiered(access.path);
+    if (doc.tooLarge) {
+      return { tooLarge: true, size: doc.size, name, path: access.path };
+    }
+    diskMemory.remember(access.path, doc.content);
     setCurrentDoc(access.path);
+    if (doc.large) {
+      try {
+        registry.track(access.path, name, doc.content);
+      } catch {
+        // The registry row is a convenience; the document still opens.
+      }
+    }
     return {
-      name: path.basename(access.path),
-      content,
+      name,
+      content: doc.content,
       path: access.path,
+      size: doc.size,
+      large: doc.large,
     };
   } catch {
     return null;
@@ -1042,10 +1031,25 @@ handle("save-file", async (_event, { filePath, content, force = false, autosave 
     // A modal would interrupt typing and a blind write would destroy the other
     // writer's work, so it refuses and hands the newer bytes back for the
     // renderer's own non-modal strip. saveConflictAction owns that decision.
-    const newer = force ? null : diskChangedSince(access.path);
-    const action = saveConflictAction({ autosave, force, changed: newer });
+    const newer = force ? null : diskMemory.changedSince(access.path);
+    // Even a decided overwrite stops at the cap: the dialog that decided it
+    // showed bytes that are no longer what is on disk.
+    const overCap = force ? diskMemory.overCapOnDisk(access.path) : newer?.tooLarge ? newer : null;
+    if (overCap) {
+      // The file on disk outgrew what Markie opens, so the conflict dialog
+      // could not show what it would overwrite. Nothing is written; the
+      // buffer is still theirs to save under another name.
+      return {
+        success: false,
+        error:
+          `${path.basename(access.path)} on disk is now ${docTiers.formatMegabytes(overCap.size)}, ` +
+          `more than Markie opens (${docTiers.formatMegabytes(docTiers.MAX_DOC_BYTES)}). ` +
+          "Save your copy under another name.",
+      };
+    }
+    const action = saveConflictAction({ autosave, force, changed: newer?.content ?? null });
     if (action === "refuse") {
-      return { success: false, code: "disk-changed", path: access.path, content: newer };
+      return { success: false, code: "disk-changed", path: access.path, content: newer.content, size: newer.size };
     }
     if (action === "ask") {
       const { response } = await dialog.showMessageBox(mainWindow, {
@@ -1060,8 +1064,8 @@ handle("save-file", async (_event, { filePath, content, force = false, autosave 
       });
       if (response === 2) return { success: false, canceled: true };
       if (response === 0) {
-        rememberDisk(access.path, newer);
-        return { success: false, code: "reloaded", path: access.path, content: newer };
+        diskMemory.remember(access.path, newer.content);
+        return { success: false, code: "reloaded", path: access.path, content: newer.content, size: newer.size };
       }
       // response === 1: the user chose to overwrite, so fall through.
     }
@@ -1070,7 +1074,7 @@ handle("save-file", async (_event, { filePath, content, force = false, autosave 
     // find it. A save is the only moment that copy still exists.
     snapshotBeforeWrite(access.path, content);
     writeFileAtomic(access.path, content);
-    rememberDisk(access.path, content);
+    diskMemory.remember(access.path, content, { ownWrite: true });
     setCurrentDoc(access.path);
     return { success: true, path: access.path };
   } catch (err) {
@@ -1109,7 +1113,7 @@ handle("save-file-as", async (_event, { defaultName, content, csvContent }) => {
     const savedPath = grant.ok ? grant.path : result.filePath;
     // Record what is now on disk, so the next save of this path does not read
     // its own write as "someone else changed this file".
-    rememberDisk(savedPath, bytes);
+    diskMemory.remember(savedPath, bytes, { ownWrite: true });
     setCurrentDoc(savedPath);
     return {
       success: true,
@@ -1374,12 +1378,13 @@ handle("doc-retry-push", (_event, { path: p }) => {
   } catch (err) {
     return { error: `Couldn't read the file: ${err.message}` };
   }
-  rememberDisk(access.path, content);
+  diskMemory.remember(access.path, content);
   return sync.push(access.path, path.basename(access.path), content);
 });
 // A successful cloud pull rewrote the open file on disk. Without recording
-// what was written, lastSeenOnDisk goes stale and the watcher (and the next
-// save) reports a conflict for a change the user just accepted.
+// what was written, the disk memory goes stale and the watcher (and the next
+// save) reports a conflict for a change the user just accepted. Markie's own
+// write, so it is recorded as one.
 function refreshDiskMemory(filePath, result) {
   if (!filePath || !result || result.error) return;
   try {
@@ -1387,7 +1392,7 @@ function refreshDiskMemory(filePath, result) {
       typeof result.content === "string"
         ? result.content
         : fs.readFileSync(filePath, "utf-8");
-    rememberDisk(filePath, content);
+    diskMemory.remember(filePath, content, { ownWrite: true });
   } catch {
     // The stale-hash prompt is annoying, not dangerous; never fail the pull.
   }
@@ -1834,7 +1839,7 @@ handle(
     const cfg = ensureProjectsConfig({ dir: workspace.defaultRootPath() });
     const next = writeOverviewSection(cfg.content, String(listing ?? ""));
     writeFileAtomic(cfg.path, next);
-    rememberDisk(cfg.path, next);
+    diskMemory.remember(cfg.path, next, { ownWrite: true });
     return { ok: true, path: cfg.path };
   },
   { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }

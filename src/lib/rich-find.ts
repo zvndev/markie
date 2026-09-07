@@ -16,6 +16,7 @@ import {
   offsetToPos,
   rangesForMatches,
   type PosRange,
+  type TextIndex,
   type TextSegment,
 } from "./rich-search";
 
@@ -38,6 +39,25 @@ export function collectSegments(doc: PMNode): TextSegment[] {
     return false;
   });
   return segments;
+}
+
+// One stitched index per document, keyed on the document object itself.
+//
+// ProseMirror documents are immutable: any edit produces a new one, so object
+// identity is exactly "this is the same text in the same places". The four
+// entry points below (text, caret, highlight, reveal) each wanted the index,
+// and each used to walk the whole tree to get it, so a single keystroke in the
+// find bar cost four full walks of the document. A WeakMap, so a superseded
+// document and its index are collected together.
+const indexCache = new WeakMap<PMNode, TextIndex>();
+
+/** The stitched text and position map for a document, built at most once. */
+export function indexForDoc(doc: PMNode): TextIndex {
+  const cached = indexCache.get(doc);
+  if (cached) return cached;
+  const built = indexSegments(collectSegments(doc));
+  indexCache.set(doc, built);
+  return built;
 }
 
 export const findPluginKey = new PluginKey<DecorationSet>("markieFind");
@@ -91,9 +111,11 @@ function scrollTo(editor: Editor, pos: number): void {
 }
 
 export function richFindTarget(editor: Editor): FindTarget {
-  // Rebuilt per call rather than cached: the document changes under the find
-  // bar constantly, and a stale index maps matches onto the wrong characters.
-  const index = () => indexSegments(collectSegments(editor.state.doc));
+  // Read from the editor every call rather than captured, because the document
+  // changes under the find bar constantly and a stale index maps matches onto
+  // the wrong characters. The cache above keys on the document, so the answer
+  // is fresh whenever the document is and free whenever it is not.
+  const index = () => indexForDoc(editor.state.doc);
 
   const send = (matches: Match[], current: number) => {
     const idx = index();

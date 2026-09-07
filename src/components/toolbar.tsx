@@ -9,12 +9,16 @@ import {
   type ColorMode,
 } from "@/lib/color-mode";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
+import { RICH_UNAVAILABLE_TITLE } from "@/lib/doc-tiers";
 
 type ViewMode = "edit" | "preview" | "split";
 
 interface ToolbarProps {
   mode: ViewMode;
   onModeChange: (mode: ViewMode) => void;
+  // The open document is too big for the rich pane (src/lib/doc-tiers.ts):
+  // Rich and Split are shown but cannot be chosen, and say why on hover.
+  richUnavailable?: boolean;
   onOpenFile: () => void;
   onExportPDF: (theme: PDFTheme) => void;
   // "Save a Copy" writes the markdown itself somewhere else; Export HTML and
@@ -44,6 +48,7 @@ interface ToolbarProps {
 export function Toolbar({
   mode,
   onModeChange,
+  richUnavailable = false,
   onOpenFile,
   onExportPDF,
   onSaveAs,
@@ -254,22 +259,28 @@ export function Toolbar({
             ["edit", "Source", "⌘2"],
             ["split", "Split", "⌘3"],
           ] as const
-        ).map(([value, label, shortcut]) => (
-          <button
-            key={value}
-            onClick={() => onModeChange(value)}
-            title={`${label} (${shortcut})`}
-            aria-label={`${label} mode (${shortcut})`}
-            aria-pressed={mode === value}
-            className={`px-3 py-1 text-[11px] font-medium rounded transition-all ${
-              mode === value
-                ? "bg-accent text-foreground"
-                : "text-muted hover:text-foreground"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+        ).map(([value, label, shortcut]) => {
+          const unavailable = richUnavailable && value !== "edit";
+          return (
+            <button
+              key={value}
+              onClick={() => onModeChange(value)}
+              disabled={unavailable}
+              title={unavailable ? RICH_UNAVAILABLE_TITLE : `${label} (${shortcut})`}
+              aria-label={`${label} mode (${shortcut})`}
+              aria-pressed={mode === value}
+              className={`px-3 py-1 text-[11px] font-medium rounded transition-all ${
+                mode === value
+                  ? "bg-accent text-foreground"
+                  : unavailable
+                    ? "text-muted/50 cursor-default"
+                    : "text-muted hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Right: theme/mode + presence + share */}

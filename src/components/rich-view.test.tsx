@@ -3,6 +3,18 @@ import { describe, expect, it, vi } from "vitest";
 import type { Editor } from "@tiptap/react";
 import { RichView } from "@/components/rich-view";
 
+// The loader stands between a shared document and its editor; a chunk that
+// fails to load must not take the editor with it. Only the failure is faked.
+const loader = vi.hoisted(() => ({ failed: false }));
+vi.mock("@/lib/collab-loader", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/collab-loader")>();
+  return {
+    ...real,
+    useCollabRuntime: (wanted: boolean) =>
+      wanted && loader.failed ? { runtime: null, failed: true } : real.useCollabRuntime(wanted),
+  };
+});
+
 // Opens a document in the real rich pane, runs one edit through the real
 // editor, and returns the markdown the component emitted. This is the wiring
 // test: the layer modules have their own suites, but only this proves the
@@ -90,5 +102,41 @@ describe("RichView serialization", () => {
     expect(out).toContain("<div class=\"note\">\n<b>raw html</b>\n</div>");
     expect(out).toContain("Opening paragraph. EDITED");
     expect(out).not.toContain("markie-hold-");
+  });
+});
+
+describe("RichView when the live session cannot load", () => {
+  it("says so in one line and mounts the editor on the local copy", async () => {
+    loader.failed = true;
+    try {
+      const onCollabStatus = vi.fn();
+      let editor: Editor | null = null;
+      const { container } = render(
+        <RichView
+          value={"# Shared\n\nA line.\n"}
+          onChange={() => {}}
+          collab={{
+            docId: "doc-1",
+            wsBase: "ws://localhost/collab",
+            token: "t",
+            user: { name: "Me", color: "#000000" },
+            readonly: false,
+          }}
+          onEditorReady={(e) => {
+            if (e) editor = e;
+          }}
+          onCollabStatus={onCollabStatus}
+        />
+      );
+      const note = container.querySelector("[data-markie-live-failed]");
+      expect(note).not.toBeNull();
+      expect(note!.textContent).toBe("The live session could not load. You are editing your copy alone.");
+      expect(container.querySelector("[data-markie-live-loading]")).toBeNull();
+      await waitFor(() => expect(editor).not.toBeNull());
+      expect((editor as unknown as Editor).isEditable).toBe(true);
+      expect(onCollabStatus).toHaveBeenCalledWith("unavailable");
+    } finally {
+      loader.failed = false;
+    }
   });
 });

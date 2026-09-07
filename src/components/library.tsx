@@ -7,7 +7,8 @@ import {
   type DragEvent,
 } from "react";
 import { matchesFilter, stableOrder } from "@/lib/stable-order";
-import { getElectronAPI, type LibraryItem } from "@/lib/electron";
+import { getElectronAPI, isTooLarge, type LibraryItem } from "@/lib/electron";
+import { tooLargeMessage } from "@/lib/doc-tiers";
 import { ProjectsPanelContainer } from "@/components/projects-panel";
 import { BrowseView } from "@/components/browse-view";
 import { SkillsView } from "@/components/skills-view";
@@ -364,6 +365,7 @@ export function Library({
     if (!item.path || !api?.openFilePath) return flashError("Nothing to copy.");
     const file = await api.openFilePath(item.path);
     if (!file) return flashError(`Couldn't read ${item.name}.`);
+    if (isTooLarge(file)) return flashError(tooLargeMessage(file.size));
     try {
       await navigator.clipboard.writeText(file.content);
       flash("Contents copied to clipboard.");
@@ -377,6 +379,7 @@ export function Library({
       const api = getElectronAPI()!;
       const file = await api.openFilePath(item.path!);
       if (!file) return noticeError(`Can't read ${item.name}`);
+      if (isTooLarge(file)) return noticeError(tooLargeMessage(file.size));
       const res = await api.docSyncOn({
         path: item.path!,
         name: item.name,

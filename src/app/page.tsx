@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Toolbar } from "@/components/toolbar";
-import { Editor } from "@/components/editor";
+import { preloadSourceEditor, SourceEditor } from "@/components/source-editor";
 import { RichView, type FlushRich } from "@/components/rich-view";
 import { FormatRail } from "@/components/format-rail";
 import { DocToolbar } from "@/components/doc-toolbar";
@@ -34,12 +34,22 @@ import { ShareDialog } from "@/components/share-dialog";
 import { ShareGate } from "@/components/share-gate";
 import {
   ShareBanner,
-  LiveSourceBanner,
+  LiveSourceBanner, LiveUnavailableNote,
   UpdateStrip,
 } from "@/components/share-banner";
 import { ConflictDialog } from "@/components/conflict-dialog";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
 import { DraftStrip } from "@/components/draft-strip";
+import { LargeDocStrip, TooLargeStrip } from "@/components/large-doc";
+import {
+  LARGE_DOC_BYTES,
+  MAX_DOC_BYTES,
+  measureBytes,
+  tierForSize,
+  type DocTier,
+  type RefusalVerb,
+} from "@/lib/doc-tiers";
+import { isTooLarge, type OpenResult, type TooLargePayload } from "@/lib/electron";
 import { HistoryDialog } from "@/components/history-dialog";
 import { diskChangeKind } from "@/lib/disk-change";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -49,9 +59,7 @@ import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
 import { FindBar } from "@/components/find-bar";
 import { richFindTarget } from "@/lib/rich-find";
-import { sourceFindTarget } from "@/lib/source-find";
-import type { EditorView as SourceView } from "@codemirror/view";
-import { undo as cmUndo, redo as cmRedo } from "@codemirror/commands";
+import type { SourceHandle } from "@/lib/source-handle";
 import { undoTargetFor } from "@/lib/undo-target";
 import { TerminalPanel } from "@/components/terminal-panel";
 import { TERMINAL_ENABLED } from "@/lib/features";
@@ -109,6 +117,17 @@ import { opensAsDocument } from "@/lib/attach";
 import { useDocument, type EditInput } from "@/lib/use-document";
 import { useSaveGuard, type SaveGuard } from "@/lib/use-save-guard";
 import { useDocumentExport } from "@/lib/use-export";
+
+// How long after the last edit the document's size is measured again (see the
+// re-tiering effect in Home).
+const EDIT_TIER_DELAY_MS = 500;
+
+// A file converted on the way in (a CSV as a markdown table, every cell
+// gaining its separators) is tiered by the text the pane holds, which
+// enterTier measures when it is given no size; an unconverted one is tiered
+// by the bytes main read.
+const sizeUnlessConverted = (md: string, raw: string, bytes: number): number | undefined =>
+  md === raw ? bytes : undefined;
 
 const SAMPLE = `# Northstar Sprint Brief
 
@@ -212,7 +231,7 @@ export default function Home() {
   // kills the shells and whatever they were running.
   const [terminalMounted, setTerminalMounted] = useState(false);
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
-  const [sourceView, setSourceView] = useState<SourceView | null>(null);
+  const [sourceHandle, setSourceHandle] = useState<SourceHandle | null>(null);
   const [showFind, setShowFind] = useState(false);
   const [findWithReplace, setFindWithReplace] = useState(false);
   // In Split both panes are on screen, so find follows the one you last
@@ -254,13 +273,41 @@ export default function Home() {
   const [showConflict, setShowConflict] = useState(false);
   // Set when something else edited the open file. Holds the new on-disk text so
   // a reload does not have to go back to the filesystem and race the next edit.
-  const [diskChange, setDiskChange] = useState<string | null>(null);
+  const [diskChange, setDiskChange] = useState<{ content: string; size?: number } | null>(null);
   const [showDiskConflict, setShowDiskConflict] = useState(false);
+  // The open document's size tier (src/lib/doc-tiers.ts): its size while a
+  // large document is open in Source view, and the last file main refused.
+  const [largeDocSize, setLargeDocSize] = useState<number | null>(null);
+  const [refusedDoc, setRefusedDoc] = useState<{ name: string; size: number; verb?: RefusalVerb } | null>(null);
+  const largeDocRef = useRef(false);
+  // The tier itself, kept apart from the boolean because an edit can carry
+  // a document past the cap as well as past the large line, and the
+  // re-tiering effect below has to tell those apart.
+  const tierRef = useRef<DocTier>("ok");
+  const modeRef = useRef<ViewMode>("preview");
+  // The mode a large document displaced, given back with the next ordinary one.
+  const modeBeforeLargeRef = useRef<ViewMode | null>(null);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+  // Rich and Split cannot be chosen while a large document is open; the mode
+  // buttons say why. Source is always allowed.
+  const requestMode = useCallback((m: ViewMode) => {
+    if (largeDocRef.current && m !== "edit") return;
+    setMode(m);
+  }, []);
   const [showHistory, setShowHistory] = useState(false);
   const [peers, setPeers] = useState<PeerUser[]>([]);
   const [liveStatus, setLiveStatus] = useState<
     "connecting" | "connected" | "disconnected"
   >("disconnected");
+  // The runtime behind the live session could not load for this document
+  // (src/lib/collab-loader.ts). The page leaves live mode for it: a solo
+  // editor under a live-session flag would have its saves skip the cloud
+  // push (handleSave trusts the update log while live), and the source pane
+  // would stay read-only for a session that is not there.
+  const [liveUnavailable, setLiveUnavailable] = useState(false);
+  const liveUnavailableRef = useRef(false);
   // Owner-pinned theme on the open shared doc (non-owners only)
   const [enforcedTheme, setEnforcedTheme] = useState<ThemeTokens | null>(null);
 
@@ -292,6 +339,7 @@ export default function Home() {
   // until it lands, rich is read-only and Source is byte-faithful as ever.
   const {
     assess: assessRichSafety,
+    skip: skipRichSafety,
     override: overrideRichSafety,
     risks: richLossy,
     blocked: richBlocked,
@@ -390,7 +438,10 @@ export default function Home() {
         } else {
           setSharedBy(null);
         }
-        if (!me || !members || members.length === 0) {
+        // No live session for a large document (enterTier): Source is
+        // read-only under one, and the rich pane that would carry it never
+        // mounts, so a session would only lock the owner out of their file.
+        if (largeDocRef.current || liveUnavailableRef.current || !me || !members || members.length === 0) {
           setCollabCfg(null);
           return;
         }
@@ -541,6 +592,94 @@ export default function Home() {
     };
   }, [checkUpdates]);
 
+  // The cap, checked before any text replaces the buffer. Main refuses a file
+  // it would have had to read; this is the same line for text that is already
+  // in memory (a cloud pull, a history version, a dropped file read in the
+  // browser), which the callers below must not apply when it is over. Returns
+  // the size to hand enterTier, or null when the text was refused and the
+  // open document stays.
+  const admitUnderCap = useCallback(
+    (md: string, name: string, size: number | undefined, verb: RefusalVerb): number | null => {
+      const bytes = size ?? measureBytes(md);
+      if (tierForSize(bytes) !== "tooLarge") return bytes;
+      setRefusedDoc({ name, size: bytes, verb });
+      return null;
+    },
+    []
+  );
+
+  // Every text that lands in the buffer passes through here, whichever way it
+  // arrived (a file main read, a history version, a recovered draft, a cloud
+  // pull, an edit the disk watcher handed over), and its size settles the tier
+  // (src/lib/doc-tiers.ts). Main sends the size of a file it read; text that
+  // was already in memory is measured, so a snapshot of a large document is
+  // still a large document. A large one opens in Source view and stays there:
+  // no rich pane, so no probe, no warm-up and no journal, and no live session
+  // (see refreshCollab). The mode it displaced comes back with the next
+  // ordinary document. A buffer over the cap (only an edit or a conversion
+  // can get one there; a file that size is refused unread) is a large one
+  // whose strip says what that means. Returns whether the document is large.
+  const enterTier = useCallback(
+    (md: string, path: string | null, size?: number): boolean => {
+      const bytes = size ?? measureBytes(md);
+      const tier = tierForSize(bytes);
+      tierRef.current = tier;
+      const large = tier !== "ok";
+      largeDocRef.current = large;
+      if (large) {
+        setLargeDocSize(bytes);
+        if (modeRef.current !== "edit") modeBeforeLargeRef.current = modeRef.current;
+        setMode("edit");
+        skipRichSafety(path);
+      } else {
+        setLargeDocSize(null);
+        if (modeBeforeLargeRef.current !== null) {
+          setMode(modeBeforeLargeRef.current);
+          modeBeforeLargeRef.current = null;
+        }
+        assessRichSafety(md, path);
+      }
+      return large;
+    },
+    [assessRichSafety, skipRichSafety]
+  );
+
+  // The live session depends on the tier, so a document that changed tier in
+  // place (grew past the line on disk, or shrank back) re-resolves it.
+  const largeTier = largeDocSize !== null;
+  useEffect(() => {
+    refreshCollabRef.current();
+  }, [largeTier]);
+
+  // Edits can carry a document across either line in either direction: a
+  // paste that takes a source document past the large line must not leave
+  // Rich on offer (that is the freeze the tier exists to prevent), a large
+  // document trimmed below it gets Rich back, and one edited past the cap
+  // keeps its buffer and its saves while the strip says what that means
+  // (largeDocumentNote). Measured a beat after typing stops, and only when
+  // the character count cannot settle it: UTF-8 spends one to three bytes
+  // per character, so a document under a third of a line in characters is
+  // under it in bytes, and one past a line in characters is past it in
+  // bytes. Nearly every keystroke in nearly every document exits here
+  // without touching the text.
+  useEffect(() => {
+    if (!booted) return;
+    const timer = setTimeout(() => {
+      const chars = content.length;
+      const tier = tierRef.current;
+      const settledByLength =
+        tier === "ok"
+          ? chars * 3 < LARGE_DOC_BYTES
+          : tier === "large"
+            ? chars >= LARGE_DOC_BYTES && chars * 3 < MAX_DOC_BYTES
+            : chars >= MAX_DOC_BYTES;
+      if (settledByLength) return;
+      const bytes = measureBytes(content);
+      if (tierForSize(bytes) !== tierRef.current) enterTier(content, filePath, bytes);
+    }, EDIT_TIER_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [content, filePath, booted, enterTier]);
+
   // The clean case: nothing local is at risk, so this finishes in one click.
   const handlePullUpdate = useCallback(async () => {
     const api = getElectronAPI();
@@ -555,9 +694,14 @@ export default function Home() {
       }
       if (typeof res.content === "string") {
         // What came back is what is now on disk, and a CSV on disk is CSV.
+        // Main refuses a cloud copy over the cap before writing it; this is
+        // the same line for a copy that somehow reached here, and it leaves
+        // the update on offer rather than pretending it was taken.
+        const bytes = admitUnderCap(res.content, fileName ?? "This document", undefined, "reloaded");
+        if (bytes === null) return;
         const pulled = fromDisk(fileName, res.content);
         applyExternalDoc(pulled);
-        assessRichSafety(pulled, docRef.current.filePath);
+        enterTier(pulled, docRef.current.filePath, sizeUnlessConverted(pulled, res.content, bytes));
       }
       setUpdateWaiting(null);
       setLibRefreshKey((k) => k + 1);
@@ -566,18 +710,21 @@ export default function Home() {
     } finally {
       setUpdateBusy(false);
     }
-  }, [filePath, fileName, assessRichSafety, applyExternalDoc]);
+  }, [filePath, fileName, admitUnderCap, enterTier, applyExternalDoc]);
 
   // Whatever the dialog did, the file on disk now holds this content.
   const handleConflictResolved = useCallback(
     (next: string) => {
-      const pulled = fromDisk(fileName, next);
-      applyExternalDoc(pulled);
-      assessRichSafety(pulled, docRef.current.filePath);
+      const bytes = admitUnderCap(next, fileName ?? "This document", undefined, "reloaded");
+      if (bytes !== null) {
+        const pulled = fromDisk(fileName, next);
+        applyExternalDoc(pulled);
+        enterTier(pulled, docRef.current.filePath, sizeUnlessConverted(pulled, next, bytes));
+      }
       setUpdateWaiting(null);
       setUpdateError(null);
     },
-    [fileName, assessRichSafety, applyExternalDoc]
+    [fileName, admitUnderCap, enterTier, applyExternalDoc]
   );
 
   // A document that is being swapped out must not leave its access behind for
@@ -638,6 +785,9 @@ export default function Home() {
   // The docked side panel is persistent navigation chrome, not an overlay:
   // it stays open so browsing file-to-file doesn't slam it shut.
   const dismissDocumentUI = useCallback(() => {
+    // The next document gets its own attempt at a live session.
+    liveUnavailableRef.current = false;
+    setLiveUnavailable(false);
     setShowStats(false);
     setShowPalette(false);
     setShowHelp(false);
@@ -656,17 +806,41 @@ export default function Home() {
     resetDocAccess();
     resetDoc();
     setCanShare(false);
-    assessRichSafety("", null);
-  }, [dismissDocumentUI, resetDocAccess, assessRichSafety, resetDoc, settleDocument]);
+    enterTier("", null, 0);
+  }, [dismissDocumentUI, resetDocAccess, enterTier, resetDoc, settleDocument]);
 
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
-    (s: "connecting" | "connected" | "disconnected") => setLiveStatus(s),
+    (s: "connecting" | "connected" | "disconnected" | "unavailable") => {
+      if (s !== "unavailable") {
+        setLiveStatus(s);
+        return;
+      }
+      liveUnavailableRef.current = true;
+      setLiveUnavailable(true);
+      setLiveStatus("disconnected");
+      setCollabCfg(null);
+    },
     []
   );
 
   const loadFile = useCallback(
-    async (data: { name: string; content: string; path: string | null; unsaved?: boolean }) => {
+    async (
+      data:
+        | { name: string; content: string; path: string | null; unsaved?: boolean; size?: number; large?: boolean }
+        | TooLargePayload
+    ) => {
+      // Main refused the file for its size before reading it. Nothing about
+      // the open document changes; the strip says what happened.
+      if (isTooLarge(data)) {
+        setRefusedDoc({ name: data.name, size: data.size });
+        return false;
+      }
+      // A restore (history, a recovered draft) or a file read outside main
+      // carries no size; it is measured here and refused over the cap.
+      const bytes = admitUnderCap(data.content, data.name, data.size, data.unsaved ? "restored" : "opened");
+      if (bytes === null) return false;
+      setRefusedDoc(null);
       // Whatever the last document still owes disk lands before this one
       // replaces it. This is the P0: Markie used to drop it silently.
       await settleDocument();
@@ -681,7 +855,18 @@ export default function Home() {
       // version while the file on disk still holds the new one, so the document
       // must show as dirty until the user saves (or discards) the revert.
       loadDoc({ name: data.name, content: md, path: data.path, unsaved: data.unsaved });
-      if (data.path) {
+      // Main sends the size of a file it read; a restore of text already in
+      // memory is measured (enterTier), and so is a file converted on the way
+      // in (a CSV becomes a markdown table, and every cell gains its
+      // separators): the buffer is what the pane has to hold, and it can be
+      // large where the file was not. The cap was checked on the file above.
+      const converted = md !== data.content;
+      const large = enterTier(md, data.path, converted ? undefined : bytes);
+      // A large document was registered by main when it read it, so its text
+      // is not sent back to be hashed. Anything else is registered here,
+      // including a converted buffer that measured large: main read an
+      // ordinary file and did not register it.
+      if (data.path && !data.large && (!large || converted)) {
         getElectronAPI()?.registryTrack?.({
           path: data.path,
           name: data.name,
@@ -689,9 +874,9 @@ export default function Home() {
         });
       }
       setLibRefreshKey((k) => k + 1);
-      assessRichSafety(md, data.path);
+      return true;
     },
-    [dismissDocumentUI, resetDocAccess, assessRichSafety, loadDoc, settleDocument]
+    [dismissDocumentUI, resetDocAccess, admitUnderCap, enterTier, loadDoc, settleDocument]
   );
 
   const openPath = useCallback(
@@ -711,16 +896,19 @@ export default function Home() {
       const api = getElectronAPI();
       if (!api || paths.length === 0) return;
       Promise.all(paths.map((p) => api.openFilePath(p))).then((files) => {
+        const refused = files.find(isTooLarge);
         const valid = files.filter(
-          (f): f is FilePayload => f !== null
+          (f): f is FilePayload => f !== null && !isTooLarge(f)
         );
         valid.forEach((f, i) => {
           if (i === valid.length - 1) {
             loadFile(f); // open + track the last one
-          } else {
+          } else if (!f.large) {
+            // Main registered a large one itself when it read it.
             api.registryTrack?.({ path: f.path, name: f.name, content: f.content });
           }
         });
+        if (refused) setRefusedDoc({ name: refused.name, size: refused.size });
         setLibRefreshKey((k) => k + 1);
       });
     },
@@ -878,16 +1066,19 @@ export default function Home() {
     // The file changed underneath us and the user chose to take the disk copy
     // rather than overwrite it. Load it in place of what they had.
     if (res.code === "reloaded" && typeof res.content === "string") {
-      const reloaded = fromDisk(fileName, res.content);
-      applyExternalDoc(reloaded);
-      assessRichSafety(reloaded, filePath);
+      const bytes = admitUnderCap(res.content, fileName ?? "This document", res.size, "reloaded");
+      if (bytes !== null) {
+        const reloaded = fromDisk(fileName, res.content);
+        applyExternalDoc(reloaded);
+        enterTier(reloaded, filePath, sizeUnlessConverted(reloaded, res.content, bytes));
+      }
       return null;
     }
     // An autosave found the same collision. Nothing was written and nobody was
     // interrupted: raise the strip the user already knows, and let the gate
     // below hold autosave off until they resolve it.
     if (res.code === "disk-changed" && typeof res.content === "string") {
-      setDiskChange(res.content);
+      setDiskChange({ content: res.content, size: res.size });
       return DISK_CHANGED;
     }
     if (res.success) {
@@ -930,7 +1121,7 @@ export default function Home() {
       }
     }
     return null;
-  }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg, assessRichSafety, applyExternalDoc, markSaved, checkUpdates]);
+  }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg, admitUnderCap, enterTier, applyExternalDoc, markSaved, checkUpdates]);
 
   // Autosave arms only where a write is provably safe: a real file to write,
   // the right to write it, no unresolved disk conflict, and either Source
@@ -948,6 +1139,7 @@ export default function Home() {
     docKey: filePath,
     document: { path: filePath, name: fileName, content, dirty: isDirty },
     booted,
+    journal: largeDocSize === null,
   });
   useEffect(() => {
     saveGuardRef.current = saveGuard;
@@ -1141,7 +1333,7 @@ export default function Home() {
             break;
           case "1":
             e.preventDefault();
-            setMode("preview");
+            requestMode("preview");
             break;
           case "2":
             e.preventDefault();
@@ -1149,7 +1341,7 @@ export default function Home() {
             break;
           case "3":
             e.preventDefault();
-            setMode("split");
+            requestMode("split");
             break;
           case "s":
             e.preventDefault();
@@ -1182,6 +1374,7 @@ export default function Home() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    requestMode,
     handleOpenFile,
     handleSave,
     handleSaveAs,
@@ -1196,19 +1389,19 @@ export default function Home() {
     (direction: "undo" | "redo") => {
       const target = undoTargetFor(document.activeElement, {
         hasRich: !!richEditor,
-        hasSource: !!sourceView,
+        hasSource: !!sourceHandle,
       });
       if (target === "rich" && richEditor) {
         richEditor.chain().focus()[direction]().run();
-      } else if (target === "source" && sourceView) {
-        (direction === "undo" ? cmUndo : cmRedo)(sourceView);
-        sourceView.focus();
+      } else if (target === "source" && sourceHandle) {
+        sourceHandle[direction]();
+        sourceHandle.focus();
       } else if (target === "native") {
         // A plain field: let the platform do what it already does well.
         document.execCommand(direction);
       }
     },
-    [richEditor, sourceView]
+    [richEditor, sourceHandle]
   );
 
   // The IPC subscriptions below are installed once, so anything they compare
@@ -1230,12 +1423,15 @@ export default function Home() {
   // the buffer always holds markdown.
   const reloadFromDisk = useCallback(() => {
     if (diskChange === null) return;
-    const md = fromDisk(fileName, diskChange);
-    applyExternalDoc(md);
-    assessRichSafety(md, docRef.current.filePath);
+    const bytes = admitUnderCap(diskChange.content, fileName ?? "This document", diskChange.size, "reloaded");
+    if (bytes !== null) {
+      const md = fromDisk(fileName, diskChange.content);
+      applyExternalDoc(md);
+      enterTier(md, docRef.current.filePath, sizeUnlessConverted(md, diskChange.content, bytes));
+    }
     setDiskChange(null);
     setShowDiskConflict(false);
-  }, [diskChange, fileName, assessRichSafety, applyExternalDoc]);
+  }, [diskChange, fileName, admitUnderCap, enterTier, applyExternalDoc]);
 
   // Keep both: save the buffer under a new name and leave the changed file
   // alone. The only resolution that destroys nothing.
@@ -1261,7 +1457,7 @@ export default function Home() {
     fork: handleMakeCopy,
     reveal: handleReveal,
     exportHTML: exportHTML,
-    fileOpened: (data: FilePayload) => void loadFile(data),
+    fileOpened: (data: OpenResult) => void loadFile(data),
     settle: settleDocument,
     undoRedo: (d: "undo" | "redo") => runUndoRedo(d),
     print: printDocument,
@@ -1319,7 +1515,11 @@ export default function Home() {
         //
         // Awaited so `booted` really does mean "the first document has landed":
         // draft recovery matches what it finds against the open path.
-        if (file && typeof file.content === "string") {
+        // A file refused for its size shows the refusal and otherwise boots
+        // as if nothing had been asked for.
+        const refused = isTooLarge(file) ? file : null;
+        if (refused) setRefusedDoc({ name: refused.name, size: refused.size });
+        if (file && !isTooLarge(file) && typeof file.content === "string") {
           await loadFile(file);
         } else if (shouldShowWelcome({ openedFile: false })) {
           applyExternalDoc(WELCOME_DOC);
@@ -1353,7 +1553,7 @@ export default function Home() {
       api.onMenuExportPDF?.((theme) =>
         handlersRef.current.exportPDF(theme ?? "dark")
       ),
-      api.onSetMode?.((m) => setMode(m)),
+      api.onSetMode?.((m) => requestMode(m)),
       api.onToggleStats?.(() => setShowStats((s) => !s)),
       api.onMenuCommandPalette?.(() => setShowPalette((v) => !v)),
       api.onMenuShortcuts?.(() => setShowHelp((v) => !v)),
@@ -1423,11 +1623,32 @@ export default function Home() {
         // Ignore a change to a file we are no longer showing: the watcher can
         // fire once more between opening a new document and re-pointing.
         if (data.path !== filePathRef.current) return;
-        setDiskChange(data.content);
+        if (data.tooLarge) {
+          // The file outgrew the cap on disk. Main did not read it, so there
+          // is nothing to reload; the buffer stays, and the strip says why.
+          // A conflict still standing from an earlier, readable change is
+          // about bytes that are gone: its Reload would land stale text and
+          // its Overwrite would destroy the newer file.
+          const name = data.path.split(/[\\/]/).pop() || data.path;
+          setDiskChange(null);
+          setShowDiskConflict(false);
+          setRefusedDoc({ name, size: data.size, verb: "reloaded" });
+          return;
+        }
+        // Readable again (it shrank back, or was rewritten): the refusal for
+        // the reload it replaced no longer describes the file.
+        setRefusedDoc((r) => (r?.verb === "reloaded" ? null : r));
+        setDiskChange({ content: data.content, size: data.size });
       }),
     ];
     return () => offs.forEach((off) => off?.());
-  }, [selectView, editContent]);
+  }, [requestMode, selectView, editContent]);
+
+  // The source editor's chunk, fetched while idle so the first switch to
+  // Source view does not wait on it (src/components/source-editor.tsx).
+  useEffect(() => {
+    if (booted) preloadSourceEditor();
+  }, [booted]);
 
   const commands = useMemo<AppCommand[]>(
     () => [
@@ -1439,9 +1660,9 @@ export default function Home() {
       { id: "export-pdf-dark", title: "Export PDF (Dark)", group: "File", shortcut: "⇧⌘E", keywords: "print", run: () => exportPDF("dark") },
       { id: "export-pdf-light", title: "Export PDF (Light)", group: "File", keywords: "print", run: () => exportPDF("light") },
       { id: "export-html", title: "Export HTML", group: "File", run: exportHTML },
-      { id: "mode-view", title: "Rich Mode", group: "View", shortcut: "⌘1", keywords: "preview rich wysiwyg formatted view", run: () => setMode("preview") },
+      { id: "mode-view", title: "Rich Mode", group: "View", shortcut: "⌘1", keywords: "preview rich wysiwyg formatted view", run: () => requestMode("preview") },
       { id: "mode-edit", title: "Source Mode", group: "View", shortcut: "⌘2", keywords: "source raw markdown edit", run: () => setMode("edit") },
-      { id: "mode-split", title: "Split Mode", group: "View", shortcut: "⌘3", keywords: "both side by side", run: () => setMode("split") },
+      { id: "mode-split", title: "Split Mode", group: "View", shortcut: "⌘3", keywords: "both side by side", run: () => requestMode("split") },
       { id: "stats", title: "Statistics", group: "View", shortcut: "⇧⌘I", keywords: "words count reading", run: () => setShowStats((v) => !v) },
       { id: "palette", title: "Command Palette", group: "View", shortcut: "⌘K", run: () => setShowPalette((v) => !v) },
       // Find lives in the source editor (CodeMirror owns ⌘F there). Surface it
@@ -1487,6 +1708,7 @@ export default function Home() {
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
     ],
     [
+    requestMode,
       handleOpenFile,
       handleSave,
       handleSaveAs,
@@ -1507,10 +1729,10 @@ export default function Home() {
     mode === "edit" ? "source" : mode === "preview" ? "rich" : lastPane;
   const findTarget = useMemo(() => {
     if (findPane === "source") {
-      return sourceView ? sourceFindTarget(sourceView) : null;
+      return sourceHandle ? sourceHandle.findTarget() : null;
     }
     return richEditor ? richFindTarget(richEditor) : null;
-  }, [findPane, sourceView, richEditor]);
+  }, [findPane, sourceHandle, richEditor]);
 
   const closeFind = useCallback(() => setShowFind(false), []);
 
@@ -1594,7 +1816,8 @@ export default function Home() {
     <div className="markie-shell h-screen flex flex-col bg-background relative">
       <Toolbar
         mode={mode}
-        onModeChange={setMode}
+        onModeChange={requestMode}
+        richUnavailable={largeDocSize !== null}
         onOpenFile={handleOpenFile}
         onExportPDF={exportPDF}
         onSaveAs={() => handleSaveAs()}
@@ -1681,12 +1904,16 @@ export default function Home() {
               onRestore={() => {
                 const entry = saveGuard.recovered;
                 if (!entry) return;
-                saveGuard.acceptRecovered();
+                // The offer stays until the restore lands. A draft over the
+                // cap is refused, and taking the offer down first left the
+                // only copy of it with no way back from the window.
                 void loadFile({
                   name: entry.name ?? "untitled.md",
                   content: entry.content,
                   path: entry.path,
                   unsaved: true,
+                }).then((landed) => {
+                  if (landed) saveGuard.acceptRecovered();
                 });
               }}
               onDiscard={saveGuard.discardRecovered}
@@ -1704,6 +1931,18 @@ export default function Home() {
                   ? reloadFromDisk()
                   : setShowDiskConflict(true)
               }
+            />
+          )}
+
+          {/* The document is over the size line for the rich pane, or the last
+              open was refused for its size (src/lib/doc-tiers.ts). */}
+          {largeDocSize !== null && <LargeDocStrip size={largeDocSize} />}
+          {refusedDoc !== null && (
+            <TooLargeStrip
+              size={refusedDoc.size}
+              verb={refusedDoc.verb}
+              fileName={refusedDoc.name}
+              onDismiss={() => setRefusedDoc(null)}
             />
           )}
 
@@ -1750,11 +1989,12 @@ export default function Home() {
                 } markie-source-pane h-full min-w-0 w-full flex-1 overflow-hidden flex flex-col`}
               >
                 {collabCfg && <LiveSourceBanner />}
+                {liveUnavailable && <LiveUnavailableNote />}
                 <div className="flex-1 min-h-0 overflow-hidden">
-                  <Editor
+                  <SourceEditor
                     value={content}
                     onChange={editContent}
-                    onViewReady={setSourceView}
+                    onReady={setSourceHandle}
                     // Read-only for two separate reasons: the rich pane owns the
                     // shared document while a session is live, and a viewer may
                     // not edit at all.
@@ -1783,6 +2023,7 @@ export default function Home() {
                     />
                   )}
                   {richPreparing && !collabCfg && <RichPreparingNote />}
+                  {liveUnavailable && <LiveUnavailableNote />}
                   <div className="flex-1 min-h-0">
                   <ErrorBoundary
                     fallback={(_error, reset) => (
@@ -1890,7 +2131,7 @@ export default function Home() {
           // Compare disk-form to disk-form: the buffer holds markdown, the
           // file may be CSV or another to-disk format.
           localContent={toDisk(fileName, currentMarkdown())}
-          diskContent={diskChange}
+          diskContent={diskChange.content}
           onClose={() => setShowDiskConflict(false)}
           onSaveCopy={saveCopyOfMine}
           onOverwrite={() => {

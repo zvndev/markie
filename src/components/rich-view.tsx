@@ -15,15 +15,12 @@ import {
   restoreHoldAsides,
   type HoldAside,
 } from "@/lib/rich-hold-aside";
-import {
-  preserveBlocks,
-  splitTopLevelBlocks,
-} from "@/lib/rich-block-preserve";
+import { preserveBlocks } from "@/lib/rich-block-preserve";
 import { createBlockNormalizer } from "@/lib/rich-roundtrip";
-import { Collaboration } from "@tiptap/extension-collaboration";
-import { CollaborationCaret } from "@tiptap/extension-collaboration-caret";
-import * as Y from "yjs";
-import { WebsocketProvider } from "y-websocket";
+import { warmBlocks } from "@/lib/rich-warmup";
+import type { Doc as YDoc } from "yjs";
+import type { WebsocketProvider } from "y-websocket";
+import { useCollabRuntime, type CollabRuntime } from "@/lib/collab-loader";
 import {
   COLLAB_SCHEMA_VERSION,
   shouldWarnSchema,
@@ -59,7 +56,10 @@ interface RichViewProps {
   /** The viewer owns this document, so may moderate (delete) others' comments. */
   canModerate?: boolean;
   onPeersChange?: (peers: PeerUser[]) => void;
-  onCollabStatus?: (status: "connecting" | "connected" | "disconnected") => void;
+  // "unavailable" is the runtime failing to load at all (see RichView): the
+  // parent should leave live mode for the document, since nothing will
+  // connect and a solo editor under a live flag skips the cloud push.
+  onCollabStatus?: (status: "connecting" | "connected" | "disconnected" | "unavailable") => void;
   // Hands the parent a way to settle the 250 ms debounce on demand and get the
   // markdown back synchronously. Exporting or saving inside that window used to
   // write the document as it stood a keystroke ago. Called with null on unmount
@@ -71,8 +71,10 @@ interface RichViewProps {
 export type FlushRich = () => string | null;
 
 interface CollabSession {
-  ydoc: Y.Doc;
+  ydoc: YDoc;
   provider: WebsocketProvider;
+  /** The loaded live-session modules; the comment layer anchors through them. */
+  runtime: CollabRuntime;
 }
 
 /** What the rich pane holds aside while a solo document is being edited. */
@@ -119,17 +121,18 @@ function serializeMarkdown(
   };
 }
 
-export function RichView({
+function RichViewInner({
   value,
   onChange,
   onEditorReady,
   collab,
+  runtime,
   readOnly = false,
   canModerate = false,
   onPeersChange,
   onCollabStatus,
   onFlushReady,
-}: RichViewProps) {
+}: RichViewProps & { runtime: CollabRuntime | null }) {
   // The server told us, mid-session, that this user is no longer in the room.
   // The role prop cannot know that yet, so the editor has to lock itself.
   const [revoked, setRevoked] = useState(false);
@@ -166,23 +169,23 @@ export function RichView({
     extensions: AnyExtension[];
     error: string | null;
   }>(() => {
-    if (!collab) return { session: null, extensions: [], error: null };
-    let ydoc: Y.Doc | null = null;
+    if (!collab || !runtime) return { session: null, extensions: [], error: null };
+    let ydoc: YDoc | null = null;
     let provider: WebsocketProvider | null = null;
     try {
-      ydoc = new Y.Doc();
-      provider = new WebsocketProvider(collab.wsBase, collab.docId, ydoc, {
+      ydoc = new runtime.Y.Doc();
+      provider = new runtime.WebsocketProvider(collab.wsBase, collab.docId, ydoc, {
         connect: false,
         params: { token: collab.token },
       });
       const extensions: AnyExtension[] = [
-        Collaboration.configure({ document: ydoc }),
-        CollaborationCaret.configure({
+        runtime.Collaboration.configure({ document: ydoc }),
+        runtime.CollaborationCaret.configure({
           provider,
           user: collab.user,
         }),
       ];
-      return { session: { ydoc, provider }, extensions, error: null };
+      return { session: { ydoc, provider, runtime }, extensions, error: null };
     } catch (err) {
       console.error("Markie: couldn't start the live session", err);
       try {
@@ -594,17 +597,10 @@ export function RichView({
     }
     // Normalizing a block is a parse plus a serialize. Doing every block on the
     // first flush would stall the save; doing them while the app is idle means
-    // steady-state autosave only normalizes what actually changed.
-    const idle = window.requestIdleCallback;
-    if (typeof idle !== "function") return;
-    const warmFrom = held.text;
-    const handle = idle(() => {
-      const { normalize } = getNormalizer();
-      for (const block of splitTopLevelBlocks(warmFrom)) {
-        if (block.text !== "") normalize(block.text.replace(/(?:\r?\n)+$/, ""));
-      }
-    });
-    return () => window.cancelIdleCallback?.(handle);
+    // steady-state autosave only normalizes what actually changed. The sweep
+    // yields between slices and stops when the document changes; see
+    // src/lib/rich-warmup.ts for why a single idle callback was not enough.
+    return warmBlocks(held.text, (block) => getNormalizer().normalize(block));
   }, [value, editor, session]);
 
   useEffect(() => {
@@ -658,6 +654,7 @@ export function RichView({
           <CommentLayer
             editor={editor}
             ydoc={session.ydoc}
+            anchors={session.runtime}
             docId={collab.docId}
             readonly={locked}
             // Track 2 made commenting follow read access, so a viewer keeps the
@@ -671,4 +668,48 @@ export function RichView({
       </div>
     </div>
   );
+}
+
+// The live-session runtime (yjs, the websocket provider, the collaboration
+// extensions, comment anchoring) loads on first use; see
+// src/lib/collab-loader.ts. A shared document shows this until it is in, once
+// per launch, and a solo document never waits for any of it. A load that
+// fails does not take the document with it: the editor opens on the local
+// copy, under one line saying there is no live session behind it.
+export function RichView(props: RichViewProps) {
+  const { runtime, failed } = useCollabRuntime(!!props.collab);
+  const { onCollabStatus } = props;
+  // Nothing is going to connect: the parent leaves live mode for this
+  // document (saves push again, the source pane unlocks), and until it does
+  // the editor below opens on the local copy under one line saying so.
+  useEffect(() => {
+    if (failed) onCollabStatus?.("unavailable");
+  }, [failed, onCollabStatus]);
+  if (props.collab && !runtime && !failed) {
+    return (
+      <div
+        data-markie-live-loading
+        className="flex-1 flex items-center justify-center text-[12px] text-muted"
+      >
+        Joining the live session…
+      </div>
+    );
+  }
+  if (props.collab && failed) {
+    return (
+      <div className="h-full flex flex-col">
+        <div
+          data-markie-live-failed
+          role="status"
+          className="markie-banner shrink-0 flex items-center px-3 py-1.5 text-[11px] text-muted"
+        >
+          The live session could not load. You are editing your copy alone.
+        </div>
+        <div className="flex-1 min-h-0">
+          <RichViewInner {...props} runtime={null} />
+        </div>
+      </div>
+    );
+  }
+  return <RichViewInner {...props} runtime={runtime} />;
 }

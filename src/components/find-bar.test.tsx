@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { Match } from "@/lib/doc-search";
@@ -6,6 +6,7 @@ import type { FindTarget } from "@/lib/find-target";
 import { FindBar } from "./find-bar";
 
 type SpiedTarget = FindTarget & {
+  text: ReturnType<typeof vi.fn>;
   highlight: ReturnType<typeof vi.fn>;
   reveal: ReturnType<typeof vi.fn>;
   replace: ReturnType<typeof vi.fn>;
@@ -15,7 +16,7 @@ type SpiedTarget = FindTarget & {
 function makeTarget(text: string, caret = 0) {
   const state = { text };
   const target = {
-    text: () => state.text,
+    text: vi.fn(() => state.text),
     caret: () => caret,
     highlight: vi.fn(),
     reveal: vi.fn(),
@@ -44,6 +45,10 @@ function renderBar(
   return { ...view, target, state, onClose, props };
 }
 
+// The bar searches a beat after the last keystroke, so anything asserting on
+// the match set waits for that search to land instead of reading the field.
+const settled = (label: string) => screen.findByText(label);
+
 describe("FindBar", () => {
   it("renders nothing while closed", () => {
     const { container } = renderBar({ open: false });
@@ -61,7 +66,7 @@ describe("FindBar", () => {
     const { target } = renderBar();
 
     await user.keyboard("two");
-    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    expect(await settled("1 of 3")).toBeInTheDocument();
 
     const [matches, current] = target.highlight.mock.lastCall as [Match[], number];
     expect(matches).toHaveLength(3);
@@ -73,7 +78,7 @@ describe("FindBar", () => {
     const user = userEvent.setup();
     renderBar();
     await user.keyboard("zebra");
-    expect(screen.getByText("No results")).toBeInTheDocument();
+    expect(await settled("No results")).toBeInTheDocument();
     expect(screen.getByTitle("Next match (⏎)")).toBeDisabled();
     expect(screen.getByTitle("Previous match (⇧⏎)")).toBeDisabled();
   });
@@ -82,7 +87,7 @@ describe("FindBar", () => {
     const user = userEvent.setup();
     renderBar();
     await user.keyboard("two");
-    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    expect(await settled("1 of 3")).toBeInTheDocument();
     await user.keyboard("{Enter}");
     expect(screen.getByText("2 of 3")).toBeInTheDocument();
     await user.keyboard("{Enter}{Enter}");
@@ -93,6 +98,7 @@ describe("FindBar", () => {
     const user = userEvent.setup();
     renderBar();
     await user.keyboard("two");
+    await settled("1 of 3");
     await user.keyboard("{Shift>}{Enter}{/Shift}");
     expect(screen.getByText("3 of 3")).toBeInTheDocument();
   });
@@ -101,7 +107,7 @@ describe("FindBar", () => {
     const user = userEvent.setup();
     renderBar();
     await user.keyboard("two");
-    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    expect(await settled("1 of 3")).toBeInTheDocument();
 
     const aa = screen.getByRole("button", { name: "Match case" });
     expect(aa).toHaveAttribute("aria-pressed", "false");
@@ -114,7 +120,7 @@ describe("FindBar", () => {
     const user = userEvent.setup();
     renderBar({}, "on one only on");
     await user.keyboard("on");
-    expect(screen.getByText("1 of 4")).toBeInTheDocument();
+    expect(await settled("1 of 4")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Whole word" }));
     expect(screen.getByText("1 of 2")).toBeInTheDocument();
   });
@@ -140,6 +146,7 @@ describe("FindBar", () => {
     const { target } = renderBar({ withReplace: true });
     await user.click(screen.getByLabelText("Find"));
     await user.keyboard("two");
+    await settled("1 of 3");
     await user.click(screen.getByLabelText("Replace with"));
     await user.keyboard("2");
 
@@ -154,9 +161,76 @@ describe("FindBar", () => {
     const { target } = renderBar({ withReplace: true });
     await user.click(screen.getByLabelText("Find"));
     await user.keyboard("two");
+    await settled("1 of 3");
     await user.click(screen.getByTitle("Replace every match"));
     const [matches] = target.replace.mock.lastCall as [Match[], string];
     expect(matches).toHaveLength(3);
+  });
+
+  it("will not replace while the field is ahead of the match set", async () => {
+    const user = userEvent.setup();
+    const { target } = renderBar({ withReplace: true });
+    await user.click(screen.getByLabelText("Find"));
+    await user.keyboard("tw");
+    await settled("1 of 3");
+    // The field now says "two"; for a beat the matches are still "tw"'s.
+    await user.keyboard("o");
+    const all = screen.getByTitle("Replace every match");
+    expect(all).toBeDisabled();
+    fireEvent.click(all);
+    expect(target.replace).not.toHaveBeenCalled();
+    await waitFor(() => expect(all).toBeEnabled());
+    await user.click(all);
+    const [matches] = target.replace.mock.lastCall as [Match[], string];
+    expect(matches).toHaveLength(3);
+  });
+
+  it("settles the query before stepping, so Enter never walks the previous query's matches", async () => {
+    const user = userEvent.setup();
+    const { target } = renderBar();
+    await user.keyboard("tw");
+    await settled("1 of 3");
+    const revealsBefore = target.reveal.mock.calls.length;
+    // The field says "two"; for a beat the matches are still "tw"'s. Enter in
+    // that beat lands on what the field says, never on the second "tw".
+    await user.keyboard("o{Enter}");
+    await waitFor(() => expect(target.reveal.mock.calls.length).toBeGreaterThan(revealsBefore));
+    // Past the debounce too, so a late settle cannot step either.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const revealed = target.reveal.mock.calls.slice(revealsBefore).map(([m]) => m as Match);
+    for (const m of revealed) expect(m.to - m.from).toBe("two".length);
+    expect(revealed).not.toContainEqual({ from: 8, to: 10 });
+    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    // A second Enter steps through what the field says.
+    await user.keyboard("{Enter}");
+    expect(screen.getByText("2 of 3")).toBeInTheDocument();
+    expect(target.reveal).toHaveBeenLastCalledWith({ from: 8, to: 11 });
+  });
+
+  it("settles the query from the arrows too", async () => {
+    const user = userEvent.setup();
+    const { target } = renderBar();
+    await user.keyboard("tw");
+    await settled("1 of 3");
+    await user.keyboard("o");
+    fireEvent.click(screen.getByTitle("Next match (⏎)"));
+    await waitFor(() => expect(target.reveal).toHaveBeenLastCalledWith({ from: 4, to: 7 }));
+    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Next match (⏎)"));
+    expect(screen.getByText("2 of 3")).toBeInTheDocument();
+  });
+
+  it("settles the query from the shortcut too", async () => {
+    const user = userEvent.setup();
+    const { target } = renderBar();
+    await user.keyboard("tw");
+    await settled("1 of 3");
+    await user.keyboard("o");
+    fireEvent.keyDown(window, { code: "KeyG", metaKey: true });
+    await waitFor(() => expect(target.reveal).toHaveBeenLastCalledWith({ from: 4, to: 7 }));
+    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    fireEvent.keyDown(window, { code: "KeyG", metaKey: true });
+    expect(screen.getByText("2 of 3")).toBeInTheDocument();
   });
 
   it("says why instead of showing dead buttons on a read-only share", async () => {
@@ -174,7 +248,9 @@ describe("FindBar", () => {
   it("hands the caret back to the pane on Escape", async () => {
     const user = userEvent.setup();
     const { target, onClose } = renderBar();
-    await user.keyboard("two{Escape}");
+    await user.keyboard("two");
+    await settled("1 of 3");
+    await user.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(target.release).toHaveBeenCalledTimes(1);
     expect(target.release.mock.lastCall?.[0]).toMatchObject({ from: expect.any(Number) });
@@ -191,7 +267,7 @@ describe("FindBar", () => {
     const user = userEvent.setup();
     renderBar();
     await user.keyboard("two");
-    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    expect(await settled("1 of 3")).toBeInTheDocument();
 
     window.dispatchEvent(
       new KeyboardEvent("keydown", { code: "KeyG", metaKey: true, bubbles: true })
@@ -213,17 +289,27 @@ describe("FindBar", () => {
     const user = userEvent.setup();
     const { rerender, props, state } = renderBar();
     await user.keyboard("two");
-    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    expect(await settled("1 of 3")).toBeInTheDocument();
 
     state.text = "two";
     rerender(<FindBar {...props} revision="r1" />);
-    expect(screen.getByText("1 of 1")).toBeInTheDocument();
+    expect(await settled("1 of 1")).toBeInTheDocument();
   });
 
   it("does nothing at all with no pane mounted", async () => {
     const user = userEvent.setup();
     renderBar({ target: null });
     await user.keyboard("two");
-    expect(screen.getByText("No results")).toBeInTheDocument();
+    expect(await settled("No results")).toBeInTheDocument();
+  });
+
+  it("runs one search for a burst of typing, not one per letter", async () => {
+    // Every search reads the whole pane and scans it. On a long document, one
+    // of those per keystroke is what made the field stutter.
+    const user = userEvent.setup();
+    const { target } = renderBar();
+    await user.keyboard("two");
+    expect(await settled("1 of 3")).toBeInTheDocument();
+    expect(target.text).toHaveBeenCalledTimes(1);
   });
 });

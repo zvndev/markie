@@ -25,6 +25,10 @@ interface FindBarProps {
 const fieldClass =
   "bg-transparent text-[12px] text-foreground placeholder:text-muted outline-none w-[168px]";
 
+// How far the search trails the field. A burst of typing runs one search
+// instead of one per letter, and a search is a full scan of the document text.
+const QUERY_DEBOUNCE_MS = 100;
+
 // A pill toggle for one search option. Pressed state has to be legible at a
 // glance, because getting Aa wrong silently changes what you find.
 function Toggle({
@@ -89,6 +93,8 @@ export function FindBar({
   onClose,
 }: FindBarProps) {
   const [query, setQuery] = useState("");
+  // What the match set is actually computed from: the field, a beat later.
+  const [activeQuery, setActiveQuery] = useState("");
   const [replacement, setReplacement] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [wholeWord, setWholeWord] = useState(false);
@@ -104,12 +110,18 @@ export function FindBar({
   // one nearest what you were reading.
   const caretOnOpen = useRef(0);
 
+  useEffect(() => {
+    if (query === activeQuery) return;
+    const timer = setTimeout(() => setActiveQuery(query), QUERY_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [query, activeQuery]);
+
   const matches = useMemo<Match[]>(() => {
-    if (!open || !target || !query) return [];
-    return findMatches(target.text(), query, { caseSensitive, wholeWord });
+    if (!open || !target || !activeQuery) return [];
+    return findMatches(target.text(), activeQuery, { caseSensitive, wholeWord });
     // revision and edits are deps on purpose: both mean the text changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, target, query, caseSensitive, wholeWord, revision, edits]);
+  }, [open, target, activeQuery, caseSensitive, wholeWord, revision, edits]);
 
   useEffect(() => {
     if (!open) return;
@@ -142,6 +154,19 @@ export function FindBar({
     [matches.length]
   );
 
+  // The field runs a beat ahead of the match set (QUERY_DEBOUNCE_MS). A step
+  // in that beat would walk the previous query's matches under a field that
+  // says something else, so Enter and the arrows settle the field first: the
+  // next render lands on what it says, and the step after that moves.
+  const settledQuery = query === activeQuery;
+  const settleOrStep = useCallback(
+    (delta: number) => {
+      if (settledQuery) step(delta);
+      else setActiveQuery(query);
+    },
+    [settledQuery, step, query]
+  );
+
   // ⌘G steps from anywhere, including with the caret back in the document.
   // Bound here rather than on the page because the bar is what knows which
   // match is current.
@@ -150,30 +175,33 @@ export function FindBar({
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.code !== "KeyG") return;
       e.preventDefault();
-      step(e.shiftKey ? -1 : 1);
+      settleOrStep(e.shiftKey ? -1 : 1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, step]);
+  }, [open, settleOrStep]);
 
   const close = useCallback(() => {
     target?.release(matches[current] ?? null);
     onClose();
   }, [target, matches, current, onClose]);
 
+  // A replacement inside that beat would rewrite what the previous query
+  // found, so it waits for the set to catch up rather than settling it: a
+  // click that meant "replace" must not become "search again".
   const replaceCurrent = useCallback(() => {
     const match = matches[current];
-    if (!match || !target || !canReplace) return;
+    if (!match || !target || !canReplace || !settledQuery) return;
     target.replace([match], replacement);
     setEdits((n) => n + 1);
-  }, [matches, current, target, canReplace, replacement]);
+  }, [matches, current, target, canReplace, replacement, settledQuery]);
 
   const replaceAll = useCallback(() => {
-    if (matches.length === 0 || !target || !canReplace) return;
+    if (matches.length === 0 || !target || !canReplace || !settledQuery) return;
     target.replace(matches, replacement);
     setCurrent(-1);
     setEdits((n) => n + 1);
-  }, [matches, target, canReplace, replacement]);
+  }, [matches, target, canReplace, replacement, settledQuery]);
 
   // Escape and Enter are handled here rather than on window so they only mean
   // this while the bar has focus.
@@ -186,7 +214,7 @@ export function FindBar({
     }
     if (e.key === "Enter") {
       e.preventDefault();
-      step(e.shiftKey ? -1 : 1);
+      settleOrStep(e.shiftKey ? -1 : 1);
     }
   };
 
@@ -219,7 +247,7 @@ export function FindBar({
 
         <div
           className={`flex items-center gap-1 rounded-md border px-2 h-[26px] ${
-            query && empty ? "border-[var(--status-red)]" : "border-border"
+            activeQuery && empty ? "border-[var(--status-red)]" : "border-border"
           }`}
           style={{ background: "var(--surface)" }}
         >
@@ -250,18 +278,18 @@ export function FindBar({
           className="text-[11px] text-muted tabular-nums w-[64px] text-right"
           aria-live="polite"
         >
-          {query ? count : ""}
+          {activeQuery ? count : ""}
         </span>
 
         <ActionButton
-          onClick={() => step(-1)}
+          onClick={() => settleOrStep(-1)}
           disabled={empty}
           title="Previous match (⇧⏎)"
         >
           ↑
         </ActionButton>
         <ActionButton
-          onClick={() => step(1)}
+          onClick={() => settleOrStep(1)}
           disabled={empty}
           title="Next match (⏎)"
         >
@@ -291,14 +319,14 @@ export function FindBar({
             <>
               <ActionButton
                 onClick={replaceCurrent}
-                disabled={current < 0}
+                disabled={current < 0 || !settledQuery}
                 title="Replace this match"
               >
                 Replace
               </ActionButton>
               <ActionButton
                 onClick={replaceAll}
-                disabled={empty}
+                disabled={empty || !settledQuery}
                 title="Replace every match"
               >
                 All

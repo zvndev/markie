@@ -3,6 +3,7 @@
 // are built on top of this primitive; the user-facing gate (layer 3) uses
 // the full-pipeline probeReconstruction, not this.
 import { Editor } from "@tiptap/core";
+import { LARGE_DOC_BYTES } from "@/lib/doc-tiers";
 import { richBaseExtensions } from "@/lib/rich-extensions";
 import { formatMarkdownTables } from "@/lib/format-tables";
 import { splitFrontMatter, joinFrontMatter } from "@/lib/front-matter";
@@ -109,8 +110,22 @@ export function describeLossRisks(markdown: string): LossRisk[] {
 // worth real time: the open-path safety probe normalizes every block of a
 // document, and the rich pane's warm-up then normalizes the same blocks again
 // for the same document. One cache makes the second pass free.
+//
+// It is bounded by the characters it holds (block text plus normalized
+// output), and the bound is sized so that every block of a document under the
+// large line (src/lib/doc-tiers.ts) is warm at once, with room for a few more
+// documents. That size is load-bearing: the cooperative probe warms a
+// document's blocks in idle slices and then normalizes them all again in one
+// synchronous piece, and a cache that could not hold a whole document evicted
+// the first blocks while the last went in, so the final pass re-parsed nearly
+// everything and brought back the stall the slicing exists to remove. The
+// entry cap is a guard against degenerate input (a megabyte of one-word list
+// items), not the working limit.
 const blockCache = new Map<string, string>();
-const BLOCK_CACHE_MAX = 4000;
+const BLOCK_CACHE_MAX = 131_072;
+const BLOCK_CACHE_CHARS = 8 * LARGE_DOC_BYTES;
+let blockCacheChars = 0;
+let blockCacheBudget = BLOCK_CACHE_CHARS;
 
 function normalizeBlock(block: string): string {
   const hit = blockCache.get(block);
@@ -130,9 +145,11 @@ function normalizeBlock(block: string): string {
     out = "\u0000unparseable"; // never equals any real block
   }
   blockCache.set(block, out);
-  while (blockCache.size > BLOCK_CACHE_MAX) {
+  blockCacheChars += block.length + out.length;
+  while (blockCache.size > BLOCK_CACHE_MAX || blockCacheChars > blockCacheBudget) {
     const oldest = blockCache.keys().next();
     if (oldest.done) break;
+    blockCacheChars -= oldest.value.length + (blockCache.get(oldest.value)?.length ?? 0);
     blockCache.delete(oldest.value);
   }
   return out;
@@ -154,6 +171,25 @@ export function createBlockNormalizer(): {
 /** Tests only: forget every memoized block. */
 export function clearBlockCache(): void {
   blockCache.clear();
+  blockCacheChars = 0;
+}
+
+/** Tests only: how many blocks are warm. */
+export function blockCacheSize(): number {
+  return blockCache.size;
+}
+
+/** Tests only: the two bounds, so a test can hold them to the document sizes they must cover. */
+export function blockCacheLimits(): { entries: number; chars: number } {
+  return { entries: BLOCK_CACHE_MAX, chars: BLOCK_CACHE_CHARS };
+}
+
+/**
+ * Tests only: shrink the character budget so eviction can be exercised
+ * without megabytes of blocks. `null` restores the real budget.
+ */
+export function setBlockCacheBudgetForTests(chars: number | null): void {
+  blockCacheBudget = chars ?? BLOCK_CACHE_CHARS;
 }
 
 // The user-facing gate: can the full pipeline (hold-aside, parse, serialize,

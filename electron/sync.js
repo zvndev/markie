@@ -8,6 +8,7 @@ const { isAllowedServerOrigin } = require("./share-origin");
 // Every write below lands on a file the user owns, so none of them may leave a
 // truncated document behind if the process dies mid-write.
 const { writeFileAtomic } = require("./atomic-write");
+const docTiers = require("./doc-tiers");
 
 let config = { token: null, serverURL: null };
 
@@ -257,6 +258,8 @@ async function pull(cloudId, targetPath) {
   const doc = readDoc(res);
   if (!doc) return { error: UNREADABLE };
   const name = typeof doc.name === "string" && doc.name ? doc.name : path.basename(targetPath);
+  const refused = overCap(doc, name);
+  if (refused) return { error: refused };
   try {
     writeFileAtomic(targetPath, doc.content);
   } catch (e) {
@@ -282,6 +285,20 @@ async function pull(cloudId, targetPath) {
   return { ok: true, path: targetPath, name };
 }
 
+// A cloud copy over the cap is never written to disk: Markie could not open
+// the file it had just made, and the pull is asked for from an open document,
+// whose buffer would be left describing bytes that were replaced under it and
+// would write them back over the accepted cloud copy on its next save. The
+// message names the size so the refusal reads as a fact, not a failure.
+function overCap(doc, name) {
+  const size = Buffer.byteLength(String(doc.content ?? ""), "utf-8");
+  if (docTiers.tierForSize(size) !== "tooLarge") return null;
+  return (
+    `${name} in the cloud is ${docTiers.formatMegabytes(size)}, more than Markie opens ` +
+    `(${docTiers.formatMegabytes(docTiers.MAX_DOC_BYTES)}). Nothing was changed.`
+  );
+}
+
 // Resolve a conflict: "local" force-pushes the local file, "cloud" overwrites it.
 async function resolve(filePath, strategy) {
   const row = registry.get(filePath);
@@ -299,6 +316,8 @@ async function resolve(filePath, strategy) {
     if (res.status !== 200) return { error: failure("fetch", res) };
     const doc = readDoc(res);
     if (!doc) return { error: UNREADABLE };
+    const refused = overCap(doc, path.basename(filePath));
+    if (refused) return { error: refused };
     try {
       writeFileAtomic(filePath, doc.content);
     } catch (e) {
@@ -482,7 +501,9 @@ function listingFingerprint(docs) {
 }
 
 // The server's copy of a doc, for showing what a pull would cost before it
-// happens. Read-only: nothing on disk or in the registry is touched.
+// happens. Read-only: nothing on disk or in the registry is touched. The cap
+// holds here as it does for the pull: the renderer diffs what comes back, and
+// a copy Markie would refuse to open is refused before it gets there.
 async function remoteContent(filePath) {
   const row = registry.get(filePath);
   if (!row?.cloud_doc_id) return { error: "not synced" };
@@ -491,6 +512,8 @@ async function remoteContent(filePath) {
   if (res.status !== 200) return { error: failure("fetch", res) };
   const doc = readDoc(res);
   if (!doc) return { error: UNREADABLE };
+  const refused = overCap(doc, path.basename(filePath));
+  if (refused) return { error: refused };
   return {
     ok: true,
     content: doc.content,
@@ -549,6 +572,9 @@ async function resolveKeepBoth(filePath, localContent) {
   if (res.status !== 200) return { error: failure("fetch", res) };
   const doc = readDoc(res);
   if (!doc) return { error: UNREADABLE };
+  // Before the copy too: a "keep both" that keeps one is a stray file.
+  const refused = overCap(doc, path.basename(filePath));
+  if (refused) return { error: refused };
 
   const copyPath = keepBothPath(filePath);
   if (!copyPath) return { error: "Couldn't find an unused name for the copy." };

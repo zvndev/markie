@@ -12,6 +12,21 @@ import { getElectronAPI, type DraftEntry } from "@/lib/electron";
 // where the file write is up to a second behind. That gap is the kill window.
 const DRAFT_DEBOUNCE_MS = 250;
 
+// Past this much text, the journal waits longer between writes. Every write
+// posts the whole buffer across the IPC boundary for main to put on disk, so
+// the cost of one is proportional to the document while the interval is not.
+// A quarter of a megabyte four times a second is a stall you can feel; the
+// same document journalled every two seconds is not, and two seconds is still
+// far inside the window a crash would take away.
+//
+// Measured in characters rather than UTF-8 bytes on purpose: this runs on
+// every keystroke, and encoding the buffer to count it would cost more than
+// the write it is trying to pace. The size tiers (src/lib/doc-tiers.ts) draw
+// their lines in bytes because a file on disk has bytes; this only needs to
+// know "big enough to hurt".
+const BIG_DRAFT_CHARS = 256 * 1024;
+const BIG_DRAFT_DEBOUNCE_MS = 2000;
+
 export interface SaveGuardInputs {
   /** Runs one save. Resolves true when the bytes committed. */
   save: () => Promise<boolean>;
@@ -32,6 +47,13 @@ export interface SaveGuardInputs {
   };
   /** The first document has landed, so a recovered draft can be matched to it. */
   booted: boolean;
+  /**
+   * Keep the crash journal for this document. Off for a document too large
+   * for it (src/lib/doc-tiers.ts): journaling posts the whole buffer to main
+   * after every burst of edits, and for a multi-megabyte file that copy is the
+   * stall the size tier exists to remove. Saving still works as it always did.
+   */
+  journal?: boolean;
 }
 
 export interface SaveGuard {
@@ -59,10 +81,13 @@ export function useSaveGuard({
   docKey,
   document: doc,
   booted,
+  journal = true,
 }: SaveGuardInputs): SaveGuard {
   const saveRef = useRef(save);
   const eligibleRef = useRef(eligible);
   const docRef = useRef(doc);
+  const journalRef = useRef(journal);
+  journalRef.current = journal;
   useEffect(() => {
     saveRef.current = save;
     eligibleRef.current = eligible;
@@ -82,18 +107,23 @@ export function useSaveGuard({
   }, [docKey]);
 
   // Journal the buffer while it is dirty. Debounced, so a burst of keystrokes
-  // is one write, and cleared on the way past a committed save.
+  // is one write, and cleared on the way past a committed save. A big buffer
+  // waits longer, because the write itself is what costs.
   useEffect(() => {
-    if (!doc.dirty) return;
+    if (!doc.dirty || !journal) return;
+    const wait =
+      doc.content.length > BIG_DRAFT_CHARS
+        ? BIG_DRAFT_DEBOUNCE_MS
+        : DRAFT_DEBOUNCE_MS;
     const timer = setTimeout(() => {
       void getElectronAPI()?.draftSave?.({
         path: docRef.current.path,
         name: docRef.current.name,
         content: docRef.current.content,
       });
-    }, DRAFT_DEBOUNCE_MS);
+    }, wait);
     return () => clearTimeout(timer);
-  }, [doc.content, doc.dirty, doc.path, doc.name]);
+  }, [doc.content, doc.dirty, doc.path, doc.name, journal]);
 
   const [recovered, setRecovered] = useState<(DraftEntry & { content: string }) | null>(
     null
@@ -142,16 +172,29 @@ export function useSaveGuard({
         autosaveRef.current?.cancel();
       },
       async settle() {
+        // A save that was never attempted has not landed: a dirty restore (a
+        // history version, a recovered draft) arms nothing, and "nothing
+        // pending" must not read as "already on disk".
+        const scheduler = autosaveRef.current;
+        let landed = scheduler?.isPending() ?? false;
         try {
-          await autosaveRef.current?.flush();
+          if (landed) landed = (await scheduler!.flush()) ?? true;
         } catch {
           // A failed flush has already reported itself through the save path.
           // Blocking the transition on it would trap the user in a document
           // they cannot leave, and the draft journal holds what did not land.
+          landed = false;
         }
         // One last journal write, so closing never races the debounce above.
-        // Whatever the save could not commit is still recoverable.
-        if (docRef.current.dirty) {
+        // Whatever the save could not commit is still recoverable. A document
+        // that sits out the periodic journal for its size still gets this one
+        // write when the save did not land: the alternative is a buffer
+        // replaced with no copy of it anywhere. A document with no path has
+        // no file for a save to land in, so "landed" says nothing about it
+        // and the write happens whatever the journal setting is: this is the
+        // only copy of an untitled document there will ever be.
+        const pathless = docRef.current.path === null;
+        if (docRef.current.dirty && (pathless || journalRef.current || !landed)) {
           try {
             await getElectronAPI()?.draftSave?.({
               path: docRef.current.path,

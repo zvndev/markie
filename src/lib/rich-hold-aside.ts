@@ -101,20 +101,35 @@ export function extractHoldAsides(body: string): {
 }
 
 export function restoreHoldAsides(text: string, holds: HoldAside[]): string {
-  let result = text;
+  if (holds.length === 0) return text;
+
+  // Token to the block it stands for. A Map rather than a regex per hold: the
+  // old shape ran one whole-document replace for every hold, so a megabyte
+  // carrying a couple of thousand comments or footnotes was quadratic and cost
+  // seconds on every serialize. This walks the lines once instead.
+  const sources = new Map<string, string>();
   for (const hold of holds) {
-    // Match the token as a whole line WITHOUT consuming its newline (the line
-    // terminator stays in place so separators survive). Replace every
+    sources.set(hold.token, hold.source.replace(/\r?\n$/, ""));
+  }
+
+  // Split on the line terminators, keeping them, so line endings and blank-line
+  // separators survive untouched.
+  const parts = text.split(/(\r\n|[\n\r\u2028\u2029])/);
+  let restored = false;
+  // Even entries are line content, odd entries are the terminators between.
+  for (let i = 0; i < parts.length; i += 2) {
+    // A line has to be exactly a token, and the lookup is literal, so a token
+    // holding regex punctuation could never match anything else. Replace every
     // occurrence: a duplicated token duplicates the block, which is the user's
     // visible intent. A missing token means the user deleted the block, so it
     // stays deleted. An indented or otherwise altered token line deliberately
     // does NOT match: restoration fails closed and the reconstruction probe
     // gates the document instead.
-    const line = new RegExp(`^${hold.token}$`, "gm");
-    const src = hold.source.replace(/\r?\n$/, "");
-    // A function replacement so `$` characters in the held source are never
-    // treated as replacement patterns.
-    result = result.replace(line, () => src);
+    const source = sources.get(parts[i]);
+    if (source === undefined) continue;
+    parts[i] = source;
+    restored = true;
   }
-  return result;
+
+  return restored ? parts.join("") : text;
 }

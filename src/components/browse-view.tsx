@@ -5,6 +5,7 @@ import {
   buildFolderTree,
   countNodes,
   initialOpenSet,
+  openWithAncestors,
   pathsToFiles,
   sortTree,
   type FileEntry,
@@ -28,19 +29,52 @@ const SORTS: Array<{ order: SortOrder; label: string; hint: string }> = [
   { order: "updated", label: "Updated", hint: "Sort by when it last changed" },
 ];
 
-// Which folders the user has opened, once they have opened any. Absent means
-// they never have, and the tree opens itself to its first branching level
-// instead; an empty array is a real answer, not the absence of one.
-function rememberedOpen(): Set<string> | null {
+// Which folders the user has opened and which they have closed, once they
+// have touched any. Absent means they never have, and the tree opens itself
+// to its first branching level instead; an empty set is a real answer, not
+// the absence of one. The closed set exists for openWithAncestors: without
+// it, a folder the user shut over an open child and a folder that appeared
+// after they last looked are the same absence.
+interface OpenedByHand {
+  open: Set<string>;
+  closed: Set<string>;
+}
+
+const stringSet = (value: unknown): Set<string> =>
+  new Set(Array.isArray(value) ? value.filter((p): p is string => typeof p === "string") : []);
+
+function rememberedOpen(): OpenedByHand | null {
   try {
     const raw = localStorage.getItem(OPEN_KEY);
     if (raw === null) return null;
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return null;
-    return new Set(parsed.filter((p): p is string => typeof p === "string"));
+    // The first shape was the open list alone. Read as "closed nothing", so a
+    // remembered folder under a new ancestor shows rather than hides.
+    if (Array.isArray(parsed)) return { open: stringSet(parsed), closed: new Set() };
+    if (!parsed || typeof parsed !== "object") return null;
+    const record = parsed as { open?: unknown; closed?: unknown };
+    if (!Array.isArray(record.open)) return null;
+    return { open: stringSet(record.open), closed: stringSet(record.closed) };
   } catch {
     return null;
   }
+}
+
+// Reveals are granted for one list. The tree is that list: a rescan that adds
+// a file to a crowded folder rebuilds it, and the folder that was asked for
+// all its rows is not the folder in front of you now, however alike they
+// look. Sort and filter are already folded into the tree the same way, except
+// sort, which is applied after it.
+const treeIds = new WeakMap<object, number>();
+let nextTreeId = 0;
+function treeId(tree: object): number {
+  let id = treeIds.get(tree);
+  if (id === undefined) {
+    id = nextTreeId;
+    nextTreeId += 1;
+    treeIds.set(tree, id);
+  }
+  return id;
 }
 
 const MINUTE_MS = 60_000;
@@ -262,7 +296,7 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   );
   // Null until the user opens or closes something themselves; see the initial
   // rule below for what the tree does in the meantime.
-  const [openedByHand, setOpenedByHand] = useState<Set<string> | null>(rememberedOpen);
+  const [openedByHand, setOpenedByHand] = useState<OpenedByHand | null>(rememberedOpen);
   // Which folders have been asked to draw past the row cap, this session only,
   // and for which list. A different sort or a different filter is a different
   // list, so the folder that was asked for all its rows is not the folder in
@@ -435,13 +469,17 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   const shown = useMemo(() => sortTree(tree, sort), [tree, sort]);
 
   // Everything used to start closed, so the panel opened on a row you had to
-  // click before it told you anything. What the user opened themselves wins.
+  // click before it told you anything. What the user opened themselves wins,
+  // read against the tree as it stands today (see openWithAncestors).
   const open = useMemo(
-    () => openedByHand ?? initialOpenSet(tree),
+    () =>
+      openedByHand
+        ? openWithAncestors(openedByHand.open, openedByHand.closed, tree)
+        : initialOpenSet(tree),
     [openedByHand, tree]
   );
 
-  const listKey = `${sort}\u0000${q}`;
+  const listKey = `${treeId(tree)}\u0000${sort}`;
   const reveal = useCallback(
     (path: string) => {
       setRevealed((prev) => ({
@@ -459,11 +497,18 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
     // over what the user opened for themselves is the part that lasted, and it
     // closed folders they never touched once the filter cleared.
     if (forcedOpen) return;
-    const next = new Set(open);
-    if (next.has(path)) next.delete(path);
-    else next.add(path);
+    // What is open now, ancestors included, becomes the remembered set, so a
+    // folder opened for a remembered child stays open on its own account.
+    const next: OpenedByHand = { open: new Set(open), closed: new Set(openedByHand?.closed) };
+    if (next.open.has(path)) {
+      next.open.delete(path);
+      next.closed.add(path);
+    } else {
+      next.open.add(path);
+      next.closed.delete(path);
+    }
     setOpenedByHand(next);
-    persist(OPEN_KEY, JSON.stringify([...next]));
+    persist(OPEN_KEY, JSON.stringify({ open: [...next.open], closed: [...next.closed] }));
   };
 
   if (!api?.mdIndexScan)

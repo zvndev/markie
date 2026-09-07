@@ -156,6 +156,32 @@ export function initialOpenSet(nodes: readonly FolderNode[]): Set<string> {
   return open;
 }
 
+// The remembered open set, reconciled with the tree in front of it. Collapsing
+// renames the nodes when branches appear or disappear: a remembered
+// `/home/me/work` becomes a child of a brand-new `/home/me` the day
+// `/home/me/downloads` is indexed, and a set that does not name the new root
+// used to leave everything under it collapsed. So a folder is open when the set
+// names it, or when something the set names sits below it and nobody closed
+// it by hand. The closed set is what tells a folder the user shut with an open
+// child inside it from a folder the user has never seen.
+export function openWithAncestors(
+  open: ReadonlySet<string>,
+  closed: ReadonlySet<string>,
+  nodes: readonly FolderNode[]
+): Set<string> {
+  const result = new Set(open);
+  // Whether this node, or anything beneath it, is in the open set.
+  const visit = (node: FolderNode): boolean => {
+    let below = false;
+    for (const child of node.children) if (visit(child)) below = true;
+    const named = open.has(node.path);
+    if (named || (below && !closed.has(node.path))) result.add(node.path);
+    return named || below;
+  };
+  for (const root of nodes) visit(root);
+  return result;
+}
+
 export type SortOrder = "name" | "updated";
 
 // Build order is already by name, so only "updated" has work to do: files by

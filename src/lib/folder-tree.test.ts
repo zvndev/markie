@@ -3,6 +3,7 @@ import {
   buildFolderTree,
   countNodes,
   initialOpenSet,
+  openWithAncestors,
   pathsToFiles,
   sortTree,
   type FolderNode,
@@ -177,6 +178,48 @@ describe("the level Browse opens at", () => {
 
   it("is empty for an empty tree", () => {
     expect(initialOpenSet([])).toEqual(new Set());
+  });
+});
+
+describe("a remembered open set read against today's tree", () => {
+  const set = (...paths: string[]) => new Set(paths);
+
+  it("opens the ancestors of a remembered folder, so it can be reached", () => {
+    // The day /home/me/downloads was indexed, /home/me became the root above
+    // the remembered /home/me/work.
+    const tree = buildFolderTree([
+      file("/home/me/work/docs/guide.md"),
+      file("/home/me/work/notes/aaa.md"),
+      file("/home/me/downloads/x.md"),
+    ]);
+    const open = openWithAncestors(set("/home/me/work"), set(), tree);
+    expect([...open].sort()).toEqual(["/home/me", "/home/me/work"]);
+  });
+
+  it("leaves an ancestor the user closed by hand closed", () => {
+    const tree = buildFolderTree([
+      file("/home/me/work/docs/guide.md"),
+      file("/home/me/work/notes/aaa.md"),
+    ]);
+    const open = openWithAncestors(set("/home/me/work/notes"), set("/home/me/work"), tree);
+    expect([...open]).toEqual(["/home/me/work/notes"]);
+  });
+
+  it("reaches past a closed folder in the middle to open the ones above it", () => {
+    const deep = node("/r/mid/leaf");
+    const tree = [node("/r", { children: [node("/r/mid", { children: [deep] }), node("/r/other")] })];
+    const open = openWithAncestors(set("/r/mid/leaf"), set("/r/mid"), tree);
+    expect([...open].sort()).toEqual(["/r", "/r/mid/leaf"]);
+  });
+
+  it("opens nothing for an empty set, whatever the tree", () => {
+    const tree = buildFolderTree([file("/a/one.md"), file("/b/two.md")]);
+    expect(openWithAncestors(set(), set(), tree)).toEqual(new Set());
+  });
+
+  it("keeps remembered paths the tree no longer has, for the day they return", () => {
+    const tree = buildFolderTree([file("/a/one.md")]);
+    expect([...openWithAncestors(set("/gone"), set(), tree)]).toEqual(["/gone"]);
   });
 });
 

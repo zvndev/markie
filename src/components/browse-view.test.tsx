@@ -217,23 +217,61 @@ describe("BrowseView browsing", () => {
     expect(screen.getByText("Updated")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("remembers what the user opened, and prefers it to the initial rule", async () => {
-    localStorage.setItem("markie.browse.open.v1", JSON.stringify(["/home/me/work/notes"]));
+  it("remembers what the user opened and closed, and prefers it to the initial rule", async () => {
+    localStorage.setItem(
+      "markie.browse.open.v1",
+      JSON.stringify({ open: ["/home/me/work/notes"], closed: ["/home/me/work"] })
+    );
     renderBrowse(scan({ files: project() }));
     // The root is closed because the user closed it, even though the rule
-    // would have opened it.
+    // would have opened it and a remembered folder sits inside it.
     await waitFor(() => expect(screen.queryByText("Scanning your markdown…")).not.toBeInTheDocument());
     expect(screen.queryByText("docs")).not.toBeInTheDocument();
   });
 
-  it("writes an opened folder back to storage", async () => {
+  it("opens a new ancestor above a remembered folder rather than hiding it", async () => {
+    // The user had /home/me/work open (its own root at the time). Today the
+    // index also has /home/me/downloads, so the root is /home/me, which no
+    // stored set could have named.
+    localStorage.setItem("markie.browse.open.v1", JSON.stringify({ open: ["/home/me/work"], closed: [] }));
+    renderBrowse(
+      scan({
+        files: [
+          ...project(),
+          row({ path: "/home/me/downloads/x.md", name: "x.md", dir: "/home/me/downloads" }),
+        ],
+      })
+    );
+    await screen.findByText("docs");
+    expect(screen.getByText("notes")).toBeInTheDocument();
+    expect(screen.getByText("downloads")).toBeInTheDocument();
+    // downloads itself was never opened, so its file stays out of sight.
+    expect(screen.queryByText("x.md")).not.toBeInTheDocument();
+  });
+
+  it("reads the first storage shape, an open list alone, as having closed nothing", async () => {
+    localStorage.setItem("markie.browse.open.v1", JSON.stringify(["/home/me/work/notes"]));
+    renderBrowse(scan({ files: project() }));
+    // Nothing says the root was closed by hand, so the remembered folder is
+    // reachable: the root opens for it.
+    await screen.findByText("notes");
+    expect(screen.getByText("zzz.md")).toBeInTheDocument();
+  });
+
+  it("writes what is open and what was closed back to storage", async () => {
     renderBrowse(scan({ files: project() }));
     await userEvent.click(await screen.findByText("notes"));
-    expect(JSON.parse(localStorage.getItem("markie.browse.open.v1") as string)).toEqual([
-      "/home/me/work",
-      "/home/me/work/notes",
-    ]);
+    expect(JSON.parse(localStorage.getItem("markie.browse.open.v1") as string)).toEqual({
+      open: ["/home/me/work", "/home/me/work/notes"],
+      closed: [],
+    });
     expect(screen.getByText("zzz.md")).toBeInTheDocument();
+    await userEvent.click(screen.getByText("notes"));
+    expect(JSON.parse(localStorage.getItem("markie.browse.open.v1") as string)).toEqual({
+      open: ["/home/me/work"],
+      closed: ["/home/me/work/notes"],
+    });
+    expect(screen.queryByText("zzz.md")).not.toBeInTheDocument();
   });
 });
 
@@ -345,6 +383,22 @@ describe("BrowseView with one enormous folder", () => {
     await userEvent.click(screen.getByText("Show 120 more"));
     expect(childRows()).toHaveLength(320);
     expect(screen.queryByText(/^Show /)).not.toBeInTheDocument();
+  }, 30_000);
+
+  it("puts the cap back when the index is refreshed under the same sort and filter", async () => {
+    renderBrowse(scan({ files: crowded().slice(0, 320) }));
+    await screen.findByText("file0.md");
+    await userEvent.click(screen.getByText("Show 120 more"));
+    expect(childRows()).toHaveLength(320);
+    // A rescan found one more file in the same folder: a different list, and
+    // the folder that was asked for all its rows is not this one.
+    const labelled = time.updatedAgo.mock.calls.length;
+    await act(async () => {
+      emit("onMdIndexUpdated", scan({ files: crowded().slice(0, 321) }));
+    });
+    expect(childRows()).toHaveLength(201);
+    expect(screen.getByText("Show 121 more")).toBeInTheDocument();
+    expect(time.updatedAgo.mock.calls.length - labelled).toBeLessThan(321);
   }, 30_000);
 
   it("puts the cap back when the list underneath changes, before anything is drawn", async () => {

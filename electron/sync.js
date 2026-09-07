@@ -472,7 +472,9 @@ function listingFingerprint(docs) {
 }
 
 // The server's copy of a doc, for showing what a pull would cost before it
-// happens. Read-only: nothing on disk or in the registry is touched.
+// happens. Read-only: nothing on disk or in the registry is touched. The cap
+// holds here as it does for the pull: the renderer diffs what comes back, and
+// a copy Markie would refuse to open is refused before it gets there.
 async function remoteContent(filePath) {
   const row = registry.get(filePath);
   if (!row?.cloud_doc_id) return { error: "not synced" };
@@ -481,6 +483,8 @@ async function remoteContent(filePath) {
   if (res.status !== 200) return { error: failure("fetch", res) };
   const doc = readDoc(res);
   if (!doc) return { error: UNREADABLE };
+  const refused = overCap(doc, path.basename(filePath));
+  if (refused) return { error: refused };
   return {
     ok: true,
     content: doc.content,

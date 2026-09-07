@@ -313,6 +313,34 @@ describe("resolve", () => {
   });
 });
 
+describe("remoteContent", () => {
+  it("hands the renderer the cloud copy for a diff", async () => {
+    const filePath = path.join(tmpDir, "a.md");
+    seedRow({ path: filePath, sync_state: "conflict", cloud_doc_id: "cloud-1", cloud_version: 4 });
+    respondWith({ status: 200, body: { doc: { content: "from cloud", version: 9, name: "a.md" } } });
+
+    const res = await sync.remoteContent(filePath);
+
+    expect(res).toEqual({ ok: true, content: "from cloud", version: 9, name: "a.md" });
+  });
+
+  it("refuses a cloud copy over the cap instead of sending it to the renderer", async () => {
+    // The Review step diffs the cloud copy in the renderer, which is the one
+    // place the cap protects; a copy this size stops here, with the same
+    // refusal the pull would have given.
+    const filePath = path.join(tmpDir, "a.md");
+    seedRow({ path: filePath, sync_state: "conflict", cloud_doc_id: "cloud-1", cloud_version: 4 });
+    respondWith({ status: 200, body: { doc: { content: "x".repeat(100_000_000), version: 9 } } });
+
+    const res = await sync.remoteContent(filePath);
+
+    expect(res).toEqual({
+      error: "a.md in the cloud is 100 MB, more than Markie opens (100 MB). Nothing was changed.",
+    });
+    expect(res.content).toBeUndefined();
+  });
+});
+
 describe("syncOff", () => {
   const cloudRow = (p: string) =>
     seedRow({

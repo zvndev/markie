@@ -121,6 +121,19 @@ describe("ConflictDialog", () => {
     expect(onResolved).not.toHaveBeenCalled();
   });
 
+  it("shows a refused cloud copy as the message and never diffs it", async () => {
+    // Main refuses a cloud copy over the cap with `{ error }` alone (no ok),
+    // the shape every sync refusal uses. The Review step must show it, not a
+    // blank comparison.
+    const refusal = "notes.md in the cloud is 143 MB, more than Markie opens (100 MB). Nothing was changed.";
+    renderDialog({
+      docRemoteContent: vi.fn(async () => ({ error: refusal })),
+    });
+    expect(await screen.findByText(refusal)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Keep both" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pull and overwrite" })).not.toBeInTheDocument();
+  });
+
   it("says so when the server's copy cannot be read", async () => {
     renderDialog({
       docRemoteContent: vi.fn(async () => ({ ok: false, error: "Not found." })),

@@ -7,16 +7,14 @@
 // nobody wanted) were both found by using the app, not by a unit test. jsdom
 // cannot tell you whether the rail still has a door to a page that no longer
 // exists.
-import { spawn } from "node:child_process";
-import { closeSync, openSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
-import { safeKill } from "./lib/safe-kill.mjs";
 import { startRendererDev } from "./lib/renderer-dev.mjs";
+import { launchElectron } from "./lib/electron-window.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("projects-panel-check", import.meta.url);
@@ -26,8 +24,8 @@ const root = path.resolve(new URL("..", import.meta.url).pathname);
 const require = createRequire(path.join(root, "server", "package.json"));
 const WebSocket = require("ws");
 const artifactDir = path.join(root, ".autoloop", "runs", "projects-panel-check");
-const children = [];
 let stopRenderer = () => {};
+let closeWindow = async () => {};
 const tempPaths = [];
 let debugOrigin = "";
 
@@ -40,36 +38,15 @@ const check = (name, passed, detail = "") => {
   );
 };
 
-function start(command, args, options = {}) {
-  const fd = options.log ? openSync(options.log, "a") : "ignore";
-  const child = spawn(command, args, {
-    cwd: root,
-    env: options.env ?? process.env,
-    stdio: ["ignore", fd, fd],
-  });
-  children.push(child);
-  if (typeof fd === "number") child.on("exit", () => closeSync(fd));
-  return child;
-}
-
-function killTree(child) {
-  // Direct-child kill only; see scripts/lib/safe-kill.mjs for why a group kill
-  // (process.kill(-pid)) is banned here.
-  safeKill(child, "SIGKILL");
-}
 async function cleanup() {
+  await closeWindow();
   stopRenderer();
-  for (const c of children) killTree(c);
   await Promise.all(tempPaths.map((p) => rm(p, { recursive: true, force: true }).catch(() => {})));
 }
-process.on("exit", () => {
-  for (const c of children) killTree(c);
-});
+// A run killed outright cannot ask the window to quit, but each helper signals
+// what it spawned from its own exit handler, which a bare signal would skip.
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(signal, () => {
-    for (const c of children) killTree(c);
-    process.exit(1);
-  });
+  process.on(signal, () => process.exit(1));
 }
 
 async function waitFor(label, fn, timeoutMs = 30000) {
@@ -208,14 +185,13 @@ async function main() {
   const dev = await startRendererDev({ port: devPort, log: path.join(artifactDir, "vite.log") });
   stopRenderer = dev.stop;
 
-  start(
-    path.join(root, "node_modules", ".bin", "electron"),
-    [".", strayPath, `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],
-    {
-      env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
-      log: path.join(artifactDir, "electron.log"),
-    }
-  );
+  const win = launchElectron({
+    debugPort,
+    args: [".", strayPath, `--user-data-dir=${userDataDir}`],
+    env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
+    log: path.join(artifactDir, "electron.log"),
+  });
+  closeWindow = win.close;
 
   const cdp = await waitFor("CDP", cdpConnect, 40000);
   await cdp.send("Runtime.enable");

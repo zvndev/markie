@@ -19,6 +19,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
 import { startRendererDev } from "./lib/renderer-dev.mjs";
+import { launchElectron } from "./lib/electron-window.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("sync-down-check", import.meta.url);
@@ -33,6 +34,7 @@ const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 const artifactDir = path.join(root, ".autoloop", "runs", `sync-down-check-${stamp}`);
 const children = [];
 let stopRenderer = () => {};
+let closeWindow = async () => {};
 const tempPaths = [];
 
 const SERVER_PORT = 8791;
@@ -66,6 +68,7 @@ function start(command, args, options = {}) {
 }
 
 async function stopChildren() {
+  await closeWindow();
   stopRenderer();
   await Promise.all(
     children.map(
@@ -241,17 +244,15 @@ async function main() {
   const dev = await startRendererDev({ port: devPort, env: baseEnv, log: logPath("vite") });
   stopRenderer = dev.stop;
 
-  const electronBin = path.join(root, "node_modules", ".bin", "electron");
   // The fixture is passed as a launch argument, which is the double-click route
   // and grants the file outright.
-  start(
-    electronBin,
-    [".", docPath, `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],
-    {
-      env: { ...baseEnv, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
-      log: logPath("electron"),
-    }
-  );
+  const win = launchElectron({
+    debugPort,
+    args: [".", docPath, `--user-data-dir=${userDataDir}`],
+    env: { ...baseEnv, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
+    log: logPath("electron"),
+  });
+  closeWindow = win.close;
 
   const cdp = await waitFor("Electron CDP target", cdpConnect, 40000);
   await cdp.send("Runtime.enable");

@@ -12,8 +12,6 @@
 //
 // The card's title and thumbnail come from the network, and this makes no
 // promise about the network: those are looked at and reported, never failed.
-import { spawn } from "node:child_process";
-import { closeSync, openSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createSocket } from "node:net";
 import { tmpdir } from "node:os";
@@ -21,8 +19,8 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
-import { safeKill } from "./lib/safe-kill.mjs";
 import { startRendererDev } from "./lib/renderer-dev.mjs";
+import { launchElectron } from "./lib/electron-window.mjs";
 
 requireElectronConsent("embed-check", import.meta.url);
 
@@ -30,8 +28,8 @@ const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const require = createRequire(path.join(root, "server", "package.json"));
 const WebSocket = require("ws");
 const artifactDir = path.join(root, ".autoloop", "runs", "embed-check");
-const children = [];
 let stopRenderer = () => {};
+let closeWindow = async () => {};
 const tempPaths = [];
 let debugOrigin = "";
 
@@ -43,27 +41,15 @@ const check = (name, passed, detail = "") => {
 };
 const note = (text) => process.stdout.write(`  ..   ${text}\n`);
 
-function start(command, args, options = {}) {
-  const out = options.log ? openSync(options.log, "a") : "ignore";
-  const child = spawn(command, args, { cwd: root, env: options.env ?? process.env, stdio: ["ignore", out, out] });
-  children.push(child);
-  if (options.log) child.on("exit", () => closeSync(out));
-  return child;
-}
 async function cleanup() {
+  await closeWindow();
   stopRenderer();
-  for (const child of children) safeKill(child);
-  await new Promise((r) => setTimeout(r, 400));
   for (const p of tempPaths) await rm(p, { recursive: true, force: true }).catch(() => {});
 }
-process.on("exit", () => {
-  for (const c of children) safeKill(c, "SIGKILL");
-});
+// A run killed outright cannot ask the window to quit, but each helper signals
+// what it spawned from its own exit handler, which a bare signal would skip.
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(signal, () => {
-    for (const c of children) safeKill(c, "SIGKILL");
-    process.exit(1);
-  });
+  process.on(signal, () => process.exit(1));
 }
 async function waitFor(label, fn, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
@@ -170,14 +156,13 @@ async function main() {
   debugOrigin = `http://127.0.0.1:${debugPort}`;
   const dev = await startRendererDev({ port: devPort, log: path.join(artifactDir, "vite.log") });
   stopRenderer = dev.stop;
-  start(
-    path.join(root, "node_modules", ".bin", "electron"),
-    [".", docPath, `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],
-    {
-      env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
-      log: path.join(artifactDir, "electron.log"),
-    }
-  );
+  const win = launchElectron({
+    debugPort,
+    args: [".", docPath, `--user-data-dir=${userDataDir}`],
+    env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
+    log: path.join(artifactDir, "electron.log"),
+  });
+  closeWindow = win.close;
 
   const cdp = await waitFor("CDP", cdpConnect, 40000);
   await cdp.send("Runtime.enable");

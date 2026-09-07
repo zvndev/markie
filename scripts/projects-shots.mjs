@@ -12,16 +12,15 @@
 // Usage:
 //   MARKIE_ALLOW_E2E=1 node scripts/projects-shots.mjs \
 //     --profile <dir with registry.db> [--out shots-v4]
-import { spawn } from "node:child_process";
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createWriteStream, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
-import { safeKill } from "./lib/safe-kill.mjs";
 import { startRendererDev } from "./lib/renderer-dev.mjs";
+import { launchElectron } from "./lib/electron-window.mjs";
 
 requireElectronConsent("projects-shots", import.meta.url);
 
@@ -43,46 +42,23 @@ if (!profileSource || !existsSync(path.join(profileSource, "registry.db"))) {
   process.exit(2);
 }
 
-const children = [];
 let stopRenderer = () => {};
+let closeWindow = async () => {};
 const temps = [];
 let devOrigin = "";
 
-// Direct-child kill only, like every other script here; see
-// scripts/lib/safe-kill.mjs. Never a pattern match either: a `pkill -f vite` on
-// a developer's machine kills every other project's dev server too, which is
-// the kind of tidying that ruins somebody's afternoon.
-function start(command, cmdArgs, options = {}) {
-  const child = spawn(command, cmdArgs, {
-    cwd: root,
-    env: options.env ?? process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  children.push(child);
-  if (options.log) {
-    const stream = createWriteStream(options.log, { flags: "a" });
-    child.stdout?.pipe(stream, { end: false });
-    child.stderr?.pipe(stream, { end: false });
-    child.on("exit", () => stream.end());
-  }
-  return child;
-}
-function stop(child) {
-  safeKill(child, "SIGKILL");
-}
+// Both helpers end what they started, by name to nothing: a `pkill -f vite` or
+// `pkill -f electron` on a developer's machine reaches every other project too,
+// which is the kind of tidying that ruins somebody's afternoon.
 async function cleanup() {
+  await closeWindow();
   stopRenderer();
-  for (const child of children) stop(child);
   await Promise.all(temps.map((p) => rm(p, { recursive: true, force: true }).catch(() => {})));
 }
-process.on("exit", () => {
-  for (const child of children) stop(child);
-});
+// A run killed outright cannot ask the window to quit, but each helper signals
+// what it spawned from its own exit handler, which a bare signal would skip.
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(signal, () => {
-    for (const child of children) stop(child);
-    process.exit(1);
-  });
+  process.on(signal, () => process.exit(1));
 }
 
 async function waitFor(label, fn, timeoutMs = 60000) {
@@ -330,14 +306,13 @@ async function main() {
   const dev = await startRendererDev({ port: devPort, log: path.join(logDir, "vite.log") });
   stopRenderer = dev.stop;
 
-  start(
-    path.join(root, "node_modules", ".bin", "electron"),
-    [".", `--remote-debugging-port=${debugPort}`, `--user-data-dir=${profile}`],
-    {
-      env: { ...process.env, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
-      log: path.join(logDir, "electron.log"),
-    }
-  );
+  const win = launchElectron({
+    debugPort,
+    args: [".", `--user-data-dir=${profile}`],
+    env: { ...process.env, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
+    log: path.join(logDir, "electron.log"),
+  });
+  closeWindow = win.close;
 
   const cdp = await waitFor("Electron CDP target", cdpConnect, 60000);
   await cdp.send("Runtime.enable");

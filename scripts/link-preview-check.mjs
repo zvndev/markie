@@ -8,8 +8,6 @@
 // The page under test is served from this script, on loopback, which the
 // preview module refuses by design. MARKIE_E2E=1 is what opens that door, and
 // only for this.
-import { spawn } from "node:child_process";
-import { closeSync, openSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createSocket } from "node:net";
@@ -17,8 +15,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
-import { safeKill } from "./lib/safe-kill.mjs";
 import { startRendererDev } from "./lib/renderer-dev.mjs";
+import { launchElectron } from "./lib/electron-window.mjs";
 
 requireElectronConsent("link-preview-check");
 
@@ -26,8 +24,8 @@ const root = path.resolve(new URL("..", import.meta.url).pathname);
 const require = createRequire(path.join(root, "server", "package.json"));
 const WebSocket = require("ws");
 const artifactDir = path.join(root, ".autoloop", "runs", "link-preview-check");
-const children = [];
 let stopRenderer = () => {};
+let closeWindow = async () => {};
 const tempPaths = [];
 let servers = [];
 let debugOrigin = "";
@@ -39,23 +37,10 @@ const check = (name, passed, detail = "") => {
   if (detail) process.stdout.write(`         ${detail}\n`);
 };
 
-function start(command, args, options = {}) {
-  const out = options.log ? openSync(options.log, "a") : "ignore";
-  const child = spawn(command, args, {
-    cwd: root,
-    env: options.env ?? process.env,
-    stdio: ["ignore", out, out],
-  });
-  children.push(child);
-  if (options.log) child.on("exit", () => closeSync(out));
-  return child;
-}
-
 async function cleanup() {
+  await closeWindow();
   stopRenderer();
   for (const server of servers) await new Promise((r) => server.close(r));
-  for (const child of children) safeKill(child);
-  await new Promise((r) => setTimeout(r, 400));
   for (const p of tempPaths) await rm(p, { recursive: true, force: true }).catch(() => {});
 }
 
@@ -207,14 +192,13 @@ async function main() {
   const dev = await startRendererDev({ port: devPort, log: path.join(artifactDir, "vite.log") });
   stopRenderer = dev.stop;
 
-  start(
-    path.join(root, "node_modules", ".bin", "electron"),
-    [".", docPath, `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],
-    {
-      env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
-      log: path.join(artifactDir, "electron.log"),
-    }
-  );
+  const win = launchElectron({
+    debugPort,
+    args: [".", docPath, `--user-data-dir=${userDataDir}`],
+    env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
+    log: path.join(artifactDir, "electron.log"),
+  });
+  closeWindow = win.close;
 
   const cdp = await waitFor("CDP", cdpConnect, 40000);
   await cdp.send("Runtime.enable");

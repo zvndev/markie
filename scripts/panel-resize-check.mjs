@@ -3,8 +3,6 @@
 // Launches Markie locally, drives the resize handle through CDP with real
 // pointer events, and fails when the width does not follow the pointer, does
 // not clamp, or does not survive a relaunch.
-import { spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -12,6 +10,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
 import { startRendererDev } from "./lib/renderer-dev.mjs";
+import { closeElectron, launchElectron } from "./lib/electron-window.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("panel-resize-check", import.meta.url);
@@ -23,8 +22,8 @@ const WebSocket = require("ws");
 const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 const artifactDir = path.join(root, ".autoloop", "runs", `panel-resize-check-${stamp}`);
 const screenshotsDir = path.join(artifactDir, "screenshots");
-const children = [];
 let stopRenderer = () => {};
+let closeWindow = async () => {};
 const tempPaths = [];
 let devOrigin = "http://localhost:3000";
 let debugOrigin = "http://127.0.0.1:9222";
@@ -43,34 +42,9 @@ function logPath(name) {
   return path.join(artifactDir, `${name}.log`);
 }
 
-function start(command, args, options = {}) {
-  const child = spawn(command, args, {
-    cwd: options.cwd ?? root,
-    env: options.env ?? process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  children.push(child);
-  if (options.log) {
-    const stream = createWriteStream(options.log, { flags: "a" });
-    child.stdout?.pipe(stream, { end: false });
-    child.stderr?.pipe(stream, { end: false });
-    child.on("exit", () => stream.end());
-  }
-  return child;
-}
-
-async function stopChild(child) {
-  if (!child || child.exitCode !== null || child.killed) return;
-  await new Promise((resolve) => {
-    child.once("exit", resolve);
-    child.kill();
-    setTimeout(resolve, 2000);
-  });
-}
-
 async function stopChildren() {
+  await closeWindow();
   stopRenderer();
-  await Promise.all(children.map(stopChild));
 }
 
 async function waitFor(label, fn, timeoutMs = 30000) {
@@ -252,11 +226,14 @@ async function bootRenderer(cdp) {
 }
 
 function startElectron(debugPort, userDataDir, homeDir) {
-  const electronBin = path.join(root, "node_modules", ".bin", "electron");
-  return start(electronBin, [".", `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`], {
+  const win = launchElectron({
+    debugPort,
+    args: [".", `--user-data-dir=${userDataDir}`],
     env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
     log: logPath("electron"),
   });
+  closeWindow = win.close;
+  return win;
 }
 
 async function main() {
@@ -354,7 +331,7 @@ async function main() {
   // Relaunch with the same profile: the panel is unmounted while collapsed, so
   // the width has to come back from storage rather than from React state.
   cdp.close();
-  await stopChild(electron);
+  await closeElectron(electron);
   await new Promise((resolve) => setTimeout(resolve, 1500));
   electron = startElectron(debugPort, userDataDir, homeDir);
   cdp = await waitFor("relaunched Electron CDP app target", cdpConnect, 30000);

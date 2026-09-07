@@ -10,6 +10,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
 import { startRendererDev } from "./lib/renderer-dev.mjs";
+import { launchElectron } from "./lib/electron-window.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("comments-verify-local", import.meta.url);
@@ -33,6 +34,7 @@ await mkdir(runDir, { recursive: true });
 
 const children = [];
 let stopRenderer = () => {};
+let closeWindow = async () => {};
 const tempPaths = [];
 
 function logPath(name) {
@@ -209,15 +211,13 @@ async function main() {
       log: logPath("comments-vite"),
     });
     stopRenderer = dev.stop;
-    const electronBin = path.join(root, "node_modules", ".bin", "electron");
-    const electron = start(
-      electronBin,
-      [".", "--remote-debugging-port=9222", `--user-data-dir=${userDataDir}`],
-      {
-        env: { ...baseEnv, NODE_ENV: "development", DB_PATH: dbPath, MARKIE_E2E: "1" },
-        log: logPath("comments-electron"),
-      }
-    );
+    const win = launchElectron({
+      debugPort: 9222,
+      args: [".", `--user-data-dir=${userDataDir}`],
+      env: { ...baseEnv, NODE_ENV: "development", DB_PATH: dbPath, MARKIE_E2E: "1" },
+      log: logPath("comments-electron"),
+    });
+    closeWindow = win.close;
     await bootstrapElectronForComments(seed);
     e2eLog = logPath("comments-e2e");
     const e2e = await runCapture(
@@ -226,7 +226,7 @@ async function main() {
       { env, log: e2eLog }
     );
     process.stdout.write(e2e.stdout);
-    electron.kill();
+    await closeWindow();
     stopRenderer();
   }
 
@@ -248,6 +248,7 @@ async function main() {
 try {
   await main();
 } finally {
+  await closeWindow();
   stopRenderer();
   for (const child of children) child.kill?.();
   await Promise.all(tempPaths.map((p) => rm(p, { recursive: true, force: true })));

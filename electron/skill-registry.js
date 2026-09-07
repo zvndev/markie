@@ -44,6 +44,10 @@ const MAX_SKILL_NAME = 64;
 // A source tarball this size is not a skill repository, it is an accident or an
 // attack, and it arrives in memory.
 const MAX_TARBALL_BYTES = 50 * 1024 * 1024;
+// The compressed cap alone is not a bound: gzip happily turns a few kilobytes
+// of zeros into gigabytes, and the whole archive is inflated in the main
+// process before a single entry is looked at. So the inflate is bounded too.
+const MAX_EXPANDED_BYTES = 128 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 30000;
 const SEARCH_TIMEOUT_MS = 8000;
 const STALE_MS = 24 * 60 * 60 * 1000;
@@ -72,12 +76,36 @@ const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build"]);
 const SKILLS_SH_SEARCH = "https://skills.sh/api/search";
 const LOCK_VERSION = 3;
 
+// A segment that is nothing but dots is `.` or `..` wearing a hat. GitHub
+// cannot name an account or a repository that way, and both segments become
+// directory names under the download cache, so `../..` would otherwise resolve
+// out of it and hand a recursive delete somebody else's folder.
+const DOTS_ONLY_RE = /^\.+$/;
+
 /** `owner/repo` → `{ owner, repo }`, or null when it is not that shape. */
 function parseOwnerRepo(value) {
   const text = String(value ?? "").trim().replace(/^\/+|\/+$/g, "");
   if (!OWNER_REPO_RE.test(text)) return null;
   const [owner, repo] = text.split("/");
+  if (DOTS_ONLY_RE.test(owner) || DOTS_ONLY_RE.test(repo)) return null;
   return { owner, repo };
+}
+
+// Windows paths compare case-blind, and the registry stores an install path
+// lowercased there (see registry.js) while os.homedir() and the workspace list
+// keep their spelling. Folding both sides is what lets a row match its root.
+const foldCase = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
+
+/**
+ * Is `target` strictly inside `root`? Both are resolved first, so this answers
+ * for the real path rather than for the spelling, and the root itself does not
+ * count: deleting the whole cache, or the whole home folder, is never what a
+ * caller here means.
+ */
+function insideDir(root, target) {
+  const base = foldCase(path.resolve(String(root ?? "")));
+  const resolved = foldCase(path.resolve(String(target ?? "")));
+  return resolved !== base && resolved.startsWith(base + path.sep);
 }
 
 /** Is this a name Markie will create a folder for? */
@@ -197,6 +225,7 @@ function discoverSkills(entries, { owner, repo }) {
  * @param {string} [deps.version] Markie's version, for the User-Agent
  * @param {Record<string, string | undefined>} [deps.env]
  * @param {() => Date} [deps.clock]
+ * @param {number} [deps.maxExpandedBytes] the inflate bound, lowered by tests
  */
 function createSkillRegistry(deps = {}) {
   const home = deps.home || (() => os.homedir());
@@ -206,6 +235,7 @@ function createSkillRegistry(deps = {}) {
   const roots = deps.roots || (() => []);
   const version = deps.version || "0.0.0";
   const store = deps.store || require("./registry");
+  const maxExpandedBytes = deps.maxExpandedBytes || MAX_EXPANDED_BYTES;
   // Required lazily for the same reason registry.js defers better-sqlite3:
   // `require("electron")` throws outside the app, and every test supplies its
   // own directory rather than reaching for the real one.
@@ -275,6 +305,22 @@ function createSkillRegistry(deps = {}) {
 
   function tooLarge() {
     return `That repository's download is over ${Math.round(MAX_TARBALL_BYTES / 1024 / 1024)} MB, which is too big to be a skill repository.`;
+  }
+
+  // Inflate with a ceiling. zlib answers a RangeError with ERR_BUFFER_TOO_LARGE
+  // when the output would pass it, and that is a different failure from a
+  // corrupt download, so the two get different sentences.
+  function inflate(bytes, owner, repo) {
+    try {
+      return zlib.gunzipSync(bytes, { maxOutputLength: maxExpandedBytes });
+    } catch (err) {
+      if (err && err.code === "ERR_BUFFER_TOO_LARGE") {
+        throw new Error(
+          `The archive for ${owner}/${repo} unpacks to more than ${Math.round(maxExpandedBytes / 1024 / 1024)} MB, which is too large to be a skill repository.`
+        );
+      }
+      throw new Error(`${owner}/${repo} did not download as a readable archive.`);
+    }
   }
 
   async function downloadTarball(owner, repo) {
@@ -375,20 +421,16 @@ function createSkillRegistry(deps = {}) {
       })
       .sort((a, b) => b.at - a.at);
     for (const entry of dated.slice(KEEP_COMMITS - 1)) {
-      fs.rmSync(path.join(dir, entry.name), { recursive: true, force: true });
+      const stale = path.join(dir, entry.name);
+      if (!insideDir(cacheRoot(), stale)) continue;
+      fs.rmSync(stale, { recursive: true, force: true });
     }
   }
 
   async function fetchSource(source) {
     const { owner, repo } = source;
     const { bytes, branch } = await downloadTarball(owner, repo);
-    let archive;
-    try {
-      archive = zlib.gunzipSync(bytes);
-    } catch {
-      throw new Error(`${owner}/${repo} did not download as a readable archive.`);
-    }
-    const discovered = discoverSkills(parseTar(archive), { owner, repo });
+    const discovered = discoverSkills(parseTar(inflate(bytes, owner, repo)), { owner, repo });
     const { commit, commitSource } = await headCommit(owner, repo, branch, bytes);
     const dir = path.join(sourceDir(owner, repo), commit);
     fs.mkdirSync(dir, { recursive: true });
@@ -451,6 +493,26 @@ function createSkillRegistry(deps = {}) {
         out.skills.push({ ...skill, installedTo: installedTo(skill, rows) });
       }
     }
+    // A repository that failed on the way in is not a row (see addSource), but
+    // the reason has to reach the panel, which reads failures off this list.
+    // So it is listed for this session only, with nothing behind it; removing
+    // it clears the reason, and a restart forgets it.
+    const listed = new Set(out.sources.map((s) => s.id));
+    for (const [id, error] of errors) {
+      if (listed.has(id)) continue;
+      const parsed = parseOwnerRepo(id);
+      if (!parsed) continue;
+      out.sources.push({
+        id,
+        owner: parsed.owner,
+        repo: parsed.repo,
+        ref: null,
+        commit: null,
+        fetchedAt: null,
+        builtin: false,
+        error,
+      });
+    }
     return out;
   }
 
@@ -480,13 +542,18 @@ function createSkillRegistry(deps = {}) {
     return listCatalog();
   }
 
+  // The row is written only once the repository has actually answered. A
+  // source that was persisted on the way in stayed in the list forever with
+  // nothing behind it, and offered a Remove that pointed at a directory that
+  // was never created.
   async function addSource(ownerRepo) {
     const parsed = parseOwnerRepo(ownerRepo);
     if (!parsed) return listCatalog();
     const id = `${parsed.owner}/${parsed.repo}`;
-    store.skillSourceAdd(id);
     try {
       await fetchSource(parsed);
+      store.skillSourceAdd(id);
+      errors.delete(id);
     } catch (err) {
       errors.set(id, err && err.message ? err.message : String(err));
     }
@@ -497,11 +564,22 @@ function createSkillRegistry(deps = {}) {
     const parsed = parseOwnerRepo(ownerRepo);
     if (!parsed) return listCatalog();
     const id = `${parsed.owner}/${parsed.repo}`;
+    const dir = sourceDir(parsed.owner, parsed.repo);
+    // A recursive delete is the most destructive thing this file does, so it
+    // proves where it is pointing first rather than trusting the two segments
+    // it was handed. parseOwnerRepo should already make this impossible; that
+    // is the argument for checking, not against it.
+    if (!insideDir(cacheRoot(), dir)) {
+      const message = `Markie will not delete ${dir}: it is outside the skill cache.`;
+      console.error(`skill-registry: refused to remove a source at ${dir}`);
+      errors.set(id, message);
+      return listCatalog();
+    }
     store.skillSourceRemove(id);
     errors.delete(id);
     // The download is disposable; the installs it produced are not, and their
     // rows are keyed by destination rather than by source.
-    fs.rmSync(sourceDir(parsed.owner, parsed.repo), { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
     return listCatalog();
   }
 
@@ -649,6 +727,119 @@ function createSkillRegistry(deps = {}) {
 
   // ── Install and remove ───────────────────────────────────────────────────
 
+  // The row Markie wrote for this tool and this skill, found by what was
+  // persisted rather than by recomputing where the folder ought to be. A user
+  // who moves CLAUDE_CONFIG_DIR or unregisters a project still owns the folder
+  // Markie made, and recomputing would lose it: Remove would fail forever, and
+  // installing again would leave a second copy behind.
+  function ownedRow(target, name) {
+    const key = targetKey(target);
+    if (!key) return null;
+    return (
+      installRows().find((row) => row.target === key && row.name === String(name)) || null
+    );
+  }
+
+  // The folders Markie may write into: the home folder (every tool's default
+  // lives under it), the two config folders a user can move, and each
+  // registered project.
+  function allowedRoots() {
+    return [home(), env.CLAUDE_CONFIG_DIR, env.CODEX_HOME, ...(roots() || [])]
+      .filter((dir) => typeof dir === "string" && dir.trim())
+      .map((dir) => path.resolve(dir));
+  }
+
+  // The folder a row says Markie created, or the reason the row is not
+  // trusted. It has to have the shape every install produces, an absolute
+  // `.../skills/<name>` whose last segment is the row's own name, and it has
+  // to sit inside one of the allowed roots as they are today. Deliberately
+  // not compared against today's target directories: a folder under a
+  // CODEX_HOME that has since moved is still under the home folder, and still
+  // Markie's to update or remove. What this refuses is a row that names the
+  // home folder itself, a workspace root, or anything a corrupt record could
+  // point at outside those roots.
+  function ownedFolder(row) {
+    const notSkill = { ok: false, why: "not a skill folder" };
+    const recorded = String(row?.path || "");
+    if (!recorded || !path.isAbsolute(recorded)) return notSkill;
+    const resolved = path.resolve(recorded);
+    if (!validSkillName(row.name) || path.basename(resolved) !== row.name) return notSkill;
+    if (path.basename(path.dirname(resolved)) !== "skills") return notSkill;
+    if (!allowedRoots().some((root) => insideDir(root, resolved))) {
+      return { ok: false, why: "outside every folder Markie may write to" };
+    }
+    return { ok: true, path: resolved };
+  }
+
+  // Is the row's skill the one being installed? A destination Markie owns is
+  // still not a destination it may hand to a different repository: two sources
+  // both offering a `pdf` would otherwise overwrite each other silently.
+  function sameSkill(row, skill) {
+    return row.source === skill.source && row.skill_path === skill.skillPath;
+  }
+
+  function elsewhere(row, skill) {
+    if (!row.source) return "another source";
+    return row.source === skill.source ? `${row.source}/${row.skill_path}` : row.source;
+  }
+
+  // Copy into place without ever being between two versions.
+  //
+  // The old shape deleted the destination and then copied, so a disk error or
+  // a locked file left the user with neither the version they had nor the one
+  // they asked for, and a registry failure after the copy left a folder no row
+  // claimed, which every later attempt then refused as somebody else's.
+  //
+  // Now the new copy is staged beside the destination (same filesystem, so the
+  // swap is a rename), the old folder is moved aside rather than deleted, the
+  // row is written, and only then is the old folder dropped. Anything that
+  // throws before that point puts the previous folder back and leaves the row
+  // exactly as it was.
+  function swapIntoPlace(source, destination, writeRow) {
+    const dir = path.dirname(destination);
+    const name = path.basename(destination);
+    const staging = path.join(dir, `.${name}.markie-staging`);
+    const aside = path.join(dir, `.${name}.markie-previous`);
+    let placed = false;
+    let movedAside = false;
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      // A crash mid-install can leave either of these behind. They are
+      // dot-prefixed, so the index never walked them.
+      fs.rmSync(staging, { recursive: true, force: true });
+      fs.rmSync(aside, { recursive: true, force: true });
+      fs.cpSync(source, staging, { recursive: true });
+      if (fs.existsSync(destination)) {
+        fs.renameSync(destination, aside);
+        movedAside = true;
+      }
+      fs.renameSync(staging, destination);
+      placed = true;
+      writeRow();
+    } catch (err) {
+      try {
+        // Whatever the copy managed before it stopped is in the staging
+        // folder, or the folder is already gone because the rename took it.
+        // Either way it is not wanted.
+        fs.rmSync(staging, { recursive: true, force: true });
+        if (placed) fs.rmSync(destination, { recursive: true, force: true });
+        if (movedAside) fs.renameSync(aside, destination);
+      } catch {
+        // Restoring is best effort by definition: whatever stopped the install
+        // may stop the undo too. The original error is the one worth reporting.
+      }
+      throw err;
+    }
+    // Past the point of no return. The files are in place and the row says so,
+    // so a failure to tidy the old copy is a leftover directory and not a
+    // reason to undo a good install.
+    try {
+      if (movedAside) fs.rmSync(aside, { recursive: true, force: true });
+    } catch {
+      // it will be cleared by the next install of this skill
+    }
+  }
+
   function install(id, targets) {
     const found = findSkill(id);
     const installed = [];
@@ -673,26 +864,53 @@ function createSkillRegistry(deps = {}) {
         });
         continue;
       }
-      const dir = targetDir(target);
-      if (!dir) {
+      // What Markie already installed for this tool under this name, if
+      // anything, before working out where a new install would go.
+      let row = ownedRow(target, skill.name);
+      let destination = null;
+      if (row) {
+        const owned = ownedFolder(row);
+        if (!owned.ok) {
+          errorsOut.push({
+            target,
+            error: "copy-failed",
+            message: `Markie's record of ${skill.name} points at ${row.path}, which is ${owned.why}, so it will not write there.`,
+          });
+          continue;
+        }
+        destination = owned.path;
+      } else {
+        const dir = targetDir(target);
+        if (!dir) {
+          errorsOut.push({
+            target,
+            error: "no-such-target",
+            message: "Markie does not know where to put a skill for that tool.",
+          });
+          continue;
+        }
+        destination = path.join(dir, skill.name);
+        if (!path.resolve(destination).startsWith(path.resolve(dir) + path.sep)) {
+          errorsOut.push({
+            target,
+            error: "invalid-name",
+            message: `"${skill.name}" would be written outside ${dir}.`,
+          });
+          continue;
+        }
+        // A row keyed by this exact folder, from an install under some other
+        // target. It is still Markie's folder, and the same rules apply to it.
+        row = store.skillInstallGet(destination) || null;
+      }
+      if (row && !sameSkill(row, skill)) {
         errorsOut.push({
           target,
-          error: "no-such-target",
-          message: "Markie does not know where to put a skill for that tool.",
+          error: "exists",
+          message: `${skill.name} is already installed from ${elsewhere(row, skill)}. Remove it first.`,
         });
         continue;
       }
-      const destination = path.join(dir, skill.name);
-      if (!path.resolve(destination).startsWith(path.resolve(dir) + path.sep)) {
-        errorsOut.push({
-          target,
-          error: "invalid-name",
-          message: `"${skill.name}" would be written outside ${dir}.`,
-        });
-        continue;
-      }
-      const row = store.skillInstallGet(destination);
-      if (fs.existsSync(destination) && !row) {
+      if (!row && fs.existsSync(destination)) {
         errorsOut.push({
           target,
           error: "exists",
@@ -701,35 +919,43 @@ function createSkillRegistry(deps = {}) {
         continue;
       }
       try {
-        fs.rmSync(destination, { recursive: true, force: true });
-        fs.mkdirSync(dir, { recursive: true });
-        fs.cpSync(found.dir, destination, { recursive: true });
         const at = nowIso();
-        store.skillInstallSet({
-          path: destination,
-          target: targetKey(target),
-          name: skill.name,
-          source: skill.source,
-          skill_path: skill.skillPath,
-          folder_hash: skill.folderHash,
-          installed_at: at,
+        const place = destination;
+        swapIntoPlace(found.dir, place, () => {
+          store.skillInstallSet({
+            path: place,
+            target: targetKey(target),
+            name: skill.name,
+            source: skill.source,
+            skill_path: skill.skillPath,
+            folder_hash: skill.folderHash,
+            installed_at: at,
+          });
         });
         // `sourceUrl` carries the .git suffix and `skillPath` points at the
         // SKILL.md rather than its folder, because that is what the Vercel CLI
         // writes: this file is shared with it, so Markie's entries should read
         // the same as its own. `ref` is Markie's own addition; the CLI ignores
         // keys it does not know.
-        mergeLock(skill.name, {
-          source: skill.source,
-          sourceType: "github",
-          sourceUrl: `https://github.com/${skill.source}.git`,
-          ref: found.catalog.ref,
-          skillPath: `${skill.skillPath}/SKILL.md`,
-          skillFolderHash: skill.folderHash,
-          installedAt: at,
-          updatedAt: at,
-        });
-        installed.push({ target, path: destination });
+        //
+        // Written after the swap and outside it: the install is already real
+        // and recorded, and a lock file that will not take the entry is not a
+        // reason to throw the skill away.
+        try {
+          mergeLock(skill.name, {
+            source: skill.source,
+            sourceType: "github",
+            sourceUrl: `https://github.com/${skill.source}.git`,
+            ref: found.catalog.ref,
+            skillPath: `${skill.skillPath}/SKILL.md`,
+            skillFolderHash: skill.folderHash,
+            installedAt: at,
+            updatedAt: at,
+          });
+        } catch {
+          // shared with another tool; not ours to fail an install over
+        }
+        installed.push({ target, path: place });
       } catch (err) {
         errorsOut.push({
           target,
@@ -742,20 +968,29 @@ function createSkillRegistry(deps = {}) {
   }
 
   function remove(target, name) {
-    const dir = targetDir(target);
-    if (!dir) return { ok: false, error: "Markie does not know where that tool keeps its skills." };
-    if (!validSkillName(name)) return { ok: false, error: `"${name}" is not a skill name Markie installs.` };
-    const destination = path.join(dir, String(name));
-    const row = store.skillInstallGet(destination);
-    // Without a row this folder is the user's, or another tool's. Deleting it
-    // would be Markie throwing away something it never put there.
-    if (!row) return { ok: false, error: "Markie did not install that skill, so it will not remove it." };
+    if (!validSkillName(name)) {
+      return { ok: false, error: `"${name}" is not a skill name Markie installs.` };
+    }
+    // The row, not a recomputed path: see ownedRow. Without a row this folder
+    // is the user's, or another tool's, and deleting it would be Markie
+    // throwing away something it never put there.
+    const row = ownedRow(target, name);
+    if (!row) {
+      return { ok: false, error: "Markie did not install that skill, so it will not remove it." };
+    }
+    const owned = ownedFolder(row);
+    if (!owned.ok) {
+      return {
+        ok: false,
+        error: `Markie's record of ${name} points at ${row.path}, which is ${owned.why}, so it will not delete it.`,
+      };
+    }
     try {
-      fs.rmSync(destination, { recursive: true, force: true });
+      fs.rmSync(owned.path, { recursive: true, force: true });
     } catch (err) {
       return { ok: false, error: err && err.message ? err.message : String(err) };
     }
-    store.skillInstallDelete(destination);
+    store.skillInstallDelete(row.path);
     // The lock is keyed by name alone, so the entry only goes when the last
     // copy of this skill does.
     if (!installRows().some((other) => other.name === String(name))) dropFromLock(String(name));
@@ -814,7 +1049,9 @@ module.exports = {
   discoverSkills,
   parseOwnerRepo,
   validSkillName,
+  insideDir,
   containerDepth,
   DEFAULT_SOURCES,
   MAX_TARBALL_BYTES,
+  MAX_EXPANDED_BYTES,
 };

@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import zlib from "node:zlib";
 import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +11,7 @@ const {
   createSkillRegistry,
   validSkillName,
   parseOwnerRepo,
+  insideDir,
   MAX_TARBALL_BYTES,
 } = require("./skill-registry.js");
 
@@ -227,8 +229,48 @@ describe("skill registry", () => {
   it("refuses a download that is over the size cap", async () => {
     fetchImpl.mockImplementation(async () => response(null, { bytes: Buffer.alloc(MAX_TARBALL_BYTES + 1) }));
     const { catalog } = await load();
-    expect(catalog.sources.find((s: { id: string }) => s.id === "acme/kit").error).toMatch(/too big/);
     expect(catalog.skills).toEqual([]);
+    expect(store.sources.size).toBe(0);
+    expect(catalog.sources.find((s: { id: string }) => s.id === "acme/kit").error).toMatch(/too big/);
+  });
+
+  it("does not remember a source that never answered, but does say why", async () => {
+    fetchImpl.mockImplementation(async () => {
+      throw new Error("offline");
+    });
+    const { skills, catalog } = await load();
+    // Nothing persisted: a row written on the way in stayed in the list
+    // forever with nothing behind it.
+    expect(store.sources.size).toBe(0);
+    // The reason still reaches the panel, which reads failures off the source
+    // list, as a row for this session with nothing behind it.
+    expect(catalog.sources.find((s: { id: string }) => s.id === "acme/kit")).toMatchObject({
+      builtin: false,
+      fetchedAt: null,
+      commit: null,
+      error: "offline",
+    });
+    // A fresh registry over the same store has no trace of it.
+    expect(registry().listCatalog().sources.map((s: { id: string }) => s.id)).not.toContain("acme/kit");
+    // And dismissing it clears the reason.
+    expect(skills.removeSource("acme/kit").sources.map((s: { id: string }) => s.id)).not.toContain("acme/kit");
+  });
+
+  it("refuses an archive that inflates past the cap, and keeps the catalog it had", async () => {
+    const { skills } = await load({ maxExpandedBytes: 1024 * 1024 });
+    // Two megabytes of zeros compress to about two kilobytes, so the download
+    // cap never sees this one coming. The inflate is what has to stop it.
+    const bomb = zlib.gzipSync(Buffer.alloc(2 * 1024 * 1024));
+    expect(bomb.length).toBeLessThan(MAX_TARBALL_BYTES);
+    fetchImpl.mockImplementation(async (url: string) =>
+      url.startsWith("https://api.github.com/")
+        ? response({ sha: "b".repeat(40) })
+        : response(null, { bytes: bomb })
+    );
+    const catalog = await skills.refresh("acme/kit");
+    const source = catalog.sources.find((s: { id: string }) => s.id === "acme/kit");
+    expect(source.error).toMatch(/unpacks to more than 1 MB/);
+    expect(catalog.skills.some((s: { name: string }) => s.name === "pdf")).toBe(true);
   });
 
   it("extracts the skill's files and keeps scripts executable", async () => {
@@ -289,6 +331,39 @@ describe("skill registry", () => {
     expect(store.sources.size).toBe(0);
     expect(parseOwnerRepo("owner/repo")).toEqual({ owner: "owner", repo: "repo" });
     expect(parseOwnerRepo("owner/repo/extra")).toBeNull();
+  });
+
+  // Both segments become directory names under the download cache, and
+  // removing a source hands that directory to a recursive delete.
+  it("refuses a repository name made only of dots", () => {
+    for (const bad of ["../..", "a/..", "../a", "a/.", "./.", ".../..."]) {
+      expect(parseOwnerRepo(bad), bad).toBeNull();
+    }
+    expect(parseOwnerRepo("a.b/c.d")).toEqual({ owner: "a.b", repo: "c.d" });
+  });
+
+  it("knows what is inside a folder and what is not", () => {
+    const root = path.join(tmp, "cache");
+    expect(insideDir(root, path.join(root, "acme", "kit"))).toBe(true);
+    expect(insideDir(root, root)).toBe(false);
+    expect(insideDir(root, path.join(root, "..", ".."))).toBe(false);
+    expect(insideDir(root, path.join(root, "acme", "..", "..", "elsewhere"))).toBe(false);
+    expect(insideDir(root, `${root}-next`)).toBe(false);
+  });
+
+  it("deletes nothing outside the cache when asked to remove a source", async () => {
+    const { skills } = await load();
+    // What `skill-cache/../..` would have reached: on a real machine, the
+    // application support folder Markie's own database lives in.
+    const precious = path.join(tmp, "precious");
+    fs.mkdirSync(precious, { recursive: true });
+    fs.writeFileSync(path.join(precious, "keep.txt"), "not yours\n", "utf8");
+    for (const bad of ["../..", "../precious", "a/.."]) {
+      skills.removeSource(bad);
+    }
+    expect(fs.existsSync(path.join(precious, "keep.txt"))).toBe(true);
+    expect(fs.existsSync(path.join(cacheDir, "acme", "kit", "catalog.json"))).toBe(true);
+    expect(store.sources.has("acme/kit")).toBe(true);
   });
 
   // ── Install ──────────────────────────────────────────────────────────────
@@ -372,6 +447,184 @@ describe("skill registry", () => {
     expect(again.errors).toEqual([]);
     expect(fs.existsSync(path.join(dest, "leftover.md"))).toBe(false);
     expect(fs.existsSync(path.join(dest, "SKILL.md"))).toBe(true);
+  });
+
+  it("refuses to replace a skill that came from a different source", async () => {
+    const { skills } = await installOnce();
+    const dest = path.join(home, ".claude", "skills", "pdf");
+    // A second repository offering a skill by the same name. Owning the folder
+    // is not the same as owning it on behalf of anyone who asks.
+    const rival = buildRepoTarball(path.join(tmp, "rival"), {
+      "skills/pdf/SKILL.md": skillDoc("pdf", "A different pdf skill entirely."),
+      "skills/pdf/rival.md": "# Rival\n",
+    });
+    fetchImpl.mockImplementation(async (url: string) => {
+      if (url.startsWith("https://api.github.com/")) return response({ sha: "e".repeat(40) });
+      if (url.includes("/rival/kit/")) return response(null, { bytes: rival });
+      return response(null, { bytes: tarball });
+    });
+    await skills.addSource("rival/kit");
+    const result = skills.install("rival/kit/skills/pdf", ["claude"]);
+    expect(result.installed).toEqual([]);
+    expect(result.errors[0].error).toBe("exists");
+    expect(result.errors[0].message).toBe("pdf is already installed from acme/kit. Remove it first.");
+    expect(fs.existsSync(path.join(dest, "rival.md"))).toBe(false);
+    expect(fs.readFileSync(path.join(dest, "reference.md"), "utf8")).toBe("# Reference\n");
+    expect(store.installs.get(dest)!.source).toBe("acme/kit");
+  });
+
+  // ── The update is a swap, not a delete and a hope ────────────────────────
+
+  it("leaves the version it had when there is nothing to copy from", async () => {
+    const { skills } = await installOnce();
+    const dest = path.join(home, ".claude", "skills", "pdf");
+    const before = { ...store.installs.get(dest)! };
+    // The cache the copy reads from goes away between the two installs.
+    fs.rmSync(path.join(cacheDir, "acme", "kit", COMMIT, "skills", "pdf"), {
+      recursive: true,
+      force: true,
+    });
+    const again = skills.install("acme/kit/skills/pdf", ["claude"]);
+    expect(again.installed).toEqual([]);
+    expect(again.errors[0].error).toBe("copy-failed");
+    expect(fs.readFileSync(path.join(dest, "SKILL.md"), "utf8")).toContain("name: pdf");
+    expect(fs.readFileSync(path.join(dest, "reference.md"), "utf8")).toBe("# Reference\n");
+    expect(store.installs.get(dest)).toEqual(before);
+    expect(fs.readdirSync(path.dirname(dest))).toEqual(["pdf"]);
+  });
+
+  // A file with no read permission is how a copy is made to stop part way
+  // through. Root reads it anyway, and Windows has no such bit.
+  const canDenyRead =
+    process.platform !== "win32" && typeof process.getuid === "function" && process.getuid() !== 0;
+
+  it.skipIf(!canDenyRead)("leaves the version it had when the copy fails half way through", async () => {
+    const { skills } = await installOnce();
+    const dest = path.join(home, ".claude", "skills", "pdf");
+    const before = { ...store.installs.get(dest)! };
+    // One file in the cache that cannot be read, so the copy writes some of
+    // the folder and then stops: what a disk error or a locked file looks
+    // like from here.
+    const unreadable = path.join(cacheDir, "acme", "kit", COMMIT, "skills", "pdf", "reference.md");
+    fs.chmodSync(unreadable, 0o000);
+    let again;
+    try {
+      again = skills.install("acme/kit/skills/pdf", ["claude"]);
+    } finally {
+      fs.chmodSync(unreadable, 0o644);
+    }
+    expect(again.installed).toEqual([]);
+    expect(again.errors[0].error).toBe("copy-failed");
+    expect(fs.readFileSync(path.join(dest, "SKILL.md"), "utf8")).toContain("name: pdf");
+    expect(fs.readFileSync(path.join(dest, "reference.md"), "utf8")).toBe("# Reference\n");
+    expect(store.installs.get(dest)).toEqual(before);
+    // And no half-copied staging folder is left beside it.
+    expect(fs.readdirSync(path.dirname(dest))).toEqual(["pdf"]);
+  });
+
+  it("puts the previous folder back when the registry will not take the row", async () => {
+    const { skills } = await installOnce();
+    const dest = path.join(home, ".claude", "skills", "pdf");
+    // Something only the old copy has, so "the previous folder is back" is a
+    // different claim from "the new copy is still there".
+    fs.writeFileSync(path.join(dest, "only-in-the-old-one.md"), "v1\n", "utf8");
+    const before = { ...store.installs.get(dest)! };
+    store.skillInstallSet = () => {
+      throw new Error("database is locked");
+    };
+    const again = skills.install("acme/kit/skills/pdf", ["claude"]);
+    expect(again.installed).toEqual([]);
+    expect(again.errors[0].error).toBe("copy-failed");
+    expect(again.errors[0].message).toContain("database is locked");
+    expect(fs.readFileSync(path.join(dest, "only-in-the-old-one.md"), "utf8")).toBe("v1\n");
+    expect(store.installs.get(dest)).toEqual(before);
+    expect(fs.readdirSync(path.dirname(dest))).toEqual(["pdf"]);
+  });
+
+  it("cleans up after itself when a first install fails", async () => {
+    const { skills } = await load();
+    store.skillInstallSet = () => {
+      throw new Error("database is locked");
+    };
+    const result = skills.install("acme/kit/skills/pdf", ["claude"]);
+    expect(result.errors[0].error).toBe("copy-failed");
+    // Nothing was installed, so nothing may be left behind: a folder with no
+    // row is one every later attempt refuses as somebody else's.
+    expect(fs.existsSync(path.join(home, ".claude", "skills", "pdf"))).toBe(false);
+    expect(fs.readdirSync(path.join(home, ".claude", "skills"))).toEqual([]);
+  });
+
+  // ── The row is the record, not a recomputed path ─────────────────────────
+
+  it("removes an install by its recorded path after the tool's folder moves", async () => {
+    const env: Record<string, string> = { CODEX_HOME: path.join(home, ".config", "codex-one") };
+    const { skills } = await load({ env });
+    const dest = path.join(home, ".config", "codex-one", "skills", "pdf");
+    expect(skills.install("acme/kit/skills/pdf", ["codex"]).installed).toEqual([
+      { target: "codex", path: dest },
+    ]);
+    // The user points Codex somewhere else. The folder Markie made is still
+    // the folder Markie made, and it is still under the home folder.
+    env.CODEX_HOME = path.join(home, ".config", "codex-two");
+    expect(skills.remove("codex", "pdf")).toEqual({ ok: true });
+    expect(fs.existsSync(dest)).toBe(false);
+    expect(store.installs.size).toBe(0);
+  });
+
+  it("updates the folder it made rather than making a second one", async () => {
+    const env: Record<string, string> = { CODEX_HOME: path.join(home, ".config", "codex-one") };
+    const { skills } = await load({ env });
+    const dest = path.join(home, ".config", "codex-one", "skills", "pdf");
+    skills.install("acme/kit/skills/pdf", ["codex"]);
+    env.CODEX_HOME = path.join(home, ".config", "codex-two");
+    const again = skills.install("acme/kit/skills/pdf", ["codex"]);
+    expect(again.errors).toEqual([]);
+    expect(again.installed).toEqual([{ target: "codex", path: dest }]);
+    expect(fs.existsSync(path.join(home, ".config", "codex-two", "skills", "pdf"))).toBe(false);
+    expect(store.installs.size).toBe(1);
+  });
+
+  it("will not act on a recorded path that is not a skill folder", async () => {
+    const { skills } = await installOnce();
+    const dest = path.join(home, ".claude", "skills", "pdf");
+    const row = store.installs.get(dest)!;
+    store.installs.delete(dest);
+    // A corrupt record, pointing at the user's home folder.
+    store.installs.set(home, { ...row, path: home });
+    const result = skills.remove("claude", "pdf");
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("not a skill folder");
+    expect(fs.existsSync(home)).toBe(true);
+    expect(fs.existsSync(path.join(home, ".claude"))).toBe(true);
+  });
+
+  it("will not touch a recorded folder outside every root it may write to", async () => {
+    // A config folder outside home and outside every project is allowed while
+    // the tool points at it. Once the tool points elsewhere, nothing Markie
+    // may write to contains it any more.
+    const env: Record<string, string> = { CODEX_HOME: path.join(tmp, "elsewhere") };
+    const { skills } = await load({ env });
+    const dest = path.join(tmp, "elsewhere", "skills", "pdf");
+    expect(skills.install("acme/kit/skills/pdf", ["codex"]).installed).toEqual([
+      { target: "codex", path: dest },
+    ]);
+    env.CODEX_HOME = path.join(home, ".codex");
+    const removed = skills.remove("codex", "pdf");
+    expect(removed.ok).toBe(false);
+    expect(removed.error).toContain("outside every folder Markie may write to");
+    expect(fs.existsSync(path.join(dest, "SKILL.md"))).toBe(true);
+    expect(store.installs.size).toBe(1);
+    // Nor does an update go there, or start a second copy at the new folder.
+    const again = skills.install("acme/kit/skills/pdf", ["codex"]);
+    expect(again.installed).toEqual([]);
+    expect(again.errors[0].error).toBe("copy-failed");
+    expect(again.errors[0].message).toContain("outside every folder Markie may write to");
+    expect(fs.existsSync(path.join(home, ".codex", "skills", "pdf"))).toBe(false);
+    expect(store.installs.size).toBe(1);
+    // Pointing the tool back at it is what makes it Markie's again.
+    env.CODEX_HOME = path.join(tmp, "elsewhere");
+    expect(skills.remove("codex", "pdf")).toEqual({ ok: true });
+    expect(fs.existsSync(dest)).toBe(false);
   });
 
   // ── The lock file ────────────────────────────────────────────────────────

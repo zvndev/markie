@@ -170,6 +170,34 @@ describe("library overview", () => {
     ]);
   });
 
+  it("keeps a file the cloud never heard of out of the synced group", () => {
+    const organized = organizeLibraryItems([
+      item({ path: "/docs/local.md", name: "local.md", state: "local-only" }),
+      item({ path: "/docs/synced.md", name: "synced.md", state: "synced", cloudId: "c1" }),
+      item({ path: "/docs/paused.md", name: "paused.md", state: "paused", cloudId: "c2" }),
+      item({ path: "/docs/behind.md", name: "behind.md", state: "behind", cloudId: "c3" }),
+      item({ path: "/docs/unpushed.md", name: "unpushed.md", state: "unpushed", cloudId: "c4" }),
+      item({ path: "/docs/conflict.md", name: "conflict.md", state: "conflict", cloudId: "c5" }),
+      item({
+        kind: "cloud-only",
+        path: null,
+        name: "cloud.md",
+        state: "cloud-only",
+        cloudId: "c6",
+        exists: false,
+      }),
+    ]);
+
+    // Attention order, the same one the Library rows use.
+    expect(organized.syncedFromDevice.map((entry) => entry.name)).toEqual([
+      "unpushed.md",
+      "conflict.md",
+      "behind.md",
+      "paused.md",
+      "synced.md",
+    ]);
+  });
+
   it("sorts an unpushed doc above every other attention state", () => {
     // It is the only state where the newest copy of the edit exists in exactly
     // one place, so it has to be the first row the user sees.

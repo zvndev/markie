@@ -12,10 +12,25 @@ export interface LibraryOverview {
 
 export interface OrganizedLibraryItems {
   localFiles: LibraryItem[];
+  // Files of this device the cloud also knows about, in any of its states.
+  // The Library shows every local file together; the Cloud page shows only
+  // this subset, because a file the cloud has never heard of has nothing to
+  // say there.
+  syncedFromDevice: LibraryItem[];
   myCloudOnly: LibraryItem[];
   sharedItems: LibraryItem[];
   sharedCloudOnly: LibraryItem[];
 }
+
+// Every state that means "the cloud holds a copy of this file". "local-only" is
+// the one state a local file can be in that the cloud knows nothing about.
+const CLOUD_STATES: ReadonlyArray<LibraryItem["state"]> = [
+  "synced",
+  "unpushed",
+  "conflict",
+  "behind",
+  "paused",
+];
 
 export function summarizeLibrary(items: LibraryItem[]): LibraryOverview {
   return items.reduce<LibraryOverview>(
@@ -47,6 +62,9 @@ export function organizeLibraryItems(items: LibraryItem[]): OrganizedLibraryItem
   const sharedItems = sortLibraryItems(items.filter((item) => item.shared));
   return {
     localFiles: sortLibraryItems(items.filter((item) => item.path)),
+    syncedFromDevice: sortLibraryItems(
+      items.filter((item) => item.path && CLOUD_STATES.includes(item.state))
+    ),
     myCloudOnly: sortLibraryItems(items.filter((item) => !item.path && !item.shared)),
     sharedItems,
     sharedCloudOnly: sharedItems.filter((item) => !item.path),
@@ -62,7 +80,7 @@ export function libraryItemNeedsAttention(item: LibraryItem): boolean {
   );
 }
 
-function sortLibraryItems(items: LibraryItem[]): LibraryItem[] {
+export function sortLibraryItems(items: LibraryItem[]): LibraryItem[] {
   return [...items].sort((a, b) => {
     const attention = attentionRank(b) - attentionRank(a);
     if (attention !== 0) return attention;

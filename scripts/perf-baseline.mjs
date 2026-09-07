@@ -33,7 +33,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { cpus, loadavg, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
@@ -420,6 +420,98 @@ async function waitForEditorSize(cdp, min, capMs, since = Date.now(), max = Infi
   return null;
 }
 
+const LANDING_POLL_MS = 150;
+// How many quick answers in a row count as "the renderer is usable again".
+const SETTLE_CONFIRMATIONS = 3;
+const SETTLE_DEADLINE_MS = 200;
+
+// Both landing signals in one probe, so watching for them costs one request per
+// poll rather than two.
+const landingProbe = (name) =>
+  `(() => {
+    let editorSize = 0;
+    try { editorSize = window.__markieEditor?.state?.doc?.content?.size ?? 0; } catch {}
+    const label = (${NAME_SELECTOR}?.textContent || "").trim();
+    return JSON.stringify({ named: label.startsWith(${JSON.stringify(name)}), editorSize });
+  })()`;
+
+// Watch a document land, from the moment it was asked for.
+//
+// Starting at the click rather than after the sampling window is the point: an
+// observer that cannot look until the twenty second window closes would report a
+// build that lands the fixture in three seconds as twenty, and that improvement
+// is exactly what this baseline exists to detect.
+//
+// Landing is deliberately two events, because the first one alone lies. Both
+// probe signals are state, not paint: `state.doc.content.size` becomes millions
+// as soon as the ProseMirror document is built, which is long before the DOM for
+// 33,700 blocks exists. On 0.5.4 the renderer reports the new document and then
+// wedges for another minute building that DOM, and a capture that called the
+// first moment "landed" recorded 1.7 s for a document the app could not then
+// accept a click about for another thirty seconds.
+//
+//   stateSeenMs — the first moment the renderer reported the new document.
+//   settledMs   — the first moment after that when it answered
+//                 SETTLE_CONFIRMATIONS quick probes in a row, which is when a
+//                 person would say the document is open.
+//
+// Returns a promise; start it at the click, await it after the samples.
+function watchLanding(cdp, { name, minEditorSize, capMs, since }) {
+  const observed = { toolbarNamedMs: null, editorReadyMs: null, stateSeenMs: null, settledMs: null };
+  const done = (async () => {
+    const deadline = since + capMs;
+    let streak = 0;
+    while (Date.now() < deadline) {
+      const reply = await cdp.evaluate(landingProbe(name), 1000);
+      const at = Date.now() - since;
+      let state = null;
+      if (reply.ok && typeof reply.value === "string") {
+        try {
+          state = JSON.parse(reply.value);
+        } catch {
+          state = null;
+        }
+      }
+      if (state) {
+        if (observed.toolbarNamedMs === null && state.named) observed.toolbarNamedMs = at;
+        if (observed.editorReadyMs === null && state.editorSize >= minEditorSize) {
+          observed.editorReadyMs = at;
+        }
+        if (
+          observed.stateSeenMs === null &&
+          observed.toolbarNamedMs !== null &&
+          observed.editorReadyMs !== null
+        ) {
+          observed.stateSeenMs = at;
+        }
+      }
+      if (observed.stateSeenMs !== null) {
+        // Confirm the renderer is actually usable, not just momentarily
+        // reachable between two long blocks of work.
+        streak = 0;
+        for (let i = 0; i < SETTLE_CONFIRMATIONS; i += 1) {
+          const beat = await cdp.send(
+            "Runtime.evaluate",
+            { expression: "1+1", returnByValue: true },
+            SETTLE_DEADLINE_MS
+          );
+          if (!beat.ok) break;
+          streak += 1;
+          if (streak < SETTLE_CONFIRMATIONS) await sleep(SETTLE_DEADLINE_MS);
+        }
+        if (streak === SETTLE_CONFIRMATIONS) {
+          observed.settledMs = Date.now() - since;
+          break;
+        }
+      }
+      await sleep(LANDING_POLL_MS);
+    }
+    return observed;
+  })();
+  done.catch(() => {});
+  return done;
+}
+
 // Wait until the toolbar names the document. Each poll carries its own deadline
 // so a frozen renderer costs a poll, not the run.
 async function waitForToolbarName(cdp, name, capMs, since = Date.now()) {
@@ -633,6 +725,14 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
     // Nothing awaits this before the samples run; keep a rejection from
     // reaching the process as an unhandled one.
     largeClickPromise.catch(() => {});
+    // Started here, awaited after the samples: the landing clock has to run
+    // from the click even when the document lands inside the sampling window.
+    const landingWatch = watchLanding(cdp, {
+      name: path.basename(largePath),
+      minEditorSize: LARGE_EDITOR_MIN,
+      capMs: LARGE_LAND_CAP_MS,
+      since: largeStart,
+    });
     const samples = [];
     for (let i = 0; i < SAMPLE_COUNT; i += 1) {
       const dueAt = largeStart + (i + 1) * SAMPLE_INTERVAL_MS;
@@ -662,23 +762,19 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
         if (stall > longestStall) longestStall = stall;
       }
     }
-    // The sampling window is over; now wait for the 4.4 MB document to actually
-    // land. The switch back cannot be timed until it has: until React commits
-    // the large document the toolbar is still naming the small one, and a
-    // toolbar reading a click later would then "prove" a switch that never
-    // happened. Landing is the toolbar naming the large document, confirmed by
-    // the editor holding a document of its size.
-    const largeNamedMs = await waitForToolbarName(
-      cdp,
-      path.basename(largePath),
-      LARGE_LAND_CAP_MS,
-      largeStart
-    );
-    const largeEditorMs =
-      largeNamedMs === null
-        ? null
-        : await waitForEditorSize(cdp, LARGE_EDITOR_MIN, LARGE_LAND_CAP_MS, largeStart);
-    const largeLanded = largeNamedMs !== null && largeEditorMs !== null;
+    // The sampling window is over. Collect what the watcher saw, which may
+    // already be everything if the document landed while the samples ran.
+    //
+    // The switch back cannot be timed until the document has landed: until React
+    // commits it the toolbar is still naming the small one, and a toolbar
+    // reading a click later would then "prove" a switch that never happened.
+    // Landing is the toolbar naming the large document, confirmed by the editor
+    // holding a document of its size.
+    const landing = await landingWatch;
+    const largeNamedMs = landing.toolbarNamedMs;
+    const largeEditorMs = landing.editorReadyMs;
+    // Settled, not merely reported: see watchLanding.
+    const largeLanded = landing.settledMs !== null;
     result.largeDoc = {
       path: largePath,
       bytes: docs.large.bytes,
@@ -693,9 +789,11 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
       longestUnresponsiveStretchSeconds: longestStall,
       toolbarNamedMs: largeNamedMs,
       editorReadyMs: largeEditorMs,
+      stateSeenMs: landing.stateSeenMs,
+      settledMs: landing.settledMs,
       landCapMs: LARGE_LAND_CAP_MS,
       landed: largeLanded,
-      ...(largeLanded ? {} : { note: "large document never landed within the cap" }),
+      ...(largeLanded ? {} : { note: "large document never settled within the cap" }),
     };
     result.editorSizeWithLargeDoc = (await cdp.evaluate(EDITOR_SIZE_EXPR, 5000)).value ?? null;
 
@@ -709,7 +807,7 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
         timedOut: true,
         skipped: true,
         capMs: SWITCH_CAP_MS,
-        note: "not attempted: the 4.4 MB document never landed, so a switch back could not be told from no switch at all",
+        note: "not attempted: the 4.4 MB document never settled, so a switch back could not be told from no switch at all",
       };
     } else {
       const switchStart = Date.now();
@@ -784,8 +882,16 @@ function minimum(values) {
 
 const plain = (pick) => ({ pick });
 // `attempted` says the run reached the point where this metric applies, so a
-// null there is a timeout rather than a run that never got that far.
-const censored = (pick, capMs, attempted) => ({ pick, capMs, attempted });
+// null there is a timeout rather than a run that never got that far. `skipped`
+// says the run deliberately did not take the measurement, which is neither a
+// number nor a timeout and must not be substituted with the cap: counting a
+// skipped switch as a 30 second one invents a slow result out of an absent one.
+const censored = (pick, capMs, attempted, skipped = () => false) => ({
+  pick,
+  capMs,
+  attempted,
+  skipped,
+});
 
 const METRICS = {
   launchMs: plain((r) => r.launch?.spawnToLoadEventFiredMs ?? r.launch?.spawnToLoadEventEndMs),
@@ -816,25 +922,46 @@ const METRICS = {
     (r) => !!r.largeDoc
   ),
   largeDocLongestStallSeconds: plain((r) => r.largeDoc?.longestUnresponsiveStretchSeconds),
-  largeDocLandedMs: censored((r) => r.largeDoc?.editorReadyMs, LARGE_LAND_CAP_MS, (r) => !!r.largeDoc),
-  switchBackMs: censored((r) => r.switchBack?.ms, SWITCH_CAP_MS, (r) => !!r.switchBack),
+  largeDocStateSeenMs: censored((r) => r.largeDoc?.stateSeenMs, LARGE_LAND_CAP_MS, (r) => !!r.largeDoc),
+  largeDocLandedMs: censored((r) => r.largeDoc?.settledMs, LARGE_LAND_CAP_MS, (r) => !!r.largeDoc),
+  switchBackMs: censored(
+    (r) => r.switchBack?.ms,
+    SWITCH_CAP_MS,
+    (r) => !!r.switchBack && !r.switchBack.skipped,
+    (r) => r.switchBack?.skipped === true
+  ),
   switchBackClickExecutedMs: censored(
     (r) => r.switchBack?.clickExecutedMs,
     SWITCH_CAP_MS,
-    (r) => !!r.switchBack && !r.switchBack.skipped
+    (r) => !!r.switchBack && !r.switchBack.skipped,
+    (r) => r.switchBack?.skipped === true
   ),
 };
 
+/**
+ * @typedef {{ capMs: number, attemptedRuns: number, completedRuns: number,
+ *   timedOutRuns: number, skippedRuns: number, medianAtOrAboveCap: boolean,
+ *   medianOfCompletedMs: number | null }} CensoredMetric
+ */
 export function summarize(runs) {
+  /** @type {Record<string, number | null>} */
   const medians = {};
+  /** @type {Record<string, number | null>} */
   const minimums = {};
+  /** @type {Record<string, number>} */
   const samples = {};
+  /** @type {Record<string, CensoredMetric>} */
   const censoredSummary = {};
   for (const [key, metric] of Object.entries(METRICS)) {
     const completed = [];
     let attempted = 0;
     let timedOut = 0;
+    let skipped = 0;
     for (const run of runs) {
+      if (metric.capMs && metric.skipped?.(run)) {
+        skipped += 1;
+        continue;
+      }
       const value = metric.pick(run);
       if (typeof value === "number" && Number.isFinite(value)) {
         completed.push(value);
@@ -852,12 +979,13 @@ export function summarize(runs) {
     medians[key] = median(aggregated);
     minimums[key] = minimum(aggregated);
     samples[key] = completed.length;
-    if (metric.capMs && attempted) {
+    if (metric.capMs && (attempted || skipped)) {
       censoredSummary[key] = {
         capMs: metric.capMs,
         attemptedRuns: attempted,
         completedRuns: completed.length,
         timedOutRuns: timedOut,
+        skippedRuns: skipped,
         medianAtOrAboveCap: medians[key] !== null && medians[key] >= metric.capMs,
         medianOfCompletedMs: median(completed),
       };
@@ -867,18 +995,21 @@ export function summarize(runs) {
 }
 
 // "3/3 runs, 9.0s" when everything completed; "1/3 runs, 9.0s when it did" when
-// some run hit the cap; "0/3 runs (>20s)" when none did.
+// some run hit the cap; "0/3 runs (>20s)" when none did. A run that skipped the
+// measurement is named rather than folded into either count.
 export function censoredText(summary, key, unit = "s") {
   const info = summary.censored?.[key];
   if (!info) {
     const value = summary.medians[key];
     return value === null ? "n/a" : `${(value / 1000).toFixed(1)}${unit}`;
   }
+  const skipped = info.skippedRuns ? `, ${info.skippedRuns} skipped` : "";
+  if (!info.attemptedRuns) return `not attempted (${info.skippedRuns} skipped)`;
   const cap = `>${Math.round(info.capMs / 1000)}${unit}`;
   const ratio = `${info.completedRuns}/${info.attemptedRuns} runs`;
-  if (info.completedRuns === 0) return `${ratio} (${cap})`;
+  if (info.completedRuns === 0) return `${ratio} (${cap})${skipped}`;
   const best = `${(info.medianOfCompletedMs / 1000).toFixed(1)}${unit}`;
-  return info.timedOutRuns ? `${ratio}, ${best} when it did` : `${ratio}, ${best}`;
+  return `${ratio}, ${best}${info.timedOutRuns ? " when it did" : ""}${skipped}`;
 }
 
 export function oneLine(runs, summary) {
@@ -971,7 +1102,8 @@ async function main() {
         `idle ${run.rssIdle?.totalMb ?? "n/a"}MB, doc ${run.rssDoc?.totalMb ?? "n/a"}MB, ` +
         `small doc ready ${run.smallDoc?.editorReadyMs ?? "n/a"}ms, ` +
         `responsive ${run.largeDoc?.responsiveSeconds ?? "n/a"}/${SAMPLE_COUNT}s, ` +
-        `landed ${run.largeDoc?.landed ? run.largeDoc.editorReadyMs + "ms" : "never"}, ` +
+        `state ${run.largeDoc?.stateSeenMs ?? "never"}ms, ` +
+        `settled ${run.largeDoc?.landed ? run.largeDoc.settledMs + "ms" : "never"}, ` +
         `switch ${run.switchBack?.timedOut ? "timed out" : (run.switchBack?.ms ?? "n/a") + "ms"}` +
         `${run.mainMemory?.idle ? `, main heap ${run.mainMemory.idle.heapUsedMb}MB` : ""}`
     );
@@ -993,6 +1125,11 @@ async function main() {
           return null;
         }
       })(),
+      cores: cpus().length,
+      // What else the machine was doing. A capture taken next to someone else's
+      // build is not comparable with one taken on a quiet laptop, and without
+      // this there is no way to tell them apart afterwards.
+      loadAverage: loadavg().map((v) => Number(v.toFixed(2))),
     },
     settings: {
       runs: options.runs,

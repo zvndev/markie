@@ -123,9 +123,39 @@ renderer answered in time.
 * `longestUnresponsiveStretchSeconds`: the longest run of consecutive samples
   that did not answer.
 * `toolbarNamedMs` and `editorReadyMs`: how long from the click until the
-  document actually lands, measured after the sampling window and capped at
-  `landCapMs` (120 s). `landed` is false, with an explicit `note`, if it never
-  did.
+  document actually lands, capped at `landCapMs` (120 s). `landed` is false,
+  with an explicit `note`, if it never did.
+
+  The watcher for these starts at the click and runs alongside the sampling
+  loop, not after it. That matters for the build this baseline exists to
+  compare against: if 0.6 lands the 4.4 MB fixture in three seconds, an observer
+  that could not look until the twenty second window closed would report it as
+  twenty, and the whole improvement would vanish into the sampling window. It is
+  polled every 150 ms, one request per poll for both signals.
+
+* `stateSeenMs` and `settledMs`: landing is two events, and the first one alone
+  lies. Both probe signals above are state, not paint:
+  `__markieEditor.state.doc.content.size` becomes millions as soon as the
+  ProseMirror document is built, which is long before the DOM for 33,700 blocks
+  exists. On 0.5.4 the renderer reports the new document and then wedges for
+  another minute building that DOM. A capture that called that first moment
+  "landed" recorded 1.7 s for a document the app could not then accept a click
+  about for another thirty seconds.
+
+  So `stateSeenMs` is the first moment the renderer reported the new document,
+  and `settledMs` is the first moment after that when it answered three quick
+  probes in a row, which is when a person would say the document is open.
+  `landed`, and the gate on the switch back, are `settledMs`.
+
+  The gap between the two is the most useful thing in this capture. On 0.5.4 the
+  4.4 MB document is parsed and in the editor's state after about 1.6 seconds,
+  and the app is not usable again for about another minute. Whatever costs that
+  minute, it is not the markdown parser.
+
+  This matters when comparing captures: on a contended machine the renderer is
+  descheduled more, which gives probes more windows to slip through, so a loaded
+  run reports a *smaller* `stateSeenMs` than a quiet one. `settledMs` does not
+  move that way. Compare captures with similar `host.loadAverage` regardless.
 
 ### switchBack
 
@@ -143,7 +173,9 @@ long the app took merely to accept the click.
 
 If the large document never landed, the switch is not attempted and is recorded
 as `skipped` with a note, because in that state a fast switch and no switch at
-all look identical.
+all look identical. A skipped switch is left out of the aggregation entirely
+rather than censored at the cap, and counted in `skippedRuns`: substituting 30
+seconds there would invent a slow result out of an absent one.
 
 So `switchBack.ms` answers "once the big document is finally open, how long to
 get back to the small one", and the cost of the freeze itself lives in
@@ -166,9 +198,22 @@ entirely: a first response of `[never, 9001, never]` would otherwise report a
 median of 9,001 ms, which reads as "it answers in nine seconds" when two runs in
 three never answered at all. Instead a timeout counts as its cap, so the median
 is at least as bad as the truth, and `summary.censored` carries the completion
-ratio, the cap, whether the median sits at the cap, and the median of only the
-runs that did complete. The one line summary says the same thing as
-`first response 1/3 runs, 10.0s when it did`.
+ratio, the cap, whether the median sits at the cap, the median of only the runs
+that did complete, and how many runs skipped the measurement outright. The one
+line summary says the same thing as `first response 1/3 runs, 10.0s when it
+did`, and appends `, 1 skipped` when a run declined to measure.
+
+A skipped run is not a timeout and is never substituted with the cap. If every
+run skipped a metric, its median is `null` and the summary reads
+`not attempted (N skipped)`.
+
+## Tests
+
+`scripts/perf-baseline.test.ts` covers the two parts that decide what a capture
+says rather than what it measures: which processes belong to one run of one
+bundle, and how a metric that can time out or be skipped is aggregated. Both
+have been wrong once already. Run them with
+`npx vitest run scripts/perf-baseline.test.ts`.
 
 ## Cold versus warm launch
 
@@ -176,16 +221,22 @@ Only a launch that reads the app bundle from disk is a cold launch. Once the
 bundle is in the OS page cache the app comes up in roughly a third of the time,
 and the cache stays warm for a long while.
 
-**The capture in `2026-09-07-baseline.json` contains no cold launch.** A
-verification run immediately preceded it, so all three runs found the bundle
-cached and report about 565 ms. Cold launches of this same build on this machine
-measured 1,803 ms, 1,894 ms and 2,196 ms. To capture a cold one, do not launch
-that bundle for a while before the run, and treat run 1 alone as the cold
-number. Purging the page cache needs `sudo purge` and is deliberately not done
-here.
+**The capture in `2026-09-07-baseline.json` contains no cold launch.** Earlier
+runs of the same bundle preceded it, so all three found it in the page cache and
+report 559 ms, 767 ms and 636 ms. Cold launches of this same build on this
+machine measured 1,803 ms, 1,894 ms, 2,067 ms and 2,196 ms. To capture a cold
+one, do not launch that bundle for a while before the run, and treat run 1 alone
+as the cold number. Purging the page cache needs `sudo purge` and is
+deliberately not done here.
 
 ## Captures
 
 * `2026-09-07-baseline.json`: Markie 0.5.4, packaged `dist/mac-arm64`, macOS 26.5
-  on Apple silicon, 3 runs, `--inspect-main` on.
-  `launch 564ms · rss idle 528MB · rss doc 756MB · 4.4MB: responsive 0/20s, first response 1/3 runs, 10.0s when it did · landed 3/3 runs, 64.6s · switch 3/3 runs, 0.4s`
+  on an 18 core Apple M5 Max, 3 runs, `--inspect-main` on, `host.loadAverage`
+  around 7.9.
+  `launch 636ms · rss idle 525MB · rss doc 753MB · 4.4MB: responsive 0/20s, first response 1/3 runs, 11.0s when it did · landed 3/3 runs, 63.3s · switch 3/3 runs, 0.4s`
+
+  The 4.4 MB document is in the editor's state at about 1.6 s
+  (`largeDocStateSeenMs`) and the app is usable again at about 63 s
+  (`largeDocLandedMs`), answering none to one of the 20 liveness samples in
+  between.

@@ -194,7 +194,7 @@ async function runTool(name, args) {
     }
     case "markie_list_skills": {
       const rows = await scan();
-      return groupSkills(rows).map((grp) => ({
+      return groupSkills(rows, { home: HOME }).map((grp) => ({
         tool: grp.label,
         files: grp.files.map((f) => ({ path: f.path, name: f.name })),
       }));

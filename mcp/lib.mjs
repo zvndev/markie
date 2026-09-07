@@ -3,18 +3,22 @@
 // can be unit-tested in isolation (node --test lib.test.mjs).
 import { resolve, join, sep, dirname, basename, win32 as winPath } from "node:path";
 import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 // Self-contained scan rules (no ../electron dependency — see scan.mjs header).
 import { isExcludedDir, allowlist } from "./scan.mjs";
-import { classifyAgentFile } from "./agent-classify.mjs";
+import { classifyAgentFile, isCachedAgentPath } from "./agent-classify.mjs";
 
 export const MD_RE = /\.(md|markdown|mdx)$/i;
 
-// Display order + labels for grouped skills — mirrors src/lib/agent-files.ts.
+// Display order + labels for grouped skills, mirroring src/lib/agent-files.ts,
+// plus the universal skills folder (~/.agents/skills), which every tool reads
+// and no tool owns.
 export const AGENT_TOOLS = [
   { id: "claude", label: "Claude" },
   { id: "openai", label: "OpenAI · Codex" },
   { id: "gemini", label: "Gemini" },
   { id: "cursor", label: "Cursor" },
+  { id: "universal", label: "Universal" },
 ];
 
 function relSegments(full, home) {
@@ -135,13 +139,43 @@ export function matchQuery(row, query) {
 
 // Which agent tool a file belongs to, or null. ONE definition, shared with the
 // app: re-exported rather than mirrored, because the mirror drifted.
-export { classifyAgentFile, isCachedAgentPath } from "./agent-classify.mjs";
+export { classifyAgentFile, isCachedAgentPath };
+
+// Which tool's folder a scanned file is in, by the roots the scan reads: the
+// Claude and Codex config folders as configured (else their conventional
+// homes) and the three tools that only ever have a skills folder. The path's
+// spelling is no guide on its own: a Codex home moved to ~/.config/codex has
+// no ".codex" in it, and nothing in "~/.agents" names a tool. Mirrors
+// skillToolFor in electron/mdindex.js, with this server's group ids.
+function skillRoots(home, env) {
+  const configured = (value) => (typeof value === "string" && value.trim() ? resolve(value) : null);
+  return [
+    ["claude", configured(env?.CLAUDE_CONFIG_DIR) || join(home, ".claude")],
+    ["openai", configured(env?.CODEX_HOME) || join(home, ".codex")],
+    ["cursor", join(home, ".cursor")],
+    ["gemini", join(home, ".gemini")],
+    ["universal", join(home, ".agents")],
+  ];
+}
+
+export function skillToolFor(path, { home = homedir(), env = process.env, platform = process.platform } = {}) {
+  const fold = (p) => (platform === "win32" ? p.toLowerCase() : p);
+  const full = fold(resolve(String(path || "")));
+  if (isCachedAgentPath(full)) return null;
+  for (const [tool, root] of skillRoots(home, env)) {
+    if (full.startsWith(fold(resolve(root)) + sep)) return tool;
+  }
+  return null;
+}
 
 // Group scan rows into agent tools (display order), dropping empty groups.
-export function groupSkills(rows) {
+// A row under one of the skills folders the scan reads is that tool's; the
+// instruction files elsewhere (a project's CLAUDE.md, say) still classify by
+// name and path.
+export function groupSkills(rows, { home = homedir(), env = process.env } = {}) {
   const byTool = new Map();
   for (const r of rows) {
-    const tool = classifyAgentFile(r.path, r.name);
+    const tool = skillToolFor(r.path, { home, env }) || classifyAgentFile(r.path, r.name);
     if (!tool) continue;
     const arr = byTool.get(tool);
     if (arr) arr.push(r);

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { guardPath, matchQuery, classifyAgentFile, isCachedAgentPath, groupSkills, markieOpenCommand } from "./lib.mjs";
+import { guardPath, matchQuery, classifyAgentFile, isCachedAgentPath, groupSkills, markieOpenCommand, AGENT_TOOLS } from "./lib.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, realpathSync, rmSync, existsSync } from "node:fs";
 import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { MARKDOWN_GUIDE, GUIDE_URI, guideEssentials } from "./markdown-guide.mjs";
@@ -223,6 +223,68 @@ test("groupSkills groups classified files by tool, in display order", () => {
   assert.deepEqual(ids, ["claude", "openai"]);
   assert.equal(groups[0].files.length, 2); // CLAUDE.md + SKILL.md
   assert.equal(groups[1].files.length, 1); // AGENTS.md
+});
+
+// The index scans five skills folders plus the two a user can move, and the
+// classifier knew about two of them: a skill under ~/.agents, ~/.cursor or
+// ~/.gemini was scanned and then dropped from markie_list_skills, and one
+// under a moved CODEX_HOME had no ".codex" in its path to be recognised by.
+test("groupSkills files a skill under every folder the scan reads, by the configured roots", () => {
+  const home = "/home/u";
+  const env = { CLAUDE_CONFIG_DIR: "/home/u/.config/claude", CODEX_HOME: "/home/u/.config/codex" };
+  const rows = [
+    { name: "SKILL.md", path: "/home/u/.config/claude/skills/a/SKILL.md", dir: "/home/u/.config/claude/skills/a" },
+    { name: "SKILL.md", path: "/home/u/.config/codex/skills/b/SKILL.md", dir: "/home/u/.config/codex/skills/b" },
+    { name: "SKILL.md", path: "/home/u/.cursor/skills/c/SKILL.md", dir: "/home/u/.cursor/skills/c" },
+    { name: "SKILL.md", path: "/home/u/.gemini/skills/d/SKILL.md", dir: "/home/u/.gemini/skills/d" },
+    { name: "SKILL.md", path: "/home/u/.agents/skills/e/SKILL.md", dir: "/home/u/.agents/skills/e" },
+    { name: "README.md", path: "/home/u/notes/README.md", dir: "/home/u/notes" },
+  ];
+  const groups = groupSkills(rows, { home, env });
+  const byId = Object.fromEntries(groups.map((g) => [g.id, g.files.map((f) => f.path)]));
+  assert.deepEqual(byId.claude, ["/home/u/.config/claude/skills/a/SKILL.md"]);
+  assert.deepEqual(byId.openai, ["/home/u/.config/codex/skills/b/SKILL.md"]);
+  assert.deepEqual(byId.cursor, ["/home/u/.cursor/skills/c/SKILL.md"]);
+  assert.deepEqual(byId.gemini, ["/home/u/.gemini/skills/d/SKILL.md"]);
+  assert.deepEqual(byId.universal, ["/home/u/.agents/skills/e/SKILL.md"]);
+  assert.deepEqual(groups.map((g) => g.id), ["claude", "openai", "gemini", "cursor", "universal"]);
+  assert.ok(AGENT_TOOLS.some((t) => t.id === "universal" && t.label === "Universal"));
+});
+
+test("a scan of a home with every skills folder lists every skill, moved Codex home included", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-skillscan-")));
+  const previous = process.env.CODEX_HOME;
+  try {
+    process.env.CODEX_HOME = pjoin(home, ".config", "codex");
+    const folders = {
+      ".claude": "claude",
+      ".codex": "openai",
+      ".cursor": "cursor",
+      ".gemini": "gemini",
+      ".agents": "universal",
+      ".config/codex": "openai",
+    };
+    for (const folder of Object.keys(folders)) {
+      const dir = pjoin(home, folder, "skills", folder.replace(/[./]/g, "") + "-skill");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(pjoin(dir, "SKILL.md"), "---\nname: x\ndescription: y\n---\n");
+    }
+    const rows = await walk(home, { home });
+    const skills = rows.filter((r) => r.name === "SKILL.md");
+    assert.equal(skills.length, 6, "the scan reaches every folder");
+    const groups = groupSkills(rows, { home, env: process.env });
+    const listed = groups.flatMap((g) => g.files.map((f) => [g.id, f.path]));
+    assert.equal(listed.length, 6, "and every skill is grouped");
+    for (const [folder, tool] of Object.entries(folders)) {
+      const hit = listed.find(([, p]) => p.startsWith(pjoin(home, folder, "skills") + "/"));
+      assert.ok(hit, `${folder} is listed`);
+      assert.equal(hit[0], tool, `${folder} lands under ${tool}`);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("markieOpenCommand uses the Markie app on macOS", () => {

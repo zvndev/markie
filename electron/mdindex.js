@@ -3,9 +3,15 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const { parseFrontmatter } = require("./skill-frontmatter");
 
 const fsp = fs.promises;
 const MD_RE = /\.(md|markdown|mdx)$/i;
+const SKILL_RE = /^skill\.md$/i;
+// How much of a SKILL.md is read for its description. The front matter is at
+// the top and a few hundred bytes long; a skill that pads it past this is
+// one whose description is not worth a bigger read.
+const SKILL_HEAD_BYTES = 64 * 1024;
 
 // Non-dot directories that are vendored, generated, or system noise.
 //
@@ -124,6 +130,49 @@ function allowlist(home, env = process.env) {
   return [...new Set(dirs)];
 }
 
+// Which tool's folder a path is in, by the roots main knows: the Claude and
+// Codex config folders as configured (else their conventional homes) and the
+// three tools that only ever have a skills folder. Decided from the roots
+// rather than from the path's spelling, because a Codex home moved to
+// ~/.config/codex has no ".codex" in it. Anything else, a project folder
+// included, is null.
+function skillRoots(home, env = process.env) {
+  const configured = (value) => (typeof value === "string" && value.trim() ? path.resolve(value) : null);
+  return [
+    ["claude", configured(env?.CLAUDE_CONFIG_DIR) || path.join(home, ".claude")],
+    ["codex", configured(env?.CODEX_HOME) || path.join(home, ".codex")],
+    ["cursor", path.join(home, ".cursor")],
+    ["gemini", path.join(home, ".gemini")],
+    ["universal", path.join(home, ".agents")],
+  ];
+}
+
+function skillToolFor(filePath, { home = os.homedir(), env = process.env, platform = process.platform } = {}) {
+  const fold = (p) => (platform === "win32" ? p.toLowerCase() : p);
+  const full = fold(path.resolve(String(filePath || "")));
+  for (const [tool, root] of skillRoots(home, env)) {
+    if (full.startsWith(fold(path.resolve(root)) + path.sep)) return tool;
+  }
+  return null;
+}
+
+// The `description` in a SKILL.md's front matter, or null when there is none
+// or the file cannot be read. Only the head of the file is read.
+async function skillDescription(filePath) {
+  let handle;
+  try {
+    handle = await fsp.open(filePath, "r");
+    const buffer = Buffer.alloc(SKILL_HEAD_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, SKILL_HEAD_BYTES, 0);
+    const value = parseFrontmatter(buffer.toString("utf8", 0, bytesRead)).fields.description;
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  } catch {
+    return null;
+  } finally {
+    if (handle) await handle.close().catch(() => {});
+  }
+}
+
 // True if any path segment of `full` (relative to home) is itself an excluded
 // dir name. This catches children re-exposed when we force-descend a dot-dir
 // for the allowlist: e.g. `.claude/sessions` has the excluded `.claude` segment.
@@ -200,11 +249,12 @@ async function walk(rootDir, {
   budget = {},
   now = Date.now,
   stats = {},
+  env = process.env,
 } = {}) {
   const limits = { ...DEFAULT_BUDGET, ...budget };
   const startedAt = now();
   // Hoisted: these were rebuilt for every directory the walk touched.
-  const allow = allowlist(home);
+  const allow = allowlist(home, env);
   const skip = skippedDirs({ home, platform, realpath, roots });
   const registered = (roots || []).filter(Boolean).map((r) => path.resolve(r));
   const out = [];
@@ -238,7 +288,16 @@ async function walk(rootDir, {
         }
         let mtimeMs = 0;
         try { mtimeMs = (await fsp.stat(full)).mtimeMs; } catch { /* keep 0 */ }
-        out.push({ path: full, name: ent.name, dir, mtimeMs });
+        const row = { path: full, name: ent.name, dir, mtimeMs };
+        // A SKILL.md says which tool it belongs to and what it is for, so the
+        // Skills panel can group and describe it without a second read.
+        if (SKILL_RE.test(ent.name)) {
+          row.skill = {
+            tool: skillToolFor(full, { home, env, platform }),
+            description: await skillDescription(full),
+          };
+        }
+        out.push(row);
       }
     }
     // Checked per directory rather than per entry: one clock read per readdir.
@@ -434,5 +493,5 @@ function noteFile(filePath) {
 module.exports = {
   isExcludedDir, isBundleDir, EXCLUDED_NAMES, BUNDLE_RE, DEFAULT_BUDGET, registeredRoots,
   shouldDescend, allowlist, icloudDesktopDocuments, skippedDirs, scanTargets, nearestRoot,
-  walk, rescan, getCached, seed, moved, noteFile,
+  skillToolFor, walk, rescan, getCached, seed, moved, noteFile,
 };

@@ -13,6 +13,7 @@ import {
   scanTargets,
   seed,
   shouldDescend,
+  skillToolFor,
   skippedDirs,
   walk,
 } from "./mdindex.js";
@@ -27,6 +28,14 @@ type WalkOptions = {
   budget?: { maxFiles?: number; maxMs?: number; maxDepth?: number };
   now?: () => number;
   stats?: Record<string, unknown>;
+  env?: Record<string, string | undefined>;
+};
+type SkillRow = {
+  path: string;
+  name: string;
+  dir: string;
+  mtimeMs: number;
+  skill?: { tool: string | null; description: string | null };
 };
 const skipWith = (opts: {
   home?: string;
@@ -41,9 +50,7 @@ const descendWith = (
   opts: { roots?: string[]; allow?: string[]; skip?: Set<string> | null }
 ) => shouldDescend(full, name, home, opts as never) as boolean;
 const walkWith = (dir: string, opts: WalkOptions) =>
-  walk(dir, opts as never) as Promise<
-    Array<{ path: string; name: string; dir: string; mtimeMs: number }>
-  >;
+  walk(dir, opts as never) as Promise<SkillRow[]>;
 
 describe("isExcludedDir", () => {
   it("excludes any dot-directory", () => {
@@ -149,6 +156,63 @@ describe("walk", () => {
     const a = rows.find((r) => r.name === "a.md")!;
     expect(a.dir).toBe(root);
     expect(typeof a.mtimeMs).toBe("number");
+  });
+});
+
+// A SKILL.md row says which tool's folder it sits in and what the skill is
+// for, decided by main from the roots it knows rather than by the renderer
+// from the spelling of the path: a Codex home moved to ~/.config/codex has no
+// ".codex" in it, and the description is in the file, not the path.
+describe("a SKILL.md in the index", () => {
+  it("names the tool from the configured roots, and reads the description", () => {
+    const home = "/h";
+    const env = { CLAUDE_CONFIG_DIR: "/h/.config/claude", CODEX_HOME: "/h/.config/codex" };
+    expect(skillToolFor("/h/.config/claude/skills/pdf/SKILL.md", { home, env })).toBe("claude");
+    expect(skillToolFor("/h/.config/codex/skills/pdf/SKILL.md", { home, env })).toBe("codex");
+    // With the config folders moved, their conventional homes are not them.
+    expect(skillToolFor("/h/.claude/skills/pdf/SKILL.md", { home, env })).toBe(null);
+    expect(skillToolFor("/h/.claude/skills/pdf/SKILL.md", { home, env: {} })).toBe("claude");
+    expect(skillToolFor("/h/.codex/skills/pdf/SKILL.md", { home, env: {} })).toBe("codex");
+    expect(skillToolFor("/h/.cursor/skills/pdf/SKILL.md", { home, env })).toBe("cursor");
+    expect(skillToolFor("/h/.gemini/skills/pdf/SKILL.md", { home, env })).toBe("gemini");
+    expect(skillToolFor("/h/.agents/skills/pdf/SKILL.md", { home, env })).toBe("universal");
+    expect(skillToolFor("/h/code/project/.claude/skills/pdf/SKILL.md", { home, env })).toBe(null);
+    expect(skillToolFor("/h/.claudette/skills/pdf/SKILL.md", { home, env: {} })).toBe(null);
+  });
+
+  it("marks a SKILL.md under a relocated CODEX_HOME as codex with its description", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "mdskill-"));
+    const env = { CODEX_HOME: path.join(home, ".config", "codex") };
+    const mk = (p: string, body = "x") => {
+      fs.mkdirSync(path.dirname(path.join(home, p)), { recursive: true });
+      fs.writeFileSync(path.join(home, p), body);
+    };
+    mk(".config/codex/skills/pdf/SKILL.md", "---\nname: pdf\ndescription: Work with PDF files.\n---\n# pdf\n");
+    mk(".config/codex/skills/pdf/reference.md", "# reference\n");
+    mk("project/tools/local/SKILL.md", "---\nname: local\ndescription: >-\n  Folded over\n  two lines.\n---\n");
+    mk("project/tools/bare/SKILL.md", "# no front matter\n");
+    mk("project/notes.md", "# notes\n");
+    try {
+      const rows = await walkWith(home, { home, env, roots: [path.join(home, "project")] });
+      const byPath = new Map(rows.map((r) => [r.path.slice(home.length + 1), r]));
+      expect(byPath.get(".config/codex/skills/pdf/SKILL.md")?.skill).toEqual({
+        tool: "codex",
+        description: "Work with PDF files.",
+      });
+      expect(byPath.get("project/tools/local/SKILL.md")?.skill).toEqual({
+        tool: null,
+        description: "Folded over two lines.",
+      });
+      expect(byPath.get("project/tools/bare/SKILL.md")?.skill).toEqual({
+        tool: null,
+        description: null,
+      });
+      expect(byPath.get(".config/codex/skills/pdf/reference.md")).toBeDefined();
+      expect("skill" in byPath.get(".config/codex/skills/pdf/reference.md")!).toBe(false);
+      expect("skill" in byPath.get("project/notes.md")!).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

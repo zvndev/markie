@@ -185,8 +185,12 @@ export function useSaveGuard({
         // Whatever the save could not commit is still recoverable. A document
         // that sits out the periodic journal for its size still gets this one
         // write when the save did not land: the alternative is a buffer
-        // replaced with no copy of it anywhere.
-        if (docRef.current.dirty && (journalRef.current || !landed)) {
+        // replaced with no copy of it anywhere. A document with no path has
+        // no file for a save to land in, so "landed" says nothing about it
+        // and the write happens whatever the journal setting is: this is the
+        // only copy of an untitled document there will ever be.
+        const pathless = docRef.current.path === null;
+        if (docRef.current.dirty && (pathless || journalRef.current || !landed)) {
           try {
             await getElectronAPI()?.draftSave?.({
               path: docRef.current.path,

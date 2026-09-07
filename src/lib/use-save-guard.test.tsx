@@ -123,6 +123,28 @@ describe("the crash journal's pace", () => {
     expect(draftSave).not.toHaveBeenCalled();
   });
 
+  it("always journals a dirty document with no path on settle, whatever the journal setting", async () => {
+    // An untitled document has nowhere to autosave to, and once it has grown
+    // past the journal's size it has no periodic journal either. The write on
+    // the way out is the only copy that survives closing it.
+    const big = "x".repeat(300 * 1024);
+    const draftSave = vi.fn<(entry: DraftCall) => void>();
+    (window as unknown as { electronAPI?: unknown }).electronAPI = { draftSave };
+    const { result } = renderHook(() =>
+      useSaveGuard({
+        save: async () => true,
+        eligible: false,
+        docKey: null,
+        document: { path: null, name: null, content: big, dirty: true },
+        booted: false,
+        journal: false,
+      })
+    );
+    await act(() => result.current.settle());
+    expect(draftSave).toHaveBeenCalledTimes(1);
+    expect(draftSave.mock.calls[0][0]).toEqual({ path: null, name: null, content: big });
+  });
+
   it("writes nothing at all for a document the journal is off for", () => {
     const big = "x".repeat(300 * 1024);
     const draftSave = vi.fn<(entry: DraftCall) => void>();

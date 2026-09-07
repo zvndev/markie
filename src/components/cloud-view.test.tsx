@@ -167,6 +167,37 @@ describe("the Cloud page's four sections", () => {
     expect(sectionNames("synced")).toEqual([]);
   });
 
+  it("files my document under In your cloud once its file is gone from this device", async () => {
+    // The cloud copy is the only one left. "Synced from this device" would be
+    // describing a file that is not here; the row belongs where the way back
+    // is, beside the other documents this device does not hold.
+    renderView({ items: [synced({ name: "gone.md", exists: false })] });
+    await waitFor(() => expect(sectionNames("cloud")).toEqual(["gone.md"]));
+    expect(sectionNames("synced")).toEqual([]);
+    expect(await screen.findByText("1 in your cloud")).toBeInTheDocument();
+  });
+
+  it("keeps a document remembered as shared under Shared with me while the server is away", async () => {
+    // The list did not load. The row carries the role this account remembers
+    // and no name for who shared it, and it still has a section.
+    renderView({
+      items: [
+        synced({
+          name: "theirs.md",
+          cloudId: "c9",
+          owned: false,
+          shared: true,
+          role: "editor",
+          sharedBy: null,
+        }),
+      ],
+      cloudError: "Couldn't reach the server, so your cloud documents may be out of date.",
+    });
+    await waitFor(() => expect(sectionNames("with-me")).toEqual(["theirs.md"]));
+    expect(sectionNames("synced")).toEqual([]);
+    expect(sectionNames("cloud")).toEqual([]);
+  });
+
   it("leaves a row nobody has vouched for out of both ownership sections", async () => {
     // The server did not answer, so this row carries no owner. It is still in
     // the Library's list of what is on this device; it just cannot claim a

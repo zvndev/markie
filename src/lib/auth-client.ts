@@ -54,15 +54,20 @@ function getToken(): string | null {
 }
 
 function setToken(token: string | null): void {
+  const before = getToken();
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);
   } catch {
     // storage unavailable
   }
-  // No token is a deliberate sign-out, which is the one thing that can say the
-  // principal is no longer whoever it was.
-  if (!token) principal = null;
+  // The principal was confirmed for the token before this one. A different
+  // token is a different session, whether or not anyone signed out in
+  // between, so the answer goes here and main hears in the same push; a push
+  // that paired the new token with the old account is how one account's
+  // remembered roles came to speak for another. me() sets it again once the
+  // server says who this token belongs to. No token at all is a sign-out.
+  if (!token || token !== before) principal = null;
   pushSyncConfig();
 }
 

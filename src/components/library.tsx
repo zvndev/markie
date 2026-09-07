@@ -24,6 +24,7 @@ import type { PanelView } from "@/lib/left-rail";
 import { readLibraryStartupSnapshot } from "@/lib/library-startup";
 import { LIB_TAB_KEY, initialLibTab, type LibTab } from "@/lib/library-state";
 import {
+  cloudCopyOnly,
   libraryItemNeedsAttention,
   organizeLibraryItems,
   summarizeLibrary,
@@ -409,7 +410,9 @@ export function Library({
       } else if (item.shared && item.cloudId && api.docOpenShared) {
         // shared with me → just save to Downloads and open it, no save dialog
         act(() => api.docOpenShared!({ cloudId: item.cloudId!, suggestedName: item.name }));
-      } else if (item.state === "cloud-only" && item.cloudId) {
+      } else if (cloudCopyOnly(item)) {
+        // The cloud has it and this device does not, whether the file was
+        // never here or was deleted: either way the click gets the copy back.
         act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name }));
       }
     };
@@ -497,7 +500,7 @@ export function Library({
                 Review changes…
               </button>
             )}
-            {item.state === "cloud-only" && signedIn && (
+            {cloudCopyOnly(item) && signedIn && (
               <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name }))}>Download…</button>
             )}
           </div>

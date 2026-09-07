@@ -19,6 +19,14 @@ const SERVER = "https://api-production-602f.up.railway.app";
 const ME = "user-me";
 const THEM = "user-them";
 
+// The renderer's sequence, in two pushes: the token is stored, and only later
+// does /api/me say who it belongs to. The first push carries whatever principal
+// the renderer had before, which is why the engine must not trust it.
+function signIn(token: string, userId: string) {
+  sync.setConfig({ token, serverURL: SERVER });
+  sync.setConfig({ token, serverURL: SERVER, userId });
+}
+
 interface Row {
   path: string;
   name: string;
@@ -111,7 +119,7 @@ beforeEach(() => {
   registry.list = () => [...rows.values()];
   registry.pruneMissing = () => 0;
   registry.track = () => {};
-  sync.setConfig({ token: "test-token", serverURL: SERVER, userId: ME });
+  signIn("test-token", ME);
 });
 
 afterEach(() => {
@@ -739,8 +747,73 @@ describe("libraryState", () => {
         share_role: "owner",
         share_role_user: THEM,
       });
-      sync.setConfig({ token: "b-token", serverURL: SERVER, userId: ME });
+      signIn("b-token", ME);
       respondWith({ status: 200, body: { docs: [] } });
+
+      expect((await sync.libraryState()).items[0].owned).toBeNull();
+    });
+
+    // A's remembered roles are evidence about A's token. The moment another
+    // token arrives, nothing has been confirmed for it, and the roles say
+    // nothing until /api/me answers under the new token.
+    const mineByA = () =>
+      seedRow({
+        path: "/docs/mine-by-a.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-7",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: ME,
+      });
+
+    it("stops reading A's remembered roles the moment B's token arrives", async () => {
+      // A is confirmed. B's token replaces A's with no sign-out in between,
+      // and the renderer's push still names A, because that is the last thing
+      // it heard. B's list then fails to load.
+      mineByA();
+      sync.setConfig({ token: "b-token", serverURL: SERVER, userId: ME });
+      respondWith({ status: 503 });
+
+      expect((await sync.libraryState()).items[0].owned).toBeNull();
+    });
+
+    it("reads B's remembered roles once B's token is confirmed, and not A's", async () => {
+      mineByA();
+      seedRow({
+        path: "/docs/mine-by-b.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-8",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: "user-b",
+      });
+      signIn("b-token", "user-b");
+      respondWith({ status: 503 });
+
+      const owned = Object.fromEntries(
+        (await sync.libraryState()).items.map((i: { path: string; owned: boolean | null }) => [
+          i.path,
+          i.owned,
+        ])
+      );
+      expect(owned).toEqual({ "/docs/mine-by-a.md": null, "/docs/mine-by-b.md": true });
+    });
+
+    it("keeps the confirmed account through a push that only repeats the token", async () => {
+      // A server URL change, or the boot push, sends the same token with no
+      // user. That is not a new session and must not throw the answer away.
+      mineByA();
+      sync.setConfig({ token: "test-token", serverURL: SERVER });
+      respondWith({ status: 503 });
+
+      expect((await sync.libraryState()).items[0].owned).toBe(true);
+    });
+
+    it("forgets the account on sign-out until the next token is confirmed", async () => {
+      mineByA();
+      sync.setConfig({ token: null, serverURL: null });
+      sync.setConfig({ token: "test-token", serverURL: SERVER });
+      respondWith({ status: 503 });
 
       expect((await sync.libraryState()).items[0].owned).toBeNull();
     });
@@ -757,6 +830,117 @@ describe("libraryState", () => {
       respondWith({ status: 500 });
 
       expect((await sync.libraryState()).items[0].owned).toBe(true);
+    });
+  });
+
+  // Whether a document is shared with this account decides the other half of
+  // the Cloud page. The list says so when it loads; when it does not, the
+  // role the server last confirmed for this account is the only word there
+  // is, and a document that was shared with me yesterday is still shared with
+  // me during today's outage.
+  describe("what a remembered role says about sharing", () => {
+    const sharedWithMe = (role: "editor" | "viewer", user: string = ME) =>
+      seedRow({
+        path: "/docs/theirs.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-9",
+        cloud_version: 4,
+        share_role: role,
+        share_role_user: user,
+      });
+
+    it("keeps a document shared with me shared when the list cannot be fetched", async () => {
+      sharedWithMe("editor");
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        owned: false,
+        shared: true,
+        role: "editor",
+        // Nobody remembers who shared it; the list will say when it is back.
+        sharedBy: null,
+      });
+    });
+
+    it("carries a remembered viewer role the same way", async () => {
+      sharedWithMe("viewer");
+      respondWith({ status: 503 });
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        owned: false,
+        shared: true,
+        role: "viewer",
+      });
+    });
+
+    it("prefers the list over memory when the list loads", async () => {
+      sharedWithMe("viewer");
+      respondWith({
+        status: 200,
+        body: {
+          docs: [{ id: "cloud-9", version: 4, shared: true, role: "editor", shared_by: "Grace" }],
+        },
+      });
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        shared: true,
+        role: "editor",
+        sharedBy: "Grace",
+      });
+    });
+
+    it("does not call a document shared when the list loaded without it", async () => {
+      // Access was revoked, or the document was deleted. Memory does not get a
+      // vote once the server has answered.
+      sharedWithMe("editor");
+      respondWith({ status: 200, body: { docs: [] } });
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        shared: false,
+        role: null,
+        owned: null,
+      });
+    });
+
+    it("does not read another account's remembered share as mine", async () => {
+      sharedWithMe("editor", THEM);
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        shared: false,
+        role: null,
+        owned: null,
+      });
+    });
+
+    it("does not read a remembered share before this account is confirmed", async () => {
+      sharedWithMe("editor");
+      sync.setConfig({ token: "b-token", serverURL: SERVER, userId: ME });
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        shared: false,
+        role: null,
+        owned: null,
+      });
+    });
+
+    it("does not call my own document shared with me", async () => {
+      seedRow({
+        path: "/docs/mine.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-10",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: ME,
+      });
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0]).toMatchObject({
+        owned: true,
+        shared: false,
+        role: null,
+      });
     });
   });
 

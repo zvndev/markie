@@ -28,7 +28,15 @@ export interface OrganizedLibraryItems {
   // a file fails, the row is left unpushed with no cloud document behind it,
   // and a heading that says the file is synced from this device would be
   // describing a copy that does not exist.
+  //
+  // And the file has to still be here. Once it is deleted from disk, the cloud
+  // copy is the only one left, which is what "In your cloud" means; a row
+  // under this heading would open nothing and offer nothing.
   syncedFromDevice: LibraryItem[];
+  // My documents the cloud holds and this device does not: the ones the
+  // server's list named with no file here, and the ones whose file was here
+  // and has since been deleted. Either way the row's job is to get the copy
+  // back.
   myCloudOnly: LibraryItem[];
   sharedItems: LibraryItem[];
   sharedCloudOnly: LibraryItem[];
@@ -70,23 +78,37 @@ export function summarizeLibrary(items: LibraryItem[]): LibraryOverview {
   );
 }
 
+// A file of my own that the cloud holds a copy of, whether or not the file is
+// still on the disk.
+function myCloudBacked(item: LibraryItem): boolean {
+  return (
+    !!item.path && !!item.cloudId && item.owned === true && CLOUD_STATES.includes(item.state)
+  );
+}
+
 export function organizeLibraryItems(items: LibraryItem[]): OrganizedLibraryItems {
   const sharedItems = sortLibraryItems(items.filter((item) => item.shared));
   return {
     localFiles: sortLibraryItems(items.filter((item) => item.path)),
     syncedFromDevice: sortLibraryItems(
+      items.filter((item) => myCloudBacked(item) && item.exists)
+    ),
+    myCloudOnly: sortLibraryItems(
       items.filter(
-        (item) =>
-          item.path &&
-          item.cloudId &&
-          item.owned === true &&
-          CLOUD_STATES.includes(item.state)
+        (item) => (!item.path && !item.shared) || (myCloudBacked(item) && !item.exists)
       )
     ),
-    myCloudOnly: sortLibraryItems(items.filter((item) => !item.path && !item.shared)),
     sharedItems,
     sharedCloudOnly: sharedItems.filter((item) => !item.path),
   };
+}
+
+// Whether the cloud holds a copy of this document and this device does not: a
+// document the list named with no file here, or one of my own synced files
+// that has since been deleted from disk. The way back is the same for both.
+export function cloudCopyOnly(item: LibraryItem): boolean {
+  if (!item.cloudId) return false;
+  return item.state === "cloud-only" || (myCloudBacked(item) && !item.exists);
 }
 
 export function libraryItemNeedsAttention(item: LibraryItem): boolean {

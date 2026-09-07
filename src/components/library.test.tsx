@@ -371,6 +371,69 @@ describe("the Cloud page inside the panel", () => {
     expect(within(row).getByRole("button", { name: /Download/ })).toBeInTheDocument();
   });
 
+  it("offers my document whose file is gone the way back, in the menu and on the row", async () => {
+    // Deleted from disk, still in the cloud. The row says the file is missing
+    // and offers Download, the same recovery a document that was never here
+    // gets; before this, it opened nothing and offered nothing.
+    const gone = item({
+      name: "gone.md",
+      path: "/notes/gone.md",
+      state: "synced",
+      cloudId: "c8",
+      exists: false,
+    });
+    const { api, onOpenPath } = renderLibrary([gone], cloudProps);
+    const row = await rowFor("gone.md");
+    expect(within(row).getByText("Missing on disk")).toBeInTheDocument();
+
+    await userEvent.click(within(row).getByRole("button", { name: "Actions" }));
+    await userEvent.click(within(row).getByRole("button", { name: /Download/ }));
+    expect(api.docPull).toHaveBeenCalledExactlyOnceWith({
+      cloudId: "c8",
+      suggestedName: "gone.md",
+    });
+
+    await userEvent.click(row);
+    expect(api.docPull).toHaveBeenCalledTimes(2);
+    expect(onOpenPath).not.toHaveBeenCalled();
+  });
+
+  it("offers nothing for a gone file nobody has vouched for", async () => {
+    // Offline, with no confirmed role: the cloud may or may not hold this for
+    // whoever is signed in, so the row says it is missing and no more.
+    const { api } = renderLibrary(
+      [item({ name: "gone.md", path: "/notes/gone.md", state: "synced", cloudId: "c8", exists: false, owned: null })],
+      cloudProps
+    );
+    // Not in any Cloud section, so it is found through the Library instead.
+    expect(await screen.findByText("Nothing synced from this device yet")).toBeInTheDocument();
+    expect(screen.queryByText("gone.md")).not.toBeInTheDocument();
+    expect(api.docPull).not.toHaveBeenCalled();
+  });
+
+  it("renders a shared row remembered offline without the sharer's name", async () => {
+    // The server is away, so the role is what this account remembers and the
+    // name of who shared it is not known. The row still says what it can.
+    renderLibrary(
+      [
+        item({
+          name: "theirs.md",
+          path: "/notes/theirs.md",
+          state: "synced",
+          cloudId: "c9",
+          owned: false,
+          shared: true,
+          role: "viewer",
+          sharedBy: null,
+        }),
+      ],
+      cloudProps
+    );
+    const row = await rowFor("theirs.md");
+    expect(within(row).getByText("Shared")).toBeInTheDocument();
+    expect(within(row).getByText("Shared with you · Viewer")).toBeInTheDocument();
+  });
+
   it("renders a shared row with its own badge and who shared it", async () => {
     renderLibrary(
       [

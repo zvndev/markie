@@ -37,15 +37,22 @@ function setConfig(next) {
     allowDev: process.env.NODE_ENV === "development",
   });
   const token = next.token ?? null;
+  const tokenChanged = token !== config.token;
   config = { token, serverURL: allowed ? serverURL : null };
   // Roles belong to whoever was signed in. Another account's grants on the same
   // doc are a different answer entirely.
   docRoles.clear();
-  // A push that carries no user leaves the principal alone: it usually means
-  // nobody has asked the server yet, and offline nobody can. Losing the token
-  // is different, because that is a sign-out.
-  if (next.userId) principal = next.userId;
-  else if (!token) principal = null;
+  // The principal is evidence about one token. A different token is a
+  // different session, whether or not anyone signed out in between, so the
+  // old answer goes at once, and a user named in the same push cannot have
+  // been confirmed for the new token yet: the renderer sends whatever it last
+  // heard, which was said for the token before. The principal comes back only
+  // with a later push made after /api/me answered under this token. A push
+  // that carries no user and the same token leaves it alone: that usually
+  // means nobody has asked the server yet, and offline nobody can. No token
+  // at all is a sign-out, and nobody is signed in.
+  if (tokenChanged || !token) principal = null;
+  else if (next.userId) principal = next.userId;
 }
 
 function isConfigured() {
@@ -565,24 +572,33 @@ async function resolveKeepBoth(filePath, localContent) {
   return { ok: true, keptAt: copyPath, content: doc.content, version: doc.version };
 }
 
+// The role the registry remembers for this document, when it is the only word
+// there is. A list that loaded outranks it entirely: a complete list that
+// omits a document is the server saying the document is not this account's
+// now, whatever it once was (deleted, access revoked, or it belongs to the
+// account that was signed in before this one). Without a list, the last thing
+// the server said is all an offline session has, and it counts only for the
+// account it was said to, and only once this session has confirmed who that
+// is. Anything else is null: nobody has said.
+function rememberedRole(row, remoteLoaded) {
+  if (remoteLoaded) return null;
+  if (!principal || row.share_role_user !== principal) return null;
+  const role = row.share_role;
+  return role === "owner" || role === "editor" || role === "viewer" ? role : null;
+}
+
 // Who owns a cloud document, as far as anything can actually say. The list the
-// server just sent is the live answer. Without one, the registry's share_role
-// is the last answer the server gave, which is all an offline session has. With
-// neither, ownership is unknown, and unknown must not read as "mine": a list
-// that failed used to make someone else's document look like your own.
+// server just sent is the live answer. Without one, the remembered role is the
+// last answer the server gave. With neither, ownership is unknown, and unknown
+// must not read as "mine": a list that failed used to make someone else's
+// document look like your own.
 function ownership(remoteRecord, row, remoteLoaded) {
   if (remoteRecord) return !remoteRecord.shared;
   // Nothing in the cloud to own.
   if (!row.cloud_doc_id) return true;
-  // The list answered and this document was not in it. Whatever it once was,
-  // it is not one of this account's documents now: it was deleted, access was
-  // revoked, or it belongs to the account that was signed in before this one.
-  if (remoteLoaded) return null;
-  // No list at all, so the last thing the server said is all there is, and it
-  // counts only for the account it was said to.
-  if (!principal || row.share_role_user !== principal) return null;
-  if (row.share_role === "owner") return true;
-  if (row.share_role === "editor" || row.share_role === "viewer") return false;
+  const role = rememberedRole(row, remoteLoaded);
+  if (role === "owner") return true;
+  if (role === "editor" || role === "viewer") return false;
   return null;
 }
 
@@ -626,6 +642,14 @@ async function libraryState() {
     if (remoteLoaded && state === "synced" && f.cloud_doc_id && !r) {
       state = "paused"; // deleted remotely
     }
+    // A document somebody else owns stays shared with you while the server is
+    // unreachable. The list is the live answer; without one, a viewer or
+    // editor role this account remembers is the server having said so, and
+    // reading its absence as "not shared" left the document in no section of
+    // the Cloud page for the length of an outage. Who shared it is not
+    // remembered, so that stays unknown until the list comes back.
+    const remembered = r || !f.cloud_doc_id ? null : rememberedRole(f, remoteLoaded);
+    const sharedFromMemory = remembered === "editor" || remembered === "viewer";
     return {
       kind: "local",
       path: f.path,
@@ -638,8 +662,8 @@ async function libraryState() {
       // true mine, false someone else's, null nobody has said
       owned: ownership(r, f, remoteLoaded),
       // a synced copy of a doc that was shared with you
-      shared: !!r?.shared,
-      role: r?.role ?? null,
+      shared: !!r?.shared || sharedFromMemory,
+      role: r?.role ?? (sharedFromMemory ? remembered : null),
       sharedBy: r?.shared_by ?? null,
     };
   });

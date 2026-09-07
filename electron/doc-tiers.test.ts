@@ -4,6 +4,7 @@ import {
   MAX_DOC_BYTES,
   formatMegabytes,
   readDocumentTiered,
+  statDocument,
   tierForSize,
 } from "./doc-tiers.js";
 import * as rendererTiers from "../src/lib/doc-tiers";
@@ -71,6 +72,12 @@ describe("document size tiers", () => {
       readFileSync: vi.fn(() => "# small\n"),
     };
     expect(readDocumentTiered("/notes.md", io)).toEqual({ content: "# small\n", size: 12, large: false });
+  });
+
+  it("answers the tier from a stat alone", () => {
+    const io = { statSync: vi.fn(() => ({ size: 143_000_000 })) };
+    expect(statDocument("/big.md", io)).toEqual({ size: 143_000_000, tier: "tooLarge" });
+    expect(statDocument("/big.md", { statSync: () => ({ size: 12 }) })).toEqual({ size: 12, tier: "ok" });
   });
 
   it("lets a stat failure through as the read failure it is", () => {

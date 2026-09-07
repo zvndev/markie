@@ -9,7 +9,7 @@
 // until dismissed, since the open that produced it made no other visible
 // change, and a message that vanished on its own would leave "nothing
 // happened" as the only explanation.
-import { largeDocumentNote, tooLargeMessage } from "@/lib/doc-tiers";
+import { largeDocumentNote, tooLargeMessage, type RefusalVerb } from "@/lib/doc-tiers";
 
 export function LargeDocStrip({ size }: { size: number }) {
   return (
@@ -30,8 +30,8 @@ export function LargeDocStrip({ size }: { size: number }) {
 interface TooLargeStripProps {
   size: number;
   fileName: string;
-  /** What did not happen: an open, or a reload of the document that is open. */
-  verb?: "opened" | "reloaded";
+  /** What did not happen: an open, a reload of the open document, or a restore into it. */
+  verb?: RefusalVerb;
   onDismiss: () => void;
 }
 

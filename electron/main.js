@@ -519,6 +519,17 @@ function diskChangedSince(filePath) {
   return hashOf(doc.content) === known ? null : { content: doc.content, size: doc.size };
 }
 
+// `{ tooLarge: true, size }` when the file at this path is over the cap, else
+// null (including when it cannot be stat'ed: the write reports that itself).
+function overCapOnDisk(filePath) {
+  try {
+    const { size, tier } = docTiers.statDocument(filePath);
+    return tier === "tooLarge" ? { tooLarge: true, size } : null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Watching the open document ──
 // Markie already knew a file had changed underneath the user, but only at the
 // moment they pressed save — after they had been typing into a stale document
@@ -1068,14 +1079,17 @@ handle("save-file", async (_event, { filePath, content, force = false, autosave 
     // writer's work, so it refuses and hands the newer bytes back for the
     // renderer's own non-modal strip. saveConflictAction owns that decision.
     const newer = force ? null : diskChangedSince(access.path);
-    if (newer?.tooLarge) {
+    // Even a decided overwrite stops at the cap: the dialog that decided it
+    // showed bytes that are no longer what is on disk.
+    const overCap = force ? overCapOnDisk(access.path) : newer?.tooLarge ? newer : null;
+    if (overCap) {
       // The file on disk outgrew what Markie opens, so the conflict dialog
       // could not show what it would overwrite. Nothing is written; the
       // buffer is still theirs to save under another name.
       return {
         success: false,
         error:
-          `${path.basename(access.path)} on disk is now ${docTiers.formatMegabytes(newer.size)}, ` +
+          `${path.basename(access.path)} on disk is now ${docTiers.formatMegabytes(overCap.size)}, ` +
           `more than Markie opens (${docTiers.formatMegabytes(docTiers.MAX_DOC_BYTES)}). ` +
           "Save your copy under another name.",
       };

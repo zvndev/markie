@@ -41,7 +41,7 @@ import { ConflictDialog } from "@/components/conflict-dialog";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
 import { DraftStrip } from "@/components/draft-strip";
 import { LargeDocStrip, TooLargeStrip } from "@/components/large-doc";
-import { measureBytes, tierForSize } from "@/lib/doc-tiers";
+import { measureBytes, tierForSize, type RefusalVerb } from "@/lib/doc-tiers";
 import { isTooLarge, type OpenResult, type TooLargePayload } from "@/lib/electron";
 import { HistoryDialog } from "@/components/history-dialog";
 import { diskChangeKind } from "@/lib/disk-change";
@@ -256,7 +256,7 @@ export default function Home() {
   // The open document's size tier (src/lib/doc-tiers.ts): its size while a
   // large document is open in Source view, and the last file main refused.
   const [largeDocSize, setLargeDocSize] = useState<number | null>(null);
-  const [refusedDoc, setRefusedDoc] = useState<{ name: string; size: number; verb?: "opened" | "reloaded" } | null>(null);
+  const [refusedDoc, setRefusedDoc] = useState<{ name: string; size: number; verb?: RefusalVerb } | null>(null);
   const largeDocRef = useRef(false);
   const modeRef = useRef<ViewMode>("preview");
   // The mode a large document displaced, given back with the next ordinary one.
@@ -558,6 +558,22 @@ export default function Home() {
     };
   }, [checkUpdates]);
 
+  // The cap, checked before any text replaces the buffer. Main refuses a file
+  // it would have had to read; this is the same line for text that is already
+  // in memory (a cloud pull, a history version, a dropped file read in the
+  // browser), which the callers below must not apply when it is over. Returns
+  // the size to hand enterTier, or null when the text was refused and the
+  // open document stays.
+  const admitUnderCap = useCallback(
+    (md: string, name: string, size: number | undefined, verb: RefusalVerb): number | null => {
+      const bytes = size ?? measureBytes(md);
+      if (tierForSize(bytes) !== "tooLarge") return bytes;
+      setRefusedDoc({ name, size: bytes, verb });
+      return null;
+    },
+    []
+  );
+
   // Every text that lands in the buffer passes through here, whichever way it
   // arrived (a file main read, a history version, a recovered draft, a cloud
   // pull, an edit the disk watcher handed over), and its size settles the tier
@@ -611,9 +627,12 @@ export default function Home() {
       }
       if (typeof res.content === "string") {
         // What came back is what is now on disk, and a CSV on disk is CSV.
-        const pulled = fromDisk(fileName, res.content);
-        applyExternalDoc(pulled);
-        enterTier(pulled, docRef.current.filePath);
+        const bytes = admitUnderCap(res.content, fileName ?? "This document", undefined, "reloaded");
+        if (bytes !== null) {
+          const pulled = fromDisk(fileName, res.content);
+          applyExternalDoc(pulled);
+          enterTier(pulled, docRef.current.filePath, bytes);
+        }
       }
       setUpdateWaiting(null);
       setLibRefreshKey((k) => k + 1);
@@ -622,18 +641,21 @@ export default function Home() {
     } finally {
       setUpdateBusy(false);
     }
-  }, [filePath, fileName, enterTier, applyExternalDoc]);
+  }, [filePath, fileName, admitUnderCap, enterTier, applyExternalDoc]);
 
   // Whatever the dialog did, the file on disk now holds this content.
   const handleConflictResolved = useCallback(
     (next: string) => {
-      const pulled = fromDisk(fileName, next);
-      applyExternalDoc(pulled);
-      enterTier(pulled, docRef.current.filePath);
+      const bytes = admitUnderCap(next, fileName ?? "This document", undefined, "reloaded");
+      if (bytes !== null) {
+        const pulled = fromDisk(fileName, next);
+        applyExternalDoc(pulled);
+        enterTier(pulled, docRef.current.filePath, bytes);
+      }
       setUpdateWaiting(null);
       setUpdateError(null);
     },
-    [fileName, enterTier, applyExternalDoc]
+    [fileName, admitUnderCap, enterTier, applyExternalDoc]
   );
 
   // A document that is being swapped out must not leave its access behind for
@@ -733,6 +755,10 @@ export default function Home() {
         setRefusedDoc({ name: data.name, size: data.size });
         return;
       }
+      // A restore (history, a recovered draft) or a file read outside main
+      // carries no size; it is measured here and refused over the cap.
+      const bytes = admitUnderCap(data.content, data.name, data.size, data.unsaved ? "restored" : "opened");
+      if (bytes === null) return;
       setRefusedDoc(null);
       // Whatever the last document still owes disk lands before this one
       // replaces it. This is the P0: Markie used to drop it silently.
@@ -751,7 +777,7 @@ export default function Home() {
       // Main sends the size of a file it read; a restore of text already in
       // memory is measured (enterTier). A large document was registered by
       // main when it read it, so its text is not sent back to be hashed.
-      const large = enterTier(md, data.path, data.size);
+      const large = enterTier(md, data.path, bytes);
       if (!large && data.path) {
         getElectronAPI()?.registryTrack?.({
           path: data.path,
@@ -761,7 +787,7 @@ export default function Home() {
       }
       setLibRefreshKey((k) => k + 1);
     },
-    [dismissDocumentUI, resetDocAccess, enterTier, loadDoc, settleDocument]
+    [dismissDocumentUI, resetDocAccess, admitUnderCap, enterTier, loadDoc, settleDocument]
   );
 
   const openPath = useCallback(
@@ -943,9 +969,12 @@ export default function Home() {
     // The file changed underneath us and the user chose to take the disk copy
     // rather than overwrite it. Load it in place of what they had.
     if (res.code === "reloaded" && typeof res.content === "string") {
-      const reloaded = fromDisk(fileName, res.content);
-      applyExternalDoc(reloaded);
-      enterTier(reloaded, filePath, res.size);
+      const bytes = admitUnderCap(res.content, fileName ?? "This document", res.size, "reloaded");
+      if (bytes !== null) {
+        const reloaded = fromDisk(fileName, res.content);
+        applyExternalDoc(reloaded);
+        enterTier(reloaded, filePath, bytes);
+      }
       return null;
     }
     // An autosave found the same collision. Nothing was written and nobody was
@@ -995,7 +1024,7 @@ export default function Home() {
       }
     }
     return null;
-  }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg, enterTier, applyExternalDoc, markSaved, checkUpdates]);
+  }, [filePath, fileName, currentMarkdown, handleSaveAs, collabCfg, admitUnderCap, enterTier, applyExternalDoc, markSaved, checkUpdates]);
 
   // Autosave arms only where a write is provably safe: a real file to write,
   // the right to write it, no unresolved disk conflict, and either Source
@@ -1297,12 +1326,15 @@ export default function Home() {
   // the buffer always holds markdown.
   const reloadFromDisk = useCallback(() => {
     if (diskChange === null) return;
-    const md = fromDisk(fileName, diskChange.content);
-    applyExternalDoc(md);
-    enterTier(md, docRef.current.filePath, diskChange.size);
+    const bytes = admitUnderCap(diskChange.content, fileName ?? "This document", diskChange.size, "reloaded");
+    if (bytes !== null) {
+      const md = fromDisk(fileName, diskChange.content);
+      applyExternalDoc(md);
+      enterTier(md, docRef.current.filePath, bytes);
+    }
     setDiskChange(null);
     setShowDiskConflict(false);
-  }, [diskChange, fileName, enterTier, applyExternalDoc]);
+  }, [diskChange, fileName, admitUnderCap, enterTier, applyExternalDoc]);
 
   // Keep both: save the buffer under a new name and leave the changed file
   // alone. The only resolution that destroys nothing.
@@ -1497,10 +1529,18 @@ export default function Home() {
         if (data.tooLarge) {
           // The file outgrew the cap on disk. Main did not read it, so there
           // is nothing to reload; the buffer stays, and the strip says why.
+          // A conflict still standing from an earlier, readable change is
+          // about bytes that are gone: its Reload would land stale text and
+          // its Overwrite would destroy the newer file.
           const name = data.path.split(/[\\/]/).pop() || data.path;
+          setDiskChange(null);
+          setShowDiskConflict(false);
           setRefusedDoc({ name, size: data.size, verb: "reloaded" });
           return;
         }
+        // Readable again (it shrank back, or was rewritten): the refusal for
+        // the reload it replaced no longer describes the file.
+        setRefusedDoc((r) => (r?.verb === "reloaded" ? null : r));
         setDiskChange({ content: data.content, size: data.size });
       }),
     ];

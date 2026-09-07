@@ -54,6 +54,19 @@ function readDocumentTiered(filePath, io = fs) {
 }
 
 /**
+ * The size and tier of a file, without reading it. For the moment a write is
+ * about to happen and the question is only whether what is on disk has grown
+ * past the cap. Throws what fs throws.
+ *
+ * @param {string} filePath
+ * @param {{ statSync(p: string): { size: number } }} [io]
+ */
+function statDocument(filePath, io = fs) {
+  const size = io.statSync(filePath).size;
+  return { size, tier: tierForSize(size) };
+}
+
+/**
  * "4.4 MB", "143 MB", "1.0 MB": one decimal under 10 MB, none above. The
  * renderer formats sizes the same way (src/lib/doc-tiers.ts), so a size named
  * in copy reads the same from either side.
@@ -68,5 +81,6 @@ module.exports = {
   MAX_DOC_BYTES,
   tierForSize,
   readDocumentTiered,
+  statDocument,
   formatMegabytes,
 };

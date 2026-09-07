@@ -33,6 +33,8 @@ export function formatMegabytes(bytes: number): string {
   return `${mb < 10 ? mb.toFixed(1) : Math.round(mb).toString()} MB`;
 }
 
+export type RefusalVerb = "opened" | "reloaded" | "restored";
+
 /** The refusal, shown instead of the document. */
 export function tooLargeMessage(size: number): string {
   return `Markie opens markdown files up to ${formatMegabytes(MAX_DOC_BYTES)}. This one is ${formatMegabytes(size)}.`;

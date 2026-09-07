@@ -22,6 +22,17 @@ vi.mock("@/lib/rich-safety", async (importOriginal) => {
   return { ...real, startReconstructionJob: vi.fn(real.startReconstructionJob) };
 });
 
+// Text over the cap without a size from main is measured in the renderer.
+// A 100 MB string in a test would prove nothing but the machine's memory, so
+// the measurement is what the mock answers for a marked string.
+vi.mock("@/lib/doc-tiers", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/doc-tiers")>();
+  return {
+    ...real,
+    measureBytes: (text: string) => (text.startsWith("HUGE:") ? 143_000_000 : real.measureBytes(text)),
+  };
+});
+
 import { clearReconstructionCache, startReconstructionJob } from "@/lib/rich-safety";
 import Home from "./page";
 
@@ -194,5 +205,38 @@ describe("large documents", () => {
     await waitFor(() => expect(largeStrip()).not.toBeNull());
     expect(largeStrip()!.textContent).toContain("Large document (1.4 MB)");
     expect(richPane()).toBeNull();
+  });
+
+  it("refuses text over the cap that arrives without a size, and keeps the open document", async () => {
+    installBridge({ getInitialFile: vi.fn(async () => SMALL) } as Partial<ElectronAPI>);
+    render(<Home />);
+    await waitFor(() => expect(richPane()).not.toBeNull());
+
+    // A history version or a recovered draft of a file that has since grown.
+    emit("onFileOpened", { name: "notes.md", path: SMALL.path, content: "HUGE: a snapshot\n", unsaved: true });
+    await waitFor(() => expect(refusalStrip()).not.toBeNull());
+    expect(refusalStrip()!.textContent).toContain(
+      "notes.md was not restored. Markie opens markdown files up to 100 MB. This one is 143 MB."
+    );
+    expect(richPane()).not.toBeNull();
+    expect(largeStrip()).toBeNull();
+    expect(document.title).toBe("notes.md — Markie");
+  });
+
+  it("drops a pending disk conflict when the file outgrows the cap, and the refusal when it is readable again", async () => {
+    installBridge({ getInitialFile: vi.fn(async () => SMALL) } as Partial<ElectronAPI>);
+    render(<Home />);
+    await waitFor(() => expect(richPane()).not.toBeNull());
+
+    emit("onFileChangedOnDisk", { path: SMALL.path, content: "theirs\n", size: 7 });
+    await screen.findByRole("button", { name: /reload/i });
+
+    emit("onFileChangedOnDisk", { path: SMALL.path, tooLarge: true, size: 143_000_000 });
+    await waitFor(() => expect(refusalStrip()).not.toBeNull());
+    expect(screen.queryByRole("button", { name: /reload/i })).toBeNull();
+
+    emit("onFileChangedOnDisk", { path: SMALL.path, content: "theirs, trimmed\n", size: 16 });
+    await screen.findByRole("button", { name: /reload/i });
+    expect(refusalStrip()).toBeNull();
   });
 });

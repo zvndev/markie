@@ -1,6 +1,6 @@
 {
   "tool": "scripts/perf-baseline.mjs",
-  "generatedAt": "2026-09-07T17:26:11.078Z",
+  "generatedAt": "2026-09-07T18:32:44.216Z",
   "app": "/Users/macbookpro-kirby/Desktop/Coding/ZVN/markdown-viewer-zvn/dist/mac-arm64/Markie.app",
   "host": {
     "platform": "darwin",
@@ -29,19 +29,19 @@
   "runs": [
     {
       "run": 1,
-      "startedAt": "2026-09-07T17:22:52.656Z",
-      "debugPort": 50053,
-      "inspectPort": null,
-      "homeDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-ykkBqq",
-      "userDataDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-profile-8Ps93n",
+      "startedAt": "2026-09-07T18:28:50.409Z",
+      "debugPort": 49940,
+      "inspectPort": 49941,
+      "homeDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-xu26Qs",
+      "userDataDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-profile-4iO31X",
       "errors": [],
       "launch": {
-        "spawnToLoadEventFiredMs": 1803,
-        "spawnToLoadEventEndMs": 1803,
-        "domContentLoadedEventEndMs": 108,
-        "loadEventEndMs": 200.3,
+        "spawnToLoadEventFiredMs": 571,
+        "spawnToLoadEventEndMs": 571,
+        "domContentLoadedEventEndMs": 82.1,
+        "loadEventEndMs": 187.2,
         "firstContentfulPaintMs": null,
-        "firstPaintMs": 124,
+        "firstPaintMs": 100,
         "paintEntries": [
           "first-paint"
         ],
@@ -50,108 +50,147 @@
       "rssIdle": {
         "processes": [
           {
-            "pid": 13251,
+            "pid": 35013,
             "role": "main",
-            "rssMb": 177.4
+            "matchedBy": "user-data-dir",
+            "rssMb": 177.7
           },
           {
-            "pid": 13274,
+            "pid": 35016,
             "role": "crashpad",
+            "matchedBy": "user-data-dir",
             "rssMb": 9.6
           },
           {
-            "pid": 13275,
+            "pid": 35017,
             "role": "gpu",
-            "rssMb": 87.8
+            "matchedBy": "user-data-dir",
+            "rssMb": 88.8
           },
           {
-            "pid": 13276,
+            "pid": 35018,
             "role": "utility",
             "detail": "network.mojom.NetworkService",
+            "matchedBy": "user-data-dir",
             "rssMb": 54.7
           },
           {
-            "pid": 13277,
+            "pid": 35022,
             "role": "renderer",
-            "rssMb": 196.8
+            "matchedBy": "user-data-dir",
+            "rssMb": 197
           }
         ],
         "byRole": {
-          "main": 177.4,
+          "main": 177.7,
           "crashpad": 9.6,
-          "gpu": 87.8,
+          "gpu": 88.8,
           "utility": 54.7,
-          "renderer": 196.8
+          "renderer": 197
         },
-        "totalMb": 526.3,
+        "totalMb": 527.8,
         "count": 5
       },
+      "mainMemory": {
+        "idle": {
+          "rssMb": 178,
+          "heapTotalMb": 16.7,
+          "heapUsedMb": 7.8,
+          "externalMb": 8.7,
+          "arrayBuffersMb": 0,
+          "bytes": {
+            "rss": 186646528,
+            "heapTotal": 17514496,
+            "heapUsed": 8168208,
+            "external": 9093090,
+            "arrayBuffers": 0
+          }
+        },
+        "withSmallDoc": {
+          "rssMb": 181.8,
+          "heapTotalMb": 17.1,
+          "heapUsedMb": 9.3,
+          "externalMb": 8.7,
+          "arrayBuffersMb": 0,
+          "bytes": {
+            "rss": 190578688,
+            "heapTotal": 17940480,
+            "heapUsed": 9726496,
+            "external": 9109817,
+            "arrayBuffers": 0
+          }
+        }
+      },
       "smallDoc": {
-        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-ykkBqq/Documents/Markie/perf-200kb.md",
+        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-xu26Qs/Documents/Markie/perf-200kb.md",
         "bytes": 204928,
         "blocks": 1514,
-        "toolbarNamedMs": 1,
-        "editorReadyMs": 104,
+        "toolbarNamedMs": 4,
+        "editorReadyMs": 113,
         "openTimedOut": false
       },
       "rssDoc": {
         "processes": [
           {
-            "pid": 13251,
+            "pid": 35013,
             "role": "main",
-            "rssMb": 181.2
+            "matchedBy": "user-data-dir",
+            "rssMb": 181.7
           },
           {
-            "pid": 13274,
+            "pid": 35016,
             "role": "crashpad",
+            "matchedBy": "user-data-dir",
             "rssMb": 9.6
           },
           {
-            "pid": 13275,
+            "pid": 35017,
             "role": "gpu",
-            "rssMb": 92.6
+            "matchedBy": "user-data-dir",
+            "rssMb": 93.3
           },
           {
-            "pid": 13276,
+            "pid": 35018,
             "role": "utility",
             "detail": "network.mojom.NetworkService",
-            "rssMb": 55.1
+            "matchedBy": "user-data-dir",
+            "rssMb": 55.2
           },
           {
-            "pid": 13277,
+            "pid": 35022,
             "role": "renderer",
-            "rssMb": 414.6
+            "matchedBy": "user-data-dir",
+            "rssMb": 416.1
           }
         ],
         "byRole": {
-          "main": 181.2,
+          "main": 181.7,
           "crashpad": 9.6,
-          "gpu": 92.6,
-          "utility": 55.1,
-          "renderer": 414.6
+          "gpu": 93.3,
+          "utility": 55.2,
+          "renderer": 416.1
         },
-        "totalMb": 753.1,
+        "totalMb": 755.9,
         "count": 5
       },
       "editorSizeWithSmallDoc": 193964,
       "largeDoc": {
-        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-ykkBqq/Documents/Markie/perf-4400kb.md",
+        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-xu26Qs/Documents/Markie/perf-4400kb.md",
         "bytes": 4614377,
         "blocks": 33730,
         "clickAccepted": true,
-        "toolbarNamedWithinSamplingWindow": false,
         "samples": [
           {
             "second": 1,
-            "atMsAfterOpen": 1002,
+            "atMsAfterOpen": 1001,
             "responded": false,
-            "roundTripMs": 202
+            "roundTripMs": 201
           },
           {
             "second": 2,
-            "atMsAfterOpen": 2003,
+            "atMsAfterOpen": 2001,
             "responded": false,
-            "roundTripMs": 202
+            "roundTripMs": 201
           },
           {
             "second": 3,
@@ -161,73 +200,73 @@
           },
           {
             "second": 4,
-            "atMsAfterOpen": 4002,
+            "atMsAfterOpen": 4001,
             "responded": false,
-            "roundTripMs": 203
+            "roundTripMs": 201
           },
           {
             "second": 5,
-            "atMsAfterOpen": 4999,
+            "atMsAfterOpen": 5001,
             "responded": false,
-            "roundTripMs": 202
+            "roundTripMs": 201
           },
           {
             "second": 6,
             "atMsAfterOpen": 6001,
             "responded": false,
-            "roundTripMs": 200
+            "roundTripMs": 202
           },
           {
             "second": 7,
             "atMsAfterOpen": 7001,
             "responded": false,
-            "roundTripMs": 202
+            "roundTripMs": 201
           },
           {
             "second": 8,
             "atMsAfterOpen": 8001,
             "responded": false,
-            "roundTripMs": 200
+            "roundTripMs": 201
           },
           {
             "second": 9,
-            "atMsAfterOpen": 9003,
+            "atMsAfterOpen": 9001,
             "responded": false,
-            "roundTripMs": 202
+            "roundTripMs": 201
           },
           {
             "second": 10,
             "atMsAfterOpen": 10002,
             "responded": false,
-            "roundTripMs": 203
+            "roundTripMs": 200
           },
           {
             "second": 11,
             "atMsAfterOpen": 11001,
             "responded": false,
-            "roundTripMs": 202
+            "roundTripMs": 201
           },
           {
             "second": 12,
             "atMsAfterOpen": 12001,
             "responded": false,
-            "roundTripMs": 202
+            "roundTripMs": 201
           },
           {
             "second": 13,
-            "atMsAfterOpen": 13002,
+            "atMsAfterOpen": 13001,
             "responded": false,
             "roundTripMs": 202
           },
           {
             "second": 14,
-            "atMsAfterOpen": 14002,
+            "atMsAfterOpen": 14001,
             "responded": false,
-            "roundTripMs": 202
+            "roundTripMs": 201
           },
           {
             "second": 15,
-            "atMsAfterOpen": 15000,
+            "atMsAfterOpen": 15001,
             "responded": false,
             "roundTripMs": 201
           },
@@ -239,15 +278,15 @@
           },
           {
             "second": 17,
-            "atMsAfterOpen": 17001,
+            "atMsAfterOpen": 17000,
             "responded": false,
-            "roundTripMs": 200
+            "roundTripMs": 201
           },
           {
             "second": 18,
             "atMsAfterOpen": 18002,
             "responded": false,
-            "roundTripMs": 200
+            "roundTripMs": 201
           },
           {
             "second": 19,
@@ -257,41 +296,48 @@
           },
           {
             "second": 20,
-            "atMsAfterOpen": 19999,
+            "atMsAfterOpen": 20001,
             "responded": false,
-            "roundTripMs": 201
+            "roundTripMs": 202
           }
         ],
         "responsiveSeconds": 0,
         "unresponsiveSeconds": 20,
         "sampleSeconds": 20,
         "firstResponsiveAfterOpenMs": null,
-        "longestUnresponsiveStretchSeconds": 20
+        "firstResponseCapMs": 20000,
+        "longestUnresponsiveStretchSeconds": 20,
+        "toolbarNamedMs": 65009,
+        "editorReadyMs": 65530,
+        "landCapMs": 120000,
+        "landed": true
       },
+      "editorSizeWithLargeDoc": 4363068,
       "switchBack": {
-        "ms": null,
-        "timedOut": true,
+        "ms": 435,
+        "timedOut": false,
         "capMs": 30000,
-        "clickExecutedMs": null,
-        "clickExecutionTimedOut": true,
-        "clickAccepted": false,
-        "elapsedMs": 30071
+        "toolbarNamedMs": 436,
+        "clickExecutedMs": 3,
+        "clickExecutionTimedOut": false,
+        "clickAccepted": true,
+        "elapsedMs": 436
       },
-      "finishedAt": "2026-09-07T17:23:59.377Z"
+      "finishedAt": "2026-09-07T18:30:09.476Z"
     },
     {
       "run": 2,
-      "startedAt": "2026-09-07T17:23:59.382Z",
-      "debugPort": 50259,
-      "inspectPort": null,
-      "homeDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-ERC4Nc",
-      "userDataDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-profile-0H1L49",
+      "startedAt": "2026-09-07T18:30:09.479Z",
+      "debugPort": 50407,
+      "inspectPort": 50408,
+      "homeDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-Hc6t2Z",
+      "userDataDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-profile-Add0UT",
       "errors": [],
       "launch": {
-        "spawnToLoadEventFiredMs": 571,
-        "spawnToLoadEventEndMs": 571,
-        "domContentLoadedEventEndMs": 75.3,
-        "loadEventEndMs": 170.8,
+        "spawnToLoadEventFiredMs": 562,
+        "spawnToLoadEventEndMs": 562,
+        "domContentLoadedEventEndMs": 78.5,
+        "loadEventEndMs": 175.2,
         "firstContentfulPaintMs": null,
         "firstPaintMs": 92,
         "paintEntries": [
@@ -302,108 +348,147 @@
       "rssIdle": {
         "processes": [
           {
-            "pid": 20522,
+            "pid": 38827,
             "role": "main",
-            "rssMb": 176.9
+            "matchedBy": "user-data-dir",
+            "rssMb": 178
           },
           {
-            "pid": 20526,
+            "pid": 38833,
             "role": "crashpad",
+            "matchedBy": "user-data-dir",
             "rssMb": 9.6
           },
           {
-            "pid": 20527,
+            "pid": 38834,
             "role": "gpu",
-            "rssMb": 88.8
+            "matchedBy": "user-data-dir",
+            "rssMb": 87.7
           },
           {
-            "pid": 20528,
+            "pid": 38835,
             "role": "utility",
             "detail": "network.mojom.NetworkService",
+            "matchedBy": "user-data-dir",
             "rssMb": 54.6
           },
           {
-            "pid": 20529,
+            "pid": 38836,
             "role": "renderer",
-            "rssMb": 196.5
+            "matchedBy": "user-data-dir",
+            "rssMb": 196.6
           }
         ],
         "byRole": {
-          "main": 176.9,
+          "main": 178,
           "crashpad": 9.6,
-          "gpu": 88.8,
+          "gpu": 87.7,
           "utility": 54.6,
-          "renderer": 196.5
+          "renderer": 196.6
         },
-        "totalMb": 526.4,
+        "totalMb": 526.5,
         "count": 5
       },
+      "mainMemory": {
+        "idle": {
+          "rssMb": 178.3,
+          "heapTotalMb": 16.7,
+          "heapUsedMb": 7.8,
+          "externalMb": 8.7,
+          "arrayBuffersMb": 0,
+          "bytes": {
+            "rss": 186974208,
+            "heapTotal": 17514496,
+            "heapUsed": 8163356,
+            "external": 9093090,
+            "arrayBuffers": 0
+          }
+        },
+        "withSmallDoc": {
+          "rssMb": 182.1,
+          "heapTotalMb": 17.1,
+          "heapUsedMb": 9.3,
+          "externalMb": 8.7,
+          "arrayBuffersMb": 0,
+          "bytes": {
+            "rss": 190971904,
+            "heapTotal": 17940480,
+            "heapUsed": 9719084,
+            "external": 9109817,
+            "arrayBuffers": 0
+          }
+        }
+      },
       "smallDoc": {
-        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-ERC4Nc/Documents/Markie/perf-200kb.md",
+        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-Hc6t2Z/Documents/Markie/perf-200kb.md",
         "bytes": 204928,
         "blocks": 1514,
-        "toolbarNamedMs": 306,
-        "editorReadyMs": 513,
+        "toolbarNamedMs": 4,
+        "editorReadyMs": 109,
         "openTimedOut": false
       },
       "rssDoc": {
         "processes": [
           {
-            "pid": 20522,
+            "pid": 38827,
             "role": "main",
-            "rssMb": 180.6
+            "matchedBy": "user-data-dir",
+            "rssMb": 182.1
           },
           {
-            "pid": 20526,
+            "pid": 38833,
             "role": "crashpad",
+            "matchedBy": "user-data-dir",
             "rssMb": 9.6
           },
           {
-            "pid": 20527,
+            "pid": 38834,
             "role": "gpu",
-            "rssMb": 93.5
+            "matchedBy": "user-data-dir",
+            "rssMb": 92.1
           },
           {
-            "pid": 20528,
+            "pid": 38835,
             "role": "utility",
             "detail": "network.mojom.NetworkService",
+            "matchedBy": "user-data-dir",
             "rssMb": 55.1
           },
           {
-            "pid": 20529,
+            "pid": 38836,
             "role": "renderer",
-            "rssMb": 416.3
+            "matchedBy": "user-data-dir",
+            "rssMb": 416.8
           }
         ],
         "byRole": {
-          "main": 180.6,
+          "main": 182.1,
           "crashpad": 9.6,
-          "gpu": 93.5,
+          "gpu": 92.1,
           "utility": 55.1,
-          "renderer": 416.3
+          "renderer": 416.8
         },
-        "totalMb": 755.1,
+        "totalMb": 755.7,
         "count": 5
       },
       "editorSizeWithSmallDoc": 193964,
       "largeDoc": {
-        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-ERC4Nc/Documents/Markie/perf-4400kb.md",
+        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-Hc6t2Z/Documents/Markie/perf-4400kb.md",
         "bytes": 4614377,
         "blocks": 33730,
         "clickAccepted": true,
-        "toolbarNamedWithinSamplingWindow": false,
         "samples": [
           {
             "second": 1,
-            "atMsAfterOpen": 1002,
+            "atMsAfterOpen": 1001,
             "responded": false,
-            "roundTripMs": 200
+            "roundTripMs": 201
           },
           {
             "second": 2,
             "atMsAfterOpen": 2001,
             "responded": false,
-            "roundTripMs": 200
+            "roundTripMs": 201
           },
           {
             "second": 3,
@@ -413,7 +498,7 @@
           },
           {
             "second": 4,
-            "atMsAfterOpen": 4002,
+            "atMsAfterOpen": 4001,
             "responded": false,
             "roundTripMs": 201
           },
@@ -437,6 +522,304 @@
           },
           {
             "second": 8,
+            "atMsAfterOpen": 8002,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 9,
+            "atMsAfterOpen": 9001,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 10,
+            "atMsAfterOpen": 10001,
+            "responded": true,
+            "roundTripMs": 99
+          },
+          {
+            "second": 11,
+            "atMsAfterOpen": 11002,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 12,
+            "atMsAfterOpen": 12001,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 13,
+            "atMsAfterOpen": 13001,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 14,
+            "atMsAfterOpen": 14001,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 15,
+            "atMsAfterOpen": 15001,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 16,
+            "atMsAfterOpen": 16001,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 17,
+            "atMsAfterOpen": 17001,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 18,
+            "atMsAfterOpen": 18001,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 19,
+            "atMsAfterOpen": 19001,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 20,
+            "atMsAfterOpen": 20001,
+            "responded": false,
+            "roundTripMs": 201
+          }
+        ],
+        "responsiveSeconds": 1,
+        "unresponsiveSeconds": 19,
+        "sampleSeconds": 20,
+        "firstResponsiveAfterOpenMs": 10001,
+        "firstResponseCapMs": 20000,
+        "longestUnresponsiveStretchSeconds": 10,
+        "toolbarNamedMs": 62494,
+        "editorReadyMs": 62935,
+        "landCapMs": 120000,
+        "landed": true
+      },
+      "editorSizeWithLargeDoc": 4363068,
+      "switchBack": {
+        "ms": 551,
+        "timedOut": false,
+        "capMs": 30000,
+        "toolbarNamedMs": 551,
+        "clickExecutedMs": 3,
+        "clickExecutionTimedOut": false,
+        "clickAccepted": true,
+        "elapsedMs": 551
+      },
+      "finishedAt": "2026-09-07T18:31:26.077Z"
+    },
+    {
+      "run": 3,
+      "startedAt": "2026-09-07T18:31:26.081Z",
+      "debugPort": 50719,
+      "inspectPort": 50720,
+      "homeDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-6yf4Xb",
+      "userDataDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-profile-hlioPa",
+      "errors": [],
+      "launch": {
+        "spawnToLoadEventFiredMs": 564,
+        "spawnToLoadEventEndMs": 564,
+        "domContentLoadedEventEndMs": 79.3,
+        "loadEventEndMs": 181.7,
+        "firstContentfulPaintMs": null,
+        "firstPaintMs": 92,
+        "paintEntries": [
+          "first-paint"
+        ],
+        "documentHidden": false
+      },
+      "rssIdle": {
+        "processes": [
+          {
+            "pid": 48687,
+            "role": "main",
+            "matchedBy": "user-data-dir",
+            "rssMb": 177.7
+          },
+          {
+            "pid": 48694,
+            "role": "crashpad",
+            "matchedBy": "user-data-dir",
+            "rssMb": 9.6
+          },
+          {
+            "pid": 48700,
+            "role": "gpu",
+            "matchedBy": "user-data-dir",
+            "rssMb": 88.2
+          },
+          {
+            "pid": 48701,
+            "role": "utility",
+            "detail": "network.mojom.NetworkService",
+            "matchedBy": "user-data-dir",
+            "rssMb": 54.6
+          },
+          {
+            "pid": 48702,
+            "role": "renderer",
+            "matchedBy": "user-data-dir",
+            "rssMb": 197.4
+          }
+        ],
+        "byRole": {
+          "main": 177.7,
+          "crashpad": 9.6,
+          "gpu": 88.2,
+          "utility": 54.6,
+          "renderer": 197.4
+        },
+        "totalMb": 527.5,
+        "count": 5
+      },
+      "mainMemory": {
+        "idle": {
+          "rssMb": 178.1,
+          "heapTotalMb": 16.5,
+          "heapUsedMb": 7.8,
+          "externalMb": 8.8,
+          "arrayBuffersMb": 0,
+          "bytes": {
+            "rss": 186728448,
+            "heapTotal": 17252352,
+            "heapUsed": 8171416,
+            "external": 9213271,
+            "arrayBuffers": 0
+          }
+        },
+        "withSmallDoc": {
+          "rssMb": 181.9,
+          "heapTotalMb": 16.9,
+          "heapUsedMb": 9.3,
+          "externalMb": 8.8,
+          "arrayBuffersMb": 0,
+          "bytes": {
+            "rss": 190742528,
+            "heapTotal": 17678336,
+            "heapUsed": 9726948,
+            "external": 9229998,
+            "arrayBuffers": 0
+          }
+        }
+      },
+      "smallDoc": {
+        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-6yf4Xb/Documents/Markie/perf-200kb.md",
+        "bytes": 204928,
+        "blocks": 1514,
+        "toolbarNamedMs": 105,
+        "editorReadyMs": 107,
+        "openTimedOut": false
+      },
+      "rssDoc": {
+        "processes": [
+          {
+            "pid": 48687,
+            "role": "main",
+            "matchedBy": "user-data-dir",
+            "rssMb": 181.9
+          },
+          {
+            "pid": 48694,
+            "role": "crashpad",
+            "matchedBy": "user-data-dir",
+            "rssMb": 9.6
+          },
+          {
+            "pid": 48700,
+            "role": "gpu",
+            "matchedBy": "user-data-dir",
+            "rssMb": 92.6
+          },
+          {
+            "pid": 48701,
+            "role": "utility",
+            "detail": "network.mojom.NetworkService",
+            "matchedBy": "user-data-dir",
+            "rssMb": 55.1
+          },
+          {
+            "pid": 48702,
+            "role": "renderer",
+            "matchedBy": "user-data-dir",
+            "rssMb": 414
+          }
+        ],
+        "byRole": {
+          "main": 181.9,
+          "crashpad": 9.6,
+          "gpu": 92.6,
+          "utility": 55.1,
+          "renderer": 414
+        },
+        "totalMb": 753.2,
+        "count": 5
+      },
+      "editorSizeWithSmallDoc": 193964,
+      "largeDoc": {
+        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-6yf4Xb/Documents/Markie/perf-4400kb.md",
+        "bytes": 4614377,
+        "blocks": 33730,
+        "clickAccepted": true,
+        "samples": [
+          {
+            "second": 1,
+            "atMsAfterOpen": 1000,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 2,
+            "atMsAfterOpen": 2001,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 3,
+            "atMsAfterOpen": 3001,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 4,
+            "atMsAfterOpen": 4000,
+            "responded": false,
+            "roundTripMs": 200
+          },
+          {
+            "second": 5,
+            "atMsAfterOpen": 5001,
+            "responded": false,
+            "roundTripMs": 201
+          },
+          {
+            "second": 6,
+            "atMsAfterOpen": 6000,
+            "responded": false,
+            "roundTripMs": 200
+          },
+          {
+            "second": 7,
+            "atMsAfterOpen": 7001,
+            "responded": false,
+            "roundTripMs": 200
+          },
+          {
+            "second": 8,
             "atMsAfterOpen": 8001,
             "responded": false,
             "roundTripMs": 201
@@ -444,14 +827,14 @@
           {
             "second": 9,
             "atMsAfterOpen": 9001,
-            "responded": true,
-            "roundTripMs": 44
+            "responded": false,
+            "roundTripMs": 201
           },
           {
             "second": 10,
             "atMsAfterOpen": 10001,
             "responded": false,
-            "roundTripMs": 202
+            "roundTripMs": 201
           },
           {
             "second": 11,
@@ -479,15 +862,15 @@
           },
           {
             "second": 15,
-            "atMsAfterOpen": 15001,
+            "atMsAfterOpen": 15000,
             "responded": false,
-            "roundTripMs": 200
+            "roundTripMs": 201
           },
           {
             "second": 16,
             "atMsAfterOpen": 16001,
             "responded": false,
-            "roundTripMs": 200
+            "roundTripMs": 201
           },
           {
             "second": 17,
@@ -499,335 +882,104 @@
             "second": 18,
             "atMsAfterOpen": 18001,
             "responded": false,
-            "roundTripMs": 200
+            "roundTripMs": 202
           },
           {
             "second": 19,
             "atMsAfterOpen": 19000,
             "responded": false,
-            "roundTripMs": 202
+            "roundTripMs": 201
           },
           {
             "second": 20,
             "atMsAfterOpen": 20001,
             "responded": false,
-            "roundTripMs": 201
-          }
-        ],
-        "responsiveSeconds": 1,
-        "unresponsiveSeconds": 19,
-        "sampleSeconds": 20,
-        "firstResponsiveAfterOpenMs": 9001,
-        "longestUnresponsiveStretchSeconds": 11
-      },
-      "switchBack": {
-        "ms": null,
-        "timedOut": true,
-        "capMs": 30000,
-        "clickExecutedMs": null,
-        "clickExecutionTimedOut": true,
-        "clickAccepted": false,
-        "elapsedMs": 30060
-      },
-      "finishedAt": "2026-09-07T17:25:05.237Z"
-    },
-    {
-      "run": 3,
-      "startedAt": "2026-09-07T17:25:05.240Z",
-      "debugPort": 50453,
-      "inspectPort": null,
-      "homeDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-M02anA",
-      "userDataDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-profile-jbZbkA",
-      "errors": [],
-      "launch": {
-        "spawnToLoadEventFiredMs": 552,
-        "spawnToLoadEventEndMs": 552,
-        "domContentLoadedEventEndMs": 77.8,
-        "loadEventEndMs": 170.1,
-        "firstContentfulPaintMs": null,
-        "firstPaintMs": 96,
-        "paintEntries": [
-          "first-paint"
-        ],
-        "documentHidden": false
-      },
-      "rssIdle": {
-        "processes": [
-          {
-            "pid": 24887,
-            "role": "main",
-            "rssMb": 177.7
-          },
-          {
-            "pid": 24899,
-            "role": "crashpad",
-            "rssMb": 9.6
-          },
-          {
-            "pid": 24900,
-            "role": "gpu",
-            "rssMb": 87.4
-          },
-          {
-            "pid": 24901,
-            "role": "utility",
-            "detail": "network.mojom.NetworkService",
-            "rssMb": 54.6
-          },
-          {
-            "pid": 24902,
-            "role": "renderer",
-            "rssMb": 196.3
-          }
-        ],
-        "byRole": {
-          "main": 177.7,
-          "crashpad": 9.6,
-          "gpu": 87.4,
-          "utility": 54.6,
-          "renderer": 196.3
-        },
-        "totalMb": 525.6,
-        "count": 5
-      },
-      "smallDoc": {
-        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-M02anA/Documents/Markie/perf-200kb.md",
-        "bytes": 204928,
-        "blocks": 1514,
-        "toolbarNamedMs": 293,
-        "editorReadyMs": 491,
-        "openTimedOut": false
-      },
-      "rssDoc": {
-        "processes": [
-          {
-            "pid": 24887,
-            "role": "main",
-            "rssMb": 181.3
-          },
-          {
-            "pid": 24899,
-            "role": "crashpad",
-            "rssMb": 9.6
-          },
-          {
-            "pid": 24900,
-            "role": "gpu",
-            "rssMb": 92.1
-          },
-          {
-            "pid": 24901,
-            "role": "utility",
-            "detail": "network.mojom.NetworkService",
-            "rssMb": 55
-          },
-          {
-            "pid": 24902,
-            "role": "renderer",
-            "rssMb": 414.5
-          }
-        ],
-        "byRole": {
-          "main": 181.3,
-          "crashpad": 9.6,
-          "gpu": 92.1,
-          "utility": 55,
-          "renderer": 414.5
-        },
-        "totalMb": 752.5,
-        "count": 5
-      },
-      "editorSizeWithSmallDoc": 193964,
-      "largeDoc": {
-        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-M02anA/Documents/Markie/perf-4400kb.md",
-        "bytes": 4614377,
-        "blocks": 33730,
-        "clickAccepted": true,
-        "toolbarNamedWithinSamplingWindow": false,
-        "samples": [
-          {
-            "second": 1,
-            "atMsAfterOpen": 1000,
-            "responded": false,
-            "roundTripMs": 202
-          },
-          {
-            "second": 2,
-            "atMsAfterOpen": 2001,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 3,
-            "atMsAfterOpen": 3001,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 4,
-            "atMsAfterOpen": 4001,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 5,
-            "atMsAfterOpen": 5000,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 6,
-            "atMsAfterOpen": 6001,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 7,
-            "atMsAfterOpen": 7001,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 8,
-            "atMsAfterOpen": 8002,
-            "responded": false,
             "roundTripMs": 200
-          },
-          {
-            "second": 9,
-            "atMsAfterOpen": 9001,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 10,
-            "atMsAfterOpen": 10001,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 11,
-            "atMsAfterOpen": 11001,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 12,
-            "atMsAfterOpen": 12001,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 13,
-            "atMsAfterOpen": 13000,
-            "responded": false,
-            "roundTripMs": 202
-          },
-          {
-            "second": 14,
-            "atMsAfterOpen": 14001,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 15,
-            "atMsAfterOpen": 15001,
-            "responded": false,
-            "roundTripMs": 200
-          },
-          {
-            "second": 16,
-            "atMsAfterOpen": 15999,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 17,
-            "atMsAfterOpen": 17001,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 18,
-            "atMsAfterOpen": 18001,
-            "responded": false,
-            "roundTripMs": 201
-          },
-          {
-            "second": 19,
-            "atMsAfterOpen": 19002,
-            "responded": false,
-            "roundTripMs": 200
-          },
-          {
-            "second": 20,
-            "atMsAfterOpen": 20001,
-            "responded": false,
-            "roundTripMs": 201
           }
         ],
         "responsiveSeconds": 0,
         "unresponsiveSeconds": 20,
         "sampleSeconds": 20,
         "firstResponsiveAfterOpenMs": null,
-        "longestUnresponsiveStretchSeconds": 20
+        "firstResponseCapMs": 20000,
+        "longestUnresponsiveStretchSeconds": 20,
+        "toolbarNamedMs": 64622,
+        "editorReadyMs": 64623,
+        "landCapMs": 120000,
+        "landed": true
       },
+      "editorSizeWithLargeDoc": 4363068,
       "switchBack": {
-        "ms": null,
-        "timedOut": true,
+        "ms": 443,
+        "timedOut": false,
         "capMs": 30000,
-        "clickExecutedMs": null,
-        "clickExecutionTimedOut": true,
-        "clickAccepted": false,
-        "elapsedMs": 30051
+        "toolbarNamedMs": 443,
+        "clickExecutedMs": 3,
+        "clickExecutionTimedOut": false,
+        "clickAccepted": true,
+        "elapsedMs": 443
       },
-      "finishedAt": "2026-09-07T17:26:11.078Z"
+      "finishedAt": "2026-09-07T18:32:44.215Z"
     }
   ],
   "summary": {
     "medians": {
-      "launchMs": 571,
-      "spawnToLoadEventEndMs": 571,
-      "domContentLoadedEventEndMs": 77.8,
-      "loadEventEndMs": 170.8,
-      "firstContentfulPaintMs": null,
-      "firstPaintMs": 96,
-      "rssIdleTotalMb": 526.3,
-      "rssIdleMainMb": 177.4,
-      "rssIdleRendererMb": 196.5,
-      "rssIdleGpuMb": 87.8,
-      "rssDocTotalMb": 753.1,
-      "rssDocMainMb": 181.2,
-      "rssDocRendererMb": 414.6,
-      "smallDocToolbarNamedMs": 293,
-      "smallDocEditorReadyMs": 491,
-      "largeDocResponsiveSeconds": 0,
-      "largeDocFirstResponseMs": 9001,
-      "largeDocLongestStallSeconds": 20,
-      "switchBackMs": null,
-      "switchBackClickExecutedMs": null
-    },
-    "minimums": {
-      "launchMs": 552,
-      "spawnToLoadEventEndMs": 552,
-      "domContentLoadedEventEndMs": 75.3,
-      "loadEventEndMs": 170.1,
+      "launchMs": 564,
+      "spawnToLoadEventEndMs": 564,
+      "domContentLoadedEventEndMs": 79.3,
+      "loadEventEndMs": 181.7,
       "firstContentfulPaintMs": null,
       "firstPaintMs": 92,
-      "rssIdleTotalMb": 525.6,
-      "rssIdleMainMb": 176.9,
-      "rssIdleRendererMb": 196.3,
-      "rssIdleGpuMb": 87.4,
-      "rssDocTotalMb": 752.5,
-      "rssDocMainMb": 180.6,
-      "rssDocRendererMb": 414.5,
-      "smallDocToolbarNamedMs": 1,
-      "smallDocEditorReadyMs": 104,
+      "rssIdleTotalMb": 527.5,
+      "rssIdleMainMb": 177.7,
+      "rssIdleRendererMb": 197,
+      "rssIdleGpuMb": 88.2,
+      "rssDocTotalMb": 755.7,
+      "rssDocMainMb": 181.9,
+      "rssDocRendererMb": 416.1,
+      "mainHeapUsedIdleMb": 7.8,
+      "mainHeapTotalIdleMb": 16.7,
+      "mainExternalIdleMb": 8.7,
+      "mainRssIdleMb": 178.1,
+      "mainHeapUsedDocMb": 9.3,
+      "mainRssDocMb": 181.9,
+      "smallDocToolbarNamedMs": 4,
+      "smallDocEditorReadyMs": 109,
       "largeDocResponsiveSeconds": 0,
-      "largeDocFirstResponseMs": 9001,
-      "largeDocLongestStallSeconds": 11,
-      "switchBackMs": null,
-      "switchBackClickExecutedMs": null
+      "largeDocFirstResponseMs": 20000,
+      "largeDocLongestStallSeconds": 20,
+      "largeDocLandedMs": 64623,
+      "switchBackMs": 443,
+      "switchBackClickExecutedMs": 3
+    },
+    "minimums": {
+      "launchMs": 562,
+      "spawnToLoadEventEndMs": 562,
+      "domContentLoadedEventEndMs": 78.5,
+      "loadEventEndMs": 175.2,
+      "firstContentfulPaintMs": null,
+      "firstPaintMs": 92,
+      "rssIdleTotalMb": 526.5,
+      "rssIdleMainMb": 177.7,
+      "rssIdleRendererMb": 196.6,
+      "rssIdleGpuMb": 87.7,
+      "rssDocTotalMb": 753.2,
+      "rssDocMainMb": 181.7,
+      "rssDocRendererMb": 414,
+      "mainHeapUsedIdleMb": 7.8,
+      "mainHeapTotalIdleMb": 16.5,
+      "mainExternalIdleMb": 8.7,
+      "mainRssIdleMb": 178,
+      "mainHeapUsedDocMb": 9.3,
+      "mainRssDocMb": 181.8,
+      "smallDocToolbarNamedMs": 4,
+      "smallDocEditorReadyMs": 107,
+      "largeDocResponsiveSeconds": 0,
+      "largeDocFirstResponseMs": 10001,
+      "largeDocLongestStallSeconds": 10,
+      "largeDocLandedMs": 62935,
+      "switchBackMs": 435,
+      "switchBackClickExecutedMs": 3
     },
     "samples": {
       "launchMs": 3,
@@ -843,14 +995,72 @@
       "rssDocTotalMb": 3,
       "rssDocMainMb": 3,
       "rssDocRendererMb": 3,
+      "mainHeapUsedIdleMb": 3,
+      "mainHeapTotalIdleMb": 3,
+      "mainExternalIdleMb": 3,
+      "mainRssIdleMb": 3,
+      "mainHeapUsedDocMb": 3,
+      "mainRssDocMb": 3,
       "smallDocToolbarNamedMs": 3,
       "smallDocEditorReadyMs": 3,
       "largeDocResponsiveSeconds": 3,
       "largeDocFirstResponseMs": 1,
       "largeDocLongestStallSeconds": 3,
-      "switchBackMs": 0,
-      "switchBackClickExecutedMs": 0
+      "largeDocLandedMs": 3,
+      "switchBackMs": 3,
+      "switchBackClickExecutedMs": 3
     },
-    "line": "launch 571ms · rss idle 526MB · rss doc 753MB · 4.4MB: responsive 0/20s, first response 9.0s · switch timed out (>30s)"
-  }
+    "censored": {
+      "smallDocToolbarNamedMs": {
+        "capMs": 60000,
+        "attemptedRuns": 3,
+        "completedRuns": 3,
+        "timedOutRuns": 0,
+        "medianAtOrAboveCap": false,
+        "medianOfCompletedMs": 4
+      },
+      "smallDocEditorReadyMs": {
+        "capMs": 60000,
+        "attemptedRuns": 3,
+        "completedRuns": 3,
+        "timedOutRuns": 0,
+        "medianAtOrAboveCap": false,
+        "medianOfCompletedMs": 109
+      },
+      "largeDocFirstResponseMs": {
+        "capMs": 20000,
+        "attemptedRuns": 3,
+        "completedRuns": 1,
+        "timedOutRuns": 2,
+        "medianAtOrAboveCap": true,
+        "medianOfCompletedMs": 10001
+      },
+      "largeDocLandedMs": {
+        "capMs": 120000,
+        "attemptedRuns": 3,
+        "completedRuns": 3,
+        "timedOutRuns": 0,
+        "medianAtOrAboveCap": false,
+        "medianOfCompletedMs": 64623
+      },
+      "switchBackMs": {
+        "capMs": 30000,
+        "attemptedRuns": 3,
+        "completedRuns": 3,
+        "timedOutRuns": 0,
+        "medianAtOrAboveCap": false,
+        "medianOfCompletedMs": 443
+      },
+      "switchBackClickExecutedMs": {
+        "capMs": 30000,
+        "attemptedRuns": 3,
+        "completedRuns": 3,
+        "timedOutRuns": 0,
+        "medianAtOrAboveCap": false,
+        "medianOfCompletedMs": 3
+      }
+    },
+    "line": "launch 564ms · rss idle 528MB · rss doc 756MB · 4.4MB: responsive 0/20s, first response 1/3 runs, 10.0s when it did · landed 3/3 runs, 64.6s · switch 3/3 runs, 0.4s"
+  },
+  "ok": true
 }

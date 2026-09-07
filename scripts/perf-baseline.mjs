@@ -11,12 +11,17 @@
 //      paint timings
 //   b. resident memory per helper process after 5s idle
 //   c. the same table with a 200 KB document open
-//   d. what a 4.4 MB document does to responsiveness, and how long the app then
-//      takes to switch back to the small one
+//   d. what a 4.4 MB document does to responsiveness, how long it takes to land,
+//      and how long the app then takes to switch back to the small one
+//
+// With --inspect-main (the default) it also reads the main process's own
+// process.memoryUsage() over its inspector port, because RSS alone cannot tell
+// a shared framework page from something the app is holding.
 //
 // Every run gets its own profile, so every run is a cold launch. Nothing here
-// asserts a budget: bad numbers are the point of a baseline, so the script exits
-// non-zero only when the measurement itself failed.
+// asserts a budget: bad numbers are the point of a baseline, so a slow number
+// exits 0. A run that could not be measured exits non-zero, with whatever it did
+// manage to record still written to the artifact.
 //
 // Usage:
 //   MARKIE_ALLOW_E2E=1 node scripts/perf-baseline.mjs \
@@ -45,6 +50,9 @@ const SAMPLE_INTERVAL_MS = 1000;
 const SAMPLE_DEADLINE_MS = 200;
 const SWITCH_CAP_MS = 30000;
 const OPEN_CAP_MS = 60000;
+// How long the 4.4 MB document is given to land before the switch back is even
+// asked for. On 0.5.4 it takes about a minute from the click.
+const LARGE_LAND_CAP_MS = 120000;
 const BOOT_TIMEOUT_MS = 60000;
 const SMALL_DOC_BYTES = 200 * 1024;
 const LARGE_DOC_BYTES = 4.4 * 1024 * 1024;
@@ -135,7 +143,7 @@ function blockCycle(n) {
   return blocks;
 }
 
-function generateMarkdown(targetBytes, title) {
+export function generateMarkdown(targetBytes, title) {
   const out = [`# ${title}`, "", `Generated for the Markie performance baseline. Target ${Math.round(targetBytes / 1024)} KB.`, ""];
   let blocks = 2; // the title and the intro paragraph
   let bytes = out.join("\n").length;
@@ -166,28 +174,62 @@ function roleDetail(command) {
   return sub ? sub[1] : null;
 }
 
-function rssTable(bundlePath) {
-  const raw = execFileSync("ps", ["-Awwo", "pid=,rss=,command="], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  const processes = [];
-  for (const line of raw.split("\n")) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+// Every process of one run of one bundle, and nothing else.
+//
+// Three filters, narrowest first. argv[0] must be inside the bundle that was
+// launched, which keeps out an installed Markie at another path and keeps out
+// this script's own shell and node (their command lines carry the bundle path
+// as an argument, which an `includes` test once counted as a 110 MB "main"
+// process). Then the row must belong to *this* run: either its command line
+// carries this run's throwaway profile directory, which Chromium propagates to
+// every helper (and which crashpad carries as its --database path), or the
+// process descends from the one we spawned. Without that second filter a
+// concurrent smoke run of the same dist build would land in these totals.
+export function selectRunProcesses(psOutput, { bundlePath, userDataDir, rootPid } = {}) {
+  const rows = [];
+  const parentOf = new Map();
+  for (const line of String(psOutput).split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/.exec(line);
     if (!match) continue;
-    const command = match[3];
-    // startsWith, not includes: only a process whose argv[0] is inside the
-    // bundle we launched. An installed Markie lives at another bundle path and
-    // must never be counted; and this script's own shell and node command lines
-    // carry the bundle path as an argument, which `includes` counted as a
-    // 110 MB "main" process.
+    const row = {
+      pid: Number(match[1]),
+      ppid: Number(match[2]),
+      rssKb: Number(match[3]),
+      command: match[4],
+    };
+    parentOf.set(row.pid, row.ppid);
+    rows.push(row);
+  }
+  const descendsFromRoot = (pid) => {
+    if (!rootPid) return false;
+    let cursor = pid;
+    for (let hops = 0; hops < 64; hops += 1) {
+      if (cursor === rootPid) return true;
+      const parent = parentOf.get(cursor);
+      if (parent === undefined || parent <= 1) return false;
+      cursor = parent;
+    }
+    return false;
+  };
+  // The profile directory's basename is unique per run and survives the
+  // /var vs /private/var spelling difference between the argument we passed and
+  // the one Chromium hands its helpers.
+  const profileMark = userDataDir ? path.basename(userDataDir) : null;
+
+  const processes = [];
+  for (const row of rows) {
+    const command = row.command;
     if (!command.startsWith(`${bundlePath}/`)) continue;
+    const byProfile = !!profileMark && command.includes(profileMark);
+    const byDescent = !byProfile && descendsFromRoot(row.pid);
+    if (profileMark && !byProfile && !byDescent) continue;
     const detail = roleDetail(command);
     processes.push({
-      pid: Number(match[1]),
+      pid: row.pid,
       role: roleOf(command),
       ...(detail ? { detail } : {}),
-      rssMb: Number((Number(match[2]) / 1024).toFixed(1)),
+      matchedBy: byProfile ? "user-data-dir" : byDescent ? "descendant" : "bundle-path",
+      rssMb: Number((row.rssKb / 1024).toFixed(1)),
     });
   }
   const byRole = {};
@@ -196,6 +238,14 @@ function rssTable(bundlePath) {
   }
   const totalMb = Number(processes.reduce((sum, p) => sum + p.rssMb, 0).toFixed(1));
   return { processes, byRole, totalMb, count: processes.length };
+}
+
+function rssTable(bundlePath, scope = {}) {
+  const raw = execFileSync("ps", ["-Awwo", "pid=,ppid=,rss=,command="], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return selectRunProcesses(raw, { bundlePath, ...scope });
 }
 
 // ── CDP over the built-in WebSocket, with a deadline on every request ────────
@@ -290,6 +340,38 @@ async function openCdp(webSocketDebuggerUrl) {
   };
 }
 
+// The packaged build honours --inspect (Electron's EnableNodeCliInspectArguments
+// fuse is left at its default), which puts a Node inspector on the main process
+// with a single target. Note that the default evaluation context there is
+// Electron's bootstrap context, where `require` is undefined; `process` is not,
+// which is all this needs, and `process.mainModule.require` is the way to reach
+// modules if more is ever wanted.
+async function readMainMemory(inspectOrigin) {
+  const targets = await (await fetch(`${inspectOrigin}/json`)).json();
+  const target = targets.find((t) => t.webSocketDebuggerUrl);
+  if (!target) throw new Error("no main-process inspector target");
+  const cdp = await openCdp(target.webSocketDebuggerUrl);
+  try {
+    await cdp.send("Runtime.enable");
+    const reply = await cdp.evaluate("JSON.stringify(process.memoryUsage())", 10000);
+    if (!reply.ok || typeof reply.value !== "string") {
+      throw new Error(`main process memoryUsage failed: ${JSON.stringify(reply)}`);
+    }
+    const usage = JSON.parse(reply.value);
+    const mb = (bytes) => Number((bytes / 1048576).toFixed(1));
+    return {
+      rssMb: mb(usage.rss),
+      heapTotalMb: mb(usage.heapTotal),
+      heapUsedMb: mb(usage.heapUsed),
+      externalMb: mb(usage.external),
+      arrayBuffersMb: mb(usage.arrayBuffers),
+      bytes: usage,
+    };
+  } finally {
+    cdp.close();
+  }
+}
+
 async function findPageTarget(debugOrigin) {
   const response = await fetch(`${debugOrigin}/json`);
   if (!response.ok) return null;
@@ -319,14 +401,18 @@ async function openLibrary(cdp) {
 const EDITOR_SIZE_EXPR =
   `(() => { try { return window.__markieEditor?.state?.doc?.content?.size ?? 0; } catch { return 0; } })()`;
 const EDITOR_READY_SIZE = 100000;
+// The 200 KB fixture parses to about 194,000; the 4.4 MB one to millions. Any
+// threshold between the two separates "the small document is loaded" from "the
+// large one is", which is what makes a switch back provable.
+const LARGE_EDITOR_MIN = 1000000;
 
 // Wait until the rich editor holds a document of at least `size` nodes' worth
 // of content. `since` lets the clock start at the click rather than here.
-async function waitForEditorSize(cdp, size, capMs, since = Date.now()) {
+async function waitForEditorSize(cdp, min, capMs, since = Date.now(), max = Infinity) {
   const deadline = since + capMs;
   while (Date.now() < deadline) {
     const reply = await cdp.evaluate(EDITOR_SIZE_EXPR, 1000);
-    if (reply.ok && typeof reply.value === "number" && reply.value >= size) {
+    if (reply.ok && typeof reply.value === "number" && reply.value >= min && reply.value <= max) {
       return Date.now() - since;
     }
     await sleep(100);
@@ -336,12 +422,12 @@ async function waitForEditorSize(cdp, size, capMs, since = Date.now()) {
 
 // Wait until the toolbar names the document. Each poll carries its own deadline
 // so a frozen renderer costs a poll, not the run.
-async function waitForToolbarName(cdp, name, capMs) {
-  const started = Date.now();
-  while (Date.now() - started < capMs) {
+async function waitForToolbarName(cdp, name, capMs, since = Date.now()) {
+  const deadline = since + capMs;
+  while (Date.now() < deadline) {
     const reply = await cdp.evaluate(`(${NAME_SELECTOR}?.textContent || "").trim()`, 1000);
     if (reply.ok && typeof reply.value === "string" && reply.value.startsWith(name)) {
-      return Date.now() - started;
+      return Date.now() - since;
     }
     await sleep(100);
   }
@@ -364,6 +450,7 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
   const debugPort = await pickPort();
   const debugOrigin = `http://127.0.0.1:${debugPort}`;
   const inspectPort = inspectMain ? await pickPort() : null;
+  const inspectOrigin = inspectPort ? `http://127.0.0.1:${inspectPort}` : null;
 
   const args = [
     `--remote-debugging-port=${debugPort}`,
@@ -471,7 +558,11 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
 
     // b. idle memory
     await sleep(IDLE_SETTLE_MS);
-    result.rssIdle = rssTable(appPath);
+    const scope = { userDataDir, rootPid: child.pid };
+    result.rssIdle = rssTable(appPath, scope);
+    if (inspectOrigin) {
+      result.mainMemory = { idle: await readMainMemory(inspectOrigin) };
+    }
 
     // Register the throwaway home's Documents/Markie as a workspace root, which
     // is what makes the two fixtures readable and listable without a dialog.
@@ -504,7 +595,10 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
     if (!smallClick.ok || smallClick.value !== true) {
       throw new Error(`could not click the 200 KB library row: ${JSON.stringify(smallClick)}`);
     }
-    const smallNamedMs = await waitForToolbarName(cdp, path.basename(smallPath), OPEN_CAP_MS);
+    // Both clocks start at the click, not at the moment the click's CDP reply
+    // came back, so any delay the renderer took to dispatch it is inside the
+    // number rather than outside it.
+    const smallNamedMs = await waitForToolbarName(cdp, path.basename(smallPath), OPEN_CAP_MS, smallStart);
     // The toolbar name lands as soon as the document state is set, which is well
     // before the text is on screen. The editor's own document size is what says
     // the document actually arrived.
@@ -518,7 +612,10 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
       openTimedOut: smallNamedMs === null || smallReadyMs === null,
     };
     await sleep(IDLE_SETTLE_MS);
-    result.rssDoc = rssTable(appPath);
+    result.rssDoc = rssTable(appPath, scope);
+    if (inspectOrigin) {
+      result.mainMemory.withSmallDoc = await readMainMemory(inspectOrigin);
+    }
     result.editorSizeWithSmallDoc = (await cdp.evaluate(EDITOR_SIZE_EXPR, 5000)).value ?? null;
 
     // d. 4.4 MB document
@@ -565,70 +662,91 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
         if (stall > longestStall) longestStall = stall;
       }
     }
-    // Deliberately not waiting for the 4.4 MB document to finish opening: the
-    // question this measures is what a person can do while it is still landing,
-    // and waiting first would time the switch of an app that had already
-    // recovered.
-    const nameProbe = await cdp.evaluate(
-      `(${NAME_SELECTOR}?.textContent || "").trim()`,
-      SAMPLE_DEADLINE_MS
+    // The sampling window is over; now wait for the 4.4 MB document to actually
+    // land. The switch back cannot be timed until it has: until React commits
+    // the large document the toolbar is still naming the small one, and a
+    // toolbar reading a click later would then "prove" a switch that never
+    // happened. Landing is the toolbar naming the large document, confirmed by
+    // the editor holding a document of its size.
+    const largeNamedMs = await waitForToolbarName(
+      cdp,
+      path.basename(largePath),
+      LARGE_LAND_CAP_MS,
+      largeStart
     );
+    const largeEditorMs =
+      largeNamedMs === null
+        ? null
+        : await waitForEditorSize(cdp, LARGE_EDITOR_MIN, LARGE_LAND_CAP_MS, largeStart);
+    const largeLanded = largeNamedMs !== null && largeEditorMs !== null;
     result.largeDoc = {
       path: largePath,
       bytes: docs.large.bytes,
       blocks: docs.large.blocks,
       clickAccepted: largeClickState.accepted,
-      toolbarNamedWithinSamplingWindow:
-        nameProbe.ok === true && typeof nameProbe.value === "string"
-          ? nameProbe.value.startsWith(path.basename(largePath))
-          : false,
       samples,
       responsiveSeconds: responsive.length,
       unresponsiveSeconds: SAMPLE_COUNT - responsive.length,
       sampleSeconds: SAMPLE_COUNT,
       firstResponsiveAfterOpenMs: firstResponsive ? firstResponsive.atMsAfterOpen : null,
+      firstResponseCapMs: SAMPLE_COUNT * SAMPLE_INTERVAL_MS,
       longestUnresponsiveStretchSeconds: longestStall,
+      toolbarNamedMs: largeNamedMs,
+      editorReadyMs: largeEditorMs,
+      landCapMs: LARGE_LAND_CAP_MS,
+      landed: largeLanded,
+      ...(largeLanded ? {} : { note: "large document never landed within the cap" }),
     };
+    result.editorSizeWithLargeDoc = (await cdp.evaluate(EDITOR_SIZE_EXPR, 5000)).value ?? null;
 
-    // and back to the small document, asked for while the 4.4 MB one is still
-    // landing. The toolbar is still naming the small document at this point
-    // (React has not committed the large one yet), so "the toolbar shows its
-    // name" is only evidence of a switch once the click itself has run. A
-    // frozen renderer cannot run it, which is exactly the wait being measured.
-    const switchStart = Date.now();
-    const switchState = { executedMs: null, executionTimedOut: false, accepted: null };
-    const switchClick = cdp.evaluate(rowClick(smallPath), SWITCH_CAP_MS).then((reply) => {
-      // A timed-out request never ran in the page: record that as "never
-      // executed", not as a 30000ms execution.
-      switchState.executedMs = reply.timedOut ? null : Date.now() - switchStart;
-      switchState.executionTimedOut = reply.timedOut === true;
-      switchState.accepted = reply.ok === true && reply.value === true;
-      return reply;
-    });
-    switchClick.catch(() => {});
-    let switchMs = null;
-    while (Date.now() - switchStart < SWITCH_CAP_MS) {
-      if (switchState.executedMs !== null) {
-        const named = await cdp.evaluate(`(${NAME_SELECTOR}?.textContent || "").trim()`, 1000);
-        if (named.ok && typeof named.value === "string" && named.value.startsWith(path.basename(smallPath))) {
-          switchMs = Date.now() - switchStart;
-          break;
-        }
-      }
-      await sleep(100);
+    // and back to the small document. The end marker is the editor holding a
+    // document of the small one's size again, not the toolbar text: after the
+    // large document landed the editor is holding millions of nodes, so falling
+    // back into the small band is proof that a new load completed.
+    if (!largeLanded) {
+      result.switchBack = {
+        ms: null,
+        timedOut: true,
+        skipped: true,
+        capMs: SWITCH_CAP_MS,
+        note: "not attempted: the 4.4 MB document never landed, so a switch back could not be told from no switch at all",
+      };
+    } else {
+      const switchStart = Date.now();
+      const switchState = { executedMs: null, executionTimedOut: false, accepted: null };
+      const switchClick = cdp.evaluate(rowClick(smallPath), SWITCH_CAP_MS).then((reply) => {
+        // A timed-out request never ran in the page: record that as "never
+        // executed", not as a 30000ms execution.
+        switchState.executedMs = reply.timedOut ? null : Date.now() - switchStart;
+        switchState.executionTimedOut = reply.timedOut === true;
+        switchState.accepted = reply.ok === true && reply.value === true;
+        return reply;
+      });
+      switchClick.catch(() => {});
+      const switchReadyMs = await waitForEditorSize(
+        cdp,
+        EDITOR_READY_SIZE,
+        SWITCH_CAP_MS,
+        switchStart,
+        LARGE_EDITOR_MIN - 1
+      );
+      const switchNamedMs =
+        switchReadyMs === null
+          ? null
+          : await waitForToolbarName(cdp, path.basename(smallPath), SWITCH_CAP_MS, switchStart);
+      await switchClick;
+      result.switchBack = {
+        ms: switchReadyMs,
+        timedOut: switchReadyMs === null,
+        capMs: SWITCH_CAP_MS,
+        toolbarNamedMs: switchNamedMs,
+        // How long the app took merely to accept the click.
+        clickExecutedMs: switchState.executedMs,
+        clickExecutionTimedOut: switchState.executionTimedOut,
+        clickAccepted: switchState.accepted,
+        elapsedMs: Date.now() - switchStart,
+      };
     }
-    await switchClick;
-    result.switchBack = {
-      ms: switchMs,
-      timedOut: switchMs === null,
-      capMs: SWITCH_CAP_MS,
-      // How long the app took merely to accept the click. On a frozen renderer
-      // this is most of the number above.
-      clickExecutedMs: switchState.executedMs,
-      clickExecutionTimedOut: switchState.executionTimedOut,
-      clickAccepted: switchState.accepted,
-      elapsedMs: Date.now() - switchStart,
-    };
   } catch (error) {
     result.errors.push(String(error?.message || error));
   } finally {
@@ -646,9 +764,13 @@ async function runOnce({ appPath, executable, appDir, runIndex, docs, inspectMai
 }
 
 // ── aggregation ─────────────────────────────────────────────────────────────
-function numbers(runs, pick) {
-  return runs.map(pick).filter((v) => typeof v === "number" && Number.isFinite(v));
-}
+//
+// Some of these metrics can time out, and dropping a timeout leaves the slowest
+// runs out of the summary entirely: a first response of [never, 9001, never]
+// would otherwise report a median of 9,001 ms, which reads as "it answers in
+// nine seconds" when two runs in three never answered at all. A metric declared
+// censored substitutes its cap for a timeout, so the median is at least as bad
+// as the truth, and carries the completion ratio alongside.
 function median(values) {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -660,72 +782,131 @@ function minimum(values) {
   return values.length ? Number(Math.min(...values).toFixed(1)) : null;
 }
 
+const plain = (pick) => ({ pick });
+// `attempted` says the run reached the point where this metric applies, so a
+// null there is a timeout rather than a run that never got that far.
+const censored = (pick, capMs, attempted) => ({ pick, capMs, attempted });
+
 const METRICS = {
-  launchMs: (r) => r.launch?.spawnToLoadEventFiredMs ?? r.launch?.spawnToLoadEventEndMs,
-  spawnToLoadEventEndMs: (r) => r.launch?.spawnToLoadEventEndMs,
-  domContentLoadedEventEndMs: (r) => r.launch?.domContentLoadedEventEndMs,
-  loadEventEndMs: (r) => r.launch?.loadEventEndMs,
-  firstContentfulPaintMs: (r) => r.launch?.firstContentfulPaintMs,
-  firstPaintMs: (r) => r.launch?.firstPaintMs,
-  rssIdleTotalMb: (r) => r.rssIdle?.totalMb,
-  rssIdleMainMb: (r) => r.rssIdle?.byRole?.main,
-  rssIdleRendererMb: (r) => r.rssIdle?.byRole?.renderer,
-  rssIdleGpuMb: (r) => r.rssIdle?.byRole?.gpu,
-  rssDocTotalMb: (r) => r.rssDoc?.totalMb,
-  rssDocMainMb: (r) => r.rssDoc?.byRole?.main,
-  rssDocRendererMb: (r) => r.rssDoc?.byRole?.renderer,
-  smallDocToolbarNamedMs: (r) => r.smallDoc?.toolbarNamedMs,
-  smallDocEditorReadyMs: (r) => r.smallDoc?.editorReadyMs,
-  largeDocResponsiveSeconds: (r) => r.largeDoc?.responsiveSeconds,
-  largeDocFirstResponseMs: (r) => r.largeDoc?.firstResponsiveAfterOpenMs,
-  largeDocLongestStallSeconds: (r) => r.largeDoc?.longestUnresponsiveStretchSeconds,
-  switchBackMs: (r) => r.switchBack?.ms,
-  switchBackClickExecutedMs: (r) => r.switchBack?.clickExecutedMs,
+  launchMs: plain((r) => r.launch?.spawnToLoadEventFiredMs ?? r.launch?.spawnToLoadEventEndMs),
+  spawnToLoadEventEndMs: plain((r) => r.launch?.spawnToLoadEventEndMs),
+  domContentLoadedEventEndMs: plain((r) => r.launch?.domContentLoadedEventEndMs),
+  loadEventEndMs: plain((r) => r.launch?.loadEventEndMs),
+  firstContentfulPaintMs: plain((r) => r.launch?.firstContentfulPaintMs),
+  firstPaintMs: plain((r) => r.launch?.firstPaintMs),
+  rssIdleTotalMb: plain((r) => r.rssIdle?.totalMb),
+  rssIdleMainMb: plain((r) => r.rssIdle?.byRole?.main),
+  rssIdleRendererMb: plain((r) => r.rssIdle?.byRole?.renderer),
+  rssIdleGpuMb: plain((r) => r.rssIdle?.byRole?.gpu),
+  rssDocTotalMb: plain((r) => r.rssDoc?.totalMb),
+  rssDocMainMb: plain((r) => r.rssDoc?.byRole?.main),
+  rssDocRendererMb: plain((r) => r.rssDoc?.byRole?.renderer),
+  mainHeapUsedIdleMb: plain((r) => r.mainMemory?.idle?.heapUsedMb),
+  mainHeapTotalIdleMb: plain((r) => r.mainMemory?.idle?.heapTotalMb),
+  mainExternalIdleMb: plain((r) => r.mainMemory?.idle?.externalMb),
+  mainRssIdleMb: plain((r) => r.mainMemory?.idle?.rssMb),
+  mainHeapUsedDocMb: plain((r) => r.mainMemory?.withSmallDoc?.heapUsedMb),
+  mainRssDocMb: plain((r) => r.mainMemory?.withSmallDoc?.rssMb),
+  smallDocToolbarNamedMs: censored((r) => r.smallDoc?.toolbarNamedMs, OPEN_CAP_MS, (r) => !!r.smallDoc),
+  smallDocEditorReadyMs: censored((r) => r.smallDoc?.editorReadyMs, OPEN_CAP_MS, (r) => !!r.smallDoc),
+  largeDocResponsiveSeconds: plain((r) => r.largeDoc?.responsiveSeconds),
+  largeDocFirstResponseMs: censored(
+    (r) => r.largeDoc?.firstResponsiveAfterOpenMs,
+    SAMPLE_COUNT * SAMPLE_INTERVAL_MS,
+    (r) => !!r.largeDoc
+  ),
+  largeDocLongestStallSeconds: plain((r) => r.largeDoc?.longestUnresponsiveStretchSeconds),
+  largeDocLandedMs: censored((r) => r.largeDoc?.editorReadyMs, LARGE_LAND_CAP_MS, (r) => !!r.largeDoc),
+  switchBackMs: censored((r) => r.switchBack?.ms, SWITCH_CAP_MS, (r) => !!r.switchBack),
+  switchBackClickExecutedMs: censored(
+    (r) => r.switchBack?.clickExecutedMs,
+    SWITCH_CAP_MS,
+    (r) => !!r.switchBack && !r.switchBack.skipped
+  ),
 };
 
-function summarize(runs) {
+export function summarize(runs) {
   const medians = {};
   const minimums = {};
-  const samplesSeen = {};
-  for (const [key, pick] of Object.entries(METRICS)) {
-    const values = numbers(runs, pick);
-    medians[key] = median(values);
-    minimums[key] = minimum(values);
-    samplesSeen[key] = values.length;
+  const samples = {};
+  const censoredSummary = {};
+  for (const [key, metric] of Object.entries(METRICS)) {
+    const completed = [];
+    let attempted = 0;
+    let timedOut = 0;
+    for (const run of runs) {
+      const value = metric.pick(run);
+      if (typeof value === "number" && Number.isFinite(value)) {
+        completed.push(value);
+        attempted += 1;
+        continue;
+      }
+      if (metric.capMs && metric.attempted?.(run)) {
+        attempted += 1;
+        timedOut += 1;
+      }
+    }
+    const aggregated = metric.capMs
+      ? [...completed, ...Array(timedOut).fill(metric.capMs)]
+      : completed;
+    medians[key] = median(aggregated);
+    minimums[key] = minimum(aggregated);
+    samples[key] = completed.length;
+    if (metric.capMs && attempted) {
+      censoredSummary[key] = {
+        capMs: metric.capMs,
+        attemptedRuns: attempted,
+        completedRuns: completed.length,
+        timedOutRuns: timedOut,
+        medianAtOrAboveCap: medians[key] !== null && medians[key] >= metric.capMs,
+        medianOfCompletedMs: median(completed),
+      };
+    }
   }
-  return { medians, minimums, samples: samplesSeen };
+  return { medians, minimums, samples, censored: censoredSummary };
 }
 
-function oneLine(runs, summary) {
+// "3/3 runs, 9.0s" when everything completed; "1/3 runs, 9.0s when it did" when
+// some run hit the cap; "0/3 runs (>20s)" when none did.
+export function censoredText(summary, key, unit = "s") {
+  const info = summary.censored?.[key];
+  if (!info) {
+    const value = summary.medians[key];
+    return value === null ? "n/a" : `${(value / 1000).toFixed(1)}${unit}`;
+  }
+  const cap = `>${Math.round(info.capMs / 1000)}${unit}`;
+  const ratio = `${info.completedRuns}/${info.attemptedRuns} runs`;
+  if (info.completedRuns === 0) return `${ratio} (${cap})`;
+  const best = `${(info.medianOfCompletedMs / 1000).toFixed(1)}${unit}`;
+  return info.timedOutRuns ? `${ratio}, ${best} when it did` : `${ratio}, ${best}`;
+}
+
+export function oneLine(runs, summary) {
   const m = summary.medians;
-  const timedOutSwitch = runs.filter((r) => r.switchBack?.timedOut).length;
-  const cap = runs.find((r) => r.switchBack)?.switchBack?.capMs ?? SWITCH_CAP_MS;
-  const switchText = timedOutSwitch === runs.length
-    ? `switch timed out (>${(cap / 1000).toFixed(0)}s)`
-    : `switch ${m.switchBackMs === null ? "n/a" : (m.switchBackMs / 1000).toFixed(1) + "s"}${
-        timedOutSwitch ? ` (${timedOutSwitch}/${runs.length} timed out)` : ""
-      }`;
-  const first = m.largeDocFirstResponseMs === null
-    ? "never responded"
-    : `first response ${(m.largeDocFirstResponseMs / 1000).toFixed(1)}s`;
   return [
     `launch ${m.launchMs === null ? "n/a" : Math.round(m.launchMs) + "ms"}`,
     `rss idle ${m.rssIdleTotalMb === null ? "n/a" : Math.round(m.rssIdleTotalMb) + "MB"}`,
     `rss doc ${m.rssDocTotalMb === null ? "n/a" : Math.round(m.rssDocTotalMb) + "MB"}`,
-    `4.4MB: responsive ${m.largeDocResponsiveSeconds === null ? "n/a" : Math.round(m.largeDocResponsiveSeconds)}/${SAMPLE_COUNT}s, ${first}`,
-    switchText,
+    `4.4MB: responsive ${m.largeDocResponsiveSeconds === null ? "n/a" : Math.round(m.largeDocResponsiveSeconds)}/${SAMPLE_COUNT}s, ` +
+      `first response ${censoredText(summary, "largeDocFirstResponseMs")}`,
+    `landed ${censoredText(summary, "largeDocLandedMs")}`,
+    `switch ${censoredText(summary, "switchBackMs")}`,
   ].join(" · ");
 }
 
 // ── cli ─────────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const options = { runs: 3, app: "dist/mac-arm64/Markie.app", out: null, inspectMain: false };
+  // The main process's own process.memoryUsage() is part of the baseline, and
+  // the only way to it without adding an IPC to the app is its inspector port,
+  // so --inspect-main is on unless it is turned off.
+  const options = { runs: 3, app: "dist/mac-arm64/Markie.app", out: null, inspectMain: true };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--app") options.app = argv[++i];
     else if (arg === "--runs") options.runs = Number(argv[++i]);
     else if (arg === "--out") options.out = argv[++i];
     else if (arg === "--inspect-main") options.inspectMain = true;
+    else if (arg === "--no-inspect-main") options.inspectMain = false;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else throw new Error(`unknown argument: ${arg}`);
   }
@@ -736,8 +917,11 @@ function usage() {
   return [
     "Usage: MARKIE_ALLOW_E2E=1 node scripts/perf-baseline.mjs --app <path-to-.app> --runs 3 --out <json path>",
     "",
-    "Measures cold launch, per-process RSS, and large-document responsiveness of a",
-    "packaged Markie build. Every run uses a fresh throwaway HOME and profile.",
+    "Measures cold launch, per-process RSS, main-process heap, and large-document",
+    "responsiveness of a packaged Markie build. Every run uses a fresh throwaway",
+    "HOME and profile.",
+    "",
+    "  --no-inspect-main   skip --inspect and the main process memoryUsage reading",
   ].join("\n");
 }
 
@@ -787,7 +971,9 @@ async function main() {
         `idle ${run.rssIdle?.totalMb ?? "n/a"}MB, doc ${run.rssDoc?.totalMb ?? "n/a"}MB, ` +
         `small doc ready ${run.smallDoc?.editorReadyMs ?? "n/a"}ms, ` +
         `responsive ${run.largeDoc?.responsiveSeconds ?? "n/a"}/${SAMPLE_COUNT}s, ` +
-        `switch ${run.switchBack?.timedOut ? "timed out" : (run.switchBack?.ms ?? "n/a") + "ms"}`
+        `landed ${run.largeDoc?.landed ? run.largeDoc.editorReadyMs + "ms" : "never"}, ` +
+        `switch ${run.switchBack?.timedOut ? "timed out" : (run.switchBack?.ms ?? "n/a") + "ms"}` +
+        `${run.mainMemory?.idle ? `, main heap ${run.mainMemory.idle.heapUsedMb}MB` : ""}`
     );
   }
 
@@ -825,6 +1011,9 @@ async function main() {
   };
   artifact.summary.line = oneLine(runs, summary);
 
+  const failed = runs.filter((run) => run.errors.length);
+  artifact.ok = failed.length === 0;
+
   if (options.out) {
     const outPath = path.resolve(rootDir, options.out);
     await mkdir(path.dirname(outPath), { recursive: true });
@@ -832,18 +1021,36 @@ async function main() {
     console.log(`[perf:baseline] wrote ${outPath}`);
   }
   console.log(artifact.summary.line);
+
+  // A slow number is a result and exits 0. A run that could not be measured is
+  // this script failing, so it exits non-zero even though the partial artifact
+  // was written: a capture with a hole in it must not pass for a capture.
+  if (failed.length) {
+    console.error(
+      `[perf:baseline] ${failed.length}/${runs.length} run(s) could not be measured: ` +
+        failed.map((run) => `run ${run.run}: ${run.errors.join("; ")}`).join(" | ")
+    );
+    return 1;
+  }
   return 0;
 }
 
-main()
-  .then((code) => {
-    stopAll();
-    process.exitCode = code;
-  })
-  .catch((error) => {
-    // Non-zero only when the measurement itself failed. Bad numbers are the
-    // point of a baseline.
-    console.error(`[perf:baseline] failed: ${error?.stack || error}`);
-    stopAll();
-    process.exitCode = 1;
-  });
+// Only when this file is the process entry point, so the helpers above can be
+// imported and exercised without launching anything.
+const isEntryPoint =
+  !!process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+
+if (isEntryPoint) {
+  main()
+    .then((code) => {
+      stopAll();
+      process.exitCode = code;
+    })
+    .catch((error) => {
+      // A slow number is a result. Only a measurement that could not be taken,
+      // or a broken invocation, is a failure.
+      console.error(`[perf:baseline] failed: ${error?.stack || error}`);
+      stopAll();
+      process.exitCode = 1;
+    });
+}

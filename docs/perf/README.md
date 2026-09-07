@@ -19,17 +19,26 @@ goes through (see `scripts/lib/e2e-consent.mjs`). The run launches the packaged
 build with a throwaway `$HOME` and a throwaway `--user-data-dir`, and with
 `MARKIE_E2E=1` set for the app, which is what keeps it from taking or being
 handed the single instance lock of a Markie you already have open. Each run gets
-a fresh profile, so every run is a cold launch. Nothing is asserted: the script
-exits non-zero only when the measurement itself failed, never because a number
-is bad.
+a fresh profile, so every run is a cold launch.
 
-Optional: `--inspect-main` adds `--inspect` so the main process can be attached
-to with a Node inspector client at the same time.
+`--inspect` is passed as well, so the main process's own `process.memoryUsage()`
+can be read over its inspector port. Pass `--no-inspect-main` to skip that; the
+capture in this folder was taken with it on, so compare like with like.
 
-The two fixtures are generated per run into the throwaway home: a 200 KB
-document of about 1,500 top level blocks and a 4.4 MB document of about 33,700,
-both shaped like real writing (headings, prose with inline marks, lists, fenced
-code, tables).
+### Exit code
+
+A slow number exits 0. Bad numbers are the point of a baseline. A run that could
+not be measured (the renderer never reachable, a selector drifted, the app died)
+exits non-zero, and the artifact is still written with whatever that run managed
+to record plus its error, and with `"ok": false` at the top. A capture with a
+hole in it must not pass for a capture, so check the exit code, not just the
+file.
+
+### Fixtures
+
+Both are generated per run into the throwaway home: a 200 KB document of about
+1,500 top level blocks and a 4.4 MB document of about 33,700, both shaped like
+real writing (headings, prose with inline marks, lists, fenced code, tables).
 
 ## What each number means
 
@@ -44,8 +53,8 @@ code, tables).
 * `domContentLoadedEventEndMs`, `loadEventEndMs`: from
   `performance.getEntriesByType("navigation")[0]`, relative to the renderer's
   own time origin rather than to spawn. The gap between `loadEventEndMs` (about
-  170 ms) and the spawn to load number (about 560 ms warm, about 1,800 ms cold)
-  is process startup and Electron boot, not page work.
+  180 ms) and the spawn to load number is process startup and Electron boot, not
+  page work.
 * `firstPaintMs`, `firstContentfulPaintMs`, `paintEntries`: from the paint
   timeline. `first-contentful-paint` is absent on these runs. `MARKIE_E2E=1`
   keeps the window unshown, so the compositor never presents a frame with
@@ -53,29 +62,52 @@ code, tables).
 
 ### rssIdle and rssDoc
 
-`ps -Awwo pid=,rss=,command=`, keeping only rows whose command starts with the
-bundle path that was launched, so an installed Markie belonging to whoever is
-running this is never counted. Rows are labelled `main`, `renderer`, `gpu`,
-`utility` (with the Chromium sub type in `detail`) and `crashpad`, and reported
-per process, per role, and as a total.
+`ps -Awwo pid=,ppid=,rss=,command=`, filtered three ways. The command must start
+with the bundle path that was launched, which keeps out an installed Markie and
+keeps out this script's own shell and node (their command lines carry the bundle
+path as an argument). Then the row must belong to *this* run: either its command
+line carries this run's throwaway profile directory, which Chromium propagates
+to every helper and which crashpad carries as its `--database` path, or the
+process descends from the one we spawned. Without that second filter a
+concurrent smoke run of the same `dist/` build would be added to these totals.
+Each row records which rule matched it in `matchedBy`.
 
-`rssIdle` is taken 5 seconds after load with no document open. `rssDoc` is taken
+Rows are labelled `main`, `renderer`, `gpu`, `utility` (with the Chromium sub
+type in `detail`) and `crashpad`, and reported per process, per role, and as a
+total. `rssIdle` is taken 5 seconds after load with no document open; `rssDoc`
 5 seconds after the 200 KB document has landed.
 
 Read RSS as a comparison number between builds, not as "how much memory Markie
 uses". Most of each Electron process's resident set is the same shared, read
 only, file backed framework code, counted once per process. On this build the
-main process reports about 177 MB of RSS and about 57 MB of macOS physical
+main process reports about 178 MB of RSS and about 57 MB of macOS physical
 footprint.
+
+### mainMemory
+
+The main process's own `process.memoryUsage()`, read by connecting to the Node
+inspector that `--inspect` puts on it and evaluating there. Recorded at the two
+points the RSS tables are taken, as `idle` and `withSmallDoc`, in MB plus the
+raw `bytes`. This is the number that says how much of the main process is
+actually Markie: `heapUsed` is about 8 MB idle against 178 MB of RSS.
+
+Note that the inspector's default evaluation context is Electron's bootstrap
+context, where `require` is undefined. `process` is defined, which is all this
+needs; `process.mainModule.require(...)` is the way in if more is ever wanted.
 
 ### smallDoc
 
 * `toolbarNamedMs`: how long after the click before the toolbar shows the
-  document's name. This lands as soon as the document state is set, anywhere from
-  1 ms to about 300 ms here, and well before anything is on screen.
+  document's name. The clock starts at the click, not at the moment the click's
+  CDP reply came back, so any delay the renderer took to dispatch it is inside
+  the number. The name lands as soon as the document state is set, well before
+  anything is on screen.
 * `editorReadyMs`: how long before the rich editor actually holds the document
   (`__markieEditor.state.doc.content.size` past 100,000). This is the honest
   "the document arrived" number.
+
+Both are polled every 100 ms, so read them at that granularity: 4 ms and 105 ms
+are one poll and three polls, not a real 26x difference.
 
 ### largeDoc
 
@@ -86,45 +118,74 @@ renderer answered in time.
 
 * `responsiveSeconds` / `unresponsiveSeconds`: how many of the 20 answered.
 * `firstResponsiveAfterOpenMs`: how long after the open before the first sample
-  came back. `null` means none of the 20 did.
+  came back. `null` means none of the 20 did, which the summary censors at the
+  20 second cap rather than dropping (see below).
 * `longestUnresponsiveStretchSeconds`: the longest run of consecutive samples
   that did not answer.
-* `toolbarNamedWithinSamplingWindow`: whether the document had landed by the end
-  of the 20 seconds.
+* `toolbarNamedMs` and `editorReadyMs`: how long from the click until the
+  document actually lands, measured after the sampling window and capped at
+  `landCapMs` (120 s). `landed` is false, with an explicit `note`, if it never
+  did.
 
 ### switchBack
 
-Immediately after the sampling window, still while the 4.4 MB document is
-landing, the 200 KB document is requested again from the Library, and the script
-times how long until the toolbar names it, capped at 30 seconds.
+Once the 4.4 MB document has landed, the 200 KB document is requested again from
+the Library and the script times the switch.
 
-Note that the toolbar is still naming the 200 KB document at this point, because
-React has not committed the large one yet. So a name alone proves nothing, and
-the measurement also requires the click itself to have run in the page.
-`clickExecutedMs` is how long the app took merely to accept the click, and
-`clickExecutionTimedOut` says it never did. On the 0.5.4 build the app never
-accepts the click inside the cap, and `ms` is `null` with `timedOut: true`.
-"Timed out" is a result, not a failure: the script tears the app down and still
-writes its numbers.
+The landing gate matters. Until React commits the large document the toolbar is
+still naming the small one from the previous step, so a toolbar reading taken
+after a click would "prove" a switch that never happened. For the same reason
+the end marker is not the toolbar text: it is the editor falling back into the
+small document's size band (at least 100,000 and under 1,000,000, against the
+4.4 MB document's 4.3 million), which only a completed new load produces.
+`toolbarNamedMs` is kept alongside for comparison, and `clickExecutedMs` is how
+long the app took merely to accept the click.
 
-## Medians and minimums
+If the large document never landed, the switch is not attempted and is recorded
+as `skipped` with a note, because in that state a fast switch and no switch at
+all look identical.
 
-Both are reported for every metric because this capture was not made on a quiet
-machine. Another engineer was running tests on the same laptop during it, so
-some samples carry contention that has nothing to do with Markie. The median is
-the number to quote; the minimum is the closest thing here to an uncontended
-reading, and a large gap between the two means the run was noisy rather than
-that the build changed.
+So `switchBack.ms` answers "once the big document is finally open, how long to
+get back to the small one", and the cost of the freeze itself lives in
+`largeDoc.toolbarNamedMs` and the responsiveness samples. On 0.5.4 those are
+about 65 seconds and 0 of 20 respectively, while the switch back is under half a
+second.
 
-One more caveat on launch specifically: the first run of a session is the only
-one that reads the app bundle from disk. Runs 2 and 3 find it in the OS page
-cache and come up in roughly a third of the time. In `2026-09-07-baseline.json`
-run 1 is 1,803 ms and runs 2 and 3 are 571 ms and 552 ms, and the median of 571
-ms therefore describes a warm launch, not a cold one. Compare like for like:
-first run against first run.
+## Medians, minimums and censoring
+
+Both a median and a minimum are reported for every metric because this capture
+was not made on a quiet machine. Another engineer was running tests on the same
+laptop during it, so some samples carry contention that has nothing to do with
+Markie. The median is the number to quote; the minimum is the closest thing here
+to an uncontended reading, and a large gap between the two means the run was
+noisy rather than that the build changed.
+
+Metrics that can time out are **censored at their cap** rather than having the
+timeout dropped. Dropping it leaves the slowest runs out of the summary
+entirely: a first response of `[never, 9001, never]` would otherwise report a
+median of 9,001 ms, which reads as "it answers in nine seconds" when two runs in
+three never answered at all. Instead a timeout counts as its cap, so the median
+is at least as bad as the truth, and `summary.censored` carries the completion
+ratio, the cap, whether the median sits at the cap, and the median of only the
+runs that did complete. The one line summary says the same thing as
+`first response 1/3 runs, 10.0s when it did`.
+
+## Cold versus warm launch
+
+Only a launch that reads the app bundle from disk is a cold launch. Once the
+bundle is in the OS page cache the app comes up in roughly a third of the time,
+and the cache stays warm for a long while.
+
+**The capture in `2026-09-07-baseline.json` contains no cold launch.** A
+verification run immediately preceded it, so all three runs found the bundle
+cached and report about 565 ms. Cold launches of this same build on this machine
+measured 1,803 ms, 1,894 ms and 2,196 ms. To capture a cold one, do not launch
+that bundle for a while before the run, and treat run 1 alone as the cold
+number. Purging the page cache needs `sudo purge` and is deliberately not done
+here.
 
 ## Captures
 
 * `2026-09-07-baseline.json`: Markie 0.5.4, packaged `dist/mac-arm64`, macOS 26.5
-  on Apple silicon, 3 runs.
-  `launch 571ms · rss idle 526MB · rss doc 753MB · 4.4MB: responsive 0/20s, first response 9.0s · switch timed out (>30s)`
+  on Apple silicon, 3 runs, `--inspect-main` on.
+  `launch 564ms · rss idle 528MB · rss doc 756MB · 4.4MB: responsive 0/20s, first response 1/3 runs, 10.0s when it did · landed 3/3 runs, 64.6s · switch 3/3 runs, 0.4s`

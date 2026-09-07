@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { getElectronAPI, type MdRow, type MdStar } from "@/lib/electron";
 import { compactHomePath, inferHomePath } from "@/lib/path-display";
 import {
@@ -7,6 +7,7 @@ import {
   initialOpenSet,
   pathsToFiles,
   sortTree,
+  type FileEntry,
   type FolderNode,
   type SortOrder,
 } from "@/lib/folder-tree";
@@ -43,6 +44,11 @@ function rememberedOpen(): Set<string> | null {
 }
 
 const MINUTE_MS = 60_000;
+
+// How many rows one open folder draws before it stops and offers the rest. The
+// indexer allows 200,000 files and nothing stops them all sitting in one
+// folder; the tree used to open closed, so nobody had met that folder yet.
+const ROW_CAP = 200;
 
 // The dates in the column age on their own, and Browse can sit open for hours
 // without a click to re-render it: "just now" would stay true-looking long
@@ -85,12 +91,62 @@ function Star({ on, onClick }: { on: boolean; onClick: () => void }) {
   );
 }
 
+// Memoized, and handed its date as a finished string rather than a timestamp.
+// The minute tick re-renders the whole tree to age that column, and without
+// this every visible row would re-render every minute to print what it already
+// said. When the string has not changed, this row does no work at all.
+const FileRow = memo(function FileRow({
+  file,
+  ago,
+  starred,
+  active,
+  onOpen,
+  onToggleStar,
+}: {
+  file: FileEntry;
+  ago: string;
+  starred: boolean;
+  active: boolean;
+  onOpen: (path: string) => void;
+  onToggleStar: (path: string, kind: "folder" | "file") => void;
+}) {
+  return (
+    <div
+      onClick={() => onOpen(file.path)}
+      className={`flex items-center gap-1 pl-1 pr-2 py-1 cursor-pointer hover:bg-accent/30 text-[12px] ${
+        active ? "bg-accent/40" : ""
+      }`}
+    >
+      {/* Stands in for the folder chevron, so names line up with the labels
+          above them. */}
+      <span aria-hidden="true" className="w-3 shrink-0" />
+      {/* Deep rows have little room left for a name, so the whole path is one
+          hover away, the same as a folder row. */}
+      <span className="truncate flex-1" title={file.path}>
+        {file.name}
+      </span>
+      <span
+        data-markie-browse-updated
+        // Empty when the indexer could not stat the file: an empty title
+        // attribute is still a tooltip, so leave it off entirely.
+        title={updatedOn(file.mtimeMs) || undefined}
+        className="shrink-0 text-[10px] text-muted tabular-nums"
+      >
+        {ago}
+      </span>
+      <Star on={starred} onClick={() => onToggleStar(file.path, "file")} />
+    </div>
+  );
+});
+
 function FolderRow({
   node,
   label,
   open,
   forcedOpen,
   onToggle,
+  revealed,
+  onReveal,
   stars,
   onToggleStar,
   onOpenPath,
@@ -103,12 +159,25 @@ function FolderRow({
   // hiding them behind rows the user would have to guess at.
   forcedOpen: Set<string> | null;
   onToggle: (path: string) => void;
+  // The folders whose row cap the user has lifted. Kept for the session only:
+  // asking for 30,000 rows is a decision about this list, right now, not a
+  // preference to greet them with tomorrow.
+  revealed: Set<string>;
+  onReveal: (path: string) => void;
   stars: Set<string>;
   onToggleStar: (path: string, kind: "folder" | "file") => void;
   onOpenPath: (path: string) => void;
   activePath: string | null;
 }) {
   const isOpen = forcedOpen ? forcedOpen.has(node.path) : open.has(node.path);
+  // Files and folders share one budget, counted in the order they are drawn.
+  const capped = !revealed.has(node.path) && node.files.length + node.children.length > ROW_CAP;
+  const shownFiles = capped ? node.files.slice(0, ROW_CAP) : node.files;
+  const shownChildren = capped
+    ? node.children.slice(0, Math.max(0, ROW_CAP - node.files.length))
+    : node.children;
+  const hidden =
+    node.files.length + node.children.length - shownFiles.length - shownChildren.length;
   return (
     <div data-markie-folder-node={node.path}>
       <div
@@ -130,47 +199,43 @@ function FolderRow({
         // paid for out of the old indent rather than added on top of it: a
         // name four levels down has the room it had before.
         <div data-markie-browse-children className="ml-[6px] border-l border-border pl-[5px]">
-          {node.files.map((f) => (
-            <div
+          {shownFiles.map((f) => (
+            <FileRow
               key={f.path}
-              onClick={() => onOpenPath(f.path)}
-              className={`flex items-center gap-1 pl-1 pr-2 py-1 cursor-pointer hover:bg-accent/30 text-[12px] ${
-                activePath === f.path ? "bg-accent/40" : ""
-              }`}
-            >
-              {/* Stands in for the folder chevron, so names line up with the
-                  labels above them. */}
-              <span aria-hidden="true" className="w-3 shrink-0" />
-              {/* Deep rows have little room left for a name, so the whole path
-                  is one hover away, the same as a folder row. */}
-              <span className="truncate flex-1" title={f.path}>
-                {f.name}
-              </span>
-              <span
-                data-markie-browse-updated
-                // Empty when the indexer could not stat the file: an empty
-                // title attribute is still a tooltip, so leave it off entirely.
-                title={updatedOn(f.mtimeMs) || undefined}
-                className="shrink-0 text-[10px] text-muted tabular-nums"
-              >
-                {updatedAgo(f.mtimeMs)}
-              </span>
-              <Star on={stars.has(f.path)} onClick={() => onToggleStar(f.path, "file")} />
-            </div>
+              file={f}
+              ago={updatedAgo(f.mtimeMs)}
+              starred={stars.has(f.path)}
+              active={activePath === f.path}
+              onOpen={onOpenPath}
+              onToggleStar={onToggleStar}
+            />
           ))}
-          {node.children.map((child) => (
+          {shownChildren.map((child) => (
             <FolderRow
               key={child.path}
               node={child}
               open={open}
               forcedOpen={forcedOpen}
               onToggle={onToggle}
+              revealed={revealed}
+              onReveal={onReveal}
               stars={stars}
               onToggleStar={onToggleStar}
               onOpenPath={onOpenPath}
               activePath={activePath}
             />
           ))}
+          {hidden > 0 && (
+            <button
+              type="button"
+              data-markie-browse-more
+              onClick={() => onReveal(node.path)}
+              className="flex w-full items-center gap-1 pl-1 pr-2 py-1 text-left text-[11px] text-muted hover:bg-accent/30 hover:text-foreground"
+            >
+              <span aria-hidden="true" className="w-3 shrink-0" />
+              <span className="truncate">Show {hidden.toLocaleString()} more</span>
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -197,6 +262,8 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   // Null until the user opens or closes something themselves; see the initial
   // rule below for what the tree does in the meantime.
   const [openedByHand, setOpenedByHand] = useState<Set<string> | null>(rememberedOpen);
+  // Which folders have been asked to draw past the row cap, this session only.
+  const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   // A failed star is a one-line complaint, not an error page over the list.
   const [starNotice, setStarNotice] = useState<string | null>(null);
@@ -215,14 +282,19 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
     return inferHomePath(rows.flatMap((r) => [r.path, r.dir]));
   }, [rows]);
 
-  const loadStars = () =>
-    api?.mdIndexStars?.()
-      .then((s: MdStar[]) =>
-        // A failed channel answers `{ error }`, not a list.
-        setStars(new Set((Array.isArray(s) ? s : []).map((x) => x.path)))
-      )
-      // Stars are decoration: losing them must not take the panel down with it.
-      .catch(() => {});
+  // Stable across renders, because the memoized file rows use it as a prop and
+  // a fresh function every render would defeat the memo on every minute tick.
+  const loadStars = useCallback(
+    () =>
+      api?.mdIndexStars?.()
+        .then((s: MdStar[]) =>
+          // A failed channel answers `{ error }`, not a list.
+          setStars(new Set((Array.isArray(s) ? s : []).map((x) => x.path)))
+        )
+        // Stars are decoration: losing them must not take the panel down with it.
+        .catch(() => {}),
+    [api]
+  );
 
   useEffect(() => {
     if (!api?.mdIndexScan) return;
@@ -314,14 +386,17 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   // A star is decoration. Routing its failure through `error` replaced the
   // whole file list with an error page, so the user lost the panel over a
   // bookmark that didn't stick. Say so in the header instead.
-  const toggleStar = (p: string, kind: "folder" | "file") => {
-    api?.mdIndexToggleStar?.(p, kind)
-      .then(() => {
-        setStarNotice(null);
-        return loadStars();
-      })
-      .catch(() => setStarNotice("Couldn't save that star."));
-  };
+  const toggleStar = useCallback(
+    (p: string, kind: "folder" | "file") => {
+      api?.mdIndexToggleStar?.(p, kind)
+        .then(() => {
+          setStarNotice(null);
+          return loadStars();
+        })
+        .catch(() => setStarNotice("Couldn't save that star."));
+    },
+    [api, loadStars]
+  );
 
   const q = filter.trim().toLowerCase();
   const filtered = useMemo(
@@ -356,6 +431,16 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
     () => openedByHand ?? initialOpenSet(tree),
     [openedByHand, tree]
   );
+
+  const reveal = useCallback((path: string) => {
+    setRevealed((prev) => new Set(prev).add(path));
+  }, []);
+
+  // A different sort or a different filter is a different list, so the folder
+  // that was asked for all its rows is not the folder in front of you now.
+  useEffect(() => {
+    setRevealed((prev) => (prev.size === 0 ? prev : new Set()));
+  }, [sort, q]);
 
   const toggle = (path: string) => {
     // While the filter is holding the tree open, a chevron has nothing to do:
@@ -488,6 +573,8 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
                 open={open}
                 forcedOpen={forcedOpen}
                 onToggle={toggle}
+                revealed={revealed}
+                onReveal={reveal}
                 stars={stars}
                 onToggleStar={toggleStar}
                 onOpenPath={onOpenPath}

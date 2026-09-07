@@ -3,6 +3,17 @@ import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElectronAPI, MdRow, MdScanResult } from "@/lib/electron";
+
+// The real formatters, wrapped so calls can be counted. `updatedOn` is called
+// once per file row render and nowhere else, which is how the memo test below
+// counts renders without reaching inside the component.
+const time = vi.hoisted(() => ({ updatedAgo: vi.fn(), updatedOn: vi.fn() }));
+vi.mock("@/lib/relative-time", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/relative-time")>();
+  time.updatedAgo.mockImplementation(real.updatedAgo);
+  time.updatedOn.mockImplementation(real.updatedOn);
+  return { ...real, updatedAgo: time.updatedAgo, updatedOn: time.updatedOn };
+});
 import { emit, installBridge } from "@/test/mock-bridge";
 import { BrowseView } from "./browse-view";
 
@@ -35,6 +46,8 @@ const NOTE = /^Index is incomplete:/;
 
 beforeEach(() => {
   localStorage.clear();
+  time.updatedAgo.mockClear();
+  time.updatedOn.mockClear();
 });
 
 describe("BrowseView truncated index", () => {
@@ -298,5 +311,77 @@ describe("BrowseView toggling under a filter", () => {
     await userEvent.type(filterField(), "guide");
     await userEvent.click(await screen.findByText("guide.md"));
     expect(onOpenPath).toHaveBeenCalledWith("/home/me/work/docs/guide.md");
+  });
+});
+
+// One folder holding the whole index is allowed: electron/mdindex.js indexes up
+// to 200,000 files and nothing says they have to be spread out. The tree used
+// to open closed, so this folder was never drawn; now it opens on sight.
+const CROWDED = 200_000;
+const crowded = (): MdRow[] =>
+  Array.from({ length: CROWDED }, (_, i) => ({
+    path: `/home/me/big/file${i}.md`,
+    name: `file${i}.md`,
+    dir: "/home/me/big",
+    mtimeMs: i + 1,
+  }));
+
+const childRows = () =>
+  [...(document.querySelector("[data-markie-browse-children]")?.children ?? [])];
+
+describe("BrowseView with one enormous folder", () => {
+  it("draws 200 rows and offers the rest", async () => {
+    renderBrowse(scan({ files: crowded() }));
+    await screen.findByText("file0.md");
+    // 200 files, then the row that offers the other 199,800.
+    expect(childRows()).toHaveLength(201);
+    expect(screen.getByText("Show 199,800 more")).toBeInTheDocument();
+  }, 30_000);
+
+  it("draws the rest when asked, and only then", async () => {
+    renderBrowse(scan({ files: crowded().slice(0, 320) }));
+    await screen.findByText("file0.md");
+    expect(childRows()).toHaveLength(201);
+    await userEvent.click(screen.getByText("Show 120 more"));
+    expect(childRows()).toHaveLength(320);
+    expect(screen.queryByText(/^Show /)).not.toBeInTheDocument();
+  }, 30_000);
+
+  it("puts the cap back when the list underneath changes", async () => {
+    renderBrowse(scan({ files: crowded().slice(0, 320) }));
+    await screen.findByText("file0.md");
+    await userEvent.click(screen.getByText("Show 120 more"));
+    expect(childRows()).toHaveLength(320);
+    await userEvent.click(screen.getByText("Updated"));
+    expect(childRows()).toHaveLength(201);
+  }, 30_000);
+});
+
+describe("BrowseView minute tick", () => {
+  // The tick re-renders the tree so the dates age. A row whose date is three
+  // days old has nothing to say differently, and must not be re-rendered to
+  // print the same words twice.
+  it("leaves rows alone when their date has not changed", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 8, 7, 12, 0, 0));
+      renderBrowse(scan({ files: [row({ mtimeMs: Date.now() - 3 * 24 * 60 * 60_000 })] }));
+      await act(async () => {});
+      expect(dateCell()?.textContent).toBe("Sep 4");
+      const rendersSoFar = time.updatedOn.mock.calls.length;
+      const labelsSoFar = time.updatedAgo.mock.calls.length;
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2 * 60_000);
+      });
+
+      // The tick fired and the label was recomputed, and the row still did not
+      // re-render, because the answer came back the same.
+      expect(time.updatedAgo.mock.calls.length).toBeGreaterThan(labelsSoFar);
+      expect(time.updatedOn.mock.calls.length).toBe(rendersSoFar);
+      expect(dateCell()?.textContent).toBe("Sep 4");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

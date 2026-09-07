@@ -360,7 +360,35 @@ async function main() {
   });
   check("local changes route through the dialog, not a one-click pull", dirtyStrip.includes("Review changes"), JSON.stringify(dirtyStrip));
 
-  await cdp.ev(`${STRIP_BUTTON}.click()`);
+  // The strip is one element with two jobs: on a clean copy its button pulls
+  // outright, and on a dirty one it opens the dialog. React re-renders it as
+  // the buffer and the registry row settle, so a click aimed at the label read
+  // a moment ago can land on the other one. Read the label and click it in the
+  // same evaluation, and report what was clicked rather than assuming.
+  await waitFor(
+    "the strip to settle on Review changes",
+    async () => {
+      const a = await cdp.ev(STRIP);
+      await new Promise((r) => setTimeout(r, 250));
+      const b = await cdp.ev(STRIP);
+      return a && a === b && a.includes("Review changes") ? a : null;
+    },
+    20000
+  );
+  const clicked = await cdp.ev(`(() => {
+    const button = ${STRIP_BUTTON};
+    if (!button) return "the strip had no button";
+    const label = button.textContent;
+    button.click();
+    return label;
+  })()`);
+  if (!String(clicked).includes("Review changes")) {
+    throw new Error(`the strip's button was "${clicked}" at the moment of the click, not "Review changes…"`);
+  }
+  // The dialog fetches the server's copy before it can say anything, so its
+  // arrival and its content are two waits, not one. Separating them is what
+  // tells a lost click apart from a slow comparison.
+  await waitFor("the conflict dialog to open", () => cdp.ev(`!!${DIALOG}`), 20000);
   const dialogText = await waitFor(
     "diff summary",
     async () => {

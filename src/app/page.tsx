@@ -103,7 +103,6 @@ import {
   type FilePayload,
   type SaveResult,
 } from "@/lib/electron";
-import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { pathDirname } from "@/lib/path-utils";
 import { setAssetBaseDir } from "@/lib/asset-url";
 import { opensAsDocument } from "@/lib/attach";
@@ -744,8 +743,16 @@ export default function Home() {
     input.click();
   }, [loadFile]);
 
+  // Imported here rather than at the top of the file because unified, remark,
+  // rehype-katex, KaTeX and highlight.js are the heaviest thing the renderer
+  // can pull in and nothing but export, print and PDF wants them. Loading them
+  // when one of those runs keeps them off every launch. The chunk is cached
+  // after the first export, so the second one does not wait again.
   const getPreviewHTML = useCallback(
-    (md?: string): string => renderMarkdownHTML(md ?? content),
+    async (md?: string): Promise<string> => {
+      const { renderMarkdownHTML } = await import("@/lib/markdown-html");
+      return renderMarkdownHTML(md ?? content);
+    },
     [content]
   );
 

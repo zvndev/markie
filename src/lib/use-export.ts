@@ -18,8 +18,12 @@ export const EXPORT_BUSY =
   "Markie is already exporting. Wait for that one to finish.";
 
 export interface ExportInputs {
-  /** The document rendered to HTML; the markdown argument wins over state. */
-  previewHTML: (md?: string) => string;
+  /**
+   * The document rendered to HTML; the markdown argument wins over state.
+   * Async because the render pipeline is loaded at the moment of export rather
+   * than on the launch path (see page.tsx).
+   */
+  previewHTML: (md?: string) => Promise<string>;
   /** Settles the rich pane's debounce and returns the document as it stands. */
   currentMarkdown: () => string;
   /** The open file's path, so main can inline that folder's images. */
@@ -82,7 +86,7 @@ export function useDocumentExport(inputs: ExportInputs) {
       if (api) {
         await guarded("Couldn't export this document as a PDF.", async () =>
           api.exportPDF({
-            html: await buildPDFHTML(previewHTML(md), theme),
+            html: await buildPDFHTML(await previewHTML(md), theme),
             theme,
             docPath: docPath(),
           })
@@ -90,7 +94,7 @@ export function useDocumentExport(inputs: ExportInputs) {
         return;
       }
       // Web fallback: open in a new window and print.
-      const fullHTML = await buildPDFHTML(previewHTML(md), theme);
+      const fullHTML = await buildPDFHTML(await previewHTML(md), theme);
       const printWindow = window.open("", "_blank");
       if (!printWindow) return;
       printWindow.document.write(fullHTML);
@@ -108,7 +112,7 @@ export function useDocumentExport(inputs: ExportInputs) {
     await guarded("Couldn't export this document as HTML.", async () =>
       api.exportHTML({
         defaultName: `${base}.html`,
-        html: await buildPDFHTML(previewHTML(currentMarkdown()), "light"),
+        html: await buildPDFHTML(await previewHTML(currentMarkdown()), "light"),
         docPath: docPath(),
       })
     );
@@ -129,7 +133,7 @@ export function useDocumentExport(inputs: ExportInputs) {
     const theme: PDFTheme = resolveColorMode(getColorMode());
     await guarded("Couldn't print this document.", async () =>
       api.exportPDF({
-        html: await buildPDFHTML(previewHTML(currentMarkdown()), theme),
+        html: await buildPDFHTML(await previewHTML(currentMarkdown()), theme),
         theme,
         docPath: docPath(),
         mode: "print",

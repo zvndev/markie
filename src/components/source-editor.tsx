@@ -27,11 +27,14 @@ export function preloadSourceEditor(): void {
 
 // Only the head of the document: the placeholder stands for a few dozen
 // milliseconds, and laying out every line of a large file would cost more
-// than the wait it covers.
+// than the wait it covers. Bounded in characters as well as lines, because a
+// document can be one line of several megabytes; the placeholder is a picture
+// of the top of the document, not the document.
 const PLACEHOLDER_LINES = 200;
+const PLACEHOLDER_CHARS = 64_000;
 
 function SourcePlaceholder({ value }: { value: string }) {
-  const head = value.split("\n", PLACEHOLDER_LINES).join("\n");
+  const head = value.slice(0, PLACEHOLDER_CHARS).split("\n", PLACEHOLDER_LINES).join("\n");
   return (
     <pre
       data-markie-source-loading

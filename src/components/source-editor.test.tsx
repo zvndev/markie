@@ -30,4 +30,18 @@ describe("the lazily loaded source editor", () => {
     view.unmount();
     expect(onReady).toHaveBeenLastCalledWith(null);
   });
+
+  it("bounds the placeholder by characters as well as lines", async () => {
+    // A fresh copy of the module, so its lazy editor has not loaded yet and
+    // the placeholder is what renders. One line of two million characters is
+    // the document the line cap cannot see.
+    vi.resetModules();
+    const { SourceEditor: Fresh } = await import("@/components/source-editor");
+    const value = "x".repeat(2_000_000);
+    const view = render(<Fresh value={value} onChange={() => {}} />);
+    const placeholder = view.container.querySelector("[data-markie-source-loading]");
+    expect(placeholder).not.toBeNull();
+    expect(placeholder!.textContent!.length).toBeLessThanOrEqual(64_000);
+    view.unmount();
+  });
 });

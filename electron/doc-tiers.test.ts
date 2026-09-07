@@ -110,10 +110,10 @@ describe("document size tiers", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it("answers the tier from a stat alone", () => {
-    const io = { statSync: vi.fn(() => ({ size: 143_000_000 })) };
-    expect(statDocument("/big.md", io)).toEqual({ size: 143_000_000, tier: "tooLarge" });
-    expect(statDocument("/big.md", { statSync: () => ({ size: 12 }) })).toEqual({ size: 12, tier: "ok" });
+  it("answers the tier from a stat alone, with the size and mtime it came from", () => {
+    const io = { statSync: vi.fn(() => ({ size: 143_000_000, mtimeMs: 1_700_000_000_000.5 })) };
+    expect(statDocument("/big.md", io)).toEqual({ size: 143_000_000, mtimeMs: 1_700_000_000_000.5, tier: "tooLarge" });
+    expect(statDocument("/big.md", { statSync: () => ({ size: 12, mtimeMs: 7 }) })).toEqual({ size: 12, mtimeMs: 7, tier: "ok" });
   });
 
   it("lets an open failure through as the read failure it is", () => {

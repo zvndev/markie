@@ -68,16 +68,18 @@ function readDocumentTiered(filePath, io = fs) {
 }
 
 /**
- * The size and tier of a file, without reading it. For the moment a write is
- * about to happen and the question is only whether what is on disk has grown
- * past the cap. Throws what fs throws.
+ * The size, mtime and tier of a file, without reading it. For the moment a
+ * write is about to happen and the question is only whether what is on disk
+ * has grown past the cap, and for telling Markie's own write over the cap
+ * from someone else's by its stat (electron/disk-memory.js). Throws what fs
+ * throws.
  *
  * @param {string} filePath
- * @param {{ statSync(p: string): { size: number } }} [io]
+ * @param {{ statSync(p: string): { size: number, mtimeMs: number } }} [io]
  */
 function statDocument(filePath, io = fs) {
-  const size = io.statSync(filePath).size;
-  return { size, tier: tierForSize(size) };
+  const { size, mtimeMs } = io.statSync(filePath);
+  return { size, mtimeMs, tier: tierForSize(size) };
 }
 
 /**

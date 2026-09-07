@@ -15,11 +15,9 @@ import {
   restoreHoldAsides,
   type HoldAside,
 } from "@/lib/rich-hold-aside";
-import {
-  preserveBlocks,
-  splitTopLevelBlocks,
-} from "@/lib/rich-block-preserve";
+import { preserveBlocks } from "@/lib/rich-block-preserve";
 import { createBlockNormalizer } from "@/lib/rich-roundtrip";
+import { warmBlocks } from "@/lib/rich-warmup";
 import { Collaboration } from "@tiptap/extension-collaboration";
 import { CollaborationCaret } from "@tiptap/extension-collaboration-caret";
 import * as Y from "yjs";
@@ -594,17 +592,10 @@ export function RichView({
     }
     // Normalizing a block is a parse plus a serialize. Doing every block on the
     // first flush would stall the save; doing them while the app is idle means
-    // steady-state autosave only normalizes what actually changed.
-    const idle = window.requestIdleCallback;
-    if (typeof idle !== "function") return;
-    const warmFrom = held.text;
-    const handle = idle(() => {
-      const { normalize } = getNormalizer();
-      for (const block of splitTopLevelBlocks(warmFrom)) {
-        if (block.text !== "") normalize(block.text.replace(/(?:\r?\n)+$/, ""));
-      }
-    });
-    return () => window.cancelIdleCallback?.(handle);
+    // steady-state autosave only normalizes what actually changed. The sweep
+    // yields between slices and stops when the document changes; see
+    // src/lib/rich-warmup.ts for why a single idle callback was not enough.
+    return warmBlocks(held.text, (block) => getNormalizer().normalize(block));
   }, [value, editor, session]);
 
   useEffect(() => {

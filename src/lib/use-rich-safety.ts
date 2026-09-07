@@ -13,7 +13,7 @@
 // in the same tick, so reopening a document never shows that state at all.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { describeLossRisks, type LossRisk } from "@/lib/rich-roundtrip";
-import { cachedReconstruction, resolveReconstruction } from "@/lib/rich-safety";
+import { cachedReconstruction, startReconstructionJob } from "@/lib/rich-safety";
 import { richOverride, setRichOverride } from "@/lib/rich-override";
 
 export type RichSafety = "checking" | "safe" | "blocked";
@@ -61,28 +61,25 @@ export function useRichSafety() {
 
   useEffect(() => {
     if (pending === null) return;
-    let cancelled = false;
-    const run = () => {
-      if (cancelled) return;
-      setVerdict(verdictFor(resolveReconstruction(pending), pending));
+    // In idle slices, yielding between them, and cancelled the moment another
+    // document replaces this one; see startReconstructionJob.
+    const job = startReconstructionJob(pending, (clean) => {
+      setVerdict(verdictFor(clean, pending));
       setPending(null);
-    };
-    // requestIdleCallback where it exists, so the probe waits for a frame that
-    // is not already busy; the timeout keeps it from waiting on a busy app.
-    const idle = window.requestIdleCallback;
-    if (typeof idle === "function") {
-      const handle = idle(run, { timeout: 200 });
-      return () => {
-        cancelled = true;
-        window.cancelIdleCallback?.(handle);
-      };
-    }
-    const handle = window.setTimeout(run, 0);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
-    };
+    });
+    return () => job.cancel();
   }, [pending]);
+
+  // A document that never gets a rich pane (too large for it, see
+  // src/lib/doc-tiers.ts) gets no probe either: the probe exists to decide
+  // whether rich edits may be written back, and there will be none. Rich stays
+  // unarmed for it, and whatever was pending for the previous document stops.
+  const skip = useCallback((path: string | null) => {
+    pathRef.current = path;
+    setOverridden(false);
+    setPending(null);
+    setVerdict({ safety: "blocked", risks: null });
+  }, []);
 
   const override = useCallback(() => {
     setRichOverride(pathRef.current, true);
@@ -91,6 +88,7 @@ export function useRichSafety() {
 
   return {
     assess,
+    skip,
     override,
     risks: verdict.risks,
     /** Rich edits are refused: the pipeline cannot promise this file's bytes. */

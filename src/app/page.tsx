@@ -40,6 +40,8 @@ import {
 import { ConflictDialog } from "@/components/conflict-dialog";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
 import { DraftStrip } from "@/components/draft-strip";
+import { LargeDocStrip, TooLargeStrip } from "@/components/large-doc";
+import { isTooLarge, type OpenResult, type TooLargePayload } from "@/lib/electron";
 import { HistoryDialog } from "@/components/history-dialog";
 import { diskChangeKind } from "@/lib/disk-change";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -252,6 +254,23 @@ export default function Home() {
   // a reload does not have to go back to the filesystem and race the next edit.
   const [diskChange, setDiskChange] = useState<string | null>(null);
   const [showDiskConflict, setShowDiskConflict] = useState(false);
+  // The open document's size tier (src/lib/doc-tiers.ts): its size while a
+  // large document is open in Source view, and the last file main refused.
+  const [largeDocSize, setLargeDocSize] = useState<number | null>(null);
+  const [refusedDoc, setRefusedDoc] = useState<{ name: string; size: number } | null>(null);
+  const largeDocRef = useRef(false);
+  const modeRef = useRef<ViewMode>("preview");
+  // The mode a large document displaced, given back with the next ordinary one.
+  const modeBeforeLargeRef = useRef<ViewMode | null>(null);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+  // Rich and Split cannot be chosen while a large document is open; the mode
+  // buttons say why. Source is always allowed.
+  const requestMode = useCallback((m: ViewMode) => {
+    if (largeDocRef.current && m !== "edit") return;
+    setMode(m);
+  }, []);
   const [showHistory, setShowHistory] = useState(false);
   const [peers, setPeers] = useState<PeerUser[]>([]);
   const [liveStatus, setLiveStatus] = useState<
@@ -288,6 +307,7 @@ export default function Home() {
   // until it lands, rich is read-only and Source is byte-faithful as ever.
   const {
     assess: assessRichSafety,
+    skip: skipRichSafety,
     override: overrideRichSafety,
     risks: richLossy,
     blocked: richBlocked,
@@ -661,7 +681,18 @@ export default function Home() {
   );
 
   const loadFile = useCallback(
-    async (data: { name: string; content: string; path: string | null; unsaved?: boolean }) => {
+    async (
+      data:
+        | { name: string; content: string; path: string | null; unsaved?: boolean; size?: number; large?: boolean }
+        | TooLargePayload
+    ) => {
+      // Main refused the file for its size before reading it. Nothing about
+      // the open document changes; the strip says what happened.
+      if (isTooLarge(data)) {
+        setRefusedDoc({ name: data.name, size: data.size });
+        return;
+      }
+      setRefusedDoc(null);
       // Whatever the last document still owes disk lands before this one
       // replaces it. This is the P0: Markie used to drop it silently.
       await settleDocument();
@@ -676,17 +707,35 @@ export default function Home() {
       // version while the file on disk still holds the new one, so the document
       // must show as dirty until the user saves (or discards) the revert.
       loadDoc({ name: data.name, content: md, path: data.path, unsaved: data.unsaved });
-      if (data.path) {
-        getElectronAPI()?.registryTrack?.({
-          path: data.path,
-          name: data.name,
-          content: data.content,
-        });
+      // A large document (src/lib/doc-tiers.ts) opens in Source view and stays
+      // there: no rich pane, so no probe, no warm-up and no journal, and main
+      // has already registered it, so the text is not sent back to be hashed.
+      // The mode it displaced comes back with the next ordinary document.
+      const large = data.large === true;
+      largeDocRef.current = large;
+      if (large) {
+        setLargeDocSize(data.size ?? 0);
+        if (modeRef.current !== "edit") modeBeforeLargeRef.current = modeRef.current;
+        setMode("edit");
+        skipRichSafety(data.path);
+      } else {
+        setLargeDocSize(null);
+        if (modeBeforeLargeRef.current !== null) {
+          setMode(modeBeforeLargeRef.current);
+          modeBeforeLargeRef.current = null;
+        }
+        if (data.path) {
+          getElectronAPI()?.registryTrack?.({
+            path: data.path,
+            name: data.name,
+            content: data.content,
+          });
+        }
+        assessRichSafety(md, data.path);
       }
       setLibRefreshKey((k) => k + 1);
-      assessRichSafety(md, data.path);
     },
-    [dismissDocumentUI, resetDocAccess, assessRichSafety, loadDoc, settleDocument]
+    [dismissDocumentUI, resetDocAccess, assessRichSafety, skipRichSafety, loadDoc, settleDocument]
   );
 
   const openPath = useCallback(
@@ -706,16 +755,19 @@ export default function Home() {
       const api = getElectronAPI();
       if (!api || paths.length === 0) return;
       Promise.all(paths.map((p) => api.openFilePath(p))).then((files) => {
+        const refused = files.find(isTooLarge);
         const valid = files.filter(
-          (f): f is FilePayload => f !== null
+          (f): f is FilePayload => f !== null && !isTooLarge(f)
         );
         valid.forEach((f, i) => {
           if (i === valid.length - 1) {
             loadFile(f); // open + track the last one
-          } else {
+          } else if (!f.large) {
+            // Main registered a large one itself when it read it.
             api.registryTrack?.({ path: f.path, name: f.name, content: f.content });
           }
         });
+        if (refused) setRefusedDoc({ name: refused.name, size: refused.size });
         setLibRefreshKey((k) => k + 1);
       });
     },
@@ -935,6 +987,7 @@ export default function Home() {
     docKey: filePath,
     document: { path: filePath, name: fileName, content, dirty: isDirty },
     booted,
+    journal: largeDocSize === null,
   });
   useEffect(() => {
     saveGuardRef.current = saveGuard;
@@ -1128,7 +1181,7 @@ export default function Home() {
             break;
           case "1":
             e.preventDefault();
-            setMode("preview");
+            requestMode("preview");
             break;
           case "2":
             e.preventDefault();
@@ -1136,7 +1189,7 @@ export default function Home() {
             break;
           case "3":
             e.preventDefault();
-            setMode("split");
+            requestMode("split");
             break;
           case "s":
             e.preventDefault();
@@ -1169,6 +1222,7 @@ export default function Home() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    requestMode,
     handleOpenFile,
     handleSave,
     handleSaveAs,
@@ -1248,7 +1302,7 @@ export default function Home() {
     fork: handleMakeCopy,
     reveal: handleReveal,
     exportHTML: exportHTML,
-    fileOpened: (data: FilePayload) => void loadFile(data),
+    fileOpened: (data: OpenResult) => void loadFile(data),
     settle: settleDocument,
     undoRedo: (d: "undo" | "redo") => runUndoRedo(d),
     print: printDocument,
@@ -1306,7 +1360,11 @@ export default function Home() {
         //
         // Awaited so `booted` really does mean "the first document has landed":
         // draft recovery matches what it finds against the open path.
-        if (file && typeof file.content === "string") {
+        // A file refused for its size shows the refusal and otherwise boots
+        // as if nothing had been asked for.
+        const refused = isTooLarge(file) ? file : null;
+        if (refused) setRefusedDoc({ name: refused.name, size: refused.size });
+        if (file && !isTooLarge(file) && typeof file.content === "string") {
           await loadFile(file);
         } else if (shouldShowWelcome({ openedFile: false })) {
           applyExternalDoc(WELCOME_DOC);
@@ -1340,7 +1398,7 @@ export default function Home() {
       api.onMenuExportPDF?.((theme) =>
         handlersRef.current.exportPDF(theme ?? "dark")
       ),
-      api.onSetMode?.((m) => setMode(m)),
+      api.onSetMode?.((m) => requestMode(m)),
       api.onToggleStats?.(() => setShowStats((s) => !s)),
       api.onMenuCommandPalette?.(() => setShowPalette((v) => !v)),
       api.onMenuShortcuts?.(() => setShowHelp((v) => !v)),
@@ -1414,7 +1472,7 @@ export default function Home() {
       }),
     ];
     return () => offs.forEach((off) => off?.());
-  }, [selectView, editContent]);
+  }, [requestMode, selectView, editContent]);
 
   const commands = useMemo<AppCommand[]>(
     () => [
@@ -1426,9 +1484,9 @@ export default function Home() {
       { id: "export-pdf-dark", title: "Export PDF (Dark)", group: "File", shortcut: "⇧⌘E", keywords: "print", run: () => exportPDF("dark") },
       { id: "export-pdf-light", title: "Export PDF (Light)", group: "File", keywords: "print", run: () => exportPDF("light") },
       { id: "export-html", title: "Export HTML", group: "File", run: exportHTML },
-      { id: "mode-view", title: "Rich Mode", group: "View", shortcut: "⌘1", keywords: "preview rich wysiwyg formatted view", run: () => setMode("preview") },
+      { id: "mode-view", title: "Rich Mode", group: "View", shortcut: "⌘1", keywords: "preview rich wysiwyg formatted view", run: () => requestMode("preview") },
       { id: "mode-edit", title: "Source Mode", group: "View", shortcut: "⌘2", keywords: "source raw markdown edit", run: () => setMode("edit") },
-      { id: "mode-split", title: "Split Mode", group: "View", shortcut: "⌘3", keywords: "both side by side", run: () => setMode("split") },
+      { id: "mode-split", title: "Split Mode", group: "View", shortcut: "⌘3", keywords: "both side by side", run: () => requestMode("split") },
       { id: "stats", title: "Statistics", group: "View", shortcut: "⇧⌘I", keywords: "words count reading", run: () => setShowStats((v) => !v) },
       { id: "palette", title: "Command Palette", group: "View", shortcut: "⌘K", run: () => setShowPalette((v) => !v) },
       // Find lives in the source editor (CodeMirror owns ⌘F there). Surface it
@@ -1473,6 +1531,7 @@ export default function Home() {
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
     ],
     [
+    requestMode,
       handleOpenFile,
       handleSave,
       handleSaveAs,
@@ -1580,7 +1639,8 @@ export default function Home() {
     <div className="markie-shell h-screen flex flex-col bg-background relative">
       <Toolbar
         mode={mode}
-        onModeChange={setMode}
+        onModeChange={requestMode}
+        richUnavailable={largeDocSize !== null}
         onOpenFile={handleOpenFile}
         onExportPDF={exportPDF}
         onSaveAs={() => handleSaveAs()}
@@ -1689,6 +1749,17 @@ export default function Home() {
                   ? reloadFromDisk()
                   : setShowDiskConflict(true)
               }
+            />
+          )}
+
+          {/* The document is over the size line for the rich pane, or the last
+              open was refused for its size (src/lib/doc-tiers.ts). */}
+          {largeDocSize !== null && <LargeDocStrip size={largeDocSize} />}
+          {refusedDoc !== null && (
+            <TooLargeStrip
+              size={refusedDoc.size}
+              fileName={refusedDoc.name}
+              onDismiss={() => setRefusedDoc(null)}
             />
           )}
 

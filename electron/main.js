@@ -19,6 +19,7 @@ const { shareBaseFromSrc } = require("./share-origin");
 const { classifyDeepLink, cloudDocId } = require("./deep-links");
 const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
+const docTiers = require("./doc-tiers");
 const { ASSET_SCHEME, buildAppCsp } = require("./csp");
 const localAssets = require("./local-assets");
 const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
@@ -594,17 +595,37 @@ function refreshRevertMenuItem() {
   }
 }
 
+// Every way a file reaches the renderer ends here, so this is where its size
+// is settled (electron/doc-tiers.js). A file over the cap comes back as a
+// refusal the renderer shows instead of a document; a large one comes back
+// flagged so the renderer opens it in Source view and skips the rich pipeline.
+// A large document is registered from here as well: the renderer used to send
+// the whole text back over IPC just so the registry could hash it, and for a
+// file this size that copy is worth skipping.
 function readFilePayload(filePath, { grant = false } = {}) {
   try {
     const access = grant ? fileGrants.grantFile(filePath) : fileGrants.canRead(filePath);
     if (!access.ok) return null;
-    const content = fs.readFileSync(access.path, "utf-8");
-    rememberDisk(access.path, content);
+    const name = path.basename(access.path);
+    const doc = docTiers.readDocumentTiered(access.path);
+    if (doc.tooLarge) {
+      return { tooLarge: true, size: doc.size, name, path: access.path };
+    }
+    rememberDisk(access.path, doc.content);
     setCurrentDoc(access.path);
+    if (doc.large) {
+      try {
+        registry.track(access.path, name, doc.content);
+      } catch {
+        // The registry row is a convenience; the document still opens.
+      }
+    }
     return {
-      name: path.basename(access.path),
-      content,
+      name,
+      content: doc.content,
       path: access.path,
+      size: doc.size,
+      large: doc.large,
     };
   } catch {
     return null;

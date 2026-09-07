@@ -9,6 +9,27 @@ export interface FilePayload {
   // back an older version of the file that is already open. The document keeps
   // its path and stays unsaved until the user saves it.
   unsaved?: boolean;
+  // Bytes on disk, and main's verdict on them (src/lib/doc-tiers.ts): a large
+  // document opens in Source view only, with the rich pipeline skipped, and
+  // main has already registered it, so the renderer must not send the text
+  // back to be hashed.
+  size?: number;
+  large?: boolean;
+}
+
+// Main refused the file for its size before reading it. Shown instead of a
+// document; nothing about the open document changes.
+export interface TooLargePayload {
+  tooLarge: true;
+  size: number;
+  name: string;
+  path: string;
+}
+
+export type OpenResult = FilePayload | TooLargePayload;
+
+export function isTooLarge(result: unknown): result is TooLargePayload {
+  return typeof result === "object" && result !== null && (result as { tooLarge?: unknown }).tooLarge === true;
 }
 
 export interface SaveResult {
@@ -65,8 +86,8 @@ export interface LinkPreview {
 
 export interface ElectronAPI {
   platform: string;
-  openFile(args?: { near?: string | null }): Promise<FilePayload | null>;
-  openFilePath(path: string): Promise<FilePayload | null>;
+  openFile(args?: { near?: string | null }): Promise<OpenResult | null>;
+  openFilePath(path: string): Promise<OpenResult | null>;
   // resolve a dropped File to its on-disk path (Electron webUtils)
   pathForFile(file: File): string | null;
   // resolve a file dropped onto a document and grant it for display; returns
@@ -99,7 +120,7 @@ export interface ElectronAPI {
   onTermExit(cb: (p: { id: string }) => void): Unsubscribe;
   termExternalApps(): Promise<Array<{ id: string; name: string }>>;
   termOpenExternal(app: string, cwd: string | null): Promise<WsResult>;
-  getInitialFile(): Promise<FilePayload | null>;
+  getInitialFile(): Promise<OpenResult | null>;
   // `success: false` with a reason is a real outcome here: the print can time
   // out, another export can already hold the hidden window, or the save sheet
   // can be dismissed. Callers must read it.
@@ -254,7 +275,7 @@ export interface ElectronAPI {
   }): Promise<{ ok?: boolean; path?: string; error?: string }>;
   onSetMode(cb: (mode: ViewMode) => void): Unsubscribe;
   onToggleStats(cb: () => void): Unsubscribe;
-  onFileOpened(cb: (data: FilePayload) => void): Unsubscribe;
+  onFileOpened(cb: (data: OpenResult) => void): Unsubscribe;
   /** Something else edited the open document. Carries the new on-disk text. */
   onFileChangedOnDisk(
     cb: (data: { path: string; content: string }) => void

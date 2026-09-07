@@ -18,15 +18,18 @@ vi.mock("@/lib/auth-client", () => ({
 }));
 
 // Wrap the real module so the verdict is genuine and only the call is watched.
-vi.mock("@/lib/rich-safety", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@/lib/rich-safety")>();
-  return { ...real, resolveReconstruction: vi.fn(real.resolveReconstruction) };
+// The probe itself is the thing with the cost, so that is what is counted; how
+// the safety layer schedules it (whole, or in idle slices) is its own business.
+vi.mock("@/lib/rich-roundtrip", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/rich-roundtrip")>();
+  return { ...real, probeReconstruction: vi.fn(real.probeReconstruction) };
 });
 
-import { clearReconstructionCache, resolveReconstruction } from "@/lib/rich-safety";
+import { probeReconstruction } from "@/lib/rich-roundtrip";
+import { clearReconstructionCache } from "@/lib/rich-safety";
 import Home from "./page";
 
-const probe = vi.mocked(resolveReconstruction);
+const probe = vi.mocked(probeReconstruction);
 const OPEN = {
   name: "notes.md",
   path: "/notes/notes.md",

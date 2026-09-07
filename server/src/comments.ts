@@ -4,7 +4,7 @@
 // thread and deleting somebody else's comment stay with editors and the owner.
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
-import Database from "better-sqlite3";
+import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
 import {
   accessLevel,
@@ -15,7 +15,7 @@ import {
 } from "./shares.ts";
 import { sendEmail } from "./email.ts";
 
-const db = new Database(process.env.DB_PATH ?? "./markie.db");
+const db = openDatabase();
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS threads (
@@ -233,3 +233,15 @@ comments.delete("/:id/threads/:threadId/comments/:commentId", async (c) => {
   }
   return c.json({ ok: true, threadDeleted: left === 0 });
 });
+
+// Every thread on a doc and every comment in them. Comments quote the text
+// they were left on, so they go with the document they were about.
+export function purgeDocThreads(docId: string): number {
+  const run = db.transaction(() => {
+    db.prepare(
+      "DELETE FROM comments WHERE thread_id IN (SELECT id FROM threads WHERE doc_id = ?)"
+    ).run(docId);
+    return db.prepare("DELETE FROM threads WHERE doc_id = ?").run(docId).changes;
+  });
+  return run();
+}

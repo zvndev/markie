@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import Database from "better-sqlite3";
+import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
 import {
   accessLevel,
@@ -7,11 +7,14 @@ import {
   canReadLevel,
   sharedDocsFor,
   docsSharedByMe,
+  removeDocShares,
 } from "./shares.ts";
-import { claimPendingInvites } from "./pending.ts";
-import { closeRoom } from "./collab.ts";
+import { claimPendingInvites, removeDocPending } from "./pending.ts";
+import { closeRoom, purgeDocUpdates } from "./collab.ts";
+import { purgeDocThreads } from "./comments.ts";
+import { revokePublicLink } from "./public-links.ts";
 
-const db = new Database(process.env.DB_PATH ?? "./markie.db");
+const db = openDatabase();
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS docs (
@@ -152,19 +155,33 @@ docs.put("/:id", async (c) => {
   return c.json({ id, version, updated_at: now });
 });
 
-// Soft-delete the cloud copy
+// Delete the cloud copy. The row stays as a tombstone, so a client that still
+// knows the id gets the same 404 either way and the owner's next push starts
+// over at version 1. Everything readable goes now: the text, its hash, every
+// version in the history, and every share, invite, link, thread and collab
+// update that pointed at it. Nothing waits for a sweep that might never run.
 docs.delete("/:id", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  const res = db
-    .prepare(
-      "UPDATE docs SET deleted_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL"
-    )
-    .run(new Date().toISOString(), docId, user.id);
-  if (res.changes === 0) return c.json({ error: "not found" }, 404);
+  const tombstone = db.transaction((): number => {
+    const changes = db
+      .prepare(
+        "UPDATE docs SET deleted_at = ?, content = '', hash = '' WHERE id = ? AND owner_id = ? AND deleted_at IS NULL"
+      )
+      .run(new Date().toISOString(), docId, user.id).changes;
+    if (changes > 0) db.prepare("DELETE FROM doc_history WHERE doc_id = ?").run(docId);
+    return changes;
+  });
+  if (tombstone() === 0) return c.json({ error: "not found" }, 404);
   // The delete revokes access for every member at once, so nobody keeps a live
-  // socket on the room.
+  // socket on the room. Closed before the update log is purged, so a socket
+  // mid-write cannot put a fragment of the text back.
   closeRoom(docId);
+  purgeDocUpdates(docId);
+  removeDocShares(docId);
+  removeDocPending(docId);
+  revokePublicLink(docId);
+  purgeDocThreads(docId);
   return c.json({ ok: true });
 });

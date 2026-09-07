@@ -1,7 +1,7 @@
 // Unauthenticated public share surface: a rendered preview and a raw download.
 // Mounted at root (not /api) so links are clean: ${SITE}/s/:token
 import { Hono } from "hono";
-import Database from "better-sqlite3";
+import { openDatabase } from "./db.ts";
 import { resolvePublicToken } from "./public-links.ts";
 import {
   renderDownloadPage,
@@ -22,7 +22,7 @@ import {
   type DownloadPlatform,
 } from "./downloads.ts";
 
-const db = new Database(process.env.DB_PATH ?? "./markie.db");
+const db = openDatabase();
 const MARKIE_SITE = markieSiteUrl();
 
 // Cache resolved artifact URLs so a "Get Markie" click does not hit B2 every time.

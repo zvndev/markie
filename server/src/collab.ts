@@ -8,7 +8,7 @@ import * as syncProtocol from "y-protocols/sync";
 import * as awarenessProtocol from "y-protocols/awareness";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
-import Database from "better-sqlite3";
+import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
 import {
   accessLevel,
@@ -17,7 +17,7 @@ import {
   type ShareAccessLevel,
 } from "./shares.ts";
 
-const db = new Database(process.env.DB_PATH ?? "./markie.db");
+const db = openDatabase();
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS doc_updates (
@@ -56,7 +56,14 @@ function loadUpdates(docId: string, ydoc: Y.Doc): void {
   }
 }
 
-function appendUpdate(docId: string, update: Uint8Array): void {
+// A member whose access was read within ACCESS_CACHE_MS can still deliver an
+// update in the moment after the owner deletes the doc. The row is a tombstone
+// by then, and a tombstone takes no more text. Exported for the delete test.
+export function appendUpdate(docId: string, update: Uint8Array): void {
+  const row = db.prepare("SELECT deleted_at FROM docs WHERE id = ?").get(docId) as
+    | { deleted_at: string | null }
+    | undefined;
+  if (row?.deleted_at) return;
   const next =
     ((db
       .prepare("SELECT MAX(seq) AS m FROM doc_updates WHERE doc_id = ?")
@@ -479,4 +486,10 @@ export function attachCollab(server: Server): void {
   });
 
   console.log("collab websocket attached at /collab/:docId");
+}
+
+// The stored yjs update log for a doc holds its full text in another form.
+// Call closeRoom first so no socket writes another update after the purge.
+export function purgeDocUpdates(docId: string): number {
+  return db.prepare("DELETE FROM doc_updates WHERE doc_id = ?").run(docId).changes;
 }

@@ -1,9 +1,9 @@
 // Public share links: an unguessable, revocable token per doc that grants
 // account-free read + download via GET /s/:token. Own table so it can be
 // revoked independently of membership. Mirrors pending.ts (own db handle).
-import Database from "better-sqlite3";
+import { openDatabase } from "./db.ts";
 
-const db = new Database(process.env.DB_PATH ?? "./markie.db");
+const db = openDatabase();
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS public_links (

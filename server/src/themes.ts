@@ -2,7 +2,7 @@
 // last-write-wins), and a doc owner can pin a theme to a doc so everyone
 // it's shared with reads it the way the owner styled it.
 import { Hono } from "hono";
-import Database from "better-sqlite3";
+import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
 import {
   accessLevel,
@@ -10,7 +10,7 @@ import {
   canReadLevel,
 } from "./shares.ts";
 
-const db = new Database(process.env.DB_PATH ?? "./markie.db");
+const db = openDatabase();
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS user_themes (

@@ -1,6 +1,6 @@
 import { betterAuth } from "better-auth";
 import { bearer, emailOTP } from "better-auth/plugins";
-import Database from "better-sqlite3";
+import { openDatabase } from "./db.ts";
 import { sendEmail } from "./email.ts";
 import { claimPendingInvites } from "./pending.ts";
 import { resolveAuthSecret } from "./auth-secret.ts";
@@ -10,7 +10,7 @@ const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
 export const auth = betterAuth({
-  database: new Database(process.env.DB_PATH ?? "./markie.db"),
+  database: openDatabase(),
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:8787",
   secret: resolveAuthSecret(process.env),
   trustedOrigins: [

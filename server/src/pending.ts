@@ -2,9 +2,9 @@
 // When that email becomes a user (signup hook) or next lists their docs (read
 // sweep), the pending rows are "claimed" into real `shares` rows — so the doc
 // shows up in their Library and they join live collab.
-import Database from "better-sqlite3";
+import { openDatabase } from "./db.ts";
 
-const db = new Database(process.env.DB_PATH ?? "./markie.db");
+const db = openDatabase();
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS pending_shares (
@@ -112,4 +112,10 @@ export function claimPendingInvites(email: string, userId: string): number {
   });
   claim();
   return pending.length;
+}
+
+// Invites still waiting on a sign-up, dropped when the doc they were for is
+// deleted; the claim on sign-up would otherwise resurrect a seat on a tombstone.
+export function removeDocPending(docId: string): number {
+  return db.prepare("DELETE FROM pending_shares WHERE doc_id = ?").run(docId).changes;
 }

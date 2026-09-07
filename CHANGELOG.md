@@ -18,6 +18,15 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   time. Documents shared with you are not landed: they open into Downloads
   when you ask, as before. A file you delete or pause stays gone.
 
+### Fixed
+
+- **Deleting a document from the cloud now erases it on the server at once.**
+  Before, the server kept the text of a deleted document, and every version
+  you had ever pushed, indefinitely: hidden from the app, still stored. Delete
+  now wipes the content, the history, and every share, invite, link and
+  comment thread that pointed at it, and the database overwrites freed space
+  as it goes instead of leaving it for a later sweep.
+
 ## [0.5.4] - 2026-09-06
 
 ### Added

@@ -14,7 +14,7 @@
 // Anything else gets an access page that names no document, so the route
 // cannot be used to discover which document ids exist.
 import { Hono } from "hono";
-import Database from "better-sqlite3";
+import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
 import {
   accessLevel,
@@ -26,7 +26,7 @@ import { pendingForToken } from "./pending.ts";
 import { markieSiteUrl } from "./downloads.ts";
 import { renderAccessRequiredPage, renderSharedDocPage } from "./render.ts";
 
-const db = new Database(process.env.DB_PATH ?? "./markie.db");
+const db = openDatabase();
 
 const MARKIE_SITE = markieSiteUrl();
 

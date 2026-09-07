@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import Database from "better-sqlite3";
+import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
 import { sendEmail } from "./email.ts";
 import { addPending, listPendingForDoc, removePending } from "./pending.ts";
@@ -12,7 +12,7 @@ import { markieSiteUrl, primaryDownloadCta } from "./downloads.ts";
 import { disconnectUser } from "./collab.ts";
 import { newLinkToken } from "./link-token.ts";
 
-const db = new Database(process.env.DB_PATH ?? "./markie.db");
+const db = openDatabase();
 
 // Share emails use the stable release-manifest domain and versionless download routes.
 const MARKIE_SITE = markieSiteUrl();
@@ -395,4 +395,10 @@ function addedHtml(
   </p>
   <p style="font-size:12px;line-height:1.6;color:#71717a">This link is yours alone. It only opens ${escapeHtml(docName)}, and it stops working if your access is removed.</p>
 </div>`;
+}
+
+// Every membership for a doc, dropped in one go when the owner deletes it, so
+// nobody keeps a seat at a row that no longer has content.
+export function removeDocShares(docId: string): number {
+  return db.prepare("DELETE FROM shares WHERE doc_id = ?").run(docId).changes;
 }

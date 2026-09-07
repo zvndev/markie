@@ -14,6 +14,11 @@
 // Installs are copies, never symlinks. A symlink needs Developer Mode on
 // Windows, and the Vercel CLI falls back to copying for the same reason, so a
 // copy is the only form both tools agree on.
+//
+// A skill's `folderHash` is its git tree object id, computed from the tarball
+// by electron/git-tree-id.js. That is what the Vercel CLI records in the shared
+// lock file and what it compares to decide an install is out of date, so any
+// other digest would make each tool think the other's installs were stale.
 const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
@@ -21,6 +26,7 @@ const path = require("path");
 const zlib = require("zlib");
 const { parseTar } = require("./ustar");
 const { parseFrontmatter } = require("./skill-frontmatter");
+const { treeId } = require("./git-tree-id");
 
 // The three repositories every install starts with. They are not rows: a user
 // can add sources and remove the ones they added, but these come back.
@@ -65,18 +71,6 @@ const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build"]);
 
 const SKILLS_SH_SEARCH = "https://skills.sh/api/search";
 const LOCK_VERSION = 3;
-
-/** SHA-256 over every file in a folder: the sorted `path\0bytes` of each. */
-function folderHash(entries) {
-  const hash = crypto.createHash("sha256");
-  const ordered = [...entries].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  for (const entry of ordered) {
-    hash.update(entry.path);
-    hash.update("\0");
-    hash.update(entry.data);
-  }
-  return hash.digest("hex");
-}
 
 /** `owner/repo` → `{ owner, repo }`, or null when it is not that shape. */
 function parseOwnerRepo(value) {
@@ -186,7 +180,7 @@ function discoverSkills(entries, { owner, repo }) {
           size: entry.data.length,
           executable: Boolean(entry.mode & 0o111),
         })),
-        folderHash: folderHash(own),
+        folderHash: treeId(own),
       },
     });
   }
@@ -818,7 +812,6 @@ function createSkillRegistry(deps = {}) {
 module.exports = {
   createSkillRegistry,
   discoverSkills,
-  folderHash,
   parseOwnerRepo,
   validSkillName,
   containerDepth,

@@ -100,7 +100,11 @@ export interface CatalogSkill {
   allowedTools: string | null;
   metadata: Record<string, string>;
   files: SkillFile[];
-  /** SHA-256 over the folder's contents; an install records the one it copied. */
+  /**
+   * The folder's git tree object id, 40 hex characters. The Vercel CLI records
+   * the same id in ~/.agents/.skill-lock.json and compares it to decide whether
+   * an install is out of date, so the two tools agree.
+   */
   folderHash: string;
   installs?: number | null;
   installedTo: { target: SkillTarget; path: string; upToDate: boolean }[];

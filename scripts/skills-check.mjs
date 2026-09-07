@@ -153,8 +153,8 @@ async function main() {
   const skills = (catalog?.skills || []).filter((s) => s.source === "anthropics/skills");
   check("it holds skills with a name and a description", skills.length > 0, `${skills.length} found`);
   check(
-    "every skill has a description and a folder hash",
-    skills.length > 0 && skills.every((s) => s.description && /^[0-9a-f]{64}$/.test(s.folderHash))
+    "every skill has a description and a git tree id for its folder",
+    skills.length > 0 && skills.every((s) => s.description && /^[0-9a-f]{40}$/.test(s.folderHash))
   );
 
   const pdf = skills.find((s) => s.name === "pdf") || skills[0];

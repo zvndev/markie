@@ -58,10 +58,11 @@ dist-windows/
 marker-screenshot.png
 
 # server
-server/node_modules/
+# No trailing slash: a worktree's symlinked node_modules is a file to git.
+server/node_modules
 server/markie.db*
 server/.env
-mcp/node_modules/
+mcp/node_modules
 
 # agent-loop run artifacts (logs + screenshots of a real library) stay local:
 # they are machine noise and can capture private file names

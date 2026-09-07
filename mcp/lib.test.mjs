@@ -129,6 +129,38 @@ test("guardPath allows the skill/agent allowlist roots despite the dot-dir", () 
   }
 });
 
+test("guardPath follows a Claude or Codex config folder the user has moved", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const previous = {
+    CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
+    CODEX_HOME: process.env.CODEX_HOME,
+  };
+  try {
+    // The realistic case: config folders tucked inside ~/.config, which the
+    // dot-dir rule prunes unless the allowlist names them.
+    process.env.CLAUDE_CONFIG_DIR = pjoin(home, ".config", "claude");
+    process.env.CODEX_HOME = pjoin(home, ".config", "codex");
+    for (const configured of [process.env.CLAUDE_CONFIG_DIR, process.env.CODEX_HOME]) {
+      mkdirSync(pjoin(configured, "skills", "pdf"), { recursive: true });
+      const file = pjoin(configured, "skills", "pdf", "SKILL.md");
+      assert.equal(guardPath(file, home).ok, true, `${configured} is still readable`);
+      assert.equal(
+        guardPath(file, home, { mode: "write" }).ok,
+        false,
+        "and is still no place for an agent to write",
+      );
+      // Only the skills folder inside it, as for every other tool.
+      assert.equal(guardPath(pjoin(configured, "notes.md"), home).ok, false);
+    }
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("guardPath rejects non-markdown files", () => {
   const r = guardPath("/home/u/notes.txt", HOME);
   assert.equal(r.ok, false);

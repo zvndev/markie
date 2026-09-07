@@ -5,6 +5,7 @@ import fs from "node:fs";
 import {
   getCached,
   isBundleDir,
+  allowlist,
   isExcludedDir,
   moved,
   noteFile,
@@ -95,6 +96,29 @@ describe("shouldDescend", () => {
     }
     // Only the skills folder: the rest of a tool's dot-dir stays out.
     expect(shouldDescend(path.join(home, ".cursor", "extensions"), "extensions", home)).toBe(false);
+  });
+  it("re-includes a Claude or Codex config folder the user has moved", () => {
+    // The realistic case: a config folder tucked inside ~/.config, which the
+    // dot-dir rule prunes unless the allowlist names it.
+    const env = {
+      CLAUDE_CONFIG_DIR: path.join(home, ".config", "claude"),
+      CODEX_HOME: path.join(home, ".config", "codex"),
+    };
+    const allow = allowlist(home, env);
+    for (const configured of [env.CLAUDE_CONFIG_DIR, env.CODEX_HOME]) {
+      const skills = path.join(configured, "skills");
+      expect(allow).toContain(skills);
+      expect(shouldDescend(path.join(home, ".config"), ".config", home, { allow })).toBe(true);
+      expect(shouldDescend(configured, path.basename(configured), home, { allow })).toBe(true);
+      expect(shouldDescend(skills, "skills", home, { allow })).toBe(true);
+      expect(shouldDescend(path.join(skills, "pdf"), "pdf", home, { allow })).toBe(true);
+    }
+    // Only the skills folder inside it, as for every other tool.
+    expect(
+      shouldDescend(path.join(env.CODEX_HOME, "sessions"), "sessions", home, { allow })
+    ).toBe(false);
+    // An unset pair leaves the list exactly as it was.
+    expect(allowlist(home, {})).toEqual(allowlist(home, { CLAUDE_CONFIG_DIR: "" }));
   });
   it("still prunes node_modules and nested dot-dirs INSIDE an allowlisted root", () => {
     // allowlisting ~/.codex must not drag in its node_modules / nested .git

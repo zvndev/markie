@@ -101,8 +101,8 @@ function skippedDirs({ home, platform = process.platform, realpath = fs.realpath
 
 // Directories explicitly re-included even though the rules above would prune
 // them (they live under a dot-dir). Absolute paths, resolved against home.
-function allowlist(home) {
-  return [
+function allowlist(home, env = process.env) {
+  const dirs = [
     path.join(home, ".claude", "skills"),
     path.join(home, ".codex"), // OpenAI Codex agent files (AGENTS.md, etc.)
     // The other tools Markie can install a skill into. The Skills panel reads
@@ -112,6 +112,16 @@ function allowlist(home) {
     path.join(home, ".cursor", "skills"),
     path.join(home, ".gemini", "skills"),
   ];
+  // Claude Code and Codex both let the user move their config folder, and
+  // Markie installs into the folder they actually read. Leaving the moved one
+  // out meant the skill landed somewhere the index would never look, so the
+  // Installed tab could not open or reveal what it had just written.
+  for (const configured of [env?.CLAUDE_CONFIG_DIR, env?.CODEX_HOME]) {
+    if (typeof configured === "string" && configured.trim()) {
+      dirs.push(path.join(path.resolve(configured), "skills"));
+    }
+  }
+  return [...new Set(dirs)];
 }
 
 // True if any path segment of `full` (relative to home) is itself an excluded

@@ -43,8 +43,8 @@ export function isExcludedDir(name) {
 }
 
 // Dot-dir roots explicitly re-included (agent/skill files live under them).
-export function allowlist(home) {
-  return [
+export function allowlist(home, env = process.env) {
+  const dirs = [
     path.join(home, ".claude", "skills"),
     path.join(home, ".codex"),
     // Mirrors electron/mdindex.js: the other folders Markie installs skills
@@ -53,6 +53,14 @@ export function allowlist(home) {
     path.join(home, ".cursor", "skills"),
     path.join(home, ".gemini", "skills"),
   ];
+  // And the two a user can move. Same list as the app's index, for the same
+  // reason: a skill installed into a moved config folder is still a skill.
+  for (const configured of [env?.CLAUDE_CONFIG_DIR, env?.CODEX_HOME]) {
+    if (typeof configured === "string" && configured.trim()) {
+      dirs.push(path.join(path.resolve(configured), "skills"));
+    }
+  }
+  return [...new Set(dirs)];
 }
 
 // True if any path segment of `full` (relative to home) is an excluded dir.

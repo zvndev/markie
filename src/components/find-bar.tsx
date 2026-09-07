@@ -173,19 +173,24 @@ export function FindBar({
     onClose();
   }, [target, matches, current, onClose]);
 
+  // The field runs a beat ahead of the match set (QUERY_DEBOUNCE_MS). A click
+  // in that beat would replace what the previous query found, under a field
+  // that says something else, so replacement waits for the set to catch up.
+  const settledQuery = query === activeQuery;
+
   const replaceCurrent = useCallback(() => {
     const match = matches[current];
-    if (!match || !target || !canReplace) return;
+    if (!match || !target || !canReplace || !settledQuery) return;
     target.replace([match], replacement);
     setEdits((n) => n + 1);
-  }, [matches, current, target, canReplace, replacement]);
+  }, [matches, current, target, canReplace, replacement, settledQuery]);
 
   const replaceAll = useCallback(() => {
-    if (matches.length === 0 || !target || !canReplace) return;
+    if (matches.length === 0 || !target || !canReplace || !settledQuery) return;
     target.replace(matches, replacement);
     setCurrent(-1);
     setEdits((n) => n + 1);
-  }, [matches, target, canReplace, replacement]);
+  }, [matches, target, canReplace, replacement, settledQuery]);
 
   // Escape and Enter are handled here rather than on window so they only mean
   // this while the bar has focus.
@@ -303,14 +308,14 @@ export function FindBar({
             <>
               <ActionButton
                 onClick={replaceCurrent}
-                disabled={current < 0}
+                disabled={current < 0 || !settledQuery}
                 title="Replace this match"
               >
                 Replace
               </ActionButton>
               <ActionButton
                 onClick={replaceAll}
-                disabled={empty}
+                disabled={empty || !settledQuery}
                 title="Replace every match"
               >
                 All

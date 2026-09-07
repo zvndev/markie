@@ -172,16 +172,21 @@ export function useSaveGuard({
         autosaveRef.current?.cancel();
       },
       async settle() {
+        let landed = true;
         try {
-          await autosaveRef.current?.flush();
+          landed = (await autosaveRef.current?.flush()) ?? true;
         } catch {
           // A failed flush has already reported itself through the save path.
           // Blocking the transition on it would trap the user in a document
           // they cannot leave, and the draft journal holds what did not land.
+          landed = false;
         }
         // One last journal write, so closing never races the debounce above.
-        // Whatever the save could not commit is still recoverable.
-        if (docRef.current.dirty && journalRef.current) {
+        // Whatever the save could not commit is still recoverable. A document
+        // that sits out the periodic journal for its size still gets this one
+        // write when the save did not land: the alternative is a buffer
+        // replaced with no copy of it anywhere.
+        if (docRef.current.dirty && (journalRef.current || !landed)) {
           try {
             await getElectronAPI()?.draftSave?.({
               path: docRef.current.path,

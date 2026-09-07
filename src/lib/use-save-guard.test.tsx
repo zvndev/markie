@@ -90,6 +90,39 @@ describe("the crash journal's pace", () => {
     expect(draftSave.mock.calls[0][0].content).toBe(big + "yyyyy");
   });
 
+  it("still writes once on settle when the journal is off and the save did not land", async () => {
+    const big = "x".repeat(300 * 1024);
+    const draftSave = vi.fn<(entry: DraftCall) => void>();
+    (window as unknown as { electronAPI?: unknown }).electronAPI = { draftSave };
+    const mount = (save: () => Promise<boolean>) =>
+      renderHook(() =>
+        useSaveGuard({
+          save,
+          eligible: true,
+          docKey: "/doc.md",
+          document: { path: "/doc.md", name: "doc.md", content: big, dirty: true },
+          booted: false,
+          journal: false,
+        })
+      );
+
+    // The save refused (a conflict, a read-only share): the buffer is the
+    // only copy, so closing journals it once.
+    const refused = mount(async () => false);
+    act(() => refused.result.current.noteEdit());
+    await act(() => refused.result.current.settle());
+    expect(draftSave).toHaveBeenCalledTimes(1);
+    expect(draftSave.mock.calls[0][0].content).toBe(big);
+    refused.unmount();
+
+    // The save landed: nothing to recover, so nothing is written.
+    draftSave.mockClear();
+    const landed = mount(async () => true);
+    act(() => landed.result.current.noteEdit());
+    await act(() => landed.result.current.settle());
+    expect(draftSave).not.toHaveBeenCalled();
+  });
+
   it("writes nothing at all for a document the journal is off for", () => {
     const big = "x".repeat(300 * 1024);
     const draftSave = vi.fn<(entry: DraftCall) => void>();

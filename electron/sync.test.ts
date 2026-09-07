@@ -915,6 +915,20 @@ describe("resolveKeepBoth", () => {
 });
 
 describe("resolve('cloud')", () => {
+  it("refuses a cloud copy over the cap before touching the file", async () => {
+    const p = path.join(tmpDir, "notes.md");
+    fs.writeFileSync(p, "mine\n");
+    const row = seedRow({ path: p, sync_state: "behind", cloud_doc_id: "cloud-1", cloud_version: 4 });
+    respondWith({ status: 200, body: { doc: { content: "x".repeat(100_000_000), version: 9 } } });
+
+    const res = await sync.resolve(p, "cloud");
+
+    expect(res.error).toMatch(/notes\.md in the cloud is 100 MB, more than Markie opens \(100 MB\)/);
+    expect(res.ok).toBeUndefined();
+    expect(fs.readFileSync(p, "utf-8")).toBe("mine\n");
+    expect(row.cloud_version).toBe(4);
+  });
+
   it("hands back the content it wrote so an open buffer can follow it", async () => {
     const p = path.join(tmpDir, "notes.md");
     fs.writeFileSync(p, "mine\n");

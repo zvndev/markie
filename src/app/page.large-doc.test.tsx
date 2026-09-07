@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElectronAPI } from "@/lib/electron";
 import { emit, installBridge } from "@/test/mock-bridge";
+import { EditorView } from "@codemirror/view";
 
 vi.mock("@/lib/auth-client", () => ({
   authClient: { me: async () => null },
@@ -29,7 +30,8 @@ vi.mock("@/lib/doc-tiers", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/doc-tiers")>();
   return {
     ...real,
-    measureBytes: (text: string) => (text.startsWith("HUGE:") ? 143_000_000 : real.measureBytes(text)),
+    measureBytes: (text: string) =>
+      text.startsWith("HUGE:") ? 143_000_000 : text.startsWith("LARGE:") ? 2_500_000 : real.measureBytes(text),
   };
 });
 
@@ -238,5 +240,27 @@ describe("large documents", () => {
     emit("onFileChangedOnDisk", { path: SMALL.path, content: "theirs, trimmed\n", size: 16 });
     await screen.findByRole("button", { name: /reload/i });
     expect(refusalStrip()).toBeNull();
+  });
+
+  it("re-tiers a document the user edits across the line, both ways", async () => {
+    installBridge({ getInitialFile: vi.fn(async () => SMALL) } as Partial<ElectronAPI>);
+    render(<Home />);
+    await waitFor(() => expect(richPane()).not.toBeNull());
+    fireEvent.keyDown(window, { key: "2", metaKey: true });
+    await waitFor(() => expect(sourceEditor()).not.toBeNull());
+    const view = EditorView.findFromDOM(sourceEditor() as HTMLElement)!;
+
+    // A paste that takes the document past the line: long enough that the
+    // cheap length test cannot rule it out, marked so the measurement says so.
+    const pasted = "LARGE:" + "x".repeat(340_000);
+    view.dispatch({ changes: { from: 0, insert: pasted } });
+    await waitFor(() => expect(largeStrip()).not.toBeNull(), { timeout: 3000 });
+    expect(largeStrip()!.textContent).toContain("Large document (2.5 MB)");
+    expect(modeButton(/rich mode/i).disabled).toBe(true);
+
+    // Trimmed back below it: Rich is on offer again.
+    view.dispatch({ changes: { from: 0, to: pasted.length, insert: "" } });
+    await waitFor(() => expect(largeStrip()).toBeNull(), { timeout: 3000 });
+    expect(modeButton(/rich mode/i).disabled).toBe(false);
   });
 });

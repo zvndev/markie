@@ -34,23 +34,32 @@ function tierForSize(size) {
 }
 
 /**
- * Read a document the size-aware way: stat first, refuse before reading when
- * the file is over the cap, and flag a large one so the renderer can open it
- * in Source view. `io` exists for tests, which must not need a 100 MB file.
+ * Read a document the size-aware way: measure first, refuse before reading
+ * when the file is over the cap, and flag a large one so the renderer can
+ * open it in Source view. One descriptor serves both the measurement and the
+ * read: an editor or agent renaming a different file over the path between a
+ * stat and a read would otherwise hand back that file's bytes under the first
+ * file's size, which is how something over the cap could slip through. `io`
+ * exists for tests, which must not need a 100 MB file.
  *
  * Returns `{ tooLarge: true, size }` or `{ content, size, large }`. Throws
- * what fs throws for a path that cannot be read; the caller already turns
+ * what fs throws for a path that cannot be opened; the caller already turns
  * that into "nothing opened".
  *
  * @param {string} filePath
- * @param {{ statSync(p: string): { size: number }, readFileSync(p: string, encoding: "utf-8"): string }} [io]
+ * @param {{ openSync(p: string, flags: "r"): number, fstatSync(fd: number): { size: number }, readFileSync(fd: number, encoding: "utf-8"): string, closeSync(fd: number): void }} [io]
  */
 function readDocumentTiered(filePath, io = fs) {
-  const size = io.statSync(filePath).size;
-  const tier = tierForSize(size);
-  if (tier === "tooLarge") return { tooLarge: true, size };
-  const content = io.readFileSync(filePath, "utf-8");
-  return { content, size, large: tier === "large" };
+  const fd = io.openSync(filePath, "r");
+  try {
+    const size = io.fstatSync(fd).size;
+    const tier = tierForSize(size);
+    if (tier === "tooLarge") return { tooLarge: true, size };
+    const content = io.readFileSync(fd, "utf-8");
+    return { content, size, large: tier === "large" };
+  } finally {
+    io.closeSync(fd);
+  }
 }
 
 /**

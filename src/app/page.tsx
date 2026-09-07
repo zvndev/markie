@@ -41,7 +41,7 @@ import { ConflictDialog } from "@/components/conflict-dialog";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
 import { DraftStrip } from "@/components/draft-strip";
 import { LargeDocStrip, TooLargeStrip } from "@/components/large-doc";
-import { measureBytes, tierForSize, type RefusalVerb } from "@/lib/doc-tiers";
+import { LARGE_DOC_BYTES, measureBytes, tierForSize, type RefusalVerb } from "@/lib/doc-tiers";
 import { isTooLarge, type OpenResult, type TooLargePayload } from "@/lib/electron";
 import { HistoryDialog } from "@/components/history-dialog";
 import { diskChangeKind } from "@/lib/disk-change";
@@ -111,6 +111,10 @@ import { opensAsDocument } from "@/lib/attach";
 import { useDocument, type EditInput } from "@/lib/use-document";
 import { useSaveGuard, type SaveGuard } from "@/lib/use-save-guard";
 import { useDocumentExport } from "@/lib/use-export";
+
+// How long after the last edit the document's size is measured again (see the
+// re-tiering effect in Home).
+const EDIT_TIER_DELAY_MS = 500;
 
 const SAMPLE = `# Northstar Sprint Brief
 
@@ -613,6 +617,27 @@ export default function Home() {
     refreshCollabRef.current();
   }, [largeTier]);
 
+  // Edits can carry a document across the line in either direction: a paste
+  // that takes a source document past it must not leave Rich on offer (that
+  // is the freeze the tier exists to prevent), and a large document trimmed
+  // below it gets Rich back. Measured a beat after typing stops, and only
+  // when the character count cannot settle it: UTF-8 spends one to three
+  // bytes per character, so a document under a third of the line in
+  // characters is under it in bytes, and one past the line in characters is
+  // past it in bytes. Nearly every keystroke in nearly every document exits
+  // here without touching the text.
+  useEffect(() => {
+    if (!booted) return;
+    const timer = setTimeout(() => {
+      const chars = content.length;
+      if (largeDocRef.current ? chars >= LARGE_DOC_BYTES : chars * 3 < LARGE_DOC_BYTES) return;
+      const bytes = measureBytes(content);
+      const large = tierForSize(bytes) !== "ok";
+      if (large !== largeDocRef.current) enterTier(content, filePath, bytes);
+    }, EDIT_TIER_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [content, filePath, booted, enterTier]);
+
   // The clean case: nothing local is at risk, so this finishes in one click.
   const handlePullUpdate = useCallback(async () => {
     const api = getElectronAPI();
@@ -627,12 +652,14 @@ export default function Home() {
       }
       if (typeof res.content === "string") {
         // What came back is what is now on disk, and a CSV on disk is CSV.
+        // Main refuses a cloud copy over the cap before writing it; this is
+        // the same line for a copy that somehow reached here, and it leaves
+        // the update on offer rather than pretending it was taken.
         const bytes = admitUnderCap(res.content, fileName ?? "This document", undefined, "reloaded");
-        if (bytes !== null) {
-          const pulled = fromDisk(fileName, res.content);
-          applyExternalDoc(pulled);
-          enterTier(pulled, docRef.current.filePath, bytes);
-        }
+        if (bytes === null) return;
+        const pulled = fromDisk(fileName, res.content);
+        applyExternalDoc(pulled);
+        enterTier(pulled, docRef.current.filePath, bytes);
       }
       setUpdateWaiting(null);
       setLibRefreshKey((k) => k + 1);

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { Match } from "@/lib/doc-search";
@@ -163,6 +163,24 @@ describe("FindBar", () => {
     await user.keyboard("two");
     await settled("1 of 3");
     await user.click(screen.getByTitle("Replace every match"));
+    const [matches] = target.replace.mock.lastCall as [Match[], string];
+    expect(matches).toHaveLength(3);
+  });
+
+  it("will not replace while the field is ahead of the match set", async () => {
+    const user = userEvent.setup();
+    const { target } = renderBar({ withReplace: true });
+    await user.click(screen.getByLabelText("Find"));
+    await user.keyboard("tw");
+    await settled("1 of 3");
+    // The field now says "two"; for a beat the matches are still "tw"'s.
+    await user.keyboard("o");
+    const all = screen.getByTitle("Replace every match");
+    expect(all).toBeDisabled();
+    fireEvent.click(all);
+    expect(target.replace).not.toHaveBeenCalled();
+    await waitFor(() => expect(all).toBeEnabled());
+    await user.click(all);
     const [matches] = target.replace.mock.lastCall as [Match[], string];
     expect(matches).toHaveLength(3);
   });

@@ -103,7 +103,7 @@ function getDB() {
       name TEXT NOT NULL,
       source TEXT,                  -- "owner/repo" it came from
       skill_path TEXT,              -- where it sits inside that repository
-      folder_hash TEXT,             -- the catalog hash at install time
+      folder_hash TEXT,             -- git tree id of the folder it copied
       installed_at TEXT NOT NULL
     );
   `);

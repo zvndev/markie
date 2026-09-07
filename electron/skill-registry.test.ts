@@ -191,7 +191,7 @@ describe("skill registry", () => {
     const script = pdf.files.find((f: { path: string }) => f.path === "scripts/run.sh");
     expect(script.executable).toBe(true);
     expect(script.size).toBeGreaterThan(0);
-    expect(pdf.folderHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(pdf.folderHash).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it("records the source, its branch and the commit it read", async () => {
@@ -405,7 +405,7 @@ describe("skill registry", () => {
       ref: "main",
       skillPath: "skills/pdf/SKILL.md",
     });
-    expect(written.skills.pdf.skillFolderHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(written.skills.pdf.skillFolderHash).toMatch(/^[0-9a-f]{40}$/);
     expect(written.skills.pdf.installedAt).toBeTruthy();
   });
 

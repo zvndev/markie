@@ -19,8 +19,6 @@ vi.mock("@/lib/comments", () => ({
     setStatus: (...a: unknown[]) => setStatus(...a),
     deleteComment: (...a: unknown[]) => deleteComment(...a),
   },
-  selectionToAnchor: (...a: unknown[]) => selectionToAnchor(...a),
-  anchorToAbsolute: (...a: unknown[]) => anchorToAbsolute(...a),
 }));
 
 const me = vi.fn();
@@ -99,6 +97,7 @@ function renderLayer(
     <CommentLayer
       editor={harness.editor as never}
       ydoc={{} as never}
+      anchors={{ selectionToAnchor, anchorToAbsolute } as never}
       docId="doc-1"
       readonly={props.readonly ?? false}
       canComment={props.canComment ?? true}

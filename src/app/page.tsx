@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Toolbar } from "@/components/toolbar";
-import { Editor } from "@/components/editor";
+import { preloadSourceEditor, SourceEditor } from "@/components/source-editor";
 import { RichView, type FlushRich } from "@/components/rich-view";
 import { FormatRail } from "@/components/format-rail";
 import { DocToolbar } from "@/components/doc-toolbar";
@@ -52,9 +52,7 @@ import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
 import { FindBar } from "@/components/find-bar";
 import { richFindTarget } from "@/lib/rich-find";
-import { sourceFindTarget } from "@/lib/source-find";
-import type { EditorView as SourceView } from "@codemirror/view";
-import { undo as cmUndo, redo as cmRedo } from "@codemirror/commands";
+import type { SourceHandle } from "@/lib/source-handle";
 import { undoTargetFor } from "@/lib/undo-target";
 import { TerminalPanel } from "@/components/terminal-panel";
 import { TERMINAL_ENABLED } from "@/lib/features";
@@ -211,7 +209,7 @@ export default function Home() {
   // kills the shells and whatever they were running.
   const [terminalMounted, setTerminalMounted] = useState(false);
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
-  const [sourceView, setSourceView] = useState<SourceView | null>(null);
+  const [sourceHandle, setSourceHandle] = useState<SourceHandle | null>(null);
   const [showFind, setShowFind] = useState(false);
   const [findWithReplace, setFindWithReplace] = useState(false);
   // In Split both panes are on screen, so find follows the one you last
@@ -1265,19 +1263,19 @@ export default function Home() {
     (direction: "undo" | "redo") => {
       const target = undoTargetFor(document.activeElement, {
         hasRich: !!richEditor,
-        hasSource: !!sourceView,
+        hasSource: !!sourceHandle,
       });
       if (target === "rich" && richEditor) {
         richEditor.chain().focus()[direction]().run();
-      } else if (target === "source" && sourceView) {
-        (direction === "undo" ? cmUndo : cmRedo)(sourceView);
-        sourceView.focus();
+      } else if (target === "source" && sourceHandle) {
+        sourceHandle[direction]();
+        sourceHandle.focus();
       } else if (target === "native") {
         // A plain field: let the platform do what it already does well.
         document.execCommand(direction);
       }
     },
-    [richEditor, sourceView]
+    [richEditor, sourceHandle]
   );
 
   // The IPC subscriptions below are installed once, so anything they compare
@@ -1509,6 +1507,12 @@ export default function Home() {
     return () => offs.forEach((off) => off?.());
   }, [requestMode, selectView, editContent]);
 
+  // The source editor's chunk, fetched while idle so the first switch to
+  // Source view does not wait on it (src/components/source-editor.tsx).
+  useEffect(() => {
+    if (booted) preloadSourceEditor();
+  }, [booted]);
+
   const commands = useMemo<AppCommand[]>(
     () => [
       { id: "open", title: "Open File…", group: "File", shortcut: "⌘O", run: handleOpenFile },
@@ -1587,10 +1591,10 @@ export default function Home() {
     mode === "edit" ? "source" : mode === "preview" ? "rich" : lastPane;
   const findTarget = useMemo(() => {
     if (findPane === "source") {
-      return sourceView ? sourceFindTarget(sourceView) : null;
+      return sourceHandle ? sourceHandle.findTarget() : null;
     }
     return richEditor ? richFindTarget(richEditor) : null;
-  }, [findPane, sourceView, richEditor]);
+  }, [findPane, sourceHandle, richEditor]);
 
   const closeFind = useCallback(() => setShowFind(false), []);
 
@@ -1843,10 +1847,10 @@ export default function Home() {
               >
                 {collabCfg && <LiveSourceBanner />}
                 <div className="flex-1 min-h-0 overflow-hidden">
-                  <Editor
+                  <SourceEditor
                     value={content}
                     onChange={editContent}
-                    onViewReady={setSourceView}
+                    onReady={setSourceHandle}
                     // Read-only for two separate reasons: the rich pane owns the
                     // shared document while a session is live, and a viewer may
                     // not edit at all.

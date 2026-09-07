@@ -1,13 +1,6 @@
-// Comment threads client + Yjs anchor helpers. Anchors are relative
-// positions into the shared doc, so they survive concurrent edits; they
-// round-trip through the server as opaque JSON.
-import type { Editor } from "@tiptap/react";
-import {
-  ySyncPluginKey,
-  absolutePositionToRelativePosition,
-  relativePositionToAbsolutePosition,
-} from "@tiptap/y-tiptap";
-import * as Y from "yjs";
+// Comment threads client and types. The Yjs anchor helpers live in
+// src/lib/comment-anchors.ts, behind the live-session chunk, so this module
+// can be imported at launch without pulling yjs along.
 import { getAuthToken, getServerURL } from "@/lib/auth-client";
 
 export interface ThreadComment {
@@ -84,68 +77,3 @@ export const commentsClient = {
       `/api/docs/${encodeURIComponent(docId)}/threads/${threadId}/comments/${commentId}`
     ),
 };
-
-type YMapping = Parameters<typeof absolutePositionToRelativePosition>[2];
-
-interface YSyncState {
-  type: Y.XmlFragment;
-  binding?: { mapping: YMapping } | null;
-}
-
-function syncState(editor: Editor): YSyncState | null {
-  const state = ySyncPluginKey.getState(editor.state) as YSyncState | null;
-  return state?.binding ? state : null;
-}
-
-// Editor selection → serializable anchor
-export function selectionToAnchor(
-  editor: Editor,
-  from: number,
-  to: number
-): { from: unknown; to: unknown } | null {
-  const ystate = syncState(editor);
-  if (!ystate) return null;
-  const relFrom = absolutePositionToRelativePosition(
-    from,
-    ystate.type,
-    ystate.binding!.mapping
-  );
-  const relTo = absolutePositionToRelativePosition(
-    to,
-    ystate.type,
-    ystate.binding!.mapping
-  );
-  if (!relFrom || !relTo) return null;
-  return {
-    from: Y.relativePositionToJSON(relFrom),
-    to: Y.relativePositionToJSON(relTo),
-  };
-}
-
-// Anchor → current absolute positions; null when the text was deleted
-export function anchorToAbsolute(
-  editor: Editor,
-  ydoc: Y.Doc,
-  anchor: { from: unknown; to: unknown }
-): { from: number; to: number } | null {
-  const ystate = syncState(editor);
-  if (!ystate) return null;
-  try {
-    const from = relativePositionToAbsolutePosition(
-      ydoc,
-      ystate.type,
-      Y.createRelativePositionFromJSON(anchor.from),
-      ystate.binding!.mapping
-    );
-    const to = relativePositionToAbsolutePosition(
-      ydoc,
-      ystate.type,
-      Y.createRelativePositionFromJSON(anchor.to),
-      ystate.binding!.mapping
-    );
-    if (from == null || to == null) return null;
-    return { from, to };
-  } catch {
-    return null;
-  }
-}

@@ -18,10 +18,9 @@ import {
 import { preserveBlocks } from "@/lib/rich-block-preserve";
 import { createBlockNormalizer } from "@/lib/rich-roundtrip";
 import { warmBlocks } from "@/lib/rich-warmup";
-import { Collaboration } from "@tiptap/extension-collaboration";
-import { CollaborationCaret } from "@tiptap/extension-collaboration-caret";
-import * as Y from "yjs";
-import { WebsocketProvider } from "y-websocket";
+import type { Doc as YDoc } from "yjs";
+import type { WebsocketProvider } from "y-websocket";
+import { useCollabRuntime, type CollabRuntime } from "@/lib/collab-loader";
 import {
   COLLAB_SCHEMA_VERSION,
   shouldWarnSchema,
@@ -69,8 +68,10 @@ interface RichViewProps {
 export type FlushRich = () => string | null;
 
 interface CollabSession {
-  ydoc: Y.Doc;
+  ydoc: YDoc;
   provider: WebsocketProvider;
+  /** The loaded live-session modules; the comment layer anchors through them. */
+  runtime: CollabRuntime;
 }
 
 /** What the rich pane holds aside while a solo document is being edited. */
@@ -117,17 +118,18 @@ function serializeMarkdown(
   };
 }
 
-export function RichView({
+function RichViewInner({
   value,
   onChange,
   onEditorReady,
   collab,
+  runtime,
   readOnly = false,
   canModerate = false,
   onPeersChange,
   onCollabStatus,
   onFlushReady,
-}: RichViewProps) {
+}: RichViewProps & { runtime: CollabRuntime | null }) {
   // The server told us, mid-session, that this user is no longer in the room.
   // The role prop cannot know that yet, so the editor has to lock itself.
   const [revoked, setRevoked] = useState(false);
@@ -164,23 +166,23 @@ export function RichView({
     extensions: AnyExtension[];
     error: string | null;
   }>(() => {
-    if (!collab) return { session: null, extensions: [], error: null };
-    let ydoc: Y.Doc | null = null;
+    if (!collab || !runtime) return { session: null, extensions: [], error: null };
+    let ydoc: YDoc | null = null;
     let provider: WebsocketProvider | null = null;
     try {
-      ydoc = new Y.Doc();
-      provider = new WebsocketProvider(collab.wsBase, collab.docId, ydoc, {
+      ydoc = new runtime.Y.Doc();
+      provider = new runtime.WebsocketProvider(collab.wsBase, collab.docId, ydoc, {
         connect: false,
         params: { token: collab.token },
       });
       const extensions: AnyExtension[] = [
-        Collaboration.configure({ document: ydoc }),
-        CollaborationCaret.configure({
+        runtime.Collaboration.configure({ document: ydoc }),
+        runtime.CollaborationCaret.configure({
           provider,
           user: collab.user,
         }),
       ];
-      return { session: { ydoc, provider }, extensions, error: null };
+      return { session: { ydoc, provider, runtime }, extensions, error: null };
     } catch (err) {
       console.error("Markie: couldn't start the live session", err);
       try {
@@ -649,6 +651,7 @@ export function RichView({
           <CommentLayer
             editor={editor}
             ydoc={session.ydoc}
+            anchors={session.runtime}
             docId={collab.docId}
             readonly={locked}
             // Track 2 made commenting follow read access, so a viewer keeps the
@@ -662,4 +665,23 @@ export function RichView({
       </div>
     </div>
   );
+}
+
+// The live-session runtime (yjs, the websocket provider, the collaboration
+// extensions, comment anchoring) loads on first use; see
+// src/lib/collab-loader.ts. A shared document shows this until it is in, once
+// per launch, and a solo document never waits for any of it.
+export function RichView(props: RichViewProps) {
+  const runtime = useCollabRuntime(!!props.collab);
+  if (props.collab && !runtime) {
+    return (
+      <div
+        data-markie-live-loading
+        className="flex-1 flex items-center justify-center text-[12px] text-muted"
+      >
+        Joining the live session…
+      </div>
+    );
+  }
+  return <RichViewInner {...props} runtime={runtime} />;
 }

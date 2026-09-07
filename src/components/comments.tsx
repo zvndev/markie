@@ -1,12 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import type * as Y from "yjs";
-import {
-  commentsClient,
-  selectionToAnchor,
-  anchorToAbsolute,
-  type CommentThread,
-} from "@/lib/comments";
+import { commentsClient, type CommentThread } from "@/lib/comments";
+import type { CollabRuntime } from "@/lib/collab-loader";
 import type { MarkieUser } from "@/lib/auth-client";
 import { useAuth } from "@/lib/auth-store";
 import { colorForName, initials } from "@/lib/collab";
@@ -27,6 +23,8 @@ function fmtTime(iso: string): string {
 interface CommentLayerProps {
   editor: Editor;
   ydoc: Y.Doc;
+  /** Anchoring through the live-session runtime (src/lib/comment-anchors.ts). */
+  anchors: Pick<CollabRuntime, "selectionToAnchor" | "anchorToAbsolute">;
   docId: string;
   // The document cannot be edited: hides resolve/reopen, never commenting.
   readonly: boolean;
@@ -43,6 +41,7 @@ interface CommentLayerProps {
 export function CommentLayer({
   editor,
   ydoc,
+  anchors,
   docId,
   readonly,
   canComment = true,
@@ -139,7 +138,7 @@ export function CommentLayer({
   const resolved = (threads ?? []).filter((t) => t.status === "resolved");
   const bubbles: Array<{ thread: CommentThread; top: number; from: number; to: number }> = [];
   for (const thread of open) {
-    const abs = anchorToAbsolute(editor, ydoc, thread.anchor);
+    const abs = anchors.anchorToAbsolute(editor, ydoc, thread.anchor);
     if (!abs) continue; // anchored text was deleted
     const top = topFor(abs.from);
     if (top === null) continue;
@@ -165,7 +164,7 @@ export function CommentLayer({
 
   const submitThread = async (body: string) => {
     if (!composing) return;
-    const anchor = selectionToAnchor(editor, composing.from, composing.to);
+    const anchor = anchors.selectionToAnchor(editor, composing.from, composing.to);
     setComposing(null);
     if (!anchor) return;
     await commentsClient.createThread(docId, anchor, body);

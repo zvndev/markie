@@ -720,12 +720,17 @@ function createSkillRegistry(deps = {}) {
           folder_hash: skill.folderHash,
           installed_at: at,
         });
+        // `sourceUrl` carries the .git suffix and `skillPath` points at the
+        // SKILL.md rather than its folder, because that is what the Vercel CLI
+        // writes: this file is shared with it, so Markie's entries should read
+        // the same as its own. `ref` is Markie's own addition; the CLI ignores
+        // keys it does not know.
         mergeLock(skill.name, {
           source: skill.source,
           sourceType: "github",
-          sourceUrl: `https://github.com/${skill.source}`,
+          sourceUrl: `https://github.com/${skill.source}.git`,
           ref: found.catalog.ref,
-          skillPath: skill.skillPath,
+          skillPath: `${skill.skillPath}/SKILL.md`,
           skillFolderHash: skill.folderHash,
           installedAt: at,
           updatedAt: at,

@@ -381,19 +381,29 @@ describe("skill registry", () => {
     fs.mkdirSync(path.dirname(lock), { recursive: true });
     fs.writeFileSync(
       lock,
-      JSON.stringify({ version: 3, skills: { "someone-elses": { source: "other/repo", sourceType: "github" } } }),
+      JSON.stringify({
+        version: 3,
+        skills: { "someone-elses": { source: "other/repo", sourceType: "github" } },
+        dismissed: ["a-skill-they-said-no-to"],
+        lastSelectedAgents: ["claude"],
+      }),
       "utf8"
     );
     await installOnce();
     const written = JSON.parse(fs.readFileSync(lock, "utf8"));
     expect(written.version).toBe(3);
     expect(written.skills["someone-elses"]).toEqual({ source: "other/repo", sourceType: "github" });
+    // The Vercel CLI keeps its own top-level keys in here too.
+    expect(written.dismissed).toEqual(["a-skill-they-said-no-to"]);
+    expect(written.lastSelectedAgents).toEqual(["claude"]);
+    // The shape the Vercel CLI itself writes, read off a real lock file: the
+    // .git suffix, and a path to the SKILL.md rather than to its folder.
     expect(written.skills.pdf).toMatchObject({
       source: "acme/kit",
       sourceType: "github",
-      sourceUrl: "https://github.com/acme/kit",
+      sourceUrl: "https://github.com/acme/kit.git",
       ref: "main",
-      skillPath: "skills/pdf",
+      skillPath: "skills/pdf/SKILL.md",
     });
     expect(written.skills.pdf.skillFolderHash).toMatch(/^[0-9a-f]{64}$/);
     expect(written.skills.pdf.installedAt).toBeTruthy();

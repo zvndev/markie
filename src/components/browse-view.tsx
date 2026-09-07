@@ -49,6 +49,7 @@ const MINUTE_MS = 60_000;
 // indexer allows 200,000 files and nothing stops them all sitting in one
 // folder; the tree used to open closed, so nobody had met that folder yet.
 const ROW_CAP = 200;
+const NO_REVEALS: ReadonlySet<string> = new Set();
 
 // The dates in the column age on their own, and Browse can sit open for hours
 // without a click to re-render it: "just now" would stay true-looking long
@@ -162,7 +163,7 @@ function FolderRow({
   // The folders whose row cap the user has lifted. Kept for the session only:
   // asking for 30,000 rows is a decision about this list, right now, not a
   // preference to greet them with tomorrow.
-  revealed: Set<string>;
+  revealed: ReadonlySet<string>;
   onReveal: (path: string) => void;
   stars: Set<string>;
   onToggleStar: (path: string, kind: "folder" | "file") => void;
@@ -262,8 +263,16 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   // Null until the user opens or closes something themselves; see the initial
   // rule below for what the tree does in the meantime.
   const [openedByHand, setOpenedByHand] = useState<Set<string> | null>(rememberedOpen);
-  // Which folders have been asked to draw past the row cap, this session only.
-  const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
+  // Which folders have been asked to draw past the row cap, this session only,
+  // and for which list. A different sort or a different filter is a different
+  // list, so the folder that was asked for all its rows is not the folder in
+  // front of you now. Keyed by the list rather than reset in an effect: an
+  // effect runs after a render, and that one render would have drawn every
+  // row of the old list before the cap came back.
+  const [revealed, setRevealed] = useState<{ list: string; paths: Set<string> }>(() => ({
+    list: "",
+    paths: new Set(),
+  }));
   const [error, setError] = useState<string | null>(null);
   // A failed star is a one-line complaint, not an error page over the list.
   const [starNotice, setStarNotice] = useState<string | null>(null);
@@ -432,15 +441,17 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
     [openedByHand, tree]
   );
 
-  const reveal = useCallback((path: string) => {
-    setRevealed((prev) => new Set(prev).add(path));
-  }, []);
-
-  // A different sort or a different filter is a different list, so the folder
-  // that was asked for all its rows is not the folder in front of you now.
-  useEffect(() => {
-    setRevealed((prev) => (prev.size === 0 ? prev : new Set()));
-  }, [sort, q]);
+  const listKey = `${sort}\u0000${q}`;
+  const reveal = useCallback(
+    (path: string) => {
+      setRevealed((prev) => ({
+        list: listKey,
+        paths: new Set(prev.list === listKey ? prev.paths : []).add(path),
+      }));
+    },
+    [listKey]
+  );
+  const revealedNow = revealed.list === listKey ? revealed.paths : NO_REVEALS;
 
   const toggle = (path: string) => {
     // While the filter is holding the tree open, a chevron has nothing to do:
@@ -573,7 +584,7 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
                 open={open}
                 forcedOpen={forcedOpen}
                 onToggle={toggle}
-                revealed={revealed}
+                revealed={revealedNow}
                 onReveal={reveal}
                 stars={stars}
                 onToggleStar={toggleStar}

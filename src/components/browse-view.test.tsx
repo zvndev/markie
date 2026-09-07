@@ -347,13 +347,18 @@ describe("BrowseView with one enormous folder", () => {
     expect(screen.queryByText(/^Show /)).not.toBeInTheDocument();
   }, 30_000);
 
-  it("puts the cap back when the list underneath changes", async () => {
+  it("puts the cap back when the list underneath changes, before anything is drawn", async () => {
     renderBrowse(scan({ files: crowded().slice(0, 320) }));
     await screen.findByText("file0.md");
     await userEvent.click(screen.getByText("Show 120 more"));
     expect(childRows()).toHaveLength(320);
+    // The parent labels every file it draws, so the labels counted across the
+    // change are the rows that were ever drawn for the new list. A reset that
+    // ran after the render would have drawn all 320 first.
+    const labelled = time.updatedAgo.mock.calls.length;
     await userEvent.click(screen.getByText("Updated"));
     expect(childRows()).toHaveLength(201);
+    expect(time.updatedAgo.mock.calls.length - labelled).toBeLessThan(320);
   }, 30_000);
 });
 

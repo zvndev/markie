@@ -77,12 +77,18 @@ describe("the export pipeline is off the launch path", () => {
     expect(pipeline.loads).toBe(0);
 
     await push("onMenuExportHTML");
-    await waitFor(() => expect(exportHTML).toHaveBeenCalledTimes(1));
+    // The point of the change is that this export is the first thing to
+    // evaluate the pipeline, and evaluating it costs real time. waitFor's
+    // second-long default is not enough for that on a busy machine, and a
+    // timeout here would read as a broken export rather than as a slow import.
+    await waitFor(() => expect(exportHTML).toHaveBeenCalledTimes(1), { timeout: 15000 });
     expect(pipeline.loads).toBe(1);
 
     // Imported only now, so the assertion above stays honest.
     const { renderMarkdownHTML } = await import("@/lib/markdown-html");
     const { html } = (exportHTML.mock.calls[0] as unknown[])[0] as { html: string };
     expect(html).toContain(renderMarkdownHTML(FIXTURE));
-  });
+    // The whole test has to outlast the waitFor above, or the 5 s default cuts
+    // it off before the import it is waiting for has finished.
+  }, 20000);
 });

@@ -65,6 +65,20 @@ const doc = (o: Partial<SharedByMeDoc> = {}): SharedByMeDoc => ({
   ...o,
 });
 
+function props(over: Partial<React.ComponentProps<typeof CloudView>> = {}) {
+  return {
+    items: [],
+    loading: false,
+    renderRow: (i: LibraryItem) => <div key={i.name}>{i.name}</div>,
+    signedIn: true,
+    onManage: vi.fn(),
+    onOpenPath: vi.fn(),
+    cloudError: null,
+    refreshKey: 0,
+    ...over,
+  } satisfies React.ComponentProps<typeof CloudView>;
+}
+
 function renderView(props: Partial<React.ComponentProps<typeof CloudView>> = {}) {
   const onManage = vi.fn();
   const onOpenPath = vi.fn();
@@ -202,6 +216,18 @@ describe("the Cloud page's header band", () => {
   it("does not call the cloud empty when a list failed to load", async () => {
     sharedByMe.mockResolvedValue(null);
     renderView();
+
+    expect(await screen.findByText("Some of your cloud didn't load")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing in the cloud yet")).not.toBeInTheDocument();
+  });
+
+  it("does not call the cloud empty when the main listing failed", async () => {
+    // The account's own documents are the half that did not load. "Shared by
+    // me" answering with nothing says nothing about them.
+    sharedByMe.mockResolvedValue([]);
+    renderView({
+      cloudError: "Couldn't reach the server, so your cloud documents may be out of date.",
+    });
 
     expect(await screen.findByText("Some of your cloud didn't load")).toBeInTheDocument();
     expect(screen.queryByText("Nothing in the cloud yet")).not.toBeInTheDocument();
@@ -356,6 +382,44 @@ describe("documents I have shared", () => {
       />
     );
     expect(await screen.findByText("second.md")).toBeInTheDocument();
+  });
+});
+
+describe("changing accounts under an open panel", () => {
+  it("drops the last account's documents before the next one's arrive", async () => {
+    // A is signed in with a list on screen. A signs out, B signs in, and B's
+    // request has not answered yet. A's document names must not be sitting
+    // there in the meantime, clickable, under B's account.
+    sharedByMe.mockResolvedValue([doc({ name: "alice-brief.md" })]);
+    const view = render(<CloudView {...props()} />);
+    expect(await screen.findByText("alice-brief.md")).toBeInTheDocument();
+
+    view.rerender(<CloudView {...props({ signedIn: false, refreshKey: 1 })} />);
+    expect(screen.queryByText("alice-brief.md")).not.toBeInTheDocument();
+
+    let settle: (docs: SharedByMeDoc[]) => void = () => {};
+    sharedByMe.mockReturnValue(new Promise<SharedByMeDoc[]>((r) => (settle = r)));
+    view.rerender(<CloudView {...props({ signedIn: true, refreshKey: 2 })} />);
+    expect(screen.queryByText("alice-brief.md")).not.toBeInTheDocument();
+    expect(screen.getByText("Checking your cloud…")).toBeInTheDocument();
+
+    settle([doc({ id: "d9", name: "bob-plan.md" })]);
+    expect(await screen.findByText("bob-plan.md")).toBeInTheDocument();
+    expect(screen.queryByText("alice-brief.md")).not.toBeInTheDocument();
+  });
+
+  it("keeps the list in place through an ordinary refresh", async () => {
+    // Only a change of account blanks it. A membership change bumps refreshKey
+    // too, and blanking the list every time would make the page flicker.
+    sharedByMe.mockResolvedValue([doc()]);
+    const view = render(<CloudView {...props()} />);
+    expect(await screen.findByText("brief.md")).toBeInTheDocument();
+
+    let settle: (docs: SharedByMeDoc[]) => void = () => {};
+    sharedByMe.mockReturnValue(new Promise<SharedByMeDoc[]>((r) => (settle = r)));
+    view.rerender(<CloudView {...props({ refreshKey: 1 })} />);
+    expect(screen.getByText("brief.md")).toBeInTheDocument();
+    settle([doc()]);
   });
 });
 

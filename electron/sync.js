@@ -17,6 +17,12 @@ let config = { token: null, serverURL: null };
 // Nothing is inferred locally, so an unreported doc stays unknown.
 const docRoles = new Map();
 
+// Who is signed in, as the renderer last confirmed with the server. The roles
+// the registry remembers were granted to one account, so reading them back for
+// any other is worth nothing. Unknown until a confirmed session says, and
+// unknown never claims ownership.
+let principal = null;
+
 function setDocRole(cloudId, role) {
   if (!cloudId) return;
   if (role) docRoles.set(cloudId, role);
@@ -30,10 +36,16 @@ function setConfig(next) {
   const allowed = isAllowedServerOrigin(serverURL, {
     allowDev: process.env.NODE_ENV === "development",
   });
-  config = { token: next.token ?? null, serverURL: allowed ? serverURL : null };
+  const token = next.token ?? null;
+  config = { token, serverURL: allowed ? serverURL : null };
   // Roles belong to whoever was signed in. Another account's grants on the same
   // doc are a different answer entirely.
   docRoles.clear();
+  // A push that carries no user leaves the principal alone: it usually means
+  // nobody has asked the server yet, and offline nobody can. Losing the token
+  // is different, because that is a sign-out.
+  if (next.userId) principal = next.userId;
+  else if (!token) principal = null;
 }
 
 function isConfigured() {
@@ -558,10 +570,17 @@ async function resolveKeepBoth(filePath, localContent) {
 // is the last answer the server gave, which is all an offline session has. With
 // neither, ownership is unknown, and unknown must not read as "mine": a list
 // that failed used to make someone else's document look like your own.
-function ownership(remoteRecord, row) {
+function ownership(remoteRecord, row, remoteLoaded) {
   if (remoteRecord) return !remoteRecord.shared;
   // Nothing in the cloud to own.
   if (!row.cloud_doc_id) return true;
+  // The list answered and this document was not in it. Whatever it once was,
+  // it is not one of this account's documents now: it was deleted, access was
+  // revoked, or it belongs to the account that was signed in before this one.
+  if (remoteLoaded) return null;
+  // No list at all, so the last thing the server said is all there is, and it
+  // counts only for the account it was said to.
+  if (!principal || row.share_role_user !== principal) return null;
   if (row.share_role === "owner") return true;
   if (row.share_role === "editor" || row.share_role === "viewer") return false;
   return null;
@@ -617,7 +636,7 @@ async function libraryState() {
       remoteVersion: r?.version ?? null,
       exists: fs.existsSync(f.path),
       // true mine, false someone else's, null nobody has said
-      owned: ownership(r, f),
+      owned: ownership(r, f, remoteLoaded),
       // a synced copy of a doc that was shared with you
       shared: !!r?.shared,
       role: r?.role ?? null,

@@ -15,6 +15,10 @@ const sync = load("./sync.js");
 // The only origin setConfig will accept outside dev mode.
 const SERVER = "https://api-production-602f.up.railway.app";
 
+// Whoever is signed in for these tests, and somebody else.
+const ME = "user-me";
+const THEM = "user-them";
+
 interface Row {
   path: string;
   name: string;
@@ -24,8 +28,10 @@ interface Row {
   content_hash: string | null;
   last_synced_at: string | null;
   last_opened_at: string | null;
-  // The last role the server confirmed for this file.
+  // The last role the server confirmed for this file, and the account it was
+  // confirmed for.
   share_role?: "owner" | "editor" | "viewer" | null;
+  share_role_user?: string | null;
 }
 
 const realRegistry = { ...registry };
@@ -45,6 +51,7 @@ function seedRow(overrides: Partial<Row> & { path: string }): Row {
     last_synced_at: null,
     last_opened_at: "2026-08-01T00:00:00.000Z",
     share_role: null,
+    share_role_user: null,
     ...overrides,
   };
   rows.set(row.path, row);
@@ -104,7 +111,7 @@ beforeEach(() => {
   registry.list = () => [...rows.values()];
   registry.pruneMissing = () => 0;
   registry.track = () => {};
-  sync.setConfig({ token: "test-token", serverURL: SERVER });
+  sync.setConfig({ token: "test-token", serverURL: SERVER, userId: ME });
 });
 
 afterEach(() => {
@@ -659,14 +666,15 @@ describe("libraryState", () => {
     });
 
     it("keeps someone else's document theirs when the list cannot be fetched", async () => {
-      // Offline, or access revoked: no remote record either way. Reading that
-      // silence as "mine" is what filed a shared file under my own documents.
+      // Offline, or the server is down: no remote record either way. Reading
+      // that silence as "mine" is what filed a shared file under my own.
       seedRow({
         path: "/docs/theirs.md",
         sync_state: "synced",
         cloud_doc_id: "cloud-2",
         cloud_version: 4,
         share_role: "editor",
+        share_role_user: ME,
       });
       respondWith(new Error("offline"));
 
@@ -674,16 +682,67 @@ describe("libraryState", () => {
     });
 
     it("still calls my own document mine when the list cannot be fetched", async () => {
+      // The wifi dropping mid-session must not take my own documents away from
+      // me: this is the whole reason the remembered role is kept.
       seedRow({
         path: "/docs/mine.md",
         sync_state: "synced",
         cloud_doc_id: "cloud-3",
         cloud_version: 4,
         share_role: "owner",
+        share_role_user: ME,
       });
       respondWith({ status: 503 });
 
       expect((await sync.libraryState()).items[0].owned).toBe(true);
+    });
+
+    it("will not read another account's remembered role as its own", async () => {
+      // Two accounts on one machine. The role was proved by somebody else, so
+      // for this session it says nothing at all.
+      seedRow({
+        path: "/docs/hers.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-4",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: THEM,
+      });
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0].owned).toBeNull();
+    });
+
+    it("will not read a role remembered before principals were stored", async () => {
+      // Databases that predate the column have a role and no account beside it.
+      seedRow({
+        path: "/docs/old.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-5",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: null,
+      });
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0].owned).toBeNull();
+    });
+
+    it("drops a previous account's documents when this account's list loads", async () => {
+      // A signed in as owner, then B signed in. B's list is complete and does
+      // not mention the document, which is the server saying it is not B's.
+      seedRow({
+        path: "/docs/from-a.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-6",
+        cloud_version: 4,
+        share_role: "owner",
+        share_role_user: THEM,
+      });
+      sync.setConfig({ token: "b-token", serverURL: SERVER, userId: ME });
+      respondWith({ status: 200, body: { docs: [] } });
+
+      expect((await sync.libraryState()).items[0].owned).toBeNull();
     });
 
     it("says nobody has told it, rather than guessing", async () => {

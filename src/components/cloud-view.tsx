@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LibraryItem } from "@/lib/electron";
 import { sharesClient, type SharedByMeDoc } from "@/lib/auth-client";
 import { organizeLibraryItems } from "@/lib/library-overview";
@@ -171,11 +171,24 @@ export function CloudView({
   // refreshKey for something only this panel knows went wrong.
   const [byMeNonce, setByMeNonce] = useState(0);
 
+  // Whether the account changed under a panel that stayed open. Signing out and
+  // back in as somebody else is the case that matters: the names and people
+  // counts on screen belong to the account that left.
+  const wasSignedIn = useRef(signedIn);
+
   // Fetch "shared by me" on mount and whenever something changed (refreshKey).
   // Cheap metadata-only call, and no polling: the page already learns about
-  // everything else through the same bump. When signed out the render shows a
-  // sign-in prompt, so there is nothing to fetch or reset here.
+  // everything else through the same bump.
   useEffect(() => {
+    // Drop the last account's documents before asking for this one's, so they
+    // are never on screen while another account's request is in flight, or for
+    // ever if it never answers. Only on a change of account: doing it on every
+    // refresh would blank the list each time somebody's membership changed.
+    if (wasSignedIn.current !== signedIn) {
+      wasSignedIn.current = signedIn;
+      setByMe(null);
+      setByMeError(false);
+    }
     if (!signedIn) return;
     let alive = true;
     sharesClient
@@ -223,11 +236,14 @@ export function CloudView({
   // sign in for as long as the IPC round trip took.
   const booting = loading && items.length === 0;
 
-  // A failed request leaves byMe null as well, so the failure is read first:
-  // "still coming" and "never arrived" are different things to say.
+  // Both listings feed this page, so both decide whether it may call the
+  // account empty. cloudError is the primary one saying it never loaded, and a
+  // failed request leaves byMe null exactly as a pending one does, so the
+  // failures are read first: "still coming" and "never arrived" are different
+  // things to say.
   const lists = booting
     ? "loading"
-    : byMeError
+    : byMeError || cloudError
       ? "incomplete"
       : byMe === null
         ? "loading"

@@ -60,6 +60,26 @@ function setToken(token: string | null): void {
   } catch {
     // storage unavailable
   }
+  // No token is a deliberate sign-out, which is the one thing that can say the
+  // principal is no longer whoever it was.
+  if (!token) principal = null;
+  pushSyncConfig();
+}
+
+// Who the token belongs to, as the session store last confirmed. It lives here
+// because pushSyncConfig is called from places that do not have the user in
+// hand, and main needs the two together: a token with no principal cannot say
+// whose remembered roles it is reading.
+let principal: string | null = null;
+
+// Set from `me()` below and nowhere else, because that is the one call where
+// the server says who is signed in. A probe that failed says nothing about
+// that, and letting it erase the answer would throw away the evidence the
+// offline path depends on the moment the wifi drops. Signing out clears the
+// token, and setToken clears this with it.
+function setSyncPrincipal(userId: string): void {
+  if (principal === userId) return;
+  principal = userId;
   pushSyncConfig();
 }
 
@@ -68,6 +88,7 @@ export function pushSyncConfig(): void {
   getElectronAPI()?.syncConfig?.({
     token: getToken(),
     serverURL: getServerURL(),
+    userId: principal,
   });
 }
 
@@ -112,7 +133,12 @@ export const authClient = {
 
   me: async (): Promise<MarkieUser | null> => {
     const res = await api<{ user: MarkieUser | null }>("/api/me");
-    return res.data?.user ?? null;
+    const user = res.data?.user ?? null;
+    // Main remembers what the server said about each document, and a role
+    // means nothing without the account it was said to. This answer is the
+    // only place the account is confirmed, so it is where main is told.
+    if (user) setSyncPrincipal(user.id);
+    return user;
   },
 
   // `token` is how the server says whether a session actually exists. Under

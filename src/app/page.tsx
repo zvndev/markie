@@ -356,7 +356,8 @@ export default function Home() {
         setRoleState(role);
         // Remember it: Markie is local-first, so the next launch may have no
         // network, and a role we already proved should survive that.
-        if (filePath) void api?.registrySetRole?.({ path: filePath, role });
+        if (filePath && me)
+          void api?.registrySetRole?.({ path: filePath, role, userId: me.id });
         // Same answer, same doc: the sync engine can now refuse a push the
         // server would only reject.
         api?.syncDocRole?.({ cloudId: cid, role });

@@ -243,6 +243,28 @@ describe("library overview", () => {
     expect(organized.localFiles.map((entry) => entry.name)).toEqual(["theirs.md"]);
   });
 
+  it("keeps a file whose first sync never landed out of the cloud sections", () => {
+    // docSyncOn failed, so the row is unpushed with no cloud document behind
+    // it. Saying it is synced from this device describes a copy that was never
+    // created; the Library still lists it, because the file is right there.
+    const neverLanded = item({
+      path: "/docs/orphan.md",
+      name: "orphan.md",
+      state: "unpushed",
+      cloudId: null,
+    });
+
+    expect(organizeLibraryItems([neverLanded]).syncedFromDevice).toEqual([]);
+    expect(organizeLibraryItems([neverLanded]).localFiles.map((e) => e.name)).toEqual([
+      "orphan.md",
+    ]);
+    expect(
+      organizeLibraryItems([{ ...neverLanded, cloudId: "c1" }]).syncedFromDevice.map(
+        (e) => e.name
+      )
+    ).toEqual(["orphan.md"]);
+  });
+
   it("keeps a row nobody has vouched for out of my own documents too", () => {
     // No remote record and no confirmed role: unknown, which is not "mine".
     // It joins the group the moment the server's list says it belongs there.

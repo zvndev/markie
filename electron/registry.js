@@ -107,6 +107,16 @@ function getDB() {
     db.exec("ALTER TABLE files ADD COLUMN share_role TEXT");
   }
 
+  // Who the remembered role was granted to. A role is evidence about one
+  // account and no other: without this, signing into a second account on the
+  // same machine let the first account's "owner" answer speak for it. Existing
+  // rows get a null principal, which counts as nobody having said, so a role
+  // learned before this column existed can no longer claim ownership on its
+  // own. The next time the server confirms it, it is written back with a name.
+  if (!fileCols.some((c) => c.name === "share_role_user")) {
+    db.exec("ALTER TABLE files ADD COLUMN share_role_user TEXT");
+  }
+
   // Schema versioning starts at 0.5.0. Version 0 is every database that
   // predates it; the PRAGMA-guarded share_role ALTER above predates versioning
   // and stays as-is so any skipped-version database still heals.
@@ -338,8 +348,10 @@ function update(filePath, fields) {
     "sync_state",
     "last_synced_at",
     // Last role the server confirmed for this doc, so an offline session can
-    // keep honouring it instead of locking the owner out of their own file.
+    // keep honouring it instead of locking the owner out of their own file,
+    // and the account it confirmed it for.
     "share_role",
+    "share_role_user",
   ];
   const sets = [];
   const values = [];

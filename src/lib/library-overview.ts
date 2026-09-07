@@ -23,6 +23,11 @@ export interface OrganizedLibraryItems {
   // nobody has vouched for is in neither ownership section: it is still in the
   // Library's list of what is on this device, and it joins this one the moment
   // the server's list says it is mine.
+  //
+  // A cloud id is required for the same reason. When the first attempt to sync
+  // a file fails, the row is left unpushed with no cloud document behind it,
+  // and a heading that says the file is synced from this device would be
+  // describing a copy that does not exist.
   syncedFromDevice: LibraryItem[];
   myCloudOnly: LibraryItem[];
   sharedItems: LibraryItem[];
@@ -71,7 +76,11 @@ export function organizeLibraryItems(items: LibraryItem[]): OrganizedLibraryItem
     localFiles: sortLibraryItems(items.filter((item) => item.path)),
     syncedFromDevice: sortLibraryItems(
       items.filter(
-        (item) => item.path && item.owned === true && CLOUD_STATES.includes(item.state)
+        (item) =>
+          item.path &&
+          item.cloudId &&
+          item.owned === true &&
+          CLOUD_STATES.includes(item.state)
       )
     ),
     myCloudOnly: sortLibraryItems(items.filter((item) => !item.path && !item.shared)),

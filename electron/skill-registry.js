@@ -71,6 +71,12 @@ const CONTAINERS = [
   ".codex/skills",
 ];
 const MAX_CONTAINER_DEPTH = 3;
+// The deepest directory that can be a skill, in path segments: the longest
+// container plus the levels allowed inside it. Nothing below that depth is
+// ever asked for its files, so nothing below it is indexed.
+const MAX_SKILL_SEGMENTS =
+  Math.max(...CONTAINERS.map((container) => (container ? container.split("/").length : 0))) +
+  MAX_CONTAINER_DEPTH;
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build"]);
 
 const SKILLS_SH_SEARCH = "https://skills.sh/api/search";
@@ -82,11 +88,19 @@ const LOCK_VERSION = 3;
 // out of it and hand a recursive delete somebody else's folder.
 const DOTS_ONLY_RE = /^\.+$/;
 
-/** `owner/repo` → `{ owner, repo }`, or null when it is not that shape. */
+/**
+ * `owner/repo` → `{ owner, repo }`, or null when it is not that shape.
+ *
+ * Lowercased, because GitHub answers for `Anthropics/Skills` and
+ * `anthropics/skills` alike and the id is also a folder name in the download
+ * cache, which on most machines does not tell the two apart either. Keeping
+ * the spelling made one repository two sources that shared one folder, so
+ * removing the second deleted the first's catalog.
+ */
 function parseOwnerRepo(value) {
   const text = String(value ?? "").trim().replace(/^\/+|\/+$/g, "");
   if (!OWNER_REPO_RE.test(text)) return null;
-  const [owner, repo] = text.split("/");
+  const [owner, repo] = text.toLowerCase().split("/");
   if (DOTS_ONLY_RE.test(owner) || DOTS_ONLY_RE.test(repo)) return null;
   return { owner, repo };
 }
@@ -170,6 +184,25 @@ function discoverSkills(entries, { owner, repo }) {
   const files = stripArchiveRoot(entries).filter(
     (file) => !file.path.split("/").some((segment) => SKIP_DIRS.has(segment))
   );
+  // Every file, filed under each directory above it that could be a skill.
+  // Built once, so a skill's files are a lookup rather than a scan of the
+  // whole archive: the scan made discovery grow with skills times files, and
+  // a monorepo of skills froze the main process for seconds.
+  const byDir = new Map();
+  for (const file of files) {
+    const segments = file.path.split("/");
+    segments.pop();
+    let dir = "";
+    for (let depth = 0; depth < segments.length && depth < MAX_SKILL_SEGMENTS; depth++) {
+      dir = dir ? `${dir}/${segments[depth]}` : segments[depth];
+      let list = byDir.get(dir);
+      if (!list) {
+        list = [];
+        byDir.set(dir, list);
+      }
+      list.push(file);
+    }
+  }
   const found = [];
   const seen = new Set();
   for (const file of files) {
@@ -188,9 +221,11 @@ function discoverSkills(entries, { owner, repo }) {
     seen.add(skillPath);
 
     const prefix = `${skillPath}/`;
-    const own = files
-      .filter((entry) => entry.path.startsWith(prefix))
-      .map((entry) => ({ path: entry.path.slice(prefix.length), data: entry.data, mode: entry.mode }));
+    const own = (byDir.get(skillPath) || []).map((entry) => ({
+      path: entry.path.slice(prefix.length),
+      data: entry.data,
+      mode: entry.mode,
+    }));
     found.push({
       files: own,
       skill: {
@@ -550,9 +585,11 @@ function createSkillRegistry(deps = {}) {
     const parsed = parseOwnerRepo(ownerRepo);
     if (!parsed) return listCatalog();
     const id = `${parsed.owner}/${parsed.repo}`;
+    // Adding a built-in, however it was spelled, is asking for it again.
+    const builtin = DEFAULT_SOURCES.some((s) => s.owner === parsed.owner && s.repo === parsed.repo);
     try {
       await fetchSource(parsed);
-      store.skillSourceAdd(id);
+      if (!builtin) store.skillSourceAdd(id);
       errors.delete(id);
     } catch (err) {
       errors.set(id, err && err.message ? err.message : String(err));

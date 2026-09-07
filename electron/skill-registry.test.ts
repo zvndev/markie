@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const require = createRequire(import.meta.url);
 const {
   createSkillRegistry,
+  discoverSkills,
   validSkillName,
   parseOwnerRepo,
   insideDir,
@@ -307,6 +308,39 @@ describe("skill registry", () => {
     expect(dirs).toContain("c".repeat(40));
   });
 
+  it("discovers a large repository in time proportional to its size", () => {
+    // Twenty thousand entries, which is what a monorepo of skills looks like
+    // and well inside the archive cap. Discovery used to scan every entry once
+    // per SKILL.md, so this took seconds and grew with the square of the size.
+    const entries: { path: string; size: number; mode: number; data: Buffer }[] = [];
+    const count = 5000;
+    for (let i = 0; i < count; i++) {
+      const dir = `kit-main/skills/skill-${i}`;
+      entries.push({
+        path: `${dir}/SKILL.md`,
+        size: 0,
+        mode: 0o644,
+        data: Buffer.from(skillDoc(`skill-${i}`, `Skill number ${i}.`)),
+      });
+      for (const name of ["reference.md", "notes/more.md", "scripts/run.sh"]) {
+        entries.push({ path: `${dir}/${name}`, size: 0, mode: 0o644, data: Buffer.from(`# ${i}\n`) });
+      }
+    }
+    const started = performance.now();
+    const found = discoverSkills(entries, { owner: "acme", repo: "kit" });
+    const elapsed = performance.now() - started;
+    expect(found.length).toBe(count);
+    // Each skill lists its own files and nobody else's: skill-1's folder is
+    // not a prefix of skill-10's.
+    const one = found.find((entry: { skill: { name: string } }) => entry.skill.name === "skill-1");
+    expect(one.skill.files.map((f: { path: string }) => f.path).sort()).toEqual(
+      ["SKILL.md", "notes/more.md", "reference.md", "scripts/run.sh"]
+    );
+    expect(found.every((entry: { files: unknown[] }) => entry.files.length === 4)).toBe(true);
+    // Generous for a loaded machine; the quadratic version takes several times this.
+    expect(elapsed).toBeLessThan(2000);
+  });
+
   // ── Sources ──────────────────────────────────────────────────────────────
 
   it("starts with the three built-in sources and takes an added one", async () => {
@@ -331,6 +365,33 @@ describe("skill registry", () => {
     expect(store.sources.size).toBe(0);
     expect(parseOwnerRepo("owner/repo")).toEqual({ owner: "owner", repo: "repo" });
     expect(parseOwnerRepo("owner/repo/extra")).toBeNull();
+  });
+
+  // GitHub does not distinguish Anthropics/Skills from anthropics/skills, and
+  // neither does the filesystem the cache lives on for most users. Markie
+  // should not either, or one repository becomes two sources sharing a folder.
+  it("reads a source id case-blind, so a built-in spelled differently is still built in", async () => {
+    expect(parseOwnerRepo("Anthropics/Skills")).toEqual({ owner: "anthropics", repo: "skills" });
+    const skills = registry();
+    const catalog = await skills.addSource("Anthropics/Skills");
+    const ids = catalog.sources.map((s: { id: string }) => s.id);
+    expect(ids.filter((id: string) => id.toLowerCase() === "anthropics/skills")).toEqual(["anthropics/skills"]);
+    expect(catalog.sources.find((s: { id: string }) => s.id === "anthropics/skills").builtin).toBe(true);
+    // A built-in is refreshed, not registered a second time.
+    expect(store.sources.size).toBe(0);
+    expect(fs.readdirSync(cacheDir)).toEqual(["anthropics"]);
+    expect(fs.readdirSync(path.join(cacheDir, "anthropics"))).toEqual(["skills"]);
+    expect(catalog.skills.some((s: { source: string }) => s.source === "anthropics/skills")).toBe(true);
+  });
+
+  it("keeps one row and one cache folder for a user source however it is spelled", async () => {
+    const skills = registry();
+    await skills.addSource("Acme/Kit");
+    const catalog = await skills.addSource("acme/kit");
+    expect([...store.sources.keys()]).toEqual(["acme/kit"]);
+    expect(catalog.sources.filter((s: { id: string }) => s.id.toLowerCase() === "acme/kit").length).toBe(1);
+    expect(fs.readdirSync(cacheDir)).toEqual(["acme"]);
+    expect(fs.readdirSync(path.join(cacheDir, "acme"))).toEqual(["kit"]);
   });
 
   // Both segments become directory names under the download cache, and

@@ -1925,6 +1925,21 @@ handle("skills-search", (_e, query) => skillRegistry().search(query), { onFailur
 handle("skills-read", (_e, id) => skillRegistry().readSkill(id), {
   onFailure: () => ({ body: "", files: [] }),
 });
+// The cached folder of a catalog skill, so its preview can show the pictures
+// beside its SKILL.md. Granting that file is what makes its folder reachable
+// through markie-asset://, the same way opening a document does; nothing
+// outside the one skill folder is opened up.
+handle(
+  "skills-skill-dir",
+  (_e, { sourceId, skillId } = {}) => {
+    const found = skillRegistry().skillDir(sourceId, skillId);
+    if (!found.dir) return found;
+    const grant = fileGrants.grantFile(path.join(found.dir, "SKILL.md"));
+    if (!grant.ok) return { error: grant.error };
+    return { dir: path.dirname(grant.path) };
+  },
+  { onFailure: (err) => ({ error: errorMessage(err) }) }
+);
 
 // The failure shape is per target, so it is built here rather than in an
 // onFailure that cannot see which targets were asked for.

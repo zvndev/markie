@@ -736,6 +736,23 @@ function createSkillRegistry(deps = {}) {
     return { skill, catalog, dir: path.join(sourceDir(owner, repo), catalog.commit, skill.skillPath) };
   }
 
+  // The cached folder of a catalog skill, for a preview that wants the files
+  // beside its SKILL.md. Keyed on the skill's own source and its catalog id,
+  // which is what the panel holds; a source that is not the skill's is a
+  // lookup that misses, not a shortcut.
+  function skillDir(sourceId, skillId) {
+    const parsed = parseOwnerRepo(sourceId);
+    if (!parsed) return { error: "Markie does not know that source." };
+    const found = findSkill(skillId);
+    if (!found || found.skill.source !== `${parsed.owner}/${parsed.repo}`) {
+      return { error: "That skill is not in the catalog. Refresh its source and try again." };
+    }
+    if (!fs.existsSync(path.join(found.dir, "SKILL.md"))) {
+      return { error: "That skill's files are not in the cache. Refresh its source and try again." };
+    }
+    return { dir: found.dir };
+  }
+
   function readSkill(id) {
     const found = findSkill(id);
     if (!found) return { body: "", files: [] };
@@ -1290,6 +1307,7 @@ function createSkillRegistry(deps = {}) {
     removeSource,
     search,
     readSkill,
+    skillDir,
     install,
     remove,
     installed,

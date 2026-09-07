@@ -168,6 +168,19 @@ async function main() {
     `${read?.body?.length ?? 0} characters, ${read?.files?.length ?? 0} files`
   );
 
+  // The preview shows the pictures beside a SKILL.md, which means the cached
+  // folder has to be named and granted before anything is installed.
+  const cached = await cdp.ev(
+    `window.electronAPI.skillsSkillDir(${JSON.stringify(pdf.source)}, ${JSON.stringify(pdf.id)})`
+  );
+  check(
+    "its cached folder is named for the preview, and holds the SKILL.md",
+    typeof cached?.dir === "string" && existsSync(path.join(cached.dir, "SKILL.md")),
+    cached?.error ?? cached?.dir ?? "no answer"
+  );
+  const unknown = await cdp.ev(`window.electronAPI.skillsSkillDir("nobody/nothing", "nobody/nothing/x")`);
+  check("and an unknown skill is an error, not a folder", typeof unknown?.error === "string" && !unknown?.dir);
+
   // ── Install ──────────────────────────────────────────────────────────────
   const result = await cdp.ev(
     `window.electronAPI.skillsInstall(${JSON.stringify(pdf.id)}, ["claude"])`
@@ -208,6 +221,11 @@ async function main() {
     row ? `${row.name} from ${row.source}` : "no row"
   );
   check("nothing claims an update is waiting straight after an install", row?.updateAvailable === false);
+  check(
+    "the row names every target its folder serves, its own first",
+    Array.isArray(row?.targets) && row.targets[0] === "claude" && row.target === "claude",
+    JSON.stringify(row?.targets ?? null)
+  );
 
   const lockPath = path.join(homeDir, ".agents", ".skill-lock.json");
   const lock = JSON.parse(await readFile(lockPath, "utf-8"));

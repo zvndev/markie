@@ -459,6 +459,9 @@ export interface ElectronAPI {
   }>;
   skillsRemove?(target: SkillTarget, name: string): Promise<{ ok: boolean; error?: string }>;
   skillsInstalled?(): Promise<InstalledSkill[]>;
+  // The cached folder of a catalog skill, granted for reading through
+  // markie-asset:// so a SKILL.md preview can show the images beside it.
+  skillsSkillDir?(sourceId: string, skillId: string): Promise<{ dir: string } | { error: string }>;
   // Report a renderer crash to the main process's crash log. Fire-and-forget:
   // the caller is an error boundary that has nothing to do with an answer.
   logRendererError?(detail: {

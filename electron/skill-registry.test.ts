@@ -295,6 +295,21 @@ describe("skill registry", () => {
     expect(skills.readSkill("acme/kit/skills/nope")).toEqual({ body: "", files: [] });
   });
 
+  it("says where a catalog skill's folder is in the cache, and when it does not know", async () => {
+    const { skills } = await load();
+    const dir = path.join(cacheDir, "acme", "kit", COMMIT, "skills", "pdf");
+    expect(skills.skillDir("acme/kit", "acme/kit/skills/pdf")).toEqual({ dir });
+    expect(fs.existsSync(path.join(dir, "SKILL.md"))).toBe(true);
+    // The source is the skill's own; a mismatch is a lookup that misses.
+    expect(skills.skillDir("obra/superpowers", "acme/kit/skills/pdf")).toHaveProperty("error");
+    expect(skills.skillDir("acme/kit", "acme/kit/skills/nope")).toHaveProperty("error");
+    expect(skills.skillDir("nobody/nothing", "nobody/nothing/skills/pdf")).toHaveProperty("error");
+    expect(skills.skillDir("", "")).toHaveProperty("error");
+    // A skill whose files are gone from the cache is not offered either.
+    fs.rmSync(dir, { recursive: true, force: true });
+    expect(skills.skillDir("acme/kit", "acme/kit/skills/pdf")).toHaveProperty("error");
+  });
+
   it("keeps at most two commit folders per source", async () => {
     const { skills } = await load();
     for (const sha of ["b".repeat(40), "c".repeat(40)]) {

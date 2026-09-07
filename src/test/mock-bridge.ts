@@ -247,6 +247,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     skillsCatalogRemoveSource: vi.fn(async () => ({ sources: [], skills: [] })),
     skillsSearch: vi.fn(async () => []),
     skillsRead: vi.fn(async () => ({ body: "", files: [] })),
+    skillsSkillDir: vi.fn(async () => ({ dir: "" })),
     skillsInstall: vi.fn(async () => ({ installed: [], errors: [] })),
     skillsRemove: vi.fn(async () => ({ ok: true })),
     skillsInstalled: vi.fn(async () => []),

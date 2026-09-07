@@ -79,6 +79,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("skills-catalog-remove-source", ownerRepo),
   skillsSearch: (query) => ipcRenderer.invoke("skills-search", query),
   skillsRead: (id) => ipcRenderer.invoke("skills-read", id),
+  skillsSkillDir: (sourceId, skillId) =>
+    ipcRenderer.invoke("skills-skill-dir", { sourceId, skillId }),
   skillsInstall: (id, targets) => ipcRenderer.invoke("skills-install", { id, targets }),
   skillsRemove: (target, name) => ipcRenderer.invoke("skills-remove", { target, name }),
   skillsInstalled: () => ipcRenderer.invoke("skills-installed"),

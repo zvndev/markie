@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+import { startRendererDev } from "./lib/renderer-dev.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("comments-verify-local", import.meta.url);
@@ -31,6 +32,7 @@ const baseEnv = {
 await mkdir(runDir, { recursive: true });
 
 const children = [];
+let stopRenderer = () => {};
 const tempPaths = [];
 
 function logPath(name) {
@@ -201,14 +203,12 @@ async function main() {
 
   let e2eLog = null;
   if (withE2E) {
-    const next = start("npm", ["run", "dev"], {
+    const dev = await startRendererDev({
+      port: 3000,
       env: baseEnv,
-      log: logPath("comments-next"),
+      log: logPath("comments-vite"),
     });
-    await waitFor("Next dev renderer", async () => {
-      const res = await fetch("http://localhost:3000").catch(() => null);
-      return !!res;
-    }, 60000);
+    stopRenderer = dev.stop;
     const electronBin = path.join(root, "node_modules", ".bin", "electron");
     const electron = start(
       electronBin,
@@ -227,7 +227,7 @@ async function main() {
     );
     process.stdout.write(e2e.stdout);
     electron.kill();
-    next.kill();
+    stopRenderer();
   }
 
   server.kill();
@@ -248,6 +248,7 @@ async function main() {
 try {
   await main();
 } finally {
+  stopRenderer();
   for (const child of children) child.kill?.();
   await Promise.all(tempPaths.map((p) => rm(p, { recursive: true, force: true })));
 }

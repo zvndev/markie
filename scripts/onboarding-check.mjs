@@ -15,6 +15,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
 import { safeKill } from "./lib/safe-kill.mjs";
+import { startRendererDev } from "./lib/renderer-dev.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("onboarding-check", import.meta.url);
@@ -25,6 +26,7 @@ const require = createRequire(path.join(root, "server", "package.json"));
 const WebSocket = require("ws");
 const artifactDir = path.join(root, ".autoloop", "runs", "onboarding-check");
 const children = [];
+let stopRenderer = () => {};
 const tempPaths = [];
 let debugOrigin = "";
 
@@ -37,10 +39,6 @@ const check = (name, passed, detail = "") => {
   );
 };
 
-// The dev server is spawned as `next` directly, not through `npm run dev`.
-// safeKill signals only the direct child, so an npm wrapper would leave the
-// real `next dev` orphaned holding .next/dev/lock, and every later run would
-// fail with "Unable to acquire lock".
 function start(command, args, options = {}) {
   const fd = options.log ? openSync(options.log, "a") : "ignore";
   const child = spawn(command, args, {
@@ -59,6 +57,7 @@ function killTree(child) {
   safeKill(child, "SIGKILL");
 }
 async function cleanup() {
+  stopRenderer();
   for (const c of children) killTree(c);
   await Promise.all(tempPaths.map((p) => rm(p, { recursive: true, force: true }).catch(() => {})));
 }
@@ -167,10 +166,8 @@ async function main() {
   const devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
 
-  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
-    log: path.join(artifactDir, "next.log"),
-  });
-  await waitFor("dev server", async () => !!(await fetch(devOrigin).catch(() => null)), 90000);
+  const dev = await startRendererDev({ port: devPort, log: path.join(artifactDir, "vite.log") });
+  stopRenderer = dev.stop;
 
   // No file argument: this is the cold Dock launch, the only one onboarding
   // is allowed to touch.

@@ -21,6 +21,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
 import { safeKill } from "./lib/safe-kill.mjs";
+import { startRendererDev } from "./lib/renderer-dev.mjs";
 
 requireElectronConsent("projects-shots", import.meta.url);
 
@@ -43,13 +44,12 @@ if (!profileSource || !existsSync(path.join(profileSource, "registry.db"))) {
 }
 
 const children = [];
+let stopRenderer = () => {};
 const temps = [];
 let devOrigin = "";
 
-// `next dev` spawns a server of its own, and killing only the direct child
-// leaves that server holding .next/dev/lock so every later run fails to start.
-// Each child therefore leads its OWN process group, and cleanup kills exactly
-// that group by negative pid. Never a pattern match: `pkill -f "next dev"` on
+// Direct-child kill only, like every other script here; see
+// scripts/lib/safe-kill.mjs. Never a pattern match either: a `pkill -f vite` on
 // a developer's machine kills every other project's dev server too, which is
 // the kind of tidying that ruins somebody's afternoon.
 function start(command, cmdArgs, options = {}) {
@@ -57,7 +57,6 @@ function start(command, cmdArgs, options = {}) {
     cwd: root,
     env: options.env ?? process.env,
     stdio: ["ignore", "pipe", "pipe"],
-    detached: true,
   });
   children.push(child);
   if (options.log) {
@@ -69,14 +68,10 @@ function start(command, cmdArgs, options = {}) {
   return child;
 }
 function stop(child) {
-  if (child.exitCode !== null) return;
-  try {
-    process.kill(-child.pid, "SIGKILL");
-  } catch {
-    safeKill(child, "SIGKILL");
-  }
+  safeKill(child, "SIGKILL");
 }
 async function cleanup() {
+  stopRenderer();
   for (const child of children) stop(child);
   await Promise.all(temps.map((p) => rm(p, { recursive: true, force: true }).catch(() => {})));
 }
@@ -332,10 +327,8 @@ async function main() {
 
   const devPort = await pickPort();
   devOrigin = `http://localhost:${devPort}`;
-  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
-    log: path.join(logDir, "next.log"),
-  });
-  await waitFor("Next dev renderer", async () => !!(await fetch(devOrigin).catch(() => null)), 90000);
+  const dev = await startRendererDev({ port: devPort, log: path.join(logDir, "vite.log") });
+  stopRenderer = dev.stop;
 
   start(
     path.join(root, "node_modules", ".bin", "electron"),

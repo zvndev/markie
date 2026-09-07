@@ -11,6 +11,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
 import { safeKill } from "./lib/safe-kill.mjs";
+import { startRendererDev } from "./lib/renderer-dev.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("ui-check", import.meta.url);
@@ -21,6 +22,7 @@ const require = createRequire(path.join(root, "server", "package.json"));
 const WebSocket = require("ws");
 const artifactDir = path.join(root, ".autoloop", "runs", "ui-check");
 const children = [];
+let stopRenderer = () => {};
 const tempPaths = [];
 let debugOrigin = "";
 
@@ -31,9 +33,7 @@ const check = (name, passed, detail = "") => {
   process.stdout.write(`${passed ? "  ok  " : "  FAIL"} ${name}${detail ? `\n         ${detail}` : ""}\n`);
 };
 
-// Kill only the direct child (safeKill); a group kill once took Finder down. Was: 
-// whole tree. Without it `npm run dev` dies and the `next dev` it spawned is
-// orphaned, keeps .next/dev/lock, and every later run fails to start.
+// Kill only the direct child (safeKill); a group kill once took Finder down.
 function start(command, args, options = {}) {
   const fd = options.log ? openSync(options.log, "a") : "ignore";
   const child = spawn(command, args, { cwd: root, env: options.env ?? process.env, stdio: ["ignore", fd, fd] });
@@ -47,6 +47,7 @@ function killTree(child) {
   safeKill(child, "SIGKILL");
 }
 async function cleanup() {
+  stopRenderer();
   for (const c of children) killTree(c);
   await Promise.all(tempPaths.map((p) => rm(p, { recursive: true, force: true }).catch(() => {})));
 }
@@ -90,8 +91,8 @@ async function main() {
   const devPort = await pickPort(); const debugPort = await pickPort();
   const devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
-  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], { log: path.join(artifactDir, "next.log") });
-  await waitFor("dev server", async () => !!(await fetch(devOrigin).catch(() => null)), 90000);
+  const dev = await startRendererDev({ port: devPort, log: path.join(artifactDir, "vite.log") });
+  stopRenderer = dev.stop;
 
   start(path.join(root, "node_modules", ".bin", "electron"),
     [".", docPath, `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],

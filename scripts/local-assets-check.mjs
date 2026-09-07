@@ -11,7 +11,7 @@
 //
 // So this asks the browser the only question that matters: did the image load,
 // and is it the right size.
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -20,6 +20,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
 import { safeKill } from "./lib/safe-kill.mjs";
+import { startRendererDev } from "./lib/renderer-dev.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("local-assets-check", import.meta.url);
@@ -30,6 +31,7 @@ const require = createRequire(path.join(root, "server", "package.json"));
 const WebSocket = require("ws");
 const artifactDir = path.join(root, ".autoloop", "runs", "local-assets-check");
 const children = [];
+let stopRenderer = () => {};
 const tempPaths = [];
 let debugOrigin = "";
 
@@ -60,6 +62,7 @@ function killTree(child) {
   safeKill(child, "SIGKILL");
 }
 async function cleanup() {
+  stopRenderer();
   for (const c of children) killTree(c);
   await Promise.all(tempPaths.map((p) => rm(p, { recursive: true, force: true }).catch(() => {})));
 }
@@ -86,39 +89,6 @@ async function waitFor(label, fn, timeoutMs = 30000) {
     await new Promise((r) => setTimeout(r, 300));
   }
   throw new Error(`timed out waiting for ${label}${lastError ? `: ${lastError.message}` : ""}`);
-}
-
-// `next dev` leaves a `next-server` behind after the run: safe-kill signals
-// only the direct child, on purpose (see scripts/lib/safe-kill.mjs, and the
-// afternoon a group kill took Finder down), and the survivor keeps holding
-// .next/dev/lock so the next run cannot start. Clear it here, and only it:
-// the pid has to be both the holder of this exact lock file and a next-server,
-// or nothing is signalled.
-function releaseStaleDevLock() {
-  const lock = path.join(root, ".next", "dev", "lock");
-  let holders = "";
-  try {
-    holders = execFileSync("lsof", ["-t", lock], { encoding: "utf-8" });
-  } catch {
-    return; // lsof exits non-zero when nobody holds it, which is the good case
-  }
-  for (const line of holders.split("\n")) {
-    const pid = Number.parseInt(line.trim(), 10);
-    if (!Number.isInteger(pid) || pid <= 1) continue;
-    let command = "";
-    try {
-      command = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf-8" });
-    } catch {
-      continue;
-    }
-    if (!command.includes("next-server")) continue;
-    try {
-      process.kill(pid, "SIGKILL");
-      process.stdout.write(`  ..   cleared a leftover next-server holding the dev lock (pid ${pid})\n`);
-    } catch {
-      /* already gone */
-    }
-  }
 }
 
 async function pickPort() {
@@ -277,16 +247,13 @@ async function main() {
     )
   );
 
-  releaseStaleDevLock();
   const devPort = await pickPort();
   const debugPort = await pickPort();
   const devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
 
-  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
-    log: path.join(artifactDir, "next.log"),
-  });
-  await waitFor("dev server", async () => !!(await fetch(devOrigin).catch(() => null)), 90000);
+  const dev = await startRendererDev({ port: devPort, log: path.join(artifactDir, "vite.log") });
+  stopRenderer = dev.stop;
 
   start(
     path.join(root, "node_modules", ".bin", "electron"),

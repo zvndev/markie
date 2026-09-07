@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+import { startRendererDev } from "./lib/renderer-dev.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("sync-down-check", import.meta.url);
@@ -31,6 +32,7 @@ const node = process.execPath;
 const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 const artifactDir = path.join(root, ".autoloop", "runs", `sync-down-check-${stamp}`);
 const children = [];
+let stopRenderer = () => {};
 const tempPaths = [];
 
 const SERVER_PORT = 8791;
@@ -64,6 +66,7 @@ function start(command, args, options = {}) {
 }
 
 async function stopChildren() {
+  stopRenderer();
   await Promise.all(
     children.map(
       (child) =>
@@ -235,11 +238,8 @@ async function main() {
   devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
 
-  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
-    env: baseEnv,
-    log: logPath("next"),
-  });
-  await waitFor("Next dev renderer", async () => !!(await fetch(devOrigin).catch(() => null)), 90000);
+  const dev = await startRendererDev({ port: devPort, env: baseEnv, log: logPath("vite") });
+  stopRenderer = dev.stop;
 
   const electronBin = path.join(root, "node_modules", ".bin", "electron");
   // The fixture is passed as a launch argument, which is the double-click route

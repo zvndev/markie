@@ -12,7 +12,7 @@
 //
 // The card's title and thumbnail come from the network, and this makes no
 // promise about the network: those are looked at and reported, never failed.
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createSocket } from "node:net";
@@ -22,6 +22,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
 import { safeKill } from "./lib/safe-kill.mjs";
+import { startRendererDev } from "./lib/renderer-dev.mjs";
 
 requireElectronConsent("embed-check", import.meta.url);
 
@@ -30,6 +31,7 @@ const require = createRequire(path.join(root, "server", "package.json"));
 const WebSocket = require("ws");
 const artifactDir = path.join(root, ".autoloop", "runs", "embed-check");
 const children = [];
+let stopRenderer = () => {};
 const tempPaths = [];
 let debugOrigin = "";
 
@@ -49,6 +51,7 @@ function start(command, args, options = {}) {
   return child;
 }
 async function cleanup() {
+  stopRenderer();
   for (const child of children) safeKill(child);
   await new Promise((r) => setTimeout(r, 400));
   for (const p of tempPaths) await rm(p, { recursive: true, force: true }).catch(() => {});
@@ -75,33 +78,6 @@ async function waitFor(label, fn, timeoutMs = 30000) {
     await new Promise((r) => setTimeout(r, 250));
   }
   throw new Error(`timed out waiting for ${label}${last ? `: ${last.message}` : ""}`);
-}
-// See scripts/local-assets-check.mjs for why this is narrow on purpose.
-function releaseStaleDevLock() {
-  const lock = path.join(root, ".next", "dev", "lock");
-  let holders = "";
-  try {
-    holders = execFileSync("lsof", ["-t", lock], { encoding: "utf-8" });
-  } catch {
-    return;
-  }
-  for (const line of holders.split("\n")) {
-    const pid = Number.parseInt(line.trim(), 10);
-    if (!Number.isInteger(pid) || pid <= 1) continue;
-    let command = "";
-    try {
-      command = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf-8" });
-    } catch {
-      continue;
-    }
-    if (!command.includes("next-server")) continue;
-    try {
-      process.kill(pid, "SIGKILL");
-      note(`cleared a leftover next-server holding the dev lock (pid ${pid})`);
-    } catch {
-      /* already gone */
-    }
-  }
 }
 async function pickPort() {
   return new Promise((resolve, reject) => {
@@ -188,15 +164,12 @@ async function main() {
   ].join("\n");
   await writeFile(docPath, source, "utf-8");
 
-  releaseStaleDevLock();
   const devPort = await pickPort();
   const debugPort = await pickPort();
   const devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
-  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
-    log: path.join(artifactDir, "next.log"),
-  });
-  await waitFor("dev server", async () => !!(await fetch(devOrigin).catch(() => null)), 90000);
+  const dev = await startRendererDev({ port: devPort, log: path.join(artifactDir, "vite.log") });
+  stopRenderer = dev.stop;
   start(
     path.join(root, "node_modules", ".bin", "electron"),
     [".", docPath, `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],

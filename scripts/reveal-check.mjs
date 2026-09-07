@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+import { startRendererDev } from "./lib/renderer-dev.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("reveal-check", import.meta.url);
@@ -29,6 +30,7 @@ const WebSocket = require("ws");
 const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 const artifactDir = path.join(root, ".autoloop", "runs", `reveal-check-${stamp}`);
 const children = [];
+let stopRenderer = () => {};
 const tempPaths = [];
 let debugOrigin = "http://127.0.0.1:9222";
 
@@ -60,6 +62,7 @@ function start(command, args, options = {}) {
 }
 
 async function stopChildren() {
+  stopRenderer();
   await Promise.all(
     children.map(
       (child) =>
@@ -208,14 +211,8 @@ async function main() {
   const devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
 
-  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
-    log: logPath("next"),
-  });
-  await waitFor(
-    "Next dev renderer",
-    async () => !!(await fetch(devOrigin).catch(() => null)),
-    90000
-  );
+  const dev = await startRendererDev({ port: devPort, log: logPath("vite") });
+  stopRenderer = dev.stop;
 
   const electronBin = path.join(root, "node_modules", ".bin", "electron");
   // Passed as a launch argument, which is the double-click route and grants

@@ -1,5 +1,3 @@
-"use client";
-
 // Something else edited the file you have open.
 //
 // Two surfaces, split by what is actually at stake. With an unmodified buffer,

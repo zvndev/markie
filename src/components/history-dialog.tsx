@@ -1,4 +1,3 @@
-"use client";
 // Per-document version history. Versions come from main's history store; the
 // per-row diff counts are computed lazily against the next-older version with
 // the existing lineDiff, one read per visible row, cached in state.

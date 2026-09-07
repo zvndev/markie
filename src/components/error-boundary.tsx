@@ -1,5 +1,3 @@
-"use client";
-
 import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
 
 // React 19 still has no hook equivalent of getDerivedStateFromError /

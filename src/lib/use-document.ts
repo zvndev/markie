@@ -1,4 +1,3 @@
-"use client";
 // The document buffer, extracted from page.tsx so autosave, drafts, and
 // flush-on-transition have one owner to attach to instead of five useStates
 // scattered through a 1,900-line component. Behavior is a byte-for-byte copy

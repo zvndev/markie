@@ -1,5 +1,3 @@
-"use client";
-
 import { relativeTime } from "@/lib/relative-time";
 
 export function DraftStrip({

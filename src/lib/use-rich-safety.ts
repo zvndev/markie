@@ -1,4 +1,3 @@
-"use client";
 // Is rich editing armed for the open document?
 //
 // Rendering rich is always safe, because rendering never writes. What the

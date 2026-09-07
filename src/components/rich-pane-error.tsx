@@ -1,5 +1,3 @@
-"use client";
-
 // The rich pane builds a TipTap editor at render time. A throw in that binding
 // is not catchable inside the component, and uncaught it takes the whole
 // window down. Source mode is right there and holds the same document, so the

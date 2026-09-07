@@ -27,8 +27,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
-      # A hard gate: `next build` type-checks src/ only, so nothing used to
-      # check electron/ or the test fixtures at all.
+      # A hard gate over the whole repo (src/, electron/, scripts/ and the test
+      # fixtures), not only what the renderer bundle pulls in.
       - run: npm run typecheck
       # Both projects: `node` (src/lib + electron helpers) and `dom` (jsdom
       # component tests).
@@ -48,8 +48,8 @@ jobs:
           path: coverage/
           if-no-files-found: ignore
 
-  # Lint plus the static export. The whole-repo type gate is `npm run typecheck`
-  # in the unit job; `next build` only covers src/.
+  # Lint plus the static export. `npm run build` runs the same tsc gate first
+  # and then `vite build` into out/.
   lint-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15

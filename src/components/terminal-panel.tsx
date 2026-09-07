@@ -1,5 +1,3 @@
-"use client";
-
 import "@xterm/xterm/css/xterm.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getElectronAPI, type TerminalContext } from "@/lib/electron";

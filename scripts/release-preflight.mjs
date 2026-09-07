@@ -32,7 +32,7 @@ const REQUIRED_FILES = [
   "build/icon.ico",
   "build/icons/256x256.png",
   "build/icons/512x512.png",
-  "public/icon.icns",
+  "build/icon.icns",
   "scripts/local-electron-builder.mjs",
   "scripts/restore-host-native-prebuild.mjs",
   "scripts/install-win-native-prebuild.mjs",
@@ -137,7 +137,7 @@ const REQUIRED_ELECTRON_MAIN_SNIPPETS = [
 // and it works that out from package.json, not from the `files` glob. So this
 // list is the app's real payload budget: only modules the Electron main process
 // require()s at runtime belong in `dependencies`. Everything the renderer
-// imports is already inlined into out/ by `next build`, so listing it here
+// imports is already inlined into out/ by `vite build`, so listing it here
 // ships a second raw copy of it. That mistake is what made the macOS DMG 209MB
 // for a 6.5MB renderer.
 const MAIN_PROCESS_RUNTIME_DEPENDENCIES = ["better-sqlite3", "electron-updater", "node-pty"];

@@ -1,5 +1,3 @@
-"use client";
-
 import { type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
 import { clearFormatting, promptForLink } from "@/lib/rich-keymap";

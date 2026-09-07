@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useState, type ReactNode } from "react";
 import type { LibraryItem } from "@/lib/electron";
 import { sharesClient, type SharedByMeDoc } from "@/lib/auth-client";

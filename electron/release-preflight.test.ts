@@ -48,7 +48,7 @@ describe("release preflight", () => {
         ".github/workflows/windows-launch-smoke.yml",
         "electron/csp.js",
         "electron/update-policy.js",
-        "public/icon.icns",
+        "build/icon.icns",
         "mcp/markie-mcp.mjs",
         "server/package.json",
         "server/download-manifest.json",
@@ -238,7 +238,7 @@ describe("release preflight", () => {
     expect(inspected).toContain("npm test vitest run");
     expect(inspected).toContain("node --test mcp/lib.test.mjs");
     expect(inspected).toContain("npm run lint eslint");
-    expect(inspected).toContain("npm run build next build");
+    expect(inspected).toContain("npm run build tsc --noEmit -p tsconfig.json && vite build");
     expect(inspected).not.toMatch(
       /\b(electron-builder|--publish|publish|notarize|notarytool|codesign|xcrun|deploy|railway|aws|s3)\b/i
     );

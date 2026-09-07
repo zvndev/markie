@@ -1,4 +1,3 @@
-"use client";
 // The bridge between "the user typed" and "the bytes are on disk".
 //
 // It lives outside page.tsx because it has to hold three things that must not

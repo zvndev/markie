@@ -1,5 +1,3 @@
-"use client";
-
 import { useAuth } from "@/lib/auth-store";
 import { colorForName, initials } from "@/lib/collab";
 

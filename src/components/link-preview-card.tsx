@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getElectronAPI, type LinkPreview } from "@/lib/electron";
 import {
@@ -153,7 +151,6 @@ export function LinkPreviewCard({ container }: { container: HTMLElement | null }
       {preview.image && (
         // A data URI main already fetched and capped, in a statically exported
         // app with no image optimizer to route it through.
-        // eslint-disable-next-line @next/next/no-img-element
         <img
           src={preview.image}
           alt=""

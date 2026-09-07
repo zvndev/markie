@@ -1,4 +1,3 @@
-"use client";
 // The renderer half of the projects engine: pulls index rows plus decisions,
 // parses rules (with last-known-good fallback), computes the taxonomy, and
 // persists the derived cache when the index fingerprint moves. All the heavy

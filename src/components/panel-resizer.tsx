@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   LEFT_PANEL_DEFAULT_WIDTH,

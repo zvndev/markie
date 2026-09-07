@@ -1,5 +1,3 @@
-"use client";
-
 // The one sign-in surface in Markie.
 //
 // This used to live inline in settings.tsx, which meant sign-in was a place you

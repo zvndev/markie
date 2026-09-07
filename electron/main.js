@@ -212,7 +212,9 @@ const isDev = process.env.NODE_ENV === "development";
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "app",
-    privileges: { standard: true, secure: true, supportFetchAPI: true },
+    // codeCache lets V8 keep compiled bytecode for app:// scripts between
+    // launches, which is where a static renderer spends its startup.
+    privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true },
   },
   // Pictures that live next to the document. Standard so the URL parses
   // predictably; secure so it is not mixed content on the app:// origin.
@@ -796,20 +798,14 @@ function registerProtocol() {
       return new Response("Forbidden", { status: 403 });
     }
 
-    // If path doesn't exist, try adding .html
-    if (!fs.existsSync(fullPath) && !path.extname(fullPath)) {
-      const htmlPath = fullPath + ".html";
-      if (fs.existsSync(htmlPath)) {
-        return net.fetch(url.pathToFileURL(htmlPath).toString());
-      }
-    }
-
-    // If it's a directory, serve index.html
+    // Vite emits one index.html plus hashed assets, so the only path that
+    // needs help is the origin root. Anything else that is missing is a build
+    // bug, and a 404 says so where a guessed file would hide it.
     if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
-      const indexPath = path.join(fullPath, "index.html");
-      if (fs.existsSync(indexPath)) {
-        return net.fetch(url.pathToFileURL(indexPath).toString());
-      }
+      return net.fetch(url.pathToFileURL(path.join(fullPath, "index.html")).toString());
+    }
+    if (!fs.existsSync(fullPath)) {
+      return new Response("Not Found", { status: 404 });
     }
 
     return net.fetch(url.pathToFileURL(fullPath).toString());

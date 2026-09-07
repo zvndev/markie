@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import type { PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI } from "@/lib/electron";

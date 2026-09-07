@@ -645,6 +645,67 @@ describe("upgrading a populated version 1 database", () => {
 // files, roots, stars, and index cache, and has never heard of user_version.
 // Losing anything here is a release blocker, so this builds that database by
 // hand rather than trusting a fresh one to represent it.
+// The install row gained the root it was installed under, so a project
+// install stays Markie's after the workspace is unregistered. Databases from
+// before the column have rows with no root, and they must still open.
+describe("a skill_installs table from before the root column", () => {
+  const legacyDir = fs.mkdtempSync(path.join(os.tmpdir(), "markie-registry-skills-"));
+
+  beforeAll(() => {
+    if (!Adapter) return;
+    const legacy = new Adapter(path.join(legacyDir, "registry.db"));
+    legacy.exec(`
+      CREATE TABLE skill_installs (
+        path TEXT PRIMARY KEY,
+        target TEXT NOT NULL,
+        name TEXT NOT NULL,
+        source TEXT,
+        skill_path TEXT,
+        folder_hash TEXT,
+        installed_at TEXT NOT NULL
+      );
+      INSERT INTO skill_installs (path, target, name, source, skill_path, folder_hash, installed_at)
+        VALUES ('/legacy/.claude/skills/pdf', 'claude', 'pdf', 'acme/kit', 'skills/pdf', 'abc', '2026-09-01');
+    `);
+    legacy.close();
+  });
+
+  afterAll(() => {
+    registry.close();
+    userDataDir = tmpDir;
+    fs.rmSync(legacyDir, { recursive: true, force: true });
+  });
+
+  it("gains the column, with the old row's root unknown and a new row's recorded", () => {
+    registry.close();
+    userDataDir = legacyDir;
+
+    const rows = registry.skillInstallsAll() as Array<{ path: string; root: string | null }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].path).toBe("/legacy/.claude/skills/pdf");
+    expect(rows[0].root).toBeNull();
+
+    registry.skillInstallSet({
+      path: "/legacy/project/.claude/skills/pdf",
+      target: "project:/legacy/project",
+      name: "pdf",
+      source: "acme/kit",
+      skill_path: "skills/pdf",
+      folder_hash: "abc",
+      root: "/legacy/project",
+      installed_at: "2026-09-02",
+    });
+    const added = registry.skillInstallGet("/legacy/project/.claude/skills/pdf") as { root: string };
+    expect(added.root).toBe("/legacy/project");
+    // Reopening changes nothing.
+    registry.close();
+    expect((registry.skillInstallsAll() as Array<{ root: string | null }>).map((r) => r.root).sort()).toEqual([
+      "/legacy/project",
+      null,
+    ]);
+  });
+});
+
 describe("upgrading a populated version 0 database", () => {
   const legacyDir = fs.mkdtempSync(path.join(os.tmpdir(), "markie-registry-v0-"));
 

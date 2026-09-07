@@ -125,6 +125,11 @@ export interface SearchHit {
 export interface InstalledSkill {
   name: string;
   target: SkillTarget;
+  // Every known target whose skills directory resolves to this row's folder.
+  // Two targets can share one folder (CLAUDE_CONFIG_DIR pointed at ~/.agents,
+  // say), and both are then installed here. Absent from rows older than the
+  // field; read it as [target].
+  targets?: SkillTarget[];
   path: string;
   description: string | null;
   source: string | null;
@@ -439,9 +444,12 @@ export interface ElectronAPI {
     id: string,
     targets: SkillTarget[]
   ): Promise<{
-    installed: { target: SkillTarget; path: string }[];
+    // One entry per folder written; `targets` names every selected target
+    // that folder serves when two of them resolve to the same place.
+    installed: { target: SkillTarget; targets?: SkillTarget[]; path: string }[];
     errors: {
       target: SkillTarget;
+      targets?: SkillTarget[];
       error: "exists" | "invalid-name" | "no-such-target" | "copy-failed";
       message: string;
     }[];

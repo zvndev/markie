@@ -27,6 +27,7 @@ type Row = {
   source: string | null;
   skill_path: string | null;
   folder_hash: string | null;
+  root?: string | null;
   installed_at: string;
 };
 
@@ -109,6 +110,7 @@ describe("skill registry", () => {
   let home = "";
   let cacheDir = "";
   let project = "";
+  let roots: string[] = [];
   let store: ReturnType<typeof makeStore>;
   let tarball: Buffer;
   let fetchImpl: ReturnType<typeof vi.fn>;
@@ -119,7 +121,7 @@ describe("skill registry", () => {
       cacheDir,
       store,
       fetchImpl,
-      roots: () => [project],
+      roots: () => roots,
       version: "0.6.0",
       env: {},
       ...overrides,
@@ -133,6 +135,7 @@ describe("skill registry", () => {
     project = path.join(tmp, "project");
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(project, { recursive: true });
+    roots = [project];
     store = makeStore();
     tarball = buildRepoTarball(tmp, REPO_FILES, ["skills/pdf/scripts/run.sh"]);
     fetchImpl = vi.fn(async (url: string) => {
@@ -509,7 +512,7 @@ describe("skill registry", () => {
     const { result } = await installOnce();
     const dest = path.join(home, ".claude", "skills", "pdf");
     expect(result.errors).toEqual([]);
-    expect(result.installed).toEqual([{ target: "claude", path: dest }]);
+    expect(result.installed).toEqual([{ target: "claude", targets: ["claude"], path: dest }]);
     expect(fs.readFileSync(path.join(dest, "reference.md"), "utf8")).toBe("# Reference\n");
     expect(fs.statSync(path.join(dest, "scripts", "run.sh")).mode & 0o111).toBeTruthy();
     expect(store.installs.get(dest)).toMatchObject({
@@ -693,7 +696,7 @@ describe("skill registry", () => {
     const { skills } = await load({ env });
     const dest = path.join(home, ".config", "codex-one", "skills", "pdf");
     expect(skills.install("acme/kit/skills/pdf", ["codex"]).installed).toEqual([
-      { target: "codex", path: dest },
+      { target: "codex", targets: ["codex"], path: dest },
     ]);
     // The user points Codex somewhere else. The folder Markie made is still
     // the folder Markie made, and it is still under the home folder.
@@ -711,7 +714,7 @@ describe("skill registry", () => {
     env.CODEX_HOME = path.join(home, ".config", "codex-two");
     const again = skills.install("acme/kit/skills/pdf", ["codex"]);
     expect(again.errors).toEqual([]);
-    expect(again.installed).toEqual([{ target: "codex", path: dest }]);
+    expect(again.installed).toEqual([{ target: "codex", targets: ["codex"], path: dest }]);
     expect(fs.existsSync(path.join(home, ".config", "codex-two", "skills", "pdf"))).toBe(false);
     expect(store.installs.size).toBe(1);
   });
@@ -730,16 +733,52 @@ describe("skill registry", () => {
     expect(fs.existsSync(path.join(home, ".claude"))).toBe(true);
   });
 
-  it("will not touch a recorded folder outside every root it may write to", async () => {
-    // A config folder outside home and outside every project is allowed while
-    // the tool points at it. Once the tool points elsewhere, nothing Markie
-    // may write to contains it any more.
+  it("keeps a project install after the workspace is unregistered", async () => {
+    // The project is outside the home folder, so once it is not a workspace
+    // root either, nothing about today's roots says the folder is Markie's.
+    // The row does: it remembers the root it was installed under.
+    const { skills } = await load();
+    const dest = path.join(project, ".claude", "skills", "pdf");
+    expect(skills.install("acme/kit/skills/pdf", [{ project }]).installed[0].path).toBe(dest);
+    expect(store.installs.get(dest)!.root).toBe(project);
+    roots = [];
+    const again = skills.install("acme/kit/skills/pdf", [{ project }]);
+    expect(again.errors).toEqual([]);
+    expect(again.installed[0].path).toBe(dest);
+    expect(store.installs.size).toBe(1);
+    expect(skills.installed().map((row: { path: string }) => row.path)).toEqual([dest]);
+    expect(skills.remove({ project }, "pdf")).toEqual({ ok: true });
+    expect(fs.existsSync(dest)).toBe(false);
+    expect(store.installs.size).toBe(0);
+    // A new install there is still gated by today's roots.
+    expect(skills.install("acme/kit/skills/pdf", [{ project }]).errors[0].error).toBe("no-such-target");
+  });
+
+  it("keeps an install under a config folder the tool has since moved away from", async () => {
     const env: Record<string, string> = { CODEX_HOME: path.join(tmp, "elsewhere") };
     const { skills } = await load({ env });
     const dest = path.join(tmp, "elsewhere", "skills", "pdf");
     expect(skills.install("acme/kit/skills/pdf", ["codex"]).installed).toEqual([
-      { target: "codex", path: dest },
+      { target: "codex", targets: ["codex"], path: dest },
     ]);
+    expect(store.installs.get(dest)!.root).toBe(path.join(tmp, "elsewhere"));
+    env.CODEX_HOME = path.join(home, ".codex");
+    const again = skills.install("acme/kit/skills/pdf", ["codex"]);
+    expect(again.errors).toEqual([]);
+    expect(again.installed[0].path).toBe(dest);
+    expect(fs.existsSync(path.join(home, ".codex", "skills", "pdf"))).toBe(false);
+    expect(skills.remove("codex", "pdf")).toEqual({ ok: true });
+    expect(fs.existsSync(dest)).toBe(false);
+  });
+
+  it("will not touch a recorded folder outside every root when the row has no root", async () => {
+    // A row from before the root was recorded, pointing outside home and
+    // every project: nothing says Markie may write there today.
+    const env: Record<string, string> = { CODEX_HOME: path.join(tmp, "elsewhere") };
+    const { skills } = await load({ env });
+    const dest = path.join(tmp, "elsewhere", "skills", "pdf");
+    skills.install("acme/kit/skills/pdf", ["codex"]);
+    store.installs.set(dest, { ...store.installs.get(dest)!, root: null });
     env.CODEX_HOME = path.join(home, ".codex");
     const removed = skills.remove("codex", "pdf");
     expect(removed.ok).toBe(false);
@@ -757,6 +796,38 @@ describe("skill registry", () => {
     env.CODEX_HOME = path.join(tmp, "elsewhere");
     expect(skills.remove("codex", "pdf")).toEqual({ ok: true });
     expect(fs.existsSync(dest)).toBe(false);
+  });
+
+  // ── Two targets, one folder ──────────────────────────────────────────────
+
+  it("installs once when two targets share a folder, and lists both", async () => {
+    // Claude Code pointed at the universal folder: both targets resolve to
+    // ~/.agents/skills, and the copy that lands there is both installs.
+    const { skills } = await load({ env: { CLAUDE_CONFIG_DIR: path.join(home, ".agents") } });
+    const dest = path.join(home, ".agents", "skills", "pdf");
+    const result = skills.install("acme/kit/skills/pdf", ["claude", "universal"]);
+    expect(result.errors).toEqual([]);
+    expect(result.installed).toEqual([{ target: "claude", targets: ["claude", "universal"], path: dest }]);
+    expect(store.installs.size).toBe(1);
+    expect(store.installs.get(dest)!.target).toBe("claude");
+    const rows = skills.installed();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ target: "claude", targets: ["claude", "universal"], path: dest });
+    const pdf = skills.listCatalog().skills.find((s: { name: string }) => s.name === "pdf");
+    expect(pdf.installedTo).toEqual([
+      { target: "claude", path: dest, upToDate: true },
+      { target: "universal", path: dest, upToDate: true },
+    ]);
+    // Asking for the other target again updates the same row, and does not
+    // hand it over.
+    const again = skills.install("acme/kit/skills/pdf", ["universal"]);
+    expect(again.installed).toEqual([{ target: "universal", targets: ["universal"], path: dest }]);
+    expect(store.installs.size).toBe(1);
+    expect(store.installs.get(dest)!.target).toBe("claude");
+    // And removing under either name removes the one folder.
+    expect(skills.remove("universal", "pdf")).toEqual({ ok: true });
+    expect(fs.existsSync(dest)).toBe(false);
+    expect(store.installs.size).toBe(0);
   });
 
   // ── The lock file ────────────────────────────────────────────────────────
@@ -961,6 +1032,7 @@ describe("skill registry", () => {
     expect(rows[0]).toMatchObject({
       name: "pdf",
       target: "claude",
+      targets: ["claude"],
       source: "acme/kit",
       description: "Work with PDF files.",
       updateAvailable: false,

@@ -104,9 +104,21 @@ function getDB() {
       source TEXT,                  -- "owner/repo" it came from
       skill_path TEXT,              -- where it sits inside that repository
       folder_hash TEXT,             -- git tree id of the folder it copied
+      root TEXT,                    -- the folder it was allowed to write under
       installed_at TEXT NOT NULL
     );
   `);
+
+  // A skill installed into a project outside the home folder was only ever
+  // Markie's to update or remove while that project stayed a workspace root:
+  // unregister it and the recorded folder was outside every folder Markie
+  // may write to. The row now remembers the root the install was made under.
+  // Added after the table shipped, so older databases need the column too;
+  // their rows have no root, and the current roots are all they can rely on.
+  const installCols = db.prepare("PRAGMA table_info(skill_installs)").all();
+  if (!installCols.some((c) => c.name === "root")) {
+    db.exec("ALTER TABLE skill_installs ADD COLUMN root TEXT");
+  }
 
   // Markie is local-first, so being offline is an ordinary state, not an error.
   // Without a remembered role, an unreachable server means we cannot prove the
@@ -653,14 +665,15 @@ function skillInstallGet(p) {
 function skillInstallSet(row) {
   getDB()
     .prepare(
-      `INSERT INTO skill_installs (path, target, name, source, skill_path, folder_hash, installed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO skill_installs (path, target, name, source, skill_path, folder_hash, root, installed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(path) DO UPDATE SET
          target = excluded.target,
          name = excluded.name,
          source = excluded.source,
          skill_path = excluded.skill_path,
          folder_hash = excluded.folder_hash,
+         root = excluded.root,
          installed_at = excluded.installed_at`
     )
     .run(
@@ -670,6 +683,7 @@ function skillInstallSet(row) {
       row.source ?? null,
       row.skill_path ?? null,
       row.folder_hash ?? null,
+      row.root ?? null,
       row.installed_at || new Date().toISOString()
     );
 }

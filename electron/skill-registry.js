@@ -80,6 +80,9 @@ const MAX_SKILL_SEGMENTS =
   MAX_CONTAINER_DEPTH;
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build"]);
 
+// The tools a skill can be installed for, by the string the renderer sends.
+const TOOL_TARGETS = ["claude", "codex", "cursor", "gemini", "universal"];
+
 const SKILLS_SH_SEARCH = "https://skills.sh/api/search";
 const LOCK_VERSION = 3;
 // How many times a lock update starts over because the file changed under
@@ -565,15 +568,18 @@ function createSkillRegistry(deps = {}) {
     }
   }
 
+  // One entry per target a row serves, so a folder two tools share reads as
+  // installed for both.
   function installedTo(skill, rows) {
     return rows
       .filter((row) => row.source === skill.source && row.skill_path === skill.skillPath)
-      .map((row) => ({
-        target: targetFromKey(row.target),
-        path: row.path,
-        upToDate: row.folder_hash === skill.folderHash,
-      }))
-      .filter((entry) => entry.target !== null);
+      .flatMap((row) =>
+        targetsServedBy(row).map((target) => ({
+          target,
+          path: row.path,
+          upToDate: row.folder_hash === skill.folderHash,
+        }))
+      );
   }
 
   function listCatalog() {
@@ -783,7 +789,36 @@ function createSkillRegistry(deps = {}) {
   function targetFromKey(key) {
     const text = String(key ?? "");
     if (text.startsWith("project:")) return { project: text.slice("project:".length) };
-    return ["claude", "codex", "cursor", "gemini", "universal"].includes(text) ? text : null;
+    return TOOL_TARGETS.includes(text) ? text : null;
+  }
+
+  // Every target an install could be asked for today: the tools, and each
+  // registered project.
+  function knownTargets() {
+    const projects = (roots() || [])
+      .filter((root) => typeof root === "string" && root.trim())
+      .map((project) => ({ project }));
+    return [...TOOL_TARGETS, ...projects];
+  }
+
+  const sameFolder = (a, b) => foldCase(path.resolve(a)) === foldCase(path.resolve(b));
+
+  // Every target whose skills directory is the folder this row sits in, the
+  // row's own first. Two targets can share one folder (CLAUDE_CONFIG_DIR
+  // pointed at ~/.agents, say), and the one copy there is then both installs.
+  // Decided when asked rather than recorded, because the answer changes when
+  // the user moves a config folder.
+  function targetsServedBy(row) {
+    const own = targetFromKey(row.target);
+    if (!own) return [];
+    const out = [own];
+    const parent = path.dirname(String(row.path || ""));
+    for (const target of knownTargets()) {
+      if (targetKey(target) === row.target) continue;
+      const dir = targetDir(target);
+      if (dir && sameFolder(dir, parent)) out.push(target);
+    }
+    return out;
   }
 
   // ── The lock file the Vercel CLI also reads ──────────────────────────────
@@ -900,12 +935,17 @@ function createSkillRegistry(deps = {}) {
   // persisted rather than by recomputing where the folder ought to be. A user
   // who moves CLAUDE_CONFIG_DIR or unregisters a project still owns the folder
   // Markie made, and recomputing would lose it: Remove would fail forever, and
-  // installing again would leave a second copy behind.
+  // installing again would leave a second copy behind. A row written under
+  // another target's name but sitting in this target's folder is this
+  // target's install too.
   function ownedRow(target, name) {
     const key = targetKey(target);
     if (!key) return null;
+    const rows = installRows().filter((row) => row.name === String(name));
     return (
-      installRows().find((row) => row.target === key && row.name === String(name)) || null
+      rows.find((row) => row.target === key) ||
+      rows.find((row) => targetsServedBy(row).some((served) => targetKey(served) === key)) ||
+      null
     );
   }
 
@@ -918,15 +958,24 @@ function createSkillRegistry(deps = {}) {
       .map((dir) => path.resolve(dir));
   }
 
+  // The root a new install is recorded under: the most specific of today's
+  // allowed roots that holds the destination, so a project install remembers
+  // its project rather than the home folder that happens to contain it.
+  function rootFor(destination) {
+    const holding = allowedRoots().filter((root) => insideDir(root, destination));
+    if (!holding.length) return null;
+    return holding.reduce((best, root) => (root.length > best.length ? root : best));
+  }
+
   // The folder a row says Markie created, or the reason the row is not
   // trusted. It has to have the shape every install produces, an absolute
   // `.../skills/<name>` whose last segment is the row's own name, and it has
-  // to sit inside one of the allowed roots as they are today. Deliberately
-  // not compared against today's target directories: a folder under a
-  // CODEX_HOME that has since moved is still under the home folder, and still
-  // Markie's to update or remove. What this refuses is a row that names the
-  // home folder itself, a workspace root, or anything a corrupt record could
-  // point at outside those roots.
+  // to sit inside one of the allowed roots as they are today, or inside the
+  // root the row itself recorded at install time. That recorded root is what
+  // keeps a project install Markie's after the workspace is unregistered, and
+  // an install under a config folder the tool has since moved away from. What
+  // this refuses is a row that names the home folder itself, a workspace
+  // root, or anything a corrupt record could point at outside those roots.
   function ownedFolder(row) {
     const notSkill = { ok: false, why: "not a skill folder" };
     const recorded = String(row?.path || "");
@@ -934,7 +983,9 @@ function createSkillRegistry(deps = {}) {
     const resolved = path.resolve(recorded);
     if (!validSkillName(row.name) || path.basename(resolved) !== row.name) return notSkill;
     if (path.basename(path.dirname(resolved)) !== "skills") return notSkill;
-    if (!allowedRoots().some((root) => insideDir(root, resolved))) {
+    const roots = allowedRoots();
+    if (typeof row.root === "string" && path.isAbsolute(row.root)) roots.push(path.resolve(row.root));
+    if (!roots.some((root) => insideDir(root, resolved))) {
       return { ok: false, why: "outside every folder Markie may write to" };
     }
     return { ok: true, path: resolved };
@@ -1039,6 +1090,13 @@ function createSkillRegistry(deps = {}) {
       }
       return { installed, errors: errorsOut };
     }
+    // Where each target's copy would go, worked out for every target before
+    // anything is written. Two targets can resolve to one folder, and that
+    // folder is written once and reported once, naming every target it
+    // serves; writing it twice reported two installs of one copy and left the
+    // row under whichever target came last.
+    const plans = [];
+    const byFolder = new Map();
     for (const target of targets || []) {
       if (!validSkillName(skill.name)) {
         errorsOut.push({
@@ -1086,9 +1144,22 @@ function createSkillRegistry(deps = {}) {
         // target. It is still Markie's folder, and the same rules apply to it.
         row = store.skillInstallGet(destination) || null;
       }
+      const folder = foldCase(path.resolve(destination));
+      const shared = byFolder.get(folder);
+      if (shared) {
+        shared.targets.push(target);
+        continue;
+      }
+      const plan = { targets: [target], row, destination };
+      byFolder.set(folder, plan);
+      plans.push(plan);
+    }
+    for (const { targets: served, row, destination } of plans) {
+      const target = served[0];
       if (!row && fs.existsSync(destination)) {
         errorsOut.push({
           target,
+          targets: served,
           error: "exists",
           message: `There is already a folder at ${destination} that Markie did not install.`,
         });
@@ -1100,11 +1171,15 @@ function createSkillRegistry(deps = {}) {
         swapIntoPlace(found.dir, place, () => {
           store.skillInstallSet({
             path: place,
-            target: targetKey(target),
+            // An existing row keeps the target it was written under: the
+            // folder serves every target that resolves to it, and handing it
+            // to whichever was asked for last only made it change hands.
+            target: row ? row.target : targetKey(target),
             name: skill.name,
             source: skill.source,
             skill_path: skill.skillPath,
             folder_hash: skill.folderHash,
+            root: row && row.root ? row.root : rootFor(place),
             installed_at: at,
           });
         });
@@ -1125,10 +1200,11 @@ function createSkillRegistry(deps = {}) {
         } catch {
           // shared with another tool; not ours to fail an install over
         }
-        installed.push({ target, path: place });
+        installed.push({ target, targets: served, path: place });
       } catch (err) {
         errorsOut.push({
           target,
+          targets: served,
           error: "copy-failed",
           message: err && err.message ? err.message : String(err),
         });
@@ -1181,8 +1257,8 @@ function createSkillRegistry(deps = {}) {
     const bySkill = new Map(catalog.skills.map((skill) => [`${skill.source}/${skill.skillPath}`, skill]));
     return rows
       .map((row) => {
-        const target = targetFromKey(row.target);
-        if (!target) return null;
+        const targets = targetsServedBy(row);
+        if (!targets.length) return null;
         let description = null;
         try {
           const markdown = fs.readFileSync(path.join(row.path, "SKILL.md"), "utf8");
@@ -1194,7 +1270,8 @@ function createSkillRegistry(deps = {}) {
         const known = bySkill.get(`${row.source}/${row.skill_path}`);
         return {
           name: row.name,
-          target,
+          target: targets[0],
+          targets,
           path: row.path,
           description,
           source: row.source ?? null,

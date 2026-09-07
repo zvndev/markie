@@ -363,3 +363,15 @@ describe("the licence chip on a catalog row", () => {
     expect(licenseChip(null)).toBeNull();
   });
 });
+
+describe("skillGroupFor and a tool's cache", () => {
+  it("keeps a clone under a tool's cache out, whatever main labelled it", () => {
+    // A vendored or plugin-cached clone sits inside ~/.codex, so main says
+    // "codex"; it is a cache, not an install.
+    const cached = "/home/me/.codex/plugins/cache/some-plugin/1.0.0/skills/pdf/SKILL.md";
+    expect(skillGroupFor(cached, "SKILL.md", { tool: "codex", description: null })).toBeNull();
+    expect(skillGroupFor("/home/me/.codex/skills/pdf/SKILL.md", "SKILL.md", { tool: "codex", description: null })).toBe(
+      "codex"
+    );
+  });
+});

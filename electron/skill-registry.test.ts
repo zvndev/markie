@@ -813,6 +813,61 @@ describe("skill registry", () => {
     expect(fs.existsSync(dest)).toBe(false);
   });
 
+  // ── The folder is checked for real before anything is deleted ────────────
+  // The recorded path is compared against the roots lexically, and a parent
+  // of it can become a symlink after the install. Following that link from
+  // a remove or an update would delete or replace a folder somewhere else.
+
+  it("refuses to delete or replace through a parent that now links out of the root", async () => {
+    const { skills } = await load();
+    const dest = path.join(project, ".claude", "skills", "pdf");
+    expect(skills.install("acme/kit/skills/pdf", [{ project }]).installed[0].path).toBe(dest);
+    // Somebody else's folder, holding a skill of the same name, and the
+    // project's .claude replaced by a link to it.
+    const outside = path.join(tmp, "outside");
+    fs.mkdirSync(path.join(outside, "skills", "pdf"), { recursive: true });
+    fs.writeFileSync(path.join(outside, "skills", "pdf", "SKILL.md"), "not yours\n", "utf8");
+    fs.rmSync(path.join(project, ".claude"), { recursive: true, force: true });
+    fs.symlinkSync(outside, path.join(project, ".claude"), "dir");
+
+    const removed = skills.remove({ project }, "pdf");
+    expect(removed.ok).toBe(false);
+    expect(removed.error).toContain(dest);
+    expect(removed.error).toContain("outside every folder Markie may write to");
+    expect(fs.readFileSync(path.join(outside, "skills", "pdf", "SKILL.md"), "utf8")).toBe("not yours\n");
+    expect(store.installs.size).toBe(1);
+
+    const again = skills.install("acme/kit/skills/pdf", [{ project }]);
+    expect(again.installed).toEqual([]);
+    expect(again.errors[0].error).toBe("copy-failed");
+    expect(again.errors[0].message).toContain(dest);
+    expect(again.errors[0].message).toContain("outside every folder Markie may write to");
+    expect(fs.readFileSync(path.join(outside, "skills", "pdf", "SKILL.md"), "utf8")).toBe("not yours\n");
+    // Nothing was staged beside it either.
+    expect(fs.readdirSync(path.join(outside, "skills"))).toEqual(["pdf"]);
+  });
+
+  it("still installs, updates and removes under a home reached through a symlink", async () => {
+    // A home folder that is itself a link (common on macOS, where the temp
+    // folder is one too) resolves on both sides, so it is not refused.
+    const realHome = path.join(tmp, "home-real");
+    const linkedHome = path.join(tmp, "home-link");
+    fs.mkdirSync(realHome, { recursive: true });
+    fs.symlinkSync(realHome, linkedHome, "dir");
+    const skills = registry({ home: () => linkedHome });
+    await skills.addSource("acme/kit");
+    const dest = path.join(linkedHome, ".claude", "skills", "pdf");
+    const result = skills.install("acme/kit/skills/pdf", ["claude"]);
+    expect(result.errors).toEqual([]);
+    expect(result.installed[0].path).toBe(dest);
+    expect(fs.existsSync(path.join(realHome, ".claude", "skills", "pdf", "SKILL.md"))).toBe(true);
+    const again = skills.install("acme/kit/skills/pdf", ["claude"]);
+    expect(again.errors).toEqual([]);
+    expect(store.installs.size).toBe(1);
+    expect(skills.remove("claude", "pdf")).toEqual({ ok: true });
+    expect(fs.existsSync(path.join(realHome, ".claude", "skills", "pdf"))).toBe(false);
+  });
+
   // ── Two targets, one folder ──────────────────────────────────────────────
 
   it("installs once when two targets share a folder, and lists both", async () => {

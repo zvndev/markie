@@ -975,6 +975,58 @@ function createSkillRegistry(deps = {}) {
       .map((dir) => path.resolve(dir));
   }
 
+  // Today's roots plus the one the row recorded at install time.
+  function rootsFor(row) {
+    const out = allowedRoots();
+    if (row && typeof row.root === "string" && path.isAbsolute(row.root)) out.push(path.resolve(row.root));
+    return out;
+  }
+
+  // Where a path really is: the real path of its deepest existing ancestor
+  // with the rest appended, so a folder that does not exist yet (a first
+  // install's destination) still answers for the folder it would land in.
+  // A link that leads nowhere is not an ancestor to build on, and answers
+  // null.
+  function realPathBound(target) {
+    let existing = path.resolve(String(target || ""));
+    const tail = [];
+    for (;;) {
+      try {
+        const real = fs.realpathSync(existing);
+        return tail.length ? path.join(real, ...tail.reverse()) : real;
+      } catch (err) {
+        if (!err || err.code !== "ENOENT") return null;
+        try {
+          if (fs.lstatSync(existing).isSymbolicLink()) return null;
+        } catch {
+          // not there at all, which is the ordinary case for a new folder
+        }
+        const parent = path.dirname(existing);
+        if (parent === existing) return null;
+        tail.push(path.basename(existing));
+        existing = parent;
+      }
+    }
+  }
+
+  // The check the lexical one in ownedFolder cannot make. A recorded path
+  // sits inside a root by its spelling, and a parent of it can be replaced
+  // by a symlink after the install; a delete or a swap that followed the
+  // link would land on a folder somewhere else entirely. So, immediately
+  // before either, both sides are resolved for real, and the destination
+  // has to be strictly inside one of the roots as they really are. A root
+  // resolves the same way the destination does, so a config folder the tool
+  // has not created yet still counts as the root it will be.
+  function reallyInside(destination, candidates) {
+    const real = realPathBound(destination);
+    if (!real) return { ok: false, real: null };
+    for (const root of candidates) {
+      const realRoot = realPathBound(root);
+      if (realRoot && insideDir(realRoot, real)) return { ok: true, real };
+    }
+    return { ok: false, real };
+  }
+
   // The root a new install is recorded under: the most specific of today's
   // allowed roots that holds the destination, so a project install remembers
   // its project rather than the home folder that happens to contain it.
@@ -1000,9 +1052,7 @@ function createSkillRegistry(deps = {}) {
     const resolved = path.resolve(recorded);
     if (!validSkillName(row.name) || path.basename(resolved) !== row.name) return notSkill;
     if (path.basename(path.dirname(resolved)) !== "skills") return notSkill;
-    const roots = allowedRoots();
-    if (typeof row.root === "string" && path.isAbsolute(row.root)) roots.push(path.resolve(row.root));
-    if (!roots.some((root) => insideDir(root, resolved))) {
+    if (!rootsFor(row).some((root) => insideDir(root, resolved))) {
       return { ok: false, why: "outside every folder Markie may write to" };
     }
     return { ok: true, path: resolved };
@@ -1182,6 +1232,17 @@ function createSkillRegistry(deps = {}) {
         });
         continue;
       }
+      // Resolved for real at the last moment: see reallyInside.
+      const bound = reallyInside(destination, row ? rootsFor(row) : allowedRoots());
+      if (!bound.ok) {
+        errorsOut.push({
+          target,
+          targets: served,
+          error: "copy-failed",
+          message: `${destination} resolves to ${bound.real ?? "nowhere"}, outside every folder Markie may write to, so Markie will not write there.`,
+        });
+        continue;
+      }
       try {
         const at = nowIso();
         const place = destination;
@@ -1246,6 +1307,14 @@ function createSkillRegistry(deps = {}) {
       return {
         ok: false,
         error: `Markie's record of ${name} points at ${row.path}, which is ${owned.why}, so it will not delete it.`,
+      };
+    }
+    // Resolved for real at the last moment: see reallyInside.
+    const bound = reallyInside(owned.path, rootsFor(row));
+    if (!bound.ok) {
+      return {
+        ok: false,
+        error: `Markie's record of ${name} points at ${row.path}, which resolves to ${bound.real ?? "nowhere"}, outside every folder Markie may write to, so it will not delete it.`,
       };
     }
     try {

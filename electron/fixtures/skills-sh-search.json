@@ -1,0 +1,41 @@
+{
+  "query": "pdf",
+  "searchType": "fuzzy",
+  "skills": [
+    {
+      "id": "anthropics/skills/pdf",
+      "skillId": "pdf",
+      "name": "pdf",
+      "installs": 192000,
+      "source": "anthropics/skills"
+    },
+    {
+      "id": "vercel-labs/json-render/react-pdf",
+      "skillId": "react-pdf",
+      "name": "react-pdf",
+      "installs": 1996,
+      "source": "vercel-labs/json-render"
+    },
+    {
+      "id": "openai/skills/pdf",
+      "skillId": "pdf",
+      "name": "pdf",
+      "installs": 12135,
+      "source": "openai/skills"
+    },
+    {
+      "id": "github/awesome-copilot/pdftk-server",
+      "skillId": "pdftk-server",
+      "name": "pdftk-server",
+      "installs": 10019,
+      "source": "github/awesome-copilot"
+    },
+    {
+      "id": "anthropics/knowledge-work-plugins/view-pdf",
+      "skillId": "view-pdf",
+      "name": "view-pdf",
+      "installs": 5945,
+      "source": "anthropics/knowledge-work-plugins"
+    }
+  ]
+}

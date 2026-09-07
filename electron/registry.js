@@ -93,6 +93,19 @@ function getDB() {
       name TEXT NOT NULL,
       mtime_ms REAL NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS skill_sources (
+      id TEXT PRIMARY KEY,          -- "owner/repo"
+      added_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS skill_installs (
+      path TEXT PRIMARY KEY,        -- the folder Markie wrote
+      target TEXT NOT NULL,         -- "claude" … or "project:<root>"
+      name TEXT NOT NULL,
+      source TEXT,                  -- "owner/repo" it came from
+      skill_path TEXT,              -- where it sits inside that repository
+      folder_hash TEXT,             -- the catalog hash at install time
+      installed_at TEXT NOT NULL
+    );
   `);
 
   // Markie is local-first, so being offline is an ordinary state, not an error.
@@ -211,6 +224,9 @@ function removeRoot(rootPath) {
 // star, or the extracted metadata behind at the old path is how a renamed file
 // used to change project on its own, and how the Library kept calling it by
 // its old name until it was opened again.
+// `skill_installs` is keyed by a path too and is deliberately absent: that
+// path is a skill folder Markie created, not a document the user might move,
+// and a rename of some unrelated file must never drag it anywhere.
 const PATH_KEYED_TABLES = [
   "files",
   "md_stars",
@@ -606,6 +622,62 @@ function projectsConfigSet(key, value) {
     .run(key, String(value), new Date().toISOString());
 }
 
+// ── Skills: sources the user added, and folders Markie installed ──
+// The install row is what makes an install reversible: without it, a folder in
+// ~/.claude/skills is indistinguishable from one the user put there by hand,
+// and Markie will not delete or replace something it cannot prove it wrote.
+function skillSourcesAll() {
+  return getDB().prepare("SELECT id, added_at FROM skill_sources ORDER BY added_at ASC").all();
+}
+
+function skillSourceAdd(id) {
+  getDB()
+    .prepare(
+      "INSERT INTO skill_sources (id, added_at) VALUES (?, ?) ON CONFLICT(id) DO NOTHING"
+    )
+    .run(String(id), new Date().toISOString());
+}
+
+function skillSourceRemove(id) {
+  getDB().prepare("DELETE FROM skill_sources WHERE id = ?").run(String(id));
+}
+
+function skillInstallsAll() {
+  return getDB().prepare("SELECT * FROM skill_installs ORDER BY installed_at DESC").all();
+}
+
+function skillInstallGet(p) {
+  return getDB().prepare("SELECT * FROM skill_installs WHERE path = ?").get(canonicalPath(p));
+}
+
+function skillInstallSet(row) {
+  getDB()
+    .prepare(
+      `INSERT INTO skill_installs (path, target, name, source, skill_path, folder_hash, installed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(path) DO UPDATE SET
+         target = excluded.target,
+         name = excluded.name,
+         source = excluded.source,
+         skill_path = excluded.skill_path,
+         folder_hash = excluded.folder_hash,
+         installed_at = excluded.installed_at`
+    )
+    .run(
+      canonicalPath(row.path),
+      String(row.target),
+      String(row.name),
+      row.source ?? null,
+      row.skill_path ?? null,
+      row.folder_hash ?? null,
+      row.installed_at || new Date().toISOString()
+    );
+}
+
+function skillInstallDelete(p) {
+  getDB().prepare("DELETE FROM skill_installs WHERE path = ?").run(canonicalPath(p));
+}
+
 // Flush + close the handle deterministically on app quit (WAL checkpoint).
 function close() {
   if (db) {
@@ -658,4 +730,11 @@ module.exports = {
   assignmentsSave,
   projectsConfigGet,
   projectsConfigSet,
+  skillSourcesAll,
+  skillSourceAdd,
+  skillSourceRemove,
+  skillInstallsAll,
+  skillInstallGet,
+  skillInstallSet,
+  skillInstallDelete,
 };

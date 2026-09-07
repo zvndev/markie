@@ -97,3 +97,61 @@ describe("extractHoldAsides", () => {
     expect(text).not.toMatch(/[<>[]/);
   });
 });
+
+describe("restoreHoldAsides", () => {
+  it("puts a duplicated placeholder back as two copies of the block", () => {
+    // Copying the placeholder line copies the block it stands for. That is
+    // what the user did on screen, so it is what the file should say.
+    const md = "a\n\n<!-- twice -->\n\nb\n";
+    const { text, holds } = extractHoldAsides(md);
+    const token = holds[0].token;
+    const edited = text.replace(token, `${token}\n\n${token}`);
+    const back = restoreHoldAsides(edited, holds);
+    expect(back.match(/<!-- twice -->/g)).toHaveLength(2);
+  });
+
+  it("treats a token as literal text, never as a pattern", () => {
+    // Tokens minted here are plain alphanumeric, but the lookup must not care:
+    // a token holding regex punctuation matches only a line equal to it.
+    const holds = [
+      { token: "a.c", source: "<!-- held -->\n", kind: "html-comment" as const },
+    ];
+    expect(restoreHoldAsides("abc\n", holds)).toBe("abc\n");
+    expect(restoreHoldAsides("a.c\n", holds)).toBe("<!-- held -->\n");
+  });
+
+  it("leaves an indented or extended placeholder line alone", () => {
+    const md = "a\n\n<!-- keep -->\n\nb\n";
+    const { text, holds } = extractHoldAsides(md);
+    const token = holds[0].token;
+    expect(restoreHoldAsides(text.replace(token, `  ${token}`), holds)).not.toContain(
+      "<!--"
+    );
+    expect(restoreHoldAsides(text.replace(token, `${token} x`), holds)).not.toContain(
+      "<!--"
+    );
+  });
+
+  it("restores thousands of holds without rescanning the document each time", () => {
+    // One whole-document replace per hold made this quadratic: a megabyte with
+    // a couple of thousand comments or footnotes in it took seconds to
+    // serialize, on every save. One pass over the lines does the same job.
+    const filler = "lorem ipsum dolor sit amet consectetur ".repeat(13);
+    const blocks: string[] = [];
+    for (let i = 0; i < 2000; i += 1) {
+      blocks.push(`${filler}\n\n<!-- hold ${i} -->\n\n`);
+    }
+    const md = blocks.join("");
+    expect(md.length).toBeGreaterThan(1_000_000);
+
+    const { text, holds } = extractHoldAsides(md);
+    expect(holds).toHaveLength(2000);
+
+    const started = performance.now();
+    const back = restoreHoldAsides(text, holds);
+    const elapsed = performance.now() - started;
+
+    expect(back).toBe(md);
+    expect(elapsed).toBeLessThan(200);
+  });
+});

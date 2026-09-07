@@ -130,29 +130,36 @@ describe("the Cloud page's four sections", () => {
     expect(rendered).not.toContain("local.md");
   });
 
-  it("shows a document that is shared and synced here in both lists", async () => {
-    // It is on this device, so it is synced; it is someone else's document, so
-    // it is where you look for other people's documents. Both are true.
+  it("files someone else's document under theirs, copy on this device or not", async () => {
+    // Ownership decides the section. A local copy only decides what the row
+    // can do, so listing it as one of mine would say the wrong thing about who
+    // the document belongs to.
     renderView({
-      items: [synced({ name: "ours.md", cloudId: "c9", shared: true, sharedBy: "Grace" })],
+      items: [synced({ name: "theirs.md", cloudId: "c9", shared: true, sharedBy: "Grace" })],
     });
-    await waitFor(() => expect(section("synced")).not.toBeNull());
-    expect(sectionNames("synced")).toEqual(["ours.md"]);
-    expect(sectionNames("with-me")).toEqual(["ours.md"]);
+    await waitFor(() => expect(sectionNames("with-me")).toEqual(["theirs.md"]));
+    expect(sectionNames("synced")).toEqual([]);
   });
 
-  it("leaves out a section it has nothing to put in", async () => {
+  it("keeps every section on the page, so its shape never depends on the account", async () => {
     renderView({ items: [synced()] });
-    await waitFor(() => expect(section("by-me")).toBeNull());
-    expect(section("synced")).not.toBeNull();
-    expect(section("cloud")).toBeNull();
-    expect(section("with-me")).toBeNull();
+    await waitFor(() => expect(section("by-me")).not.toBeNull());
+    for (const id of ["synced", "cloud", "with-me", "by-me"]) {
+      expect(section(id)).not.toBeNull();
+    }
+    // And each empty one says what it would hold, rather than sitting blank.
+    expect(screen.getByText("Nothing in your cloud yet")).toBeInTheDocument();
+    expect(
+      screen.getByText("Nobody has shared a document with you yet")
+    ).toBeInTheDocument();
+    expect(await screen.findByText("You haven't shared a document yet")).toBeInTheDocument();
   });
 
   it("says the cloud is empty rather than leaving a blank page", async () => {
     renderView();
     expect(await screen.findByText("Nothing in the cloud yet")).toBeInTheDocument();
-    expect(await screen.findByText("Nothing synced yet")).toBeInTheDocument();
+    expect(screen.getByText("Nothing synced from this device yet")).toBeInTheDocument();
+    expect(await screen.findByText("You haven't shared a document yet")).toBeInTheDocument();
   });
 });
 
@@ -276,7 +283,9 @@ describe("documents I have shared", () => {
     // null is the client's "the request failed" answer.
     sharedByMe.mockResolvedValue(null);
     renderView();
-    expect(await screen.findByText("Couldn't load your shared docs")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Couldn't load the documents you've shared")
+    ).toBeInTheDocument();
     const before = sharedByMe.mock.calls.length;
 
     sharedByMe.mockResolvedValue([doc()]);

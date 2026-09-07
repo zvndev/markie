@@ -12,10 +12,12 @@ export interface LibraryOverview {
 
 export interface OrganizedLibraryItems {
   localFiles: LibraryItem[];
-  // Files of this device the cloud also knows about, in any of its states.
-  // The Library shows every local file together; the Cloud page shows only
-  // this subset, because a file the cloud has never heard of has nothing to
-  // say there.
+  // My own files that the cloud also knows about, in any of its states. The
+  // Library shows every local file together; the Cloud page shows only this
+  // subset, because a file the cloud has never heard of has nothing to say
+  // there. Ownership decides the group and a local copy does not: someone
+  // else's document is theirs whether or not this device holds it, so it
+  // belongs under the heading about their documents, not under mine.
   syncedFromDevice: LibraryItem[];
   myCloudOnly: LibraryItem[];
   sharedItems: LibraryItem[];
@@ -63,7 +65,9 @@ export function organizeLibraryItems(items: LibraryItem[]): OrganizedLibraryItem
   return {
     localFiles: sortLibraryItems(items.filter((item) => item.path)),
     syncedFromDevice: sortLibraryItems(
-      items.filter((item) => item.path && CLOUD_STATES.includes(item.state))
+      items.filter(
+        (item) => item.path && !item.shared && CLOUD_STATES.includes(item.state)
+      )
     ),
     myCloudOnly: sortLibraryItems(items.filter((item) => !item.path && !item.shared)),
     sharedItems,

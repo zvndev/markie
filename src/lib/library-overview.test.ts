@@ -198,6 +198,27 @@ describe("library overview", () => {
     ]);
   });
 
+  it("counts someone else's document as theirs even with a copy on this device", () => {
+    // Ownership decides the group. A local copy only decides what the row can
+    // do with it, and listing it as one of mine says the wrong thing about who
+    // the document belongs to.
+    const organized = organizeLibraryItems([
+      item({ path: "/docs/mine.md", name: "mine.md", state: "synced", cloudId: "c1" }),
+      item({
+        path: "/docs/theirs.md",
+        name: "theirs.md",
+        state: "synced",
+        cloudId: "c2",
+        shared: true,
+        sharedBy: "Grace",
+        role: "viewer",
+      }),
+    ]);
+
+    expect(organized.syncedFromDevice.map((entry) => entry.name)).toEqual(["mine.md"]);
+    expect(organized.sharedItems.map((entry) => entry.name)).toEqual(["theirs.md"]);
+  });
+
   it("sorts an unpushed doc above every other attention state", () => {
     // It is the only state where the newest copy of the edit exists in exactly
     // one place, so it has to be the first row the user sees.

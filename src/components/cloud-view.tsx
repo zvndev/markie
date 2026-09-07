@@ -49,6 +49,17 @@ const SECTION_LABEL: Record<SectionId, string> = {
   "by-me": "Shared by me",
 };
 
+// Every section is on the page whatever the account holds, so the page has one
+// shape. A heading that disappears when its list is empty leaves someone
+// hunting for a section with no way to know it exists, so an empty one says so
+// in a line instead. The band is the summary and still leaves zeroes out.
+const SECTION_EMPTY: Record<SectionId, string> = {
+  synced: "Nothing synced from this device yet",
+  cloud: "Nothing in your cloud yet",
+  "with-me": "Nobody has shared a document with you yet",
+  "by-me": "You haven't shared a document yet",
+};
+
 type OpenState = Record<SectionId, boolean>;
 
 // Sections start open: a page whose contents are hidden until you find the
@@ -216,17 +227,9 @@ export function CloudView({
   }
 
   // Nothing has arrived from the main process yet. The skeleton stands for the
-  // whole page rather than one section, because at this point we do not know
-  // which sections there will be.
+  // whole page rather than one section: four headings each saying they hold
+  // nothing is a worse answer than "still reading" before we have looked.
   const booting = loading && items.length === 0;
-  const empty =
-    !booting &&
-    syncedFromDevice.length === 0 &&
-    myCloudOnly.length === 0 &&
-    sharedItems.length === 0 &&
-    !byMeError &&
-    byMe !== null &&
-    byMe.length === 0;
 
   return (
     <div className="flex flex-col h-full">
@@ -235,74 +238,83 @@ export function CloudView({
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {booting && <CloudSkeleton label="Loading your cloud documents" />}
+        {booting ? (
+          <CloudSkeleton label="Loading your cloud documents" />
+        ) : (
+          <>
+            <Section
+              id="synced"
+              count={syncedFromDevice.length}
+              open={open.synced}
+              onToggle={toggle}
+            >
+              {syncedFromDevice.length > 0 ? (
+                syncedFromDevice.map(renderRow)
+              ) : (
+                <SectionEmpty id="synced" />
+              )}
+            </Section>
 
-        {syncedFromDevice.length > 0 && (
-          <Section id="synced" count={syncedFromDevice.length} open={open.synced} onToggle={toggle}>
-            {syncedFromDevice.map(renderRow)}
-          </Section>
-        )}
+            <Section id="cloud" count={myCloudOnly.length} open={open.cloud} onToggle={toggle}>
+              {myCloudOnly.length > 0 ? myCloudOnly.map(renderRow) : <SectionEmpty id="cloud" />}
+            </Section>
 
-        {myCloudOnly.length > 0 && (
-          <Section id="cloud" count={myCloudOnly.length} open={open.cloud} onToggle={toggle}>
-            {myCloudOnly.map(renderRow)}
-          </Section>
-        )}
+            <Section
+              id="with-me"
+              count={sharedItems.length}
+              open={open["with-me"]}
+              onToggle={toggle}
+            >
+              {sharedItems.length > 0 ? (
+                sharedItems.map(renderRow)
+              ) : (
+                <SectionEmpty id="with-me" />
+              )}
+            </Section>
 
-        {sharedItems.length > 0 && (
-          <Section
-            id="with-me"
-            count={sharedItems.length}
-            open={open["with-me"]}
-            onToggle={toggle}
-          >
-            {sharedItems.map(renderRow)}
-          </Section>
-        )}
-
-        {(byMeError || byMe === null || byMe.length > 0) && (
-          <Section id="by-me" count={byMe?.length ?? 0} open={open["by-me"]} onToggle={toggle}>
-            {byMeError ? (
-              <CloudEmptyState
-                icon={<PeopleIcon />}
-                title="Couldn't load your shared docs"
-                body="The server didn't answer. Your shares are unchanged."
-                action={{
-                  label: "Try again",
-                  onClick: () => {
-                    setByMeError(false);
-                    setByMeNonce((n) => n + 1);
-                  },
-                }}
-              />
-            ) : byMe === null ? (
-              <CloudSkeleton label="Loading documents you've shared" />
-            ) : (
-              byMe.map((d) => (
-                <SharedByMeRow
-                  key={d.id}
-                  doc={d}
-                  path={localByCloudId.get(d.id) ?? null}
-                  onOpenPath={onOpenPath}
-                  onManage={onManage}
+            <Section id="by-me" count={byMe?.length ?? 0} open={open["by-me"]} onToggle={toggle}>
+              {byMeError ? (
+                <CloudEmptyState
+                  icon={<PeopleIcon />}
+                  title="Couldn't load the documents you've shared"
+                  body="The server didn't answer. Your shares are unchanged."
+                  action={{
+                    label: "Try again",
+                    onClick: () => {
+                      setByMeError(false);
+                      setByMeNonce((n) => n + 1);
+                    },
+                  }}
                 />
-              ))
-            )}
-          </Section>
-        )}
-
-        {empty && (
-          <CloudEmptyState
-            icon={<CloudIcon />}
-            title="Nothing synced yet"
-            body="Use Sync to cloud on a document in the Library, and it shows up here along with anything people share with you."
-          />
+              ) : byMe === null ? (
+                <CloudSkeleton label="Loading documents you've shared" />
+              ) : byMe.length > 0 ? (
+                byMe.map((d) => (
+                  <SharedByMeRow
+                    key={d.id}
+                    doc={d}
+                    path={localByCloudId.get(d.id) ?? null}
+                    onOpenPath={onOpenPath}
+                    onManage={onManage}
+                  />
+                ))
+              ) : (
+                <SectionEmpty id="by-me" />
+              )}
+            </Section>
+          </>
         )}
       </div>
 
       <PanelNotice notice={notice} />
     </div>
   );
+}
+
+function SectionEmpty({ id }: { id: SectionId }) {
+  // Indented to the width of a row's icon, so it reads as the list's first
+  // line rather than as another heading.
+  return <div className="py-1 pr-2 pl-5 text-[11px] text-muted">{SECTION_EMPTY[id]}</div>;
 }
 
 function Section({

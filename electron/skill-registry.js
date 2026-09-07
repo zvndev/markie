@@ -959,6 +959,27 @@ function createSkillRegistry(deps = {}) {
     };
   }
 
+  // Who the lock says a name belongs to: the entry's source, or "another
+  // source" for an entry that names none, or null when there is no entry.
+  // The Vercel CLI writes entries for its own installs, and one with no
+  // Markie row behind it is that tool's record, not Markie's to replace.
+  function lockOwner(name) {
+    const lock = parseLock(readLockText());
+    const entry = lock && lock.skills ? lock.skills[name] : null;
+    if (!entry || typeof entry !== "object") return null;
+    const source = typeof entry.source === "string" ? entry.source.trim().toLowerCase() : "";
+    return source || "another source";
+  }
+
+  // Is a folder of this name installed for any known target, by anyone? The
+  // lock's entry describes such a folder, so it stays while one does.
+  function installedAnywhere(name) {
+    return knownTargets().some((target) => {
+      const dir = targetDir(target);
+      return Boolean(dir) && fs.existsSync(path.join(dir, name));
+    });
+  }
+
   // The entry a remaining install row stands for. Its branch is not on the
   // row; the source's catalog knows it when the source is still around.
   function lockEntryFromRow(row) {
@@ -1184,6 +1205,22 @@ function createSkillRegistry(deps = {}) {
       }
       return { installed, errors: errorsOut };
     }
+    // The same rule for the lock's entry when Markie has no row for the
+    // name at all: another tool installed that name from somewhere else,
+    // and writing over its record would leave that install unaccounted for.
+    if (!installRows().some((row) => row.name === skill.name)) {
+      const owner = lockOwner(skill.name);
+      if (owner && owner !== skill.source) {
+        for (const target of targets || []) {
+          errorsOut.push({
+            target,
+            error: "exists",
+            message: `${skill.name} is already installed from ${owner}. Remove it first.`,
+          });
+        }
+        return { installed, errors: errorsOut };
+      }
+    }
     // Where each target's copy would go, worked out for every target before
     // anything is written. Two targets can resolve to one folder, and that
     // folder is written once and reported once, naming every target it
@@ -1351,13 +1388,15 @@ function createSkillRegistry(deps = {}) {
     }
     store.skillInstallDelete(row.path);
     // The lock is keyed by name alone, so the entry only goes when the last
-    // copy of this skill does. While one remains, the entry is rebuilt from
-    // it: whatever another tool wrote there in the meantime described a
-    // copy that is gone now.
+    // copy of this skill does, Markie's or anyone's: with Markie's last row
+    // gone, a folder of the name still in some tool's skills directory is
+    // another tool's install, and the entry is its record. While a row of
+    // Markie's remains, the entry is rebuilt from it: whatever another tool
+    // wrote there in the meantime described a copy that is gone now.
     const remaining = installRows().find((other) => other.name === String(name));
     try {
-      if (!remaining) dropFromLock(String(name));
-      else if (remaining.source) mergeLock(String(name), lockEntryFromRow(remaining));
+      if (remaining && remaining.source) mergeLock(String(name), lockEntryFromRow(remaining));
+      else if (!remaining && !installedAnywhere(String(name))) dropFromLock(String(name));
     } catch {
       // shared with another tool; the removal itself is done
     }

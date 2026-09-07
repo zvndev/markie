@@ -1044,6 +1044,68 @@ describe("skill registry", () => {
     ]);
   });
 
+  // The lock's entries have owners. The Vercel CLI writes entries for its own
+  // installs, and an entry naming another source with no Markie row behind
+  // it is the CLI's record of a skill still on disk somewhere.
+  it("refuses a name the lock says came from somewhere else when Markie has no row for it", async () => {
+    const lockFile = path.join(home, ".agents", ".skill-lock.json");
+    fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+    const theirs = { version: 3, skills: { pdf: { source: "other/repo", sourceType: "github" } } };
+    fs.writeFileSync(lockFile, JSON.stringify(theirs), "utf8");
+    const { skills } = await load();
+    const result = skills.install("acme/kit/skills/pdf", ["claude", "codex"]);
+    expect(result.installed).toEqual([]);
+    expect(result.errors.map((e: { error: string; message: string }) => [e.error, e.message])).toEqual([
+      ["exists", "pdf is already installed from other/repo. Remove it first."],
+      ["exists", "pdf is already installed from other/repo. Remove it first."],
+    ]);
+    expect(fs.existsSync(path.join(home, ".claude", "skills", "pdf"))).toBe(false);
+    expect(fs.existsSync(path.join(home, ".codex", "skills", "pdf"))).toBe(false);
+    expect(JSON.parse(fs.readFileSync(lockFile, "utf8"))).toEqual(theirs);
+    // A different skill is not held up by it.
+    expect(skills.install("acme/kit/root-skill", ["claude"]).installed.length).toBe(1);
+  });
+
+  it("installs over a lock entry from the same source, and updates it", async () => {
+    const lockFile = path.join(home, ".agents", ".skill-lock.json");
+    fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+    fs.writeFileSync(
+      lockFile,
+      JSON.stringify({
+        version: 3,
+        skills: {
+          pdf: { source: "acme/kit", sourceType: "github", skillFolderHash: "0".repeat(40), installedAt: "2026-01-01T00:00:00.000Z" },
+        },
+      }),
+      "utf8"
+    );
+    const { skills, catalog } = await load();
+    const hash = catalog.skills.find((s: { name: string }) => s.name === "pdf").folderHash;
+    const result = skills.install("acme/kit/skills/pdf", ["claude"]);
+    expect(result.errors).toEqual([]);
+    expect(result.installed.length).toBe(1);
+    const entry = JSON.parse(fs.readFileSync(lockFile, "utf8")).skills.pdf;
+    expect(entry).toMatchObject({ source: "acme/kit", skillFolderHash: hash, installedAt: "2026-01-01T00:00:00.000Z" });
+  });
+
+  it("keeps the lock entry on remove while a folder of that name is still installed somewhere", async () => {
+    const { skills } = await installOnce();
+    const lockFile = path.join(home, ".agents", ".skill-lock.json");
+    // The CLI's own copy for Cursor, which Markie has no row for.
+    const theirs = path.join(home, ".cursor", "skills", "pdf");
+    fs.mkdirSync(theirs, { recursive: true });
+    fs.writeFileSync(path.join(theirs, "SKILL.md"), "theirs\n", "utf8");
+    expect(skills.remove("claude", "pdf")).toEqual({ ok: true });
+    expect(store.installs.size).toBe(0);
+    expect(JSON.parse(fs.readFileSync(lockFile, "utf8")).skills.pdf).toMatchObject({ source: "acme/kit" });
+    expect(fs.readFileSync(path.join(theirs, "SKILL.md"), "utf8")).toBe("theirs\n");
+    // With no folder of that name anywhere, the entry goes with the last one.
+    fs.rmSync(theirs, { recursive: true, force: true });
+    expect(skills.install("acme/kit/skills/pdf", ["claude"]).installed.length).toBe(1);
+    expect(skills.remove("claude", "pdf")).toEqual({ ok: true });
+    expect(JSON.parse(fs.readFileSync(lockFile, "utf8")).skills).toEqual({});
+  });
+
   it("rebuilds the lock entry from the copy that remains, and drops it with the last one", async () => {
     const { skills } = await installOnce(["claude", "codex"]);
     const lockFile = path.join(home, ".agents", ".skill-lock.json");

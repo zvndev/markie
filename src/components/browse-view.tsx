@@ -42,6 +42,30 @@ function rememberedOpen(): Set<string> | null {
   }
 }
 
+const MINUTE_MS = 60_000;
+
+// The dates in the column age on their own, and Browse can sit open for hours
+// without a click to re-render it: "just now" would stay true-looking long
+// after it stopped being true. Tick on the minute boundary so every row turns
+// over together, and only while the panel is actually mounted.
+function useMinuteTick(): void {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    let repeat: ReturnType<typeof setInterval> | undefined;
+    const align = setTimeout(
+      () => {
+        setTick((n) => n + 1);
+        repeat = setInterval(() => setTick((n) => n + 1), MINUTE_MS);
+      },
+      MINUTE_MS - (Date.now() % MINUTE_MS)
+    );
+    return () => {
+      clearTimeout(align);
+      if (repeat) clearInterval(repeat);
+    };
+  }, []);
+}
+
 // Module scope so the recursive tree rows can use it too. It was defined
 // inside BrowseView, which also meant a fresh component identity every render.
 function Star({ on, onClick }: { on: boolean; onClick: () => void }) {
@@ -124,7 +148,9 @@ function FolderRow({
               </span>
               <span
                 data-markie-browse-updated
-                title={updatedOn(f.mtimeMs)}
+                // Empty when the indexer could not stat the file: an empty
+                // title attribute is still a tooltip, so leave it off entirely.
+                title={updatedOn(f.mtimeMs) || undefined}
                 className="shrink-0 text-[10px] text-muted tabular-nums"
               >
                 {updatedAgo(f.mtimeMs)}
@@ -153,6 +179,7 @@ function FolderRow({
 
 export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   const api = getElectronAPI();
+  useMinuteTick();
   const [rows, setRows] = useState<MdRow[]>([]);
   const [stars, setStars] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(!!api?.mdIndexScan);
@@ -331,6 +358,11 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   );
 
   const toggle = (path: string) => {
+    // While the filter is holding the tree open, a chevron has nothing to do:
+    // the row springs back the moment it renders. Saving the filtered shape
+    // over what the user opened for themselves is the part that lasted, and it
+    // closed folders they never touched once the filter cleared.
+    if (forcedOpen) return;
     const next = new Set(open);
     if (next.has(path)) next.delete(path);
     else next.add(path);

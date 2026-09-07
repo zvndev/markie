@@ -223,3 +223,80 @@ describe("BrowseView browsing", () => {
     expect(screen.getByText("zzz.md")).toBeInTheDocument();
   });
 });
+
+const filterField = () => screen.getByPlaceholderText(/Filter by name or path/);
+const dateCell = () => document.querySelector("[data-markie-browse-updated]");
+
+describe("BrowseView dates that keep themselves honest", () => {
+  it("shows nothing, and no tooltip, for a file the indexer could not stat", async () => {
+    renderBrowse(scan({ files: [row({ mtimeMs: 0 })] }));
+    await screen.findByText("one.md");
+    expect(dateCell()?.textContent).toBe("");
+    expect(dateCell()?.hasAttribute("title")).toBe(false);
+  });
+
+  // Browse can sit open all afternoon without a click, and "just now" was
+  // staying on screen long after it stopped being true.
+  it("ages while the panel sits open, with nobody touching it", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 8, 7, 12, 0, 0));
+      renderBrowse(scan({ files: [row({ mtimeMs: Date.now() - 30_000 })] }));
+      await act(async () => {});
+      expect(dateCell()?.textContent).toBe("just now");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(90_000);
+      });
+      expect(dateCell()?.textContent).toBe("2m ago");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops ticking once Browse is gone", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 8, 7, 12, 0, 0));
+      const { unmount } = render(<BrowseView onOpenPath={vi.fn()} activePath={null} />);
+      await act(async () => {});
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      unmount();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("BrowseView toggling under a filter", () => {
+  // The filter holds matching rows open, so a chevron has nothing to close.
+  // What used to last was the save: the filtered tree's shape was written over
+  // the user's own open set, and folders they never touched closed when the
+  // filter cleared.
+  it("leaves the remembered open set alone", async () => {
+    renderBrowse(scan({ files: project() }));
+    await screen.findByText("docs");
+    expect(localStorage.getItem("markie.browse.open.v1")).toBeNull();
+
+    await userEvent.type(filterField(), "docs");
+    expect(await screen.findByText("guide.md")).toBeInTheDocument();
+
+    const forcedRow = document.querySelector("[data-markie-folder-node] > div") as HTMLElement;
+    await userEvent.click(forcedRow);
+    // Still open, because the filter says so, and nothing was written down.
+    expect(screen.getByText("guide.md")).toBeInTheDocument();
+    expect(localStorage.getItem("markie.browse.open.v1")).toBeNull();
+
+    await userEvent.clear(filterField());
+    expect(await screen.findByText("notes")).toBeInTheDocument();
+    expect(screen.getByText("docs")).toBeInTheDocument();
+  });
+
+  it("still opens a file from a row the filter forced open", async () => {
+    const { onOpenPath } = renderBrowse(scan({ files: project() }));
+    await screen.findByText("docs");
+    await userEvent.type(filterField(), "guide");
+    await userEvent.click(await screen.findByText("guide.md"));
+    expect(onOpenPath).toHaveBeenCalledWith("/home/me/work/docs/guide.md");
+  });
+});

@@ -74,8 +74,38 @@ describe("updatedAgo", () => {
     expect(updatedAgo(NOW + DAY, NOW)).toBe("just now");
   });
 
-  it("says nothing for a missing timestamp", () => {
-    expect(updatedAgo(NaN, NOW)).toBe("");
+  // The indexer writes 0 when stat fails, and 0 used to print "1969" with an
+  // epoch tooltip behind it.
+  it("says nothing for a timestamp it does not have", () => {
+    for (const missing of [0, -1, NaN, undefined as unknown as number]) {
+      expect(updatedAgo(missing, NOW), String(missing)).toBe("");
+    }
+  });
+});
+
+// Local wall-clock times, built here rather than parsed, so these read the same
+// wherever the suite runs. `now` is always passed: no test reads a real clock.
+describe("updatedAgo around midnight", () => {
+  const at = (y: number, month: number, d: number, h: number, min = 0) =>
+    new Date(y, month - 1, d, h, min).getTime();
+
+  it("calls last night yesterday, however few hours ago it was", () => {
+    expect(updatedAgo(at(2026, 9, 6, 23), at(2026, 9, 7, 9))).toBe("yesterday");
+  });
+
+  it("still counts minutes across midnight, where the elapsed time is the point", () => {
+    expect(updatedAgo(at(2026, 9, 6, 23, 50), at(2026, 9, 7, 0, 10))).toBe("20m ago");
+  });
+
+  it("counts hours all the way to the end of the same day", () => {
+    expect(updatedAgo(at(2026, 9, 7, 0, 5), at(2026, 9, 7, 23, 55))).toBe("23h ago");
+  });
+
+  it("names the date once yesterday is no longer true", () => {
+    const then = at(2026, 9, 5, 22);
+    expect(updatedAgo(then, at(2026, 9, 7, 9))).toBe(
+      new Date(then).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+    );
   });
 });
 
@@ -85,7 +115,9 @@ describe("updatedOn", () => {
     expect(updatedOn(t)).toBe(new Date(t).toLocaleString());
   });
 
-  it("says nothing for a missing timestamp", () => {
-    expect(updatedOn(NaN)).toBe("");
+  it("says nothing for a timestamp it does not have, so the cell gets no tooltip", () => {
+    for (const missing of [0, -1, NaN, undefined as unknown as number]) {
+      expect(updatedOn(missing), String(missing)).toBe("");
+    }
   });
 });

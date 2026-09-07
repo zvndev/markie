@@ -99,12 +99,18 @@ function collapse(node: Building): FolderNode {
     files,
     children,
     total: files.length + children.reduce((sum, c) => sum + c.total, 0),
-    latestMtimeMs: Math.max(
-      0,
-      ...files.map((f) => f.mtimeMs),
-      ...children.map((c) => c.latestMtimeMs)
-    ),
+    latestMtimeMs: newest(files, children),
   };
+}
+
+// A loop rather than Math.max(...files): the indexer will hand us up to 200,000
+// files (electron/mdindex.js), and one folder holding a large share of them is
+// enough arguments to blow the call stack before Browse renders anything.
+function newest(files: readonly FileEntry[], children: readonly FolderNode[]): number {
+  let latest = 0;
+  for (const f of files) if (f.mtimeMs > latest) latest = f.mtimeMs;
+  for (const c of children) if (c.latestMtimeMs > latest) latest = c.latestMtimeMs;
+  return latest;
 }
 
 const byLabel = (a: FolderNode, b: FolderNode) => a.label.localeCompare(b.label);

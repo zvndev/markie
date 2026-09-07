@@ -190,6 +190,22 @@ describe("the newest file beneath a folder", () => {
     expect(tree[0].children[0].latestMtimeMs).toBe(900);
   });
 
+  // 200,000 is the indexer's cap (electron/mdindex.js), and one directory can
+  // hold all of it. Math.max(...files) died here with a RangeError before the
+  // whole panel had drawn anything.
+  it("survives one folder holding the whole index", () => {
+    const rows = Array.from({ length: 200_000 }, (_, i) => ({
+      path: `/big/file${i}.md`,
+      name: `file${i}.md`,
+      dir: "/big",
+      mtimeMs: i + 1,
+    }));
+    const tree = buildFolderTree(rows);
+    expect(tree[0].latestMtimeMs).toBe(200_000);
+    const sorted = sortTree(tree, "updated");
+    expect(sorted[0].files[0].name).toBe("file199999.md");
+  }, 20_000);
+
   it("is the folder's own newest file when nothing below it is newer", () => {
     const tree = buildFolderTree([
       file("/a/b/recent.md", 900),

@@ -39,22 +39,22 @@ export function longAgo(ms: number, now: number = Date.now()): string {
 }
 
 // The Browse column: short enough to sit beside a filename, specific enough to
-// be worth the space. Minutes and hours while that is what you mean, then the
-// day by name, then the date, then just the year.
+// be worth the space. Minutes while that is what you mean, then hours for the
+// rest of today, then the day by name, then the date, then just the year.
 export function updatedAgo(ms: number, now: number = Date.now()): string {
-  if (!Number.isFinite(ms)) return "";
+  if (!known(ms)) return "";
   const delta = Math.max(0, now - ms);
   if (delta < MINUTE) return "just now";
+  // Under an hour stays elapsed time even across midnight: "20m ago" is what
+  // you want at ten past twelve, not "yesterday".
   if (delta < HOUR) return `${Math.floor(delta / MINUTE)}m ago`;
-  if (delta < DAY) return `${Math.floor(delta / HOUR)}h ago`;
   const then = new Date(ms);
   const today = new Date(now);
-  // Calendar days, not 24-hour blocks: something saved at 11pm is "yesterday"
-  // all through the next morning, which is how anyone reads it.
-  const days = Math.round(
-    (startOfDay(today) - startOfDay(then)) / DAY
-  );
-  if (days <= 1) return "yesterday";
+  // Calendar days from here, not 24-hour blocks. Counting hours instead is how
+  // 11pm last night ends up reading "10h ago" over this morning's coffee.
+  const days = Math.round((startOfDay(today) - startOfDay(then)) / DAY);
+  if (days <= 0) return `${Math.floor(delta / HOUR)}h ago`;
+  if (days === 1) return "yesterday";
   if (then.getFullYear() === today.getFullYear())
     return then.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   return String(then.getFullYear());
@@ -62,8 +62,14 @@ export function updatedAgo(ms: number, now: number = Date.now()): string {
 
 // The whole thing, for the tooltip over a date that had to be short.
 export function updatedOn(ms: number): string {
-  if (!Number.isFinite(ms)) return "";
+  if (!known(ms)) return "";
   return new Date(ms).toLocaleString();
+}
+
+// The indexer writes 0 when it cannot stat a file, so a non-positive number is
+// "we do not know", not 1970. Saying nothing beats saying the wrong year.
+function known(ms: number): boolean {
+  return Number.isFinite(ms) && ms > 0;
 }
 
 function startOfDay(d: Date): number {

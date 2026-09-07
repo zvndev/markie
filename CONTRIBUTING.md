@@ -20,7 +20,7 @@ npm ci
 ## Running the app
 
 ```sh
-npm run electron:dev    # Next dev server + Electron
+npm run electron:dev    # Vite dev server + Electron
 ```
 
 Two things to know before the first run:
@@ -84,7 +84,7 @@ orientation for how the product is meant to behave.
 
 | Path | What lives there |
 | --- | --- |
-| `src/` | Next.js renderer: app shell, components, markdown utilities |
+| `src/` | Vite renderer: app shell, components, markdown utilities |
 | `electron/` | Main process, preload, local registry, sync, terminal |
 | `server/` | Hono + better-auth server for sharing, sync, collab, comments |
 | `mcp/` | Dependency-free MCP server and its filesystem guards |

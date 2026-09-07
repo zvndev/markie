@@ -15,7 +15,7 @@ override task notes, backlog entries, and older progress logs.
 - Server tests: `(cd server && npm test)`
 
 ## Layout
-- `src/app`, `src/components`, `src/lib`: Next/React renderer, editor surfaces, markdown utilities.
+- `src/app`, `src/components`, `src/lib`: Vite/React renderer, editor surfaces, markdown utilities.
 - `electron`: Electron main/preload, local registry, terminal, sync, app integrations.
 - `server`: Hono/better-auth server for sharing, public links, sync, collaboration, comments.
 - `mcp`: dependency-free Markie MCP server and filesystem guards.

@@ -7,7 +7,7 @@
 // which is not the same question as "which tool wrote this file" that
 // classifyAgentFile answers for instruction files.
 import { classifyAgentFile, isCachedAgentPath, type AgentKind } from "@/lib/agent-files";
-import type { CatalogSkill, SkillSource, SkillTarget } from "@/lib/electron";
+import type { CatalogSkill, SearchHit, SkillSource, SkillTarget } from "@/lib/electron";
 
 // ── The two tabs ──
 
@@ -68,6 +68,23 @@ export function skillGroupFor(path: string, name: string): SkillGroupId | null {
   if (p.includes("/.gemini/")) return "gemini";
   if (p.includes("/.agents/")) return "universal";
   return null;
+}
+
+// ── Folders ──
+
+/**
+ * One key per folder, however it was spelled.
+ *
+ * The registry canonicalizes a Windows path to lower case at its own boundary
+ * and the markdown index hands back whatever the filesystem said, so folding
+ * separators alone gave one installed skill two keys and drew it as two rows.
+ * Case is folded only where the filesystem folds it.
+ */
+export function canonicalFolder(path: string, platform: string): string {
+  const folded = String(path ?? "")
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "");
+  return platform === "win32" ? folded.toLowerCase() : folded;
 }
 
 // ── Targets ──
@@ -138,6 +155,29 @@ export function writeRememberedTargets(
   }
 }
 
+/** "Claude Code", "Claude Code and Codex", "Claude Code, Codex and 1 more". */
+export function formatDestinations(targets: SkillTarget[]): string {
+  const names = targets.map(targetLabel);
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names[0]}, ${names[1]} and ${names.length - 2} more`;
+}
+
+// The button says what it is about to do to which place. "Add skill" left the
+// user to remember what they had ticked three rows above it.
+export function installLabel(targets: SkillTarget[], updating: boolean): string {
+  if (targets.length === 0) return "Add skill";
+  if (targets.length === 1) {
+    return updating ? `Update in ${targetLabel(targets[0])}` : `Add to ${targetLabel(targets[0])}`;
+  }
+  return updating ? `Update in ${targets.length} targets` : `Add to ${targets.length} targets`;
+}
+
+/** What a target means, for the two nobody can infer from the name. */
+export const UNIVERSAL_HINT = "~/.agents/skills, read by every tool that looks there";
+export const PROJECT_HINT = "this workspace's .claude/skills folder";
+
 // ── Rows ──
 
 // The badge under a catalog row. A repository that ships no LICENSE says so
@@ -152,6 +192,25 @@ export function licenseBadge(license: string | null | undefined): string {
     return "Proprietary";
   }
   return text;
+}
+
+/** Said once, in the detail pane, where there is room to act on it. */
+export const LICENSE_NOTE = "Review the licence before installing";
+
+export const PROPRIETARY_NOTE =
+  "The repository states this skill is proprietary. Read its licence before you use it.";
+
+// A licence name reads as a badge. A sentence does not: "Complete terms in
+// LICENSE.txt" is what anthropics/skills writes, and one of those under every
+// row in the catalog was the loudest thing on the list. Rows keep the name or
+// nothing; the sentence is represented in the detail pane by LICENSE_NOTE.
+const LICENSE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9.+ -]{0,19}$/;
+
+export function licenseChip(license: string | null | undefined): string | null {
+  const badge = licenseBadge(license);
+  if (badge === "Proprietary") return badge;
+  if (badge === "License in repo") return null;
+  return LICENSE_NAME_RE.test(badge) ? badge : null;
 }
 
 export function matchesSkill(
@@ -174,6 +233,40 @@ export function formatSize(bytes: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// ── Resolving a skills.sh hit ──
+//
+// skills.sh names the pdf skill `anthropics/skills/pdf`. Discovery finds it in
+// that repository's `skills/` container and calls it
+// `anthropics/skills/skills/pdf`. The two ids are not the same string and never
+// were, so a hit has to be matched against the catalog by what it is (this
+// source, this skill folder) rather than looked up by id.
+
+/** The skill part of a hit's id: "anthropics/skills/pdf" over "anthropics/skills" is "pdf". */
+export function hitSkillKey(hit: Pick<SearchHit, "id" | "source" | "name">): string {
+  const id = String(hit.id ?? "");
+  const source = String(hit.source ?? "");
+  const rest = source && id.startsWith(`${source}/`) ? id.slice(source.length + 1) : id;
+  const last = rest.split(/[\\/]/).filter(Boolean).pop();
+  return String(last || hit.name || "").toLowerCase();
+}
+
+export function resolveHit(
+  hit: Pick<SearchHit, "id" | "source" | "name">,
+  skills: CatalogSkill[]
+): CatalogSkill | null {
+  const wanted = new Set([hitSkillKey(hit), String(hit.name ?? "").toLowerCase()].filter(Boolean));
+  if (wanted.size === 0) return null;
+  const same = skills.filter((skill) => skill.source === hit.source);
+  // The folder is the identity skills.sh indexes, so it is asked first across
+  // the whole source; a skill that merely shares the name is the fallback.
+  const byFolder = same.find((skill) => {
+    const folder = String(skill.skillPath ?? "").split(/[\\/]/).filter(Boolean).pop();
+    return wanted.has(String(folder ?? "").toLowerCase());
+  });
+  if (byFolder) return byFolder;
+  return same.find((skill) => wanted.has(skill.name.toLowerCase())) ?? null;
+}
+
 // ── When the catalog was last fetched ──
 
 export function newestFetchedAt(sources: Pick<SkillSource, "fetchedAt">[]): number | null {
@@ -190,13 +283,13 @@ export function newestFetchedAt(sources: Pick<SkillSource, "fetchedAt">[]): numb
 export function describeChecked(at: number | null, now: number): string | null {
   if (at === null) return null;
   const seconds = Math.max(0, Math.round((now - at) / 1000));
-  if (seconds < 60) return "checked just now";
+  if (seconds < 60) return "Catalog updated just now";
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `checked ${minutes} min ago`;
+  if (minutes < 60) return `Catalog updated ${minutes} min ago`;
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `checked ${hours} hour${hours === 1 ? "" : "s"} ago`;
+  if (hours < 24) return `Catalog updated ${hours} hour${hours === 1 ? "" : "s"} ago`;
   const days = Math.round(hours / 24);
-  return `checked ${days} day${days === 1 ? "" : "s"} ago`;
+  return `Catalog updated ${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 // ── Adding a source ──

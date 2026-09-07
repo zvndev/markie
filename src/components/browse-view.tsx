@@ -114,7 +114,11 @@ function FolderRow({
               {/* Stands in for the folder chevron, so names line up with the
                   labels above them. */}
               <span aria-hidden="true" className="w-3 shrink-0" />
-              <span className="truncate flex-1">{f.name}</span>
+              {/* Deep rows have little room left for a name, so the whole path
+                  is one hover away, the same as a folder row. */}
+              <span className="truncate flex-1" title={f.path}>
+                {f.name}
+              </span>
               <span
                 data-markie-browse-updated
                 title={updatedOn(f.mtimeMs)}
@@ -350,6 +354,9 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
           className="w-full text-[12px] bg-background border border-border rounded-md px-2 py-1 text-foreground outline-none focus:border-foreground/40"
         />
         <div className="flex items-center gap-1 text-[11px]">
+          {/* Two tabs used to sit here, so name what these are: without the
+              word they read as another pair of views. */}
+          <span className="text-muted pl-0.5">Sort</span>
           {SORTS.map(({ order, label, hint }) => (
             <button
               key={order}

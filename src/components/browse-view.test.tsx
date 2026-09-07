@@ -164,6 +164,8 @@ describe("BrowseView browsing", () => {
     const cell = document.querySelector("[data-markie-browse-updated]");
     expect(cell?.textContent).toBe("2h ago");
     expect(cell?.getAttribute("title")).toBe(new Date(when).toLocaleString());
+    // A name squeezed out by the indent is still one hover from readable.
+    expect(screen.getByText("one.md")).toHaveAttribute("title", "/home/me/notes/one.md");
   });
 
   it("sorts files by name, and by when they changed when asked to", async () => {

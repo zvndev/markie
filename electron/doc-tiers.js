@@ -50,18 +50,31 @@ function tierForSize(size) {
  * that into "nothing opened".
  *
  * @param {string} filePath
- * @param {{ openSync(p: string, flags: "r"): number, fstatSync(fd: number): { size: number }, readFileSync(fd: number): Buffer, closeSync(fd: number): void }} [io]
+ * @param {{ openSync(p: string, flags: "r"): number, fstatSync(fd: number): { size: number }, readSync(fd: number, buffer: Buffer, offset: number, length: number, position: null): number, closeSync(fd: number): void }} [io]
  */
 function readDocumentTiered(filePath, io = fs) {
   const fd = io.openSync(filePath, "r");
   try {
     const measured = io.fstatSync(fd).size;
     if (tierForSize(measured) === "tooLarge") return { tooLarge: true, size: measured };
-    const bytes = io.readFileSync(fd);
-    const size = bytes.length;
-    const tier = tierForSize(size);
-    if (tier === "tooLarge") return { tooLarge: true, size };
-    return { content: bytes.toString("utf-8"), size, large: tier === "large" };
+    // Read at most the cap. A file that grows under the stat is refused at
+    // the cap rather than read whole and decoded first: a writer on the same
+    // machine must not be able to make main allocate whatever it likes. One
+    // byte past the measured size is room to notice growth at all.
+    let buffer = Buffer.allocUnsafe(Math.min(measured + 1, MAX_DOC_BYTES));
+    let size = 0;
+    for (;;) {
+      if (size === buffer.length) {
+        if (buffer.length >= MAX_DOC_BYTES) {
+          return { tooLarge: true, size: Math.max(io.fstatSync(fd).size, MAX_DOC_BYTES) };
+        }
+        buffer = Buffer.concat([buffer], Math.min(buffer.length * 2, MAX_DOC_BYTES));
+      }
+      const n = io.readSync(fd, buffer, size, buffer.length - size, null);
+      if (n === 0) break;
+      size += n;
+    }
+    return { content: buffer.toString("utf-8", 0, size), size, large: tierForSize(size) === "large" };
   } finally {
     io.closeSync(fd);
   }

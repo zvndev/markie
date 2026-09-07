@@ -220,6 +220,19 @@ describe("FindBar", () => {
     expect(screen.getByText("2 of 3")).toBeInTheDocument();
   });
 
+  it("settles the query from the shortcut too", async () => {
+    const user = userEvent.setup();
+    const { target } = renderBar();
+    await user.keyboard("tw");
+    await settled("1 of 3");
+    await user.keyboard("o");
+    fireEvent.keyDown(window, { code: "KeyG", metaKey: true });
+    await waitFor(() => expect(target.reveal).toHaveBeenLastCalledWith({ from: 4, to: 7 }));
+    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    fireEvent.keyDown(window, { code: "KeyG", metaKey: true });
+    expect(screen.getByText("2 of 3")).toBeInTheDocument();
+  });
+
   it("says why instead of showing dead buttons on a read-only share", async () => {
     const user = userEvent.setup();
     const { target } = renderBar({ withReplace: true, canReplace: false });

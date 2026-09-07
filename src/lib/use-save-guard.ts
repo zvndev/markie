@@ -172,9 +172,13 @@ export function useSaveGuard({
         autosaveRef.current?.cancel();
       },
       async settle() {
-        let landed = true;
+        // A save that was never attempted has not landed: a dirty restore (a
+        // history version, a recovered draft) arms nothing, and "nothing
+        // pending" must not read as "already on disk".
+        const scheduler = autosaveRef.current;
+        let landed = scheduler?.isPending() ?? false;
         try {
-          landed = (await autosaveRef.current?.flush()) ?? true;
+          if (landed) landed = (await scheduler!.flush()) ?? true;
         } catch {
           // A failed flush has already reported itself through the save path.
           // Blocking the transition on it would trap the user in a document

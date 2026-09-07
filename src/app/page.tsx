@@ -34,7 +34,7 @@ import { ShareDialog } from "@/components/share-dialog";
 import { ShareGate } from "@/components/share-gate";
 import {
   ShareBanner,
-  LiveSourceBanner,
+  LiveSourceBanner, LiveUnavailableNote,
   UpdateStrip,
 } from "@/components/share-banner";
 import { ConflictDialog } from "@/components/conflict-dialog";
@@ -122,6 +122,13 @@ import { useDocumentExport } from "@/lib/use-export";
 // How long after the last edit the document's size is measured again (see the
 // re-tiering effect in Home).
 const EDIT_TIER_DELAY_MS = 500;
+
+// A file converted on the way in (a CSV as a markdown table, every cell
+// gaining its separators) is tiered by the text the pane holds, which
+// enterTier measures when it is given no size; an unconverted one is tiered
+// by the bytes main read.
+const sizeUnlessConverted = (md: string, raw: string, bytes: number): number | undefined =>
+  md === raw ? bytes : undefined;
 
 const SAMPLE = `# Northstar Sprint Brief
 
@@ -290,6 +297,13 @@ export default function Home() {
   const [liveStatus, setLiveStatus] = useState<
     "connecting" | "connected" | "disconnected"
   >("disconnected");
+  // The runtime behind the live session could not load for this document
+  // (src/lib/collab-loader.ts). The page leaves live mode for it: a solo
+  // editor under a live-session flag would have its saves skip the cloud
+  // push (handleSave trusts the update log while live), and the source pane
+  // would stay read-only for a session that is not there.
+  const [liveUnavailable, setLiveUnavailable] = useState(false);
+  const liveUnavailableRef = useRef(false);
   // Owner-pinned theme on the open shared doc (non-owners only)
   const [enforcedTheme, setEnforcedTheme] = useState<ThemeTokens | null>(null);
 
@@ -422,7 +436,7 @@ export default function Home() {
         // No live session for a large document (enterTier): Source is
         // read-only under one, and the rich pane that would carry it never
         // mounts, so a session would only lock the owner out of their file.
-        if (largeDocRef.current || !me || !members || members.length === 0) {
+        if (largeDocRef.current || liveUnavailableRef.current || !me || !members || members.length === 0) {
           setCollabCfg(null);
           return;
         }
@@ -682,7 +696,7 @@ export default function Home() {
         if (bytes === null) return;
         const pulled = fromDisk(fileName, res.content);
         applyExternalDoc(pulled);
-        enterTier(pulled, docRef.current.filePath, bytes);
+        enterTier(pulled, docRef.current.filePath, sizeUnlessConverted(pulled, res.content, bytes));
       }
       setUpdateWaiting(null);
       setLibRefreshKey((k) => k + 1);
@@ -700,7 +714,7 @@ export default function Home() {
       if (bytes !== null) {
         const pulled = fromDisk(fileName, next);
         applyExternalDoc(pulled);
-        enterTier(pulled, docRef.current.filePath, bytes);
+        enterTier(pulled, docRef.current.filePath, sizeUnlessConverted(pulled, next, bytes));
       }
       setUpdateWaiting(null);
       setUpdateError(null);
@@ -766,6 +780,9 @@ export default function Home() {
   // The docked side panel is persistent navigation chrome, not an overlay:
   // it stays open so browsing file-to-file doesn't slam it shut.
   const dismissDocumentUI = useCallback(() => {
+    // The next document gets its own attempt at a live session.
+    liveUnavailableRef.current = false;
+    setLiveUnavailable(false);
     setShowStats(false);
     setShowPalette(false);
     setShowHelp(false);
@@ -789,7 +806,16 @@ export default function Home() {
 
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
-    (s: "connecting" | "connected" | "disconnected") => setLiveStatus(s),
+    (s: "connecting" | "connected" | "disconnected" | "unavailable") => {
+      if (s !== "unavailable") {
+        setLiveStatus(s);
+        return;
+      }
+      liveUnavailableRef.current = true;
+      setLiveUnavailable(true);
+      setLiveStatus("disconnected");
+      setCollabCfg(null);
+    },
     []
   );
 
@@ -803,12 +829,12 @@ export default function Home() {
       // the open document changes; the strip says what happened.
       if (isTooLarge(data)) {
         setRefusedDoc({ name: data.name, size: data.size });
-        return;
+        return false;
       }
       // A restore (history, a recovered draft) or a file read outside main
       // carries no size; it is measured here and refused over the cap.
       const bytes = admitUnderCap(data.content, data.name, data.size, data.unsaved ? "restored" : "opened");
-      if (bytes === null) return;
+      if (bytes === null) return false;
       setRefusedDoc(null);
       // Whatever the last document still owes disk lands before this one
       // replaces it. This is the P0: Markie used to drop it silently.
@@ -843,6 +869,7 @@ export default function Home() {
         });
       }
       setLibRefreshKey((k) => k + 1);
+      return true;
     },
     [dismissDocumentUI, resetDocAccess, admitUnderCap, enterTier, loadDoc, settleDocument]
   );
@@ -1030,7 +1057,7 @@ export default function Home() {
       if (bytes !== null) {
         const reloaded = fromDisk(fileName, res.content);
         applyExternalDoc(reloaded);
-        enterTier(reloaded, filePath, bytes);
+        enterTier(reloaded, filePath, sizeUnlessConverted(reloaded, res.content, bytes));
       }
       return null;
     }
@@ -1387,7 +1414,7 @@ export default function Home() {
     if (bytes !== null) {
       const md = fromDisk(fileName, diskChange.content);
       applyExternalDoc(md);
-      enterTier(md, docRef.current.filePath, bytes);
+      enterTier(md, docRef.current.filePath, sizeUnlessConverted(md, diskChange.content, bytes));
     }
     setDiskChange(null);
     setShowDiskConflict(false);
@@ -1862,12 +1889,16 @@ export default function Home() {
               onRestore={() => {
                 const entry = saveGuard.recovered;
                 if (!entry) return;
-                saveGuard.acceptRecovered();
+                // The offer stays until the restore lands. A draft over the
+                // cap is refused, and taking the offer down first left the
+                // only copy of it with no way back from the window.
                 void loadFile({
                   name: entry.name ?? "untitled.md",
                   content: entry.content,
                   path: entry.path,
                   unsaved: true,
+                }).then((landed) => {
+                  if (landed) saveGuard.acceptRecovered();
                 });
               }}
               onDiscard={saveGuard.discardRecovered}
@@ -1943,6 +1974,7 @@ export default function Home() {
                 } markie-source-pane h-full min-w-0 w-full flex-1 overflow-hidden flex flex-col`}
               >
                 {collabCfg && <LiveSourceBanner />}
+                {liveUnavailable && <LiveUnavailableNote />}
                 <div className="flex-1 min-h-0 overflow-hidden">
                   <SourceEditor
                     value={content}
@@ -1976,6 +2008,7 @@ export default function Home() {
                     />
                   )}
                   {richPreparing && !collabCfg && <RichPreparingNote />}
+                  {liveUnavailable && <LiveUnavailableNote />}
                   <div className="flex-1 min-h-0">
                   <ErrorBoundary
                     fallback={(_error, reset) => (

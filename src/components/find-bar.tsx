@@ -175,11 +175,11 @@ export function FindBar({
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.code !== "KeyG") return;
       e.preventDefault();
-      step(e.shiftKey ? -1 : 1);
+      settleOrStep(e.shiftKey ? -1 : 1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, step]);
+  }, [open, settleOrStep]);
 
   const close = useCallback(() => {
     target?.release(matches[current] ?? null);

@@ -47,17 +47,27 @@ describe("document size tiers", () => {
 
   // A fake descriptor: the read must come from the descriptor that was
   // measured, never from the path again.
-  const fdIo = (size: number, bytes: string | Buffer) => ({
-    openSync: vi.fn(() => 7),
-    fstatSync: vi.fn(() => ({ size })),
-    readFileSync: vi.fn(() => (typeof bytes === "string" ? Buffer.from(bytes, "utf-8") : bytes)),
-    closeSync: vi.fn(),
-  });
+  // A fake descriptor over `bytes`, read the way fs.readSync reads: as much
+  // as the caller asked for, from where the last read stopped.
+  const fdIo = (size: number, bytes: string | Buffer) => {
+    const src = typeof bytes === "string" ? Buffer.from(bytes, "utf-8") : bytes;
+    let at = 0;
+    return {
+      openSync: vi.fn(() => 7),
+      fstatSync: vi.fn(() => ({ size })),
+      readSync: vi.fn((_fd: number, buf: Buffer, offset: number, length: number) => {
+        const n = src.copy(buf, offset, at, Math.min(src.length, at + length));
+        at += n;
+        return n;
+      }),
+      closeSync: vi.fn(),
+    };
+  };
 
   it("refuses a file over the cap without reading it, and still closes it", () => {
     const io = fdIo(143_000_000, "must not be read");
     expect(readDocumentTiered("/big/file.md", io)).toEqual({ tooLarge: true, size: 143_000_000 });
-    expect(io.readFileSync).not.toHaveBeenCalled();
+    expect(io.readSync).not.toHaveBeenCalled();
     expect(io.closeSync).toHaveBeenCalledWith(7);
   });
 
@@ -68,7 +78,7 @@ describe("document size tiers", () => {
       size: 4_400_000,
       large: true,
     });
-    expect(io.readFileSync).toHaveBeenCalledWith(7);
+    expect(io.readSync.mock.calls[0][0]).toBe(7);
     expect(io.closeSync).toHaveBeenCalledWith(7);
   });
 
@@ -80,8 +90,12 @@ describe("document size tiers", () => {
   it("tiers the bytes it read, not the size it measured a moment earlier", () => {
     // Something appended in place between the stat and the read: the bytes
     // that came back are what the renderer would get, so they set the tier.
+    // The read stops at the cap rather than taking the whole file, and the
+    // size reported is the cap (the fake's stat still says 12).
     const grownPastCap = fdIo(12, Buffer.alloc(143_000_000));
-    expect(readDocumentTiered("/growing.md", grownPastCap)).toEqual({ tooLarge: true, size: 143_000_000 });
+    expect(readDocumentTiered("/growing.md", grownPastCap)).toEqual({ tooLarge: true, size: MAX_DOC_BYTES });
+    const bytesRead = grownPastCap.readSync.mock.results.reduce((n, r) => n + (r.value as number), 0);
+    expect(bytesRead).toBeLessThanOrEqual(MAX_DOC_BYTES);
     expect(grownPastCap.closeSync).toHaveBeenCalledWith(7);
 
     const grownLarge = fdIo(12, Buffer.alloc(LARGE_DOC_BYTES, "x"));
@@ -122,7 +136,7 @@ describe("document size tiers", () => {
         throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       }),
       fstatSync: vi.fn(),
-      readFileSync: vi.fn(),
+      readSync: vi.fn(),
       closeSync: vi.fn(),
     };
     expect(() => readDocumentTiered("/gone.md", io)).toThrow("ENOENT");

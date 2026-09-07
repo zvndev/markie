@@ -145,6 +145,29 @@ describe("the crash journal's pace", () => {
     expect(draftSave.mock.calls[0][0]).toEqual({ path: null, name: null, content: big });
   });
 
+  it("journals a dirty restore that never armed a save, whatever the journal setting", async () => {
+    // A history version restored into a large document: dirty from the first
+    // frame, no edit to arm autosave, and no journal for its size.
+    const big = "x".repeat(300 * 1024);
+    const draftSave = vi.fn<(entry: DraftCall) => void>();
+    const save = vi.fn(async () => true);
+    (window as unknown as { electronAPI?: unknown }).electronAPI = { draftSave };
+    const view = renderHook(() =>
+      useSaveGuard({
+        save,
+        eligible: true,
+        docKey: "/doc.md",
+        document: { path: "/doc.md", name: "doc.md", content: big, dirty: true },
+        booted: false,
+        journal: false,
+      })
+    );
+    await act(() => view.result.current.settle());
+    expect(save).not.toHaveBeenCalled();
+    expect(draftSave).toHaveBeenCalledTimes(1);
+    expect(draftSave.mock.calls[0][0].content).toBe(big);
+  });
+
   it("writes nothing at all for a document the journal is off for", () => {
     const big = "x".repeat(300 * 1024);
     const draftSave = vi.fn<(entry: DraftCall) => void>();

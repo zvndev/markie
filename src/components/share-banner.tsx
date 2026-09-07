@@ -134,6 +134,20 @@ export function UpdateStrip({
 
 // The rich pane owns the shared document while a session is live: it is the one
 // bound to the Yjs doc, so the source pane is a read-only mirror of it.
+// The runtime behind the live session could not load, so the document is
+// open on its own, with saves going to the cloud the ordinary way.
+export function LiveUnavailableNote() {
+  return (
+    <div
+      data-markie-live-failed
+      role="status"
+      className="markie-banner shrink-0 px-3 py-1 text-[11px] text-muted"
+    >
+      The live session could not load. You are editing your copy alone.
+    </div>
+  );
+}
+
 export function LiveSourceBanner() {
   return (
     <div

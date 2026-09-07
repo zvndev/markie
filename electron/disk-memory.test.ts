@@ -11,6 +11,7 @@ interface Entry {
 
 function fakeDisk(files: Record<string, Entry>) {
   const handles = new Map<number, string>();
+  const positions = new Map<number, number>();
   let nextFd = 3;
   const entry = (p: string) => {
     const f = files[p];
@@ -26,12 +27,21 @@ function fakeDisk(files: Record<string, Entry>) {
     openSync: (p: string) => {
       entry(p);
       handles.set(nextFd, p);
+      positions.set(nextFd, 0);
       return nextFd++;
     },
     fstatSync: (fd: number) => ({ size: entry(handles.get(fd)!).bytes.length }),
-    readFileSync: (fd: number) => entry(handles.get(fd)!).bytes,
+    // Sequential reads from the descriptor, the way fs.readSync serves them.
+    readSync: (fd: number, buf: Buffer, offset: number, length: number) => {
+      const src = entry(handles.get(fd)!).bytes;
+      const at = positions.get(fd) ?? 0;
+      const n = src.copy(buf, offset, at, Math.min(src.length, at + length));
+      positions.set(fd, at + n);
+      return n;
+    },
     closeSync: (fd: number) => {
       handles.delete(fd);
+      positions.delete(fd);
     },
   };
 }

@@ -134,7 +134,7 @@ describe("RichView when the live session cannot load", () => {
       expect(container.querySelector("[data-markie-live-loading]")).toBeNull();
       await waitFor(() => expect(editor).not.toBeNull());
       expect((editor as unknown as Editor).isEditable).toBe(true);
-      expect(onCollabStatus).toHaveBeenCalledWith("disconnected");
+      expect(onCollabStatus).toHaveBeenCalledWith("unavailable");
     } finally {
       loader.failed = false;
     }

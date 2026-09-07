@@ -56,7 +56,10 @@ interface RichViewProps {
   /** The viewer owns this document, so may moderate (delete) others' comments. */
   canModerate?: boolean;
   onPeersChange?: (peers: PeerUser[]) => void;
-  onCollabStatus?: (status: "connecting" | "connected" | "disconnected") => void;
+  // "unavailable" is the runtime failing to load at all (see RichView): the
+  // parent should leave live mode for the document, since nothing will
+  // connect and a solo editor under a live flag skips the cloud push.
+  onCollabStatus?: (status: "connecting" | "connected" | "disconnected" | "unavailable") => void;
   // Hands the parent a way to settle the 250 ms debounce on demand and get the
   // markdown back synchronously. Exporting or saving inside that window used to
   // write the document as it stood a keystroke ago. Called with null on unmount
@@ -676,9 +679,11 @@ function RichViewInner({
 export function RichView(props: RichViewProps) {
   const { runtime, failed } = useCollabRuntime(!!props.collab);
   const { onCollabStatus } = props;
-  // Nothing is going to connect, so the toolbar must not keep saying so.
+  // Nothing is going to connect: the parent leaves live mode for this
+  // document (saves push again, the source pane unlocks), and until it does
+  // the editor below opens on the local copy under one line saying so.
   useEffect(() => {
-    if (failed) onCollabStatus?.("disconnected");
+    if (failed) onCollabStatus?.("unavailable");
   }, [failed, onCollabStatus]);
   if (props.collab && !runtime && !failed) {
     return (

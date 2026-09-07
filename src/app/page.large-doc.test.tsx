@@ -324,4 +324,45 @@ describe("large documents", () => {
     expect(probe).not.toHaveBeenCalled();
     expect(registryTrack).toHaveBeenCalledTimes(1);
   });
+
+  it("tiers a CSV reloaded from disk by the table it becomes, not by the file", async () => {
+    const CSV = { name: "data.csv", path: "/notes/data.csv", content: "a,b\n1,2\n", size: 8, large: false };
+    installBridge({ getInitialFile: vi.fn(async () => CSV) } as Partial<ElectronAPI>);
+    render(<Home />);
+    await waitFor(() => expect(richPane()).not.toBeNull());
+
+    // 600,000 bytes of CSV; the markdown table it becomes is past the line.
+    const grown = Array.from({ length: 3000 }, () => "a".repeat(100).split("").join(",")).join("\n") + "\n";
+    emit("onFileChangedOnDisk", { path: CSV.path, content: grown, size: grown.length });
+    await userEvent.click(await screen.findByRole("button", { name: /reload/i }));
+    await waitFor(() => expect(largeStrip()).not.toBeNull(), { timeout: 5000 });
+    expect(largeStrip()!.textContent).toContain("Large document (1.2 MB)");
+    expect(richPane()).toBeNull();
+    expect(modeButton(/rich mode/i).disabled).toBe(true);
+  });
+
+  it("keeps the offer of a recovered draft the cap refuses", async () => {
+    installBridge({
+      getInitialFile: vi.fn(async () => SMALL),
+      draftCheck: vi.fn(async () => [
+        {
+          key: "k-notes",
+          path: SMALL.path,
+          name: SMALL.name,
+          savedAt: new Date().toISOString(),
+          bytes: 143_000_000,
+          content: "HUGE: the only copy",
+        },
+      ]),
+    } as Partial<ElectronAPI>);
+    render(<Home />);
+    await waitFor(() => expect(richPane()).not.toBeNull());
+    await userEvent.click(await screen.findByRole("button", { name: /restore/i }));
+    await waitFor(() => expect(refusalStrip()).not.toBeNull());
+    expect(refusalStrip()!.textContent).toContain("notes.md was not restored.");
+    // The draft is still on offer: nothing took it down, and the file on
+    // disk still holds it for whatever the user does next.
+    expect(screen.getByRole("button", { name: /restore/i })).toBeInTheDocument();
+    expect(document.title).toBe("notes.md — Markie");
+  });
 });

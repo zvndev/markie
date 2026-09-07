@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Schema } from "@tiptap/pm/model";
 import { findMatches } from "./doc-search";
-import { collectSegments } from "./rich-find";
+import type { Editor } from "@tiptap/react";
+import { collectSegments, richFindTarget } from "./rich-find";
 import { indexSegments, rangesForMatches } from "./rich-search";
 
 // A document model small enough to reason about but shaped like the real one:
@@ -126,5 +127,42 @@ describe("matches map back onto the document", () => {
     for (const range of ranges) {
       expect(document.textBetween(range.from, range.to)).toBe("cat");
     }
+  });
+});
+
+describe("the index is built once per document", () => {
+  // One keystroke in the find bar asks the target for text, then a caret, then
+  // highlights, then a reveal. Each of those used to walk the whole tree, so
+  // typing in a long document paid for four full walks per letter.
+  const fakeEditor = (document: ReturnType<typeof doc.create>) => {
+    const state = { doc: document, selection: { head: 1 } };
+    return { editor: { state } as unknown as Editor, state };
+  };
+
+  it("answers repeated reads without walking the document again", () => {
+    const document = doc.create(null, [
+      paragraph.create(null, [t("one")]),
+      paragraph.create(null, [t("two")]),
+    ]);
+    const walked = vi.spyOn(document, "descendants");
+    const { editor } = fakeEditor(document);
+    const target = richFindTarget(editor);
+
+    expect(target.text()).toBe("one\ntwo");
+    expect(target.text()).toBe("one\ntwo");
+    expect(target.caret()).toBe(0);
+
+    expect(walked).toHaveBeenCalledTimes(1);
+  });
+
+  it("indexes the document that replaces it, so an edit is never searched stale", () => {
+    const before = doc.create(null, [paragraph.create(null, [t("before")])]);
+    const after = doc.create(null, [paragraph.create(null, [t("after")])]);
+    const { editor, state } = fakeEditor(before);
+    const target = richFindTarget(editor);
+
+    expect(target.text()).toBe("before");
+    state.doc = after;
+    expect(target.text()).toBe("after");
   });
 });

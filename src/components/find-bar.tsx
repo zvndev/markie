@@ -25,6 +25,10 @@ interface FindBarProps {
 const fieldClass =
   "bg-transparent text-[12px] text-foreground placeholder:text-muted outline-none w-[168px]";
 
+// How far the search trails the field. A burst of typing runs one search
+// instead of one per letter, and a search is a full scan of the document text.
+const QUERY_DEBOUNCE_MS = 100;
+
 // A pill toggle for one search option. Pressed state has to be legible at a
 // glance, because getting Aa wrong silently changes what you find.
 function Toggle({
@@ -89,6 +93,8 @@ export function FindBar({
   onClose,
 }: FindBarProps) {
   const [query, setQuery] = useState("");
+  // What the match set is actually computed from: the field, a beat later.
+  const [activeQuery, setActiveQuery] = useState("");
   const [replacement, setReplacement] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [wholeWord, setWholeWord] = useState(false);
@@ -104,12 +110,18 @@ export function FindBar({
   // one nearest what you were reading.
   const caretOnOpen = useRef(0);
 
+  useEffect(() => {
+    if (query === activeQuery) return;
+    const timer = setTimeout(() => setActiveQuery(query), QUERY_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [query, activeQuery]);
+
   const matches = useMemo<Match[]>(() => {
-    if (!open || !target || !query) return [];
-    return findMatches(target.text(), query, { caseSensitive, wholeWord });
+    if (!open || !target || !activeQuery) return [];
+    return findMatches(target.text(), activeQuery, { caseSensitive, wholeWord });
     // revision and edits are deps on purpose: both mean the text changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, target, query, caseSensitive, wholeWord, revision, edits]);
+  }, [open, target, activeQuery, caseSensitive, wholeWord, revision, edits]);
 
   useEffect(() => {
     if (!open) return;
@@ -219,7 +231,7 @@ export function FindBar({
 
         <div
           className={`flex items-center gap-1 rounded-md border px-2 h-[26px] ${
-            query && empty ? "border-[var(--status-red)]" : "border-border"
+            activeQuery && empty ? "border-[var(--status-red)]" : "border-border"
           }`}
           style={{ background: "var(--surface)" }}
         >
@@ -250,7 +262,7 @@ export function FindBar({
           className="text-[11px] text-muted tabular-nums w-[64px] text-right"
           aria-live="polite"
         >
-          {query ? count : ""}
+          {activeQuery ? count : ""}
         </span>
 
         <ActionButton

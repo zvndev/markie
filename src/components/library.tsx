@@ -538,10 +538,10 @@ export function Library({
       <div className="flex items-center justify-between px-3 h-10 shrink-0 border-b border-border">
         <span className="text-[11px] uppercase tracking-wide text-muted font-medium">{VIEW_TITLE[view]}</span>
         <div className="flex items-center gap-1">
-          <button onClick={onOpenFile} title="Open file (⌘O)" className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
+          <button onClick={onOpenFile} title="Open a file from disk (⌘O)" aria-label="Open a file from disk" className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
           </button>
-          <button onClick={onClose} title="Collapse (⌘L)" aria-label="Collapse library" className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
+          <button onClick={onClose} title={`Collapse the ${VIEW_TITLE[view]} panel (⌘L)`} aria-label={`Collapse the ${VIEW_TITLE[view]} panel`} className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
           </button>
         </div>

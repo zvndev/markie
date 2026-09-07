@@ -238,6 +238,20 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Installing or removing a skill writes a folder main has never seen. Until
+  // the index has walked it, that SKILL.md is not a path the main process will
+  // open or reveal, because both take only paths the app itself advertised. The
+  // watcher would get there on its own; asking makes it deterministic.
+  const reindex = useCallback(
+    () =>
+      api?.mdIndexRefresh?.()
+        .then((res) => {
+          if (Array.isArray(res?.files)) setRows(res.files);
+        })
+        .catch(() => {}),
+    [api]
+  );
+
   // Rescan on demand, so an error state is not a dead end.
   const retry = () => {
     if (!api?.mdIndexRefresh) return;
@@ -309,11 +323,12 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
           loading={loading}
           error={error}
           onRetry={retry}
+          onReindex={reindex}
           onOpenPath={onOpenPath}
           activePath={activePath}
         />
       ) : (
-        <DiscoverTab api={api} />
+        <DiscoverTab api={api} onReindex={reindex} />
       )}
     </div>
   );
@@ -344,6 +359,7 @@ function InstalledTab({
   loading,
   error,
   onRetry,
+  onReindex,
   onOpenPath,
   activePath,
 }: {
@@ -352,6 +368,7 @@ function InstalledTab({
   loading: boolean;
   error: string | null;
   onRetry: () => void;
+  onReindex: () => void;
   onOpenPath: (path: string) => void;
   activePath: string | null;
 }) {
@@ -529,7 +546,10 @@ function InstalledTab({
     setNotice(null);
     setConfirming(null);
     run()
-      .then(() => loadInstalled())
+      .then(() => {
+        onReindex();
+        return loadInstalled();
+      })
       .catch(() => setNotice("That didn't work. Try again."))
       .finally(() => setBusy(null));
   };
@@ -810,7 +830,7 @@ function InstalledSkillRow({
 
 // ── Discover ──
 
-function DiscoverTab({ api }: { api: ElectronAPI }) {
+function DiscoverTab({ api, onReindex }: { api: ElectronAPI; onReindex: () => void }) {
   const [catalog, setCatalog] = useState<Catalog>(EMPTY_CATALOG);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -983,7 +1003,10 @@ function DiscoverTab({ api }: { api: ElectronAPI }) {
         fallbackName={selected.name}
         skill={catalog.skills.find((s) => s.id === selected.id) ?? null}
         onBack={() => setSelected(null)}
-        onInstalled={() => api.skillsCatalogList?.().then(apply).catch(() => {})}
+        onInstalled={() => {
+          onReindex();
+          api.skillsCatalogList?.().then(apply).catch(() => {});
+        }}
       />
     );
   }

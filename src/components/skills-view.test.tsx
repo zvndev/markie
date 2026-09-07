@@ -254,6 +254,20 @@ describe("Installed", () => {
     await waitFor(() => expect(skillsInstalled).toHaveBeenCalledTimes(2));
   });
 
+  it("asks the index to catch up, so the folder that changed is a path Markie will open", async () => {
+    const user = userEvent.setup();
+    const mdIndexRefresh = vi.fn(async () => scan(rows));
+    renderSkills({
+      mdIndexScan: vi.fn(async () => scan(rows)),
+      mdIndexRefresh,
+      skillsInstalled: vi.fn(async () => [installedSkill()]),
+      skillsRemove: vi.fn(async () => ({ ok: true })),
+    });
+    await user.click(await screen.findByRole("button", { name: "Remove pdf" }));
+    await user.click(screen.getByRole("button", { name: "Confirm removing pdf" }));
+    await waitFor(() => expect(mdIndexRefresh).toHaveBeenCalled());
+  });
+
   it("says why a removal was refused rather than pretending it worked", async () => {
     const user = userEvent.setup();
     renderSkills({
@@ -532,6 +546,23 @@ describe("one skill, in full", () => {
 
     expect(skillsInstall).toHaveBeenCalledWith("anthropics/skills/pdf", ["claude", "codex"]);
     expect(await screen.findByText("Added to")).toBeInTheDocument();
+  });
+
+  it("asks the index to catch up once a skill has been written to disk", async () => {
+    const user = userEvent.setup();
+    const mdIndexRefresh = vi.fn(async () => scan([]));
+    renderSkills(
+      detailApi({
+        mdIndexRefresh,
+        skillsInstall: vi.fn(async () => ({
+          installed: [{ target: "claude" as const, path: `${HOME}/.claude/skills/pdf` }],
+          errors: [],
+        })),
+      })
+    );
+    await open(user);
+    await user.click(await screen.findByRole("button", { name: "Add skill" }));
+    await waitFor(() => expect(mdIndexRefresh).toHaveBeenCalled());
   });
 
   it("installs into a workspace root when Project is ticked", async () => {

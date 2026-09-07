@@ -49,7 +49,10 @@ const MAX_TARBALL_BYTES = 50 * 1024 * 1024;
 // of zeros into gigabytes, and the whole archive is inflated in the main
 // process before a single entry is looked at. So the inflate is bounded too.
 const MAX_EXPANDED_BYTES = 128 * 1024 * 1024;
-const FETCH_TIMEOUT_MS = 30000;
+// One deadline per source, covering the head query and the archive together.
+// Two request timeouts in a row, three sources one after another, was three
+// minutes of an empty Discover tab on a connection that never answered.
+const SOURCE_DEADLINE_MS = 45000;
 const SEARCH_TIMEOUT_MS = 8000;
 const STALE_MS = 24 * 60 * 60 * 1000;
 // Two commits per source: the one in use, and the one it just replaced, so a
@@ -268,6 +271,7 @@ function discoverSkills(entries, { owner, repo }) {
  * @param {Record<string, string | undefined>} [deps.env]
  * @param {() => Date} [deps.clock]
  * @param {number} [deps.maxExpandedBytes] the inflate bound, lowered by tests
+ * @param {number} [deps.deadlineMs] how long one source may take, lowered by tests
  */
 function createSkillRegistry(deps = {}) {
   const home = deps.home || (() => os.homedir());
@@ -278,6 +282,10 @@ function createSkillRegistry(deps = {}) {
   const version = deps.version || "0.0.0";
   const store = deps.store || require("./registry");
   const maxExpandedBytes = deps.maxExpandedBytes || MAX_EXPANDED_BYTES;
+  const deadlineMs = deps.deadlineMs || SOURCE_DEADLINE_MS;
+  // The reason a source's requests are abandoned when its deadline passes,
+  // so that abort can be told apart from the one the size cap raises.
+  const DEADLINE = { deadline: true };
   // Required lazily for the same reason registry.js defers better-sqlite3:
   // `require("electron")` throws outside the app, and every test supplies its
   // own directory rather than reaching for the real one.
@@ -366,27 +374,22 @@ function createSkillRegistry(deps = {}) {
   }
 
   // One archive, as GitHub serves it: a commit's tarball when the head is
-  // known, else whatever the branch holds right now.
-  async function downloadArchive(owner, repo, ref) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const response = await fetchImpl(`https://codeload.github.com/${owner}/${repo}/tar.gz/${ref}`, {
-        headers: { "User-Agent": userAgent },
-        signal: controller.signal,
-      });
-      if (response.status === 404) return null;
-      if (!response.ok) throw new Error(`GitHub answered ${response.status} for ${owner}/${repo}.`);
-      return await readCapped(response, controller);
-    } finally {
-      clearTimeout(timer);
-    }
+  // known, else whatever the branch holds right now. `controller` is the
+  // source's own, shared with the head query, so one deadline covers both.
+  async function downloadArchive(owner, repo, ref, controller) {
+    const response = await fetchImpl(`https://codeload.github.com/${owner}/${repo}/tar.gz/${ref}`, {
+      headers: { "User-Agent": userAgent },
+      signal: controller.signal,
+    });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`GitHub answered ${response.status} for ${owner}/${repo}.`);
+    return await readCapped(response, controller);
   }
 
-  async function downloadBranch(owner, repo) {
+  async function downloadBranch(owner, repo, controller) {
     let missing = false;
     for (const branch of BRANCHES) {
-      const bytes = await downloadArchive(owner, repo, `refs/heads/${branch}`);
+      const bytes = await downloadArchive(owner, repo, `refs/heads/${branch}`, controller);
       if (bytes) return { bytes, branch };
       missing = true;
     }
@@ -403,7 +406,7 @@ function createSkillRegistry(deps = {}) {
   // not there answers 404 (no such repository) or 422 (no such ref), and
   // both mean "try the next one"; when neither branch exists, that is the
   // answer, and it is the same one the tarball download would have given.
-  async function resolveHead(owner, repo) {
+  async function resolveHead(owner, repo, signal) {
     let missing = false;
     for (const branch of BRANCHES) {
       try {
@@ -411,7 +414,7 @@ function createSkillRegistry(deps = {}) {
           `https://api.github.com/repos/${owner}/${repo}/commits/${branch}`,
           {
             headers: { "User-Agent": userAgent, Accept: "application/vnd.github+json" },
-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+            signal,
           }
         );
         if (response.status === 404 || response.status === 422) {
@@ -424,7 +427,9 @@ function createSkillRegistry(deps = {}) {
           return { commit: body.sha, branch };
         }
         return null;
-      } catch {
+      } catch (err) {
+        // Past the deadline there is nothing to fall back to.
+        if (signal.aborted) throw err;
         return null; // offline, or answering something that is not JSON
       }
     }
@@ -507,7 +512,23 @@ function createSkillRegistry(deps = {}) {
   // a commit's archive never changes, so the catalog is re-dated and kept.
   async function fetchSource(source) {
     const { owner, repo } = source;
-    const head = await resolveHead(owner, repo);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(DEADLINE), deadlineMs);
+    try {
+      return await fetchSourceWithin(owner, repo, controller);
+    } catch (err) {
+      if (controller.signal.aborted && controller.signal.reason === DEADLINE) {
+        const seconds = (deadlineMs / 1000).toFixed(deadlineMs % 1000 ? 1 : 0);
+        throw new Error(`${owner}/${repo} did not answer within ${seconds} seconds.`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function fetchSourceWithin(owner, repo, controller) {
+    const head = await resolveHead(owner, repo, controller.signal);
     const previous = readCatalog(owner, repo);
     if (
       head &&
@@ -526,7 +547,7 @@ function createSkillRegistry(deps = {}) {
     let commit;
     let commitSource;
     if (head) {
-      bytes = await downloadArchive(owner, repo, head.commit);
+      bytes = await downloadArchive(owner, repo, head.commit, controller);
       if (!bytes) throw new Error(`${owner}/${repo} could not be downloaded.`);
       branch = head.branch;
       commit = head.commit;
@@ -534,7 +555,7 @@ function createSkillRegistry(deps = {}) {
     } else {
       // No head to name the folder after, so the archive's own digest does:
       // it is bound to these exact bytes just as a commit id is.
-      ({ bytes, branch } = await downloadBranch(owner, repo));
+      ({ bytes, branch } = await downloadBranch(owner, repo, controller));
       commit = crypto.createHash("sha1").update(bytes).digest("hex");
       commitSource = "tarball";
     }
@@ -633,21 +654,27 @@ function createSkillRegistry(deps = {}) {
 
   // With a source named, the user asked for that one and it is fetched. With no
   // source, this is the periodic catch-up and only stale catalogs are fetched.
+  // Sources are independent, so they are fetched side by side: what lands is
+  // listed, and a source that did not answer carries its reason on its row,
+  // so the panel's wait is one deadline rather than one per source.
   async function refresh(source) {
     const named = source ? parseOwnerRepo(source) : null;
     if (source && !named) return listCatalog();
     const wanted = named
       ? sources().filter((s) => s.owner === named.owner && s.repo === named.repo)
       : sources();
-    for (const entry of wanted) {
-      const id = `${entry.owner}/${entry.repo}`;
-      if (!named && !isStale(readCatalog(entry.owner, entry.repo))) continue;
-      try {
-        await fetchSource(entry);
-      } catch (err) {
-        errors.set(id, err && err.message ? err.message : String(err));
-      }
-    }
+    await Promise.allSettled(
+      wanted
+        .filter((entry) => named || isStale(readCatalog(entry.owner, entry.repo)))
+        .map(async (entry) => {
+          const id = `${entry.owner}/${entry.repo}`;
+          try {
+            await fetchSource(entry);
+          } catch (err) {
+            errors.set(id, err && err.message ? err.message : String(err));
+          }
+        })
+    );
     return listCatalog();
   }
 

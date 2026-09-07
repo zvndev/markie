@@ -1153,6 +1153,45 @@ describe("skill registry", () => {
     expect(await skills.search("pdf")).toEqual([]);
   });
 
+  // ── The first refresh ────────────────────────────────────────────────────
+  // Three sources fetched one after another, each able to spend a request
+  // timeout on the head and another on the archive, made an empty Discover
+  // tab look hung for minutes on a slow connection.
+
+  it("refreshes sources side by side, and gives up on one after its deadline", async () => {
+    // A repository that never answers: the promise settles only when the
+    // request is abandoned.
+    const stalls = (init: { signal?: AbortSignal }) =>
+      new Promise<never>((_, reject) => {
+        const signal = init?.signal;
+        if (!signal) return;
+        if (signal.aborted) reject(signal.reason);
+        else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    fetchImpl.mockImplementation(async (url: string, init: { signal?: AbortSignal }) => {
+      if (url.includes("/slow/")) return stalls(init);
+      if (url.startsWith("https://codeload.github.com/")) return response(null, { bytes: tarball });
+      if (url.startsWith("https://api.github.com/")) return response({ sha: COMMIT });
+      throw new Error(`unexpected request to ${url}`);
+    });
+    store.skillSourceAdd("acme/kit");
+    store.skillSourceAdd("slow/one");
+    store.skillSourceAdd("slow/two");
+    const skills = registry({ deadlineMs: 300 });
+    const started = performance.now();
+    const catalog = await skills.refresh();
+    const elapsed = performance.now() - started;
+    // Two stalled sources, one deadline: side by side, not one after another.
+    expect(elapsed).toBeLessThan(550);
+    expect(catalog.skills.some((s: { source: string }) => s.source === "acme/kit")).toBe(true);
+    for (const id of ["slow/one", "slow/two"]) {
+      const row = catalog.sources.find((s: { id: string }) => s.id === id);
+      expect(row.error).toMatch(/did not answer within/);
+      expect(row.fetchedAt).toBeNull();
+    }
+    expect(catalog.sources.find((s: { id: string }) => s.id === "acme/kit").error).toBeNull();
+  }, 5000);
+
   // ── Staleness ────────────────────────────────────────────────────────────
 
   it("only re-fetches a source with no name given once its catalog is a day old", async () => {

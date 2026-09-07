@@ -16,8 +16,13 @@
 //
 // So the window is asked, not killed. CDP's Browser.close tells the app to
 // quit, it quits the way it would from the menu, and the launcher we did spawn
-// exits with it. The signal stays as a fallback for a window too broken to
-// answer.
+// exits with it.
+//
+// The fallback, for a window whose debugger never answers, is SIGTERM and only
+// SIGTERM. node_modules/.bin/electron is Electron's cli.js: a Node process that
+// spawns the real binary and forwards SIGINT, SIGTERM and SIGUSR2 to it, and
+// nothing else. SIGKILL cannot be caught, so it ends that shim and hands the
+// app to init, which is the orphan this module exists to stop.
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import path from "node:path";
@@ -36,6 +41,8 @@ const WebSocket = require("ws");
 // costs anything when a window refuses to go; a healthy one is waited on for
 // exactly as long as it takes.
 const QUIT_TIMEOUT_MS = 10000;
+// A window that ignored the debugger gets a signal and a shorter wait.
+const SIGNAL_TIMEOUT_MS = 5000;
 
 /**
  * Launch the app in a real window with the debugger attached.
@@ -75,10 +82,10 @@ export function launchElectron({ debugPort, args = [], env, cwd = repoRoot, log 
     closed: false,
     close: () => closeElectron(handle),
   };
-  // A script killed before its own teardown runs still must not leave the
-  // launcher behind. This cannot ask the window to quit, since that is async
-  // and an exit handler is not, so it is a last resort rather than the path.
-  process.on("exit", () => safeKill(child, "SIGKILL"));
+  // A script killed before its own teardown runs still must not leave a window
+  // behind. An exit handler cannot wait, so it cannot ask the window to quit
+  // and cannot escalate: SIGTERM, forwarded by the shim, is the whole handler.
+  process.on("exit", () => safeKill(child, "SIGTERM"));
   return handle;
 }
 
@@ -90,9 +97,14 @@ export async function closeElectron(handle) {
   if (!handle || handle.closed) return;
   handle.closed = true;
   await askToQuit(handle.debugOrigin);
-  await waitUntilGone(handle, QUIT_TIMEOUT_MS);
-  // A no-op if the app took the hint; the only thing that ends a window whose
-  // debugger never answered.
+  if (await waitUntilGone(handle, QUIT_TIMEOUT_MS)) return;
+  // The debugger never answered. SIGTERM reaches the app through the shim and
+  // the app quits on it, so this is a real second chance rather than a formality.
+  safeKill(handle.child, "SIGTERM");
+  if (await waitUntilGone(handle, SIGNAL_TIMEOUT_MS)) return;
+  // Last resort, and an admission of defeat: SIGKILL ends the shim without
+  // reaching the binary it spawned, so it tidies our own child list and leaves
+  // the window. Nothing else here can do better without killing by name.
   safeKill(handle.child, "SIGKILL");
 }
 

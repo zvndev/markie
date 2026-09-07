@@ -1,4 +1,3 @@
-"use client";
 // Everything that renders the open document to paper, PDF, or a standalone
 // HTML file. All three go through main's one hidden window, so they share a
 // single in-flight guard: two concurrent printToPDF runs each spawn a renderer

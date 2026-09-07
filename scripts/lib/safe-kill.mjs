@@ -12,7 +12,12 @@
 // A real ChildProcess.kill(signal) signals just that one process; the Electron
 // main process reaps its own helpers as it quits. A leftover Electron is a
 // nuisance; killing Finder is a catastrophe. Direct-child kill only.
-export function safeKill(child, signal = "SIGKILL") {
+//
+// `escalate` is for the second signal in a row. ChildProcess.killed only means
+// a signal was delivered, not that the process died, so a SIGKILL sent after a
+// SIGTERM the process ignored would otherwise be dropped here. It relaxes that
+// one guard and nothing else: the pid check and the group-kill ban still hold.
+export function safeKill(child, signal = "SIGKILL", { escalate = false } = {}) {
   if (!child) return;
   // A pseudo-child (e.g. a local server wrapped as { kill }) carries no pid.
   if ("pid" in child && (typeof child.pid !== "number" || child.pid <= 1)) {
@@ -26,7 +31,8 @@ export function safeKill(child, signal = "SIGKILL") {
     }
     return;
   }
-  if (child.exitCode !== null || child.signalCode !== null || child.killed) return;
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (child.killed && !escalate) return;
   try {
     child.kill(signal);
   } catch {

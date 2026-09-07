@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Toolbar } from "@/components/toolbar";
 import { Editor } from "@/components/editor";

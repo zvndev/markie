@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useMemo, useState } from "react";
 import { getElectronAPI, type MdRow, type MdStar } from "@/lib/electron";
 import {

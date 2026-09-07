@@ -63,7 +63,7 @@ module.exports = {
   afterPack: "build/preflight.cjs",
   mac: {
     category: "public.app-category.developer-tools",
-    icon: "public/icon.icns",
+    icon: "build/icon.icns",
     artifactName: "${productName}-${version}-${arch}.${ext}",
     target: [
       { target: "dmg", arch: ["arm64", "x64"] },
@@ -107,7 +107,7 @@ module.exports = {
   // control node_modules: electron-builder resolves production dependencies
   // from package.json separately and copies them in on top of this list, which
   // is why every renderer-only package lives in devDependencies (the renderer
-  // is already bundled into out/ by `next build`).
+  // is already bundled into out/ by `vite build`).
   //
   // The negation drops electron/*.test.ts, which sits next to the modules it
   // covers and has no business inside a user's app bundle.

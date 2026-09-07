@@ -18,6 +18,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+import { startRendererDev } from "./lib/renderer-dev.mjs";
+import { launchElectron } from "./lib/electron-window.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("sync-down-check", import.meta.url);
@@ -31,6 +33,8 @@ const node = process.execPath;
 const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 const artifactDir = path.join(root, ".autoloop", "runs", `sync-down-check-${stamp}`);
 const children = [];
+let stopRenderer = () => {};
+let closeWindow = async () => {};
 const tempPaths = [];
 
 const SERVER_PORT = 8791;
@@ -64,6 +68,8 @@ function start(command, args, options = {}) {
 }
 
 async function stopChildren() {
+  await closeWindow();
+  stopRenderer();
   await Promise.all(
     children.map(
       (child) =>
@@ -235,23 +241,18 @@ async function main() {
   devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
 
-  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
-    env: baseEnv,
-    log: logPath("next"),
-  });
-  await waitFor("Next dev renderer", async () => !!(await fetch(devOrigin).catch(() => null)), 90000);
+  const dev = await startRendererDev({ port: devPort, env: baseEnv, log: logPath("vite") });
+  stopRenderer = dev.stop;
 
-  const electronBin = path.join(root, "node_modules", ".bin", "electron");
   // The fixture is passed as a launch argument, which is the double-click route
   // and grants the file outright.
-  start(
-    electronBin,
-    [".", docPath, `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],
-    {
-      env: { ...baseEnv, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
-      log: logPath("electron"),
-    }
-  );
+  const win = await launchElectron({
+    debugPort,
+    args: [".", docPath, `--user-data-dir=${userDataDir}`],
+    env: { ...baseEnv, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
+    log: logPath("electron"),
+  });
+  closeWindow = win.close;
 
   const cdp = await waitFor("Electron CDP target", cdpConnect, 40000);
   await cdp.send("Runtime.enable");
@@ -359,7 +360,35 @@ async function main() {
   });
   check("local changes route through the dialog, not a one-click pull", dirtyStrip.includes("Review changes"), JSON.stringify(dirtyStrip));
 
-  await cdp.ev(`${STRIP_BUTTON}.click()`);
+  // The strip is one element with two jobs: on a clean copy its button pulls
+  // outright, and on a dirty one it opens the dialog. React re-renders it as
+  // the buffer and the registry row settle, so a click aimed at the label read
+  // a moment ago can land on the other one. Read the label and click it in the
+  // same evaluation, and report what was clicked rather than assuming.
+  await waitFor(
+    "the strip to settle on Review changes",
+    async () => {
+      const a = await cdp.ev(STRIP);
+      await new Promise((r) => setTimeout(r, 250));
+      const b = await cdp.ev(STRIP);
+      return a && a === b && a.includes("Review changes") ? a : null;
+    },
+    20000
+  );
+  const clicked = await cdp.ev(`(() => {
+    const button = ${STRIP_BUTTON};
+    if (!button) return "the strip had no button";
+    const label = button.textContent;
+    button.click();
+    return label;
+  })()`);
+  if (!String(clicked).includes("Review changes")) {
+    throw new Error(`the strip's button was "${clicked}" at the moment of the click, not "Review changes…"`);
+  }
+  // The dialog fetches the server's copy before it can say anything, so its
+  // arrival and its content are two waits, not one. Separating them is what
+  // tells a lost click apart from a slow comparison.
+  await waitFor("the conflict dialog to open", () => cdp.ev(`!!${DIALOG}`), 20000);
   const dialogText = await waitFor(
     "diff summary",
     async () => {

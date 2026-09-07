@@ -13,8 +13,7 @@
 # testing
 /coverage
 
-# next.js
-/.next/
+# renderer bundle (vite build)
 /out/
 
 # production
@@ -23,6 +22,7 @@
 !/build/preflight.cjs
 !/build/entitlements.mac.plist
 !/build/icon.ico
+!/build/icon.icns
 !/build/icons/
 !/build/icons/*.png
 
@@ -44,7 +44,6 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
-next-env.d.ts
 
 # electron
 /dist/

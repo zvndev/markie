@@ -1,5 +1,3 @@
-"use client";
-
 // Share used to answer three different prerequisites with three unrelated
 // surfaces: signed out opened Settings, an unsynced file silently opened the
 // Library, and a synced file opened the real dialog only once a background

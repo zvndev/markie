@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const sourceIcns = path.join(root, "public", "icon.icns");
+const sourceIcns = path.join(root, "build", "icon.icns");
 const iconDir = path.join(root, "build", "icons");
 const icoPath = path.join(root, "build", "icon.ico");
 const pngSizes = [16, 32, 48, 64, 128, 256, 512, 1024];

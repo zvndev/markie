@@ -2,14 +2,14 @@
 // Focused interaction/visual check for keyboard-first overlays and menus.
 // Launches Markie locally, drives real controls through CDP, captures
 // screenshots, and fails when focus/selection affordances are not visible.
-import { spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+import { startRendererDev } from "./lib/renderer-dev.mjs";
+import { launchElectron } from "./lib/electron-window.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("overlay-interaction-check", import.meta.url);
@@ -21,7 +21,8 @@ const WebSocket = require("ws");
 const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 const artifactDir = path.join(root, ".autoloop", "runs", `overlay-interaction-check-${stamp}`);
 const screenshotsDir = path.join(artifactDir, "screenshots");
-const children = [];
+let stopRenderer = () => {};
+let closeWindow = async () => {};
 const tempPaths = [];
 let devOrigin = "http://localhost:3000";
 let debugOrigin = "http://127.0.0.1:9222";
@@ -32,37 +33,9 @@ function logPath(name) {
   return path.join(artifactDir, `${name}.log`);
 }
 
-function start(command, args, options = {}) {
-  const child = spawn(command, args, {
-    cwd: options.cwd ?? root,
-    env: options.env ?? process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  children.push(child);
-  if (options.log) {
-    const stream = createWriteStream(options.log, { flags: "a" });
-    child.stdout?.pipe(stream, { end: false });
-    child.stderr?.pipe(stream, { end: false });
-    child.on("exit", () => stream.end());
-  }
-  return child;
-}
-
 async function stopChildren() {
-  await Promise.all(
-    children.map(
-      (child) =>
-        new Promise((resolve) => {
-          if (child.exitCode !== null || child.killed) {
-            resolve();
-            return;
-          }
-          child.once("exit", resolve);
-          child.kill();
-          setTimeout(resolve, 1500);
-        })
-    )
-  );
+  await closeWindow();
+  stopRenderer();
 }
 
 async function waitFor(label, fn, timeoutMs = 30000) {
@@ -438,17 +411,16 @@ async function main() {
   const homeDir = await mkdtemp(path.join(tmpdir(), "markie-overlay-home-"));
   tempPaths.push(userDataDir, homeDir);
 
-  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], { log: logPath("next") });
-  await waitFor("Next dev renderer", async () => {
-    const res = await fetch(devOrigin).catch(() => null);
-    return !!res;
-  }, 60000);
+  const dev = await startRendererDev({ port: devPort, log: logPath("vite") });
+  stopRenderer = dev.stop;
 
-  const electronBin = path.join(root, "node_modules", ".bin", "electron");
-  start(electronBin, [".", `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`], {
+  const win = await launchElectron({
+    debugPort,
+    args: [".", `--user-data-dir=${userDataDir}`],
     env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
     log: logPath("electron"),
   });
+  closeWindow = win.close;
 
   const cdp = await waitFor("Electron CDP app target", cdpConnect, 30000);
   await cdp.send("Runtime.enable");

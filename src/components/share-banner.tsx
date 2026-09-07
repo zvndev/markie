@@ -1,5 +1,3 @@
-"use client";
-
 import type { ShareBannerView } from "@/lib/share-role";
 
 interface ShareBannerProps {

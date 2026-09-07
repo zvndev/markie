@@ -1,5 +1,3 @@
-"use client";
-
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import {
   sharesClient,

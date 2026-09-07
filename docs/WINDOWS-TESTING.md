@@ -17,7 +17,7 @@ prebuild; if the network drops at that moment run `npm run native:restore`.
 
 ```sh
 cd markie
-npm run electron:build:win     # next build && electron-builder --win --publish never
+npm run electron:build:win     # vite build && electron-builder --win --publish never
 npm run electron:smoke:win     # structure + PE-header checks of dist/win-unpacked (mac-side)
 ```
 

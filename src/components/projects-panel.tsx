@@ -1,5 +1,3 @@
-"use client";
-
 // Projects, inside the Library panel.
 //
 // This replaces the old Folders tab, which listed real directories on disk,

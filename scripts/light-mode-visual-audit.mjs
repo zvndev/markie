@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // Local light-mode visual audit for Markie. It drives the Electron renderer
 // through CDP, captures screenshots, and writes computed contrast evidence.
-import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createWriteStream } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+import { startRendererDev } from "./lib/renderer-dev.mjs";
+import { launchElectron } from "./lib/electron-window.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("light-mode-visual-audit", import.meta.url);
@@ -23,7 +23,8 @@ const artifactDir = path.join(runDir, `light-mode-audit-${stamp}`);
 const screenshotsDir = path.join(artifactDir, "screenshots");
 const baseEnv = { ...process.env };
 const regressionGuardEnabled = process.argv.includes("--regression-guard");
-const children = [];
+let stopRenderer = () => {};
+let closeWindow = async () => {};
 const tempPaths = [];
 let devOrigin = "http://localhost:3000";
 const electronDevBootstrapOrigin = "http://localhost:3000";
@@ -79,37 +80,9 @@ function logPath(name) {
   return path.join(artifactDir, `${name}.log`);
 }
 
-function start(command, args, options = {}) {
-  const child = spawn(command, args, {
-    cwd: options.cwd ?? root,
-    env: options.env ?? baseEnv,
-    stdio: options.stdio ?? ["ignore", "pipe", "pipe"],
-  });
-  children.push(child);
-  if (options.log) {
-    const stream = createWriteStream(options.log, { flags: "a" });
-    child.stdout?.pipe(stream, { end: false });
-    child.stderr?.pipe(stream, { end: false });
-    child.on("exit", () => stream.end());
-  }
-  return child;
-}
-
 async function stopChildren() {
-  await Promise.all(
-    children.map(
-      (child) =>
-        new Promise((resolve) => {
-          if (child.exitCode !== null || child.killed) {
-            resolve();
-            return;
-          }
-          child.once("exit", resolve);
-          child.kill();
-          setTimeout(resolve, 1500);
-        })
-    )
-  );
+  await closeWindow();
+  stopRenderer();
 }
 
 async function waitFor(label, fn, timeoutMs = 30000) {
@@ -261,21 +234,16 @@ async function main() {
   const userDataDir = await mkdtemp(path.join(tmpdir(), "markie-light-audit-"));
   tempPaths.push(userDataDir);
 
-  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], { log: logPath("next") });
-  await waitFor("Next dev renderer", async () => {
-    const res = await fetch(devOrigin).catch(() => null);
-    return !!res;
-  }, 60000);
+  const dev = await startRendererDev({ port: devPort, log: logPath("vite") });
+  stopRenderer = dev.stop;
 
-  const electronBin = path.join(root, "node_modules", ".bin", "electron");
-  start(
-    electronBin,
-    [".", "--remote-debugging-port=9222", `--user-data-dir=${userDataDir}`],
-    {
-      env: { ...baseEnv, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
-      log: logPath("electron"),
-    }
-  );
+  const win = await launchElectron({
+    debugPort: 9222,
+    args: [".", `--user-data-dir=${userDataDir}`],
+    env: { ...baseEnv, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
+    log: logPath("electron"),
+  });
+  closeWindow = win.close;
 
   const cdp = await waitFor("Electron CDP app target", cdpConnect, 30000);
   await cdp.send("Runtime.enable");

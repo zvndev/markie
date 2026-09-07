@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useMemo, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import type * as Y from "yjs";

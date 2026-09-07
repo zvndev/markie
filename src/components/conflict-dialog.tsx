@@ -1,5 +1,3 @@
-"use client";
-
 // Both copies of a document changed. The Library used to answer this with three
 // unlabelled buttons, one of which ("Take cloud") silently destroyed every local
 // line the server never received.

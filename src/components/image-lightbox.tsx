@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useEffect, useRef, useState } from "react";
 
 // What one picture in the document looks like to the viewer: the address the
@@ -158,7 +156,6 @@ export function ImageLightbox({
             address, so nothing is fetched twice and a private file needs no
             second permission. A statically exported app has no image
             optimizer to route it through. */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           key={image.src}
           src={image.src}

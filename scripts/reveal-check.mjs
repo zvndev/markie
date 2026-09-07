@@ -11,13 +11,14 @@
 //
 // Opens one Finder window for the passing case. That is the feature working.
 import { spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+import { startRendererDev } from "./lib/renderer-dev.mjs";
+import { endRun, launchElectron } from "./lib/electron-window.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("reveal-check", import.meta.url);
@@ -28,7 +29,8 @@ const require = createRequire(path.join(root, "server", "package.json"));
 const WebSocket = require("ws");
 const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 const artifactDir = path.join(root, ".autoloop", "runs", `reveal-check-${stamp}`);
-const children = [];
+let stopRenderer = () => {};
+let closeWindow = async () => {};
 const tempPaths = [];
 let debugOrigin = "http://127.0.0.1:9222";
 
@@ -43,34 +45,9 @@ function check(name, passed, detail = "") {
   );
 }
 
-function start(command, args, options = {}) {
-  const child = spawn(command, args, {
-    cwd: root,
-    env: options.env ?? process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  children.push(child);
-  if (options.log) {
-    const stream = createWriteStream(options.log, { flags: "a" });
-    child.stdout?.pipe(stream, { end: false });
-    child.stderr?.pipe(stream, { end: false });
-    child.on("exit", () => stream.end());
-  }
-  return child;
-}
-
 async function stopChildren() {
-  await Promise.all(
-    children.map(
-      (child) =>
-        new Promise((resolve) => {
-          if (child.exitCode !== null || child.killed) return resolve();
-          child.once("exit", resolve);
-          child.kill();
-          setTimeout(resolve, 1500);
-        })
-    )
-  );
+  await closeWindow();
+  stopRenderer();
 }
 
 async function waitFor(label, fn, timeoutMs = 30000) {
@@ -208,31 +185,18 @@ async function main() {
   const devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
 
-  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
-    log: logPath("next"),
-  });
-  await waitFor(
-    "Next dev renderer",
-    async () => !!(await fetch(devOrigin).catch(() => null)),
-    90000
-  );
+  const dev = await startRendererDev({ port: devPort, log: logPath("vite") });
+  stopRenderer = dev.stop;
 
-  const electronBin = path.join(root, "node_modules", ".bin", "electron");
   // Passed as a launch argument, which is the double-click route and grants
   // the file outright.
-  start(
-    electronBin,
-    [
-      ".",
-      docPath,
-      `--remote-debugging-port=${debugPort}`,
-      `--user-data-dir=${userDataDir}`,
-    ],
-    {
-      env: { ...process.env, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
-      log: logPath("electron"),
-    }
-  );
+  const win = await launchElectron({
+    debugPort,
+    args: [".", docPath, `--user-data-dir=${userDataDir}`],
+    env: { ...process.env, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
+    log: logPath("electron"),
+  });
+  closeWindow = win.close;
 
   const cdp = await waitFor("Electron CDP target", cdpConnect, 40000);
   await cdp.send("Runtime.enable");
@@ -341,3 +305,4 @@ const passed = checks.filter((c) => c.passed).length;
 console.log(`\n${passed}/${checks.length} checks passed`);
 console.log(`logs: ${artifactDir}`);
 if (failed || passed !== checks.length || checks.length === 0) process.exitCode = 1;
+await endRun();

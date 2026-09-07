@@ -6,15 +6,14 @@
 // the questions a new user's first two minutes actually answer: what do I see,
 // what is Markie asking me for, and can I get out of the beta channel I just
 // joined.
-import { spawn } from "node:child_process";
-import { closeSync, openSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
-import { safeKill } from "./lib/safe-kill.mjs";
+import { startRendererDev } from "./lib/renderer-dev.mjs";
+import { launchElectron } from "./lib/electron-window.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("onboarding-check", import.meta.url);
@@ -24,7 +23,8 @@ const root = path.resolve(new URL("..", import.meta.url).pathname);
 const require = createRequire(path.join(root, "server", "package.json"));
 const WebSocket = require("ws");
 const artifactDir = path.join(root, ".autoloop", "runs", "onboarding-check");
-const children = [];
+let stopRenderer = () => {};
+let closeWindow = async () => {};
 const tempPaths = [];
 let debugOrigin = "";
 
@@ -37,39 +37,15 @@ const check = (name, passed, detail = "") => {
   );
 };
 
-// The dev server is spawned as `next` directly, not through `npm run dev`.
-// safeKill signals only the direct child, so an npm wrapper would leave the
-// real `next dev` orphaned holding .next/dev/lock, and every later run would
-// fail with "Unable to acquire lock".
-function start(command, args, options = {}) {
-  const fd = options.log ? openSync(options.log, "a") : "ignore";
-  const child = spawn(command, args, {
-    cwd: root,
-    env: options.env ?? process.env,
-    stdio: ["ignore", fd, fd],
-  });
-  children.push(child);
-  if (typeof fd === "number") child.on("exit", () => closeSync(fd));
-  return child;
-}
-
-function killTree(child) {
-  // Direct-child kill only; see scripts/lib/safe-kill.mjs for why a group kill
-  // (process.kill(-pid)) is banned here.
-  safeKill(child, "SIGKILL");
-}
 async function cleanup() {
-  for (const c of children) killTree(c);
+  await closeWindow();
+  stopRenderer();
   await Promise.all(tempPaths.map((p) => rm(p, { recursive: true, force: true }).catch(() => {})));
 }
-process.on("exit", () => {
-  for (const c of children) killTree(c);
-});
+// A run killed outright cannot ask the window to quit, but each helper signals
+// what it spawned from its own exit handler, which a bare signal would skip.
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(signal, () => {
-    for (const c of children) killTree(c);
-    process.exit(1);
-  });
+  process.on(signal, () => process.exit(1));
 }
 
 async function waitFor(label, fn, timeoutMs = 40000) {
@@ -167,21 +143,18 @@ async function main() {
   const devOrigin = `http://localhost:${devPort}`;
   debugOrigin = `http://127.0.0.1:${debugPort}`;
 
-  start(path.join(root, "node_modules", ".bin", "next"), ["dev", "--turbopack", "--port", String(devPort)], {
-    log: path.join(artifactDir, "next.log"),
-  });
-  await waitFor("dev server", async () => !!(await fetch(devOrigin).catch(() => null)), 90000);
+  const dev = await startRendererDev({ port: devPort, log: path.join(artifactDir, "vite.log") });
+  stopRenderer = dev.stop;
 
   // No file argument: this is the cold Dock launch, the only one onboarding
   // is allowed to touch.
-  start(
-    path.join(root, "node_modules", ".bin", "electron"),
-    [".", `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userDataDir}`],
-    {
-      env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
-      log: path.join(artifactDir, "electron.log"),
-    }
-  );
+  const win = await launchElectron({
+    debugPort,
+    args: [".", `--user-data-dir=${userDataDir}`],
+    env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
+    log: path.join(artifactDir, "electron.log"),
+  });
+  closeWindow = win.close;
 
   const cdp = await waitFor("CDP", cdpConnect, 40000);
   await cdp.send("Runtime.enable");

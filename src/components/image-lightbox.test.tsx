@@ -1,4 +1,3 @@
-/* eslint-disable @next/next/no-img-element */
 // Plain <img> on purpose: this is the DOM the rich pane produces, not a page.
 import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";

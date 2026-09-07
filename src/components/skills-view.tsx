@@ -466,7 +466,7 @@ function InstalledTab({
     const perGroup = new Map<SkillGroupId, MdRow[]>();
     for (const r of rows) {
       if (agentFileKind(r.path, r.name) !== "skill") continue;
-      const group = skillGroupFor(r.path, r.name);
+      const group = skillGroupFor(r.path, r.name, r.skill);
       if (!group) continue;
       const list = perGroup.get(group);
       if (list) list.push(r);
@@ -480,7 +480,10 @@ function InstalledTab({
           group,
           label,
           openPath: file.path,
-          description: null,
+          // The front matter's description, when the index read it. A skill
+          // installed by hand is not in the registry, so this is the only
+          // place its description can come from.
+          description: file.skill?.description ?? null,
           installed: null,
           projectName: null,
           destinations: [],
@@ -503,7 +506,7 @@ function InstalledTab({
       const destinations = places.get(`${row.source ?? ""}::${row.name}`) ?? [];
       if (existing) {
         existing.installed = row;
-        existing.description = row.description;
+        existing.description = row.description ?? existing.description;
         existing.projectName = projectName;
         existing.destinations = destinations;
         // The recorded target beats the path: Claude Code and Codex both let

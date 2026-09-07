@@ -318,6 +318,30 @@ describe("Installed", () => {
     expect(await screen.findByText("Markie did not install that folder.")).toBeInTheDocument();
   });
 
+  it("groups a skill in a moved Codex home by what main says, and shows its description", async () => {
+    const user = userEvent.setup();
+    // Nothing in this path says Codex; the row does.
+    const path = "/home/me/.config/codex/skills/x/SKILL.md";
+    renderSkills({
+      mdIndexScan: vi.fn(async () =>
+        scan([{ ...mdRow(path), skill: { tool: "codex", description: "Does x" } }])
+      ),
+    });
+    expect(await screen.findByText("x")).toBeInTheDocument();
+    expect(screen.getByText("Codex")).toBeInTheDocument();
+    expect(screen.getByText("Does x")).toBeInTheDocument();
+    // A description the index supplied is one the filter can find.
+    await user.type(screen.getByLabelText("Filter skills and agent files"), "does");
+    expect(screen.getByText("x")).toBeInTheDocument();
+  });
+
+  it("shows nothing for that path when the row does not carry the field", async () => {
+    renderSkills({
+      mdIndexScan: vi.fn(async () => scan([mdRow("/home/me/.config/codex/skills/x/SKILL.md")])),
+    });
+    expect(await screen.findByText(/No agent files found/)).toBeInTheDocument();
+  });
+
   it("opens with Skills showing and everything else folded", async () => {
     renderSkills({ mdIndexScan: vi.fn(async () => scan(rows)) });
     await screen.findByText("pdf");

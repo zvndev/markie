@@ -7,7 +7,7 @@
 // which is not the same question as "which tool wrote this file" that
 // classifyAgentFile answers for instruction files.
 import { classifyAgentFile, isCachedAgentPath, type AgentKind } from "@/lib/agent-files";
-import type { CatalogSkill, SearchHit, SkillSource, SkillTarget } from "@/lib/electron";
+import type { CatalogSkill, MdRow, SearchHit, SkillSource, SkillTarget } from "@/lib/electron";
 
 // ── The two tabs ──
 
@@ -55,11 +55,25 @@ export const SKILLS_KIND_ORDER: AgentKind[] = [
 
 export const SKILLS_KIND_OPEN: AgentKind = "skill";
 
-// Which tool's folder a file sits in. classifyAgentFile knows about the
-// instruction files and the two config folders that predate skills; the other
-// three tools only ever appear here as a skills folder, so they are matched on
-// the folder itself.
-export function skillGroupFor(path: string, name: string): SkillGroupId | null {
+// Which tool's folder a file sits in.
+//
+// A SKILL.md the index scanned since the field existed says so itself: main
+// decides from the roots it was configured with (CLAUDE_CONFIG_DIR, CODEX_HOME
+// and the conventional folders), which a path cannot. A Codex home moved to
+// ~/.config/codex has no /.codex/ in it, and reading the path alone dropped
+// every skill installed there by hand. A null tool is main saying the folder
+// is no tool's root, which is what a project folder is; the path markers
+// decide that the way they always did, and decide rows too old for the field.
+//
+// classifyAgentFile knows about the instruction files and the two config
+// folders that predate skills; the other three tools only ever appear here as
+// a skills folder, so they are matched on the folder itself.
+export function skillGroupFor(
+  path: string,
+  name: string,
+  skill?: MdRow["skill"]
+): SkillGroupId | null {
+  if (skill?.tool) return skill.tool;
   const tool = classifyAgentFile(path, name);
   if (tool) return tool === "openai" ? "codex" : tool;
   const p = path.replace(/\\/g, "/").toLowerCase();

@@ -190,7 +190,7 @@ async function main() {
 
   // Passed as a launch argument, which is the double-click route and grants
   // the file outright.
-  const win = launchElectron({
+  const win = await launchElectron({
     debugPort,
     args: [".", docPath, `--user-data-dir=${userDataDir}`],
     env: { ...process.env, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },

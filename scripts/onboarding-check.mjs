@@ -148,7 +148,7 @@ async function main() {
 
   // No file argument: this is the cold Dock launch, the only one onboarding
   // is allowed to touch.
-  const win = launchElectron({
+  const win = await launchElectron({
     debugPort,
     args: [".", `--user-data-dir=${userDataDir}`],
     env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },

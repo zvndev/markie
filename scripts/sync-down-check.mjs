@@ -246,7 +246,7 @@ async function main() {
 
   // The fixture is passed as a launch argument, which is the double-click route
   // and grants the file outright.
-  const win = launchElectron({
+  const win = await launchElectron({
     debugPort,
     args: [".", docPath, `--user-data-dir=${userDataDir}`],
     env: { ...baseEnv, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },

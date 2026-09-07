@@ -211,7 +211,7 @@ async function main() {
       log: logPath("comments-vite"),
     });
     stopRenderer = dev.stop;
-    const win = launchElectron({
+    const win = await launchElectron({
       debugPort: 9222,
       args: [".", `--user-data-dir=${userDataDir}`],
       env: { ...baseEnv, NODE_ENV: "development", DB_PATH: dbPath, MARKIE_E2E: "1" },

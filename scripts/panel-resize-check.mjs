@@ -225,8 +225,8 @@ async function bootRenderer(cdp) {
   await waitFor("activity bar boot", () => cdp.ev(`!!document.querySelector(${JSON.stringify(LIBRARY_BUTTON)})`), 30000);
 }
 
-function startElectron(debugPort, userDataDir, homeDir) {
-  const win = launchElectron({
+async function startElectron(debugPort, userDataDir, homeDir) {
+  const win = await launchElectron({
     debugPort,
     args: [".", `--user-data-dir=${userDataDir}`],
     env: { ...process.env, HOME: homeDir, NODE_ENV: "development", MARKIE_E2E: "1", MARKIE_DEV_URL: devOrigin },
@@ -248,7 +248,7 @@ async function main() {
   const dev = await startRendererDev({ port: devPort, log: logPath("vite") });
   stopRenderer = dev.stop;
 
-  let electron = startElectron(debugPort, userDataDir, homeDir);
+  let electron = await startElectron(debugPort, userDataDir, homeDir);
   let cdp = await waitFor("Electron CDP app target", cdpConnect, 30000);
   await bootRenderer(cdp);
   await openPanel(cdp);
@@ -333,7 +333,7 @@ async function main() {
   cdp.close();
   await closeElectron(electron);
   await new Promise((resolve) => setTimeout(resolve, 1500));
-  electron = startElectron(debugPort, userDataDir, homeDir);
+  electron = await startElectron(debugPort, userDataDir, homeDir);
   cdp = await waitFor("relaunched Electron CDP app target", cdpConnect, 30000);
   await bootRenderer(cdp);
   await openPanel(cdp);

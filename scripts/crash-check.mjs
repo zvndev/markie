@@ -158,7 +158,7 @@ async function main() {
   const dev = await startRendererDev({ port: devPort, log: path.join(artifactDir, "vite.log") });
   stopRenderer = dev.stop;
 
-  const win = launchElectron({
+  const win = await launchElectron({
     debugPort,
     args: [".", `--user-data-dir=${userDataDir}`],
     env: {

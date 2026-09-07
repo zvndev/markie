@@ -194,6 +194,18 @@ describe("Installed", () => {
     expect(await screen.findAllByText("Claude Code, Codex and 1 more")).toHaveLength(3);
   });
 
+  it("names every target a shared folder serves, not only the one the row was written under", async () => {
+    // Claude Code configured to use ~/.agents: one folder, two targets, and
+    // the registry says so on the row.
+    renderSkills({
+      mdIndexScan: vi.fn(async () => scan([])),
+      skillsInstalled: vi.fn(async () => [
+        installedSkill({ target: "claude", targets: ["claude", "universal"], path: `${HOME}/.agents/skills/pdf` }),
+      ]),
+    });
+    expect(await screen.findByText("Claude Code and Universal")).toBeInTheDocument();
+  });
+
   it("merges one Windows install into one row, however the two sides spelled it", async () => {
     renderSkills({
       platform: "win32",
@@ -1053,6 +1065,29 @@ describe("one skill, in full", () => {
     await open(user);
     await user.click(await screen.findByRole("button", { name: "Add to Claude Code" }));
     expect(await screen.findByText(message)).toBeInTheDocument();
+  });
+
+  it("says every target an install served when two share one folder", async () => {
+    const user = userEvent.setup();
+    renderSkills(
+      detailApi({
+        skillsInstall: vi.fn(async () => ({
+          installed: [
+            {
+              target: "claude" as const,
+              targets: ["claude" as const, "universal" as const],
+              path: `${HOME}/.agents/skills/pdf`,
+            },
+          ],
+          errors: [],
+        })),
+      })
+    );
+    await open(user);
+    await user.click(await screen.findByRole("button", { name: "Add to Claude Code" }));
+    const added = (await screen.findByText("Added to")).parentElement as HTMLElement;
+    expect(added).toHaveTextContent("Claude Code");
+    expect(added).toHaveTextContent("Universal");
   });
 
   it("reports what landed alongside what did not", async () => {

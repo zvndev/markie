@@ -103,12 +103,20 @@ module.exports = {
     ],
   },
   publish: [publishTarget(publishPath)],
-  // Markie is English-only, so the ~50 MB of Chromium .lproj locale packs is
-  // paid for nothing. This is a top-level option and applies to mac and win.
-  // The cost is that the handful of strings Chromium owns rather than Markie
-  // (the "Look Up" and "Search with…" context menu items, the spellcheck
+  // Markie is English-only, so the ~50 MB of Chromium locale packs is paid for
+  // nothing. The cost is that the handful of strings Chromium owns rather than
+  // Markie (the "Look Up" and "Search with…" context menu items, the spellcheck
   // labels) show in English on a non-English system.
-  electronLanguages: ["en"],
+  //
+  // Three names, not one, because electron-builder prunes by exact file
+  // basename and the English pack is named differently per platform:
+  // Resources/en.lproj on macOS, locales/en-US.pak and locales/en-GB.pak on
+  // Windows and Linux. A list of just ["en"] deleted every .pak and left
+  // Windows with an empty locales directory, which is a Chromium that will not
+  // start rather than a Chromium without translations. Each platform ignores
+  // the names it does not have. scripts/package-smoke.mjs asserts a locale
+  // survives on all three, so this cannot go quiet again.
+  electronLanguages: ["en", "en-US", "en-GB"],
   // electron/ and out/ are the whole shipped app. Note that `files` does NOT
   // decide *which* node_modules ship: electron-builder resolves production
   // dependencies from package.json separately, which is why every

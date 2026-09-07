@@ -43,7 +43,7 @@ export function resolveDesktopLaunchApp(
 ) {
   const layout = verifyPackageLayout(baseDir, { platform, arch, distDir, productName });
   if (!layout.ok) {
-    const failures = [...layout.missing, ...layout.binaryFailures].join(", ");
+    const failures = [...layout.missing, ...layout.binaryFailures, ...layout.localeFailures].join(", ");
     throw new Error(`package layout is not launchable for ${layout.profile.id}: ${failures}`);
   }
   if (!layout.executable) {

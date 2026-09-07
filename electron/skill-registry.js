@@ -1208,9 +1208,11 @@ function createSkillRegistry(deps = {}) {
     // The same rule for the lock's entry when Markie has no row for the
     // name at all: another tool installed that name from somewhere else,
     // and writing over its record would leave that install unaccounted for.
+    // An entry with no folder of the name anywhere is left over from an
+    // install deleted by hand, and is replaced like remove would drop it.
     if (!installRows().some((row) => row.name === skill.name)) {
       const owner = lockOwner(skill.name);
-      if (owner && owner !== skill.source) {
+      if (owner && owner !== skill.source && installedAnywhere(skill.name)) {
         for (const target of targets || []) {
           errorsOut.push({
             target,

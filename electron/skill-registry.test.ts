@@ -1052,6 +1052,9 @@ describe("skill registry", () => {
     fs.mkdirSync(path.dirname(lockFile), { recursive: true });
     const theirs = { version: 3, skills: { pdf: { source: "other/repo", sourceType: "github" } } };
     fs.writeFileSync(lockFile, JSON.stringify(theirs), "utf8");
+    // The other tool's copy is still on disk, under a target Markie knows.
+    fs.mkdirSync(path.join(home, ".cursor", "skills", "pdf"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".cursor", "skills", "pdf", "SKILL.md"), "# theirs\n", "utf8");
     const { skills } = await load();
     const result = skills.install("acme/kit/skills/pdf", ["claude", "codex"]);
     expect(result.installed).toEqual([]);
@@ -1064,6 +1067,22 @@ describe("skill registry", () => {
     expect(JSON.parse(fs.readFileSync(lockFile, "utf8"))).toEqual(theirs);
     // A different skill is not held up by it.
     expect(skills.install("acme/kit/root-skill", ["claude"]).installed.length).toBe(1);
+  });
+
+  it("replaces a lock entry from elsewhere once no folder of that name is installed anywhere", async () => {
+    // The CLI's install was deleted by hand; its entry alone must not hold the name.
+    const lockFile = path.join(home, ".agents", ".skill-lock.json");
+    fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+    fs.writeFileSync(
+      lockFile,
+      JSON.stringify({ version: 3, skills: { pdf: { source: "other/repo", sourceType: "github" } } }),
+      "utf8"
+    );
+    const { skills } = await load();
+    const result = skills.install("acme/kit/skills/pdf", ["claude"]);
+    expect(result.errors).toEqual([]);
+    expect(result.installed.length).toBe(1);
+    expect(JSON.parse(fs.readFileSync(lockFile, "utf8")).skills.pdf).toMatchObject({ source: "acme/kit" });
   });
 
   it("installs over a lock entry from the same source, and updates it", async () => {

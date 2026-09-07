@@ -144,6 +144,7 @@ describe("skill registry", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
@@ -806,6 +807,122 @@ describe("skill registry", () => {
     const { result } = await installOnce();
     expect(result.installed.length).toBe(1);
     expect(fs.readFileSync(lock, "utf8")).toBe("not json at all");
+  });
+
+  // The file is shared with `npx skills`, which reads and writes it in place
+  // whenever it runs. Markie's update has to survive that: a write that dies
+  // part way must not leave half a file, and an entry the CLI added while
+  // Markie was working out its own change must not be lost.
+
+  it("leaves the lock file as it found it when a write dies part way through", async () => {
+    const { skills } = await installOnce();
+    const lock = path.join(home, ".agents", ".skill-lock.json");
+    const before = fs.readFileSync(lock, "utf8");
+    const original = fs.writeFileSync;
+    // What a full disk or a kill looks like: the file is truncated, some of
+    // it lands, and then nothing more does.
+    vi.spyOn(fs, "writeFileSync").mockImplementation((file, data, ...rest) => {
+      if (path.basename(String(file)).startsWith(".skill-lock.json")) {
+        original(file, String(data).slice(0, 1), ...(rest as []));
+        throw new Error("no space left on device");
+      }
+      return original(file, data, ...(rest as []));
+    });
+    const result = skills.install("acme/kit/root-skill", ["claude"]);
+    vi.restoreAllMocks();
+    // The install itself is real: the lock is another tool's record and not
+    // a reason to throw the skill away.
+    expect(result.installed.length).toBe(1);
+    expect(fs.readFileSync(lock, "utf8")).toBe(before);
+    expect(Object.keys(JSON.parse(fs.readFileSync(lock, "utf8")).skills)).toEqual(["pdf"]);
+    expect(fs.readdirSync(path.dirname(lock))).toEqual([".skill-lock.json"]);
+  });
+
+  it("keeps an entry another tool wrote while the change was being worked out", async () => {
+    const { skills } = await installOnce();
+    const lock = path.join(home, ".agents", ".skill-lock.json");
+    const original = fs.readFileSync;
+    let raced = false;
+    // On Markie's first read of the lock, `npx skills` lands its own entry
+    // right after: the bytes Markie got are already stale.
+    vi.spyOn(fs, "readFileSync").mockImplementation((file, ...rest) => {
+      const text = original(file, ...(rest as []));
+      if (!raced && String(file) === lock) {
+        raced = true;
+        const theirs = JSON.parse(String(text));
+        theirs.skills["someone-elses"] = { source: "other/repo", sourceType: "github" };
+        fs.writeFileSync(lock, JSON.stringify(theirs), "utf8");
+      }
+      return text;
+    });
+    const result = skills.install("acme/kit/root-skill", ["claude"]);
+    vi.restoreAllMocks();
+    expect(result.installed.length).toBe(1);
+    expect(raced).toBe(true);
+    const written = JSON.parse(fs.readFileSync(lock, "utf8"));
+    expect(Object.keys(written.skills).sort()).toEqual(["pdf", "root-skill", "someone-elses"]);
+    expect(written.skills["someone-elses"]).toEqual({ source: "other/repo", sourceType: "github" });
+  });
+
+  // ── One name, one source ─────────────────────────────────────────────────
+  // The lock has one entry per name, whatever the target, so a name can only
+  // ever come from one place.
+
+  async function addRival(skills: ReturnType<typeof registry>) {
+    const rival = buildRepoTarball(path.join(tmp, "rival"), {
+      "skills/pdf/SKILL.md": skillDoc("pdf", "A different pdf skill entirely."),
+      "skills/pdf/rival.md": "# Rival\n",
+    });
+    fetchImpl.mockImplementation(async (url: string) => {
+      if (url.startsWith("https://api.github.com/")) return response({ sha: "e".repeat(40) });
+      if (url.includes("/rival/kit/")) return response(null, { bytes: rival });
+      return response(null, { bytes: tarball });
+    });
+    await skills.addSource("rival/kit");
+  }
+
+  it("refuses a name already installed from another source, whatever the target", async () => {
+    const { skills } = await installOnce(["claude"]);
+    await addRival(skills);
+    const result = skills.install("rival/kit/skills/pdf", ["codex"]);
+    expect(result.installed).toEqual([]);
+    expect(result.errors).toEqual([
+      { target: "codex", error: "exists", message: "pdf is already installed from acme/kit. Remove it first." },
+    ]);
+    expect(fs.existsSync(path.join(home, ".codex", "skills", "pdf"))).toBe(false);
+    const lock = JSON.parse(fs.readFileSync(path.join(home, ".agents", ".skill-lock.json"), "utf8"));
+    expect(lock.skills.pdf.source).toBe("acme/kit");
+    // The other way round is the same refusal.
+    skills.remove("claude", "pdf");
+    expect(skills.install("rival/kit/skills/pdf", ["codex"]).installed.length).toBe(1);
+    const back = skills.install("acme/kit/skills/pdf", ["claude", "cursor"]);
+    expect(back.installed).toEqual([]);
+    expect(back.errors.map((e: { message: string }) => e.message)).toEqual([
+      "pdf is already installed from rival/kit. Remove it first.",
+      "pdf is already installed from rival/kit. Remove it first.",
+    ]);
+  });
+
+  it("rebuilds the lock entry from the copy that remains, and drops it with the last one", async () => {
+    const { skills } = await installOnce(["claude", "codex"]);
+    const lockFile = path.join(home, ".agents", ".skill-lock.json");
+    const hash = JSON.parse(fs.readFileSync(lockFile, "utf8")).skills.pdf.skillFolderHash;
+    // Another tool has since rewritten the entry with its own idea of pdf.
+    const lock = JSON.parse(fs.readFileSync(lockFile, "utf8"));
+    lock.skills.pdf = { source: "other/repo", sourceType: "github", skillFolderHash: "f".repeat(40) };
+    fs.writeFileSync(lockFile, JSON.stringify(lock), "utf8");
+    expect(skills.remove("claude", "pdf")).toEqual({ ok: true });
+    const rebuilt = JSON.parse(fs.readFileSync(lockFile, "utf8")).skills.pdf;
+    expect(rebuilt).toMatchObject({
+      source: "acme/kit",
+      sourceType: "github",
+      sourceUrl: "https://github.com/acme/kit.git",
+      ref: "main",
+      skillPath: "skills/pdf/SKILL.md",
+      skillFolderHash: hash,
+    });
+    expect(skills.remove("codex", "pdf")).toEqual({ ok: true });
+    expect(JSON.parse(fs.readFileSync(lockFile, "utf8")).skills).toEqual({});
   });
 
   // ── Remove and the installed list ────────────────────────────────────────

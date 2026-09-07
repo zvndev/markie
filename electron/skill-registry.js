@@ -27,6 +27,7 @@ const zlib = require("zlib");
 const { parseTar } = require("./ustar");
 const { parseFrontmatter } = require("./skill-frontmatter");
 const { treeId } = require("./git-tree-id");
+const { writeFileAtomic } = require("./atomic-write");
 
 // The three repositories every install starts with. They are not rows: a user
 // can add sources and remove the ones they added, but these come back.
@@ -81,6 +82,9 @@ const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build"]);
 
 const SKILLS_SH_SEARCH = "https://skills.sh/api/search";
 const LOCK_VERSION = 3;
+// How many times a lock update starts over because the file changed under
+// it. Another tool writing that often is not a race worth winning.
+const LOCK_ATTEMPTS = 4;
 
 // A segment that is nothing but dots is `.` or `..` wearing a hat. GitHub
 // cannot name an account or a repository that way, and both segments become
@@ -791,39 +795,103 @@ function createSkillRegistry(deps = {}) {
     return path.join(home(), ".agents", ".skill-lock.json");
   }
 
-  function readLock() {
+  // The file's bytes, "" when there is no file yet, null when it cannot be
+  // read at all.
+  function readLockText() {
     try {
-      const parsed = JSON.parse(fs.readFileSync(lockPath(), "utf8"));
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-      if (!parsed.skills || typeof parsed.skills !== "object") parsed.skills = {};
-      return parsed;
+      return fs.readFileSync(lockPath(), "utf8");
     } catch (err) {
-      return err && err.code === "ENOENT" ? { version: LOCK_VERSION, skills: {} } : null;
+      return err && err.code === "ENOENT" ? "" : null;
     }
   }
 
-  function writeLock(lock) {
-    fs.mkdirSync(path.dirname(lockPath()), { recursive: true });
-    fs.writeFileSync(lockPath(), `${JSON.stringify(lock, null, 2)}\n`, "utf8");
+  function parseLock(text) {
+    if (text === null) return null;
+    if (text === "") return { version: LOCK_VERSION, skills: {} };
+    try {
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+      if (!parsed.skills || typeof parsed.skills !== "object") parsed.skills = {};
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  // Apply one change to the lock file as it is right now.
+  //
+  // The other tool writes this file in place whenever it runs, so the change
+  // is worked out against a fresh read, and the file is read once more just
+  // before it is replaced: if it moved in between, the change is applied
+  // again to what is there now rather than to what was. The replacement is
+  // a rename, so a reader never sees half a file and a write that dies part
+  // way leaves the one that was there. `mutate` returns false to say there
+  // is nothing to write.
+  function updateLock(mutate) {
+    let text = readLockText();
+    for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
+      const lock = parseLock(text);
+      if (!lock) return;
+      if (mutate(lock) === false) return;
+      lock.version = LOCK_VERSION;
+      const fresh = readLockText();
+      if (fresh !== text) {
+        text = fresh;
+        continue;
+      }
+      fs.mkdirSync(path.dirname(lockPath()), { recursive: true });
+      writeFileAtomic(lockPath(), `${JSON.stringify(lock, null, 2)}\n`);
+      return;
+    }
   }
 
   function mergeLock(name, entry) {
-    const lock = readLock();
-    if (!lock) return;
-    lock.version = LOCK_VERSION;
-    const existing = lock.skills[name];
-    lock.skills[name] = {
-      ...entry,
-      installedAt: existing?.installedAt || entry.installedAt,
-    };
-    writeLock(lock);
+    updateLock((lock) => {
+      const existing = lock.skills[name];
+      lock.skills[name] = {
+        ...entry,
+        installedAt: existing?.installedAt || entry.installedAt,
+      };
+    });
   }
 
   function dropFromLock(name) {
-    const lock = readLock();
-    if (!lock || !lock.skills[name]) return;
-    delete lock.skills[name];
-    writeLock(lock);
+    updateLock((lock) => {
+      if (!lock.skills[name]) return false;
+      delete lock.skills[name];
+    });
+  }
+
+  // `sourceUrl` carries the .git suffix and `skillPath` points at the
+  // SKILL.md rather than its folder, because that is what the Vercel CLI
+  // writes: this file is shared with it, so Markie's entries should read the
+  // same as its own. `ref` is Markie's own addition; the CLI ignores keys it
+  // does not know.
+  function lockEntry({ source, skillPath, folderHash, ref, at }) {
+    return {
+      source,
+      sourceType: "github",
+      sourceUrl: `https://github.com/${source}.git`,
+      ref: ref ?? null,
+      skillPath: `${skillPath}/SKILL.md`,
+      skillFolderHash: folderHash,
+      installedAt: at,
+      updatedAt: at,
+    };
+  }
+
+  // The entry a remaining install row stands for. Its branch is not on the
+  // row; the source's catalog knows it when the source is still around.
+  function lockEntryFromRow(row) {
+    const parsed = parseOwnerRepo(row.source);
+    const catalog = parsed ? readCatalog(parsed.owner, parsed.repo) : null;
+    return lockEntry({
+      source: row.source,
+      skillPath: row.skill_path,
+      folderHash: row.folder_hash ?? null,
+      ref: catalog?.ref ?? null,
+      at: row.installed_at,
+    });
   }
 
   // ── Install and remove ───────────────────────────────────────────────────
@@ -956,6 +1024,21 @@ function createSkillRegistry(deps = {}) {
       return { installed, errors: errorsOut };
     }
     const { skill } = found;
+    // One name, one source, whatever the target: the lock file has a single
+    // entry per name, so a second source's copy of the same name under a
+    // different tool would rewrite the first's record and leave it stale
+    // when removed. A row for the name from anywhere else refuses the lot.
+    const foreign = installRows().find((row) => row.name === skill.name && !sameSkill(row, skill));
+    if (foreign) {
+      for (const target of targets || []) {
+        errorsOut.push({
+          target,
+          error: "exists",
+          message: `${skill.name} is already installed from ${elsewhere(foreign, skill)}. Remove it first.`,
+        });
+      }
+      return { installed, errors: errorsOut };
+    }
     for (const target of targets || []) {
       if (!validSkillName(skill.name)) {
         errorsOut.push({
@@ -1003,14 +1086,6 @@ function createSkillRegistry(deps = {}) {
         // target. It is still Markie's folder, and the same rules apply to it.
         row = store.skillInstallGet(destination) || null;
       }
-      if (row && !sameSkill(row, skill)) {
-        errorsOut.push({
-          target,
-          error: "exists",
-          message: `${skill.name} is already installed from ${elsewhere(row, skill)}. Remove it first.`,
-        });
-        continue;
-      }
       if (!row && fs.existsSync(destination)) {
         errorsOut.push({
           target,
@@ -1033,26 +1108,20 @@ function createSkillRegistry(deps = {}) {
             installed_at: at,
           });
         });
-        // `sourceUrl` carries the .git suffix and `skillPath` points at the
-        // SKILL.md rather than its folder, because that is what the Vercel CLI
-        // writes: this file is shared with it, so Markie's entries should read
-        // the same as its own. `ref` is Markie's own addition; the CLI ignores
-        // keys it does not know.
-        //
         // Written after the swap and outside it: the install is already real
         // and recorded, and a lock file that will not take the entry is not a
         // reason to throw the skill away.
         try {
-          mergeLock(skill.name, {
-            source: skill.source,
-            sourceType: "github",
-            sourceUrl: `https://github.com/${skill.source}.git`,
-            ref: found.catalog.ref,
-            skillPath: `${skill.skillPath}/SKILL.md`,
-            skillFolderHash: skill.folderHash,
-            installedAt: at,
-            updatedAt: at,
-          });
+          mergeLock(
+            skill.name,
+            lockEntry({
+              source: skill.source,
+              skillPath: skill.skillPath,
+              folderHash: skill.folderHash,
+              ref: found.catalog.ref,
+              at,
+            })
+          );
         } catch {
           // shared with another tool; not ours to fail an install over
         }
@@ -1093,8 +1162,16 @@ function createSkillRegistry(deps = {}) {
     }
     store.skillInstallDelete(row.path);
     // The lock is keyed by name alone, so the entry only goes when the last
-    // copy of this skill does.
-    if (!installRows().some((other) => other.name === String(name))) dropFromLock(String(name));
+    // copy of this skill does. While one remains, the entry is rebuilt from
+    // it: whatever another tool wrote there in the meantime described a
+    // copy that is gone now.
+    const remaining = installRows().find((other) => other.name === String(name));
+    try {
+      if (!remaining) dropFromLock(String(name));
+      else if (remaining.source) mergeLock(String(name), lockEntryFromRow(remaining));
+    } catch {
+      // shared with another tool; the removal itself is done
+    }
     return { ok: true };
   }
 

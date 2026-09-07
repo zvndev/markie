@@ -24,7 +24,7 @@ describe("when the formatting rail shows", () => {
   // The complaint that prompted this: a column of H1/H2/B beside the file
   // browser, while you were browsing files.
   it("stays away while a panel is selected", () => {
-    for (const view of ["library", "browse", "shared", "skills"] as const) {
+    for (const view of ["library", "browse", "cloud", "skills"] as const) {
       expect(showFormatRail(state({ view }))).toBe(false);
     }
   });
@@ -104,7 +104,7 @@ describe("no view takes the document area over", () => {
     // Projects was the only one, and it is a Library tab now. This is here so
     // that reintroducing a page that hides the document is a deliberate act
     // with a failing test in front of it, not something that creeps back.
-    for (const view of ["library", "browse", "shared", "skills", "edit"] as const) {
+    for (const view of ["library", "browse", "cloud", "skills", "edit"] as const) {
       const next = selectLeftView({ ...base, view: "library" }, view);
       expect(next.view).toBe(view);
     }

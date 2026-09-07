@@ -1,6 +1,6 @@
 // What the left edge shows.
 //
-// The activity bar picks between four side panels (library, browse, shared,
+// The activity bar picks between four side panels (library, browse, cloud,
 // skills) and now a fifth thing that is not a panel at all: the formatting
 // rail. They are mutually exclusive because they occupy the same strip of
 // screen, so "which one is showing" is a single choice rather than two
@@ -11,7 +11,7 @@
 // file, and stayed there on a document you had no permission to change.
 
 // The views that own a side panel...
-export type PanelView = "library" | "browse" | "shared" | "skills";
+export type PanelView = "library" | "browse" | "cloud" | "skills";
 // ...and everything the activity bar can select, which includes one that owns
 // neither: the formatting rail.
 //
@@ -22,7 +22,7 @@ export type PanelView = "library" | "browse" | "shared" | "skills";
 // Library panel now.
 export type LeftView = PanelView | "edit";
 
-export const PANEL_VIEWS: PanelView[] = ["library", "browse", "shared", "skills"];
+export const PANEL_VIEWS: PanelView[] = ["library", "browse", "cloud", "skills"];
 
 export function isPanelView(view: LeftView): view is PanelView {
   return (PANEL_VIEWS as LeftView[]).includes(view);

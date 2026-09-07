@@ -223,7 +223,7 @@ export default function Home() {
   const [libRefreshKey, setLibRefreshKey] = useState(0);
   const [showShare, setShowShare] = useState(false);
   const [canShare, setCanShare] = useState(false);
-  // Manage sharing on an arbitrary owned doc (from the Shared → "by me" tab),
+  // Manage sharing on an arbitrary owned doc (from the Cloud page's "Shared by me"),
   // independent of whichever doc is currently open.
   const [manageShare, setManageShare] = useState<{ docId: string; name: string } | null>(null);
   const [showAgents, setShowAgents] = useState(false);
@@ -605,7 +605,7 @@ export default function Home() {
     setShowShare(true);
   }, []);
 
-  // Open the share dialog to manage people on a doc I own (Shared → "by me").
+  // Open the share dialog to manage people on a doc I own (Cloud, "Shared by me").
   const handleManageShare = useCallback((docId: string, name: string) => {
     setManageShare({ docId, name });
   }, []);
@@ -1463,6 +1463,7 @@ export default function Home() {
       { id: "settings", title: "Settings…", group: "File", shortcut: "⌘,", keywords: "account sign in sync login", run: () => setShowSettings(true) },
       { id: "library", title: "Library…", group: "File", shortcut: "⌘L", keywords: "documents cloud sync files recent projects organize workspace group", run: () => selectView("library") },
       { id: "browse", title: "Browse all markdown…", group: "File", keywords: "all files device skills index find", run: () => selectView("browse") },
+      { id: "cloud", title: "Cloud…", group: "File", keywords: "synced shared sharing people cloud sync backup invited", run: () => selectView("cloud") },
       { id: "skills", title: "Skills & agent files…", group: "File", keywords: "claude agents codex gemini cursor instructions", run: () => selectView("skills") },
       { id: "new-file", title: "New file", group: "File", shortcut: "⌘N", keywords: "blank create empty document", run: handleNewFile },
       // Ungated on purpose: this used to vanish from the palette exactly when
@@ -1612,7 +1613,7 @@ export default function Home() {
           onAccount={() => setShowSettings(true)}
         />
 
-        {/* Docked side panel (Library / Browse / Shared / Skills) */}
+        {/* Docked side panel (Library / Browse / Cloud / Skills) */}
         {showSidePanel(leftState) && isPanelView(leftView) && (
           <Library
             key={leftView}
@@ -1909,7 +1910,7 @@ export default function Home() {
           docId={manageShare.docId}
           fileName={manageShare.name}
           onClose={() => setManageShare(null)}
-          // membership changed → refresh the Shared lists' counts
+          // membership changed → refresh the Cloud page's counts
           onChanged={() => setLibRefreshKey((k) => k + 1)}
         />
       )}

@@ -57,11 +57,9 @@ export function ActivityBar({
           <polygon points="15.5 8.5 10.5 10.5 8.5 15.5 13.5 13.5" />
         </svg>
       </NavButton>
-      <NavButton label="Shared with you" active={isActive("shared")} onClick={() => onSelectView("shared")}>
+      <NavButton label="Cloud: synced and shared" active={isActive("cloud")} onClick={() => onSelectView("cloud")}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-          <circle cx="9" cy="7" r="4" />
-          <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+          <path d="M7 19a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 19z" />
         </svg>
       </NavButton>
       <NavButton label="Skills & agent files" active={isActive("skills")} onClick={() => onSelectView("skills")}>

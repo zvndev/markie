@@ -11,7 +11,7 @@ import { getElectronAPI, type LibraryItem } from "@/lib/electron";
 import { ProjectsPanelContainer } from "@/components/projects-panel";
 import { BrowseView } from "@/components/browse-view";
 import { SkillsView } from "@/components/skills-view";
-import { SharedView } from "@/components/shared-view";
+import { CloudView } from "@/components/cloud-view";
 import { PanelResizer } from "@/components/panel-resizer";
 import {
   LEFT_PANEL_WIDTH_KEY,
@@ -31,9 +31,10 @@ import {
 } from "@/lib/library-overview";
 import type { WorkspaceBootstrapResult } from "@/lib/workspace-default";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
+import { PanelNotice, type Notice, type NoticeKind } from "@/components/panel-notice";
 
 interface LibraryProps {
-  // which view the left rail selected (library | browse | shared | skills)
+  // which view the left rail selected (library | browse | cloud | skills)
   view: PanelView;
   onClose: () => void;
   onOpenPath: (path: string) => void;
@@ -51,12 +52,6 @@ interface LibraryProps {
 }
 
 const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
-
-type NoticeKind = "info" | "error";
-interface Notice {
-  text: string;
-  kind: NoticeKind;
-}
 
 // Long enough to read a short sentence, short enough that the panel is not
 // still explaining a copy you made a minute ago.
@@ -87,7 +82,7 @@ export function plainErrorText(raw: string): string {
 const VIEW_TITLE: Record<PanelView, string> = {
   library: "Library",
   browse: "Browse",
-  shared: "Shared",
+  cloud: "Cloud",
   skills: "Skills",
 };
 
@@ -141,10 +136,11 @@ export function Library({
     () => !!getElectronAPI()?.libraryState
   );
   const [confirmOff, setConfirmOff] = useState<string | null>(null);
-  // A notice is either "that worked" or "that failed", and they must not look
-  // alike: a red line that says "Path copied" is alarming, and a grey line that
-  // says a sync failed reads as chatter and gets ignored.
   const [notice, setNotice] = useState<Notice | null>(null);
+  // Kept apart from the notice line above: a listing the server would not hand
+  // over is about the cloud, so it belongs on the Cloud page rather than under
+  // whichever panel happened to be open when the request failed.
+  const [cloudError, setCloudError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   // Freeze the row order for as long as the panel stays open, so opening a file
   // does not send it to the top and shuffle everything you were reading.
@@ -291,8 +287,8 @@ export function Library({
       setSignedIn(s.signedIn);
       setWorkspace(s.workspace);
       setLoading(false);
+      setCloudError(s.cloudError ?? null);
       if (s.error) noticeError(s.error);
-      else if (s.cloudError) noticeError(s.cloudError);
     });
   }, [noticeError]);
 
@@ -308,8 +304,8 @@ export function Library({
       setSignedIn(s.signedIn);
       setWorkspace(s.workspace);
       setLoading(false);
+      setCloudError(s.cloudError ?? null);
       if (s.error) noticeError(s.error);
-      else if (s.cloudError) noticeError(s.cloudError);
     });
     return () => {
       alive = false;
@@ -393,8 +389,7 @@ export function Library({
     [orderedItems, filter]
   );
 
-  const { localFiles, myCloudOnly, sharedItems, sharedCloudOnly } =
-    organizeLibraryItems(visibleItems);
+  const { localFiles } = organizeLibraryItems(visibleItems);
   const overview = summarizeLibrary(items);
 
   const fileRow = (item: LibraryItem) => {
@@ -605,13 +600,15 @@ export function Library({
           <BrowseView onOpenPath={onOpenPath} activePath={activePath} />
         ) : view === "skills" ? (
           <SkillsView onOpenPath={onOpenPath} activePath={activePath} />
-        ) : view === "shared" ? (
-          <SharedView
-            sharedWithMe={sharedItems}
-            withMeLoading={loading}
+        ) : view === "cloud" ? (
+          <CloudView
+            items={items}
+            loading={loading}
             renderRow={fileRow}
             signedIn={signedIn}
             onManage={onManageShare}
+            onOpenPath={onOpenPath}
+            cloudError={cloudError}
             refreshKey={refreshKey}
           />
         ) : loading ? (
@@ -622,9 +619,7 @@ export function Library({
             activePath={activePath}
             onOpenPath={onOpenPath}
           />
-        ) : localFiles.length === 0 &&
-          myCloudOnly.length === 0 &&
-          sharedCloudOnly.length === 0 ? (
+        ) : localFiles.length === 0 ? (
           <RecentEmptyState
             onOpenFile={onOpenFile}
             onShowProjects={() => pickTab("projects")}
@@ -632,18 +627,8 @@ export function Library({
           />
         ) : (
           <>
-            {localFiles.length > 0 && (
-              <LibrarySectionHeader label="On this device" items={localFiles} />
-            )}
+            <LibrarySectionHeader label="On this device" items={localFiles} />
             {localFiles.map(fileRow)}
-            {myCloudOnly.length > 0 && (
-              <LibrarySectionHeader label="In your cloud" items={myCloudOnly} />
-            )}
-            {myCloudOnly.map(fileRow)}
-            {sharedCloudOnly.length > 0 && (
-              <LibrarySectionHeader label="Shared with me" items={sharedCloudOnly} />
-            )}
-            {sharedCloudOnly.map(fileRow)}
           </>
         )}
       </div>
@@ -657,15 +642,7 @@ export function Library({
           across your devices and share them.
         </button>
       )}
-      {notice && (
-        <div
-          className={`px-3 py-2 text-[11px] border-t border-border ${
-            notice.kind === "error" ? "text-[var(--status-red)]" : "text-muted"
-          }`}
-        >
-          {notice.text}
-        </div>
-      )}
+      <PanelNotice notice={notice} />
 
       {needsDefault && (
         <div className="border-t border-border px-2 py-2">
@@ -754,11 +731,16 @@ function LibrarySectionHeader({
   );
 }
 
+// The Library counts what is on the disk, and nothing else: the synced, shared
+// and cloud-only figures moved to the Cloud page, where the documents they
+// count now live.
 function LibraryOverviewBand({ overview }: { overview: LibraryOverview }) {
   return (
     <div className="shrink-0 border-b border-border/60 px-2.5 py-2">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-wide text-muted">Documents</span>
+        <span className="text-[10px] uppercase tracking-wide text-muted tabular-nums">
+          {overview.onDevice} on this device
+        </span>
         <span
           className={`text-[10.5px] ${
             overview.needsAttention > 0 ? "text-[var(--status-yellow)]" : "text-muted"
@@ -767,25 +749,6 @@ function LibraryOverviewBand({ overview }: { overview: LibraryOverview }) {
           {overview.needsAttention > 0 ? `${overview.needsAttention} need attention` : "All clear"}
         </span>
       </div>
-      <div className="mt-1.5 grid grid-cols-3 gap-1">
-        <LibraryMetric label="Device" value={overview.onDevice} />
-        <LibraryMetric label="Synced" value={overview.synced} />
-        <LibraryMetric label="Shared" value={overview.shared} />
-      </div>
-      {overview.cloudOnly > 0 && (
-        <div className="mt-1.5 text-[10.5px] text-muted">
-          {overview.cloudOnly} cloud-only {overview.cloudOnly === 1 ? "doc" : "docs"}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LibraryMetric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-md border border-border/70 bg-background/35 px-1.5 py-1">
-      <div className="text-[13px] leading-none text-foreground tabular-nums">{value}</div>
-      <div className="mt-0.5 text-[9px] uppercase tracking-wide text-muted">{label}</div>
     </div>
   );
 }

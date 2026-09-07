@@ -81,18 +81,29 @@ beforeEach(() => {
   localStorage.clear();
 });
 
+// Every state a row can be in gets its own badge. A state that borrows
+// another's badge is a state the user cannot tell apart.
+const CASES: Array<[LibraryItem["state"], string, Partial<LibraryItem>]> = [
+  ["local-only", "Local", {}],
+  ["synced", "Synced", { cloudId: "c1" }],
+  ["unpushed", "Not backed up", { cloudId: "c2" }],
+  ["paused", "Paused", { cloudId: "c3" }],
+  ["conflict", "Conflict", { cloudId: "c4" }],
+  ["behind", "Update", { cloudId: "c5", remoteVersion: 3 }],
+];
+
+const cloudOnly = (o: Partial<LibraryItem> = {}) =>
+  item({
+    kind: "cloud-only",
+    path: null,
+    cloudId: "c6",
+    state: "cloud-only",
+    name: "cloud-only.md",
+    exists: false,
+    ...o,
+  } as Partial<LibraryItem>);
+
 describe("Library rows", () => {
-  // Every state a row can be in gets its own badge. A state that borrows
-  // another's badge is a state the user cannot tell apart.
-  const CASES: Array<[LibraryItem["state"], string, Partial<LibraryItem>]> = [
-    ["local-only", "Local", {}],
-    ["synced", "Synced", { cloudId: "c1" }],
-    ["unpushed", "Not backed up", { cloudId: "c2" }],
-    ["paused", "Paused", { cloudId: "c3" }],
-    ["conflict", "Conflict", { cloudId: "c4" }],
-    ["behind", "Update", { cloudId: "c5", remoteVersion: 3 }],
-    ["cloud-only", "Cloud", { path: null, cloudId: "c6" }],
-  ];
 
   it.each(CASES)("renders %s as a %s row", async (state, badge, extra) => {
     renderLibrary([item({ state, name: `${state}.md`, ...extra })]);
@@ -100,48 +111,17 @@ describe("Library rows", () => {
     expect(within(row).getByText(badge)).toBeInTheDocument();
   });
 
-  it("renders a shared row with its own badge and who shared it", async () => {
-    renderLibrary([
-      item({
-        kind: "shared",
-        name: "shared.md",
-        path: null,
-        cloudId: "c7",
-        state: "cloud-only",
-        shared: true,
-        sharedBy: "Grace",
-        role: "editor",
-      } as Partial<LibraryItem>),
-    ]);
-    const row = await rowFor("shared.md");
-    // Shared outranks the sync badge: "Cloud" would say nothing about access.
-    expect(within(row).getByText("Shared")).toBeInTheDocument();
-    expect(within(row).queryByText("Cloud")).not.toBeInTheDocument();
-    expect(within(row).getByText("Shared by Grace · Editor")).toBeInTheDocument();
-  });
-
-  it("keeps the eight row kinds visually distinct", async () => {
-    renderLibrary([
-      ...CASES.map(([state, , extra]) =>
-        item({ state, name: `${state}.md`, ...extra })
-      ),
-      item({
-        name: "shared.md",
-        path: null,
-        cloudId: "c7",
-        state: "cloud-only",
-        shared: true,
-      } as Partial<LibraryItem>),
-    ]);
+  it("keeps the six on-device row kinds visually distinct", async () => {
+    renderLibrary(
+      CASES.map(([state, , extra]) => item({ state, name: `${state}.md`, ...extra }))
+    );
     await screen.findByText("local-only.md");
-    // Each rendered row must carry its own badge — asserted against the DOM,
-    // not against the list this test declared.
+    // Each rendered row must carry its own badge, asserted against the DOM
+    // rather than against the list this test declared.
     for (const [state, badge] of CASES) {
       const row = await rowFor(`${state}.md`);
       expect(within(row).getByText(badge)).toBeInTheDocument();
     }
-    const sharedRow = await rowFor("shared.md");
-    expect(within(sharedRow).getByText("Shared")).toBeInTheDocument();
   });
 
   it("says a tracked file is gone rather than opening nothing", async () => {
@@ -336,18 +316,105 @@ describe("the Library's one row of tabs", () => {
   });
 });
 
+// The Library is this device's shelf. Everything the cloud holds, including the
+// copies of these same files, is the Cloud page's job now, so a document is
+// never listed twice with two different answers to "where is it".
+describe("the Library is what is on this device", () => {
+  const MIXED = [
+    item({ name: "here.md", path: "/notes/here.md" }),
+    cloudOnly({ name: "in-my-cloud.md" }),
+    item({
+      kind: "shared",
+      name: "from-grace.md",
+      path: null,
+      cloudId: "c7",
+      state: "cloud-only",
+      exists: false,
+      shared: true,
+      sharedBy: "Grace",
+    } as Partial<LibraryItem>),
+  ];
+
+  it("leaves the cloud-only and shared groups to the Cloud page", async () => {
+    renderLibrary(MIXED);
+    expect(await screen.findByText("On this device")).toBeInTheDocument();
+    expect(screen.queryByText("In your cloud")).not.toBeInTheDocument();
+    expect(screen.queryByText("Shared with me")).not.toBeInTheDocument();
+    expect(screen.queryByText("in-my-cloud.md")).not.toBeInTheDocument();
+    expect(screen.queryByText("from-grace.md")).not.toBeInTheDocument();
+  });
+
+  it("counts this device in the band and nothing else", async () => {
+    renderLibrary(MIXED);
+    // Three documents in the account, one of them here.
+    expect(await screen.findByText("1 on this device")).toBeInTheDocument();
+    expect(screen.getByText("All clear")).toBeInTheDocument();
+  });
+});
+
+describe("the Cloud page inside the panel", () => {
+  const cloudProps = { props: { view: "cloud" as const } };
+
+  it("titles the panel Cloud", async () => {
+    renderLibrary([], cloudProps);
+    expect(await screen.findByText("Cloud")).toBeInTheDocument();
+  });
+
+  it("renders a cloud-only row with its badge and the Download action", async () => {
+    renderLibrary([cloudOnly()], cloudProps);
+    const row = await rowFor("cloud-only.md");
+    expect(within(row).getByText("Cloud")).toBeInTheDocument();
+    await userEvent.click(within(row).getByRole("button", { name: "Actions" }));
+    expect(within(row).getByRole("button", { name: /Download/ })).toBeInTheDocument();
+  });
+
+  it("renders a shared row with its own badge and who shared it", async () => {
+    renderLibrary(
+      [
+        item({
+          kind: "shared",
+          name: "shared.md",
+          path: null,
+          cloudId: "c7",
+          state: "cloud-only",
+          exists: false,
+          shared: true,
+          sharedBy: "Grace",
+          role: "editor",
+        } as Partial<LibraryItem>),
+      ],
+      cloudProps
+    );
+    const row = await rowFor("shared.md");
+    // Shared outranks the sync badge: "Cloud" would say nothing about access.
+    expect(within(row).getByText("Shared")).toBeInTheDocument();
+    expect(within(row).queryByText("Cloud")).not.toBeInTheDocument();
+    expect(within(row).getByText("Shared by Grace · Editor")).toBeInTheDocument();
+  });
+});
+
 describe("the cloud half failing to load", () => {
-  it("says so beside the rows it has, instead of showing an empty cloud", async () => {
-    renderLibrary([item({ name: "here.md", path: "/notes/here.md" })], {
-      overrides: {
-        libraryState: vi.fn(async () => ({
-          signedIn: true,
-          items: [item({ name: "here.md", path: "/notes/here.md" })],
-          cloudError: "Your sign-in has expired. Sign in again to see your cloud documents.",
-        })),
-      },
-    });
+  const failing = (items: LibraryItem[]) => ({
+    overrides: {
+      libraryState: vi.fn(async () => ({
+        signedIn: true,
+        items,
+        cloudError: "Your sign-in has expired. Sign in again to see your cloud documents.",
+      })),
+    },
+  });
+
+  it("says so on the Cloud page, beside the rows it does have", async () => {
+    const items = [item({ name: "here.md", path: "/notes/here.md", state: "synced", cloudId: "c1" })];
+    renderLibrary(items, { ...failing(items), props: { view: "cloud" } });
     expect(await screen.findByText("here.md")).toBeInTheDocument();
     expect(await screen.findByText(/Your sign-in has expired/)).toBeInTheDocument();
+  });
+
+  it("does not repeat the cloud's problem under the Library", async () => {
+    const items = [item({ name: "here.md", path: "/notes/here.md" })];
+    renderLibrary(items, failing(items));
+    expect(await screen.findByText("here.md")).toBeInTheDocument();
+    expect(screen.queryByText(/Your sign-in has expired/)).not.toBeInTheDocument();
   });
 });

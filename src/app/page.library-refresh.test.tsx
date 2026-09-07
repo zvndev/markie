@@ -102,6 +102,12 @@ describe("the Library staying current", () => {
     await boot({ libraryState, docCheckUpdates } as Partial<ElectronAPI>);
     await findLibraryRow("notes.md");
     await waitFor(() => expect(docCheckUpdates).toHaveBeenCalled());
+    // A document that is only in the cloud is the Cloud page's business now,
+    // so that is the panel that has to hear about the change.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Cloud: synced and shared" })
+    );
+    await screen.findByText("Nothing in the cloud yet");
     const listedBefore = libraryState.mock.calls.length;
 
     // The other machine syncs a document; the server's list moves.

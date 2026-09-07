@@ -193,6 +193,18 @@ function Star({ on, onClick }: { on: boolean; onClick: () => void }) {
 
 // ── The panel ──
 
+// Every target a set of installs served, once each: an install that landed in
+// a folder two targets share reports both, and the badges say both.
+function servedTargets(entries: { target: SkillTarget; targets?: SkillTarget[] }[]): SkillTarget[] {
+  const out: SkillTarget[] = [];
+  for (const entry of entries) {
+    for (const target of entry.targets ?? [entry.target]) {
+      if (!out.some((t) => targetKey(t) === targetKey(target))) out.push(target);
+    }
+  }
+  return out;
+}
+
 export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
   const api = getElectronAPI();
   const [tab, setTab] = useState<SkillsTab>(() =>
@@ -492,12 +504,17 @@ function InstalledTab({
     }
     // Every place one skill was installed to, so a row can say where else it
     // lives. Only registry rows, which are the only ones that name a target.
+    // A row names every target its folder serves (two targets can share one
+    // folder), so the list is flattened and deduplicated rather than read off
+    // the one target the row was written under.
     const places = new Map<string, SkillTarget[]>();
     for (const row of installed) {
       const identity = `${row.source ?? ""}::${row.name}`;
-      const list = places.get(identity);
-      if (list) list.push(row.target);
-      else places.set(identity, [row.target]);
+      const list = places.get(identity) ?? [];
+      for (const target of row.targets ?? [row.target]) {
+        if (!list.some((t) => targetKey(t) === targetKey(target))) list.push(target);
+      }
+      places.set(identity, list);
     }
     for (const row of installed) {
       const key = canonicalFolder(row.path, api.platform);
@@ -1690,8 +1707,8 @@ function SkillDetail({
               {landed.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1 pt-2">
                   <span className="text-[10.5px] text-[var(--status-green)]">Added to</span>
-                  {landed.map((entry) => (
-                    <Badge key={targetKey(entry.target)}>{targetLabel(entry.target)}</Badge>
+                  {servedTargets(landed).map((target) => (
+                    <Badge key={targetKey(target)}>{targetLabel(target)}</Badge>
                   ))}
                 </div>
               )}

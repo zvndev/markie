@@ -334,6 +334,74 @@ test("markie_list_skills lists a skill under a CODEX_HOME outside the home folde
   }
 });
 
+// What the scan lists it can also read: a configured skills folder outside
+// home is a start point of the scan, so the guard has to accept a path under
+// it, read-only as every skills folder is.
+test("guardPath reads a SKILL.md under a configured skills folder outside home, and nothing beside it", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const codexHome = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-codex-")));
+  const previous = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = codexHome;
+  try {
+    mkdirSync(pjoin(codexHome, "skills", "pdf", "node_modules"), { recursive: true });
+    mkdirSync(pjoin(codexHome, "sessions"), { recursive: true });
+    const skill = pjoin(codexHome, "skills", "pdf", "SKILL.md");
+    writeFileSync(skill, "---\nname: pdf\ndescription: y\n---\n");
+    writeFileSync(pjoin(codexHome, "sessions", "notes.md"), "x");
+    const read = guardPath(skill, home);
+    assert.equal(read.ok, true, read.error);
+    assert.equal(read.path, skill);
+    const write = guardPath(skill, home, { mode: "write" });
+    assert.equal(write.ok, false);
+    assert.match(write.error, /disabled/);
+    assert.equal(guardPath(pjoin(codexHome, "sessions", "notes.md"), home).ok, false, "only the skills folder");
+    assert.equal(guardPath(pjoin(codexHome, "skills", "pdf", "node_modules", "x.md"), home).ok, false);
+    assert.equal(guardPath(pjoin(codexHome, "skills", "new.md"), home, { mode: "write" }).ok, false);
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
+test("the server reads and checks a skill it lists under an outside CODEX_HOME, and will not write there", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const codexHome = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-codex-")));
+  const previous = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = codexHome;
+  const client = startMcpClient(home);
+  try {
+    const skill = pjoin(codexHome, "skills", "pdf", "SKILL.md");
+    mkdirSync(pjoin(codexHome, "skills", "pdf"), { recursive: true });
+    writeFileSync(skill, "---\nname: pdf\ndescription: y\n---\n# pdf\n");
+    await client.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "markie-test", version: "0.0.0" },
+    });
+    const listed = await client.callTool("markie_list_skills", {});
+    const paths = JSON.parse(listed.result.content[0].text).flatMap((g) => g.files.map((f) => f.path));
+    assert.ok(paths.includes(skill), "the scan lists it");
+    const read = await client.callTool("markie_read_md", { path: skill });
+    assert.equal(read.result.isError, undefined, read.result.content[0].text);
+    assert.match(read.result.content[0].text, /# pdf/);
+    const checked = await client.callTool("markie_check_md", { path: skill });
+    assert.equal(checked.result.isError, undefined, checked.result.content[0].text);
+    assert.equal(JSON.parse(checked.result.content[0].text).ok, true);
+    const wrote = await client.callTool("markie_write_md", { path: skill, content: "# replaced\n" });
+    assert.equal(wrote.result.isError, true, "a write there is refused");
+    assert.match(wrote.result.content[0].text, /writing agent\/skill files is disabled/);
+    assert.match(readFileSync(skill, "utf8"), /# pdf/);
+  } finally {
+    client.close();
+    if (previous === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
 test("markieOpenCommand uses the Markie app on macOS", () => {
   assert.deepEqual(markieOpenCommand("/Users/u/Notes/a.md", "darwin"), {
     ok: true,

@@ -5,7 +5,7 @@ import { resolve, join, sep, dirname, basename, win32 as winPath } from "node:pa
 import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 // Self-contained scan rules (no ../electron dependency — see scan.mjs header).
-import { isExcludedDir, allowlist } from "./scan.mjs";
+import { isExcludedDir, allowlist, configuredSkillDirs } from "./scan.mjs";
 import { classifyAgentFile, isCachedAgentPath } from "./agent-classify.mjs";
 
 export const MD_RE = /\.(md|markdown|mdx)$/i;
@@ -84,12 +84,16 @@ function canonicalize(full) {
 }
 
 // Validate a path for read/write. Returns { ok, path } or { ok:false, error }.
-// Mirrors what the device index would surface: markdown extension, under home,
-// and no excluded/hidden ancestor segment (except the allowlisted skill roots).
+// Mirrors what the device index would surface: markdown extension, under home
+// (or under a configured skills folder outside it, which the scan starts at
+// and so lists), and no excluded/hidden ancestor segment (except the
+// allowlisted skill roots).
 // SECURITY: paths are realpath-canonicalized so a symlink (file or directory)
 // cannot dodge these checks (read/write outside home). Writes additionally
-// refuse the allowlisted skill roots so agents can't implant skill files.
-export function guardPath(input, home, { mode = "read" } = {}) {
+// refuse the allowlisted skill roots so agents can't implant skill files, and
+// that covers every configured folder outside home: nothing outside home is
+// ever written.
+export function guardPath(input, home, { mode = "read", env = process.env } = {}) {
   if (!input || typeof input !== "string") {
     return { ok: false, error: "path is required" };
   }
@@ -109,17 +113,26 @@ export function guardPath(input, home, { mode = "read" } = {}) {
   if (!MD_RE.test(real)) {
     return { ok: false, error: "only .md, .markdown, or .mdx files are allowed" };
   }
-  if (real !== homeReal && !real.startsWith(homeReal + sep)) {
+  // A configured skills folder is compared as it really is, like the path.
+  const configured = configuredSkillDirs(env).map((dir) => {
+    try { return realpathSync(dir); } catch { return dir; }
+  });
+  const configuredRoot = configured.find((dir) => real === dir || real.startsWith(dir + sep)) || null;
+  const insideHome = real === homeReal || real.startsWith(homeReal + sep);
+  if (!insideHome && !configuredRoot) {
     return { ok: false, error: "path must be inside your home folder" };
   }
 
-  const root = allowRootFor(real, homeReal);
+  const root = configuredRoot || allowRootFor(real, homeReal);
   if (mode === "write" && root) {
     return { ok: false, error: "writing agent/skill files is disabled" };
   }
 
-  const dirSegs = relSegments(real, homeReal).slice(0, -1); // drop the filename
-  const skip = root ? relSegments(root, homeReal).length : 0;
+  // Segments are judged from home, or from the configured folder when the
+  // path is only reachable through it.
+  const base = insideHome ? homeReal : configuredRoot;
+  const dirSegs = relSegments(real, base).slice(0, -1); // drop the filename
+  const skip = root ? relSegments(root, base).length : 0;
   for (const s of dirSegs.slice(skip)) {
     if (isExcludedDir(s)) {
       return { ok: false, error: `refused: "${s}" is an excluded directory` };

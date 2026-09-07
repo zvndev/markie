@@ -101,8 +101,11 @@ function FolderRow({
       {isOpen && (
         // Depth used to be padding, which left rows floating with nothing to
         // read them against. A hairline in the same border token the panel
-        // already uses does the same work and says where a level ends.
-        <div data-markie-browse-children className="ml-[10px] border-l border-border pl-2">
+        // already uses does the same work and says where a level ends. The
+        // 6 + 1 + 5 adds up to the 12 px a level always cost, so the line is
+        // paid for out of the old indent rather than added on top of it: a
+        // name four levels down has the room it had before.
+        <div data-markie-browse-children className="ml-[6px] border-l border-border pl-[5px]">
           {node.files.map((f) => (
             <div
               key={f.path}

@@ -151,8 +151,10 @@ describe("BrowseView browsing", () => {
     expect(children).toBeTruthy();
     expect(children?.className).toContain("border-l");
     expect(children?.className).toContain("border-border");
-    expect(children?.className).toContain("ml-[10px]");
-    expect(children?.className).toContain("pl-2");
+    // A level costs the 12 px it always cost: the hairline comes out of the
+    // old indent, it is not added to it.
+    expect(children?.className).toContain("ml-[6px]");
+    expect(children?.className).toContain("pl-[5px]");
     // The row itself keeps one small padding at every depth.
     expect(root?.firstElementChild?.className).toContain("pl-1");
   });

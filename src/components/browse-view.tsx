@@ -447,14 +447,18 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
     [rows, q]
   );
 
+  // What the tree is built from. With the star filter off this is `filtered`
+  // itself, the same array, so starring a file (decoration on a row the tree
+  // already has) rebuilds nothing and a reveal keyed by the tree survives it.
+  // With the filter on, a star changes what is listed, and the tree follows.
+  const listed = useMemo(
+    () => (starredOnly ? filtered.filter((r) => stars.has(r.path) || stars.has(r.dir)) : filtered),
+    [filtered, starredOnly, stars]
+  );
+
   // A tree, not one row per directory. Ten subfolders under one project used
   // to be ten sibling rows all reprinting the same prefix.
-  const tree = useMemo(() => {
-    const list = starredOnly
-      ? filtered.filter((r) => stars.has(r.path) || stars.has(r.dir))
-      : filtered;
-    return buildFolderTree(list);
-  }, [filtered, starredOnly, stars]);
+  const tree = useMemo(() => buildFolderTree(listed), [listed]);
 
   // Filtering is a search: leaving the answers behind collapsed rows would
   // make it useless. Capped so a filter that matches everything does not

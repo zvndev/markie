@@ -401,6 +401,26 @@ describe("BrowseView with one enormous folder", () => {
     expect(time.updatedAgo.mock.calls.length - labelled).toBeLessThan(321);
   }, 30_000);
 
+  it("keeps a reveal when a file is starred with the star filter off", async () => {
+    let starred: string[] = [];
+    renderBrowse(scan({ files: crowded().slice(0, 320) }), {
+      mdIndexStars: vi.fn(async () => starred.map((path) => ({ path, kind: "file" as const }))),
+      mdIndexToggleStar: vi.fn(async (path: string) => {
+        starred = [path];
+        return { starred: true };
+      }),
+    });
+    await screen.findByText("file0.md");
+    await userEvent.click(screen.getByText("Show 120 more"));
+    expect(childRows()).toHaveLength(320);
+    // Starring is decoration on a list that has not changed: the row keeps
+    // its star and the folder keeps its rows.
+    const stars = screen.getAllByTitle("Star");
+    await userEvent.click(stars[stars.length - 1]);
+    await screen.findByTitle("Unstar");
+    expect(childRows()).toHaveLength(320);
+  }, 30_000);
+
   it("puts the cap back when the list underneath changes, before anything is drawn", async () => {
     renderBrowse(scan({ files: crowded().slice(0, 320) }));
     await screen.findByText("file0.md");

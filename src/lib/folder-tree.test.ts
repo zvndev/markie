@@ -217,6 +217,29 @@ describe("a remembered open set read against today's tree", () => {
     expect(openWithAncestors(set(), set(), tree)).toEqual(new Set());
   });
 
+  it("follows a remembered folder into the node collapsing folded it into", () => {
+    // /home/me/work was open while it held docs and notes. notes emptied, so
+    // the tree now starts at /home/me/work/docs and nothing is named work.
+    const tree = buildFolderTree([file("/home/me/work/docs/a.md"), file("/home/me/work/docs/b.md")]);
+    const open = openWithAncestors(set("/home/me/work"), set(), tree);
+    expect([...open].sort()).toEqual(["/home/me/work", "/home/me/work/docs"]);
+  });
+
+  it("opens only the topmost node beneath a folded path, not everything under it", () => {
+    const tree = buildFolderTree([
+      file("/home/me/work/docs/a/one.md"),
+      file("/home/me/work/docs/b/two.md"),
+    ]);
+    const open = openWithAncestors(set("/home/me/work"), set(), tree);
+    expect(open.has("/home/me/work/docs")).toBe(true);
+    expect(open.has("/home/me/work/docs/a")).toBe(false);
+  });
+
+  it("does not open the children of a remembered folder that is still a node", () => {
+    const tree = buildFolderTree([file("/a/x/one.md"), file("/a/y/two.md")]);
+    expect([...openWithAncestors(set("/a"), set(), tree)]).toEqual(["/a"]);
+  });
+
   it("keeps remembered paths the tree no longer has, for the day they return", () => {
     const tree = buildFolderTree([file("/a/one.md")]);
     expect([...openWithAncestors(set("/gone"), set(), tree)]).toEqual(["/gone"]);

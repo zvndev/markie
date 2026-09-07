@@ -170,16 +170,35 @@ export function openWithAncestors(
   nodes: readonly FolderNode[]
 ): Set<string> {
   const result = new Set(open);
+  // Collapsing also folds a folder into a deeper node when it is down to one
+  // thing: the day /home/me/work/notes empties, /home/me/work stops being a
+  // node and what it held sits under /home/me/work/docs. A remembered path
+  // that names no node opens the topmost node beneath it, which is where that
+  // folder went.
+  const present = new Set<string>();
+  const collect = (node: FolderNode) => {
+    present.add(node.path);
+    node.children.forEach(collect);
+  };
+  nodes.forEach(collect);
+  const folded = [...open].filter((p) => !present.has(p));
+  const foldedInto = (node: FolderNode, parent: FolderNode | null) =>
+    folded.some((p) => isUnder(node.path, p) && !(parent && isUnder(parent.path, p)));
   // Whether this node, or anything beneath it, is in the open set.
-  const visit = (node: FolderNode): boolean => {
+  const visit = (node: FolderNode, parent: FolderNode | null): boolean => {
     let below = false;
-    for (const child of node.children) if (visit(child)) below = true;
-    const named = open.has(node.path);
+    for (const child of node.children) if (visit(child, node)) below = true;
+    const named = open.has(node.path) || foldedInto(node, parent);
     if (named || (below && !closed.has(node.path))) result.add(node.path);
     return named || below;
   };
-  for (const root of nodes) visit(root);
+  for (const root of nodes) visit(root, null);
   return result;
+}
+
+// Is `path` strictly inside the folder `dir`, on either kind of path?
+function isUnder(path: string, dir: string): boolean {
+  return path.length > dir.length && path.startsWith(dir) && SEPARATOR.test(path[dir.length]);
 }
 
 export type SortOrder = "name" | "updated";

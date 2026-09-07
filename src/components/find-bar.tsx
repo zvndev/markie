@@ -154,6 +154,19 @@ export function FindBar({
     [matches.length]
   );
 
+  // The field runs a beat ahead of the match set (QUERY_DEBOUNCE_MS). A step
+  // in that beat would walk the previous query's matches under a field that
+  // says something else, so Enter and the arrows settle the field first: the
+  // next render lands on what it says, and the step after that moves.
+  const settledQuery = query === activeQuery;
+  const settleOrStep = useCallback(
+    (delta: number) => {
+      if (settledQuery) step(delta);
+      else setActiveQuery(query);
+    },
+    [settledQuery, step, query]
+  );
+
   // ⌘G steps from anywhere, including with the caret back in the document.
   // Bound here rather than on the page because the bar is what knows which
   // match is current.
@@ -173,11 +186,9 @@ export function FindBar({
     onClose();
   }, [target, matches, current, onClose]);
 
-  // The field runs a beat ahead of the match set (QUERY_DEBOUNCE_MS). A click
-  // in that beat would replace what the previous query found, under a field
-  // that says something else, so replacement waits for the set to catch up.
-  const settledQuery = query === activeQuery;
-
+  // A replacement inside that beat would rewrite what the previous query
+  // found, so it waits for the set to catch up rather than settling it: a
+  // click that meant "replace" must not become "search again".
   const replaceCurrent = useCallback(() => {
     const match = matches[current];
     if (!match || !target || !canReplace || !settledQuery) return;
@@ -203,7 +214,7 @@ export function FindBar({
     }
     if (e.key === "Enter") {
       e.preventDefault();
-      step(e.shiftKey ? -1 : 1);
+      settleOrStep(e.shiftKey ? -1 : 1);
     }
   };
 
@@ -271,14 +282,14 @@ export function FindBar({
         </span>
 
         <ActionButton
-          onClick={() => step(-1)}
+          onClick={() => settleOrStep(-1)}
           disabled={empty}
           title="Previous match (⇧⏎)"
         >
           ↑
         </ActionButton>
         <ActionButton
-          onClick={() => step(1)}
+          onClick={() => settleOrStep(1)}
           disabled={empty}
           title="Next match (⏎)"
         >

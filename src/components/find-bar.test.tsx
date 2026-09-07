@@ -185,6 +185,41 @@ describe("FindBar", () => {
     expect(matches).toHaveLength(3);
   });
 
+  it("settles the query before stepping, so Enter never walks the previous query's matches", async () => {
+    const user = userEvent.setup();
+    const { target } = renderBar();
+    await user.keyboard("tw");
+    await settled("1 of 3");
+    const revealsBefore = target.reveal.mock.calls.length;
+    // The field says "two"; for a beat the matches are still "tw"'s. Enter in
+    // that beat lands on what the field says, never on the second "tw".
+    await user.keyboard("o{Enter}");
+    await waitFor(() => expect(target.reveal.mock.calls.length).toBeGreaterThan(revealsBefore));
+    // Past the debounce too, so a late settle cannot step either.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const revealed = target.reveal.mock.calls.slice(revealsBefore).map(([m]) => m as Match);
+    for (const m of revealed) expect(m.to - m.from).toBe("two".length);
+    expect(revealed).not.toContainEqual({ from: 8, to: 10 });
+    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    // A second Enter steps through what the field says.
+    await user.keyboard("{Enter}");
+    expect(screen.getByText("2 of 3")).toBeInTheDocument();
+    expect(target.reveal).toHaveBeenLastCalledWith({ from: 8, to: 11 });
+  });
+
+  it("settles the query from the arrows too", async () => {
+    const user = userEvent.setup();
+    const { target } = renderBar();
+    await user.keyboard("tw");
+    await settled("1 of 3");
+    await user.keyboard("o");
+    fireEvent.click(screen.getByTitle("Next match (⏎)"));
+    await waitFor(() => expect(target.reveal).toHaveBeenLastCalledWith({ from: 4, to: 7 }));
+    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Next match (⏎)"));
+    expect(screen.getByText("2 of 3")).toBeInTheDocument();
+  });
+
   it("says why instead of showing dead buttons on a read-only share", async () => {
     const user = userEvent.setup();
     const { target } = renderBar({ withReplace: true, canReplace: false });

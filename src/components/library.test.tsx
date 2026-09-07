@@ -20,6 +20,9 @@ const item = (o: Partial<LibraryItem> = {}): LibraryItem =>
     lastOpenedAt: "2026-01-01T00:00:00.000Z",
     remoteVersion: null,
     exists: true,
+    // The server confirmed these are the account's own; the shared fixtures
+    // below say otherwise for themselves.
+    owned: true,
     ...o,
   }) as LibraryItem;
 
@@ -378,6 +381,7 @@ describe("the Cloud page inside the panel", () => {
           cloudId: "c7",
           state: "cloud-only",
           exists: false,
+          owned: false,
           shared: true,
           sharedBy: "Grace",
           role: "editor",

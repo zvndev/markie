@@ -553,6 +553,20 @@ async function resolveKeepBoth(filePath, localContent) {
   return { ok: true, keptAt: copyPath, content: doc.content, version: doc.version };
 }
 
+// Who owns a cloud document, as far as anything can actually say. The list the
+// server just sent is the live answer. Without one, the registry's share_role
+// is the last answer the server gave, which is all an offline session has. With
+// neither, ownership is unknown, and unknown must not read as "mine": a list
+// that failed used to make someone else's document look like your own.
+function ownership(remoteRecord, row) {
+  if (remoteRecord) return !remoteRecord.shared;
+  // Nothing in the cloud to own.
+  if (!row.cloud_doc_id) return true;
+  if (row.share_role === "owner") return true;
+  if (row.share_role === "editor" || row.share_role === "viewer") return false;
+  return null;
+}
+
 // Merged local + remote view for the Library.
 async function libraryState() {
   // vanished local-only files (deleted agent worktrees, temp scratch docs)
@@ -602,6 +616,8 @@ async function libraryState() {
       lastOpenedAt: f.last_opened_at,
       remoteVersion: r?.version ?? null,
       exists: fs.existsSync(f.path),
+      // true mine, false someone else's, null nobody has said
+      owned: ownership(r, f),
       // a synced copy of a doc that was shared with you
       shared: !!r?.shared,
       role: r?.role ?? null,
@@ -619,6 +635,8 @@ async function libraryState() {
         lastOpenedAt: d.updated_at,
         remoteVersion: d.version,
         exists: false,
+        // Straight off the list that just loaded, so never in doubt.
+        owned: !d.shared,
         shared: !!d.shared,
         role: d.role ?? null,
         sharedBy: d.shared_by ?? null,

@@ -18,6 +18,11 @@ export interface OrganizedLibraryItems {
   // there. Ownership decides the group and a local copy does not: someone
   // else's document is theirs whether or not this device holds it, so it
   // belongs under the heading about their documents, not under mine.
+  //
+  // Ownership has to be confirmed rather than assumed. A row whose owner
+  // nobody has vouched for is in neither ownership section: it is still in the
+  // Library's list of what is on this device, and it joins this one the moment
+  // the server's list says it is mine.
   syncedFromDevice: LibraryItem[];
   myCloudOnly: LibraryItem[];
   sharedItems: LibraryItem[];
@@ -66,7 +71,7 @@ export function organizeLibraryItems(items: LibraryItem[]): OrganizedLibraryItem
     localFiles: sortLibraryItems(items.filter((item) => item.path)),
     syncedFromDevice: sortLibraryItems(
       items.filter(
-        (item) => item.path && !item.shared && CLOUD_STATES.includes(item.state)
+        (item) => item.path && item.owned === true && CLOUD_STATES.includes(item.state)
       )
     ),
     myCloudOnly: sortLibraryItems(items.filter((item) => !item.path && !item.shared)),

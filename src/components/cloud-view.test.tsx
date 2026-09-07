@@ -21,6 +21,9 @@ const item = (o: Partial<LibraryItem> = {}): LibraryItem =>
     lastOpenedAt: "2026-01-01T00:00:00.000Z",
     remoteVersion: null,
     exists: true,
+    // The server confirmed these belong to this account; the fixtures about
+    // other people's documents say so themselves.
+    owned: true,
     ...o,
   }) as LibraryItem;
 
@@ -46,6 +49,7 @@ const sharedWithMe = (o: Partial<LibraryItem> = {}) =>
     state: "cloud-only",
     cloudId: "c3",
     exists: false,
+    owned: false,
     shared: true,
     sharedBy: "Grace",
     role: "editor",
@@ -135,10 +139,28 @@ describe("the Cloud page's four sections", () => {
     // can do, so listing it as one of mine would say the wrong thing about who
     // the document belongs to.
     renderView({
-      items: [synced({ name: "theirs.md", cloudId: "c9", shared: true, sharedBy: "Grace" })],
+      items: [
+        synced({
+          name: "theirs.md",
+          cloudId: "c9",
+          owned: false,
+          shared: true,
+          sharedBy: "Grace",
+        }),
+      ],
     });
     await waitFor(() => expect(sectionNames("with-me")).toEqual(["theirs.md"]));
     expect(sectionNames("synced")).toEqual([]);
+  });
+
+  it("leaves a row nobody has vouched for out of both ownership sections", async () => {
+    // The server did not answer, so this row carries no owner. It is still in
+    // the Library's list of what is on this device; it just cannot claim a
+    // section here until somebody says whose it is.
+    renderView({ items: [synced({ name: "unknown.md", owned: null })] });
+    await waitFor(() => expect(section("synced")).not.toBeNull());
+    expect(sectionNames("synced")).toEqual([]);
+    expect(sectionNames("with-me")).toEqual([]);
   });
 
   it("keeps every section on the page, so its shape never depends on the account", async () => {
@@ -164,6 +186,28 @@ describe("the Cloud page's four sections", () => {
 });
 
 describe("the Cloud page's header band", () => {
+  it("does not call the cloud empty while a list is still on its way", async () => {
+    let settle: (docs: SharedByMeDoc[]) => void = () => {};
+    sharedByMe.mockReturnValue(new Promise<SharedByMeDoc[]>((r) => (settle = r)));
+    renderView();
+
+    // Counting nothing is not the same as knowing there is nothing.
+    expect(screen.getByText("Checking your cloud…")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing in the cloud yet")).not.toBeInTheDocument();
+
+    settle([]);
+    expect(await screen.findByText("Nothing in the cloud yet")).toBeInTheDocument();
+  });
+
+  it("does not call the cloud empty when a list failed to load", async () => {
+    sharedByMe.mockResolvedValue(null);
+    renderView();
+
+    expect(await screen.findByText("Some of your cloud didn't load")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing in the cloud yet")).not.toBeInTheDocument();
+  });
+
+
   it("counts every section, skipping the ones that hold nothing", async () => {
     sharedByMe.mockResolvedValue([doc()]);
     renderView({ items: [synced(), sharedWithMe()] });
@@ -316,6 +360,15 @@ describe("documents I have shared", () => {
 });
 
 describe("when the cloud cannot answer", () => {
+  it("waits for the snapshot before deciding anybody is signed out", () => {
+    // Library starts every mount with signedIn false and corrects it when the
+    // IPC answer lands. Reading that gap as "signed out" told a signed-in user
+    // to sign in, every time they opened the panel.
+    renderView({ loading: true, signedIn: false });
+    expect(screen.getByText("Loading your cloud documents")).toBeInTheDocument();
+    expect(screen.queryByText("Sign in to see your cloud")).not.toBeInTheDocument();
+  });
+
   it("asks a signed-out user to sign in and makes no request", () => {
     renderView({ signedIn: false, items: [synced()] });
     expect(screen.getByText("Sign in to see your cloud")).toBeInTheDocument();

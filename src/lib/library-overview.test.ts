@@ -15,6 +15,9 @@ const item = (overrides: Partial<LibraryItem>): LibraryItem => ({
   lastOpenedAt: null,
   remoteVersion: null,
   exists: true,
+  // Most fixtures are the account's own documents; the ones about ownership
+  // say otherwise for themselves.
+  owned: true,
   ...overrides,
 });
 
@@ -209,6 +212,7 @@ describe("library overview", () => {
         name: "theirs.md",
         state: "synced",
         cloudId: "c2",
+        owned: false,
         shared: true,
         sharedBy: "Grace",
         role: "viewer",
@@ -217,6 +221,46 @@ describe("library overview", () => {
 
     expect(organized.syncedFromDevice.map((entry) => entry.name)).toEqual(["mine.md"]);
     expect(organized.sharedItems.map((entry) => entry.name)).toEqual(["theirs.md"]);
+  });
+
+  it("keeps a revoked or offline row out of my own documents", () => {
+    // The server did not answer, so nothing in this row says "shared": the last
+    // role it confirmed is all there is, and it says the document is not mine.
+    // Reading the missing list as ownership is what put someone else's file
+    // under my own with owner's actions beside it.
+    const organized = organizeLibraryItems([
+      item({
+        path: "/docs/theirs.md",
+        name: "theirs.md",
+        state: "synced",
+        cloudId: "c1",
+        owned: false,
+      }),
+    ]);
+
+    expect(organized.syncedFromDevice).toEqual([]);
+    // It is still on this device, so the Library still lists it.
+    expect(organized.localFiles.map((entry) => entry.name)).toEqual(["theirs.md"]);
+  });
+
+  it("keeps a row nobody has vouched for out of my own documents too", () => {
+    // No remote record and no confirmed role: unknown, which is not "mine".
+    // It joins the group the moment the server's list says it belongs there.
+    const unknown = item({
+      path: "/docs/unknown.md",
+      name: "unknown.md",
+      state: "synced",
+      cloudId: "c1",
+      owned: null,
+    });
+
+    expect(organizeLibraryItems([unknown]).syncedFromDevice).toEqual([]);
+    expect(organizeLibraryItems([unknown]).localFiles.map((e) => e.name)).toEqual([
+      "unknown.md",
+    ]);
+    expect(
+      organizeLibraryItems([{ ...unknown, owned: true }]).syncedFromDevice.map((e) => e.name)
+    ).toEqual(["unknown.md"]);
   });
 
   it("sorts an unpushed doc above every other attention state", () => {

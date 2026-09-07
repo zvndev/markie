@@ -115,7 +115,15 @@ function readStorage(key: string): string | null {
 
 // "3 synced · 1 in your cloud · 2 shared with you · 1 shared by you". A count of
 // zero says nothing worth a segment, so it is left out rather than printed.
-export function cloudBandText(counts: Record<SectionId, number>): string {
+//
+// The empty verdict is the one line here that has to be earned. Counting
+// nothing is not the same as knowing there is nothing: two lists feed this
+// band, and while either is still on its way, or has failed outright, "Nothing
+// in the cloud yet" would be the app inventing an answer it does not have.
+export function cloudBandText(
+  counts: Record<SectionId, number>,
+  lists: "loading" | "incomplete" | "ready"
+): string {
   const parts = [
     [counts.synced, "synced"],
     [counts.cloud, "in your cloud"],
@@ -123,7 +131,10 @@ export function cloudBandText(counts: Record<SectionId, number>): string {
     [counts["by-me"], "shared by you"],
   ] as const;
   const said = parts.filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
-  return said.length > 0 ? said.join(" · ") : "Nothing in the cloud yet";
+  if (said.length > 0) return said.join(" · ");
+  if (lists === "loading") return "Checking your cloud…";
+  if (lists === "incomplete") return "Some of your cloud didn't load";
+  return "Nothing in the cloud yet";
 }
 
 function people(d: SharedByMeDoc): string {
@@ -202,44 +213,57 @@ export function CloudView({
     return map;
   }, [items]);
 
-  const band = cloudBandText({
-    synced: syncedFromDevice.length,
-    cloud: myCloudOnly.length,
-    "with-me": sharedItems.length,
-    "by-me": byMe?.length ?? 0,
-  });
+  // Nothing has arrived from the main process yet. The skeleton stands for the
+  // whole page rather than one section: four headings each saying they hold
+  // nothing is a worse answer than "still reading" before we have looked.
+  //
+  // This is decided before anything else, because "signed out" is not known
+  // yet either. The Library starts every mount with signedIn false and
+  // corrects it when the snapshot lands, so a signed-in user was being told to
+  // sign in for as long as the IPC round trip took.
+  const booting = loading && items.length === 0;
+
+  // A failed request leaves byMe null as well, so the failure is read first:
+  // "still coming" and "never arrived" are different things to say.
+  const lists = booting
+    ? "loading"
+    : byMeError
+      ? "incomplete"
+      : byMe === null
+        ? "loading"
+        : "ready";
+
+  const band = cloudBandText(
+    {
+      synced: syncedFromDevice.length,
+      cloud: myCloudOnly.length,
+      "with-me": sharedItems.length,
+      "by-me": byMe?.length ?? 0,
+    },
+    lists
+  );
 
   const notice = cloudError ? { text: cloudError, kind: "error" as const } : null;
 
-  if (!signedIn) {
-    return (
-      <div className="flex flex-col h-full">
-        <div className="flex-1 overflow-y-auto">
+  return (
+    <div className="flex flex-col h-full">
+      {/* A signed-out account has no counts to summarize, but one we have not
+          looked at yet does, so the band stays while the answer is on its way. */}
+      {(booting || signedIn) && (
+        <div className="shrink-0 border-b border-border/60 px-2.5 py-2 text-[10.5px] text-muted">
+          {band}
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto">
+        {booting ? (
+          <CloudSkeleton label="Loading your cloud documents" />
+        ) : !signedIn ? (
           <CloudEmptyState
             icon={<CloudIcon />}
             title="Sign in to see your cloud"
             body="Documents you sync, and docs people share with you, show up once you sign in."
           />
-        </div>
-        <PanelNotice notice={notice} />
-      </div>
-    );
-  }
-
-  // Nothing has arrived from the main process yet. The skeleton stands for the
-  // whole page rather than one section: four headings each saying they hold
-  // nothing is a worse answer than "still reading" before we have looked.
-  const booting = loading && items.length === 0;
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="shrink-0 border-b border-border/60 px-2.5 py-2 text-[10.5px] text-muted">
-        {band}
-      </div>
-
-      <div className="flex-1 overflow-y-auto">
-        {booting ? (
-          <CloudSkeleton label="Loading your cloud documents" />
         ) : (
           <>
             <Section

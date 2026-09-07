@@ -502,6 +502,11 @@ export interface LibraryItem {
   lastOpenedAt: string | null;
   remoteVersion: number | null;
   exists: boolean;
+  // Whether this account owns the cloud document: true mine, false someone
+  // else's, null nobody has said. Only ever what the server's list said, or
+  // failing that the last role it confirmed, so an unreachable server cannot
+  // turn a document you were given into one you own.
+  owned?: boolean | null;
   // shared-with-me info (present when someone invited you to this doc)
   shared?: boolean;
   role?: "viewer" | "editor" | null;

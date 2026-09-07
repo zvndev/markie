@@ -24,6 +24,8 @@ interface Row {
   content_hash: string | null;
   last_synced_at: string | null;
   last_opened_at: string | null;
+  // The last role the server confirmed for this file.
+  share_role?: "owner" | "editor" | "viewer" | null;
 }
 
 const realRegistry = { ...registry };
@@ -42,6 +44,7 @@ function seedRow(overrides: Partial<Row> & { path: string }): Row {
     content_hash: null,
     last_synced_at: null,
     last_opened_at: "2026-08-01T00:00:00.000Z",
+    share_role: null,
     ...overrides,
   };
   rows.set(row.path, row);
@@ -631,6 +634,71 @@ describe("libraryState", () => {
     const state = await sync.libraryState();
 
     expect(state.items[0].state).toBe("behind");
+  });
+
+  // Who owns a document decides which half of the Cloud page it appears under,
+  // and getting it wrong offers owner's actions on somebody else's file. The
+  // only honest sources are the list the server just sent and the last role it
+  // confirmed; with neither, the answer is "nobody has said".
+  describe("who owns each document", () => {
+    it("takes ownership from the list when the list loads", async () => {
+      syncedRow();
+      respondWith({ status: 200, body: { docs: [{ id: "cloud-1", version: 4 }] } });
+
+      expect((await sync.libraryState()).items[0].owned).toBe(true);
+    });
+
+    it("calls a shared document someone else's, list or no list", async () => {
+      syncedRow();
+      respondWith({
+        status: 200,
+        body: { docs: [{ id: "cloud-1", version: 4, shared: true, role: "editor" }] },
+      });
+
+      expect((await sync.libraryState()).items[0].owned).toBe(false);
+    });
+
+    it("keeps someone else's document theirs when the list cannot be fetched", async () => {
+      // Offline, or access revoked: no remote record either way. Reading that
+      // silence as "mine" is what filed a shared file under my own documents.
+      seedRow({
+        path: "/docs/theirs.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-2",
+        cloud_version: 4,
+        share_role: "editor",
+      });
+      respondWith(new Error("offline"));
+
+      expect((await sync.libraryState()).items[0].owned).toBe(false);
+    });
+
+    it("still calls my own document mine when the list cannot be fetched", async () => {
+      seedRow({
+        path: "/docs/mine.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-3",
+        cloud_version: 4,
+        share_role: "owner",
+      });
+      respondWith({ status: 503 });
+
+      expect((await sync.libraryState()).items[0].owned).toBe(true);
+    });
+
+    it("says nobody has told it, rather than guessing", async () => {
+      syncedRow();
+      respondWith({ status: 500 });
+
+      expect((await sync.libraryState()).items[0].owned).toBeNull();
+    });
+
+    it("has nothing to wonder about for a file that was never in the cloud", async () => {
+      seedRow({ path: "/docs/local.md" });
+      respondWith({ status: 500 });
+
+      expect((await sync.libraryState()).items[0].owned).toBe(true);
+    });
   });
 
   it("leaves an unpushed row unpushed even when the server list loads", async () => {

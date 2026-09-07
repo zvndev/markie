@@ -146,11 +146,14 @@ const MAIN_PROCESS_RUNTIME_DEPENDENCIES = ["better-sqlite3", "electron-updater",
 // happen to be present. Preflight never packages anything itself.
 const PACKAGED_APP_DIRS = ["dist/mac-arm64/Markie.app", "dist/mac/Markie.app"];
 
-// The arm64 .app measures 286 MiB once only the main-process runtime ships, and
-// 270 MiB of that is the Electron framework itself. 330 MiB leaves room for an
-// Electron upgrade while still catching a renderer package sneaking back into
-// `dependencies`: that regression cost 305 MiB on its own.
-const PACKAGED_APP_BUDGET_BYTES = 330 * 1024 * 1024;
+// The arm64 .app measures 229 MiB once only the main-process runtime ships, the
+// English locale pack ships alone, and the native modules ship without their
+// sources. 216 MiB of that is the Electron framework itself. 265 MiB leaves
+// room for an Electron upgrade while still catching the three regressions that
+// have actually happened here: a renderer package sneaking back into
+// `dependencies` (that one cost 305 MiB on its own), the other 50 locale packs
+// coming back, and the amalgamated SQLite sources coming back.
+const PACKAGED_APP_BUDGET_BYTES = 265 * 1024 * 1024;
 
 const REQUIRED_RELEASE_DOC_SNIPPETS = [
   "Per-platform local artifact contract",
@@ -443,6 +446,18 @@ export function validateRuntimeDependencies(rootDir, options = {}) {
   return { runtime, declared };
 }
 
+// The halves of the two native modules that exist only so the binding can be
+// compiled: the amalgamated SQLite C sources, better-sqlite3's own C++, and
+// node-pty's vendored winpty and conpty sources. About 10 MB of a user's disk
+// for files nothing at runtime opens. The compiled binaries live under
+// build/Release and are deliberately not in this list.
+const BUILD_TIME_ONLY_NEGATIONS = [
+  "!node_modules/better-sqlite3/deps/**",
+  "!node_modules/better-sqlite3/src/**",
+  "!node_modules/node-pty/third_party/**",
+  "!node_modules/node-pty/deps/**",
+];
+
 export function validateShippedFileGlobs(rootDir, files) {
   const globs = files ?? readBuilderConfig(rootDir).files;
   assert(Array.isArray(globs), "electron-builder config must declare a files array");
@@ -452,6 +467,16 @@ export function validateShippedFileGlobs(rootDir, files) {
       `electron/*.test.ts sits beside the modules it covers and "electron/**/*" ships it ` +
       `verbatim into a user's app bundle. Add a "!electron/**/*.test.*" negation.`
   );
+
+  const missing = BUILD_TIME_ONLY_NEGATIONS.filter((negation) => !globs.includes(negation));
+  assert(
+    missing.length === 0,
+    `electron-builder files must keep the native modules' build-time sources out of the ` +
+      `shipped app, but is missing ${missing.join(", ")}. These are what a native module is ` +
+      `compiled from, not what it loads: the .node binaries live under build/Release and are ` +
+      `unaffected. Dropping the negations puts about 10 MB back on every install.`
+  );
+
   return globs;
 }
 

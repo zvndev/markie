@@ -232,6 +232,30 @@ describe("release preflight", () => {
     );
   });
 
+  it("keeps the native modules' build-time sources out of the shipped app", () => {
+    expect(validateShippedFileGlobs(rootDir)).toEqual(
+      expect.arrayContaining([
+        "!node_modules/better-sqlite3/deps/**",
+        "!node_modules/better-sqlite3/src/**",
+        "!node_modules/node-pty/third_party/**",
+        "!node_modules/node-pty/deps/**",
+      ])
+    );
+  });
+
+  it("rejects a files glob that would ship the amalgamated SQLite sources again", () => {
+    expect(() =>
+      validateShippedFileGlobs(rootDir, [
+        "electron/**/*",
+        "out/**/*",
+        "!electron/**/*.test.*",
+        "!node_modules/better-sqlite3/src/**",
+        "!node_modules/node-pty/third_party/**",
+        "!node_modules/node-pty/deps/**",
+      ])
+    ).toThrow(/better-sqlite3\/deps/);
+  });
+
   it("runs only local test, lint, and build checks", () => {
     const inspected = assertLocalOnlyChecks(rootDir).join("\n");
 

@@ -103,15 +103,36 @@ module.exports = {
     ],
   },
   publish: [publishTarget(publishPath)],
+  // Markie is English-only, so the ~50 MB of Chromium .lproj locale packs is
+  // paid for nothing. This is a top-level option and applies to mac and win.
+  // The cost is that the handful of strings Chromium owns rather than Markie
+  // (the "Look Up" and "Search with…" context menu items, the spellcheck
+  // labels) show in English on a non-English system.
+  electronLanguages: ["en"],
   // electron/ and out/ are the whole shipped app. Note that `files` does NOT
-  // control node_modules: electron-builder resolves production dependencies
-  // from package.json separately and copies them in on top of this list, which
-  // is why every renderer-only package lives in devDependencies (the renderer
-  // is already bundled into out/ by `vite build`).
+  // decide *which* node_modules ship: electron-builder resolves production
+  // dependencies from package.json separately, which is why every
+  // renderer-only package lives in devDependencies (the renderer is already
+  // bundled into out/ by `vite build`). The negations below do still filter
+  // what gets copied out of the modules it picked, which is how the
+  // build-time-only halves of the two native modules stay out.
   //
-  // The negation drops electron/*.test.ts, which sits next to the modules it
-  // covers and has no business inside a user's app bundle.
-  files: ["electron/**/*", "out/**/*", "!electron/**/*.test.*"],
+  // The first negation drops electron/*.test.ts, which sits next to the
+  // modules it covers and has no business inside a user's app bundle.
+  //
+  // The rest are the sources a native module is compiled *from*: the amalgamated
+  // SQLite C files (about 10 MB), better-sqlite3's own C++, and node-pty's
+  // vendored winpty and conpty sources. The compiled .node binaries live under
+  // build/Release and are not touched by any of this.
+  files: [
+    "electron/**/*",
+    "out/**/*",
+    "!electron/**/*.test.*",
+    "!node_modules/better-sqlite3/deps/**",
+    "!node_modules/better-sqlite3/src/**",
+    "!node_modules/node-pty/third_party/**",
+    "!node_modules/node-pty/deps/**",
+  ],
   // Native modules cannot be loaded from inside the asar archive. Electron
   // Builder unpacks *.node on its own, which is not enough: node-pty also ships
   // winpty.dll, winpty-agent.exe and the conpty helpers on Windows, and those

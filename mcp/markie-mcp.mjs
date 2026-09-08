@@ -19,7 +19,7 @@ import { guardPath, matchQuery, groupSkills, markieOpenCommand } from "./lib.mjs
 import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { MARKDOWN_GUIDE, GUIDE_URI } from "./markdown-guide.mjs";
 import { checkMarkdown } from "./check-md.mjs";
-import { walk } from "./scan.mjs";
+import { walkAll } from "./scan.mjs";
 import { createRequire } from "node:module";
 
 // Read the version from package.json so the MCP handshake can never drift from
@@ -30,13 +30,14 @@ const HOME = homedir();
 
 // Cache the device scan for the process lifetime; writes invalidate it so new
 // files surface in the next find. The walk runs under DEFAULT_BUDGET, so a
-// pathological tree costs a bounded amount of disk instead of minutes.
+// pathological tree costs a bounded amount of disk instead of minutes. It
+// starts at home and at each configured skills folder outside it.
 let _scan = null;
 let _scanStats = {};
 async function scan() {
   if (!_scan) {
     const stats = {};
-    _scan = await walk(HOME, { home: HOME, stats });
+    _scan = await walkAll(HOME, { stats });
     _scanStats = stats;
   }
   return _scan;
@@ -194,7 +195,7 @@ async function runTool(name, args) {
     }
     case "markie_list_skills": {
       const rows = await scan();
-      return groupSkills(rows).map((grp) => ({
+      return groupSkills(rows, { home: HOME }).map((grp) => ({
         tool: grp.label,
         files: grp.files.map((f) => ({ path: f.path, name: f.name })),
       }));

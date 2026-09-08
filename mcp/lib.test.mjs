@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { guardPath, matchQuery, classifyAgentFile, isCachedAgentPath, groupSkills, markieOpenCommand } from "./lib.mjs";
+import { guardPath, matchQuery, classifyAgentFile, isCachedAgentPath, groupSkills, markieOpenCommand, AGENT_TOOLS } from "./lib.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, realpathSync, rmSync, existsSync } from "node:fs";
 import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { MARKDOWN_GUIDE, GUIDE_URI, guideEssentials } from "./markdown-guide.mjs";
 import { checkMarkdown } from "./check-md.mjs";
-import { walk, DEFAULT_BUDGET } from "./scan.mjs";
+import { walk, scanTargets, DEFAULT_BUDGET } from "./scan.mjs";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { dirname as pdirname, join as pjoin } from "node:path";
@@ -114,10 +114,49 @@ test("guardPath expands ~ against home", () => {
 test("guardPath allows the skill/agent allowlist roots despite the dot-dir", () => {
   const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
   try {
-    for (const rel of [".claude/skills/kirby/SKILL.md", ".codex/AGENTS.md", ".codex/notes/todo.md"]) {
+    for (const rel of [
+      ".claude/skills/kirby/SKILL.md",
+      ".codex/AGENTS.md",
+      ".codex/notes/todo.md",
+      ".agents/skills/pdf/SKILL.md",
+      ".cursor/skills/pdf/SKILL.md",
+      ".gemini/skills/pdf/SKILL.md",
+    ]) {
       assert.equal(guardPath(pjoin(home, rel), home).ok, true, `${rel} should be allowed`);
     }
   } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("guardPath follows a Claude or Codex config folder the user has moved", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const previous = {
+    CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
+    CODEX_HOME: process.env.CODEX_HOME,
+  };
+  try {
+    // The realistic case: config folders tucked inside ~/.config, which the
+    // dot-dir rule prunes unless the allowlist names them.
+    process.env.CLAUDE_CONFIG_DIR = pjoin(home, ".config", "claude");
+    process.env.CODEX_HOME = pjoin(home, ".config", "codex");
+    for (const configured of [process.env.CLAUDE_CONFIG_DIR, process.env.CODEX_HOME]) {
+      mkdirSync(pjoin(configured, "skills", "pdf"), { recursive: true });
+      const file = pjoin(configured, "skills", "pdf", "SKILL.md");
+      assert.equal(guardPath(file, home).ok, true, `${configured} is still readable`);
+      assert.equal(
+        guardPath(file, home, { mode: "write" }).ok,
+        false,
+        "and is still no place for an agent to write",
+      );
+      // Only the skills folder inside it, as for every other tool.
+      assert.equal(guardPath(pjoin(configured, "notes.md"), home).ok, false);
+    }
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     rmSync(home, { recursive: true, force: true });
   }
 });
@@ -184,6 +223,183 @@ test("groupSkills groups classified files by tool, in display order", () => {
   assert.deepEqual(ids, ["claude", "openai"]);
   assert.equal(groups[0].files.length, 2); // CLAUDE.md + SKILL.md
   assert.equal(groups[1].files.length, 1); // AGENTS.md
+});
+
+// The index scans five skills folders plus the two a user can move, and the
+// classifier knew about two of them: a skill under ~/.agents, ~/.cursor or
+// ~/.gemini was scanned and then dropped from markie_list_skills, and one
+// under a moved CODEX_HOME had no ".codex" in its path to be recognised by.
+test("groupSkills files a skill under every folder the scan reads, by the configured roots", () => {
+  const home = "/home/u";
+  const env = { CLAUDE_CONFIG_DIR: "/home/u/.config/claude", CODEX_HOME: "/home/u/.config/codex" };
+  const rows = [
+    { name: "SKILL.md", path: "/home/u/.config/claude/skills/a/SKILL.md", dir: "/home/u/.config/claude/skills/a" },
+    { name: "SKILL.md", path: "/home/u/.config/codex/skills/b/SKILL.md", dir: "/home/u/.config/codex/skills/b" },
+    { name: "SKILL.md", path: "/home/u/.cursor/skills/c/SKILL.md", dir: "/home/u/.cursor/skills/c" },
+    { name: "SKILL.md", path: "/home/u/.gemini/skills/d/SKILL.md", dir: "/home/u/.gemini/skills/d" },
+    { name: "SKILL.md", path: "/home/u/.agents/skills/e/SKILL.md", dir: "/home/u/.agents/skills/e" },
+    { name: "README.md", path: "/home/u/notes/README.md", dir: "/home/u/notes" },
+  ];
+  const groups = groupSkills(rows, { home, env });
+  const byId = Object.fromEntries(groups.map((g) => [g.id, g.files.map((f) => f.path)]));
+  assert.deepEqual(byId.claude, ["/home/u/.config/claude/skills/a/SKILL.md"]);
+  assert.deepEqual(byId.openai, ["/home/u/.config/codex/skills/b/SKILL.md"]);
+  assert.deepEqual(byId.cursor, ["/home/u/.cursor/skills/c/SKILL.md"]);
+  assert.deepEqual(byId.gemini, ["/home/u/.gemini/skills/d/SKILL.md"]);
+  assert.deepEqual(byId.universal, ["/home/u/.agents/skills/e/SKILL.md"]);
+  assert.deepEqual(groups.map((g) => g.id), ["claude", "openai", "gemini", "cursor", "universal"]);
+  assert.ok(AGENT_TOOLS.some((t) => t.id === "universal" && t.label === "Universal"));
+});
+
+test("a scan of a home with every skills folder lists every skill, moved Codex home included", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-skillscan-")));
+  const previous = process.env.CODEX_HOME;
+  try {
+    process.env.CODEX_HOME = pjoin(home, ".config", "codex");
+    const folders = {
+      ".claude": "claude",
+      ".codex": "openai",
+      ".cursor": "cursor",
+      ".gemini": "gemini",
+      ".agents": "universal",
+      ".config/codex": "openai",
+    };
+    for (const folder of Object.keys(folders)) {
+      const dir = pjoin(home, folder, "skills", folder.replace(/[./]/g, "") + "-skill");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(pjoin(dir, "SKILL.md"), "---\nname: x\ndescription: y\n---\n");
+    }
+    const rows = await walk(home, { home });
+    const skills = rows.filter((r) => r.name === "SKILL.md");
+    assert.equal(skills.length, 6, "the scan reaches every folder");
+    const groups = groupSkills(rows, { home, env: process.env });
+    const listed = groups.flatMap((g) => g.files.map((f) => [g.id, f.path]));
+    assert.equal(listed.length, 6, "and every skill is grouped");
+    for (const [folder, tool] of Object.entries(folders)) {
+      const hit = listed.find(([, p]) => p.startsWith(pjoin(home, folder, "skills") + "/"));
+      assert.ok(hit, `${folder} is listed`);
+      assert.equal(hit[0], tool, `${folder} lands under ${tool}`);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// A configured Codex or Claude home outside the user's home is allowlisted,
+// but a scan that starts at home never reaches it.
+test("scanTargets starts at home and at each configured skills folder outside it", () => {
+  const home = "/home/u";
+  assert.deepEqual(scanTargets(home, {}), [home]);
+  assert.deepEqual(
+    scanTargets(home, { CODEX_HOME: "/home/u/.config/codex", CLAUDE_CONFIG_DIR: "/home/u/.claude" }),
+    [home],
+  );
+  assert.deepEqual(
+    scanTargets(home, { CODEX_HOME: "/opt/codex", CLAUDE_CONFIG_DIR: "/srv/claude" }),
+    [home, "/srv/claude/skills", "/opt/codex/skills"],
+  );
+});
+
+test("markie_list_skills lists a skill under a CODEX_HOME outside the home folder", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const codexHome = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-codex-")));
+  const previous = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = codexHome;
+  const client = startMcpClient(home);
+  try {
+    mkdirSync(pjoin(codexHome, "skills", "pdf"), { recursive: true });
+    writeFileSync(pjoin(codexHome, "skills", "pdf", "SKILL.md"), "---\nname: pdf\ndescription: y\n---\n");
+    mkdirSync(pjoin(home, ".claude", "skills", "mine"), { recursive: true });
+    writeFileSync(pjoin(home, ".claude", "skills", "mine", "SKILL.md"), "---\nname: mine\ndescription: y\n---\n");
+    await client.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "markie-test", version: "0.0.0" },
+    });
+    const res = await client.callTool("markie_list_skills", {});
+    const groups = JSON.parse(res.result.content[0].text);
+    const codex = groups.find((g) => g.tool === "OpenAI · Codex");
+    assert.ok(codex, "the Codex group is listed");
+    assert.deepEqual(codex.files.map((f) => f.path), [pjoin(codexHome, "skills", "pdf", "SKILL.md")]);
+    const claude = groups.find((g) => g.tool === "Claude");
+    assert.deepEqual(claude.files.map((f) => f.path), [pjoin(home, ".claude", "skills", "mine", "SKILL.md")]);
+  } finally {
+    client.close();
+    if (previous === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
+// What the scan lists it can also read: a configured skills folder outside
+// home is a start point of the scan, so the guard has to accept a path under
+// it, read-only as every skills folder is.
+test("guardPath reads a SKILL.md under a configured skills folder outside home, and nothing beside it", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const codexHome = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-codex-")));
+  const previous = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = codexHome;
+  try {
+    mkdirSync(pjoin(codexHome, "skills", "pdf", "node_modules"), { recursive: true });
+    mkdirSync(pjoin(codexHome, "sessions"), { recursive: true });
+    const skill = pjoin(codexHome, "skills", "pdf", "SKILL.md");
+    writeFileSync(skill, "---\nname: pdf\ndescription: y\n---\n");
+    writeFileSync(pjoin(codexHome, "sessions", "notes.md"), "x");
+    const read = guardPath(skill, home);
+    assert.equal(read.ok, true, read.error);
+    assert.equal(read.path, skill);
+    const write = guardPath(skill, home, { mode: "write" });
+    assert.equal(write.ok, false);
+    assert.match(write.error, /disabled/);
+    assert.equal(guardPath(pjoin(codexHome, "sessions", "notes.md"), home).ok, false, "only the skills folder");
+    assert.equal(guardPath(pjoin(codexHome, "skills", "pdf", "node_modules", "x.md"), home).ok, false);
+    assert.equal(guardPath(pjoin(codexHome, "skills", "new.md"), home, { mode: "write" }).ok, false);
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
+test("the server reads and checks a skill it lists under an outside CODEX_HOME, and will not write there", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const codexHome = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-codex-")));
+  const previous = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = codexHome;
+  const client = startMcpClient(home);
+  try {
+    const skill = pjoin(codexHome, "skills", "pdf", "SKILL.md");
+    mkdirSync(pjoin(codexHome, "skills", "pdf"), { recursive: true });
+    writeFileSync(skill, "---\nname: pdf\ndescription: y\n---\n# pdf\n");
+    await client.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "markie-test", version: "0.0.0" },
+    });
+    const listed = await client.callTool("markie_list_skills", {});
+    const paths = JSON.parse(listed.result.content[0].text).flatMap((g) => g.files.map((f) => f.path));
+    assert.ok(paths.includes(skill), "the scan lists it");
+    const read = await client.callTool("markie_read_md", { path: skill });
+    assert.equal(read.result.isError, undefined, read.result.content[0].text);
+    assert.match(read.result.content[0].text, /# pdf/);
+    const checked = await client.callTool("markie_check_md", { path: skill });
+    assert.equal(checked.result.isError, undefined, checked.result.content[0].text);
+    assert.equal(JSON.parse(checked.result.content[0].text).ok, true);
+    const wrote = await client.callTool("markie_write_md", { path: skill, content: "# replaced\n" });
+    assert.equal(wrote.result.isError, true, "a write there is refused");
+    assert.match(wrote.result.content[0].text, /writing agent\/skill files is disabled/);
+    assert.match(readFileSync(skill, "utf8"), /# pdf/);
+  } finally {
+    client.close();
+    if (previous === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
+  }
 });
 
 test("markieOpenCommand uses the Markie app on macOS", () => {
@@ -334,11 +550,17 @@ test("guardPath allows an ordinary real .md under a real home", () => {
 test("guardPath write-mode denies the allowlist skill roots (no agent-file implant)", () => {
   const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
   try {
-    mkdirSync(pjoin(home, ".claude", "skills"), { recursive: true });
-    const r = guardPath(pjoin(home, ".claude", "skills", "x.md"), home, { mode: "write" });
-    assert.equal(r.ok, false, "writing under ~/.claude/skills must be denied");
-    // but reading is still fine
-    assert.equal(guardPath(pjoin(home, ".claude", "skills", "x.md"), home).ok, true);
+    for (const tool of [".claude", ".agents", ".cursor", ".gemini"]) {
+      mkdirSync(pjoin(home, tool, "skills"), { recursive: true });
+      const file = pjoin(home, tool, "skills", "x.md");
+      assert.equal(
+        guardPath(file, home, { mode: "write" }).ok,
+        false,
+        `writing under ~/${tool}/skills must be denied`,
+      );
+      // but reading is still fine
+      assert.equal(guardPath(file, home).ok, true);
+    }
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

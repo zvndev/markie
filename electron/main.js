@@ -1894,6 +1894,92 @@ handle("mcp-info", () => {
   };
 }, { onFailure: (err) => ({ serverPath: "", packaged: false, error: errorMessage(err) }) });
 
+// ── Skills: the catalog, and installing out of it ──
+// skill-registry.js owns every decision. main resolves the two things that
+// need Electron (where the download cache lives, and the version the
+// User-Agent carries) and passes the renderer's arguments straight through.
+let skills = null;
+function skillRegistry() {
+  if (!skills) {
+    skills = require("./skill-registry").createSkillRegistry({
+      cacheDir: path.join(app.getPath("userData"), "skill-cache"),
+      version: app.getVersion(),
+      // A project install may only land in a folder the user registered, and
+      // this is the only list of those.
+      roots: () => workspace.roots(),
+    });
+  }
+  return skills;
+}
+
+// A catalog that could not be read is an empty one; a source that failed
+// carries its own reason, and there is no source at all when the failure is
+// the registry itself.
+const noCatalog = () => ({ sources: [], skills: [] });
+
+handle("skills-catalog-list", () => skillRegistry().listCatalog(), { onFailure: noCatalog });
+handle("skills-catalog-refresh", (_e, source) => skillRegistry().refresh(source), {
+  onFailure: noCatalog,
+});
+handle("skills-catalog-add-source", (_e, ownerRepo) => skillRegistry().addSource(ownerRepo), {
+  onFailure: noCatalog,
+});
+handle(
+  "skills-catalog-remove-source",
+  (_e, ownerRepo) => skillRegistry().removeSource(ownerRepo),
+  { onFailure: noCatalog }
+);
+handle("skills-search", (_e, query) => skillRegistry().search(query), { onFailure: () => [] });
+handle("skills-read", (_e, id) => skillRegistry().readSkill(id), {
+  onFailure: () => ({ body: "", files: [] }),
+});
+// The cached folder of a catalog skill, so its preview can show the pictures
+// beside its SKILL.md. Granting that file is what makes its folder reachable
+// through markie-asset://, the same way opening a document does; nothing
+// outside the one skill folder is opened up.
+handle(
+  "skills-skill-dir",
+  (_e, { sourceId, skillId } = {}) => {
+    const found = skillRegistry().skillDir(sourceId, skillId);
+    if (!found.dir) return found;
+    const grant = fileGrants.grantFile(path.join(found.dir, "SKILL.md"));
+    if (!grant.ok) return { error: grant.error };
+    return { dir: path.dirname(grant.path) };
+  },
+  { onFailure: (err) => ({ error: errorMessage(err) }) }
+);
+
+// The failure shape is per target, so it is built here rather than in an
+// onFailure that cannot see which targets were asked for.
+handle("skills-install", (_e, { id, targets } = {}) => {
+  try {
+    const result = skillRegistry().install(id, targets);
+    // open-file-path and reveal-file both refuse a path the app never
+    // advertised, and the only thing that advertises a SKILL.md is the index.
+    // A skill installed into a config folder the user moved may never be
+    // walked at all, so Open and Reveal answered "File access was not granted"
+    // for a file Markie had just written itself. Granting it here is the same
+    // grant opening the file would have produced.
+    for (const entry of result.installed || []) {
+      fileGrants.grantFile(path.join(entry.path, "SKILL.md"));
+    }
+    return result;
+  } catch (err) {
+    return {
+      installed: [],
+      errors: (targets || []).map((target) => ({
+        target,
+        error: "copy-failed",
+        message: errorMessage(err),
+      })),
+    };
+  }
+});
+handle("skills-remove", (_e, { target, name } = {}) => skillRegistry().remove(target, name), {
+  onFailure: (err) => ({ ok: false, error: errorMessage(err) }),
+});
+handle("skills-installed", () => skillRegistry().installed(), { onFailure: () => [] });
+
 // ── Auto-update (electron-updater → the platform's published feed) ──
 // macOS updates from a signed and notarized feed, Windows from the signed NSIS
 // feed the release runbook publishes alongside the installer. Which feed an

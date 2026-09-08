@@ -238,6 +238,21 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
       serverPath: "/tmp/markie-mcp.mjs",
       packaged: false,
     })),
+
+    // Skills — empty by default: a test that wants a catalog supplies one, and
+    // nothing here ever reaches the network or the user's agent folders.
+    skillsCatalogList: vi.fn(async () => ({ sources: [], skills: [] })),
+    skillsCatalogRefresh: vi.fn(async () => ({ sources: [], skills: [] })),
+    skillsCatalogAddSource: vi.fn(async () => ({ sources: [], skills: [] })),
+    skillsCatalogRemoveSource: vi.fn(async () => ({ sources: [], skills: [] })),
+    skillsSearch: vi.fn(async () => []),
+    skillsRead: vi.fn(async () => ({ body: "", files: [] })),
+    skillsInstall: vi.fn(async () => ({ installed: [], errors: [] })),
+    skillsRemove: vi.fn(async () => ({ ok: true })),
+    skillsInstalled: vi.fn(async () => []),
+    // No cached folder by default, so a preview resolves its pictures the way
+    // it did before the channel existed; a test that wants one supplies it.
+    skillsSkillDir: vi.fn(async () => ({ error: "not cached" })),
   } as unknown as ElectronAPI;
 
   return Object.assign(bridge, overrides);

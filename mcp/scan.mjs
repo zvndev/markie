@@ -42,12 +42,45 @@ export function isExcludedDir(name) {
   return EXCLUDED_NAMES.has(name);
 }
 
+// The skills folder of each config folder the user has moved. Same list as
+// the app's index, for the same reason: a skill installed into a moved
+// config folder is still a skill.
+export function configuredSkillDirs(env = process.env) {
+  const dirs = [];
+  for (const configured of [env?.CLAUDE_CONFIG_DIR, env?.CODEX_HOME]) {
+    if (typeof configured === "string" && configured.trim()) {
+      dirs.push(path.join(path.resolve(configured), "skills"));
+    }
+  }
+  return dirs;
+}
+
 // Dot-dir roots explicitly re-included (agent/skill files live under them).
-export function allowlist(home) {
-  return [
+export function allowlist(home, env = process.env) {
+  const dirs = [
     path.join(home, ".claude", "skills"),
     path.join(home, ".codex"),
+    // Mirrors electron/mdindex.js: the other folders Markie installs skills
+    // into. Read-only here, and guardPath refuses to write into any of them.
+    path.join(home, ".agents", "skills"),
+    path.join(home, ".cursor", "skills"),
+    path.join(home, ".gemini", "skills"),
+    ...configuredSkillDirs(env),
   ];
+  return [...new Set(dirs)];
+}
+
+// Where a device scan starts: home, and each configured skills folder that
+// is not inside it. Allowlisting only lets the walk descend into a folder it
+// arrives at, and a walk from home never arrives at a Codex home in /opt.
+export function scanTargets(home, env = process.env) {
+  const base = path.resolve(home);
+  const out = [base];
+  for (const dir of configuredSkillDirs(env)) {
+    if (dir === base || dir.startsWith(base + path.sep) || out.includes(dir)) continue;
+    out.push(dir);
+  }
+  return out;
 }
 
 // True if any path segment of `full` (relative to home) is an excluded dir.
@@ -140,5 +173,47 @@ export async function walk(rootDir, { home, budget = {}, now = Date.now, stats =
   stats.ms = now() - startedAt;
   stats.truncated = !!stopped || depthCapped;
   stats.reason = stopped || (depthCapped ? "depth" : null);
+  return out;
+}
+
+// Every start point in turn, on one budget for the lot (as the app's rescan
+// does), with rows deduplicated by path. `stats` reports the whole scan:
+// truncated when any walk was, with the first reason.
+export async function walkAll(home, { env = process.env, budget = {}, now = Date.now, stats = {} } = {}) {
+  const limits = { ...DEFAULT_BUDGET, ...budget };
+  const startedAt = now();
+  const out = [];
+  const seen = new Set();
+  let usedFiles = 0;
+  stats.truncated = false;
+  stats.reason = null;
+  for (const target of scanTargets(home, env)) {
+    const remainingFiles = limits.maxFiles - usedFiles;
+    const remainingMs = limits.maxMs - (now() - startedAt);
+    if (remainingFiles <= 0 || remainingMs <= 0) {
+      stats.truncated = true;
+      stats.reason = stats.reason || (remainingFiles <= 0 ? "files" : "time");
+      break;
+    }
+    const one = {};
+    const rows = await walk(target, {
+      home,
+      budget: { ...limits, maxFiles: remainingFiles, maxMs: remainingMs },
+      now,
+      stats: one,
+    });
+    usedFiles += one.files || 0;
+    for (const row of rows) {
+      if (seen.has(row.path)) continue;
+      seen.add(row.path);
+      out.push(row);
+    }
+    if (one.truncated) {
+      stats.truncated = true;
+      stats.reason = stats.reason || one.reason;
+    }
+  }
+  stats.files = out.length;
+  stats.ms = now() - startedAt;
   return out;
 }

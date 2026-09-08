@@ -3,18 +3,22 @@
 // can be unit-tested in isolation (node --test lib.test.mjs).
 import { resolve, join, sep, dirname, basename, win32 as winPath } from "node:path";
 import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 // Self-contained scan rules (no ../electron dependency — see scan.mjs header).
-import { isExcludedDir, allowlist } from "./scan.mjs";
-import { classifyAgentFile } from "./agent-classify.mjs";
+import { isExcludedDir, allowlist, configuredSkillDirs } from "./scan.mjs";
+import { classifyAgentFile, isCachedAgentPath } from "./agent-classify.mjs";
 
 export const MD_RE = /\.(md|markdown|mdx)$/i;
 
-// Display order + labels for grouped skills — mirrors src/lib/agent-files.ts.
+// Display order + labels for grouped skills, mirroring src/lib/agent-files.ts,
+// plus the universal skills folder (~/.agents/skills), which every tool reads
+// and no tool owns.
 export const AGENT_TOOLS = [
   { id: "claude", label: "Claude" },
   { id: "openai", label: "OpenAI · Codex" },
   { id: "gemini", label: "Gemini" },
   { id: "cursor", label: "Cursor" },
+  { id: "universal", label: "Universal" },
 ];
 
 function relSegments(full, home) {
@@ -80,12 +84,16 @@ function canonicalize(full) {
 }
 
 // Validate a path for read/write. Returns { ok, path } or { ok:false, error }.
-// Mirrors what the device index would surface: markdown extension, under home,
-// and no excluded/hidden ancestor segment (except the allowlisted skill roots).
+// Mirrors what the device index would surface: markdown extension, under home
+// (or under a configured skills folder outside it, which the scan starts at
+// and so lists), and no excluded/hidden ancestor segment (except the
+// allowlisted skill roots).
 // SECURITY: paths are realpath-canonicalized so a symlink (file or directory)
 // cannot dodge these checks (read/write outside home). Writes additionally
-// refuse the allowlisted skill roots so agents can't implant skill files.
-export function guardPath(input, home, { mode = "read" } = {}) {
+// refuse the allowlisted skill roots so agents can't implant skill files, and
+// that covers every configured folder outside home: nothing outside home is
+// ever written.
+export function guardPath(input, home, { mode = "read", env = process.env } = {}) {
   if (!input || typeof input !== "string") {
     return { ok: false, error: "path is required" };
   }
@@ -105,17 +113,26 @@ export function guardPath(input, home, { mode = "read" } = {}) {
   if (!MD_RE.test(real)) {
     return { ok: false, error: "only .md, .markdown, or .mdx files are allowed" };
   }
-  if (real !== homeReal && !real.startsWith(homeReal + sep)) {
+  // A configured skills folder is compared as it really is, like the path.
+  const configured = configuredSkillDirs(env).map((dir) => {
+    try { return realpathSync(dir); } catch { return dir; }
+  });
+  const configuredRoot = configured.find((dir) => real === dir || real.startsWith(dir + sep)) || null;
+  const insideHome = real === homeReal || real.startsWith(homeReal + sep);
+  if (!insideHome && !configuredRoot) {
     return { ok: false, error: "path must be inside your home folder" };
   }
 
-  const root = allowRootFor(real, homeReal);
+  const root = configuredRoot || allowRootFor(real, homeReal);
   if (mode === "write" && root) {
     return { ok: false, error: "writing agent/skill files is disabled" };
   }
 
-  const dirSegs = relSegments(real, homeReal).slice(0, -1); // drop the filename
-  const skip = root ? relSegments(root, homeReal).length : 0;
+  // Segments are judged from home, or from the configured folder when the
+  // path is only reachable through it.
+  const base = insideHome ? homeReal : configuredRoot;
+  const dirSegs = relSegments(real, base).slice(0, -1); // drop the filename
+  const skip = root ? relSegments(root, base).length : 0;
   for (const s of dirSegs.slice(skip)) {
     if (isExcludedDir(s)) {
       return { ok: false, error: `refused: "${s}" is an excluded directory` };
@@ -135,13 +152,43 @@ export function matchQuery(row, query) {
 
 // Which agent tool a file belongs to, or null. ONE definition, shared with the
 // app: re-exported rather than mirrored, because the mirror drifted.
-export { classifyAgentFile, isCachedAgentPath } from "./agent-classify.mjs";
+export { classifyAgentFile, isCachedAgentPath };
+
+// Which tool's folder a scanned file is in, by the roots the scan reads: the
+// Claude and Codex config folders as configured (else their conventional
+// homes) and the three tools that only ever have a skills folder. The path's
+// spelling is no guide on its own: a Codex home moved to ~/.config/codex has
+// no ".codex" in it, and nothing in "~/.agents" names a tool. Mirrors
+// skillToolFor in electron/mdindex.js, with this server's group ids.
+function skillRoots(home, env) {
+  const configured = (value) => (typeof value === "string" && value.trim() ? resolve(value) : null);
+  return [
+    ["claude", configured(env?.CLAUDE_CONFIG_DIR) || join(home, ".claude")],
+    ["openai", configured(env?.CODEX_HOME) || join(home, ".codex")],
+    ["cursor", join(home, ".cursor")],
+    ["gemini", join(home, ".gemini")],
+    ["universal", join(home, ".agents")],
+  ];
+}
+
+export function skillToolFor(path, { home = homedir(), env = process.env, platform = process.platform } = {}) {
+  const fold = (p) => (platform === "win32" ? p.toLowerCase() : p);
+  const full = fold(resolve(String(path || "")));
+  if (isCachedAgentPath(full)) return null;
+  for (const [tool, root] of skillRoots(home, env)) {
+    if (full.startsWith(fold(resolve(root)) + sep)) return tool;
+  }
+  return null;
+}
 
 // Group scan rows into agent tools (display order), dropping empty groups.
-export function groupSkills(rows) {
+// A row under one of the skills folders the scan reads is that tool's; the
+// instruction files elsewhere (a project's CLAUDE.md, say) still classify by
+// name and path.
+export function groupSkills(rows, { home = homedir(), env = process.env } = {}) {
   const byTool = new Map();
   for (const r of rows) {
-    const tool = classifyAgentFile(r.path, r.name);
+    const tool = skillToolFor(r.path, { home, env }) || classifyAgentFile(r.path, r.name);
     if (!tool) continue;
     const arr = byTool.get(tool);
     if (arr) arr.push(r);

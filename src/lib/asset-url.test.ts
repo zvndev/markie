@@ -66,6 +66,30 @@ describe("resolveAssetSrc", () => {
     expect(getAssetBaseDir()).toBeNull();
   });
 
+  it("resolves against a base handed in, and leaves the document's alone", () => {
+    // A SKILL.md previewed out of the catalog cache has its pictures beside
+    // its own file, not beside whatever is open in the editor.
+    setAssetBaseDir("/Users/me/report");
+    expect(decoded(resolveAssetSrc("assets/demo.png", "/Users/me/cache/pdf"))).toBe(
+      "/Users/me/cache/pdf/assets/demo.png"
+    );
+    expect(getAssetBaseDir()).toBe("/Users/me/report");
+  });
+
+  it("falls back to the document's base when the one handed in is empty", () => {
+    setAssetBaseDir("/Users/me/report");
+    expect(decoded(resolveAssetSrc("a.png", undefined))).toBe("/Users/me/report/a.png");
+    expect(decoded(resolveAssetSrc("a.png", null))).toBe("/Users/me/report/a.png");
+    expect(decoded(resolveAssetSrc("a.png", "  "))).toBe("/Users/me/report/a.png");
+  });
+
+  it("needs no open document when a base is handed in", () => {
+    expect(decoded(resolveAssetSrc("a.png", "/Users/me/cache/pdf"))).toBe("/Users/me/cache/pdf/a.png");
+    expect(resolveAssetSrc("https://example.com/a.png", "/Users/me/cache/pdf")).toBe(
+      "https://example.com/a.png"
+    );
+  });
+
   it("recognises its own urls", () => {
     setAssetBaseDir("/Users/me/report");
     expect(isAssetUrl(resolveAssetSrc("a.png"))).toBe(true);

@@ -5,7 +5,7 @@
 
 ## Stack (fixed)
 - Language/runtime: TypeScript and JavaScript on Node.js 22+.
-- Framework(s): Electron 41, Next.js 16 static export, React 19, Tailwind 4, CodeMirror 6, TipTap /
+- Framework(s): Electron 41, Vite 8 renderer build, React 19, Tailwind 4, CodeMirror 6, TipTap /
   ProseMirror, Yjs, Hono, better-auth, better-sqlite3.
 - Datastore: local SQLite registry in Electron; server SQLite with Litestream/B2 backups.
 - Deploy target: Electron desktop builds for Apple Silicon macOS, Intel macOS, Windows, and Linux;

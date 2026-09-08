@@ -831,13 +831,30 @@ describe("libraryState", () => {
     });
 
     it("keeps the confirmed account through a push that only repeats the token", async () => {
-      // A server URL change, or the boot push, sends the same token with no
-      // user. That is not a new session and must not throw the answer away.
+      // The boot push sends the same token with no user. That is not a new
+      // session and must not throw the answer away.
       mineByA();
       sync.setConfig({ token: "test-token", serverURL: SERVER });
       respondWith({ status: 503 });
 
       expect((await sync.libraryState()).items[0].owned).toBe(true);
+    });
+
+    it("forgets the account when the server changes under the same token", async () => {
+      // The same token string offered to another server is another session:
+      // nothing there has said whose it is, so A's remembered roles are not
+      // read for it until that server answers /api/me.
+      mineByA();
+      const env = process.env.NODE_ENV;
+      process.env.NODE_ENV = "development";
+      try {
+        sync.setConfig({ token: "test-token", serverURL: "http://localhost:4010" });
+      } finally {
+        process.env.NODE_ENV = env;
+      }
+      respondWith({ status: 503 });
+
+      expect((await sync.libraryState()).items[0].owned).toBeNull();
     });
 
     it("forgets the account on sign-out until the next token is confirmed", async () => {

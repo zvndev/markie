@@ -38,21 +38,26 @@ function setConfig(next) {
     allowDev: process.env.NODE_ENV === "development",
   });
   const token = next.token ?? null;
-  const tokenChanged = token !== config.token;
-  config = { token, serverURL: allowed ? serverURL : null };
+  const server = allowed ? serverURL : null;
+  // The session is the token at a server. The same token string offered to
+  // another address is a different session: nothing there has said whose it
+  // is, and the renderer sends no user with it (setServerURL in auth-client).
+  const sessionChanged = token !== config.token || server !== config.serverURL;
+  config = { token, serverURL: server };
   // Roles belong to whoever was signed in. Another account's grants on the same
   // doc are a different answer entirely.
   docRoles.clear();
-  // The principal is evidence about one token. A different token is a
-  // different session, whether or not anyone signed out in between, so the
-  // old answer goes at once, and a user named in the same push cannot have
-  // been confirmed for the new token yet: the renderer sends whatever it last
-  // heard, which was said for the token before. The principal comes back only
-  // with a later push made after /api/me answered under this token. A push
-  // that carries no user and the same token leaves it alone: that usually
-  // means nobody has asked the server yet, and offline nobody can. No token
-  // at all is a sign-out, and nobody is signed in.
-  if (tokenChanged || !token) principal = null;
+  // The principal is evidence about one token at one server. A different
+  // token or server is a different session, whether or not anyone signed out
+  // in between, so the old answer goes at once, and a user named in the same
+  // push cannot have been confirmed for the new session yet: the renderer
+  // sends whatever it last heard, which was said for the session before. The
+  // principal comes back only with a later push made after /api/me answered
+  // under this token at this server. A push that carries no user and the same
+  // session leaves it alone: that usually means nobody has asked the server
+  // yet, and offline nobody can. No token at all is a sign-out, and nobody is
+  // signed in.
+  if (sessionChanged || !token) principal = null;
   else if (next.userId) principal = next.userId;
 }
 

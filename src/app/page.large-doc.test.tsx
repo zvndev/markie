@@ -42,10 +42,14 @@ const probe = vi.mocked(startReconstructionJob);
 
 // The flag is main's; the renderer never re-measures. A short body keeps the
 // test honest about that, and a real size drives the copy.
+// The content is long enough in characters to stand at the large tier on its
+// own: page re-measures a document a beat after it lands, and a few dozen
+// characters claiming four megabytes would be demoted the moment a slow
+// machine let that beat pass mid-test.
 const LARGE = {
   name: "big.md",
   path: "/notes/big.md",
-  content: "# Big\n\nA paragraph that stands in for four megabytes.\n",
+  content: "# Big\n\n" + "A paragraph that stands in for four megabytes.\n".repeat(22_000),
   size: 4_400_000,
   large: true,
 };

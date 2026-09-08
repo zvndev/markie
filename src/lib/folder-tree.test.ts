@@ -121,6 +121,24 @@ describe("building the folder tree", () => {
       { path: "C:\\work\\notes\\a.md", name: "a.md", dir: "C:\\work\\notes", mtimeMs: 0 },
     ]);
     expect(tree[0].label).toBe("C:/work/notes");
+    // The path is the row's own, so a star on the folder matches its rows.
+    expect(tree[0].path).toBe("C:\\work\\notes");
+  });
+
+  it("keeps a Windows root and a network share as they are spelled", () => {
+    const rows = [
+      { path: "C:\\a.md", name: "a.md", dir: "C:\\", mtimeMs: 0 },
+      { path: "\\\\server\\share\\docs\\b.md", name: "b.md", dir: "\\\\server\\share\\docs", mtimeMs: 0 },
+      { path: "\\\\server\\share\\c.md", name: "c.md", dir: "\\\\server\\share", mtimeMs: 0 },
+    ];
+    const tree = buildFolderTree(rows);
+    const paths = new Set<string>();
+    const walk = (nodes: typeof tree) => nodes.forEach((n) => (paths.add(n.path), walk(n.children)));
+    walk(tree);
+    expect(paths.has("C:\\")).toBe(true);
+    expect(paths.has("\\\\server\\share")).toBe(true);
+    expect(paths.has("\\\\server\\share\\docs")).toBe(true);
+    for (const row of rows) expect(paths.has(row.dir)).toBe(true);
   });
 
   it("is empty for no files", () => {

@@ -8,6 +8,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-08
+
 ### Added
 
 - **A Cloud page, with everything that is yours and everything shared with

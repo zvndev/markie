@@ -50,16 +50,20 @@ function normalizePath(raw) {
 
 // A pax extended header is a sequence of `<length> <key>=<value>\n` records.
 // Only `path` matters here: it is what git writes instead of a GNU long name.
+// The length counts bytes, so the boundaries are found on the bytes and each
+// record is decoded on its own. Decoding the whole header first put the
+// boundaries at character counts, and a path with a multibyte character in it
+// then swallowed the start of the record after it.
 function paxRecords(data) {
   const out = {};
   let offset = 0;
-  const src = data.toString("utf8");
-  while (offset < src.length) {
-    const space = src.indexOf(" ", offset);
+  while (offset < data.length) {
+    const space = data.indexOf(0x20, offset);
     if (space === -1) break;
-    const length = Number.parseInt(src.slice(offset, space), 10);
+    const length = Number.parseInt(data.toString("latin1", offset, space), 10);
     if (!Number.isFinite(length) || length <= 0) break;
-    const record = src.slice(space + 1, offset + length).replace(/\n$/, "");
+    const end = Math.min(offset + length, data.length);
+    const record = data.toString("utf8", space + 1, end).replace(/\n$/, "");
     const eq = record.indexOf("=");
     if (eq > 0) out[record.slice(0, eq)] = record.slice(eq + 1);
     offset += length;

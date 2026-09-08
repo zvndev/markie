@@ -126,6 +126,23 @@ describe("parseTar", () => {
     expect(parseTar(archive).map((f) => f.path)).toEqual([name]);
   });
 
+  it("counts a pax record's length in bytes, so a multibyte path keeps the record after it whole", () => {
+    // "<length> key=value\n", where the length counts itself, in bytes.
+    const pax = (body: string) => {
+      const bytes = Buffer.byteLength(body, "utf8");
+      let length = bytes + 2;
+      while (String(length).length + 1 + bytes > length) length += 1;
+      return `${length} ${body}`;
+    };
+    const name = "pax/notes-日本語-ünïcode.md";
+    const archive = Buffer.concat([
+      entry("PaxHeaders/0", pax(`path=${name}\n`) + pax("mtime=1700000000.5\n"), "x"),
+      entry("short.md", "pax\n"),
+      Buffer.alloc(1024, 0),
+    ]);
+    expect(parseTar(archive).map((f) => f.path)).toEqual([name]);
+  });
+
   it("refuses an entry that would write outside the archive", () => {
     const archive = Buffer.concat([
       entry("../escape.md", "no\n"),

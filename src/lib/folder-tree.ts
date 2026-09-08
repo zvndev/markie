@@ -36,14 +36,27 @@ export interface FolderNode {
 
 const SEPARATOR = /[\\/]/;
 
-function segmentsOf(dir: string): string[] {
-  return dir.split(SEPARATOR).filter(Boolean);
-}
-
-// Windows paths start "C:\", POSIX paths start "/". Preserved so a node's path
-// is still a path you can open.
-function prefixOf(dir: string): string {
-  return dir.startsWith("/") ? "/" : "";
+// Every ancestor of `dir`, shortest first, spelled the way `dir` spells it:
+// the separators and the root ("/", "C:\", "\\server\share") are the row's
+// own, so a node's path is one you can open and one that equals a row's `dir`.
+// Joining segments with "/" wrote C:\work as C:/work, which no row's dir ever
+// matched, so a starred folder on Windows filtered its own files out.
+function ancestorsOf(dir: string): { segment: string; path: string }[] {
+  const out: { segment: string; path: string }[] = [];
+  let start = 0;
+  for (let i = 0; i <= dir.length; i += 1) {
+    const atEnd = i === dir.length;
+    if (!atEnd && !SEPARATOR.test(dir[i])) continue;
+    if (i > start) {
+      const segment = dir.slice(start, i);
+      // A drive letter keeps its separator: "C:" alone names the drive's
+      // current folder, not its root.
+      const drive = out.length === 0 && !atEnd && /^[A-Za-z]:$/.test(segment);
+      out.push({ segment, path: dir.slice(0, drive ? i + 1 : i) });
+    }
+    start = i + 1;
+  }
+  return out;
 }
 
 interface Building {
@@ -57,18 +70,15 @@ export function buildFolderTree(rows: readonly FileEntry[]): FolderNode[] {
   const roots = new Map<string, Building>();
 
   for (const row of rows) {
-    const segments = segmentsOf(row.dir);
-    if (segments.length === 0) continue;
-    const prefix = prefixOf(row.dir);
+    const ancestors = ancestorsOf(row.dir);
+    if (ancestors.length === 0) continue;
 
     let level = roots;
     let node: Building | undefined;
-    let walked = "";
-    for (const segment of segments) {
-      walked = walked ? `${walked}/${segment}` : `${prefix}${segment}`;
+    for (const { segment, path } of ancestors) {
       let next = level.get(segment);
       if (!next) {
-        next = { path: walked, segment, files: [], children: new Map() };
+        next = { path, segment, files: [], children: new Map() };
         level.set(segment, next);
       }
       node = next;

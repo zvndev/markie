@@ -160,13 +160,42 @@ describe("the account across a relaunch", () => {
 
     expect(JSON.parse(localStorage.getItem(PRINCIPAL_KEY)!)).toEqual({
       token: "tok-a",
+      serverURL: client.getServerURL(),
       userId: "user-a",
     });
   });
 
+  it("does not restore it for a server it was not confirmed by", async () => {
+    localStorage.setItem(TOKEN_KEY, "tok-a");
+    localStorage.setItem(
+      PRINCIPAL_KEY,
+      JSON.stringify({ token: "tok-a", serverURL: "https://elsewhere.example", userId: "user-a" })
+    );
+    vi.resetModules();
+    client = await import("./auth-client");
+
+    client.pushSyncConfig();
+    expect(pushes()).toEqual([{ token: "tok-a", userId: null }]);
+    expect(localStorage.getItem(PRINCIPAL_KEY)).toBeNull();
+  });
+
+  it("forgets the account when the server address changes", async () => {
+    client.adoptAuthToken("tok-a");
+    answerMe(A);
+    await client.authClient.me();
+    syncConfig.mockClear();
+
+    client.setServerURL("https://elsewhere.example");
+    expect(pushes()).toEqual([{ token: "tok-a", userId: null }]);
+    expect(localStorage.getItem(PRINCIPAL_KEY)).toBeNull();
+  });
+
   it("restores the account on launch when the stored token is the one it was confirmed for", async () => {
     localStorage.setItem(TOKEN_KEY, "tok-a");
-    localStorage.setItem(PRINCIPAL_KEY, JSON.stringify({ token: "tok-a", userId: "user-a" }));
+    localStorage.setItem(
+      PRINCIPAL_KEY,
+      JSON.stringify({ token: "tok-a", serverURL: client.getServerURL(), userId: "user-a" })
+    );
     vi.resetModules();
     client = await import("./auth-client");
 
@@ -181,7 +210,7 @@ describe("the account across a relaunch", () => {
 
   it("does not restore it for a token it was not confirmed for", async () => {
     localStorage.setItem(TOKEN_KEY, "tok-b");
-    localStorage.setItem(PRINCIPAL_KEY, JSON.stringify({ token: "tok-a", userId: "user-a" }));
+    localStorage.setItem(PRINCIPAL_KEY, JSON.stringify({ token: "tok-a", serverURL: client.getServerURL(), userId: "user-a" }));
     vi.resetModules();
     client = await import("./auth-client");
 

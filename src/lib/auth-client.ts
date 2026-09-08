@@ -22,10 +22,18 @@ export function getServerURL(): string {
 }
 
 export function setServerURL(url: string): void {
+  const before = getServerURL();
   try {
     localStorage.setItem(SERVER_KEY, url.replace(/\/$/, ""));
   } catch {
     // storage unavailable — keep default
+  }
+  // An account was confirmed by one server; another server has not said
+  // whose this token is, so the answer goes with the old address.
+  if (getServerURL() !== before && principal !== null) {
+    principal = null;
+    writeBinding(null);
+    pushSyncConfig();
   }
 }
 
@@ -83,6 +91,9 @@ const PRINCIPAL_KEY = "markie.auth.principal.v1";
 
 interface PrincipalBinding {
   token: string;
+  // The server that confirmed it. The same token string offered to another
+  // address is not the same session, whatever that server ends up saying.
+  serverURL: string;
   userId: string;
 }
 
@@ -91,8 +102,11 @@ function readBinding(): PrincipalBinding | null {
     const raw = localStorage.getItem(PRINCIPAL_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PrincipalBinding> | null;
-    return parsed && typeof parsed.token === "string" && typeof parsed.userId === "string"
-      ? { token: parsed.token, userId: parsed.userId }
+    return parsed &&
+      typeof parsed.token === "string" &&
+      typeof parsed.serverURL === "string" &&
+      typeof parsed.userId === "string"
+      ? { token: parsed.token, serverURL: parsed.serverURL, userId: parsed.userId }
       : null;
   } catch {
     return null;
@@ -109,11 +123,12 @@ function writeBinding(binding: PrincipalBinding | null): void {
 }
 
 // The account from the last launch, when it was confirmed for exactly the
-// token in storage now. A binding for any other token is stale and dropped.
+// token in storage now, by exactly the server in storage now. A binding for
+// any other token or server is stale and dropped.
 function restorePrincipal(): string | null {
   const bound = readBinding();
-  if (!bound) return null;
-  if (bound.token !== getToken()) {
+  // A binding that cannot be read is not kept around either.
+  if (!bound || bound.token !== getToken() || bound.serverURL !== getServerURL()) {
     writeBinding(null);
     return null;
   }
@@ -131,8 +146,8 @@ let principal: string | null = restorePrincipal();
 // that, and letting it erase the answer would throw away the evidence the
 // offline path depends on the moment the wifi drops. Signing out clears the
 // token, and setToken clears this with it.
-function confirmPrincipal(token: string, userId: string): void {
-  writeBinding({ token, userId });
+function confirmPrincipal(token: string, serverURL: string, userId: string): void {
+  writeBinding({ token, serverURL, userId });
   if (principal === userId) return;
   principal = userId;
   pushSyncConfig();
@@ -213,7 +228,7 @@ export const authClient = {
     // means nothing without the account it was said to. This answer is the
     // only place the account is confirmed, so it is where main is told, and
     // where the account is kept for the next launch.
-    if (user && asked.token) confirmPrincipal(asked.token, user.id);
+    if (user && asked.token) confirmPrincipal(asked.token, asked.serverURL, user.id);
     return user;
   },
 

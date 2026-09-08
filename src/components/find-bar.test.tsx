@@ -190,6 +190,9 @@ describe("FindBar", () => {
     const { target } = renderBar();
     await user.keyboard("tw");
     await settled("1 of 3");
+    // The count lands a render before the reveal effect; wait for "tw"'s own
+    // reveal so it is not counted among what Enter revealed.
+    await waitFor(() => expect(target.reveal).toHaveBeenLastCalledWith({ from: 4, to: 6 }));
     const revealsBefore = target.reveal.mock.calls.length;
     // The field says "two"; for a beat the matches are still "tw"'s. Enter in
     // that beat lands on what the field says, never on the second "tw".

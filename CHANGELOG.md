@@ -10,6 +10,40 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A Cloud page, with everything that is yours and everything shared with
+  you in one place.** The left rail has a new Cloud entry. It lists what you
+  have synced from this device, what is in your cloud from other devices,
+  what you have shared, and what others have shared with you, each in its own
+  section, each section present even when it is empty so the absence means
+  something. Ownership is never guessed: a document you were given shows as
+  theirs even when the server cannot be reached. The Library keeps only the
+  files on this device.
+- **Browse is one tree, starting where the folders start.** The old All Files
+  tab is gone. The tree opens at the first level with more than one thing in
+  it, nested folders hang off a thin guide line rather than a stair of
+  indents, and every file shows when it was last changed, so you can see what
+  moved and sort by it. What you opened stays open next time.
+- **Browse and install skills from the registries agents actually use.** The
+  Skills panel now has two tabs. Installed shows every skill and agent file on
+  this machine, grouped by the tool that owns it: Claude, Codex, Cursor,
+  Gemini and the shared agents folder. Discover lists the skills in
+  anthropics/skills and any GitHub repository you add by name, searches
+  skills.sh for more as you type, renders a skill's SKILL.md before you take
+  it, and installs it into whichever tool's folder you choose. A lock file in
+  the same format as the Vercel skills CLI records what came from where, so
+  either tool can update what the other installed. Discover talks to GitHub
+  and to skills.sh; Installed never leaves this machine.
+  A Claude or Codex home moved with CLAUDE_CONFIG_DIR or CODEX_HOME is scanned
+  and installed to like the default one.
+- **Very large files open without taking the app with them.** A markdown file
+  over 1 MB opens in Source view, which handles any size, with a quiet strip
+  saying why rich editing is off for it; the mode you were in comes back with
+  the next ordinary document. A file over 100 MB is refused with a message
+  instead of an open that never finishes. Before, a 4 MB file stalled the
+  whole window for close to a minute. Below the line, the check that decides
+  whether rich editing can be trusted now runs in idle slices between your
+  keystrokes rather than in one piece, so a large-ish document no longer
+  freezes while "preparing".
 - **A document you sync on one machine lands on your others by itself.**
   Sign in on the laptop, and everything you synced from the desktop arrives
   under `Documents/Markie/Cloud` as real files, registered as synced and listed
@@ -18,8 +52,53 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   time. Documents shared with you are not landed: they open into Downloads
   when you ask, as before. A file you delete or pause stays gone.
 
+### Changed
+
+- **Markie launches faster and takes less space.** The renderer is built with
+  Vite instead of Next.js, which removed a whole framework from the app and
+  from every launch (launch 647 ms to 514 ms, idle memory 526 MB to 488 MB, measured on a
+  loaded machine).
+  The source editor and the live-collaboration stack are loaded the first
+  time they are needed rather than at launch, and so is the export pipeline.
+  The installed app is 230 MB instead of 287 MB on Apple silicon, and the
+  download about an eighth smaller:
+  the C sources the native modules are compiled from no longer ship, and
+  only the English locale pack does. Markie is English-only; the effect of
+  that last change is that the handful of menu strings the browser engine
+  owns rather than Markie (Look Up, Search with…, the spell-check labels)
+  read in English on a non-English system.
+
 ### Fixed
 
+- **Restoring a snapshot or a recovered draft of a large document keeps it in
+  Source view**, and a file that grows past the line on disk is re-read as a
+  large one instead of being fed to the rich editor.
+- **A cloud copy larger than Markie opens is refused, not written.** Pulling
+  an update or taking the cloud side of a conflict used to write the cloud
+  copy to disk whatever its size, leaving a file Markie could not open under a
+  buffer that would have saved over it. The pull now stops with a message
+  and nothing changes.
+- **Pasting a document past the line moves it to Source view.** A paste that
+  carries an open document past 1 MB no longer leaves rich editing on offer;
+  trimming it back below the line gives rich editing back.
+- **A document too large for the crash journal still gets one recovery
+  write** when the save on closing it did not land.
+- **Find and replace waits for the match list to catch up** with what you
+  typed, so a quick Replace All cannot act on the previous search.
+- **Opening a document with thousands of held-aside blocks no longer stalls**
+  (restoring them took close to half a second per open in a 1 MB file; it is
+  now a few milliseconds), **Find indexes a large document once** rather than
+  on every keystroke, and the crash journal writes a big buffer every two
+  seconds rather than four times a second.
+- **A live session whose runtime cannot load no longer traps the document.**
+  The document opens on its own copy under a one-line note, saves go to the
+  cloud the ordinary way, and the next shared document tries again.
+- **A recovered draft that Markie cannot open stays on offer** instead of
+  disappearing the moment it is refused, and a restored snapshot of a large
+  document is journalled before another document replaces it.
+- **A CSV whose table outgrows the line opens in Source view** whichever way
+  it arrived (opened, reloaded, pulled, or taken from a conflict): the tier
+  is measured on the table the pane holds, not on the bytes of the file.
 - **Deleting a document from the cloud now erases it on the server at once.**
   Before, the server kept the text of a deleted document, and every version
   you had ever pushed, indefinitely: hidden from the app, still stored. Delete

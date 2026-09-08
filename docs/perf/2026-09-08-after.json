@@ -1,0 +1,1087 @@
+{
+  "tool": "scripts/perf-baseline.mjs",
+  "generatedAt": "2026-09-08T01:01:03.613Z",
+  "app": "/Users/macbookpro-kirby/Desktop/Coding/ZVN/markdown-viewer-zvn/dist/mac-arm64/Markie.app",
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "node": "26.8.1",
+    "cpus": "Apple M5 Max",
+    "cores": 18,
+    "loadAverage": [
+      14.54,
+      15.99,
+      16.46
+    ]
+  },
+  "settings": {
+    "runs": 3,
+    "idleSettleMs": 5000,
+    "sampleCount": 20,
+    "sampleIntervalMs": 1000,
+    "sampleDeadlineMs": 200,
+    "switchCapMs": 30000
+  },
+  "fixtures": {
+    "small": {
+      "bytes": 204928,
+      "blocks": 1514
+    },
+    "large": {
+      "bytes": 4614377,
+      "blocks": 33730
+    }
+  },
+  "runs": [
+    {
+      "run": 1,
+      "startedAt": "2026-09-08T00:54:24.569Z",
+      "debugPort": 60099,
+      "inspectPort": 60100,
+      "homeDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-MQhwbb",
+      "userDataDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-profile-ialQbC",
+      "errors": [],
+      "launch": {
+        "spawnToLoadEventFiredMs": 609,
+        "spawnToLoadEventEndMs": 609,
+        "domContentLoadedEventEndMs": 124.7,
+        "loadEventEndMs": 124.8,
+        "firstContentfulPaintMs": null,
+        "firstPaintMs": null,
+        "paintEntries": [],
+        "documentHidden": false
+      },
+      "rssIdle": {
+        "processes": [
+          {
+            "pid": 38049,
+            "role": "main",
+            "matchedBy": "user-data-dir",
+            "rssMb": 173.7
+          },
+          {
+            "pid": 38286,
+            "role": "crashpad",
+            "matchedBy": "user-data-dir",
+            "rssMb": 9.5
+          },
+          {
+            "pid": 38308,
+            "role": "gpu",
+            "matchedBy": "user-data-dir",
+            "rssMb": 87.5
+          },
+          {
+            "pid": 38312,
+            "role": "utility",
+            "detail": "network.mojom.NetworkService",
+            "matchedBy": "user-data-dir",
+            "rssMb": 54.2
+          },
+          {
+            "pid": 38460,
+            "role": "renderer",
+            "matchedBy": "user-data-dir",
+            "rssMb": 162.3
+          }
+        ],
+        "byRole": {
+          "main": 173.7,
+          "crashpad": 9.5,
+          "gpu": 87.5,
+          "utility": 54.2,
+          "renderer": 162.3
+        },
+        "totalMb": 487.2,
+        "count": 5
+      },
+      "mainMemory": {
+        "idle": {
+          "rssMb": 174,
+          "heapTotalMb": 16.5,
+          "heapUsedMb": 7.7,
+          "externalMb": 4.9,
+          "arrayBuffersMb": 0,
+          "bytes": {
+            "rss": 182452224,
+            "heapTotal": 17268736,
+            "heapUsed": 8030832,
+            "external": 5088645,
+            "arrayBuffers": 0
+          }
+        },
+        "withSmallDoc": {
+          "rssMb": 177.8,
+          "heapTotalMb": 16.9,
+          "heapUsedMb": 9,
+          "externalMb": 5.1,
+          "arrayBuffersMb": 0,
+          "bytes": {
+            "rss": 186384384,
+            "heapTotal": 17694720,
+            "heapUsed": 9415004,
+            "external": 5305232,
+            "arrayBuffers": 0
+          }
+        }
+      },
+      "smallDoc": {
+        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-MQhwbb/Documents/Markie/perf-200kb.md",
+        "bytes": 204928,
+        "blocks": 1514,
+        "toolbarNamedMs": 110,
+        "editorReadyMs": 111,
+        "openTimedOut": false
+      },
+      "rssDoc": {
+        "processes": [
+          {
+            "pid": 38049,
+            "role": "main",
+            "matchedBy": "user-data-dir",
+            "rssMb": 177.8
+          },
+          {
+            "pid": 38286,
+            "role": "crashpad",
+            "matchedBy": "user-data-dir",
+            "rssMb": 9.5
+          },
+          {
+            "pid": 38308,
+            "role": "gpu",
+            "matchedBy": "user-data-dir",
+            "rssMb": 91.3
+          },
+          {
+            "pid": 38312,
+            "role": "utility",
+            "detail": "network.mojom.NetworkService",
+            "matchedBy": "user-data-dir",
+            "rssMb": 54.2
+          },
+          {
+            "pid": 38460,
+            "role": "renderer",
+            "matchedBy": "user-data-dir",
+            "rssMb": 388.3
+          }
+        ],
+        "byRole": {
+          "main": 177.8,
+          "crashpad": 9.5,
+          "gpu": 91.3,
+          "utility": 54.2,
+          "renderer": 388.3
+        },
+        "totalMb": 721.1,
+        "count": 5
+      },
+      "editorSizeWithSmallDoc": 193964,
+      "largeDoc": {
+        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-MQhwbb/Documents/Markie/perf-4400kb.md",
+        "bytes": 4614377,
+        "blocks": 33730,
+        "clickAccepted": true,
+        "samples": [
+          {
+            "second": 1,
+            "atMsAfterOpen": 1001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 2,
+            "atMsAfterOpen": 2001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 3,
+            "atMsAfterOpen": 3001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 4,
+            "atMsAfterOpen": 4001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 5,
+            "atMsAfterOpen": 5000,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 6,
+            "atMsAfterOpen": 6001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 7,
+            "atMsAfterOpen": 7001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 8,
+            "atMsAfterOpen": 8001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 9,
+            "atMsAfterOpen": 9002,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 10,
+            "atMsAfterOpen": 10002,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 11,
+            "atMsAfterOpen": 11001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 12,
+            "atMsAfterOpen": 12001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 13,
+            "atMsAfterOpen": 13001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 14,
+            "atMsAfterOpen": 14001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 15,
+            "atMsAfterOpen": 14999,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 16,
+            "atMsAfterOpen": 16001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 17,
+            "atMsAfterOpen": 17001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 18,
+            "atMsAfterOpen": 18001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 19,
+            "atMsAfterOpen": 19002,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 20,
+            "atMsAfterOpen": 20001,
+            "responded": true,
+            "roundTripMs": 1
+          }
+        ],
+        "responsiveSeconds": 20,
+        "unresponsiveSeconds": 0,
+        "sampleSeconds": 20,
+        "firstResponsiveAfterOpenMs": 1001,
+        "firstResponseCapMs": 20000,
+        "longestUnresponsiveStretchSeconds": 0,
+        "toolbarNamedMs": 1001,
+        "editorReadyMs": null,
+        "stateSeenMs": null,
+        "settledMs": null,
+        "landCapMs": 120000,
+        "sampleGranularityMs": 1000,
+        "landed": false,
+        "note": "large document never settled within the cap"
+      },
+      "editorSizeWithLargeDoc": 0,
+      "switchBack": {
+        "ms": null,
+        "timedOut": true,
+        "skipped": true,
+        "capMs": 30000,
+        "note": "not attempted: the 4.4 MB document never settled, so a switch back could not be told from no switch at all"
+      },
+      "finishedAt": "2026-09-08T00:56:37.589Z"
+    },
+    {
+      "run": 2,
+      "startedAt": "2026-09-08T00:56:37.593Z",
+      "debugPort": 60531,
+      "inspectPort": 60532,
+      "homeDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-RkCSx0",
+      "userDataDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-profile-qSsW5v",
+      "errors": [],
+      "launch": {
+        "spawnToLoadEventFiredMs": 376,
+        "spawnToLoadEventEndMs": 376,
+        "domContentLoadedEventEndMs": 93.6,
+        "loadEventEndMs": 93.8,
+        "firstContentfulPaintMs": null,
+        "firstPaintMs": null,
+        "paintEntries": [],
+        "documentHidden": false
+      },
+      "rssIdle": {
+        "processes": [
+          {
+            "pid": 58162,
+            "role": "main",
+            "matchedBy": "user-data-dir",
+            "rssMb": 173.7
+          },
+          {
+            "pid": 58184,
+            "role": "crashpad",
+            "matchedBy": "user-data-dir",
+            "rssMb": 9.5
+          },
+          {
+            "pid": 58189,
+            "role": "gpu",
+            "matchedBy": "user-data-dir",
+            "rssMb": 88.2
+          },
+          {
+            "pid": 58190,
+            "role": "utility",
+            "detail": "network.mojom.NetworkService",
+            "matchedBy": "user-data-dir",
+            "rssMb": 54.1
+          },
+          {
+            "pid": 58205,
+            "role": "renderer",
+            "matchedBy": "user-data-dir",
+            "rssMb": 163.2
+          }
+        ],
+        "byRole": {
+          "main": 173.7,
+          "crashpad": 9.5,
+          "gpu": 88.2,
+          "utility": 54.1,
+          "renderer": 163.2
+        },
+        "totalMb": 488.7,
+        "count": 5
+      },
+      "mainMemory": {
+        "idle": {
+          "rssMb": 174,
+          "heapTotalMb": 15.5,
+          "heapUsedMb": 7.6,
+          "externalMb": 4.6,
+          "arrayBuffersMb": 0,
+          "bytes": {
+            "rss": 182435840,
+            "heapTotal": 16220160,
+            "heapUsed": 7977248,
+            "external": 4826794,
+            "arrayBuffers": 0
+          }
+        },
+        "withSmallDoc": {
+          "rssMb": 177.8,
+          "heapTotalMb": 15.9,
+          "heapUsedMb": 8.9,
+          "externalMb": 4.8,
+          "arrayBuffersMb": 0,
+          "bytes": {
+            "rss": 186433536,
+            "heapTotal": 16646144,
+            "heapUsed": 9361024,
+            "external": 5043381,
+            "arrayBuffers": 0
+          }
+        }
+      },
+      "smallDoc": {
+        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-RkCSx0/Documents/Markie/perf-200kb.md",
+        "bytes": 204928,
+        "blocks": 1514,
+        "toolbarNamedMs": 3,
+        "editorReadyMs": 121,
+        "openTimedOut": false
+      },
+      "rssDoc": {
+        "processes": [
+          {
+            "pid": 58162,
+            "role": "main",
+            "matchedBy": "user-data-dir",
+            "rssMb": 177.8
+          },
+          {
+            "pid": 58184,
+            "role": "crashpad",
+            "matchedBy": "user-data-dir",
+            "rssMb": 9.5
+          },
+          {
+            "pid": 58189,
+            "role": "gpu",
+            "matchedBy": "user-data-dir",
+            "rssMb": 91.8
+          },
+          {
+            "pid": 58190,
+            "role": "utility",
+            "detail": "network.mojom.NetworkService",
+            "matchedBy": "user-data-dir",
+            "rssMb": 54.1
+          },
+          {
+            "pid": 58205,
+            "role": "renderer",
+            "matchedBy": "user-data-dir",
+            "rssMb": 332.7
+          }
+        ],
+        "byRole": {
+          "main": 177.8,
+          "crashpad": 9.5,
+          "gpu": 91.8,
+          "utility": 54.1,
+          "renderer": 332.7
+        },
+        "totalMb": 665.9,
+        "count": 5
+      },
+      "editorSizeWithSmallDoc": 193964,
+      "largeDoc": {
+        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-RkCSx0/Documents/Markie/perf-4400kb.md",
+        "bytes": 4614377,
+        "blocks": 33730,
+        "clickAccepted": true,
+        "samples": [
+          {
+            "second": 1,
+            "atMsAfterOpen": 1002,
+            "responded": true,
+            "roundTripMs": 3
+          },
+          {
+            "second": 2,
+            "atMsAfterOpen": 2002,
+            "responded": true,
+            "roundTripMs": 7
+          },
+          {
+            "second": 3,
+            "atMsAfterOpen": 3001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 4,
+            "atMsAfterOpen": 4001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 5,
+            "atMsAfterOpen": 5000,
+            "responded": true,
+            "roundTripMs": 3
+          },
+          {
+            "second": 6,
+            "atMsAfterOpen": 6002,
+            "responded": true,
+            "roundTripMs": 2
+          },
+          {
+            "second": 7,
+            "atMsAfterOpen": 7001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 8,
+            "atMsAfterOpen": 8001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 9,
+            "atMsAfterOpen": 9002,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 10,
+            "atMsAfterOpen": 10002,
+            "responded": true,
+            "roundTripMs": 2
+          },
+          {
+            "second": 11,
+            "atMsAfterOpen": 11001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 12,
+            "atMsAfterOpen": 12001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 13,
+            "atMsAfterOpen": 13002,
+            "responded": true,
+            "roundTripMs": 2
+          },
+          {
+            "second": 14,
+            "atMsAfterOpen": 14001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 15,
+            "atMsAfterOpen": 15001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 16,
+            "atMsAfterOpen": 16001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 17,
+            "atMsAfterOpen": 17000,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 18,
+            "atMsAfterOpen": 18001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 19,
+            "atMsAfterOpen": 19001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 20,
+            "atMsAfterOpen": 20002,
+            "responded": true,
+            "roundTripMs": 0
+          }
+        ],
+        "responsiveSeconds": 20,
+        "unresponsiveSeconds": 0,
+        "sampleSeconds": 20,
+        "firstResponsiveAfterOpenMs": 1002,
+        "firstResponseCapMs": 20000,
+        "longestUnresponsiveStretchSeconds": 0,
+        "toolbarNamedMs": 1005,
+        "editorReadyMs": null,
+        "stateSeenMs": null,
+        "settledMs": null,
+        "landCapMs": 120000,
+        "sampleGranularityMs": 1000,
+        "landed": false,
+        "note": "large document never settled within the cap"
+      },
+      "editorSizeWithLargeDoc": 0,
+      "switchBack": {
+        "ms": null,
+        "timedOut": true,
+        "skipped": true,
+        "capMs": 30000,
+        "note": "not attempted: the 4.4 MB document never settled, so a switch back could not be told from no switch at all"
+      },
+      "finishedAt": "2026-09-08T00:58:50.508Z"
+    },
+    {
+      "run": 3,
+      "startedAt": "2026-09-08T00:58:50.515Z",
+      "debugPort": 60921,
+      "inspectPort": 60922,
+      "homeDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-aaW6Ws",
+      "userDataDir": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-profile-tkvs6W",
+      "errors": [],
+      "launch": {
+        "spawnToLoadEventFiredMs": 514,
+        "spawnToLoadEventEndMs": 514,
+        "domContentLoadedEventEndMs": 128.8,
+        "loadEventEndMs": 128.9,
+        "firstContentfulPaintMs": null,
+        "firstPaintMs": null,
+        "paintEntries": [],
+        "documentHidden": false
+      },
+      "rssIdle": {
+        "processes": [
+          {
+            "pid": 68503,
+            "role": "main",
+            "matchedBy": "user-data-dir",
+            "rssMb": 173.8
+          },
+          {
+            "pid": 68548,
+            "role": "crashpad",
+            "matchedBy": "user-data-dir",
+            "rssMb": 9.5
+          },
+          {
+            "pid": 68553,
+            "role": "gpu",
+            "matchedBy": "user-data-dir",
+            "rssMb": 87.3
+          },
+          {
+            "pid": 68554,
+            "role": "utility",
+            "detail": "network.mojom.NetworkService",
+            "matchedBy": "user-data-dir",
+            "rssMb": 54.2
+          },
+          {
+            "pid": 68576,
+            "role": "renderer",
+            "matchedBy": "user-data-dir",
+            "rssMb": 163.1
+          }
+        ],
+        "byRole": {
+          "main": 173.8,
+          "crashpad": 9.5,
+          "gpu": 87.3,
+          "utility": 54.2,
+          "renderer": 163.1
+        },
+        "totalMb": 487.9,
+        "count": 5
+      },
+      "mainMemory": {
+        "idle": {
+          "rssMb": 174.1,
+          "heapTotalMb": 15.2,
+          "heapUsedMb": 7.6,
+          "externalMb": 7.3,
+          "arrayBuffersMb": 0,
+          "bytes": {
+            "rss": 182583296,
+            "heapTotal": 15958016,
+            "heapUsed": 7968272,
+            "external": 7612684,
+            "arrayBuffers": 0
+          }
+        },
+        "withSmallDoc": {
+          "rssMb": 177.9,
+          "heapTotalMb": 15.6,
+          "heapUsedMb": 8.9,
+          "externalMb": 4.8,
+          "arrayBuffersMb": 0,
+          "bytes": {
+            "rss": 186515456,
+            "heapTotal": 16384000,
+            "heapUsed": 9350008,
+            "external": 5043381,
+            "arrayBuffers": 0
+          }
+        }
+      },
+      "smallDoc": {
+        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-aaW6Ws/Documents/Markie/perf-200kb.md",
+        "bytes": 204928,
+        "blocks": 1514,
+        "toolbarNamedMs": 4,
+        "editorReadyMs": 140,
+        "openTimedOut": false
+      },
+      "rssDoc": {
+        "processes": [
+          {
+            "pid": 68503,
+            "role": "main",
+            "matchedBy": "user-data-dir",
+            "rssMb": 177.9
+          },
+          {
+            "pid": 68548,
+            "role": "crashpad",
+            "matchedBy": "user-data-dir",
+            "rssMb": 9.5
+          },
+          {
+            "pid": 68553,
+            "role": "gpu",
+            "matchedBy": "user-data-dir",
+            "rssMb": 90.8
+          },
+          {
+            "pid": 68554,
+            "role": "utility",
+            "detail": "network.mojom.NetworkService",
+            "matchedBy": "user-data-dir",
+            "rssMb": 54.2
+          },
+          {
+            "pid": 68576,
+            "role": "renderer",
+            "matchedBy": "user-data-dir",
+            "rssMb": 354.2
+          }
+        ],
+        "byRole": {
+          "main": 177.9,
+          "crashpad": 9.5,
+          "gpu": 90.8,
+          "utility": 54.2,
+          "renderer": 354.2
+        },
+        "totalMb": 686.6,
+        "count": 5
+      },
+      "editorSizeWithSmallDoc": 193964,
+      "largeDoc": {
+        "path": "/private/var/folders/qd/40lr_64x54j6f8fgjjndwf000000gn/T/markie-perf-home-aaW6Ws/Documents/Markie/perf-4400kb.md",
+        "bytes": 4614377,
+        "blocks": 33730,
+        "clickAccepted": true,
+        "samples": [
+          {
+            "second": 1,
+            "atMsAfterOpen": 1002,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 2,
+            "atMsAfterOpen": 2001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 3,
+            "atMsAfterOpen": 3001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 4,
+            "atMsAfterOpen": 4001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 5,
+            "atMsAfterOpen": 5001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 6,
+            "atMsAfterOpen": 6001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 7,
+            "atMsAfterOpen": 7001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 8,
+            "atMsAfterOpen": 8001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 9,
+            "atMsAfterOpen": 9001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 10,
+            "atMsAfterOpen": 10001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 11,
+            "atMsAfterOpen": 11001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 12,
+            "atMsAfterOpen": 12001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 13,
+            "atMsAfterOpen": 13001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 14,
+            "atMsAfterOpen": 14001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 15,
+            "atMsAfterOpen": 15000,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 16,
+            "atMsAfterOpen": 16001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 17,
+            "atMsAfterOpen": 17001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 18,
+            "atMsAfterOpen": 18001,
+            "responded": true,
+            "roundTripMs": 1
+          },
+          {
+            "second": 19,
+            "atMsAfterOpen": 19001,
+            "responded": true,
+            "roundTripMs": 0
+          },
+          {
+            "second": 20,
+            "atMsAfterOpen": 20001,
+            "responded": true,
+            "roundTripMs": 0
+          }
+        ],
+        "responsiveSeconds": 20,
+        "unresponsiveSeconds": 0,
+        "sampleSeconds": 20,
+        "firstResponsiveAfterOpenMs": 1002,
+        "firstResponseCapMs": 20000,
+        "longestUnresponsiveStretchSeconds": 0,
+        "toolbarNamedMs": 1003,
+        "editorReadyMs": null,
+        "stateSeenMs": null,
+        "settledMs": null,
+        "landCapMs": 120000,
+        "sampleGranularityMs": 1000,
+        "landed": false,
+        "note": "large document never settled within the cap"
+      },
+      "editorSizeWithLargeDoc": 0,
+      "switchBack": {
+        "ms": null,
+        "timedOut": true,
+        "skipped": true,
+        "capMs": 30000,
+        "note": "not attempted: the 4.4 MB document never settled, so a switch back could not be told from no switch at all"
+      },
+      "finishedAt": "2026-09-08T01:01:03.613Z"
+    }
+  ],
+  "summary": {
+    "medians": {
+      "launchMs": 514,
+      "spawnToLoadEventEndMs": 514,
+      "domContentLoadedEventEndMs": 124.7,
+      "loadEventEndMs": 124.8,
+      "firstContentfulPaintMs": null,
+      "firstPaintMs": null,
+      "rssIdleTotalMb": 487.9,
+      "rssIdleMainMb": 173.7,
+      "rssIdleRendererMb": 163.1,
+      "rssIdleGpuMb": 87.5,
+      "rssDocTotalMb": 686.6,
+      "rssDocMainMb": 177.8,
+      "rssDocRendererMb": 354.2,
+      "mainHeapUsedIdleMb": 7.6,
+      "mainHeapTotalIdleMb": 15.5,
+      "mainExternalIdleMb": 4.9,
+      "mainRssIdleMb": 174,
+      "mainHeapUsedDocMb": 8.9,
+      "mainRssDocMb": 177.8,
+      "smallDocToolbarNamedMs": 4,
+      "smallDocEditorReadyMs": 121,
+      "largeDocResponsiveSeconds": 20,
+      "largeDocFirstResponseMs": 1002,
+      "largeDocLongestStallSeconds": 0,
+      "largeDocStateSeenMs": 120000,
+      "largeDocLandedMs": 120000,
+      "switchBackMs": null,
+      "switchBackClickExecutedMs": null
+    },
+    "minimums": {
+      "launchMs": 376,
+      "spawnToLoadEventEndMs": 376,
+      "domContentLoadedEventEndMs": 93.6,
+      "loadEventEndMs": 93.8,
+      "firstContentfulPaintMs": null,
+      "firstPaintMs": null,
+      "rssIdleTotalMb": 487.2,
+      "rssIdleMainMb": 173.7,
+      "rssIdleRendererMb": 162.3,
+      "rssIdleGpuMb": 87.3,
+      "rssDocTotalMb": 665.9,
+      "rssDocMainMb": 177.8,
+      "rssDocRendererMb": 332.7,
+      "mainHeapUsedIdleMb": 7.6,
+      "mainHeapTotalIdleMb": 15.2,
+      "mainExternalIdleMb": 4.6,
+      "mainRssIdleMb": 174,
+      "mainHeapUsedDocMb": 8.9,
+      "mainRssDocMb": 177.8,
+      "smallDocToolbarNamedMs": 3,
+      "smallDocEditorReadyMs": 111,
+      "largeDocResponsiveSeconds": 20,
+      "largeDocFirstResponseMs": 1001,
+      "largeDocLongestStallSeconds": 0,
+      "largeDocStateSeenMs": 120000,
+      "largeDocLandedMs": 120000,
+      "switchBackMs": null,
+      "switchBackClickExecutedMs": null
+    },
+    "samples": {
+      "launchMs": 3,
+      "spawnToLoadEventEndMs": 3,
+      "domContentLoadedEventEndMs": 3,
+      "loadEventEndMs": 3,
+      "firstContentfulPaintMs": 0,
+      "firstPaintMs": 0,
+      "rssIdleTotalMb": 3,
+      "rssIdleMainMb": 3,
+      "rssIdleRendererMb": 3,
+      "rssIdleGpuMb": 3,
+      "rssDocTotalMb": 3,
+      "rssDocMainMb": 3,
+      "rssDocRendererMb": 3,
+      "mainHeapUsedIdleMb": 3,
+      "mainHeapTotalIdleMb": 3,
+      "mainExternalIdleMb": 3,
+      "mainRssIdleMb": 3,
+      "mainHeapUsedDocMb": 3,
+      "mainRssDocMb": 3,
+      "smallDocToolbarNamedMs": 3,
+      "smallDocEditorReadyMs": 3,
+      "largeDocResponsiveSeconds": 3,
+      "largeDocFirstResponseMs": 3,
+      "largeDocLongestStallSeconds": 3,
+      "largeDocStateSeenMs": 0,
+      "largeDocLandedMs": 0,
+      "switchBackMs": 0,
+      "switchBackClickExecutedMs": 0
+    },
+    "censored": {
+      "smallDocToolbarNamedMs": {
+        "capMs": 60000,
+        "attemptedRuns": 3,
+        "completedRuns": 3,
+        "timedOutRuns": 0,
+        "skippedRuns": 0,
+        "medianAtOrAboveCap": false,
+        "medianOfCompletedMs": 4
+      },
+      "smallDocEditorReadyMs": {
+        "capMs": 60000,
+        "attemptedRuns": 3,
+        "completedRuns": 3,
+        "timedOutRuns": 0,
+        "skippedRuns": 0,
+        "medianAtOrAboveCap": false,
+        "medianOfCompletedMs": 121
+      },
+      "largeDocFirstResponseMs": {
+        "capMs": 20000,
+        "attemptedRuns": 3,
+        "completedRuns": 3,
+        "timedOutRuns": 0,
+        "skippedRuns": 0,
+        "medianAtOrAboveCap": false,
+        "medianOfCompletedMs": 1002
+      },
+      "largeDocStateSeenMs": {
+        "capMs": 120000,
+        "attemptedRuns": 3,
+        "completedRuns": 0,
+        "timedOutRuns": 3,
+        "skippedRuns": 0,
+        "medianAtOrAboveCap": true,
+        "medianOfCompletedMs": null
+      },
+      "largeDocLandedMs": {
+        "capMs": 120000,
+        "attemptedRuns": 3,
+        "completedRuns": 0,
+        "timedOutRuns": 3,
+        "skippedRuns": 0,
+        "medianAtOrAboveCap": true,
+        "medianOfCompletedMs": null
+      },
+      "switchBackMs": {
+        "capMs": 30000,
+        "attemptedRuns": 0,
+        "completedRuns": 0,
+        "timedOutRuns": 0,
+        "skippedRuns": 3,
+        "medianAtOrAboveCap": false,
+        "medianOfCompletedMs": null
+      },
+      "switchBackClickExecutedMs": {
+        "capMs": 30000,
+        "attemptedRuns": 0,
+        "completedRuns": 0,
+        "timedOutRuns": 0,
+        "skippedRuns": 3,
+        "medianAtOrAboveCap": false,
+        "medianOfCompletedMs": null
+      }
+    },
+    "line": "launch 514ms · rss idle 488MB · rss doc 687MB · 4.4MB: responsive 20/20s, first response 3/3 runs, 1.0s · landed 0/3 runs (>120s) · switch not attempted (3 skipped)"
+  },
+  "ok": true
+}

@@ -93,9 +93,11 @@ describe("large documents", () => {
     const rich = modeButton(/rich mode/i);
     const split = modeButton(/split mode/i);
     const source = modeButton(/source mode/i);
-    expect(rich.disabled).toBe(true);
+    // The strip and the editor can land a render before the mode buttons on a
+    // slow machine; the buttons follow, and the shortcut is refused either way.
+    await waitFor(() => expect(rich.disabled).toBe(true));
     expect(rich.title).toBe("Too large for rich view");
-    expect(split.disabled).toBe(true);
+    await waitFor(() => expect(split.disabled).toBe(true));
     expect(source.disabled).toBe(false);
     expect(source.getAttribute("aria-pressed")).toBe("true");
 

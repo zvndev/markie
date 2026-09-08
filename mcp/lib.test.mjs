@@ -6,9 +6,9 @@ import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { MARKDOWN_GUIDE, GUIDE_URI, guideEssentials } from "./markdown-guide.mjs";
 import { checkMarkdown } from "./check-md.mjs";
 import { walk, scanTargets, DEFAULT_BUDGET } from "./scan.mjs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { spawn } from "node:child_process";
-import { dirname as pdirname, join as pjoin } from "node:path";
+import { dirname as pdirname, join as pjoin, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HOME = "/home/u";
@@ -251,8 +251,17 @@ test("groupSkills files a skill under every folder the scan reads, by the config
   assert.ok(AGENT_TOOLS.some((t) => t.id === "universal" && t.label === "Universal"));
 });
 
+// A home for a test that lists what a scan classifies. The classifier refuses
+// agent files under a cache segment, and a Linux runner's temp root is /tmp,
+// which is one: a home there lists nothing. Such a home goes beside the real
+// home folder instead.
+function classifiableHome(prefix) {
+  const base = isCachedAgentPath(tmpdir() + sep) ? homedir() : tmpdir();
+  return realpathSync(mkdtempSync(pjoin(base, prefix)));
+}
+
 test("a scan of a home with every skills folder lists every skill, moved Codex home included", async () => {
-  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-skillscan-")));
+  const home = classifiableHome("markie-skillscan-");
   const previous = process.env.CODEX_HOME;
   try {
     process.env.CODEX_HOME = pjoin(home, ".config", "codex");

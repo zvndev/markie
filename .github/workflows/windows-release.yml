@@ -233,8 +233,12 @@ jobs:
             $code = $install.ExitCode
             # Negative codes are NTSTATUS values read as signed. The hex is what
             # is searchable, and 0xC0000005 in particular is an access violation
-            # rather than anything the installer chose to report.
-            $hex = "0x{0:X8}" -f [uint32]($code -band 0xFFFFFFFF)
+            # rather than anything the installer chose to report. PowerShell
+            # reads the literal 0xFFFFFFFF as the Int32 -1, which left the code
+            # negative and the cast to UInt32 throwing on 0.6.0's first run,
+            # before any of the evidence below was printed; the mask is a
+            # UInt32 and the code widened to Int64 so the band is unsigned.
+            $hex = "0x{0:X8}" -f ([int64]$code -band [uint32]::MaxValue)
             Write-Host "::group::installer failure evidence"
             Write-Host "exit code $code ($hex)"
             if ($hex -eq "0xC0000005") { Write-Host "0xC0000005 is an access violation: the installer crashed rather than failing" }

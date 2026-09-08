@@ -174,9 +174,13 @@ function skillRoots(home, env) {
 export function skillToolFor(path, { home = homedir(), env = process.env, platform = process.platform } = {}) {
   const fold = (p) => (platform === "win32" ? p.toLowerCase() : p);
   const full = fold(resolve(String(path || "")));
-  if (isCachedAgentPath(full)) return null;
   for (const [tool, root] of skillRoots(home, env)) {
-    if (full.startsWith(fold(resolve(root)) + sep)) return tool;
+    const base = fold(resolve(root));
+    if (!full.startsWith(base + sep)) continue;
+    // A cache is judged below the tool's folder. The folders above it are
+    // the user's, and a home that happens to sit under /tmp (a CI runner's
+    // temp root, say) is not a cache of anything.
+    return isCachedAgentPath(full.slice(base.length)) ? null : tool;
   }
   return null;
 }

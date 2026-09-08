@@ -1130,7 +1130,11 @@ function createSkillRegistry(deps = {}) {
   // row is written, and only then is the old folder dropped. Anything that
   // throws before that point puts the previous folder back and leaves the row
   // exactly as it was.
-  function swapIntoPlace(source, destination, writeRow) {
+  // `expectPrevious` says whether a folder at the destination is Markie's own
+  // earlier copy. When none was planned for, one that is there by the time the
+  // copy has finished was put there meanwhile by someone else, and moving it
+  // aside would end in deleting their install.
+  function swapIntoPlace(source, destination, writeRow, { expectPrevious = false } = {}) {
     const dir = path.dirname(destination);
     const name = path.basename(destination);
     const staging = path.join(dir, `.${name}.markie-staging`);
@@ -1145,6 +1149,13 @@ function createSkillRegistry(deps = {}) {
       fs.rmSync(aside, { recursive: true, force: true });
       fs.cpSync(source, staging, { recursive: true });
       if (fs.existsSync(destination)) {
+        if (!expectPrevious) {
+          const err = new Error(
+            `A folder appeared at ${destination} while Markie was copying, so Markie left it alone.`
+          );
+          err.code = "APPEARED";
+          throw err;
+        }
         fs.renameSync(destination, aside);
         movedAside = true;
       }
@@ -1312,21 +1323,26 @@ function createSkillRegistry(deps = {}) {
       try {
         const at = nowIso();
         const place = destination;
-        swapIntoPlace(found.dir, place, () => {
-          store.skillInstallSet({
-            path: place,
-            // An existing row keeps the target it was written under: the
-            // folder serves every target that resolves to it, and handing it
-            // to whichever was asked for last only made it change hands.
-            target: row ? row.target : targetKey(target),
-            name: skill.name,
-            source: skill.source,
-            skill_path: skill.skillPath,
-            folder_hash: skill.folderHash,
-            root: row && row.root ? row.root : rootFor(place),
-            installed_at: at,
-          });
-        });
+        swapIntoPlace(
+          found.dir,
+          place,
+          () => {
+            store.skillInstallSet({
+              path: place,
+              // An existing row keeps the target it was written under: the
+              // folder serves every target that resolves to it, and handing it
+              // to whichever was asked for last only made it change hands.
+              target: row ? row.target : targetKey(target),
+              name: skill.name,
+              source: skill.source,
+              skill_path: skill.skillPath,
+              folder_hash: skill.folderHash,
+              root: row && row.root ? row.root : rootFor(place),
+              installed_at: at,
+            });
+          },
+          { expectPrevious: Boolean(row) }
+        );
         // Written after the swap and outside it: the install is already real
         // and recorded, and a lock file that will not take the entry is not a
         // reason to throw the skill away.
@@ -1349,7 +1365,7 @@ function createSkillRegistry(deps = {}) {
         errorsOut.push({
           target,
           targets: served,
-          error: "copy-failed",
+          error: err && err.code === "APPEARED" ? "exists" : "copy-failed",
           message: err && err.message ? err.message : String(err),
         });
       }

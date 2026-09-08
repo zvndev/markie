@@ -1085,6 +1085,34 @@ describe("skill registry", () => {
     expect(JSON.parse(fs.readFileSync(lockFile, "utf8")).skills.pdf).toMatchObject({ source: "acme/kit" });
   });
 
+  it("leaves alone a folder that appeared at the destination while it was copying", async () => {
+    const { skills } = await load();
+    const destination = path.join(home, ".claude", "skills", "pdf");
+    const realCpSync = fs.cpSync;
+    const spy = vi.spyOn(fs, "cpSync").mockImplementation(((src: string, dest: string, opts?: fs.CopySyncOptions) => {
+      const out = realCpSync(src, dest, opts);
+      // Another tool lands its own pdf between the plan and the swap.
+      if (String(dest).endsWith(".pdf.markie-staging")) {
+        fs.mkdirSync(destination, { recursive: true });
+        fs.writeFileSync(path.join(destination, "SKILL.md"), "# theirs\n", "utf8");
+      }
+      return out;
+    }) as typeof fs.cpSync);
+    try {
+      const result = skills.install("acme/kit/skills/pdf", ["claude"]);
+      expect(result.installed).toEqual([]);
+      expect(result.errors.map((e: { error: string; message: string }) => e.error)).toEqual(["exists"]);
+      expect(result.errors[0].message).toContain("appeared");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(fs.readFileSync(path.join(destination, "SKILL.md"), "utf8")).toBe("# theirs\n");
+    expect(fs.existsSync(path.join(home, ".claude", "skills", ".pdf.markie-staging"))).toBe(false);
+    expect(fs.existsSync(path.join(home, ".claude", "skills", ".pdf.markie-previous"))).toBe(false);
+    // No row was written: the next attempt sees a folder Markie did not install.
+    expect(skills.install("acme/kit/skills/pdf", ["claude"]).errors[0].message).toContain("did not install");
+  });
+
   it("installs over a lock entry from the same source, and updates it", async () => {
     const lockFile = path.join(home, ".agents", ".skill-lock.json");
     fs.mkdirSync(path.dirname(lockFile), { recursive: true });

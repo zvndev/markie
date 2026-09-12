@@ -133,6 +133,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   docResolve: (args) => ipcRenderer.invoke("doc-resolve", args),
   docRetryPush: (args) => ipcRenderer.invoke("doc-retry-push", args),
   docCheckUpdates: () => ipcRenderer.invoke("doc-check-updates"),
+  assetReconcile: () => ipcRenderer.invoke("asset-reconcile"),
   docRemoteContent: (args) => ipcRenderer.invoke("doc-remote-content", args),
   docKeepBoth: (args) => ipcRenderer.invoke("doc-keep-both", args),
   docPull: (args) => ipcRenderer.invoke("doc-pull", args),

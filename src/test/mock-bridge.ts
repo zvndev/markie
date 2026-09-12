@@ -170,6 +170,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     docPull: vi.fn(async () => noopResult),
     docRetryPush: vi.fn(async () => ({ ok: true, pushed: true })),
     docCheckUpdates: vi.fn(async () => ({ updates: [] })),
+    assetReconcile: vi.fn(async () => ({ pushed: [], mediaPushed: [], skipped: [], errors: [] })),
     docRemoteContent: vi.fn(async () => ({ ok: true, content: "", version: 1 })),
     docKeepBoth: vi.fn(async () => noopResult),
     docOpenShared: vi.fn(async () => ({ ok: true, path: "/tmp/shared.md" })),

@@ -1239,6 +1239,20 @@ const fileGrants = createFileGrants({ workspaceRoots: () => workspace.roots() })
 const { createAssetSync } = require("./asset-sync");
 const assetSync = createAssetSync({ api: sync.api, registry, grants: fileGrants });
 sync.setAssetSync(assetSync);
+// Repairs documents told to sync that never landed, and backfills media on
+// ones that did. Runs on its own schedule below; never awaited from a caller
+// that has to stay fast.
+const { createReconciler } = require("./reconcile");
+const reconciler = createReconciler({ sync, registry, assetSync });
+let lastReconcile = 0;
+let lastReconcileResult = null;
+async function reconcileIfDue(force = false) {
+  if (!sync.isConfigured() || !sync.hasPrincipal()) return lastReconcileResult;
+  if (!force && Date.now() - lastReconcile < 10 * 60 * 1000) return lastReconcileResult;
+  lastReconcile = Date.now();
+  lastReconcileResult = await reconciler.run();
+  return lastReconcileResult;
+}
 // A cloud document's pictures, kept on disk once fetched so the protocol
 // handler below can answer for a folder that has no local file at all.
 const { createAssetCache } = require("./asset-cache");
@@ -1310,6 +1324,9 @@ handle("sync-config", (_event, cfg) => {
   // finish the job the next time it starts, rather than leaving this
   // account's pictures behind for whoever signs in next.
   if (cfg.token === null) void assetCache.clear().catch(() => assetCache.markPendingClear());
+  // A push that names the signed-in user is the moment the session becomes a
+  // confirmed principal, which is what reconciliation waits for.
+  if (cfg.userId) void reconcileIfDue();
   return result;
 });
 // The renderer resolved this doc's share role against the server; the sync
@@ -1518,6 +1535,10 @@ handle(
   "doc-check-updates",
   async () => {
     const result = await sync.checkUpdates();
+    // Piggybacks on the same timer as the update check rather than running
+    // its own; not awaited, so a slow reconcile pass never holds up this
+    // handler's answer.
+    void reconcileIfDue();
     // A document that just landed from another machine is a new file under
     // the workspace: Browse and Projects should list it now, not after the
     // next walk of the disk.
@@ -1526,6 +1547,7 @@ handle(
   },
   { onFailure: (err) => ({ updates: [], error: errorMessage(err) }) }
 );
+handle("asset-reconcile", () => reconcileIfDue(true));
 // The server's copy, for showing what a pull would cost before doing it.
 handle("doc-remote-content", (_event, { path: p }) =>
   sync.remoteContent(p)

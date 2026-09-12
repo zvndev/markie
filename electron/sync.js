@@ -65,6 +65,13 @@ function isConfigured() {
   return !!(config.token && config.serverURL);
 }
 
+// Whether a session has been confirmed to belong to somebody, as opposed to
+// merely holding a token. Reconciliation needs an account on the other end
+// before it goes looking for what that account's server thinks it has.
+function hasPrincipal() {
+  return principal !== null;
+}
+
 // One asset of a cloud document, streamed with the session's token. Null for
 // anything but a 200, so a revoked share reads as "no such picture".
 async function fetchAsset(cloudId, ref) {
@@ -539,6 +546,17 @@ async function landCloudDocs(docs) {
   return landed;
 }
 
+// assets_skipped is stored as JSON text; a row from before Task 6, or one no
+// asset was ever skipped on, has none. Either way the Cloud page gets a list,
+// never a string to guard against or a parse error to catch itself.
+const safeJson = (s) => {
+  try {
+    return s ? JSON.parse(s) : [];
+  } catch {
+    return [];
+  }
+};
+
 function listingFingerprint(docs) {
   const parts = docs
     .map((d) => `${d.id}:${d.version ?? 0}:${d.shared ? 1 : 0}:${d.name ?? ""}`)
@@ -770,6 +788,10 @@ async function libraryState() {
       shared: !!r?.shared || sharedFromMemory,
       role: r?.role ?? (sharedFromMemory ? remembered : null),
       sharedBy: r?.shared_by ?? null,
+      media: {
+        state: f.assets_state ?? null,
+        skipped: safeJson(f.assets_skipped),
+      },
     };
   });
   for (const d of remote) {
@@ -806,6 +828,7 @@ function listFailure(status) {
 
 module.exports = {
   isConfigured,
+  hasPrincipal,
   setConfig,
   setDocRole,
   api,

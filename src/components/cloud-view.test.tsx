@@ -232,6 +232,33 @@ describe("the Cloud page's four sections", () => {
   });
 });
 
+describe("a row's media note", () => {
+  it("says a document's media is still on its way up", async () => {
+    renderView({
+      items: [synced({ media: { state: "pending", skipped: [] } })],
+    });
+    expect(await screen.findByText("media pending")).toBeInTheDocument();
+  });
+
+  it("names the picture that was too large to sync, and stays quiet about other skip reasons", async () => {
+    renderView({
+      items: [
+        synced({
+          media: {
+            state: "synced",
+            skipped: [
+              { ref: "diagram.png", reason: "size" },
+              { ref: "clip.mov", reason: "type" },
+            ],
+          },
+        }),
+      ],
+    });
+    expect(await screen.findByText("file too large: diagram.png")).toBeInTheDocument();
+    expect(screen.queryByText(/clip\.mov/)).not.toBeInTheDocument();
+  });
+});
+
 describe("the Cloud page's header band", () => {
   it("does not call the cloud empty while a list is still on its way", async () => {
     let settle: (docs: SharedByMeDoc[]) => void = () => {};

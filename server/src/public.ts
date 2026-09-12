@@ -3,6 +3,7 @@
 import { Hono } from "hono";
 import { openDatabase } from "./db.ts";
 import { resolvePublicToken } from "./public-links.ts";
+import { serveAsset } from "./assets.ts";
 import {
   renderDownloadPage,
   renderPublicPage,
@@ -64,7 +65,7 @@ export function clearDownloadCacheForTests() {
 
 function docForToken(
   token: string
-): { name: string; content: string } | null {
+): { doc_id: string; name: string; content: string } | null {
   const link = resolvePublicToken(token);
   if (!link) return null;
   const doc = db
@@ -72,7 +73,7 @@ function docForToken(
       "SELECT name, content FROM docs WHERE id = ? AND deleted_at IS NULL"
     )
     .get(link.doc_id) as { name: string; content: string } | undefined;
-  return doc ?? null;
+  return doc ? { doc_id: link.doc_id, ...doc } : null;
 }
 
 export const publicShare = new Hono();
@@ -149,4 +150,11 @@ publicShare.get("/s/:token/raw", (c) => {
     `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
   );
   return c.body(doc.content);
+});
+
+publicShare.get("/s/:token/assets", (c) => {
+  const link = resolvePublicToken(c.req.param("token"));
+  if (!link) return c.text("Not found", 404);
+  if (!docForToken(c.req.param("token"))) return c.text("Not found", 404);
+  return serveAsset(c, link.doc_id, c.req.query("ref") ?? "");
 });

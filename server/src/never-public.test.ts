@@ -32,12 +32,14 @@ if (toBeCreated.length > 0 || toBeAdded.length > 0) {
 
 const { docs } = await import("./docs.ts");
 const { shares } = await import("./shares.ts");
+const { docView } = await import("./doc-view.ts");
 const { getPublicLinkToken } = await import("./public-links.ts");
 
 const app = new Hono();
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/docs", docs);
 app.route("/api/docs", shares);
+app.route("/", docView);
 
 const stamp = Date.now();
 let ip = 0;
@@ -110,6 +112,20 @@ test("backing a document up to the cloud does not publish it", async () => {
   const read = await jsonRequest("GET", `/api/docs/${docId}`, owner.token);
   assert.equal(read.status, 200);
   assertNotPublic(docId, "reading it back");
+});
+
+// A document's media sits behind the same gates as its text. Neither asset
+// route grants anything to a request that carries no credential at all.
+test("a document's assets are not exposed to an anonymous request", async () => {
+  const owner = await signUp("Owner", `assets-gate.${stamp}@test.local`);
+  const docId = `assets-gate-${stamp}`;
+  await push(owner.token, docId, "# Has assets\n", 0);
+
+  const anon = new Headers({ "x-forwarded-for": `10.0.0.${(ip += 1) % 255}`, Origin: "http://localhost:3000" });
+  const viaLink = await app.request(`/d/${docId}/assets?ref=a.png`, { headers: anon });
+  assert.equal(viaLink.status, 404);
+  const viaBearer = await app.request(`/api/docs/${docId}/assets/file?ref=a.png`, { headers: anon });
+  assert.equal(viaBearer.status, 401);
 });
 
 test("sharing with a person who has an account does not publish the document", async () => {

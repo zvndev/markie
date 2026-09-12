@@ -23,6 +23,7 @@ import {
   memberForToken,
 } from "./shares.ts";
 import { pendingForToken } from "./pending.ts";
+import { serveAsset } from "./assets.ts";
 import { markieSiteUrl } from "./downloads.ts";
 import { renderAccessRequiredPage, renderSharedDocPage } from "./render.ts";
 
@@ -165,4 +166,16 @@ docView.get("/d/:id/raw", async (c) => {
     `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
   );
   return c.body(doc.content);
+});
+
+docView.get("/d/:id/assets", async (c) => {
+  const docId = c.req.param("id");
+  const viewer = await resolveViewer(
+    docId,
+    c.req.query("k") ?? null,
+    c.req.raw.headers
+  );
+  if (!viewer) return c.text("Not found", 404);
+  if (!loadDoc(docId)) return c.text("Not found", 404);
+  return serveAsset(c, docId, c.req.query("ref") ?? "");
 });

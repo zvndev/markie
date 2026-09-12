@@ -304,17 +304,35 @@ assetsApi.put("/docs/:id/assets", async (c) => {
 // One asset, by the reference the document wrote, for a caller that has
 // already passed a read gate. 404 for an unknown ref so the route says no
 // more than the document page would.
+// True when an If-None-Match header names this ETag, weak (`W/`) prefix
+// tolerated per RFC 9110 and one or more comma-separated values allowed.
+function etagMatches(header: string, etag: string): boolean {
+  return header.split(",").some((raw) => raw.trim().replace(/^W\//, "") === etag);
+}
+
 export async function serveAsset(c: Context, docId: string, ref: string): Promise<Response> {
   if (!store) return c.json({ error: "assets not configured" }, 503);
   const row = assetRefsFor(docId).get(ref);
   if (!row) return c.text("Not found", 404);
+  const etag = `"${row.hash}"`;
+  const cacheControl = "private, max-age=3600";
+  const inm = c.req.header("if-none-match");
+  if (inm && etagMatches(inm, etag)) {
+    return new Response(null, {
+      status: 304,
+      headers: { ETag: etag, "Cache-Control": cacheControl },
+    });
+  }
   const rangeHeader = c.req.header("range");
   let range: { start: number; end?: number } | undefined;
   if (rangeHeader) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
-    if (!m) return c.text("Range Not Satisfiable", 416);
+    // Either group may be empty to mean "to the end" / "the last N bytes",
+    // but both empty at once names no bytes at all and must not fall through
+    // to being silently served in full.
+    if (!m || (!m[1] && !m[2])) return c.text("Range Not Satisfiable", 416);
     if (m[1]) range = { start: Number(m[1]), end: m[2] ? Number(m[2]) : undefined };
-    else if (m[2]) range = { start: Math.max(0, row.size - Number(m[2])) };
+    else range = { start: Math.max(0, row.size - Number(m[2])) };
   }
   const read = await store.get(`${row.owner_id}/${row.hash}`, range);
   if (!read) return c.text(range ? "Range Not Satisfiable" : "Not found", range ? 416 : 404);
@@ -322,8 +340,8 @@ export async function serveAsset(c: Context, docId: string, ref: string): Promis
     "Content-Type": row.mime,
     "Content-Length": String(read.size),
     "Accept-Ranges": "bytes",
-    "Cache-Control": "private, max-age=3600",
-    ETag: `"${row.hash}"`,
+    "Cache-Control": cacheControl,
+    ETag: etag,
     "X-Content-Type-Options": "nosniff",
     "Content-Security-Policy": "default-src 'none'; sandbox",
   });

@@ -13,7 +13,7 @@ import { claimPendingInvites, removeDocPending } from "./pending.ts";
 import { closeRoom, purgeDocUpdates } from "./collab.ts";
 import { purgeDocThreads } from "./comments.ts";
 import { revokePublicLink } from "./public-links.ts";
-import { unlinkDocAssets } from "./assets.ts";
+import { serveAsset, unlinkDocAssets } from "./assets.ts";
 
 const db = openDatabase();
 
@@ -109,6 +109,18 @@ docs.get("/:id", async (c) => {
     .get(docId) as DocRow | undefined;
   if (!row) return c.json({ error: "not found" }, 404);
   return c.json({ doc: row });
+});
+
+// One asset from a document the caller can read. Same read gate as the
+// document itself; the ref is just a query string, not a claim about what
+// exists, so an unknown ref falls through to serveAsset's own 404.
+docs.get("/:id/assets/file", async (c) => {
+  const user = await requireUser(c);
+  if (!user) return c.json({ error: "unauthorized" }, 401);
+  const id = c.req.param("id");
+  if (!canReadLevel(accessLevel(id, user.id))) return c.text("Not found", 404);
+  const ref = c.req.query("ref") ?? "";
+  return serveAsset(c, id, ref);
 });
 
 // Upsert a snapshot. baseVersion must match the server version (or 0 for create).

@@ -1278,6 +1278,7 @@ const assetCache = createAssetCache({
     const res = await sync.fetchAsset(cloudId, ref, etag);
     if (!res) return null;
     if (res.notModified) return { fresh: true };
+    if (res.gone) return { gone: true };
     return { fetched: res };
   },
 });

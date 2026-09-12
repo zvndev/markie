@@ -372,6 +372,47 @@ describe("fetchAsset", () => {
     expect(headers[0]["If-None-Match"]).toBe(etag);
   });
 
+  // A revalidation runs while somebody is looking at the picture, and the
+  // protocol handler waits on it. Five minutes is the budget for downloading
+  // a video, not for asking whether a cached one changed.
+  it("gives a revalidation five seconds, not the five minutes a download gets", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({ status: 304, headers: new Headers(), body: null }))
+      );
+      await sync.fetchAsset("cloud-1", "a.png", `"${"a".repeat(64)}"`);
+      expect(timeout).toHaveBeenLastCalledWith(5000);
+
+      await sync.fetchAsset("cloud-1", "a.png");
+      expect(timeout).toHaveBeenLastCalledWith(300000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it("reports a revoked or missing picture as gone, and a server fault as nothing", async () => {
+    const answer = async (status: number, ifNoneMatch?: string) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({ status, headers: new Headers(), body: null }))
+      );
+      return sync.fetchAsset("cloud-1", "a.png", ifNoneMatch);
+    };
+    const etag = `"${"a".repeat(64)}"`;
+
+    // Definitive: the document no longer has this ref, or this account may no
+    // longer read it. The cache has to forget it, not keep showing it.
+    expect(await answer(404)).toEqual({ gone: true });
+    expect(await answer(403)).toEqual({ gone: true });
+    expect(await answer(404, etag)).toEqual({ gone: true });
+    expect(await answer(403, etag)).toEqual({ gone: true });
+    // Not definitive: the picture may well still be there.
+    expect(await answer(500)).toBeNull();
+    expect(await answer(503, etag)).toBeNull();
+  });
+
   it("sends no conditional header when there is nothing cached to revalidate", async () => {
     const headers: Array<Record<string, string>> = [];
     vi.stubGlobal(
@@ -382,7 +423,7 @@ describe("fetchAsset", () => {
       })
     );
 
-    expect(await sync.fetchAsset("cloud-1", "a.png")).toBeNull();
+    expect(await sync.fetchAsset("cloud-1", "a.png")).toEqual({ gone: true });
     expect(headers[0]["If-None-Match"]).toBeUndefined();
   });
 });

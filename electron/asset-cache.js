@@ -10,19 +10,33 @@ const { pipeline } = require("node:stream/promises");
 // A stray marker file, not a cached picture, so the wipe loops and the hash
 // filename check below both have to know to ignore it.
 const PENDING_CLEAR_MARKER = ".pending-clear";
+// How long one revalidation's answer stands for. Long enough that seeking
+// through a video is not a conversation with the server, short enough that a
+// relinked picture appears while somebody is still looking at the document.
+const VALID_FOR_MS = 60000;
 const HASH_RE = /^[a-f0-9]{64}$/;
 
 /**
+ * A body from the network or from node:stream/web: the DOM and Node types
+ * for a web stream are structurally different, and both arrive here.
+ * @typedef {ReadableStream | import("node:stream/web").ReadableStream} AnyReadableStream
+ * @typedef {{ stream: AnyReadableStream, mime: string, hash: string, size: number }} FetchedAsset
+ *
+ * `gone` is the server saying this ref is not the document's any more, or is
+ * not this account's to read; null is anything inconclusive, which leaves a
+ * cached copy alone.
+ *
  * @param {{
  *   dir: string,
- *   fetchAsset: (cloudId: string, ref: string, ifNoneMatch?: string) => Promise<any>,
- *   revalidate?: (cloudId: string, ref: string, etag: string) => Promise<any>,
+ *   fetchAsset: (cloudId: string, ref: string) => Promise<FetchedAsset | { gone: true } | null>,
+ *   revalidate?: (cloudId: string, ref: string, etag: string) =>
+ *     Promise<{ fresh: true } | { fetched: FetchedAsset } | { gone: true } | null>,
  *   limitBytes?: number,
  * }} options
  */
 function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 * 1024 * 1024 }) {
   const indexPath = path.join(dir, "cache.json");
-  let index = null; // { entries: { [cloudId\tref]: { hash, mime, size, used } } }
+  let index = null; // { entries: { [cloudId\tref]: { hash, mime, size, used, validatedAt? } } }
   const inflight = new Map();
   // Bumped by clear(). A fetch already in flight when a sign-out lands
   // captured the generation it started under; if that no longer matches by
@@ -118,14 +132,22 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
 
   // Fetched bytes written under their hash and recorded for this key. Null
   // when the account they were fetched for signed out mid-flight, or when
-  // what came back cannot name a file on this disk.
-  async function store(key, fetched, startedInGeneration) {
+  // what came back cannot name a file on this disk. Throws if the download
+  // itself fails.
+  async function store(key, fetched, startedInGeneration, validatedAt) {
     // The hash names the file on disk; a server that sends something
     // that is not one is not a filename, it is an attempt to write
     // somewhere else on this disk.
     if (!HASH_RE.test(fetched.hash)) return null;
     const tmp = path.join(dir, `.${fetched.hash}.part-${process.pid}-${Date.now()}`);
-    await pipeline(Readable.fromWeb(fetched.stream), fs.createWriteStream(tmp));
+    try {
+      await pipeline(Readable.fromWeb(fetched.stream), fs.createWriteStream(tmp));
+    } catch (err) {
+      // A download that died mid-stream leaves a part file nothing will ever
+      // read, and nothing else knows its name.
+      await fsp.rm(tmp, { force: true }).catch(() => {});
+      throw err;
+    }
     if (generation !== startedInGeneration) {
       // A sign-out landed while this was in flight. The account that
       // asked for this picture is gone; keeping the file or the index
@@ -142,10 +164,31 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
       await fsp.rm(fileFor(fetched.hash), { force: true });
       return null;
     }
-    index.entries[key] = { hash: fetched.hash, mime: fetched.mime, size: fetched.size, used: nextUsed() };
+    // validatedAt is undefined for a plain fetch, and JSON drops it: only a
+    // revalidation's answer is worth memoing.
+    index.entries[key] = { hash: fetched.hash, mime: fetched.mime, size: fetched.size, used: nextUsed(), validatedAt };
     await evict();
     await save();
     return { path: fileFor(fetched.hash), mime: fetched.mime, size: fetched.size };
+  }
+
+  // The file behind a hash the index no longer names. `force` covers a file
+  // that is already gone; the catch covers Windows, where an open handle on a
+  // video currently being served refuses the unlink. Orphaning the file there
+  // is better than failing the request over it.
+  async function dropFileIfUnshared(hash) {
+    if (Object.values(index.entries).some((e) => e.hash === hash)) return;
+    await fsp.rm(fileFor(hash), { force: true }).catch(() => {});
+  }
+
+  // Everything this cache remembers about one key, for a picture the server
+  // has told us is not ours to show any more.
+  async function forget(key) {
+    const entry = index.entries[key];
+    if (!entry) return;
+    delete index.entries[key];
+    await dropFileIfUnshared(entry.hash);
+    await save();
   }
 
   // One job per key at a time, handed to everyone who asks while it runs, so
@@ -178,6 +221,13 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
       await save();
       const cached = { path: fileFor(hit.hash), mime: hit.mime, size: hit.size };
       if (!revalidate) return cached;
+      // Chromium asks for a video one Range at a time and the protocol
+      // handler calls this for every slice, so an unmemoed check would be a
+      // conditional request per seek. One answer stands for a minute. Never
+      // asked is NaN here, and a clock that moved backward since is negative:
+      // both mean ask.
+      const validatedAgo = Date.now() - hit.validatedAt;
+      if (validatedAgo >= 0 && validatedAgo < VALID_FOR_MS) return cached;
       // A ref is a name, not a hash: the same reference can be relinked to
       // different bytes on the server, and this copy would otherwise be
       // shown until something evicted it. So ask, carrying the ETag of what
@@ -190,24 +240,44 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
         // fall back to has been wiped with the rest of that account's
         // pictures, and nothing here is this account's to serve.
         if (generation !== startedInGeneration) return null;
-        if (!answer || !answer.fetched) return cached;
-        const stored = await store(key, answer.fetched, startedInGeneration);
-        // The server has told us this copy is superseded, so serving it now
-        // would be knowingly wrong; whatever stopped the replacement from
-        // landing (a signed-out account, a hash that is not one) reads as
-        // "no picture" instead.
-        if (!stored) return null;
-        // Nothing points at the old copy any more unless another document
-        // happens to share it, and evict() only counts what the index still
-        // names, so a file left here is disk nothing will ever reclaim.
-        if (previousHash !== answer.fetched.hash && !Object.values(index.entries).some((e) => e.hash === previousHash)) {
-          await fsp.rm(fileFor(previousHash), { force: true }).catch(() => {});
+        // Not the document's picture any more, or not this account's to see.
+        if (answer && answer.gone) {
+          await forget(key);
+          return null;
         }
+        // Nothing conclusive came back (offline, a 5xx). What is on disk is
+        // still the best answer there is.
+        if (!answer) return cached;
+        if (!answer.fetched) {
+          hit.validatedAt = Date.now();
+          await save();
+          return cached;
+        }
+        let stored;
+        try {
+          stored = await store(key, answer.fetched, startedInGeneration, Date.now());
+        } catch {
+          // The replacement died mid-download. A stale picture beats a blank
+          // one, and the next view asks again.
+          return cached;
+        }
+        // store() answers null for a signed-out account, where nothing here
+        // is ours to serve, and for a hash that cannot name a file, where
+        // the copy on disk is still the last one that worked.
+        if (!stored) return generation === startedInGeneration ? cached : null;
+        if (previousHash !== answer.fetched.hash) await dropFileIfUnshared(previousHash);
         return stored;
       });
     }
     return share(key, async () => {
       const fetched = await fetchAsset(cloudId, ref);
+      if (fetched && fetched.gone) {
+        // Nothing to fetch and nothing to keep: an entry whose file had
+        // vanished from under the cache would otherwise be tried again on
+        // every view.
+        await forget(key);
+        return null;
+      }
       if (!fetched) return null;
       return store(key, fetched, startedInGeneration);
     });

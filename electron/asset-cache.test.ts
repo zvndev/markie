@@ -1,6 +1,6 @@
 // electron/asset-cache.test.ts
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, existsSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -176,6 +176,102 @@ describe("asset cache", () => {
     // Nothing points at the old copy any more, and evict() only counts what
     // the index still names, so leaving it would leak the disk it takes.
     expect(existsSync(first!.path)).toBe(false);
+  });
+
+  // Chromium asks for a video one Range at a time and the protocol handler
+  // calls get() for every one of them, so an unmemoed revalidation is a
+  // conditional request per slice.
+  it("asks at most once a minute, however often the same picture is served", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    let asked = 0;
+    const cache = createAssetCache({
+      dir,
+      fetchAsset: async () => bytes("aaaa"),
+      revalidate: async () => {
+        asked += 1;
+        return { fresh: true };
+      },
+    });
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-06-01T00:00:00.000Z"));
+      await cache.get("c1", "a.png"); // the miss that fills the cache
+      await cache.get("c1", "a.png"); // a hit: asks
+      await cache.get("c1", "a.png"); // still inside the window: does not ask
+      expect(asked).toBe(1);
+
+      vi.setSystemTime(new Date("2026-06-01T00:01:01.000Z"));
+      await cache.get("c1", "a.png");
+      expect(asked).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a picture the server says is gone rather than showing it from disk", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    const cache = createAssetCache({
+      dir,
+      fetchAsset: async () => bytes("aaaa"),
+      revalidate: async () => ({ gone: true }),
+    });
+
+    const first = await cache.get("c1", "a.png");
+    expect(await cache.get("c1", "a.png")).toBeNull();
+
+    // A revoked share, or a ref the document no longer has. Keeping either
+    // the entry or the file would go on showing it on this machine.
+    const stored = JSON.parse(readFileSync(path.join(dir, "cache.json"), "utf8"));
+    expect(stored.entries["c1\ta.png"]).toBeUndefined();
+    expect(existsSync(first!.path)).toBe(false);
+  });
+
+  it("remembers nothing about a miss the server says is gone", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    let fetches = 0;
+    const cache = createAssetCache({
+      dir,
+      fetchAsset: async () => {
+        fetches += 1;
+        return { gone: true };
+      },
+    });
+
+    expect(await cache.get("c1", "a.png")).toBeNull();
+
+    expect(readdirSync(dir).filter((name) => name !== "cache.json")).toEqual([]);
+    expect(await cache.get("c1", "a.png")).toBeNull();
+    expect(fetches).toBe(2);
+  });
+
+  it("keeps serving the cached copy when the replacement dies mid-download", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    const cache = createAssetCache({
+      dir,
+      fetchAsset: async () => bytes("aaaa"),
+      revalidate: async () => ({
+        fetched: {
+          stream: new ReadableStream({
+            start(controller) {
+              controller.error(new Error("connection reset"));
+            },
+          }),
+          mime: "image/png",
+          hash: hashOf("bbbb"),
+          size: 4,
+        },
+      }),
+    });
+
+    const first = await cache.get("c1", "a.png");
+    const second = await cache.get("c1", "a.png");
+
+    // The download failed, so what is on disk is still the last copy that
+    // worked. Blanking the picture would be a worse answer than a stale one.
+    expect(second).toEqual(first);
+    expect(readFileSync(second!.path, "utf8")).toBe("aaaa");
+    // And the part file the failed download left goes with it.
+    expect(readdirSync(dir).filter((name) => name.startsWith("."))).toEqual([]);
   });
 
   it("serves nothing when a sign-out lands while a hit is being revalidated", async () => {

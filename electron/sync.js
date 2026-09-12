@@ -72,12 +72,14 @@ function hasPrincipal() {
   return principal !== null;
 }
 
-// One asset of a cloud document, streamed with the session's token. Null for
-// anything but a 200, so a revoked share reads as "no such picture".
+// One asset of a cloud document, streamed with the session's token.
+// `{ stream, mime, hash, size }` for a 200, `{ gone: true }` for a 404 or a
+// 403, and null for anything else, so a caller can tell a revoked share from
+// a server having a bad minute.
 //
 // `ifNoneMatch` is the ETag of a copy the caller already holds (the asset
-// cache revalidating a hit). With one, an unchanged picture answers 304 and
-// sends no bytes at all.
+// cache revalidating a hit). With one, an unchanged picture answers 304,
+// reported as `{ notModified: true }`, and sends no bytes at all.
 async function fetchAsset(cloudId, ref, ifNoneMatch) {
   if (!isConfigured()) return null;
   try {
@@ -85,9 +87,18 @@ async function fetchAsset(cloudId, ref, ifNoneMatch) {
     if (ifNoneMatch) headers["If-None-Match"] = ifNoneMatch;
     const res = await fetch(`${config.serverURL}/api/docs/${encodeURIComponent(cloudId)}/assets/file?ref=${encodeURIComponent(ref)}`, {
       headers,
-      signal: AbortSignal.timeout(300000),
+      // Five minutes is the budget for downloading a video. A revalidation
+      // sends no body and runs while someone is looking at the picture, with
+      // the protocol handler waiting on it, so a stalled connection there is
+      // a stalled view.
+      signal: AbortSignal.timeout(ifNoneMatch ? 5000 : 300000),
     });
     if (ifNoneMatch && res.status === 304) return { notModified: true };
+    // Definitive answers: the document has no such ref any more, or this
+    // account may no longer read it. A cached copy has to go. Anything else,
+    // a 5xx or a proxy's error page, says nothing about whether the picture
+    // is still there, so it reads as no answer at all.
+    if (res.status === 404 || res.status === 403) return { gone: true };
     if (res.status !== 200 || !res.body) return null;
     const hash = (res.headers.get("etag") ?? "").replace(/"/g, "");
     if (!/^[a-f0-9]{64}$/.test(hash)) return null;

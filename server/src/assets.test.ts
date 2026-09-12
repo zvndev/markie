@@ -20,7 +20,7 @@ const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.optio
 if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 const { docs } = await import("./docs.ts");
 const { shares } = await import("./shares.ts");
-const { assetsApi, assetRefsFor, MAX_ASSET_BYTES, setAssetStoreForTests } = await import("./assets.ts");
+const { assetsApi, assetRefsFor, MAX_ASSET_BYTES, MAX_ACCOUNT_ASSET_BYTES, setAssetStoreForTests, setAssetLimitsForTests } = await import("./assets.ts");
 const { fsStore } = await import("./storage.ts");
 
 const app = new Hono();
@@ -108,6 +108,58 @@ test("upload refuses an account over its total", async () => {
   db.prepare("DELETE FROM assets WHERE owner_id = ? AND hash = ?").run(stranger.id, "f".repeat(64));
 });
 
+// A client can lie about Content-Length; the courtesy pre-flight check on
+// the declared number only rejects the common case cheaply. The real gate is
+// on the bytes actually received.
+test("a streamed body over a lowered per-file cap is refused mid-stream and stores nothing", async () => {
+  setAssetLimitsForTests({ maxAssetBytes: 8 });
+  try {
+    const bytes = Buffer.from("this body is well over eight bytes long");
+    const hash = sha(bytes);
+    // Declares under the (lowered) cap; the real body is far over it.
+    const r = await upload(stranger.token, bytes, hash, "image/png", 4);
+    assert.equal(r.status, 413);
+    const { openDatabase } = await import("./db.ts");
+    const db = openDatabase();
+    assert.equal(db.prepare("SELECT 1 FROM assets WHERE owner_id = ? AND hash = ?").get(stranger.id, hash), undefined);
+    assert.equal(await fsStore(process.env.ASSETS_DIR!).head(`${stranger.id}/${hash}`), null);
+  } finally {
+    setAssetLimitsForTests(null);
+  }
+});
+
+// The declared-length pre-flight check is a courtesy that trusts the
+// client's number; the real account cap has to hold against the bytes that
+// actually land, checked and claimed in the same transaction as the write.
+test("the account cap is enforced against the real size, not just the declared length", async () => {
+  const { openDatabase } = await import("./db.ts");
+  const db = openDatabase();
+  const filler = "d".repeat(64);
+  db.prepare("INSERT OR REPLACE INTO assets (owner_id, hash, size, mime, created_at) VALUES (?, ?, ?, ?, ?)").run(
+    stranger.id, filler, MAX_ACCOUNT_ASSET_BYTES - 2, "image/png", "2026-01-01T00:00:00.000Z"
+  );
+  try {
+    // Declaring the true length (4) already trips the pre-flight check: only 2 bytes of headroom.
+    const a = Buffer.from("aaaa");
+    let r = await upload(stranger.token, a);
+    assert.equal(r.status, 413);
+    assert.equal(r.data.error, "account over cap");
+    assert.equal(db.prepare("SELECT 1 FROM assets WHERE owner_id = ? AND hash = ?").get(stranger.id, sha(a)), undefined);
+
+    // Declaring less (1) slips past the pre-flight check, but the real bytes
+    // (4) still exceed the cap: the post-stat transactional check must catch
+    // what the courtesy check missed, and leave no row behind.
+    const b = Buffer.from("bbbb");
+    r = await upload(stranger.token, b, sha(b), "image/png", 1);
+    assert.equal(r.status, 413);
+    assert.equal(r.data.error, "account over cap");
+    assert.equal(db.prepare("SELECT 1 FROM assets WHERE owner_id = ? AND hash = ?").get(stranger.id, sha(b)), undefined);
+    assert.equal(await fsStore(process.env.ASSETS_DIR!).head(`${stranger.id}/${sha(b)}`), null);
+  } finally {
+    db.prepare("DELETE FROM assets WHERE owner_id = ? AND hash = ?").run(stranger.id, filler);
+  }
+});
+
 test("link replaces the set, keeps an entry without a hash, and collects orphans", async () => {
   const id = await makeDoc(owner.token);
   const a = Buffer.from("aaaa"), b = Buffer.from("bbbb");
@@ -131,6 +183,24 @@ test("link replaces the set, keeps an entry without a hash, and collects orphans
   assert.equal(r.status, 400);
   r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "b.png" }, { ref: "z.png" }] });
   assert.deepEqual(r.data, { linked: 0, kept: 1, dropped: 1 });
+});
+
+test("a hash another account really holds cannot be linked by someone who never uploaded it", async () => {
+  const secret = Buffer.from("owner's private bytes");
+  assert.equal((await upload(owner.token, secret)).status, 200);
+  // The owner can link their own upload.
+  const mine = await makeDoc(owner.token);
+  const own = await json("PUT", `/api/docs/${mine}/assets`, owner.token, { refs: [{ ref: "s.png", hash: sha(secret) }] });
+  assert.deepEqual(own.data, { linked: 1, kept: 0, dropped: 0 });
+  // A stranger who knows the real hash (e.g. saw it referenced in shared
+  // markdown) never uploaded those bytes under their own account, so it does
+  // not exist in their scope: this is not the "nobody holds this hash" case,
+  // it is "someone else holds it".
+  const theirs = await makeDoc(stranger.token);
+  const r = await json("PUT", `/api/docs/${theirs}/assets`, stranger.token, { refs: [{ ref: "s.png", hash: sha(secret) }] });
+  assert.equal(r.status, 400);
+  assert.equal(r.data.error, "unknown asset");
+  assert.equal(assetRefsFor(theirs).size, 0);
 });
 
 test("link refuses a document set over 500 MB by declared sizes", async () => {

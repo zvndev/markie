@@ -13,7 +13,7 @@ import { pipeline } from "node:stream/promises";
 import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
 import { accessLevel, canEditLevel } from "./shares.ts";
-import { assetMimeFor } from "./asset-mime.ts";
+import { assetMimeFor, ASSET_EXTENSIONS } from "./asset-mime.ts";
 import { assetStore, type AssetStore } from "./storage.ts";
 
 export const MAX_ASSET_BYTES = 100 * 1024 * 1024;
@@ -45,11 +45,21 @@ export function setAssetStoreForTests(next: AssetStore | null): void {
   store = next;
 }
 
+// The per-file cap actually enforced by the upload route. Defaults to
+// MAX_ASSET_BYTES; tests may lower it so a streamed over-cap upload can be
+// exercised without sending 100 MB of bytes. The exported constant itself
+// never changes, only what the route checks a request against.
+let maxAssetBytesLimit = MAX_ASSET_BYTES;
+export function setAssetLimitsForTests(limits: { maxAssetBytes?: number } | null): void {
+  maxAssetBytesLimit = limits?.maxAssetBytes ?? MAX_ASSET_BYTES;
+}
+
 const HASH = /^[a-f0-9]{64}$/;
+// One list of what a document may embed, kept in asset-mime.ts (and in step
+// there with electron/local-assets.js); this file only reads it rather than
+// keeping a second copy of the extension list.
 const ALLOWED_MIMES = new Set(
-  ["png", "jpg", "gif", "webp", "svg", "avif", "bmp", "ico", "mp4", "m4v", "webm", "ogv", "mov", "mp3", "m4a", "aac", "wav", "flac", "oga", "opus"]
-    .map((ext) => assetMimeFor(`x.${ext}`))
-    .filter((m): m is string => !!m)
+  ASSET_EXTENSIONS.map((ext) => assetMimeFor(`x${ext}`)).filter((m): m is string => !!m)
 );
 
 async function requireUser(c: Context) {
@@ -61,8 +71,12 @@ function docExists(docId: string): boolean {
   return !!db.prepare("SELECT 1 FROM docs WHERE id = ? AND deleted_at IS NULL").get(docId);
 }
 
-function usageFor(ownerId: string): number {
-  const row = db.prepare("SELECT COALESCE(SUM(size), 0) AS total FROM assets WHERE owner_id = ?").get(ownerId) as { total: number };
+function usageFor(ownerId: string, excludeHash?: string): number {
+  const row = (
+    excludeHash
+      ? db.prepare("SELECT COALESCE(SUM(size), 0) AS total FROM assets WHERE owner_id = ? AND hash != ?").get(ownerId, excludeHash)
+      : db.prepare("SELECT COALESCE(SUM(size), 0) AS total FROM assets WHERE owner_id = ?").get(ownerId)
+  ) as { total: number };
   return row.total;
 }
 
@@ -120,6 +134,24 @@ async function requireEditor(c: Context, docId: string) {
   return { user };
 }
 
+// The decisive account-cap check: the real, measured size, checked and
+// claimed in one synchronous transaction, so no upload from the same account
+// running in parallel can also pass it. A client can declare a small
+// Content-Length and stream up to the per-file cap regardless, and every
+// in-flight upload would otherwise read the same pre-upload usage; only a
+// check against actual bytes, committed together with the row that reserves
+// them, is authoritative. better-sqlite3 transactions are synchronous, so
+// nothing else can interleave between the read and the write here.
+function reserveAssetSpace(ownerId: string, hash: string, size: number, mime: string): boolean {
+  return db.transaction(() => {
+    if (usageFor(ownerId, hash) + size > MAX_ACCOUNT_ASSET_BYTES) return false;
+    db.prepare(
+      "INSERT OR REPLACE INTO assets (owner_id, hash, size, mime, created_at) VALUES (?, ?, ?, ?, ?)"
+    ).run(ownerId, hash, size, mime, new Date().toISOString());
+    return true;
+  })();
+}
+
 export const assetsApi = new Hono();
 
 // A per-route guard, not a blanket `use("*")`: assetsApi is mounted at the
@@ -160,12 +192,15 @@ assetsApi.put("/assets/:hash", async (c) => {
   if (!ALLOWED_MIMES.has(mime)) return c.json({ error: "unsupported type" }, 415);
   const declared = Number(c.req.header("content-length") ?? NaN);
   if (!Number.isFinite(declared) || declared <= 0) return c.json({ error: "length required" }, 411);
-  if (declared > MAX_ASSET_BYTES) return c.json({ error: "file over cap", cap: MAX_ASSET_BYTES }, 413);
+  if (declared > maxAssetBytesLimit) return c.json({ error: "file over cap", cap: maxAssetBytesLimit }, 413);
+  // Dedupe first, before the account-cap courtesy check below: re-uploading
+  // bytes the account already holds adds nothing to its usage, so it must
+  // never be refused for being "over cap".
+  const existing = db.prepare("SELECT size FROM assets WHERE owner_id = ? AND hash = ?").get(user.id, hash) as { size: number } | undefined;
+  if (existing && (await store!.head(`${user.id}/${hash}`))) return c.json({ ok: true, hash, size: existing.size });
   if (usageFor(user.id) + declared > MAX_ACCOUNT_ASSET_BYTES) {
     return c.json({ error: "account over cap", cap: MAX_ACCOUNT_ASSET_BYTES }, 413);
   }
-  const existing = db.prepare("SELECT size FROM assets WHERE owner_id = ? AND hash = ?").get(user.id, hash) as { size: number } | undefined;
-  if (existing && (await store!.head(`${user.id}/${hash}`))) return c.json({ ok: true, hash, size: existing.size });
 
   const dir = await mkdtemp(join(tmpdir(), "markie-upload-"));
   const tmp = join(dir, "body");
@@ -177,20 +212,30 @@ assetsApi.put("/assets/:hash", async (c) => {
     const counted = Readable.fromWeb(body as never).on("data", (chunk: Buffer) => {
       seen += chunk.length;
       hasher.update(chunk);
-      if (seen > MAX_ASSET_BYTES) counted.destroy(new Error("over cap"));
+      if (seen > maxAssetBytesLimit) counted.destroy(new Error("over cap"));
     });
     try {
       await pipeline(counted, createWriteStream(tmp));
     } catch (err) {
-      if (String(err).includes("over cap")) return c.json({ error: "file over cap", cap: MAX_ASSET_BYTES }, 413);
+      if (String(err).includes("over cap")) return c.json({ error: "file over cap", cap: maxAssetBytesLimit }, 413);
       throw err;
     }
     if (hasher.digest("hex") !== hash) return c.json({ error: "hash mismatch" }, 400);
     const size = (await stat(tmp)).size;
-    await store!.put(`${user.id}/${hash}`, Readable.toWeb(createReadStream(tmp)) as ReadableStream<Uint8Array>, size, mime);
-    db.prepare(
-      "INSERT OR REPLACE INTO assets (owner_id, hash, size, mime, created_at) VALUES (?, ?, ?, ?, ?)"
-    ).run(user.id, hash, size, mime, new Date().toISOString());
+    // The declared-length check above is a cheap courtesy: it reads
+    // yesterday's usage against a number the client chose. This is the real
+    // gate, on the size just measured from the bytes that actually arrived.
+    if (!reserveAssetSpace(user.id, hash, size, mime)) {
+      return c.json({ error: "account over cap", cap: MAX_ACCOUNT_ASSET_BYTES }, 413);
+    }
+    try {
+      await store!.put(`${user.id}/${hash}`, Readable.toWeb(createReadStream(tmp)) as ReadableStream<Uint8Array>, size, mime);
+    } catch (err) {
+      // The row already claimed the space; the object never arrived. Undo
+      // the claim rather than leave the account's usage pointing at nothing.
+      db.prepare("DELETE FROM assets WHERE owner_id = ? AND hash = ?").run(user.id, hash);
+      throw err;
+    }
     return c.json({ ok: true, hash, size });
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -214,7 +259,10 @@ assetsApi.put("/docs/:id/assets", async (c) => {
   let linked = 0, kept = 0, dropped = 0;
   for (const entry of body!.refs as { ref?: unknown; hash?: unknown }[]) {
     const ref = typeof entry?.ref === "string" ? entry.ref : "";
-    if (!ref || ref.length > 2048) continue;
+    if (!ref || ref.length > 2048) {
+      dropped += 1;
+      continue;
+    }
     if (typeof entry.hash === "string") {
       if (!HASH.test(entry.hash)) return c.json({ error: "bad hash" }, 400);
       const own = db.prepare("SELECT size FROM assets WHERE owner_id = ? AND hash = ?").get(gate.user.id, entry.hash) as { size: number } | undefined;

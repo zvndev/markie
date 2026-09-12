@@ -198,14 +198,17 @@ async function syncOn(filePath, name, content) {
   const row = registry.get(filePath);
   const refused = viewerRefusal(filePath, row?.cloud_doc_id);
   if (refused) return refused;
-  const cloudId = row?.cloud_doc_id ?? crypto.randomUUID();
-  // The one push that sends its text first. Everywhere else media travels
-  // ahead of the snapshot that references it, but the server has nothing to
-  // attach it to until the document exists: both asset routes answer 404 for
-  // a cloud id it has never seen, so media sent ahead of the create was left
-  // pending until a reconciliation pass retried it.
+  const linked = row?.cloud_doc_id ?? null;
+  const cloudId = linked ?? crypto.randomUUID();
+  const baseVersion = linked ? (row.cloud_version ?? 0) : 0;
+  // For a document the server already has this is an ordinary push, so its
+  // media travels ahead of the snapshot that references it, exactly as in
+  // push(). A document the server has never seen is the one exception: both
+  // asset routes answer 404 for a cloud id it does not know, so media sent
+  // ahead of the create was left pending until a reconciliation pass retried
+  // it. That one sends its text first, below.
+  let media = linked ? await pushMedia(filePath, cloudId, content, baseVersion) : null;
   const hash = registry.hashContent(content);
-  const baseVersion = row?.cloud_doc_id ? (row.cloud_version ?? 0) : 0;
   const res = await api("PUT", `/api/docs/${cloudId}`, {
     name,
     content,
@@ -221,7 +224,7 @@ async function syncOn(filePath, name, content) {
       // minted a fresh uuid and left an orphan copy behind. No cloud_version is
       // recorded, so the row stays unpushed and the next push re-sends from 0.
       registry.update(filePath, { cloud_doc_id: cloudId, sync_state: "unpushed" });
-      return { error: UNREADABLE, media: null };
+      return { error: UNREADABLE, media };
     }
     registry.update(filePath, {
       cloud_doc_id: cloudId,
@@ -230,17 +233,17 @@ async function syncOn(filePath, name, content) {
       sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
-    const media = await pushMedia(filePath, cloudId, content, version);
+    if (!linked) media = await pushMedia(filePath, cloudId, content, version);
     return { ok: true, version, media };
   }
   if (res.status === 409) {
     registry.update(filePath, { sync_state: "conflict" });
-    return { conflict: true, serverVersion: res.data?.serverVersion, media: null };
+    return { conflict: true, serverVersion: res.data?.serverVersion, media };
   }
   // The server did not take the snapshot, so nothing is backed up. Leaving the
   // row on its previous state would tell the user otherwise.
   registry.update(filePath, { sync_state: "unpushed" });
-  return { error: failure("push", res), media: null };
+  return { error: failure("push", res), media };
 }
 
 // Push after save, only when tracked, cloud-linked, and content actually

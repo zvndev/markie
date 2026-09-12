@@ -1907,6 +1907,31 @@ describe("media and text push order", () => {
     expect(calls.map((c) => c.method)).toEqual(["PUT"]);
   });
 
+  // Only a document the server has never seen needs the reversal. Turning
+  // sync back on for one it already has is an ordinary push, and sending its
+  // text first would put a snapshot in the cloud that names pictures nobody
+  // else can fetch yet.
+  it("syncOn sends media first for a document the server already has", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/e.md", sync_state: "paused", cloud_doc_id: "ce", cloud_version: 3 });
+    const calls = respondWith({ status: 200, body: { version: 4 } });
+    const media: Array<{ textCallsSoFar: number; baseVersion?: number }> = [];
+    sync.setAssetSync({
+      pushAssets: async (_p: string, _cloudId: string, _content: string, opts?: { baseVersion?: number }) => {
+        media.push({ textCallsSoFar: calls.length, baseVersion: opts?.baseVersion });
+        return { ok: true, uploaded: 1, skipped: [] };
+      },
+    });
+
+    const res = await sync.syncOn("/docs/e.md", "e.md", "![](e.png)\n");
+
+    expect(res).toEqual({ ok: true, version: 4, media: { ok: true, uploaded: 1, skipped: [] } });
+    // Nothing had been sent when the media went, and it was linked against
+    // the version the text PUT names.
+    expect(media).toEqual([{ textCallsSoFar: 0, baseVersion: 3 }]);
+    expect(calls[0].body).toMatchObject({ baseVersion: 3 });
+  });
+
   it("syncOn pushes no media at all when the create is refused", async () => {
     signIn("test-token", ME);
     respondWith({ status: 500 });

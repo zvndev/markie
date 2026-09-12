@@ -208,6 +208,24 @@ describe("asset cache", () => {
     }
   });
 
+  it("serves nothing from inside the memo window when a sign-out lands on the way", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    const cache = createAssetCache({
+      dir,
+      fetchAsset: async () => bytes("aaaa"),
+      revalidate: async () => ({ fresh: true }),
+    });
+    await cache.get("c1", "a.png"); // fills the cache
+    await cache.get("c1", "a.png"); // validates it, so the next get is memoed
+
+    const pending = cache.get("c1", "a.png");
+    await cache.clear(); // a sign-out lands while the hit is being recorded
+
+    // The memo is the one path that returns without asking anything, so it is
+    // the one that could hand back a file the wipe failed to unlink.
+    expect(await pending).toBeNull();
+  });
+
   it("drops a picture the server says is gone rather than showing it from disk", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
     const cache = createAssetCache({

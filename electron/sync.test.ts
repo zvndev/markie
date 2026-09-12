@@ -375,20 +375,76 @@ describe("fetchAsset", () => {
   // A revalidation runs while somebody is looking at the picture, and the
   // protocol handler waits on it. Five minutes is the budget for downloading
   // a video, not for asking whether a cached one changed.
-  it("gives a revalidation five seconds, not the five minutes a download gets", async () => {
-    const timeout = vi.spyOn(AbortSignal, "timeout");
+  it("gives a revalidation five seconds to answer, and a download five minutes", async () => {
+    const aborted: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            init.signal.addEventListener("abort", () => {
+              aborted.push(_url);
+              reject(new Error("aborted"));
+            });
+          })
+      )
+    );
+    vi.useFakeTimers();
     try {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () => ({ status: 304, headers: new Headers(), body: null }))
-      );
-      await sync.fetchAsset("cloud-1", "a.png", `"${"a".repeat(64)}"`);
-      expect(timeout).toHaveBeenLastCalledWith(5000);
+      const revalidation = sync.fetchAsset("cloud-1", "a.png", `"${"a".repeat(64)}"`);
+      await vi.advanceTimersByTimeAsync(5001);
+      expect(aborted).toHaveLength(1);
+      expect(await revalidation).toBeNull();
 
-      await sync.fetchAsset("cloud-1", "a.png");
-      expect(timeout).toHaveBeenLastCalledWith(300000);
+      const download = sync.fetchAsset("cloud-1", "a.png");
+      await vi.advanceTimersByTimeAsync(5001);
+      // Still waiting: a picture nobody has a copy of is worth five minutes.
+      expect(aborted).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(300000);
+      expect(aborted).toHaveLength(2);
+      expect(await download).toBeNull();
     } finally {
-      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  // The signal handed to fetch governs the response body too, so one 5 s cap
+  // would have given a relinked video five seconds to download, failed it,
+  // and gone on showing the old bytes forever.
+  it("holds the five-second deadline to the answer, not to the download behind it", async () => {
+    const hash = "b".repeat(64);
+    let sendBody: (() => void) | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: { signal: AbortSignal }) => ({
+        status: 200,
+        headers: new Headers({ etag: `"${hash}"`, "content-type": "image/png", "content-length": "4" }),
+        body: new ReadableStream({
+          start(controller) {
+            init.signal.addEventListener("abort", () => controller.error(new Error("aborted")));
+            sendBody = () => {
+              controller.enqueue(new TextEncoder().encode("bbbb"));
+              controller.close();
+            };
+          },
+        }),
+      }))
+    );
+    vi.useFakeTimers();
+    try {
+      const res = await sync.fetchAsset("cloud-1", "a.png", `"${"a".repeat(64)}"`);
+      expect(res).toMatchObject({ hash, mime: "image/png", size: 4 });
+
+      // Eight seconds of a slow download later, the body is still welcome.
+      await vi.advanceTimersByTimeAsync(8000);
+      sendBody!();
+      const reader = res!.stream.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe("bbbb");
+      expect((await reader.read()).done).toBe(true);
+      // And the transfer's own deadline goes with the transfer.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
     }
   });
 

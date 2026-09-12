@@ -219,6 +219,11 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
     if (hit && fs.existsSync(fileFor(hit.hash))) {
       hit.used = nextUsed();
       await save();
+      // A sign-out can land in that write. Every path below returns this
+      // file, and the memo returns it without asking anyone, so on a platform
+      // where the wipe could not unlink it this is the only thing standing
+      // between the next account and the last one's picture.
+      if (generation !== startedInGeneration) return null;
       const cached = { path: fileFor(hit.hash), mime: hit.mime, size: hit.size };
       if (!revalidate) return cached;
       // Chromium asks for a video one Range at a time and the protocol

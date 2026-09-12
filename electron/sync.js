@@ -80,19 +80,32 @@ function hasPrincipal() {
 // `ifNoneMatch` is the ETag of a copy the caller already holds (the asset
 // cache revalidating a hit). With one, an unchanged picture answers 304,
 // reported as `{ notModified: true }`, and sends no bytes at all.
+// How long to wait for the server to answer a revalidation, which happens
+// while somebody is looking at the picture and the protocol handler waits on
+// it, and how long a transfer may then take.
+const ANSWER_TIMEOUT_MS = 5000;
+const TRANSFER_TIMEOUT_MS = 300000;
+
 async function fetchAsset(cloudId, ref, ifNoneMatch) {
   if (!isConfigured()) return null;
+  // Two deadlines, not one. A signal handed to fetch governs the response
+  // body as well as the wait for its headers, so a single five-second cap on
+  // a revalidation would be five seconds for the whole replacement to
+  // download: anything bigger would fail every time, the cache would keep
+  // serving the copy it has, and the relink would never land. This one bounds
+  // the answer, then is re-armed to bound the transfer.
+  const abort = new AbortController();
+  let deadline = setTimeout(() => abort.abort(), ifNoneMatch ? ANSWER_TIMEOUT_MS : TRANSFER_TIMEOUT_MS);
+  let streaming = false;
   try {
     const headers = { Authorization: `Bearer ${config.token}` };
     if (ifNoneMatch) headers["If-None-Match"] = ifNoneMatch;
     const res = await fetch(`${config.serverURL}/api/docs/${encodeURIComponent(cloudId)}/assets/file?ref=${encodeURIComponent(ref)}`, {
       headers,
-      // Five minutes is the budget for downloading a video. A revalidation
-      // sends no body and runs while someone is looking at the picture, with
-      // the protocol handler waiting on it, so a stalled connection there is
-      // a stalled view.
-      signal: AbortSignal.timeout(ifNoneMatch ? 5000 : 300000),
+      signal: abort.signal,
     });
+    clearTimeout(deadline);
+    deadline = setTimeout(() => abort.abort(), TRANSFER_TIMEOUT_MS);
     if (ifNoneMatch && res.status === 304) return { notModified: true };
     // Definitive answers: the document has no such ref any more, or this
     // account may no longer read it. A cached copy has to go. Anything else,
@@ -102,9 +115,23 @@ async function fetchAsset(cloudId, ref, ifNoneMatch) {
     if (res.status !== 200 || !res.body) return null;
     const hash = (res.headers.get("etag") ?? "").replace(/"/g, "");
     if (!/^[a-f0-9]{64}$/.test(hash)) return null;
-    return { stream: res.body, mime: res.headers.get("content-type") ?? "application/octet-stream", hash, size: Number(res.headers.get("content-length") ?? 0) };
+    streaming = true;
+    const stream = res.body.pipeThrough(
+      new TransformStream({
+        // The transfer's deadline goes when the transfer does, whether the
+        // body ran out or died on the way.
+        flush: () => clearTimeout(deadline),
+        cancel: () => clearTimeout(deadline),
+      })
+    );
+    return { stream, mime: res.headers.get("content-type") ?? "application/octet-stream", hash, size: Number(res.headers.get("content-length") ?? 0) };
   } catch {
     return null;
+  } finally {
+    // Every path but the one that hands the body to a caller is done with the
+    // connection here, and a timer left armed would abort nothing five
+    // minutes later.
+    if (!streaming) clearTimeout(deadline);
   }
 }
 

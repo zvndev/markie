@@ -6,8 +6,31 @@ const fs = require("node:fs");
 const { Readable } = require("node:stream");
 const docAssets = require("./doc-assets");
 
-function createAssetSync({ api, registry, grants, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), maxBytes = docAssets.MAX_ASSET_BYTES }) {
+function createAssetSync({
+  api,
+  registry,
+  grants,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  maxBytes = docAssets.MAX_ASSET_BYTES,
+  hashFile = docAssets.hashFile,
+}) {
   const failure = (verb, res) => (res.status === 0 ? `${verb} failed (offline)` : `${verb} failed (${res.status})`);
+
+  // Hashing streams and reads the whole file. A document's media rarely
+  // changes between pushes, so a push that only differs in some other ref
+  // (or a reconciliation retry of a row a prior failure left "pending")
+  // would otherwise re-read and re-hash every unchanged file too. Keyed by
+  // path, good for the life of this createAssetSync — per-process memory
+  // only, never persisted, and correctly invalidated the moment size or
+  // mtime actually change.
+  const hashCache = new Map();
+  async function hashCached(path, size, mtimeMs) {
+    const cached = hashCache.get(path);
+    if (cached && cached.size === size && cached.mtimeMs === mtimeMs) return cached.hash;
+    const { hash } = await hashFile(path);
+    hashCache.set(path, { size, mtimeMs, hash });
+    return hash;
+  }
 
   async function upload(entry) {
     let res = { status: 0 };
@@ -34,12 +57,16 @@ function createAssetSync({ api, registry, grants, sleep = (ms) => new Promise((r
         skipped.push({ ref: r.ref, reason: r.skipped });
         continue;
       }
-      const { hash, size } = await docAssets.hashFile(r.path);
-      if (size > maxBytes) {
+      // A cheap stat before a full read-and-hash: the cap is checked on the
+      // authoritative size the filesystem reports, not on what hashing it
+      // happens to measure along the way.
+      const stat = fs.statSync(r.path);
+      if (stat.size > maxBytes) {
         skipped.push({ ref: r.ref, reason: "size" });
         continue;
       }
-      entries.push({ ref: r.ref, path: r.path, mime: r.mime, hash, size });
+      const hash = await hashCached(r.path, stat.size, stat.mtimeMs);
+      entries.push({ ref: r.ref, path: r.path, mime: r.mime, hash, size: stat.size });
     }
     const fp = docAssets.fingerprint(entries);
     if (row.assets_state === "synced" && row.assets_fingerprint === fp) return { unchanged: true };
@@ -65,6 +92,9 @@ function createAssetSync({ api, registry, grants, sleep = (ms) => new Promise((r
           entry.dropped = true;
           continue;
         }
+        // Two refs to byte-identical files share a hash: once this upload has
+        // landed, nothing else in this push still needs it.
+        need.delete(entry.hash);
         uploaded += 1;
       }
     }

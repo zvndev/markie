@@ -1,11 +1,11 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 
 const { createAssetSync } = require("./asset-sync") as typeof import("./asset-sync");
-const { fingerprint } = require("./doc-assets") as typeof import("./doc-assets");
+const { fingerprint, hashFile } = require("./doc-assets") as typeof import("./doc-assets");
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -125,5 +125,64 @@ describe("pushAssets", () => {
     expect(calls.map((c) => c.path)).toEqual(["/api/docs/c1/assets"]);
     expect(calls[0].body).toEqual({ refs: [{ ref: "b.png" }] });
     void dir;
+  });
+
+  it("never hashes a file it is about to skip for size", async () => {
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const hashSpy = vi.fn(hashFile);
+    const { api, calls } = fakeApi([{ status: 200, data: { linked: 0, kept: 0, dropped: 1 } }]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {}, maxBytes: 3, hashFile: hashSpy });
+    const result = await pushAssets(docPath, "c1", "![](b.png)\n");
+    expect(result).toEqual({ ok: true, uploaded: 0, skipped: [{ ref: "b.png", reason: "size" }] });
+    expect(hashSpy).not.toHaveBeenCalled();
+    expect(calls.map((c) => c.path)).toEqual(["/api/docs/c1/assets"]);
+  });
+
+  it("does not re-hash an unchanged file on a second push, even when the row is not yet synced", async () => {
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const hashSpy = vi.fn(hashFile);
+    const { api, calls } = fakeApi([
+      { status: 200, data: { missing: [sha("bbbb")] } },
+      { status: 200, data: { ok: true } },
+      { status: 200, data: { linked: 1, kept: 0, dropped: 0 } },
+      { status: 200, data: { missing: [] } },
+      { status: 200, data: { linked: 1, kept: 0, dropped: 0 } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {}, hashFile: hashSpy });
+    const md = "![](b.png)\n";
+    await pushAssets(docPath, "c1", md);
+    expect(hashSpy).toHaveBeenCalledTimes(1);
+
+    // A reconciliation pass retrying a row a prior failure left "pending",
+    // with the file on disk never touched: the second push still talks to
+    // the network (missing + link, nothing left to upload), but the hash
+    // itself comes from the cache, not another read of the file.
+    rows.set(docPath, { ...rows.get(docPath), assets_state: "pending" });
+    await pushAssets(docPath, "c1", md);
+    expect(hashSpy).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(5);
+  });
+
+  it("uploads a byte-identical file once and links both refs to the same hash", async () => {
+    const { dir, docPath } = fixture();
+    writeFileSync(path.join(dir, "c.png"), "aaaa"); // same bytes as shots/a.png
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api, calls } = fakeApi([
+      { status: 200, data: { missing: [sha("aaaa")] } },
+      { status: 200, data: { ok: true } },
+      { status: 200, data: { linked: 2, kept: 0, dropped: 0 } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+    const md = "![](shots/a.png)\n![](c.png)\n";
+    const result = await pushAssets(docPath, "c1", md);
+    expect(result).toEqual({ ok: true, uploaded: 1, skipped: [] });
+    expect(calls.map((c) => [c.method, c.path])).toEqual([
+      ["POST", "/api/docs/c1/assets/missing"],
+      ["PUT", `/api/assets/${sha("aaaa")}`],
+      ["PUT", "/api/docs/c1/assets"],
+    ]);
+    expect(calls[2].body).toEqual({ refs: [{ ref: "shots/a.png", hash: sha("aaaa") }, { ref: "c.png", hash: sha("aaaa") }] });
   });
 });

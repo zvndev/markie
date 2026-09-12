@@ -3,7 +3,7 @@
 import { Hono } from "hono";
 import { openDatabase } from "./db.ts";
 import { resolvePublicToken } from "./public-links.ts";
-import { assetRefsFor, serveAsset } from "./assets.ts";
+import { assetRefsFor, assetVersion, serveAsset } from "./assets.ts";
 import {
   renderDownloadPage,
   renderPublicPage,
@@ -128,7 +128,13 @@ publicShare.get("/s/:token", (c) => {
   const doc = docForToken(token);
   if (!doc) return c.html(renderNotFoundPage(MARKIE_SITE), 404);
   const refs = assetRefsFor(doc.doc_id);
-  const assetUrlFor = (ref: string) => (refs.has(ref) ? `/s/${encodeURIComponent(token)}/assets?ref=${encodeURIComponent(ref)}` : null);
+  // ?v= is the hash this ref points at, so a relink changes the URL; see the
+  // note in doc-view.ts for why an hour of freshness needs it.
+  const assetUrlFor = (ref: string) => {
+    const row = refs.get(ref);
+    if (!row) return null;
+    return `/s/${encodeURIComponent(token)}/assets?ref=${encodeURIComponent(ref)}&v=${assetVersion(row.hash)}`;
+  };
   return c.html(
     renderPublicPage({
       title: doc.name,

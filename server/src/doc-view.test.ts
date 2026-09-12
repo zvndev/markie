@@ -114,6 +114,7 @@ async function uploadAndLinkAsset(token: string, docId: string, ref: string) {
     refs: [{ ref, hash }],
   });
   assert.equal(linked.status, 200);
+  return hash;
 }
 
 test("a member's link opens the document, and stops the moment they are removed", async () => {
@@ -490,11 +491,14 @@ test("a linked asset renders through the doc's asset route, an unlinked ref does
     baseVersion: 0,
   });
   assert.equal(created.status, 200);
-  await uploadAndLinkAsset(owner.token, docId, "a.png");
+  const assetHash = await uploadAndLinkAsset(owner.token, docId, "a.png");
 
   const view = await page(`/d/${docId}`, owner.token);
   assert.equal(view.status, 200);
-  assert.match(view.body, new RegExp(`src="/d/${docId}/assets\\?ref=a\\.png"`));
+  // The hash rides along in ?v= so that relinking the ref changes the URL:
+  // the response is fresh for an hour, and an ETag cannot revalidate what a
+  // browser never asks about.
+  assert.match(view.body, new RegExp(`src="/d/${docId}/assets\\?ref=a\\.png&#x26;v=${assetHash.slice(0, 16)}"`));
   // b.png was never linked, so the document's own text passes through as
   // written: nothing here fetches an asset that does not exist.
   assert.match(view.body, /src="b\.png"/);
@@ -513,7 +517,7 @@ test("a reader's rewritten asset src carries their own ?k= token", async () => {
     baseVersion: 0,
   });
   assert.equal(created.status, 200);
-  await uploadAndLinkAsset(owner.token, docId, "a.png");
+  const assetHash = await uploadAndLinkAsset(owner.token, docId, "a.png");
 
   const share = await jsonRequest<{ userId: string }>(
     "POST",
@@ -531,6 +535,6 @@ test("a reader's rewritten asset src carries their own ?k= token", async () => {
   // the server as ref=a.png&k=<token>.
   assert.match(
     view.body,
-    new RegExp(`src="/d/${docId}/assets\\?ref=a\\.png&#x26;k=${token}"`)
+    new RegExp(`src="/d/${docId}/assets\\?ref=a\\.png&#x26;k=${token}&#x26;v=${assetHash.slice(0, 16)}"`)
   );
 });

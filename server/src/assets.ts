@@ -112,6 +112,13 @@ async function eachLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
+// The cache-busting half of a generated asset URL: enough of the hash to
+// change whenever the ref is relinked, short enough to keep the URL readable.
+// The asset route never reads it; a browser's cache key does.
+export function assetVersion(hash: string): string {
+  return hash.slice(0, 16);
+}
+
 // Rows in `assets` that no document links any more, removed from the table
 // and from storage. Storage failures are logged, not thrown: the link is
 // already gone, and a leftover object is a cost, not a leak.

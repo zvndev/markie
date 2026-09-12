@@ -366,11 +366,15 @@ test("the public page rewrites a linked asset's src through its own /s/ asset ro
   const res = await fullApp.request(`/s/${token}`);
   assert.equal(res.status, 200);
   const body = await res.text();
-  assert.match(body, new RegExp(`src="/s/${token}/assets\\?ref=a\\.png"`));
+  // The URL carries the hash the ref points at, so relinking a.png to other
+  // bytes changes the URL and the hour of freshness below cannot serve the
+  // old picture from a browser cache.
+  assert.match(body, new RegExp(`src="/s/${token}/assets\\?ref=a\\.png&#x26;v=${pngHash.slice(0, 16)}"`));
   // b.png was never linked, so it passes through as the document wrote it.
   assert.match(body, /src="b\.png"/);
 
-  const asset = await fullApp.request(`/s/${token}/assets?ref=a.png`);
+  const asset = await fullApp.request(`/s/${token}/assets?ref=a.png&v=${pngHash.slice(0, 16)}`);
   assert.equal(asset.status, 200);
+  assert.equal(asset.headers.get("cache-control"), "private, max-age=3600");
   assert.equal(await asset.text(), "public-page-asset-bytes");
 });

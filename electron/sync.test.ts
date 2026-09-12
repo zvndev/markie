@@ -354,6 +354,39 @@ describe("resolve", () => {
   });
 });
 
+describe("fetchAsset", () => {
+  // The asset cache revalidates a hit with the ETag of the copy it holds, so
+  // an unchanged picture costs a 304 and no bytes at all.
+  it("sends the cached copy's ETag and reads a 304 as not modified", async () => {
+    const etag = `"${"a".repeat(64)}"`;
+    const headers: Array<Record<string, string>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: { headers: Record<string, string> }) => {
+        headers.push(init.headers);
+        return { status: 304, headers: new Headers(), body: null };
+      })
+    );
+
+    expect(await sync.fetchAsset("cloud-1", "a.png", etag)).toEqual({ notModified: true });
+    expect(headers[0]["If-None-Match"]).toBe(etag);
+  });
+
+  it("sends no conditional header when there is nothing cached to revalidate", async () => {
+    const headers: Array<Record<string, string>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: { headers: Record<string, string> }) => {
+        headers.push(init.headers);
+        return { status: 404, headers: new Headers(), body: null };
+      })
+    );
+
+    expect(await sync.fetchAsset("cloud-1", "a.png")).toBeNull();
+    expect(headers[0]["If-None-Match"]).toBeUndefined();
+  });
+});
+
 describe("remoteContent", () => {
   it("hands the renderer the cloud copy for a diff", async () => {
     const filePath = path.join(tmpDir, "a.md");

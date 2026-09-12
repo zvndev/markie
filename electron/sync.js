@@ -74,13 +74,20 @@ function hasPrincipal() {
 
 // One asset of a cloud document, streamed with the session's token. Null for
 // anything but a 200, so a revoked share reads as "no such picture".
-async function fetchAsset(cloudId, ref) {
+//
+// `ifNoneMatch` is the ETag of a copy the caller already holds (the asset
+// cache revalidating a hit). With one, an unchanged picture answers 304 and
+// sends no bytes at all.
+async function fetchAsset(cloudId, ref, ifNoneMatch) {
   if (!isConfigured()) return null;
   try {
+    const headers = { Authorization: `Bearer ${config.token}` };
+    if (ifNoneMatch) headers["If-None-Match"] = ifNoneMatch;
     const res = await fetch(`${config.serverURL}/api/docs/${encodeURIComponent(cloudId)}/assets/file?ref=${encodeURIComponent(ref)}`, {
-      headers: { Authorization: `Bearer ${config.token}` },
+      headers,
       signal: AbortSignal.timeout(300000),
     });
+    if (ifNoneMatch && res.status === 304) return { notModified: true };
     if (res.status !== 200 || !res.body) return null;
     const hash = (res.headers.get("etag") ?? "").replace(/"/g, "");
     if (!/^[a-f0-9]{64}$/.test(hash)) return null;

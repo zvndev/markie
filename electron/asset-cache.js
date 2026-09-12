@@ -12,7 +12,15 @@ const { pipeline } = require("node:stream/promises");
 const PENDING_CLEAR_MARKER = ".pending-clear";
 const HASH_RE = /^[a-f0-9]{64}$/;
 
-function createAssetCache({ dir, fetchAsset, limitBytes = 2 * 1024 * 1024 * 1024 }) {
+/**
+ * @param {{
+ *   dir: string,
+ *   fetchAsset: (cloudId: string, ref: string, ifNoneMatch?: string) => Promise<any>,
+ *   revalidate?: (cloudId: string, ref: string, etag: string) => Promise<any>,
+ *   limitBytes?: number,
+ * }} options
+ */
+function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 * 1024 * 1024 }) {
   const indexPath = path.join(dir, "cache.json");
   let index = null; // { entries: { [cloudId\tref]: { hash, mime, size, used } } }
   const inflight = new Map();
@@ -108,6 +116,54 @@ function createAssetCache({ dir, fetchAsset, limitBytes = 2 * 1024 * 1024 * 1024
     }
   }
 
+  // Fetched bytes written under their hash and recorded for this key. Null
+  // when the account they were fetched for signed out mid-flight, or when
+  // what came back cannot name a file on this disk.
+  async function store(key, fetched, startedInGeneration) {
+    // The hash names the file on disk; a server that sends something
+    // that is not one is not a filename, it is an attempt to write
+    // somewhere else on this disk.
+    if (!HASH_RE.test(fetched.hash)) return null;
+    const tmp = path.join(dir, `.${fetched.hash}.part-${process.pid}-${Date.now()}`);
+    await pipeline(Readable.fromWeb(fetched.stream), fs.createWriteStream(tmp));
+    if (generation !== startedInGeneration) {
+      // A sign-out landed while this was in flight. The account that
+      // asked for this picture is gone; keeping the file or the index
+      // entry would hand both to whoever signs in next.
+      await fsp.rm(tmp, { force: true });
+      return null;
+    }
+    await fsp.rename(tmp, fileFor(fetched.hash));
+    // Checked again: a clear() that lands during the rename itself
+    // already took its snapshot of the directory before this file
+    // existed, so it never touches it. Undoing it here is what keeps it
+    // from outliving the account it was fetched for.
+    if (generation !== startedInGeneration) {
+      await fsp.rm(fileFor(fetched.hash), { force: true });
+      return null;
+    }
+    index.entries[key] = { hash: fetched.hash, mime: fetched.mime, size: fetched.size, used: nextUsed() };
+    await evict();
+    await save();
+    return { path: fileFor(fetched.hash), mime: fetched.mime, size: fetched.size };
+  }
+
+  // One job per key at a time, handed to everyone who asks while it runs, so
+  // two views of the same document never fetch or revalidate the same picture
+  // twice.
+  function share(key, run) {
+    if (inflight.has(key)) return inflight.get(key);
+    const job = (async () => {
+      try {
+        return await run();
+      } finally {
+        inflight.delete(key);
+      }
+    })();
+    inflight.set(key, job);
+    return job;
+  }
+
   async function get(cloudId, ref) {
     // Read synchronously, before the first await: a clear() that lands
     // while this call is merely suspended inside load() must still bump
@@ -120,45 +176,41 @@ function createAssetCache({ dir, fetchAsset, limitBytes = 2 * 1024 * 1024 * 1024
     if (hit && fs.existsSync(fileFor(hit.hash))) {
       hit.used = nextUsed();
       await save();
-      return { path: fileFor(hit.hash), mime: hit.mime, size: hit.size };
+      const cached = { path: fileFor(hit.hash), mime: hit.mime, size: hit.size };
+      if (!revalidate) return cached;
+      // A ref is a name, not a hash: the same reference can be relinked to
+      // different bytes on the server, and this copy would otherwise be
+      // shown until something evicted it. So ask, carrying the ETag of what
+      // is here: unchanged costs a 304 and no bytes, and no answer at all
+      // (offline, an error) is not a reason to stop showing the picture.
+      const previousHash = hit.hash;
+      return share(key, async () => {
+        const answer = await revalidate(cloudId, ref, `"${previousHash}"`);
+        // A sign-out landed while this was out asking: the copy it would
+        // fall back to has been wiped with the rest of that account's
+        // pictures, and nothing here is this account's to serve.
+        if (generation !== startedInGeneration) return null;
+        if (!answer || !answer.fetched) return cached;
+        const stored = await store(key, answer.fetched, startedInGeneration);
+        // The server has told us this copy is superseded, so serving it now
+        // would be knowingly wrong; whatever stopped the replacement from
+        // landing (a signed-out account, a hash that is not one) reads as
+        // "no picture" instead.
+        if (!stored) return null;
+        // Nothing points at the old copy any more unless another document
+        // happens to share it, and evict() only counts what the index still
+        // names, so a file left here is disk nothing will ever reclaim.
+        if (previousHash !== answer.fetched.hash && !Object.values(index.entries).some((e) => e.hash === previousHash)) {
+          await fsp.rm(fileFor(previousHash), { force: true }).catch(() => {});
+        }
+        return stored;
+      });
     }
-    if (inflight.has(key)) return inflight.get(key);
-    const job = (async () => {
-      try {
-        const fetched = await fetchAsset(cloudId, ref);
-        if (!fetched) return null;
-        // The hash names the file on disk; a server that sends something
-        // that is not one is not a filename, it is an attempt to write
-        // somewhere else on this disk.
-        if (!HASH_RE.test(fetched.hash)) return null;
-        const tmp = path.join(dir, `.${fetched.hash}.part-${process.pid}-${Date.now()}`);
-        await pipeline(Readable.fromWeb(fetched.stream), fs.createWriteStream(tmp));
-        if (generation !== startedInGeneration) {
-          // A sign-out landed while this was in flight. The account that
-          // asked for this picture is gone; keeping the file or the index
-          // entry would hand both to whoever signs in next.
-          await fsp.rm(tmp, { force: true });
-          return null;
-        }
-        await fsp.rename(tmp, fileFor(fetched.hash));
-        // Checked again: a clear() that lands during the rename itself
-        // already took its snapshot of the directory before this file
-        // existed, so it never touches it. Undoing it here is what keeps it
-        // from outliving the account it was fetched for.
-        if (generation !== startedInGeneration) {
-          await fsp.rm(fileFor(fetched.hash), { force: true });
-          return null;
-        }
-        index.entries[key] = { hash: fetched.hash, mime: fetched.mime, size: fetched.size, used: nextUsed() };
-        await evict();
-        await save();
-        return { path: fileFor(fetched.hash), mime: fetched.mime, size: fetched.size };
-      } finally {
-        inflight.delete(key);
-      }
-    })();
-    inflight.set(key, job);
-    return job;
+    return share(key, async () => {
+      const fetched = await fetchAsset(cloudId, ref);
+      if (!fetched) return null;
+      return store(key, fetched, startedInGeneration);
+    });
   }
 
   async function clear() {

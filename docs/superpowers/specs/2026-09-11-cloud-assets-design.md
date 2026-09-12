@@ -109,7 +109,7 @@ Registry gains three columns through the existing `PRAGMA table_info` + `ALTER` 
 
 The renderer's `resolveAssetSrc` appends `?doc=<encoded document path>` to every `markie-asset://` URL (the original reference is already the encoded path's tail relative to the document; the handler recomputes `ref` as the path relative to the document's folder, and falls back to the absolute reference when the file is outside it). The protocol handler tries the local file first, exactly as today. When the file does not exist or is not allowed, and the document's registry row has a `cloud_doc_id`, it asks `asset-cache.js` for `(cloudId, ref)`:
 
-- cache hit under `<userData>/asset-cache/<hash>` (index `cache.json` maps `cloudId\tref` to hash, mime, size, last used): serve with ranges;
+- cache hit under `<userData>/asset-cache/<hash>` (index `cache.json` maps `cloudId\tref` to hash, mime, size, last used): revalidated before it is served, because a ref is a name and the same name can be relinked to different bytes. The conditional `GET` carries `If-None-Match: "<hash>"`: a 304 serves the cached copy, new bytes are stored like a miss and replace the index entry (the old file is removed unless another entry shares it), and no answer at all (offline, an error) serves the cached copy rather than blanking the picture;
 - miss: `GET /api/docs/:id/assets/file?ref=` through `sync.js`'s authenticated `api()` helper, stream to a temp file, move into the cache under the `ETag` hash, then serve.
 
 The cache is capped at 2 GB; when over, the least recently used entries are deleted first. Sign-out clears it. A document pulled to `Documents/Markie/Cloud` therefore shows its images with no files written beside it and no change to its text.

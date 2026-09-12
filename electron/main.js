@@ -1270,6 +1270,16 @@ const { createAssetCache } = require("./asset-cache");
 const assetCache = createAssetCache({
   dir: path.join(app.getPath("userData"), "asset-cache"),
   fetchAsset: sync.fetchAsset,
+  // A cached picture is keyed by the reference the text wrote, and the same
+  // reference can be relinked to different bytes. Ask before serving one:
+  // a 304 keeps it, new bytes replace it, and no answer at all leaves it
+  // showing rather than blanking a picture because the network is down.
+  revalidate: async (cloudId, ref, etag) => {
+    const res = await sync.fetchAsset(cloudId, ref, etag);
+    if (!res) return null;
+    if (res.notModified) return { fresh: true };
+    return { fetched: res };
+  },
 });
 
 // ── Workspace / Files-view IPC ──

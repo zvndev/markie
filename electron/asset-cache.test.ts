@@ -136,6 +136,87 @@ describe("asset cache", () => {
     expect(existsSync(path.join(dir, hashOf("aaaa")))).toBe(false);
   });
 
+  // A ref is a name, not a hash: the same `a.png` can be relinked to new
+  // bytes on the server, and an index hit served forever would show the old
+  // picture on this machine until something evicted it.
+  it("asks whether a hit is still current, and keeps the cached copy on a 304", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    let fetches = 0;
+    const asked: string[] = [];
+    const cache = createAssetCache({
+      dir,
+      fetchAsset: async () => (fetches += 1, bytes("aaaa")),
+      revalidate: async (_c: string, _ref: string, etag: string) => (asked.push(etag), { fresh: true }),
+    });
+
+    const first = await cache.get("c1", "a.png");
+    const second = await cache.get("c1", "a.png");
+
+    expect(second).toEqual(first);
+    expect(fetches).toBe(1);
+    // The ETag of what is on disk, which is what makes the 304 possible.
+    expect(asked).toEqual([`"${hashOf("aaaa")}"`]);
+  });
+
+  it("replaces a hit whose ref now points at different bytes", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    const cache = createAssetCache({
+      dir,
+      fetchAsset: async () => bytes("aaaa"),
+      revalidate: async () => ({ fetched: bytes("bbbb") }),
+    });
+
+    const first = await cache.get("c1", "a.png");
+    const second = await cache.get("c1", "a.png");
+
+    expect(second).toEqual({ path: path.join(dir, hashOf("bbbb")), mime: "image/png", size: 4 });
+    expect(readFileSync(second!.path, "utf8")).toBe("bbbb");
+    const stored = JSON.parse(readFileSync(path.join(dir, "cache.json"), "utf8"));
+    expect(stored.entries["c1\ta.png"].hash).toBe(hashOf("bbbb"));
+    // Nothing points at the old copy any more, and evict() only counts what
+    // the index still names, so leaving it would leak the disk it takes.
+    expect(existsSync(first!.path)).toBe(false);
+  });
+
+  it("serves nothing when a sign-out lands while a hit is being revalidated", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    let answerRevalidate: (value: null) => void = () => {};
+    const deferred = new Promise<null>((resolve) => {
+      answerRevalidate = resolve;
+    });
+    const cache = createAssetCache({
+      dir,
+      fetchAsset: async () => bytes("aaaa"),
+      revalidate: async () => deferred,
+    });
+    await cache.get("c1", "a.png");
+
+    const pending = cache.get("c1", "a.png");
+    await cache.clear(); // a sign-out lands while the revalidation is still out
+    answerRevalidate(null);
+
+    // The cached copy this would otherwise fall back to went with the rest of
+    // that account's pictures.
+    expect(await pending).toBeNull();
+  });
+
+  it("serves the cached copy when revalidation cannot reach the server", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    let fetches = 0;
+    const cache = createAssetCache({
+      dir,
+      fetchAsset: async () => (fetches += 1, bytes("aaaa")),
+      revalidate: async () => null,
+    });
+
+    const first = await cache.get("c1", "a.png");
+    const second = await cache.get("c1", "a.png");
+
+    expect(second).toEqual(first);
+    expect(readFileSync(second!.path, "utf8")).toBe("aaaa");
+    expect(fetches).toBe(1);
+  });
+
   it("finishes an interrupted sign-out clear on the next load", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
     let fetches = 0;

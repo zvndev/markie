@@ -11,6 +11,7 @@ import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { rehypeMedia } from "./rehype-media.ts";
+import { rehypeCloudAssets } from "./rehype-cloud-assets.ts";
 import { rehypeEmbeds } from "./rehype-embeds.ts";
 import rehypeStringify from "rehype-stringify";
 import {
@@ -82,22 +83,30 @@ const sanitizeSchema = {
   },
 };
 
-const processor = unified()
-  .use(remarkParse)
-  .use(remarkGfm)
-  .use(remarkMath)
-  // allowDangerousHtml only keeps the HTML nodes for rehype-raw to parse;
-  // rehype-sanitize below is what decides what stays.
-  .use(remarkRehype, { allowDangerousHtml: true })
-  .use(rehypeRaw)
-  .use(rehypeMedia)
-  .use(rehypeEmbeds)
-  .use(rehypeHighlight)
-  .use(rehypeKatex)
-  .use(rehypeSanitize, sanitizeSchema)
-  .use(rehypeStringify);
+export interface RenderOptions {
+  assetUrlFor?: (ref: string) => string | null;
+}
 
-export function renderMarkdownHTML(markdown: string): string {
+function buildProcessor(opts: RenderOptions) {
+  const p = unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .use(remarkMath)
+    // allowDangerousHtml only keeps the HTML nodes for rehype-raw to parse;
+    // rehype-sanitize below is what decides what stays.
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(rehypeRaw)
+    .use(rehypeMedia);
+  if (opts.assetUrlFor) p.use(rehypeCloudAssets, opts.assetUrlFor);
+  return p.use(rehypeEmbeds).use(rehypeHighlight).use(rehypeKatex).use(rehypeSanitize, sanitizeSchema).use(rehypeStringify);
+}
+
+// The no-assets case (most renders: public-page previews with no doc context,
+// and every existing test) is cached rather than rebuilt per call.
+const plain = buildProcessor({});
+
+export function renderMarkdownHTML(markdown: string, opts: RenderOptions = {}): string {
+  const processor = opts.assetUrlFor ? buildProcessor(opts) : plain;
   return String(processor.processSync(markdown));
 }
 
@@ -204,9 +213,10 @@ export function renderPublicPage(opts: {
   markdown: string;
   token: string;
   siteUrl: string;
+  assetUrlFor?: (ref: string) => string | null;
 }): string {
   const { title, markdown, token, siteUrl } = opts;
-  const content = renderMarkdownHTML(markdown);
+  const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor });
   const safeTitle = esc(title);
   const download = primaryDownloadCta();
   return `<!doctype html>
@@ -345,9 +355,10 @@ export function renderSharedDocPage(opts: {
    * they are signed in the document really is waiting for them.
    */
   invitedEmail?: string | null;
+  assetUrlFor?: (ref: string) => string | null;
 }): string {
   const { title, markdown, docId, siteUrl, sharedBy, canEdit, invitedEmail } = opts;
-  const content = renderMarkdownHTML(markdown);
+  const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor });
   const safeTitle = esc(title);
   const download = primaryDownloadCta(siteUrl);
   const openInMarkie = `markie://doc?id=${encodeURIComponent(docId)}&src=${encodeURIComponent(siteUrl)}`;

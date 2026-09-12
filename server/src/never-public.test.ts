@@ -19,7 +19,9 @@ import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
 import { signUpVerified } from "./test-users.ts";
 
-process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-never-public-")), "t.db");
+const neverPublicDir = mkdtempSync(join(tmpdir(), "markie-never-public-"));
+process.env.DB_PATH = join(neverPublicDir, "t.db");
+process.env.ASSETS_DIR = join(neverPublicDir, "store");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
 process.env.BETTER_AUTH_SECRET = "markie-never-public-test-secret-32-plus-chars";
 process.env.MARKIE_SITE_URL = "https://markie.test";
@@ -32,12 +34,16 @@ if (toBeCreated.length > 0 || toBeAdded.length > 0) {
 
 const { docs } = await import("./docs.ts");
 const { shares } = await import("./shares.ts");
+const { assetsApi } = await import("./assets.ts");
+const { docView } = await import("./doc-view.ts");
 const { getPublicLinkToken } = await import("./public-links.ts");
 
 const app = new Hono();
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/docs", docs);
 app.route("/api/docs", shares);
+app.route("/api", assetsApi);
+app.route("/", docView);
 
 const stamp = Date.now();
 let ip = 0;
@@ -110,6 +116,46 @@ test("backing a document up to the cloud does not publish it", async () => {
   const read = await jsonRequest("GET", `/api/docs/${docId}`, owner.token);
   assert.equal(read.status, 200);
   assertNotPublic(docId, "reading it back");
+});
+
+// A document's media sits behind the same gates as its text. Neither asset
+// route grants anything to a request that carries no credential at all. An
+// asset is actually uploaded and linked here, not merely referenced by a doc
+// whose markdown mentions one: without a real doc_assets row, serveAsset's
+// own "unknown ref" 404 would pass this test even if the access gate in
+// front of it were deleted entirely.
+test("a document's assets are not exposed to an anonymous request", async () => {
+  const owner = await signUp("Owner", `assets-gate.${stamp}@test.local`);
+  const docId = `assets-gate-${stamp}`;
+  await push(owner.token, docId, "# Has assets\n", 0);
+
+  const PNG = Buffer.from("0123456789");
+  const hash = createHash("sha256").update(PNG).digest("hex");
+  const ownerHeaders = (extra: Record<string, string>) =>
+    new Headers({
+      "x-forwarded-for": `10.0.0.${(ip += 1) % 255}`,
+      Origin: "http://localhost:3000",
+      Authorization: `Bearer ${owner.token}`,
+      ...extra,
+    });
+  const uploaded = await app.request(`/api/assets/${hash}`, {
+    method: "PUT",
+    headers: ownerHeaders({ "Content-Type": "image/png", "Content-Length": String(PNG.length) }),
+    body: new Blob([PNG]),
+  });
+  assert.equal(uploaded.status, 200);
+  const linked = await app.request(`/api/docs/${docId}/assets`, {
+    method: "PUT",
+    headers: ownerHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ refs: [{ ref: "a.png", hash }] }),
+  });
+  assert.equal(linked.status, 200);
+
+  const anon = new Headers({ "x-forwarded-for": `10.0.0.${(ip += 1) % 255}`, Origin: "http://localhost:3000" });
+  const viaLink = await app.request(`/d/${docId}/assets?ref=a.png`, { headers: anon });
+  assert.equal(viaLink.status, 404);
+  const viaBearer = await app.request(`/api/docs/${docId}/assets/file?ref=a.png`, { headers: anon });
+  assert.equal(viaBearer.status, 401);
 });
 
 test("sharing with a person who has an account does not publish the document", async () => {

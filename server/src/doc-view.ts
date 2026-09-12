@@ -23,6 +23,7 @@ import {
   memberForToken,
 } from "./shares.ts";
 import { pendingForToken } from "./pending.ts";
+import { assetRefsFor, assetVersion, serveAsset } from "./assets.ts";
 import { markieSiteUrl } from "./downloads.ts";
 import { renderAccessRequiredPage, renderSharedDocPage } from "./render.ts";
 
@@ -129,6 +130,19 @@ docView.get("/d/:id", async (c) => {
   // response: the page is served through a rewrite and must carry its own
   // policy.
   c.header("X-Frame-Options", "DENY");
+  const refs = assetRefsFor(docId);
+  const k = c.req.query("k");
+  // ?v= carries the hash this ref currently points at. The asset route
+  // ignores it, but the URL is what a browser caches against, and the
+  // response is fresh for an hour: without it, relinking a.png to new bytes
+  // leaves the same URL and a browser may legally keep showing the old
+  // picture, with no request for an ETag to answer.
+  const assetUrlFor = (ref: string) => {
+    const row = refs.get(ref);
+    if (!row) return null;
+    const personal = k ? `&k=${encodeURIComponent(k)}` : "";
+    return `/d/${encodeURIComponent(docId)}/assets?ref=${encodeURIComponent(ref)}${personal}&v=${assetVersion(row.hash)}`;
+  };
   return c.html(
     renderSharedDocPage({
       title: doc.name,
@@ -138,6 +152,7 @@ docView.get("/d/:id", async (c) => {
       sharedBy: inviterName(doc.owner_id),
       canEdit: viewer.canEdit,
       invitedEmail: viewer.invitedEmail ?? null,
+      assetUrlFor,
     })
   );
 });
@@ -165,4 +180,16 @@ docView.get("/d/:id/raw", async (c) => {
     `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
   );
   return c.body(doc.content);
+});
+
+docView.get("/d/:id/assets", async (c) => {
+  const docId = c.req.param("id");
+  const viewer = await resolveViewer(
+    docId,
+    c.req.query("k") ?? null,
+    c.req.raw.headers
+  );
+  if (!viewer) return c.text("Not found", 404);
+  if (!loadDoc(docId)) return c.text("Not found", 404);
+  return serveAsset(c, docId, c.req.query("ref") ?? "");
 });

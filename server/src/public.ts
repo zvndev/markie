@@ -3,6 +3,7 @@
 import { Hono } from "hono";
 import { openDatabase } from "./db.ts";
 import { resolvePublicToken } from "./public-links.ts";
+import { assetRefsFor, assetVersion, serveAsset } from "./assets.ts";
 import {
   renderDownloadPage,
   renderPublicPage,
@@ -64,7 +65,7 @@ export function clearDownloadCacheForTests() {
 
 function docForToken(
   token: string
-): { name: string; content: string } | null {
+): { doc_id: string; name: string; content: string } | null {
   const link = resolvePublicToken(token);
   if (!link) return null;
   const doc = db
@@ -72,7 +73,7 @@ function docForToken(
       "SELECT name, content FROM docs WHERE id = ? AND deleted_at IS NULL"
     )
     .get(link.doc_id) as { name: string; content: string } | undefined;
-  return doc ?? null;
+  return doc ? { doc_id: link.doc_id, ...doc } : null;
 }
 
 export const publicShare = new Hono();
@@ -126,12 +127,21 @@ publicShare.get("/s/:token", (c) => {
   const token = c.req.param("token");
   const doc = docForToken(token);
   if (!doc) return c.html(renderNotFoundPage(MARKIE_SITE), 404);
+  const refs = assetRefsFor(doc.doc_id);
+  // ?v= is the hash this ref points at, so a relink changes the URL; see the
+  // note in doc-view.ts for why an hour of freshness needs it.
+  const assetUrlFor = (ref: string) => {
+    const row = refs.get(ref);
+    if (!row) return null;
+    return `/s/${encodeURIComponent(token)}/assets?ref=${encodeURIComponent(ref)}&v=${assetVersion(row.hash)}`;
+  };
   return c.html(
     renderPublicPage({
       title: doc.name,
       markdown: doc.content,
       token,
       siteUrl: MARKIE_SITE,
+      assetUrlFor,
     })
   );
 });
@@ -149,4 +159,10 @@ publicShare.get("/s/:token/raw", (c) => {
     `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
   );
   return c.body(doc.content);
+});
+
+publicShare.get("/s/:token/assets", (c) => {
+  const doc = docForToken(c.req.param("token"));
+  if (!doc) return c.text("Not found", 404);
+  return serveAsset(c, doc.doc_id, c.req.query("ref") ?? "");
 });

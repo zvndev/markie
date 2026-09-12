@@ -142,6 +142,14 @@ function getDB() {
     db.exec("ALTER TABLE files ADD COLUMN share_role_user TEXT");
   }
 
+  // Media that travels with the document. "synced" when the server holds
+  // every reference at the fingerprint; "pending" when a push is owed and the
+  // reconciliation pass will make it. assets_skipped is a JSON list of refs
+  // that did not travel and why, for the Cloud page to show.
+  for (const col of ["assets_state", "assets_fingerprint", "assets_skipped"]) {
+    if (!fileCols.some((c) => c.name === col)) db.exec(`ALTER TABLE files ADD COLUMN ${col} TEXT`);
+  }
+
   // Schema versioning starts at 0.5.0. Version 0 is every database that
   // predates it; the PRAGMA-guarded share_role ALTER above predates versioning
   // and stays as-is so any skipped-version database still heals.
@@ -389,6 +397,9 @@ function update(filePath, fields) {
     // and the account it confirmed it for.
     "share_role",
     "share_role_user",
+    "assets_state",
+    "assets_fingerprint",
+    "assets_skipped",
   ];
   const sets = [];
   const values = [];

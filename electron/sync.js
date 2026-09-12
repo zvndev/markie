@@ -71,18 +71,19 @@ function isConfigured() {
 // claiming a push had succeeded. Every caller now sees a status it must handle.
 const NO_RESPONSE = 0;
 
-async function api(method, p, body) {
+async function api(method, p, body, opts = {}) {
   // Abort a hung request so the renderer's invoke() can't pend forever
   // (e.g. an unreachable server would otherwise freeze the save indicator).
   try {
+    const raw = opts.raw ?? null;
     const res = await fetch(`${config.serverURL}${p}`, {
       method,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.token}`,
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15000),
+      headers: raw
+        ? { "Content-Type": raw.mime, "Content-Length": String(raw.size), Authorization: `Bearer ${config.token}` }
+        : { "Content-Type": "application/json", Authorization: `Bearer ${config.token}` },
+      body: raw ? raw.stream : body ? JSON.stringify(body) : undefined,
+      duplex: raw ? "half" : undefined,
+      signal: AbortSignal.timeout(raw ? 300000 : 15000),
     });
     // A 2xx whose body is not JSON — an HTML error page from a proxy, a
     // text/plain response from a server with no JSON notFound handler — is not
@@ -762,6 +763,7 @@ module.exports = {
   isConfigured,
   setConfig,
   setDocRole,
+  api,
   syncOn,
   syncOff,
   push,

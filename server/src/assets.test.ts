@@ -20,7 +20,7 @@ const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.optio
 if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 const { docs } = await import("./docs.ts");
 const { shares } = await import("./shares.ts");
-const { assetsApi, assetRefsFor, MAX_ASSET_BYTES, MAX_ACCOUNT_ASSET_BYTES, setAssetStoreForTests, setAssetLimitsForTests, inflightForTests } = await import("./assets.ts");
+const { assetsApi, assetRefsFor, MAX_ASSET_BYTES, MAX_ACCOUNT_ASSET_BYTES, setAssetStoreForTests, setAssetLimitsForTests, inflightForTests, sweepOrphans } = await import("./assets.ts");
 const { fsStore } = await import("./storage.ts");
 
 const app = new Hono();
@@ -454,4 +454,32 @@ test("orphan deletes run four at a time, not one by one", async () => {
   } finally {
     setAssetStoreForTests(real);
   }
+});
+
+// An upload the document cap rejects was never in the document's previous
+// link set, so collectOrphans cannot discover it and it counts against the
+// account forever. The grace period is what tells an abandoned upload apart
+// from one whose link push simply has not landed yet.
+test("the orphan sweep removes an old unreferenced asset and leaves the rest alone", async () => {
+  const { openDatabase } = await import("./db.ts");
+  const db = openDatabase();
+  const real = fsStore(process.env.ASSETS_DIR!);
+  const stale = Buffer.from("sweep-stale"), fresh = Buffer.from("sweep-fresh"), held = Buffer.from("sweep-held");
+  for (const bytes of [stale, fresh, held]) assert.equal((await upload(owner.token, bytes)).status, 200);
+  const id = await makeDoc(owner.token);
+  assert.equal((await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "h.png", hash: sha(held) }] })).status, 200);
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  db.prepare("UPDATE assets SET created_at = ? WHERE owner_id = ? AND hash IN (?, ?)").run(twoHoursAgo, owner.id, sha(stale), sha(held));
+
+  await sweepOrphans();
+
+  const row = (hash: string) => db.prepare("SELECT 1 FROM assets WHERE owner_id = ? AND hash = ?").get(owner.id, hash);
+  assert.equal(row(sha(stale)), undefined);
+  assert.equal(await real.head(`${owner.id}/${sha(stale)}`), null);
+  // Too young to be abandoned: its link push may still be on its way.
+  assert.ok(row(sha(fresh)));
+  assert.deepEqual(await real.head(`${owner.id}/${sha(fresh)}`), { size: fresh.length });
+  // Old, but a document still links it, so it is not an orphan at all.
+  assert.ok(row(sha(held)));
+  assert.deepEqual(await real.head(`${owner.id}/${sha(held)}`), { size: held.length });
 });

@@ -139,6 +139,25 @@ async function collectOrphans(candidates: { owner_id: string; hash: string }[]):
   });
 }
 
+// Assets nothing links and nothing is likely to link any more. An upload the
+// document cap rejects at the link step was never in the document's previous
+// set, so collectOrphans cannot discover it: the row keeps counting against
+// the account and the object keeps costing money with no path that removes
+// either. The grace period is the whole point of the threshold, because a
+// fresh unlinked row is the normal state of an upload whose link push has not
+// arrived yet.
+export async function sweepOrphans({ olderThanMs = 60 * 60 * 1000 } = {}): Promise<number> {
+  const cutoff = new Date(Date.now() - olderThanMs).toISOString();
+  const rows = db
+    .prepare(
+      `SELECT owner_id, hash FROM assets a WHERE a.created_at < ?
+         AND NOT EXISTS (SELECT 1 FROM doc_assets d WHERE d.owner_id = a.owner_id AND d.hash = a.hash)`
+    )
+    .all(cutoff) as { owner_id: string; hash: string }[];
+  await collectOrphans(rows);
+  return rows.length;
+}
+
 // Async, not fire-and-forget: a caller that awaits this sees the storage
 // objects actually gone, the same guarantee collectOrphans already gives the
 // link route below. A caller that does not await it still gets the DB row

@@ -25,10 +25,9 @@ export interface AssetStore {
   delete(key: string): Promise<void>;
 }
 
-// A key is "<uploader>/<id>", both segments plain (letters, digits, "_",
-// "-"). No dots, no slashes within a segment, so nothing here can climb out
-// of a directory or reach past the bucket path it is joined into.
-const KEY = /^[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]{1,128}$/;
+// A key is "<uploader>/<hash>", both segments plain. Anything else is refused
+// before it reaches a path or a URL.
+const KEY = /^[A-Za-z0-9_-]{1,64}\/[a-f0-9]{64}$/;
 function checkKey(key: string): string {
   if (!KEY.test(key)) throw new Error(`storage key refused: ${key}`);
   return key;

@@ -6,6 +6,10 @@ import { join } from "node:path";
 import { fsStore, s3Store, assetStore, sigV4Headers } from "./storage.ts";
 import { assetMimeFor } from "./asset-mime.ts";
 
+// A key is "<uploader_id>/<sha256 hex>"; these build well-formed 64-char
+// lowercase-hex second segments for tests, the shape checkKey enforces.
+const H = (c: string) => c.repeat(64);
+
 test("assetMimeFor knows the allow-list and nothing else", () => {
   assert.equal(assetMimeFor("shots/a.PNG"), "image/png");
   assert.equal(assetMimeFor("clip.mov?x=1"), "video/quicktime");
@@ -21,24 +25,27 @@ async function collect(stream: ReadableStream<Uint8Array>): Promise<Buffer> {
 
 test("fsStore round-trips a file, honours a range, and deletes", async () => {
   const store = fsStore(mkdtempSync(join(tmpdir(), "markie-store-")));
-  await store.put("u1/abc", Buffer.from("0123456789"), 10, "image/png");
-  assert.deepEqual(await store.head("u1/abc"), { size: 10 });
-  const whole = await store.get("u1/abc");
+  const key = `u1/${H("a")}`;
+  await store.put(key, Buffer.from("0123456789"), 10, "image/png");
+  assert.deepEqual(await store.head(key), { size: 10 });
+  const whole = await store.get(key);
   assert.equal((await collect(whole!.stream)).toString(), "0123456789");
-  const part = await store.get("u1/abc", { start: 2, end: 4 });
+  const part = await store.get(key, { start: 2, end: 4 });
   assert.equal((await collect(part!.stream)).toString(), "234");
   assert.deepEqual([part!.start, part!.end, part!.total], [2, 4, 10]);
-  const tail = await store.get("u1/abc", { start: 8 });
+  const tail = await store.get(key, { start: 8 });
   assert.equal((await collect(tail!.stream)).toString(), "89");
-  await store.delete("u1/abc");
-  assert.equal(await store.head("u1/abc"), null);
-  assert.equal(await store.get("u1/abc"), null);
+  await store.delete(key);
+  assert.equal(await store.head(key), null);
+  assert.equal(await store.get(key), null);
 });
 
 test("fsStore never escapes its directory", async () => {
   const store = fsStore(mkdtempSync(join(tmpdir(), "markie-store-")));
   await assert.rejects(() => store.put("../x", Buffer.from("x"), 1, "image/png"), /key/);
   await assert.rejects(() => store.head("u1/../../x"), /key/);
+  await assert.rejects(() => store.head(`u1/${H("A")}`), /key/); // uppercase hex is refused
+  await assert.rejects(() => store.head(`u1/${H("a").slice(0, 63)}`), /key/); // one char short
 });
 
 // AWS Signature Version 4 test suite, "get-vanilla" vector (empty payload,
@@ -83,24 +90,38 @@ test("s3Store issues signed requests against the bucket and streams a range back
     fetchImpl,
     now: () => new Date("2026-09-12T00:00:00Z"),
   });
-  await store.put("u1/abc", Buffer.from("0123456789"), 10, "image/png");
-  assert.equal(seen[0].url, "https://s3.us-east-005.backblazeb2.com/markie-assets/u1/abc");
+  const key = `u1/${H("a")}`;
+  await store.put(key, Buffer.from("0123456789"), 10, "image/png");
+  assert.equal(seen[0].url, `https://s3.us-east-005.backblazeb2.com/markie-assets/${key}`);
   assert.match(seen[0].headers.authorization, /^AWS4-HMAC-SHA256 Credential=k\/20260912\/us-east-005\/s3\/aws4_request/);
   assert.equal(seen[0].headers["content-type"], "image/png");
-  assert.deepEqual(await store.head("u1/abc"), { size: 10 });
-  const part = await store.get("u1/abc", { start: 2, end: 4 });
+  assert.deepEqual(await store.head(key), { size: 10 });
+  const part = await store.get(key, { start: 2, end: 4 });
   assert.equal(seen[2].headers.range, "bytes=2-4");
   assert.deepEqual([part!.start, part!.end, part!.total], [2, 4, 10]);
   assert.equal((await collect(part!.stream)).toString(), "234");
-  await store.delete("u1/abc");
+  await store.delete(key);
   assert.equal(seen[3].method, "DELETE");
 });
 
 test("s3Store answers null for a missing object", async () => {
   const fetchImpl = (async () => new Response(null, { status: 404 })) as unknown as typeof fetch;
   const store = s3Store({ bucket: "b", endpoint: "https://s3.example", keyId: "k", appKey: "s", fetchImpl });
-  assert.equal(await store.head("u1/none"), null);
-  assert.equal(await store.get("u1/none"), null);
+  const key = `u1/${H("b")}`;
+  assert.equal(await store.head(key), null);
+  assert.equal(await store.get(key), null);
+});
+
+test("s3Store refuses a malformed key before touching the network", async () => {
+  let calls = 0;
+  const fetchImpl = (async () => {
+    calls++;
+    return new Response(null, { status: 200 });
+  }) as unknown as typeof fetch;
+  const store = s3Store({ bucket: "b", endpoint: "https://s3.example", keyId: "k", appKey: "s", fetchImpl });
+  await assert.rejects(() => store.head(`u1/${H("A")}`), /key/); // uppercase hex is refused
+  await assert.rejects(() => store.head(`u1/${H("a").slice(0, 63)}`), /key/); // one char short
+  assert.equal(calls, 0);
 });
 
 test("assetStore picks the filesystem, then S3, then nothing", () => {

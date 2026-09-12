@@ -801,15 +801,19 @@ function registerProtocol() {
   });
 }
 
-// The cloud document a folder belongs to, and the reference a requested
-// absolute path is under it. The renderer names the folder; the registry
-// row for a file directly inside it names the cloud id. Several documents
-// can share a folder, so the first row that is in the cloud wins.
-function cloudDocFor(docDir, requested) {
-  const rel = path.relative(docDir, requested);
-  const ref = rel.startsWith("..") || path.isAbsolute(rel) ? requested : rel.split(path.sep).join("/");
-  const rows = registry.cloudDocsInDir(docDir);
-  return rows.length > 0 ? { cloudId: rows[0].cloud_doc_id, ref } : null;
+const { cloudDocFor } = require("./cloud-doc-for");
+
+// registry.cloudDocsInDir opens the SQLite database lazily and throws when
+// the driver failed to load. A picture request is not the place to surface
+// that: it reads the same as any other file this session cannot show, so it
+// is caught here the same way every other registry caller in this file
+// swallows a driver failure rather than crashing the handler.
+function cloudDocForFolder(docDir, requested) {
+  try {
+    return cloudDocFor({ docDir, requested, cloudDocsInDir: registry.cloudDocsInDir });
+  } catch {
+    return null;
+  }
 }
 
 // Serve a picture that lives beside the open document.
@@ -852,7 +856,8 @@ function registerAssetProtocol() {
     // file's own directory as a bound makes every path contained in itself,
     // which is a check that passes everything. It did, once, for exactly one
     // test run.
-    if (!localAssets.mediaMimeFor(requested)) return new Response("Forbidden", { status: 403 });
+    const requestedMime = localAssets.mediaMimeFor(requested);
+    if (!requestedMime) return new Response("Forbidden", { status: 403 });
     const real = localAssets.allowedRealPath(requested, {
       roots: fileGrants.assetRoots(),
       files: fileGrants.grantedFilePaths(),
@@ -865,11 +870,15 @@ function registerAssetProtocol() {
       // may still have this picture on the server, under the reference the
       // text wrote, relative to the document's folder.
       const docDir = new URL(request.url).searchParams.get("doc");
-      const cloud = docDir ? cloudDocFor(docDir, requested) : null;
+      const cloud = docDir ? cloudDocForFolder(docDir, requested) : null;
       if (!cloud) return new Response("Forbidden", { status: 403 });
       const cached = await assetCache.get(cloud.cloudId, cloud.ref);
       if (!cached) return new Response("Not found", { status: 404 });
-      return serveFileRange(cached.path, cached.mime, request.headers.get("range"));
+      // requestedMime, not cached.mime: the Content-Type the server sent
+      // back is not trusted to decide what this protocol hands the
+      // renderer. Only our own extension allow-list gets to say that, the
+      // same as it already does for a local file below.
+      return serveFileRange(cached.path, requestedMime, request.headers.get("range"));
     }
 
     // A video needs ranges or it cannot be seeked, and Chromium asks for one
@@ -1293,8 +1302,11 @@ handle("sync-config", (_event, cfg) => {
   const result = sync.setConfig(cfg);
   // Signing out drops the session for good; the pictures cached under it
   // belong to whatever account was signed in, and the next one to sign in
-  // here should not be handed a stranger's cached media.
-  if (cfg.token === null) void assetCache.clear();
+  // here should not be handed a stranger's cached media. If the clear itself
+  // cannot finish (disk trouble, a locked file), a marker asks the cache to
+  // finish the job the next time it starts, rather than leaving this
+  // account's pictures behind for whoever signs in next.
+  if (cfg.token === null) void assetCache.clear().catch(() => assetCache.markPendingClear());
   return result;
 });
 // The renderer resolved this doc's share role against the server; the sync

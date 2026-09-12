@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import Module, { createRequire } from "node:module";
 import fs from "node:fs";
 import os from "node:os";
@@ -241,6 +241,24 @@ describe("cloudDocsInDir", () => {
     registry.track("/tmp/report/local.md", "local.md", "y");
 
     expect(registry.cloudDocsInDir("/tmp/report")).toEqual([]);
+  });
+
+  it("orders by last_opened_at, so of two cloud docs sharing a folder the most recently opened wins", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      registry.track("/tmp/report/older.md", "older.md", "x");
+      registry.update("/tmp/report/older.md", { cloud_doc_id: "doc-old" });
+
+      vi.setSystemTime(new Date("2026-01-02T00:00:00.000Z"));
+      registry.track("/tmp/report/newer.md", "newer.md", "y");
+      registry.update("/tmp/report/newer.md", { cloud_doc_id: "doc-new" });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const rows = registry.cloudDocsInDir("/tmp/report") as FileRow[];
+    expect(rows.map((r) => r.cloud_doc_id)).toEqual(["doc-new", "doc-old"]);
   });
 });
 

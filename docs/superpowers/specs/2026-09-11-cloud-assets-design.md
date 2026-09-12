@@ -101,7 +101,7 @@ Deleting a document (`docs.ts` delete) removes its `doc_assets` rows and garbage
 4. `PUT /api/docs/:id/assets` with the full set (`{ ref, hash }` for resolved, `{ ref }` for skipped or unresolvable);
 5. write `assets_state = "synced"`, `assets_fingerprint`, `assets_skipped` (JSON of skipped refs and reasons) to the row; on any failure write `assets_state = "pending"` and return the error.
 
-`syncOn`, `push`, `resolve` and `resolveKeepBoth` in `sync.js` call `pushAssets` before the text `PUT`. A media failure never blocks the text: the text still lands, the row is left `pending`, and reconciliation retries. A 503 "not configured" counts as pending without an error in the UI.
+`push` and the text-writing branch of `resolve` in `sync.js` call `pushAssets` before the text `PUT`. `syncOn` is the exception: the server has no document to attach media to until the first text `PUT` lands, so it creates the document first and pushes media only once the create succeeded. A media failure never blocks the text: the text still lands, the row is left `pending`, and reconciliation retries. A 503 "not configured" counts as pending without an error in the UI.
 
 Registry gains three columns through the existing `PRAGMA table_info` + `ALTER` pattern: `assets_state TEXT`, `assets_fingerprint TEXT`, `assets_skipped TEXT`.
 

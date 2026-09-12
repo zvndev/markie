@@ -1836,7 +1836,7 @@ describe("landing", () => {
   });
 });
 
-describe("media travels ahead of the text", () => {
+describe("media and text push order", () => {
   let mediaCalls: string[];
   beforeEach(() => {
     mediaCalls = [];
@@ -1848,14 +1848,38 @@ describe("media travels ahead of the text", () => {
     });
   });
 
-  it("syncOn pushes media for the new cloud id before the text", async () => {
+  // The one place the order is reversed. The server has no document to hang
+  // media on until the text lands: /assets and /assets/missing both answer
+  // 404 for a cloud id it has never seen, so media pushed first was always
+  // left pending until a reconciliation pass picked it up.
+  it("syncOn creates the document with the text, then pushes its media", async () => {
     signIn("test-token", ME);
     const calls = respondWith({ status: 200, body: { id: "x", version: 1 } });
+    const media: Array<{ textCallsSoFar: number; filePath: string }> = [];
+    sync.setAssetSync({
+      pushAssets: async (filePath: string) => {
+        media.push({ textCallsSoFar: calls.length, filePath });
+        return { ok: true, uploaded: 1, skipped: [] };
+      },
+    });
+
     const res = await sync.syncOn("/docs/a.md", "a.md", "![](a.png)\n");
+
     expect(res.ok).toBe(true);
     expect(res.media).toEqual({ ok: true, uploaded: 1, skipped: [] });
-    expect(mediaCalls).toHaveLength(1);
+    // The create is already recorded by the time the media goes.
+    expect(media).toEqual([{ textCallsSoFar: 1, filePath: "/docs/a.md" }]);
     expect(calls.map((c) => c.method)).toEqual(["PUT"]);
+  });
+
+  it("syncOn pushes no media at all when the create is refused", async () => {
+    signIn("test-token", ME);
+    respondWith({ status: 500 });
+
+    const res = await sync.syncOn("/docs/a.md", "a.md", "![](a.png)\n");
+
+    expect(res).toEqual({ error: "push failed (500)", media: null });
+    expect(mediaCalls).toHaveLength(0);
   });
 
   it("push and resolve carry the same order, and a pending result does not stop the text", async () => {

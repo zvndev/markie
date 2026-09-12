@@ -93,12 +93,12 @@ Deleting a document (`docs.ts` delete) removes its `doc_assets` rows and garbage
 
 ### Pushing (`electron/asset-sync.js`)
 
-`pushAssets(filePath, cloudId, content)`:
+`pushAssets(filePath, cloudId, content, { baseVersion })`:
 
 1. extract, resolve and hash; compute `fingerprint` = SHA-256 of the sorted `ref\thash` lines;
 2. if the registry row's `assets_fingerprint` equals it and `assets_state` is `synced`, return `{ unchanged: true }`;
 3. `POST missing`; upload each missing hash with `PUT /api/assets/:hash`, one at a time, streaming from disk, up to three attempts each;
-4. `PUT /api/docs/:id/assets` with the full set (`{ ref, hash }` for resolved, `{ ref }` for skipped or unresolvable);
+4. `PUT /api/docs/:id/assets` with the full set (`{ ref, hash }` for resolved, `{ ref }` for skipped or unresolvable), carrying `baseVersion` when the caller gave one. A `409 { error: "version mismatch", serverVersion }` means the document moved on since that version: the refs are left unclaimed and the result is `{ pending: true, conflict: true }`, because the text `PUT` that follows will be refused the same way and take the row into the conflict flow;
 5. write `assets_state = "synced"`, `assets_fingerprint`, `assets_skipped` (JSON of skipped refs and reasons) to the row; on any failure write `assets_state = "pending"` and return the error.
 
 `push` and the text-writing branch of `resolve` in `sync.js` call `pushAssets` before the text `PUT`. `syncOn` is the exception: the server has no document to attach media to until the first text `PUT` lands, so it creates the document first and pushes media only once the create succeeded. A media failure never blocks the text: the text still lands, the row is left `pending`, and reconciliation retries. A 503 "not configured" counts as pending without an error in the UI.

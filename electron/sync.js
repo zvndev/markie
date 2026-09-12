@@ -174,10 +174,12 @@ let assetSync = null;
 function setAssetSync(next) {
   assetSync = next;
 }
-async function pushMedia(filePath, cloudId, content) {
+// `baseVersion` is the document version the text PUT around this call uses,
+// so the server commits the refs and the text against the same snapshot.
+async function pushMedia(filePath, cloudId, content, baseVersion) {
   if (!assetSync) return null;
   try {
-    return await assetSync.pushAssets(filePath, cloudId, content);
+    return await assetSync.pushAssets(filePath, cloudId, content, { baseVersion });
   } catch (err) {
     return { pending: true, error: `media push failed (${err && err.message ? err.message : err})` };
   }
@@ -221,7 +223,7 @@ async function syncOn(filePath, name, content) {
       sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
-    const media = await pushMedia(filePath, cloudId, content);
+    const media = await pushMedia(filePath, cloudId, content, version);
     return { ok: true, version, media };
   }
   if (res.status === 409) {
@@ -247,13 +249,14 @@ async function push(filePath, name, content) {
   }
   const refused = viewerRefusal(filePath, row.cloud_doc_id);
   if (refused) return refused;
-  const media = await pushMedia(filePath, row.cloud_doc_id, content);
+  const baseVersion = row.cloud_version ?? 0;
+  const media = await pushMedia(filePath, row.cloud_doc_id, content, baseVersion);
   const hash = registry.hashContent(content);
   const res = await api("PUT", `/api/docs/${row.cloud_doc_id}`, {
     name,
     content,
     hash,
-    baseVersion: row.cloud_version ?? 0,
+    baseVersion,
   });
   if (res.status === 200) {
     const version = readVersion(res);
@@ -405,7 +408,7 @@ async function resolve(filePath, strategy) {
   }
   // The local copy is what is about to become the cloud text, so it is what
   // its media is pushed for.
-  const media = await pushMedia(filePath, row.cloud_doc_id, content);
+  const media = await pushMedia(filePath, row.cloud_doc_id, content, baseVersion);
   const res = await api("PUT", `/api/docs/${row.cloud_doc_id}`, {
     name: row.name,
     content,

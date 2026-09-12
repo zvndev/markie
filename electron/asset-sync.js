@@ -46,7 +46,11 @@ function createAssetSync({
     return { error: failure("media upload", res) };
   }
 
-  async function pushAssets(filePath, cloudId, content) {
+  // `baseVersion`, when given, is the document version the caller's text PUT
+  // is about to go on top of. The server refuses the link with a 409 when the
+  // document has moved on since, so refs never land for a snapshot the text
+  // push is then going to have refused.
+  async function pushAssets(filePath, cloudId, content, { baseVersion } = {}) {
     const row = registry.get(filePath) ?? {};
     const refs = docAssets.extractRefs(content);
     const resolved = docAssets.resolveRefs(refs, { docPath: filePath, roots: grants.assetRoots(), files: grants.grantedFilePaths() });
@@ -102,8 +106,13 @@ function createAssetSync({
       ...entries.filter((e) => !e.dropped).map((e) => ({ ref: e.ref, hash: e.hash })),
       ...refs.filter((ref) => !entries.some((e) => e.ref === ref && !e.dropped)).map((ref) => ({ ref })),
     ];
-    const link = await api("PUT", `/api/docs/${cloudId}/assets`, { refs: linkRefs });
+    const body = typeof baseVersion === "number" ? { refs: linkRefs, baseVersion } : { refs: linkRefs };
+    const link = await api("PUT", `/api/docs/${cloudId}/assets`, body);
     if (link.status === 503) return pending();
+    // Somebody else's snapshot landed first. The text PUT that follows will
+    // be refused the same way and take the row into the conflict flow; all
+    // this has to do is leave the refs unclaimed for the retry.
+    if (link.status === 409) return { ...pending(), conflict: true };
     if (link.status !== 200) return pending(failure("media link", link));
     registry.update(filePath, {
       assets_state: "synced",

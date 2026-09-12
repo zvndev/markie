@@ -89,6 +89,47 @@ describe("pushAssets", () => {
     expect(await pushAssets(docPath, "c1", "# words\n")).toEqual({ unchanged: true });
   });
 
+  it("sends the base version with the link when it is given, and omits it when it is not", async () => {
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api, calls } = fakeApi([
+      { status: 200, data: { linked: 0, kept: 0, dropped: 0 } },
+      { status: 200, data: { linked: 0, kept: 0, dropped: 0 } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+    // A text push about to PUT on top of version 7 commits its refs against
+    // the same version, so the server cannot accept the refs of a snapshot it
+    // is then going to refuse.
+    await pushAssets(docPath, "c1", "# words\n", { baseVersion: 7 });
+    expect(calls[0].body).toEqual({ refs: [], baseVersion: 7 });
+
+    // Reconciliation has no snapshot to commit against, so it sends no
+    // version and the server links unconditionally, as it always did.
+    rows.set(docPath, { ...rows.get(docPath), assets_state: "pending" });
+    await pushAssets(docPath, "c1", "# words\n");
+    expect(calls[1].body).toEqual({ refs: [] });
+  });
+
+  it("leaves the row pending and reports a conflict when the link is refused as stale", async () => {
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api } = fakeApi([
+      { status: 200, data: { missing: [] } },
+      { status: 409, data: { error: "version mismatch", serverVersion: 9 } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+    // Somebody else's snapshot landed between this push's base version and
+    // the link. The text PUT that follows will 409 too and take the row into
+    // the conflict flow; this one only has to not claim the refs are synced.
+    const result = await pushAssets(docPath, "c1", "![](b.png)\n", { baseVersion: 4 });
+
+    expect(result).toEqual({ pending: true, conflict: true });
+    expect(rows.get(docPath)!.assets_state).toBe("pending");
+    expect(rows.get(docPath)!.assets_fingerprint).toBeUndefined();
+  });
+
   it("retries an upload twice, then leaves the row pending with the error", async () => {
     const { docPath } = fixture();
     rows.set(docPath, { cloud_doc_id: "c1" });

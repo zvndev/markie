@@ -1687,15 +1687,16 @@ describe("resolve('local')", () => {
 
   // "local" force-pushes the local file's text, so its media goes first, and
   // it is the local content's media that goes, not the cloud copy fetched
-  // above it for baseVersion.
+  // above it for baseVersion. The link commits against that same base
+  // version (9 here), not the row's stale 4.
   it("pushes media for the local content before pushing the text on top of the server version", async () => {
     const p = path.join(tmpDir, "notes.md");
     fs.writeFileSync(p, "local content\n![](a.png)\n", "utf-8");
     seedRow({ path: p, sync_state: "conflict", cloud_doc_id: "cloud-1", cloud_version: 4 });
     const mediaCalls: string[] = [];
     sync.setAssetSync({
-      pushAssets: async (fp: string, cloudId: string, content: string) => {
-        mediaCalls.push(`${cloudId}:${fp}:${content}`);
+      pushAssets: async (fp: string, cloudId: string, content: string, opts?: { baseVersion?: number }) => {
+        mediaCalls.push(`${cloudId}:${fp}:${content}:${opts?.baseVersion}`);
         return { ok: true, uploaded: 1, skipped: [] };
       },
     });
@@ -1707,7 +1708,7 @@ describe("resolve('local')", () => {
     const res = await sync.resolve(p, "local");
 
     expect(res).toEqual({ ok: true, pushed: true, media: { ok: true, uploaded: 1, skipped: [] } });
-    expect(mediaCalls).toEqual([`cloud-1:${p}:local content\n![](a.png)\n`]);
+    expect(mediaCalls).toEqual([`cloud-1:${p}:local content\n![](a.png)\n:9`]);
     expect(rows.get(p)!.sync_state).toBe("synced");
     expect(rows.get(p)!.cloud_version).toBe(10);
   });
@@ -1855,10 +1856,10 @@ describe("media and text push order", () => {
   it("syncOn creates the document with the text, then pushes its media", async () => {
     signIn("test-token", ME);
     const calls = respondWith({ status: 200, body: { id: "x", version: 1 } });
-    const media: Array<{ textCallsSoFar: number; filePath: string }> = [];
+    const media: Array<{ textCallsSoFar: number; filePath: string; baseVersion?: number }> = [];
     sync.setAssetSync({
-      pushAssets: async (filePath: string) => {
-        media.push({ textCallsSoFar: calls.length, filePath });
+      pushAssets: async (filePath: string, _cloudId: string, _content: string, opts?: { baseVersion?: number }) => {
+        media.push({ textCallsSoFar: calls.length, filePath, baseVersion: opts?.baseVersion });
         return { ok: true, uploaded: 1, skipped: [] };
       },
     });
@@ -1867,8 +1868,9 @@ describe("media and text push order", () => {
 
     expect(res.ok).toBe(true);
     expect(res.media).toEqual({ ok: true, uploaded: 1, skipped: [] });
-    // The create is already recorded by the time the media goes.
-    expect(media).toEqual([{ textCallsSoFar: 1, filePath: "/docs/a.md" }]);
+    // The create is already recorded by the time the media goes, and the link
+    // is committed against the version the create came back with.
+    expect(media).toEqual([{ textCallsSoFar: 1, filePath: "/docs/a.md", baseVersion: 1 }]);
     expect(calls.map((c) => c.method)).toEqual(["PUT"]);
   });
 
@@ -1880,6 +1882,26 @@ describe("media and text push order", () => {
 
     expect(res).toEqual({ error: "push failed (500)", media: null });
     expect(mediaCalls).toHaveLength(0);
+  });
+
+  // The link and the text PUT have to name the same base version, or the
+  // server can accept refs for a snapshot it is about to refuse.
+  it("push links its media against the version its text PUT is going on top of", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/d.md", sync_state: "synced", cloud_doc_id: "cd", cloud_version: 7 });
+    const linkedAgainst: Array<number | undefined> = [];
+    sync.setAssetSync({
+      pushAssets: async (_p: string, _cloudId: string, _content: string, opts?: { baseVersion?: number }) => {
+        linkedAgainst.push(opts?.baseVersion);
+        return { ok: true, uploaded: 1, skipped: [] };
+      },
+    });
+    const calls = respondWith({ status: 200, body: { version: 8 } });
+
+    await sync.push("/docs/d.md", "d.md", "![](d.png)\n");
+
+    expect(linkedAgainst).toEqual([7]);
+    expect(calls[0].body).toMatchObject({ baseVersion: 7 });
   });
 
   it("push and resolve carry the same order, and a pending result does not stop the text", async () => {

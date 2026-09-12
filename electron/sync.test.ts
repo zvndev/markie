@@ -127,6 +127,9 @@ beforeEach(() => {
 
 afterEach(() => {
   Object.assign(registry, realRegistry);
+  // Reset for every test regardless of which one set it, so a test that
+  // configures asset sync can never leak it into one that runs after.
+  sync.setAssetSync(null);
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -149,7 +152,7 @@ describe("push", () => {
 
     const res = await sync.push("/docs/a.md", "a.md", "new");
 
-    expect(res).toEqual({ ok: true, version: 5 });
+    expect(res).toEqual({ ok: true, version: 5, media: null });
     expect(row.sync_state).toBe("synced");
     expect(row.cloud_version).toBe(5);
     expect(row.content_hash).toBe("hash:new");
@@ -187,6 +190,7 @@ describe("push", () => {
     // an unhandled rejection, so the row was never updated at all.
     await expect(sync.push("/docs/a.md", "a.md", "new")).resolves.toEqual({
       error: "push failed (offline)",
+      media: null,
     });
     expect(row.sync_state).toBe("unpushed");
     expect(row.content_hash).toBe("hash:old");
@@ -208,7 +212,7 @@ describe("push", () => {
     const res = await sync.push("/docs/a.md", "a.md", "new");
 
     expect(row.sync_state).toBe("conflict");
-    expect(res).toEqual({ conflict: true });
+    expect(res).toEqual({ conflict: true, media: null });
   });
 
   it("retries an unpushed row and restores it to synced once the push lands", async () => {
@@ -224,7 +228,7 @@ describe("push", () => {
 
     const res = await sync.push("/docs/a.md", "a.md", "recovered");
 
-    expect(res).toEqual({ ok: true, version: 5 });
+    expect(res).toEqual({ ok: true, version: 5, media: null });
     expect(row.sync_state).toBe("synced");
     expect(row.cloud_version).toBe(5);
   });
@@ -256,6 +260,7 @@ describe("syncOn", () => {
 
     await expect(sync.syncOn("/docs/a.md", "a.md", "hello")).resolves.toEqual({
       error: "push failed (offline)",
+      media: null,
     });
     expect(row.sync_state).toBe("unpushed");
   });
@@ -266,7 +271,7 @@ describe("syncOn", () => {
 
     const res = await sync.syncOn("/docs/a.md", "a.md", "hello");
 
-    expect(res).toEqual({ ok: true, version: 1 });
+    expect(res).toEqual({ ok: true, version: 1, media: null });
     expect(row.sync_state).toBe("synced");
     expect(row.cloud_doc_id).toBeTruthy();
   });
@@ -288,7 +293,7 @@ describe("syncOn", () => {
     respondWith({ status: 200, body: { version: 2 } });
     const second = await sync.syncOn("/docs/a.md", "a.md", "hello");
 
-    expect(second).toEqual({ ok: true, version: 2 });
+    expect(second).toEqual({ ok: true, version: 2, media: null });
     expect(row.cloud_doc_id).toBe(minted);
   });
 });
@@ -323,6 +328,15 @@ describe("resolve", () => {
       cloud_doc_id: "cloud-1",
       cloud_version: 4,
     });
+    // Pulling the cloud copy over local is not a text push, so nothing here
+    // should ever reach the asset sync.
+    const mediaCalls: string[] = [];
+    sync.setAssetSync({
+      pushAssets: async (p: string, cloudId: string) => {
+        mediaCalls.push(`${cloudId}:${p}`);
+        return { ok: true, uploaded: 1, skipped: [] };
+      },
+    });
     respondWith({ status: 200, body: { doc: { content: "from cloud", version: 9 } } });
 
     const res = await sync.resolve(filePath, "cloud");
@@ -331,6 +345,8 @@ describe("resolve", () => {
     expect(fs.readFileSync(filePath, "utf-8")).toBe("from cloud");
     expect(row.sync_state).toBe("synced");
     expect(row.cloud_version).toBe(9);
+    expect(mediaCalls).toHaveLength(0);
+    expect(res.media).toBeUndefined();
   });
 });
 
@@ -479,6 +495,7 @@ describe("viewer access", () => {
     expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
       ok: true,
       version: 5,
+      media: null,
     });
     expect(row.sync_state).toBe("synced");
   });
@@ -491,6 +508,7 @@ describe("viewer access", () => {
     expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
       ok: true,
       version: 5,
+      media: null,
     });
     expect(row.sync_state).toBe("synced");
   });
@@ -504,6 +522,7 @@ describe("viewer access", () => {
     expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
       ok: true,
       version: 5,
+      media: null,
     });
   });
 
@@ -517,6 +536,7 @@ describe("viewer access", () => {
     expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
       ok: true,
       version: 5,
+      media: null,
     });
   });
 
@@ -560,6 +580,7 @@ describe("viewer access", () => {
     expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
       ok: true,
       version: 5,
+      media: null,
     });
   });
 });
@@ -1244,6 +1265,29 @@ describe("resolveKeepBoth", () => {
     expect(rows.get(p)!.cloud_version).toBe(9);
   });
 
+  // No text ever reaches the cloud here: the kept copy is tracked local-only
+  // (see "tracks the copy as local-only with no cloud link" below) and has no
+  // cloud id to push its media against, and the original path only pulls the
+  // server's existing content over local, same as resolve("cloud"). Nothing
+  // in this function should ever call the asset sync.
+  it("never pushes media: nothing here writes text to the cloud", async () => {
+    const p = seedOnDisk("notes.md", "mine\n![](mine.png)\n");
+    const mediaCalls: string[] = [];
+    sync.setAssetSync({
+      pushAssets: async (fp: string, cloudId: string) => {
+        mediaCalls.push(`${cloudId}:${fp}`);
+        return { ok: true, uploaded: 1, skipped: [] };
+      },
+    });
+    respondWith({ status: 200, body: { doc: { content: "theirs\n", version: 9, name: "notes.md" } } });
+
+    const res = await sync.resolveKeepBoth(p);
+
+    expect(res.ok).toBe(true);
+    expect(mediaCalls).toHaveLength(0);
+    expect(res.media).toBeUndefined();
+  });
+
   // Caught by the end-to-end run, not by inspection: the dialog counts the
   // buffer's lines and promises to save "your version", but this rescued the
   // last saved file, dropping every unsaved edit in the one feature whose whole
@@ -1586,6 +1630,33 @@ describe("resolve('local')", () => {
 
     expect(res.error).toContain("Couldn't read the local file");
   });
+
+  // "local" force-pushes the local file's text, so its media goes first, and
+  // it is the local content's media that goes, not the cloud copy fetched
+  // above it for baseVersion.
+  it("pushes media for the local content before pushing the text on top of the server version", async () => {
+    const p = path.join(tmpDir, "notes.md");
+    fs.writeFileSync(p, "local content\n![](a.png)\n", "utf-8");
+    seedRow({ path: p, sync_state: "conflict", cloud_doc_id: "cloud-1", cloud_version: 4 });
+    const mediaCalls: string[] = [];
+    sync.setAssetSync({
+      pushAssets: async (fp: string, cloudId: string, content: string) => {
+        mediaCalls.push(`${cloudId}:${fp}:${content}`);
+        return { ok: true, uploaded: 1, skipped: [] };
+      },
+    });
+    respondWith(
+      { status: 200, body: { doc: { content: "theirs\n", version: 9 } } },
+      { status: 200, body: { version: 10 } }
+    );
+
+    const res = await sync.resolve(p, "local");
+
+    expect(res).toEqual({ ok: true, pushed: true, media: { ok: true, uploaded: 1, skipped: [] } });
+    expect(mediaCalls).toEqual([`cloud-1:${p}:local content\n![](a.png)\n`]);
+    expect(rows.get(p)!.sync_state).toBe("synced");
+    expect(rows.get(p)!.cloud_version).toBe(10);
+  });
 });
 
 describe("resolve('cloud') failures", () => {
@@ -1708,5 +1779,59 @@ describe("landing", () => {
     expect(sync.freePath("/d", "notes.md", exists)).toBe("/d/notes (3).md");
     expect(sync.freePath("/d", "fresh.md", exists)).toBe("/d/fresh.md");
     expect(sync.freePath("/d", "README", exists)).toBe("/d/README");
+  });
+});
+
+describe("media travels ahead of the text", () => {
+  let mediaCalls: string[];
+  beforeEach(() => {
+    mediaCalls = [];
+    sync.setAssetSync({
+      pushAssets: async (p: string, cloudId: string) => {
+        mediaCalls.push(`${cloudId}:${p}`);
+        return { ok: true, uploaded: 1, skipped: [] };
+      },
+    });
+  });
+
+  it("syncOn pushes media for the new cloud id before the text", async () => {
+    signIn("test-token", ME);
+    const calls = respondWith({ status: 200, body: { id: "x", version: 1 } });
+    const res = await sync.syncOn("/docs/a.md", "a.md", "![](a.png)\n");
+    expect(res.ok).toBe(true);
+    expect(res.media).toEqual({ ok: true, uploaded: 1, skipped: [] });
+    expect(mediaCalls).toHaveLength(1);
+    expect(calls.map((c) => c.method)).toEqual(["PUT"]);
+  });
+
+  it("push and resolve carry the same order, and a pending result does not stop the text", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/b.md", sync_state: "synced", cloud_doc_id: "cb", cloud_version: 2 });
+    sync.setAssetSync({ pushAssets: async () => ({ pending: true, error: "media upload failed (offline)" }) });
+    respondWith({ status: 200, body: { id: "cb", version: 3 } });
+    const res = await sync.push("/docs/b.md", "b.md", "![](b.png)\n");
+    expect(res.ok).toBe(true);
+    expect(res.media).toEqual({ pending: true, error: "media upload failed (offline)" });
+    expect(rows.get("/docs/b.md")!.sync_state).toBe("synced");
+  });
+
+  it("does not let a throwing asset sync take the text push down with it", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/c.md", sync_state: "synced", cloud_doc_id: "cc", cloud_version: 1 });
+    sync.setAssetSync({
+      pushAssets: async () => {
+        throw new Error("disk full");
+      },
+    });
+    respondWith({ status: 200, body: { version: 2 } });
+
+    const res = await sync.push("/docs/c.md", "c.md", "new");
+
+    expect(res).toEqual({
+      ok: true,
+      version: 2,
+      media: { pending: true, error: "media push failed (disk full)" },
+    });
+    expect(rows.get("/docs/c.md")!.sync_state).toBe("synced");
   });
 });

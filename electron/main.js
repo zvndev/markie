@@ -1196,6 +1196,11 @@ const mdindex = require("./mdindex");
 const sync = require("./sync");
 const workspace = require("./workspace");
 const fileGrants = createFileGrants({ workspaceRoots: () => workspace.roots() });
+// Module-level so a later handler can reuse the same instance rather than
+// building a second one with its own hash cache.
+const { createAssetSync } = require("./asset-sync");
+const assetSync = createAssetSync({ api: sync.api, registry, grants: fileGrants });
+sync.setAssetSync(assetSync);
 
 // ── Workspace / Files-view IPC ──
 const wsTry = (fn) => {

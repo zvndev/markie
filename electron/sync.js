@@ -143,6 +143,21 @@ function viewerRefusal(filePath, cloudId) {
   };
 }
 
+// Set by main once file grants exist; a null here means media is not pushed,
+// which is what the tests that do not care about it get.
+let assetSync = null;
+function setAssetSync(next) {
+  assetSync = next;
+}
+async function pushMedia(filePath, cloudId, content) {
+  if (!assetSync) return null;
+  try {
+    return await assetSync.pushAssets(filePath, cloudId, content);
+  } catch (err) {
+    return { pending: true, error: `media push failed (${err && err.message ? err.message : err})` };
+  }
+}
+
 // Turn syncing on for a file: create the cloud doc (or push a new snapshot).
 async function syncOn(filePath, name, content) {
   if (!isConfigured()) return { error: "not signed in" };
@@ -150,6 +165,9 @@ async function syncOn(filePath, name, content) {
   const refused = viewerRefusal(filePath, row?.cloud_doc_id);
   if (refused) return refused;
   const cloudId = row?.cloud_doc_id ?? crypto.randomUUID();
+  // Media travels ahead of the text: whatever this document embeds should be
+  // in place before the snapshot that references it can be read by anyone.
+  const media = await pushMedia(filePath, cloudId, content);
   const hash = registry.hashContent(content);
   const baseVersion = row?.cloud_doc_id ? (row.cloud_version ?? 0) : 0;
   const res = await api("PUT", `/api/docs/${cloudId}`, {
@@ -167,7 +185,7 @@ async function syncOn(filePath, name, content) {
       // minted a fresh uuid and left an orphan copy behind. No cloud_version is
       // recorded, so the row stays unpushed and the next push re-sends from 0.
       registry.update(filePath, { cloud_doc_id: cloudId, sync_state: "unpushed" });
-      return { error: UNREADABLE };
+      return { error: UNREADABLE, media };
     }
     registry.update(filePath, {
       cloud_doc_id: cloudId,
@@ -176,16 +194,16 @@ async function syncOn(filePath, name, content) {
       sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
-    return { ok: true, version };
+    return { ok: true, version, media };
   }
   if (res.status === 409) {
     registry.update(filePath, { sync_state: "conflict" });
-    return { conflict: true, serverVersion: res.data?.serverVersion };
+    return { conflict: true, serverVersion: res.data?.serverVersion, media };
   }
   // The server did not take the snapshot, so nothing is backed up. Leaving the
   // row on its previous state would tell the user otherwise.
   registry.update(filePath, { sync_state: "unpushed" });
-  return { error: failure("push", res) };
+  return { error: failure("push", res), media };
 }
 
 // Push after save, only when tracked, cloud-linked, and content actually
@@ -201,6 +219,7 @@ async function push(filePath, name, content) {
   }
   const refused = viewerRefusal(filePath, row.cloud_doc_id);
   if (refused) return refused;
+  const media = await pushMedia(filePath, row.cloud_doc_id, content);
   const hash = registry.hashContent(content);
   const res = await api("PUT", `/api/docs/${row.cloud_doc_id}`, {
     name,
@@ -212,7 +231,7 @@ async function push(filePath, name, content) {
     const version = readVersion(res);
     if (version === null) {
       registry.update(filePath, { sync_state: "unpushed" });
-      return { error: UNREADABLE };
+      return { error: UNREADABLE, media };
     }
     registry.update(filePath, {
       cloud_version: version,
@@ -221,17 +240,17 @@ async function push(filePath, name, content) {
       sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
-    return { ok: true, version };
+    return { ok: true, version, media };
   }
   if (res.status === 409) {
     registry.update(filePath, { sync_state: "conflict" });
-    return { conflict: true };
+    return { conflict: true, media };
   }
   // This snapshot exists only on local disk. A row left on "synced" would tell
   // the user the edit is in the cloud and put "Take cloud" one click away from
   // overwriting it with an older copy the server never replaced.
   registry.update(filePath, { sync_state: "unpushed" });
-  return { error: failure("push", res) };
+  return { error: failure("push", res), media };
 }
 
 // Turn syncing off; optionally delete the cloud copy.
@@ -356,22 +375,25 @@ async function resolve(filePath, strategy) {
   } catch (e) {
     return { error: `Couldn't read the local file: ${e.message}` };
   }
+  // The local copy is what is about to become the cloud text, so it is what
+  // its media is pushed for.
+  const media = await pushMedia(filePath, row.cloud_doc_id, content);
   const res = await api("PUT", `/api/docs/${row.cloud_doc_id}`, {
     name: row.name,
     content,
     hash: registry.hashContent(content),
     baseVersion,
   });
-  if (res.status !== 200) return { error: `push failed (${res.status})` };
+  if (res.status !== 200) return { error: `push failed (${res.status})`, media };
   const pushedVersion = readVersion(res);
-  if (pushedVersion === null) return { error: UNREADABLE };
+  if (pushedVersion === null) return { error: UNREADABLE, media };
   registry.update(filePath, {
     cloud_version: pushedVersion,
     content_hash: registry.hashContent(content),
     sync_state: "synced",
     last_synced_at: new Date().toISOString(),
   });
-  return { ok: true, pushed: true };
+  return { ok: true, pushed: true, media };
 }
 
 // Which tracked files the server has a newer snapshot of.
@@ -556,6 +578,11 @@ function keepBothPath(filePath, exists = fs.existsSync) {
 // dialog counted the lines of; reading the file instead would rescue the last
 // saved copy and drop every unsaved edit, in the one feature whose entire job
 // is not losing them. Falls back to disk for callers with no buffer.
+// No media push here: this function never PUTs text to the cloud. The kept
+// copy is deliberately local-only (cloud_doc_id: null below) and never gets a
+// cloud id to push its media against, and the original path only pulls the
+// cloud's existing content over local, the same "pull, don't push" case as
+// resolve("cloud").
 async function resolveKeepBoth(filePath, localContent) {
   const row = registry.get(filePath);
   if (!row?.cloud_doc_id) return { error: "not synced" };
@@ -769,6 +796,7 @@ module.exports = {
   push,
   pull,
   resolve,
+  setAssetSync,
   checkUpdates,
   remoteContent,
   resolveKeepBoth,

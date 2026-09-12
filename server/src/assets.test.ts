@@ -46,7 +46,7 @@ async function upload(token: string, bytes: Buffer, hash = sha(bytes), mime = "i
     headers: { "Content-Type": mime, "Content-Length": String(length), Authorization: `Bearer ${token}`, Origin: "http://localhost:3000", "x-forwarded-for": "127.0.0.1" },
     body: new Blob([bytes]),
   });
-  return { status: res.status, data: await res.json().catch(() => null) };
+  return { status: res.status, headers: res.headers, data: await res.json().catch(() => null) };
 }
 async function makeDoc(token: string, content = "# t\n\n![](shots/a.png)\n") {
   const id = crypto.randomUUID();
@@ -388,6 +388,8 @@ test("a fifth concurrent upload from one account is refused", async () => {
     const fifth = await upload(editor.token, extra, sha(extra), "image/png", extra.length);
     assert.equal(fifth.status, 429);
     assert.equal(fifth.data.error, "too many uploads");
+    // A client that is told to slow down needs to be told for how long.
+    assert.equal(fifth.headers.get("retry-after"), "1");
     assert.equal(state.puts, 4);
 
     open();
@@ -482,4 +484,70 @@ test("the orphan sweep removes an old unreferenced asset and leaves the rest alo
   // Old, but a document still links it, so it is not an orphan at all.
   assert.ok(row(sha(held)));
   assert.deepEqual(await real.head(`${owner.id}/${sha(held)}`), { size: held.length });
+});
+
+// collectOrphans empties the rows synchronously and then works through the
+// storage deletes four at a time, so a delete can still be queued when the
+// same bytes are uploaded again. Removing the object then would leave a row
+// with nothing behind it, the one state this module must never produce.
+test("a re-upload during a queued orphan delete keeps its object", async () => {
+  const id = await makeDoc(owner.token);
+  const many = [0, 1, 2, 3, 4].map((n) => Buffer.from(`requeued-orphan-${n}`));
+  for (const bytes of many) assert.equal((await upload(owner.token, bytes)).status, 200);
+  const refs = many.map((bytes, i) => ({ ref: `q${i}.png`, hash: sha(bytes) }));
+  assert.equal((await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs })).status, 200);
+
+  const real = fsStore(process.env.ASSETS_DIR!);
+  let open: () => void = () => {};
+  const parked = new Promise<void>((resolve) => { open = resolve; });
+  const deleted: string[] = [];
+  setAssetStoreForTests({
+    ...real,
+    delete: async (key: string) => { deleted.push(key); await parked; return real.delete(key); },
+  });
+  const { openDatabase } = await import("./db.ts");
+  const db = openDatabase();
+  let queued = many[4];
+  try {
+    const unlinking = json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [] });
+    // Four deletes fill the pool; one candidate is still waiting its turn.
+    await waitFor(() => deleted.length === 4, "the orphan delete pool to fill");
+    queued = many.find((bytes) => !deleted.includes(`${owner.id}/${sha(bytes)}`))!;
+    assert.ok(queued, "one candidate should still be queued");
+    // Its row went with the others, so this is a full re-upload.
+    assert.equal((await upload(owner.token, queued)).status, 200);
+
+    open();
+    assert.equal((await unlinking).status, 200);
+    // The queued delete saw the new row and stood down.
+    assert.equal(deleted.length, 4);
+    assert.ok(db.prepare("SELECT 1 FROM assets WHERE owner_id = ? AND hash = ?").get(owner.id, sha(queued)));
+    assert.deepEqual(await real.head(`${owner.id}/${sha(queued)}`), { size: queued.length });
+    for (const bytes of many.filter((b) => b !== queued)) {
+      assert.equal(await real.head(`${owner.id}/${sha(bytes)}`), null);
+    }
+  } finally {
+    setAssetStoreForTests(real);
+    db.prepare("DELETE FROM assets WHERE owner_id = ? AND hash = ?").run(owner.id, sha(queued));
+    await real.delete(`${owner.id}/${sha(queued)}`);
+  }
+});
+
+// The dedupe short-circuit answers 200 without writing anything, so a row the
+// sweep is about to consider stale stays stale while the client goes on to
+// link it.
+test("re-uploading bytes the account already holds keeps them out of the sweep", async () => {
+  const { openDatabase } = await import("./db.ts");
+  const db = openDatabase();
+  const bytes = Buffer.from("dedupe-refreshes-created-at");
+  assert.equal((await upload(owner.token, bytes)).status, 200);
+  db.prepare("UPDATE assets SET created_at = ? WHERE owner_id = ? AND hash = ?").run(
+    new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), owner.id, sha(bytes)
+  );
+  // The dedupe path: the row and the object are both already there.
+  assert.equal((await upload(owner.token, bytes)).status, 200);
+
+  await sweepOrphans();
+  assert.ok(db.prepare("SELECT 1 FROM assets WHERE owner_id = ? AND hash = ?").get(owner.id, sha(bytes)));
+  assert.deepEqual(await fsStore(process.env.ASSETS_DIR!).head(`${owner.id}/${sha(bytes)}`), { size: bytes.length });
 });

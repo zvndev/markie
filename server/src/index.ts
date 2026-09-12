@@ -210,12 +210,18 @@ if (process.env.MARKIE_NO_LISTEN !== "1") {
   // module load so importing that module in a test starts no timer, and
   // unref'd so it never keeps the process alive on its own.
   const ORPHAN_SWEEP_MS = 60 * 60 * 1000;
-  setInterval(() => {
+  // A process that is redeployed or recycled more often than the interval
+  // would never reach a sweep at all, so one runs shortly after boot too,
+  // far enough in to stay clear of the first requests after a deploy.
+  const FIRST_SWEEP_MS = 60 * 1000;
+  const runSweep = () => {
     sweepOrphans()
       .then((swept) => {
         if (swept > 0) console.log(`swept ${swept} orphaned asset${swept === 1 ? "" : "s"}`);
       })
       .catch((err) => console.error("orphan sweep failed:", err));
-  }, ORPHAN_SWEEP_MS).unref();
+  };
+  setTimeout(runSweep, FIRST_SWEEP_MS).unref();
+  setInterval(runSweep, ORPHAN_SWEEP_MS).unref();
   console.log(`markie-api listening on :${port}`);
 }

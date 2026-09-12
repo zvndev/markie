@@ -130,18 +130,23 @@ export function assetVersion(hash: string): string {
 async function collectOrphans(candidates: { owner_id: string; hash: string }[]): Promise<void> {
   const unique = new Map<string, { owner_id: string; hash: string }>();
   for (const candidate of candidates) unique.set(`${candidate.owner_id}/${candidate.hash}`, candidate);
-  const doomed: string[] = [];
+  const doomed: { owner_id: string; hash: string }[] = [];
   for (const { owner_id, hash } of unique.values()) {
     const still = db.prepare("SELECT 1 FROM doc_assets WHERE owner_id = ? AND hash = ? LIMIT 1").get(owner_id, hash);
     if (still) continue;
     db.prepare("DELETE FROM assets WHERE owner_id = ? AND hash = ?").run(owner_id, hash);
-    doomed.push(`${owner_id}/${hash}`);
+    doomed.push({ owner_id, hash });
   }
-  await eachLimit(doomed, ORPHAN_DELETE_CONCURRENCY, async (key) => {
+  await eachLimit(doomed, ORPHAN_DELETE_CONCURRENCY, async ({ owner_id, hash }) => {
+    // A delete can sit queued behind three others while the same bytes are
+    // uploaded again, which writes the object and a fresh row. Removing the
+    // object now would leave that row pointing at nothing, so the row this
+    // sweep deleted has to still be absent at the moment of the call.
+    if (db.prepare("SELECT 1 FROM assets WHERE owner_id = ? AND hash = ?").get(owner_id, hash)) return;
     try {
-      await store?.delete(key);
+      await store?.delete(`${owner_id}/${hash}`);
     } catch (err) {
-      console.error(`asset delete failed for ${key}:`, err);
+      console.error(`asset delete failed for ${owner_id}/${hash}:`, err);
     }
   });
 }
@@ -285,12 +290,22 @@ assetsApi.put("/assets/:hash", async (c) => {
   // bytes the account already holds adds nothing to its usage, so it must
   // never be refused for being "over cap".
   const existing = db.prepare("SELECT size FROM assets WHERE owner_id = ? AND hash = ?").get(user.id, hash) as { size: number } | undefined;
-  if (existing && (await store!.head(`${user.id}/${hash}`))) return c.json({ ok: true, hash, size: existing.size });
+  if (existing && (await store!.head(`${user.id}/${hash}`))) {
+    // This answer is a client about to link these bytes, so the row is in use
+    // again even though nothing was written. Without a fresh created_at the
+    // hourly sweep can take it away between this 200 and the link that
+    // follows it.
+    db.prepare("UPDATE assets SET created_at = ? WHERE owner_id = ? AND hash = ?").run(new Date().toISOString(), user.id, hash);
+    return c.json({ ok: true, hash, size: existing.size });
+  }
   // Claimed before anything is read or written, and released in the outer
   // finally below, so a refusal costs the server nothing.
   const refused = claimInflight(user.id, declared);
   if (refused === "account over cap") return c.json({ error: refused, cap: MAX_ACCOUNT_ASSET_BYTES }, 413);
-  if (refused) return c.json({ error: refused, limit: MAX_CONCURRENT_UPLOADS }, 429);
+  // Retry-After because the condition clears as soon as one of the four
+  // uploads in front of this one finishes, and a client with no number to
+  // wait on retries immediately or gives up.
+  if (refused) return c.json({ error: refused, limit: MAX_CONCURRENT_UPLOADS }, 429, { "Retry-After": "1" });
 
   try {
     const dir = await mkdtemp(join(tmpdir(), "markie-upload-"));
@@ -455,10 +470,15 @@ export async function serveAsset(c: Context, docId: string, ref: string): Promis
   // copy of the old ones. If-Range is how that client asks for the rest only
   // if it is still the same representation; when the validator does not match
   // the answer is the whole thing, never a slice of something else stitched
-  // onto what it already has. A date-form If-Range matches nothing here,
-  // since this route issues no Last-Modified to compare it against.
+  // onto what it already has.
+  //
+  // Compared exactly, not through etagMatches: RFC 9110 13.1.5 takes a strong
+  // validator only here, so the weak form of this same ETag is not a match,
+  // and a date-form If-Range matches nothing because this route issues no
+  // Last-Modified to compare it against. If-None-Match keeps the tolerant
+  // comparison, where a weak match is exactly what it is for.
   const ifRange = c.req.header("if-range");
-  const rangeHeader = ifRange && !etagMatches(ifRange, etag) ? undefined : c.req.header("range");
+  const rangeHeader = ifRange && ifRange.trim() !== etag ? undefined : c.req.header("range");
   let range: { start: number; end?: number } | undefined;
   if (rangeHeader) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());

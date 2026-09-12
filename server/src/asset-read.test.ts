@@ -149,7 +149,11 @@ test("a Range with a stale If-Range is ignored and the whole asset is served", a
   assert.equal(res.status, 206);
   assert.equal(res.headers.get("content-range"), "bytes 2-4/10");
   assert.equal(await res.text(), "234");
+  // RFC 9110 13.1.5: If-Range takes a strong validator only, so the weak form
+  // of this very ETag is not a match and the answer is the whole asset. That
+  // is the opposite of If-None-Match, which tolerates the weak prefix.
   res = await app.request(path, { headers: { ...range, "If-Range": `W/${etag}` } });
-  assert.equal(res.status, 206);
-  assert.equal(await res.text(), "234");
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-range"), null);
+  assert.equal(await res.text(), "0123456789");
 });

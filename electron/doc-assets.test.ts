@@ -20,8 +20,9 @@ describe("extractRefs", () => {
       "<video src='clip.mp4?x=1' controls></video>",
       '<audio><source src="song.mp3#t=1"></audio>',
       "`![code](e.png)`",
+      "```\n![f](f.png)\n```",
     ].join("\n\n");
-    expect(extractRefs(md)).toEqual(["shots/a.png", "my shot.png", "d.png", "clip.mp4", "song.mp3", "e.png"]);
+    expect(extractRefs(md)).toEqual(["shots/a.png", "my shot.png", "d.png", "clip.mp4", "song.mp3"]);
   });
 
   it("returns nothing for a document without media", () => {

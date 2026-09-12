@@ -10,10 +10,9 @@ const localAssets = require("./local-assets");
 const MAX_ASSET_BYTES = 100 * 1024 * 1024;
 
 // A markdown image, then the src of an img, video, audio or source tag in raw
-// HTML. Fenced code blocks are cut out first so a multi-line example is not
-// an embed; a single-backtick inline span is left alone, since a reference
-// named that way still points at a real file.
-const FENCE = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
+// HTML. Fenced and inline code are cut out first so an example is not an
+// embed.
+const FENCE = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g;
 const MD_IMAGE = /!\[[^\]]*\]\(\s*<?([^\s)>]+)>?(?:\s+"[^"]*")?\s*\)/g;
 const HTML_SRC = /<(?:img|video|audio|source)\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
 
@@ -87,4 +86,4 @@ function fingerprint(entries) {
   return crypto.createHash("sha256").update(lines.join("\n")).digest("hex");
 }
 
-module.exports = { MAX_ASSET_BYTES, extractRefs, resolveRefs, hashFile, fingerprint, refOf };
+module.exports = { MAX_ASSET_BYTES, extractRefs, resolveRefs, hashFile, fingerprint };

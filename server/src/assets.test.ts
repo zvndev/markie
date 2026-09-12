@@ -266,3 +266,41 @@ test("every route answers 503 when no store is configured", async () => {
     setAssetStoreForTests(fsStore(process.env.ASSETS_DIR!));
   }
 });
+
+// The client pushes its link set just before the text snapshot those links
+// belong to. If the text is refused as stale, the links must be refused too,
+// or the document keeps yesterday's markdown pointing at today's pictures.
+test("link with a stale baseVersion is refused and the previous set survives", async () => {
+  const id = await makeDoc(owner.token);
+  const a = Buffer.from("base-version-a"), b = Buffer.from("base-version-b");
+  assert.equal((await upload(owner.token, a)).status, 200);
+  assert.equal((await upload(owner.token, b)).status, 200);
+  // makeDoc wrote version 1, so that is the snapshot these links describe.
+  let r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { baseVersion: 1, refs: [{ ref: "a.png", hash: sha(a) }] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data, { linked: 1, kept: 0, dropped: 0 });
+
+  r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { baseVersion: 0, refs: [{ ref: "a.png", hash: sha(b) }] });
+  assert.equal(r.status, 409);
+  assert.equal(r.data.error, "version mismatch");
+  assert.equal(r.data.serverVersion, 1);
+  // Nothing moved: the ref still points at the hash the accepted text named.
+  assert.equal(assetRefsFor(id).get("a.png")?.hash, sha(a));
+  // And the refused set's own hash was not collected as an orphan either.
+  assert.deepEqual(await fsStore(process.env.ASSETS_DIR!).head(`${owner.id}/${sha(b)}`), { size: b.length });
+
+  // The current version is accepted, and a body without baseVersion still is.
+  r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { baseVersion: 1, refs: [{ ref: "a.png", hash: sha(b) }] });
+  assert.equal(r.status, 200);
+  assert.equal(assetRefsFor(id).get("a.png")?.hash, sha(b));
+  r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "a.png", hash: sha(b) }] });
+  assert.equal(r.status, 200);
+});
+
+// A baseVersion that is not a whole number is a client bug, and silently
+// ignoring it would skip exactly the check it asked for.
+test("link refuses a malformed baseVersion rather than ignoring it", async () => {
+  const id = await makeDoc(owner.token);
+  const r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { baseVersion: "1", refs: [] });
+  assert.equal(r.status, 400);
+});

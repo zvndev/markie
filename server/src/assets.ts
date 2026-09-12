@@ -258,14 +258,27 @@ assetsApi.put("/assets/:hash", async (c) => {
 // in the caller's scope; one without keeps whatever link the document already
 // has for that ref (an editor pushing text whose pictures the owner uploaded)
 // or is dropped.
+//
+// `baseVersion` is optional and names the text snapshot these links belong to.
+// The client sends its links just before the text PUT they describe, so a
+// snapshot the server later refuses as stale must not leave its hashes linked
+// to the markdown that survived. When it is present the swap only happens if
+// the document is still at that version, checked inside the same transaction;
+// when it is absent the route behaves as it always has.
 assetsApi.put("/docs/:id/assets", async (c) => {
   const unconfigured = requireStore(c);
   if (unconfigured) return unconfigured;
   const docId = c.req.param("id");
   const gate = await requireEditor(c, docId);
   if ("error" in gate) return gate.error;
-  const body = (await c.req.json().catch(() => null)) as { refs?: unknown } | null;
+  const body = (await c.req.json().catch(() => null)) as { refs?: unknown; baseVersion?: unknown } | null;
   if (!Array.isArray(body?.refs)) return c.json({ error: "bad request" }, 400);
+  // Present but malformed is a client bug, and ignoring it would quietly skip
+  // the very check the client asked for.
+  const baseVersion = body!.baseVersion;
+  if (baseVersion !== undefined && (typeof baseVersion !== "number" || !Number.isInteger(baseVersion) || baseVersion < 0)) {
+    return c.json({ error: "bad request" }, 400);
+  }
   const current = assetRefsFor(docId);
   const next = new Map<string, { owner_id: string; hash: string; size: number }>();
   let linked = 0, kept = 0, dropped = 0;
@@ -292,11 +305,21 @@ assetsApi.put("/docs/:id/assets", async (c) => {
   const total = [...next.values()].reduce((n, r) => n + r.size, 0);
   if (total > MAX_DOC_ASSET_BYTES) return c.json({ error: "document over cap", cap: MAX_DOC_ASSET_BYTES }, 413);
   const before = [...current.values()].map((r) => ({ owner_id: r.owner_id, hash: r.hash }));
-  db.transaction(() => {
+  // better-sqlite3 transactions are synchronous, so the version read and the
+  // swap cannot be interleaved by another request's text PUT.
+  const stale = db.transaction(() => {
+    if (baseVersion !== undefined) {
+      const doc = db.prepare("SELECT version FROM docs WHERE id = ? AND deleted_at IS NULL").get(docId) as { version: number } | undefined;
+      if (!doc || doc.version !== baseVersion) return { serverVersion: doc?.version ?? null };
+    }
     db.prepare("DELETE FROM doc_assets WHERE doc_id = ?").run(docId);
     const ins = db.prepare("INSERT INTO doc_assets (doc_id, ref, owner_id, hash) VALUES (?, ?, ?, ?)");
     for (const [ref, r] of next) ins.run(docId, ref, r.owner_id, r.hash);
+    return null;
   })();
+  // Nothing was written, so nothing was orphaned either: leave the previous
+  // set, and the bytes the refused set named, exactly as they were.
+  if (stale) return c.json({ error: "version mismatch", serverVersion: stale.serverVersion }, 409);
   await collectOrphans(before);
   return c.json({ linked, kept, dropped });
 });

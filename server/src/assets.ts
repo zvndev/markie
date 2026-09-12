@@ -19,6 +19,7 @@ import { assetStore, type AssetStore } from "./storage.ts";
 export const MAX_ASSET_BYTES = 100 * 1024 * 1024;
 export const MAX_DOC_ASSET_BYTES = 500 * 1024 * 1024;
 export const MAX_ACCOUNT_ASSET_BYTES = 5 * 1024 * 1024 * 1024;
+export const MAX_CONCURRENT_UPLOADS = 4;
 
 const db = openDatabase();
 db.exec(`
@@ -152,6 +153,39 @@ function reserveAssetSpace(ownerId: string, hash: string, size: number, mime: st
   })();
 }
 
+// What this account is already in the middle of uploading, by declared bytes
+// and by request count. The committed-usage check alone reads the same
+// headroom for every request in flight, so a hundred parallel 100 MB uploads
+// all pass it, each buffering a temp file and pushing bytes to the bucket
+// before the transaction at the end refuses the excess. A claim taken before
+// the body is touched is what makes the cap bound disk and bandwidth, not
+// just stored bytes. One process's view only: two server instances still
+// reserve independently, and the transactional check on real bytes stays the
+// authority on what is actually stored.
+const inflight = new Map<string, { bytes: number; count: number }>();
+export function inflightForTests(): Map<string, { bytes: number; count: number }> {
+  return inflight;
+}
+
+// Synchronous on purpose: nothing may await between reading the map and
+// writing it, or two requests could both see room for the last byte.
+function claimInflight(ownerId: string, declared: number): "account over cap" | "too many uploads" | null {
+  const held = inflight.get(ownerId) ?? { bytes: 0, count: 0 };
+  if (usageFor(ownerId) + held.bytes + declared > MAX_ACCOUNT_ASSET_BYTES) return "account over cap";
+  if (held.count >= MAX_CONCURRENT_UPLOADS) return "too many uploads";
+  inflight.set(ownerId, { bytes: held.bytes + declared, count: held.count + 1 });
+  return null;
+}
+
+function releaseInflight(ownerId: string, declared: number): void {
+  const held = inflight.get(ownerId);
+  if (!held) return;
+  const bytes = held.bytes - declared;
+  const count = held.count - 1;
+  if (count <= 0) inflight.delete(ownerId);
+  else inflight.set(ownerId, { bytes, count });
+}
+
 export const assetsApi = new Hono();
 
 // A per-route guard, not a blanket `use("*")`: assetsApi is mounted at the
@@ -201,56 +235,64 @@ assetsApi.put("/assets/:hash", async (c) => {
   // never be refused for being "over cap".
   const existing = db.prepare("SELECT size FROM assets WHERE owner_id = ? AND hash = ?").get(user.id, hash) as { size: number } | undefined;
   if (existing && (await store!.head(`${user.id}/${hash}`))) return c.json({ ok: true, hash, size: existing.size });
-  if (usageFor(user.id) + declared > MAX_ACCOUNT_ASSET_BYTES) {
-    return c.json({ error: "account over cap", cap: MAX_ACCOUNT_ASSET_BYTES }, 413);
-  }
+  // Claimed before anything is read or written, and released in the outer
+  // finally below, so a refusal costs the server nothing.
+  const refused = claimInflight(user.id, declared);
+  if (refused === "account over cap") return c.json({ error: refused, cap: MAX_ACCOUNT_ASSET_BYTES }, 413);
+  if (refused) return c.json({ error: refused, limit: MAX_CONCURRENT_UPLOADS }, 429);
 
-  const dir = await mkdtemp(join(tmpdir(), "markie-upload-"));
-  const tmp = join(dir, "body");
   try {
-    const hasher = createHash("sha256");
-    let seen = 0;
-    const body = c.req.raw.body;
-    if (!body) return c.json({ error: "empty body" }, 400);
-    const counted = Readable.fromWeb(body as never).on("data", (chunk: Buffer) => {
-      seen += chunk.length;
-      hasher.update(chunk);
-      if (seen > maxAssetBytesLimit) counted.destroy(new Error("over cap"));
-    });
+    const dir = await mkdtemp(join(tmpdir(), "markie-upload-"));
+    const tmp = join(dir, "body");
     try {
-      await pipeline(counted, createWriteStream(tmp));
-    } catch (err) {
-      if (String(err).includes("over cap")) return c.json({ error: "file over cap", cap: maxAssetBytesLimit }, 413);
-      throw err;
-    }
-    if (hasher.digest("hex") !== hash) return c.json({ error: "hash mismatch" }, 400);
-    const size = (await stat(tmp)).size;
-    // Object first, then the atomic reserve: a row must never exist without
-    // an object behind it, because a row alone counts against quota, answers
-    // "not missing", and can be linked into a document. If the process dies
-    // between these two steps the object is merely an orphan (a cost, the
-    // same as the ones collectOrphans sweeps up), not a document pointing at
-    // bytes that were never written.
-    await store!.put(`${user.id}/${hash}`, Readable.toWeb(createReadStream(tmp)) as ReadableStream<Uint8Array>, size, mime);
-    // The declared-length check above is a cheap courtesy: it reads
-    // yesterday's usage against a number the client chose. This is the real
-    // gate, on the size just measured from the bytes that actually arrived.
-    if (!reserveAssetSpace(user.id, hash, size, mime)) {
-      // The object was written on spec but the account can't afford it:
-      // undo the write so it does not linger as an unowned orphan, then
-      // refuse. A failure here is logged, not thrown, the same as
-      // collectOrphans: the row was never claimed, so there is nothing this
-      // request can still get wrong by moving on.
+      const hasher = createHash("sha256");
+      let seen = 0;
+      const body = c.req.raw.body;
+      if (!body) return c.json({ error: "empty body" }, 400);
+      const counted = Readable.fromWeb(body as never).on("data", (chunk: Buffer) => {
+        seen += chunk.length;
+        hasher.update(chunk);
+        if (seen > maxAssetBytesLimit) counted.destroy(new Error("over cap"));
+      });
       try {
-        await store!.delete(`${user.id}/${hash}`);
+        await pipeline(counted, createWriteStream(tmp));
       } catch (err) {
-        console.error(`asset cleanup failed for ${user.id}/${hash}:`, err);
+        if (String(err).includes("over cap")) return c.json({ error: "file over cap", cap: maxAssetBytesLimit }, 413);
+        throw err;
       }
-      return c.json({ error: "account over cap", cap: MAX_ACCOUNT_ASSET_BYTES }, 413);
+      if (hasher.digest("hex") !== hash) return c.json({ error: "hash mismatch" }, 400);
+      const size = (await stat(tmp)).size;
+      // Object first, then the atomic reserve: a row must never exist without
+      // an object behind it, because a row alone counts against quota, answers
+      // "not missing", and can be linked into a document. If the process dies
+      // between these two steps the object is merely an orphan (a cost, the
+      // same as the ones collectOrphans sweeps up), not a document pointing at
+      // bytes that were never written.
+      await store!.put(`${user.id}/${hash}`, Readable.toWeb(createReadStream(tmp)) as ReadableStream<Uint8Array>, size, mime);
+      // The declared-length check above is a cheap courtesy: it reads
+      // yesterday's usage against a number the client chose. This is the real
+      // gate, on the size just measured from the bytes that actually arrived.
+      if (!reserveAssetSpace(user.id, hash, size, mime)) {
+        // The object was written on spec but the account can't afford it:
+        // undo the write so it does not linger as an unowned orphan, then
+        // refuse. A failure here is logged, not thrown, the same as
+        // collectOrphans: the row was never claimed, so there is nothing this
+        // request can still get wrong by moving on.
+        try {
+          await store!.delete(`${user.id}/${hash}`);
+        } catch (err) {
+          console.error(`asset cleanup failed for ${user.id}/${hash}:`, err);
+        }
+        return c.json({ error: "account over cap", cap: MAX_ACCOUNT_ASSET_BYTES }, 413);
+      }
+      return c.json({ ok: true, hash, size });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
-    return c.json({ ok: true, hash, size });
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    // After the temp directory is gone, so the claim outlives every
+    // resource it was standing in for.
+    releaseInflight(user.id, declared);
   }
 });
 

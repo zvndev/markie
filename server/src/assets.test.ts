@@ -20,7 +20,7 @@ const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.optio
 if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 const { docs } = await import("./docs.ts");
 const { shares } = await import("./shares.ts");
-const { assetsApi, assetRefsFor, MAX_ASSET_BYTES, MAX_ACCOUNT_ASSET_BYTES, setAssetStoreForTests, setAssetLimitsForTests } = await import("./assets.ts");
+const { assetsApi, assetRefsFor, MAX_ASSET_BYTES, MAX_ACCOUNT_ASSET_BYTES, setAssetStoreForTests, setAssetLimitsForTests, inflightForTests } = await import("./assets.ts");
 const { fsStore } = await import("./storage.ts");
 
 const app = new Hono();
@@ -303,4 +303,105 @@ test("link refuses a malformed baseVersion rather than ignoring it", async () =>
   const id = await makeDoc(owner.token);
   const r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { baseVersion: "1", refs: [] });
   assert.equal(r.status, 400);
+});
+
+// Polls a condition instead of sleeping a fixed time, and gives up rather
+// than hanging the run if the condition never comes true.
+async function waitFor(ready: () => boolean, what: string) {
+  for (let i = 0; i < 2000; i += 1) {
+    if (ready()) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+// A store whose put parks until the returned gate is opened, so a test can
+// hold uploads in flight and see what a concurrent request is told.
+function blockingStore() {
+  const real = fsStore(process.env.ASSETS_DIR!);
+  let open: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { open = resolve; });
+  const state = { puts: 0 };
+  const store = {
+    ...real,
+    put: async (...args: Parameters<typeof real.put>) => {
+      state.puts += 1;
+      await gate;
+      return real.put(...args);
+    },
+  };
+  return { real, store, state, open: () => open() };
+}
+
+// The pre-flight account check reads committed usage, so without a
+// reservation every parallel request sees the same headroom and all of them
+// buffer a body and upload it before the transaction refuses the excess.
+test("an in-flight upload's declared bytes count against the account cap", async () => {
+  const { openDatabase } = await import("./db.ts");
+  const db = openDatabase();
+  const filler = "a".repeat(64);
+  db.prepare("INSERT OR REPLACE INTO assets (owner_id, hash, size, mime, created_at) VALUES (?, ?, ?, ?, ?)").run(
+    stranger.id, filler, MAX_ACCOUNT_ASSET_BYTES - 150 * 1024 * 1024, "image/png", "2026-01-01T00:00:00.000Z"
+  );
+  const { real, store, state, open } = blockingStore();
+  setAssetStoreForTests(store);
+  const declared = 100 * 1024 * 1024;
+  const a = Buffer.from("in-flight-a");
+  try {
+    // Declares 100 MB and sends a handful of bytes: the reservation has to
+    // work off what the client claims, before the body is read.
+    const first = upload(stranger.token, a, sha(a), "image/png", declared);
+    await waitFor(() => state.puts === 1, "the first upload to reach the store");
+    assert.equal(inflightForTests().get(stranger.id)?.bytes, declared);
+
+    const b = Buffer.from("in-flight-b");
+    const second = await upload(stranger.token, b, sha(b), "image/png", declared);
+    assert.equal(second.status, 413);
+    assert.equal(second.data.error, "account over cap");
+    // Refused before its body was buffered or a byte went to storage.
+    assert.equal(state.puts, 1);
+    assert.equal(await fsStore(process.env.ASSETS_DIR!).head(`${stranger.id}/${sha(b)}`), null);
+
+    open();
+    assert.equal((await first).status, 200);
+    // The reservation is released once the request is done, not left behind.
+    assert.equal(inflightForTests().get(stranger.id), undefined);
+  } finally {
+    setAssetStoreForTests(real);
+    db.prepare("DELETE FROM assets WHERE owner_id = ? AND hash IN (?, ?)").run(stranger.id, filler, sha(a));
+    await real.delete(`${stranger.id}/${sha(a)}`);
+  }
+});
+
+// Concurrency is its own limit: many small uploads never trip the cap, but
+// each one still holds a temp file and an outbound connection.
+test("a fifth concurrent upload from one account is refused", async () => {
+  const { real, store, state, open } = blockingStore();
+  setAssetStoreForTests(store);
+  const held = [0, 1, 2, 3].map((n) => Buffer.from(`concurrent-upload-${n}`));
+  const extra = Buffer.from("concurrent-upload-4");
+  try {
+    const running = held.map((bytes) => upload(editor.token, bytes, sha(bytes), "image/png", bytes.length));
+    await waitFor(() => state.puts === 4, "four uploads to reach the store");
+    assert.equal(inflightForTests().get(editor.id)?.count, 4);
+
+    const fifth = await upload(editor.token, extra, sha(extra), "image/png", extra.length);
+    assert.equal(fifth.status, 429);
+    assert.equal(fifth.data.error, "too many uploads");
+    assert.equal(state.puts, 4);
+
+    open();
+    for (const r of await Promise.all(running)) assert.equal(r.status, 200);
+    assert.equal(inflightForTests().get(editor.id), undefined);
+    // With the four finished there is room again.
+    assert.equal((await upload(editor.token, extra, sha(extra), "image/png", extra.length)).status, 200);
+  } finally {
+    setAssetStoreForTests(real);
+    const { openDatabase } = await import("./db.ts");
+    const db = openDatabase();
+    for (const bytes of [...held, extra]) {
+      db.prepare("DELETE FROM assets WHERE owner_id = ? AND hash = ?").run(editor.id, sha(bytes));
+      await real.delete(`${editor.id}/${sha(bytes)}`);
+    }
+  }
 });

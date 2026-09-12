@@ -301,17 +301,29 @@ assetsApi.put("/docs/:id/assets", async (c) => {
   return c.json({ linked, kept, dropped });
 });
 
-// One asset, by the reference the document wrote, for a caller that has
-// already passed a read gate. 404 for an unknown ref so the route says no
-// more than the document page would.
 // True when an If-None-Match header names this ETag, weak (`W/`) prefix
 // tolerated per RFC 9110 and one or more comma-separated values allowed.
 function etagMatches(header: string, etag: string): boolean {
   return header.split(",").some((raw) => raw.trim().replace(/^W\//, "") === etag);
 }
 
+// Headers every response about an asset carries, whether it answers with
+// bytes or merely confirms the caller already has them (304). An asset is
+// arbitrary user content served back on the same origin, so it must never be
+// sniffed as script or styled as a frame, and it must never be cached for
+// anyone but the caller who was just gated.
+const ASSET_SAFETY_HEADERS = {
+  "Accept-Ranges": "bytes",
+  "X-Content-Type-Options": "nosniff",
+  "Content-Security-Policy": "default-src 'none'; sandbox",
+} as const;
+
+// One asset, by the reference the document wrote, for a caller that has
+// already passed a read gate. 404 for an unknown ref, or for a document that
+// no longer exists, so the route says no more than the document page would.
 export async function serveAsset(c: Context, docId: string, ref: string): Promise<Response> {
   if (!store) return c.json({ error: "assets not configured" }, 503);
+  if (!docExists(docId)) return c.text("Not found", 404);
   const row = assetRefsFor(docId).get(ref);
   if (!row) return c.text("Not found", 404);
   const etag = `"${row.hash}"`;
@@ -320,7 +332,7 @@ export async function serveAsset(c: Context, docId: string, ref: string): Promis
   if (inm && etagMatches(inm, etag)) {
     return new Response(null, {
       status: 304,
-      headers: { ETag: etag, "Cache-Control": cacheControl },
+      headers: { ETag: etag, "Cache-Control": cacheControl, ...ASSET_SAFETY_HEADERS },
     });
   }
   const rangeHeader = c.req.header("range");
@@ -339,11 +351,9 @@ export async function serveAsset(c: Context, docId: string, ref: string): Promis
   const headers = new Headers({
     "Content-Type": row.mime,
     "Content-Length": String(read.size),
-    "Accept-Ranges": "bytes",
     "Cache-Control": cacheControl,
     ETag: etag,
-    "X-Content-Type-Options": "nosniff",
-    "Content-Security-Policy": "default-src 'none'; sandbox",
+    ...ASSET_SAFETY_HEADERS,
   });
   if (range) headers.set("Content-Range", `bytes ${read.start}-${read.end}/${read.total}`);
   return new Response(read.stream, { status: range ? 206 : 200, headers });

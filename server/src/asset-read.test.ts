@@ -84,6 +84,11 @@ test("a matching If-None-Match answers 304 with no body, weak prefix tolerated",
   assert.equal(res.status, 304);
   assert.equal(res.headers.get("etag"), etag);
   assert.equal(res.headers.get("cache-control"), "private, max-age=3600");
+  // A 304 still confirms nothing sniffs, frames or ranges past the gate,
+  // same as any other response about this asset.
+  assert.equal(res.headers.get("accept-ranges"), "bytes");
+  assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(res.headers.get("content-security-policy"), "default-src 'none'; sandbox");
   assert.equal(await res.text(), "");
   const weak = await app.request(path, { headers: { ...H(owner.token), "If-None-Match": `W/${etag}` } });
   assert.equal(weak.status, 304);

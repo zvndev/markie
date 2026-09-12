@@ -153,8 +153,7 @@ publicShare.get("/s/:token/raw", (c) => {
 });
 
 publicShare.get("/s/:token/assets", (c) => {
-  const link = resolvePublicToken(c.req.param("token"));
-  if (!link) return c.text("Not found", 404);
-  if (!docForToken(c.req.param("token"))) return c.text("Not found", 404);
-  return serveAsset(c, link.doc_id, c.req.query("ref") ?? "");
+  const doc = docForToken(c.req.param("token"));
+  if (!doc) return c.text("Not found", 404);
+  return serveAsset(c, doc.doc_id, c.req.query("ref") ?? "");
 });

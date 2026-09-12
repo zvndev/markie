@@ -13,6 +13,7 @@ import { claimPendingInvites, removeDocPending } from "./pending.ts";
 import { closeRoom, purgeDocUpdates } from "./collab.ts";
 import { purgeDocThreads } from "./comments.ts";
 import { revokePublicLink } from "./public-links.ts";
+import { unlinkDocAssets } from "./assets.ts";
 
 const db = openDatabase();
 
@@ -183,5 +184,6 @@ docs.delete("/:id", async (c) => {
   removeDocPending(docId);
   revokePublicLink(docId);
   purgeDocThreads(docId);
+  await unlinkDocAssets(docId);
   return c.json({ ok: true });
 });

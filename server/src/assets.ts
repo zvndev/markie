@@ -1,0 +1,272 @@
+// Media that travels with a document: what is stored, who may link it to
+// which document, and how it is served. Reads go through the same three
+// gates the text uses (bearer, /d/ viewer, /s/ token); this module only
+// knows how to stream one asset once a caller has passed one of them.
+import { Hono, type Context } from "hono";
+import { createHash } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { openDatabase } from "./db.ts";
+import { auth } from "./auth.ts";
+import { accessLevel, canEditLevel } from "./shares.ts";
+import { assetMimeFor } from "./asset-mime.ts";
+import { assetStore, type AssetStore } from "./storage.ts";
+
+export const MAX_ASSET_BYTES = 100 * 1024 * 1024;
+export const MAX_DOC_ASSET_BYTES = 500 * 1024 * 1024;
+export const MAX_ACCOUNT_ASSET_BYTES = 5 * 1024 * 1024 * 1024;
+
+const db = openDatabase();
+db.exec(`
+  CREATE TABLE IF NOT EXISTS assets (
+    owner_id TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    mime TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (owner_id, hash)
+  );
+  CREATE TABLE IF NOT EXISTS doc_assets (
+    doc_id TEXT NOT NULL,
+    ref TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    PRIMARY KEY (doc_id, ref)
+  );
+  CREATE INDEX IF NOT EXISTS idx_doc_assets_asset ON doc_assets(owner_id, hash);
+`);
+
+let store: AssetStore | null = assetStore();
+export function setAssetStoreForTests(next: AssetStore | null): void {
+  store = next;
+}
+
+const HASH = /^[a-f0-9]{64}$/;
+const ALLOWED_MIMES = new Set(
+  ["png", "jpg", "gif", "webp", "svg", "avif", "bmp", "ico", "mp4", "m4v", "webm", "ogv", "mov", "mp3", "m4a", "aac", "wav", "flac", "oga", "opus"]
+    .map((ext) => assetMimeFor(`x.${ext}`))
+    .filter((m): m is string => !!m)
+);
+
+async function requireUser(c: Context) {
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  return session?.user ?? null;
+}
+
+function docExists(docId: string): boolean {
+  return !!db.prepare("SELECT 1 FROM docs WHERE id = ? AND deleted_at IS NULL").get(docId);
+}
+
+function usageFor(ownerId: string): number {
+  const row = db.prepare("SELECT COALESCE(SUM(size), 0) AS total FROM assets WHERE owner_id = ?").get(ownerId) as { total: number };
+  return row.total;
+}
+
+interface AssetRow {
+  owner_id: string;
+  hash: string;
+  size: number;
+  mime: string;
+}
+
+export function assetRefsFor(docId: string): Map<string, AssetRow> {
+  const rows = db
+    .prepare(
+      `SELECT d.ref, a.owner_id, a.hash, a.size, a.mime FROM doc_assets d
+       JOIN assets a ON a.owner_id = d.owner_id AND a.hash = d.hash WHERE d.doc_id = ?`
+    )
+    .all(docId) as (AssetRow & { ref: string })[];
+  return new Map(rows.map((r) => [r.ref, { owner_id: r.owner_id, hash: r.hash, size: r.size, mime: r.mime }]));
+}
+
+// Rows in `assets` that no document links any more, removed from the table
+// and from storage. Storage failures are logged, not thrown: the link is
+// already gone, and a leftover object is a cost, not a leak.
+async function collectOrphans(candidates: { owner_id: string; hash: string }[]): Promise<void> {
+  for (const { owner_id, hash } of candidates) {
+    const still = db.prepare("SELECT 1 FROM doc_assets WHERE owner_id = ? AND hash = ? LIMIT 1").get(owner_id, hash);
+    if (still) continue;
+    db.prepare("DELETE FROM assets WHERE owner_id = ? AND hash = ?").run(owner_id, hash);
+    try {
+      await store?.delete(`${owner_id}/${hash}`);
+    } catch (err) {
+      console.error(`asset delete failed for ${owner_id}/${hash}:`, err);
+    }
+  }
+}
+
+// Async, not fire-and-forget: a caller that awaits this sees the storage
+// objects actually gone, the same guarantee collectOrphans already gives the
+// link route below. A caller that does not await it still gets the DB row
+// deleted synchronously; only the storage sweep trails behind.
+export async function unlinkDocAssets(docId: string): Promise<void> {
+  const rows = db.prepare("SELECT owner_id, hash FROM doc_assets WHERE doc_id = ?").all(docId) as { owner_id: string; hash: string }[];
+  db.prepare("DELETE FROM doc_assets WHERE doc_id = ?").run(docId);
+  await collectOrphans(rows);
+}
+
+// The gate for writes: owner or editor of a live document. 404 for a
+// document the caller cannot see at all, the same as the text routes.
+async function requireEditor(c: Context, docId: string) {
+  const user = await requireUser(c);
+  if (!user) return { error: c.json({ error: "unauthorized" }, 401) };
+  const level = accessLevel(docId, user.id);
+  if (!docExists(docId) || level === null) return { error: c.json({ error: "not found" }, 404) };
+  if (!canEditLevel(level)) return { error: c.json({ error: "forbidden" }, 403) };
+  return { user };
+}
+
+export const assetsApi = new Hono();
+
+// A per-route guard, not a blanket `use("*")`: assetsApi is mounted at the
+// same "/api" prefix as docs, shares and the rest, and a wildcard middleware
+// registered on a sub-app is merged into the parent's route table at that
+// prefix, so it would gate every "/api/*" request, not just this module's
+// own three routes, and take the whole API down whenever the store env vars
+// are unset.
+function requireStore(c: Context): Response | null {
+  return store ? null : c.json({ error: "assets not configured" }, 503);
+}
+
+assetsApi.post("/docs/:id/assets/missing", async (c) => {
+  const unconfigured = requireStore(c);
+  if (unconfigured) return unconfigured;
+  const docId = c.req.param("id");
+  const gate = await requireEditor(c, docId);
+  if ("error" in gate) return gate.error;
+  const body = (await c.req.json().catch(() => null)) as { hashes?: unknown } | null;
+  const hashes = Array.isArray(body?.hashes) ? body!.hashes.filter((h): h is string => typeof h === "string" && HASH.test(h)) : [];
+  const have = new Set(
+    (db.prepare("SELECT hash FROM assets WHERE owner_id = ?").all(gate.user.id) as { hash: string }[]).map((r) => r.hash)
+  );
+  return c.json({ missing: hashes.filter((h) => !have.has(h)), usage: usageFor(gate.user.id), cap: MAX_ACCOUNT_ASSET_BYTES });
+});
+
+// Bytes in, hashed as they stream to a temp file, kept only when the hash
+// the URL names is the hash of what arrived. Nothing reaches storage before
+// every cap has been checked against real byte counts.
+assetsApi.put("/assets/:hash", async (c) => {
+  const unconfigured = requireStore(c);
+  if (unconfigured) return unconfigured;
+  const user = await requireUser(c);
+  if (!user) return c.json({ error: "unauthorized" }, 401);
+  const hash = c.req.param("hash");
+  if (!HASH.test(hash)) return c.json({ error: "bad hash" }, 400);
+  const mime = (c.req.header("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (!ALLOWED_MIMES.has(mime)) return c.json({ error: "unsupported type" }, 415);
+  const declared = Number(c.req.header("content-length") ?? NaN);
+  if (!Number.isFinite(declared) || declared <= 0) return c.json({ error: "length required" }, 411);
+  if (declared > MAX_ASSET_BYTES) return c.json({ error: "file over cap", cap: MAX_ASSET_BYTES }, 413);
+  if (usageFor(user.id) + declared > MAX_ACCOUNT_ASSET_BYTES) {
+    return c.json({ error: "account over cap", cap: MAX_ACCOUNT_ASSET_BYTES }, 413);
+  }
+  const existing = db.prepare("SELECT size FROM assets WHERE owner_id = ? AND hash = ?").get(user.id, hash) as { size: number } | undefined;
+  if (existing && (await store!.head(`${user.id}/${hash}`))) return c.json({ ok: true, hash, size: existing.size });
+
+  const dir = await mkdtemp(join(tmpdir(), "markie-upload-"));
+  const tmp = join(dir, "body");
+  try {
+    const hasher = createHash("sha256");
+    let seen = 0;
+    const body = c.req.raw.body;
+    if (!body) return c.json({ error: "empty body" }, 400);
+    const counted = Readable.fromWeb(body as never).on("data", (chunk: Buffer) => {
+      seen += chunk.length;
+      hasher.update(chunk);
+      if (seen > MAX_ASSET_BYTES) counted.destroy(new Error("over cap"));
+    });
+    try {
+      await pipeline(counted, createWriteStream(tmp));
+    } catch (err) {
+      if (String(err).includes("over cap")) return c.json({ error: "file over cap", cap: MAX_ASSET_BYTES }, 413);
+      throw err;
+    }
+    if (hasher.digest("hex") !== hash) return c.json({ error: "hash mismatch" }, 400);
+    const size = (await stat(tmp)).size;
+    await store!.put(`${user.id}/${hash}`, Readable.toWeb(createReadStream(tmp)) as ReadableStream<Uint8Array>, size, mime);
+    db.prepare(
+      "INSERT OR REPLACE INTO assets (owner_id, hash, size, mime, created_at) VALUES (?, ?, ?, ?, ?)"
+    ).run(user.id, hash, size, mime, new Date().toISOString());
+    return c.json({ ok: true, hash, size });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// The document's full reference set. An entry with a hash must name an asset
+// in the caller's scope; one without keeps whatever link the document already
+// has for that ref (an editor pushing text whose pictures the owner uploaded)
+// or is dropped.
+assetsApi.put("/docs/:id/assets", async (c) => {
+  const unconfigured = requireStore(c);
+  if (unconfigured) return unconfigured;
+  const docId = c.req.param("id");
+  const gate = await requireEditor(c, docId);
+  if ("error" in gate) return gate.error;
+  const body = (await c.req.json().catch(() => null)) as { refs?: unknown } | null;
+  if (!Array.isArray(body?.refs)) return c.json({ error: "bad request" }, 400);
+  const current = assetRefsFor(docId);
+  const next = new Map<string, { owner_id: string; hash: string; size: number }>();
+  let linked = 0, kept = 0, dropped = 0;
+  for (const entry of body!.refs as { ref?: unknown; hash?: unknown }[]) {
+    const ref = typeof entry?.ref === "string" ? entry.ref : "";
+    if (!ref || ref.length > 2048) continue;
+    if (typeof entry.hash === "string") {
+      if (!HASH.test(entry.hash)) return c.json({ error: "bad hash" }, 400);
+      const own = db.prepare("SELECT size FROM assets WHERE owner_id = ? AND hash = ?").get(gate.user.id, entry.hash) as { size: number } | undefined;
+      if (!own) return c.json({ error: "unknown asset", hash: entry.hash }, 400);
+      next.set(ref, { owner_id: gate.user.id, hash: entry.hash, size: own.size });
+      linked += 1;
+    } else if (current.has(ref)) {
+      const row = current.get(ref)!;
+      next.set(ref, { owner_id: row.owner_id, hash: row.hash, size: row.size });
+      kept += 1;
+    } else {
+      dropped += 1;
+    }
+  }
+  const total = [...next.values()].reduce((n, r) => n + r.size, 0);
+  if (total > MAX_DOC_ASSET_BYTES) return c.json({ error: "document over cap", cap: MAX_DOC_ASSET_BYTES }, 413);
+  const before = [...current.values()].map((r) => ({ owner_id: r.owner_id, hash: r.hash }));
+  db.transaction(() => {
+    db.prepare("DELETE FROM doc_assets WHERE doc_id = ?").run(docId);
+    const ins = db.prepare("INSERT INTO doc_assets (doc_id, ref, owner_id, hash) VALUES (?, ?, ?, ?)");
+    for (const [ref, r] of next) ins.run(docId, ref, r.owner_id, r.hash);
+  })();
+  await collectOrphans(before);
+  return c.json({ linked, kept, dropped });
+});
+
+// One asset, by the reference the document wrote, for a caller that has
+// already passed a read gate. 404 for an unknown ref so the route says no
+// more than the document page would.
+export async function serveAsset(c: Context, docId: string, ref: string): Promise<Response> {
+  if (!store) return c.json({ error: "assets not configured" }, 503);
+  const row = assetRefsFor(docId).get(ref);
+  if (!row) return c.text("Not found", 404);
+  const rangeHeader = c.req.header("range");
+  let range: { start: number; end?: number } | undefined;
+  if (rangeHeader) {
+    const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+    if (!m) return c.text("Range Not Satisfiable", 416);
+    if (m[1]) range = { start: Number(m[1]), end: m[2] ? Number(m[2]) : undefined };
+    else if (m[2]) range = { start: Math.max(0, row.size - Number(m[2])) };
+  }
+  const read = await store.get(`${row.owner_id}/${row.hash}`, range);
+  if (!read) return c.text(range ? "Range Not Satisfiable" : "Not found", range ? 416 : 404);
+  const headers = new Headers({
+    "Content-Type": row.mime,
+    "Content-Length": String(read.size),
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "private, max-age=3600",
+    ETag: `"${row.hash}"`,
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+  });
+  if (range) headers.set("Content-Range", `bytes ${read.start}-${read.end}/${read.total}`);
+  return new Response(read.stream, { status: range ? 206 : 200, headers });
+}

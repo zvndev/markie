@@ -7,6 +7,7 @@ import { docs } from "./docs.ts";
 import { shares } from "./shares.ts";
 import { comments } from "./comments.ts";
 import { themes } from "./themes.ts";
+import { assetsApi } from "./assets.ts";
 import { publicShare } from "./public.ts";
 import { docView } from "./doc-view.ts";
 import { attachCollab } from "./collab.ts";
@@ -147,6 +148,7 @@ app.route("/api/docs", docs);
 app.route("/api/docs", shares);
 app.route("/api/docs", comments);
 app.route("/api", themes);
+app.route("/api", assetsApi);
 app.route("/", docView);
 app.route("/", publicShare);
 

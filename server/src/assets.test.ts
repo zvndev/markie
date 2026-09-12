@@ -147,8 +147,10 @@ test("the account cap is enforced against the real size, not just the declared l
     assert.equal(db.prepare("SELECT 1 FROM assets WHERE owner_id = ? AND hash = ?").get(stranger.id, sha(a)), undefined);
 
     // Declaring less (1) slips past the pre-flight check, but the real bytes
-    // (4) still exceed the cap: the post-stat transactional check must catch
-    // what the courtesy check missed, and leave no row behind.
+    // (4) still exceed the cap: the object gets written (the route writes
+    // before it reserves), then the post-stat transactional check catches
+    // what the courtesy check missed and the object is deleted again. No
+    // row and no stored object should be left behind.
     const b = Buffer.from("bbbb");
     r = await upload(stranger.token, b, sha(b), "image/png", 1);
     assert.equal(r.status, 413);
@@ -157,6 +159,26 @@ test("the account cap is enforced against the real size, not just the declared l
     assert.equal(await fsStore(process.env.ASSETS_DIR!).head(`${stranger.id}/${sha(b)}`), null);
   } finally {
     db.prepare("DELETE FROM assets WHERE owner_id = ? AND hash = ?").run(stranger.id, filler);
+  }
+});
+
+// If the object never arrives, the row must not exist either: the route
+// writes the object before it reserves the row, so a rejected store.put
+// leaves nothing behind for reserveAssetSpace to have claimed.
+test("a store.put rejection leaves no row behind", async () => {
+  const real = fsStore(process.env.ASSETS_DIR!);
+  const failing = { ...real, put: async () => { throw new Error("simulated store failure"); } };
+  setAssetStoreForTests(failing);
+  try {
+    const bytes = Buffer.from("bytes that never make it to storage");
+    const hash = sha(bytes);
+    const r = await upload(owner.token, bytes, hash);
+    assert.equal(r.status, 500);
+    const { openDatabase } = await import("./db.ts");
+    const db = openDatabase();
+    assert.equal(db.prepare("SELECT 1 FROM assets WHERE owner_id = ? AND hash = ?").get(owner.id, hash), undefined);
+  } finally {
+    setAssetStoreForTests(real);
   }
 });
 

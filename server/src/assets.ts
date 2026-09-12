@@ -179,8 +179,11 @@ assetsApi.post("/docs/:id/assets/missing", async (c) => {
 });
 
 // Bytes in, hashed as they stream to a temp file, kept only when the hash
-// the URL names is the hash of what arrived. Nothing reaches storage before
-// every cap has been checked against real byte counts.
+// the URL names is the hash of what arrived. The per-file cap and the cheap
+// declared-length courtesy check happen before anything is written; the
+// decisive account-cap check happens after the object is written, so a row
+// in `assets` is never created ahead of the bytes it claims to describe (see
+// the comment at the reserveAssetSpace call below).
 assetsApi.put("/assets/:hash", async (c) => {
   const unconfigured = requireStore(c);
   if (unconfigured) return unconfigured;
@@ -222,19 +225,28 @@ assetsApi.put("/assets/:hash", async (c) => {
     }
     if (hasher.digest("hex") !== hash) return c.json({ error: "hash mismatch" }, 400);
     const size = (await stat(tmp)).size;
+    // Object first, then the atomic reserve: a row must never exist without
+    // an object behind it, because a row alone counts against quota, answers
+    // "not missing", and can be linked into a document. If the process dies
+    // between these two steps the object is merely an orphan (a cost, the
+    // same as the ones collectOrphans sweeps up), not a document pointing at
+    // bytes that were never written.
+    await store!.put(`${user.id}/${hash}`, Readable.toWeb(createReadStream(tmp)) as ReadableStream<Uint8Array>, size, mime);
     // The declared-length check above is a cheap courtesy: it reads
     // yesterday's usage against a number the client chose. This is the real
     // gate, on the size just measured from the bytes that actually arrived.
     if (!reserveAssetSpace(user.id, hash, size, mime)) {
+      // The object was written on spec but the account can't afford it:
+      // undo the write so it does not linger as an unowned orphan, then
+      // refuse. A failure here is logged, not thrown, the same as
+      // collectOrphans: the row was never claimed, so there is nothing this
+      // request can still get wrong by moving on.
+      try {
+        await store!.delete(`${user.id}/${hash}`);
+      } catch (err) {
+        console.error(`asset cleanup failed for ${user.id}/${hash}:`, err);
+      }
       return c.json({ error: "account over cap", cap: MAX_ACCOUNT_ASSET_BYTES }, 413);
-    }
-    try {
-      await store!.put(`${user.id}/${hash}`, Readable.toWeb(createReadStream(tmp)) as ReadableStream<Uint8Array>, size, mime);
-    } catch (err) {
-      // The row already claimed the space; the object never arrived. Undo
-      // the claim rather than leave the account's usage pointing at nothing.
-      db.prepare("DELETE FROM assets WHERE owner_id = ? AND hash = ?").run(user.id, hash);
-      throw err;
     }
     return c.json({ ok: true, hash, size });
   } finally {

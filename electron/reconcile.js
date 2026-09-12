@@ -19,13 +19,25 @@ function createReconciler({ sync, registry, assetSync, fs = require("node:fs"), 
 
   async function run({ limit = 50 } = {}) {
     const result = { pushed: [], mediaPushed: [], skipped: [], errors: [] };
-    const res = await sync.api("GET", "/api/docs");
-    if (res.status !== 200 || !Array.isArray(res.data?.docs)) {
-      result.errors.push({ path: "*", error: "listing unavailable" });
+    let remote;
+    let rows;
+    // Building the listing is one unit: a throw from either the request or
+    // the registry read means there is nothing safe to iterate, so it is
+    // caught here rather than only around each row. Left uncaught, it would
+    // reject run() itself and surface as an unhandled rejection through the
+    // fire-and-forget callers in main.js.
+    try {
+      const res = await sync.api("GET", "/api/docs");
+      if (res.status !== 200 || !Array.isArray(res.data?.docs)) {
+        result.errors.push({ path: "*", error: "listing unavailable" });
+        return result;
+      }
+      remote = new Map(res.data.docs.map((d) => [d.id, d]));
+      rows = registry.list().filter((r) => r.cloud_doc_id && (r.sync_state === "synced" || r.sync_state === "unpushed"));
+    } catch (err) {
+      result.errors.push({ path: "*", error: err && err.message ? err.message : String(err) });
       return result;
     }
-    const remote = new Map(res.data.docs.map((d) => [d.id, d]));
-    const rows = registry.list().filter((r) => r.cloud_doc_id && (r.sync_state === "synced" || r.sync_state === "unpushed"));
     if (cursor >= rows.length) cursor = 0;
     const slice = rows.slice(cursor, cursor + limit);
     cursor = cursor + limit >= rows.length ? 0 : cursor + limit;

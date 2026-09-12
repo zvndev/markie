@@ -551,7 +551,8 @@ async function landCloudDocs(docs) {
 // never a string to guard against or a parse error to catch itself.
 const safeJson = (s) => {
   try {
-    return s ? JSON.parse(s) : [];
+    const parsed = s ? JSON.parse(s) : [];
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }

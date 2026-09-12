@@ -40,6 +40,10 @@ interface Row {
   // confirmed for.
   share_role?: "owner" | "editor" | "viewer" | null;
   share_role_user?: string | null;
+  // What reconciliation (electron/reconcile.js) last learned about this
+  // row's media.
+  assets_state?: string | null;
+  assets_skipped?: string | null;
 }
 
 const realRegistry = { ...registry };
@@ -1118,6 +1122,56 @@ describe("libraryState", () => {
     const state = await sync.libraryState();
 
     expect(state.items[0].state).toBe("unpushed");
+  });
+
+  describe("media", () => {
+    it("reports what reconciliation last learned about a row's pictures", async () => {
+      seedRow({
+        path: "/docs/pics.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-20",
+        cloud_version: 1,
+        assets_state: "pending",
+        assets_skipped: '[{"ref":"a.png","reason":"size"}]',
+      });
+      respondWith({ status: 200, body: { docs: [{ id: "cloud-20", version: 1 }] } });
+
+      const state = await sync.libraryState();
+
+      expect(state.items[0].media).toEqual({
+        state: "pending",
+        skipped: [{ ref: "a.png", reason: "size" }],
+      });
+    });
+
+    it("reads as no state and no skips for a row reconciliation has never touched", async () => {
+      seedRow({
+        path: "/docs/untouched.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-21",
+        cloud_version: 1,
+      });
+      respondWith({ status: 200, body: { docs: [{ id: "cloud-21", version: 1 }] } });
+
+      const state = await sync.libraryState();
+
+      expect(state.items[0].media).toEqual({ state: null, skipped: [] });
+    });
+  });
+});
+
+describe("hasPrincipal", () => {
+  it("is false before anyone is confirmed signed in", () => {
+    sync.setConfig({ token: null, serverURL: null });
+    expect(sync.hasPrincipal()).toBe(false);
+  });
+
+  it("is true once a config push confirms who the token belongs to", () => {
+    sync.setConfig({ token: null, serverURL: null });
+    sync.setConfig({ token: "test-token", serverURL: SERVER });
+    expect(sync.hasPrincipal()).toBe(false);
+    sync.setConfig({ token: "test-token", serverURL: SERVER, userId: ME });
+    expect(sync.hasPrincipal()).toBe(true);
   });
 });
 

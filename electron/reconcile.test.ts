@@ -104,4 +104,18 @@ describe("reconcile", () => {
     const r = await createReconciler({ sync, registry, assetSync, fs, sleep: async () => {} }).run();
     expect(r).toEqual({ pushed: [], mediaPushed: [], skipped: [], errors: [{ path: "*", error: "listing unavailable" }] });
   });
+
+  it("turns a throw while building the listing into an error result instead of rejecting", async () => {
+    seed({ path: "/d/un.md", cloud_doc_id: "c1", sync_state: "unpushed" }, "x");
+    listing = { docs: [{ id: "c1", version: 1, hash: sha("x") }] };
+    const brokenRegistry = {
+      ...registry,
+      list: () => {
+        throw new Error("registry unavailable");
+      },
+    };
+    const r = await createReconciler({ sync, registry: brokenRegistry, assetSync, fs, sleep: async () => {} }).run();
+    expect(r).toEqual({ pushed: [], mediaPushed: [], skipped: [], errors: [{ path: "*", error: "registry unavailable" }] });
+    expect(pushed).toEqual([]);
+  });
 });

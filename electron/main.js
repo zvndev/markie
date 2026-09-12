@@ -1246,12 +1246,23 @@ const { createReconciler } = require("./reconcile");
 const reconciler = createReconciler({ sync, registry, assetSync });
 let lastReconcile = 0;
 let lastReconcileResult = null;
+// A run in progress, shared by every caller that arrives while it is still
+// going. Without this, the force=true path (asset-reconcile) skips the
+// cooldown that stops the other two callers from overlapping, and two runs
+// racing over the reconciler's cursor state at once double-count.
+let reconcileInFlight = null;
 async function reconcileIfDue(force = false) {
   if (!sync.isConfigured() || !sync.hasPrincipal()) return lastReconcileResult;
+  if (reconcileInFlight) return reconcileInFlight;
   if (!force && Date.now() - lastReconcile < 10 * 60 * 1000) return lastReconcileResult;
   lastReconcile = Date.now();
-  lastReconcileResult = await reconciler.run();
-  return lastReconcileResult;
+  reconcileInFlight = reconciler.run();
+  try {
+    lastReconcileResult = await reconcileInFlight;
+    return lastReconcileResult;
+  } finally {
+    reconcileInFlight = null;
+  }
 }
 // A cloud document's pictures, kept on disk once fetched so the protocol
 // handler below can answer for a folder that has no local file at all.

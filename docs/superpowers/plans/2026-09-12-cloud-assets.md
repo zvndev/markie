@@ -414,10 +414,9 @@ export function s3Store(cfg: {
       method,
       headers: signed,
       body,
-      // @ts-expect-error Node needs this for a streaming body
       duplex: "half",
       signal: AbortSignal.timeout(120_000),
-    });
+    } as RequestInit);
   };
   return {
     async put(key, body, size, mime) {
@@ -1632,14 +1631,14 @@ describe("pushAssets", () => {
   it("skips a file over the cap and says so", async () => {
     const { dir, docPath } = fixture();
     rows.set(docPath, { cloud_doc_id: "c1" });
-    const { api, calls } = fakeApi([
-      { status: 200, data: { missing: [] } },
-      { status: 200, data: { linked: 0, kept: 0, dropped: 1 } },
-    ]);
+    // Nothing is left to upload, so there is nothing to ask about: the only
+    // call is the link, which names the ref without a hash.
+    const { api, calls } = fakeApi([{ status: 200, data: { linked: 0, kept: 0, dropped: 1 } }]);
     const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {}, maxBytes: 3 });
     const result = await pushAssets(docPath, "c1", "![](b.png)\n");
     expect(result).toEqual({ ok: true, uploaded: 0, skipped: [{ ref: "b.png", reason: "size" }] });
-    expect(calls[0].body).toEqual({ hashes: [] });
+    expect(calls.map((c) => c.path)).toEqual(["/api/docs/c1/assets"]);
+    expect(calls[0].body).toEqual({ refs: [{ ref: "b.png" }] });
     void dir;
   });
 });

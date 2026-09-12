@@ -130,3 +130,14 @@ test("assetStore picks the filesystem, then S3, then nothing", () => {
   assert.equal(assetStore({}), null);
   assert.equal(assetStore({ ASSETS_BUCKET: "b" }), null);
 });
+
+test("the real bucket round-trips (ASSETS_LIVE_TEST=1 only)", { skip: process.env.ASSETS_LIVE_TEST !== "1" }, async () => {
+  const store = assetStore(process.env)!;
+  const key = `livetest/${"0".repeat(60)}beef`;
+  await store.put(key, Buffer.from("live"), 4, "image/png");
+  assert.deepEqual(await store.head(key), { size: 4 });
+  const part = await store.get(key, { start: 1, end: 2 });
+  assert.equal((await collect(part!.stream)).toString(), "iv");
+  await store.delete(key);
+  assert.equal(await store.head(key), null);
+});

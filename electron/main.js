@@ -801,6 +801,17 @@ function registerProtocol() {
   });
 }
 
+// The cloud document a folder belongs to, and the reference a requested
+// absolute path is under it. The renderer names the folder; the registry
+// row for a file directly inside it names the cloud id. Several documents
+// can share a folder, so the first row that is in the cloud wins.
+function cloudDocFor(docDir, requested) {
+  const rel = path.relative(docDir, requested);
+  const ref = rel.startsWith("..") || path.isAbsolute(rel) ? requested : rel.split(path.sep).join("/");
+  const rows = registry.cloudDocsInDir(docDir);
+  return rows.length > 0 ? { cloudId: rows[0].cloud_doc_id, ref } : null;
+}
+
 // Serve a picture that lives beside the open document.
 //
 // The renderer resolves a document's relative image against the document's own
@@ -811,8 +822,13 @@ function registerProtocol() {
 // traversal, a file with the wrong extension, and a path that simply is not in
 // scope. The exporter answers to the same module, so what you see is what
 // travels.
+//
+// A picture that fails all of that may still exist: the document it belongs
+// to can have landed here from the cloud, on a machine that never had the
+// file beside it. That fallback runs only after the local answer is a
+// refusal, never instead of it.
 function registerAssetProtocol() {
-  protocol.handle(ASSET_SCHEME, (request) => {
+  protocol.handle(ASSET_SCHEME, async (request) => {
     let requested;
     try {
       // The path is one percent-encoded segment, so the standard scheme's own
@@ -844,7 +860,17 @@ function registerAssetProtocol() {
     // Checked again on the realpath: a symlink must not be able to swap a .png
     // for something else between the two.
     const mime = real ? localAssets.mediaMimeFor(real) : null;
-    if (!real || !mime) return new Response("Forbidden", { status: 403 });
+    if (!real || !mime) {
+      // Not here, or not allowed here. A document that lives in the cloud
+      // may still have this picture on the server, under the reference the
+      // text wrote, relative to the document's folder.
+      const docDir = new URL(request.url).searchParams.get("doc");
+      const cloud = docDir ? cloudDocFor(docDir, requested) : null;
+      if (!cloud) return new Response("Forbidden", { status: 403 });
+      const cached = await assetCache.get(cloud.cloudId, cloud.ref);
+      if (!cached) return new Response("Not found", { status: 404 });
+      return serveFileRange(cached.path, cached.mime, request.headers.get("range"));
+    }
 
     // A video needs ranges or it cannot be seeked, and Chromium asks for one
     // the moment you drag the scrubber. Serving the whole file for every range
@@ -1201,6 +1227,13 @@ const fileGrants = createFileGrants({ workspaceRoots: () => workspace.roots() })
 const { createAssetSync } = require("./asset-sync");
 const assetSync = createAssetSync({ api: sync.api, registry, grants: fileGrants });
 sync.setAssetSync(assetSync);
+// A cloud document's pictures, kept on disk once fetched so the protocol
+// handler below can answer for a folder that has no local file at all.
+const { createAssetCache } = require("./asset-cache");
+const assetCache = createAssetCache({
+  dir: path.join(app.getPath("userData"), "asset-cache"),
+  fetchAsset: sync.fetchAsset,
+});
 
 // ── Workspace / Files-view IPC ──
 const wsTry = (fn) => {
@@ -1256,7 +1289,14 @@ handle("term-kill", (_e, id) => terminal.kill(id));
 handle("term-external-apps", () => terminal.externalApps(), { onFailure: () => [] });
 handle("term-open-external", (_e, { app, cwd }) => terminal.openExternal(app, cwd));
 
-handle("sync-config", (_event, cfg) => sync.setConfig(cfg));
+handle("sync-config", (_event, cfg) => {
+  const result = sync.setConfig(cfg);
+  // Signing out drops the session for good; the pictures cached under it
+  // belong to whatever account was signed in, and the next one to sign in
+  // here should not be handed a stranger's cached media.
+  if (cfg.token === null) void assetCache.clear();
+  return result;
+});
 // The renderer resolved this doc's share role against the server; the sync
 // engine needs it so a save can refuse a push the server would only 403.
 handle("sync-doc-role", (_event, { cloudId, role }) =>

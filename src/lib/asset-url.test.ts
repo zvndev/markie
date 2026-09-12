@@ -3,7 +3,13 @@ import { getAssetBaseDir, isAssetUrl, resolveAssetSrc, setAssetBaseDir } from "@
 
 afterEach(() => setAssetBaseDir(null));
 
-const decoded = (url: string) => decodeURIComponent(url.replace("markie-asset://local/", ""));
+// The `?doc=` suffix names the document a reference belongs to (see the
+// "names the document" test below); every other test here is about how the
+// path itself gets built, so this strips the suffix the way a caller who only
+// wants the path would (new URL(...).pathname does the same on the main
+// side).
+const decoded = (url: string) =>
+  decodeURIComponent(url.replace("markie-asset://local/", "").split("?")[0]);
 
 describe("resolveAssetSrc", () => {
   it("resolves a relative path against the open document's folder", () => {
@@ -95,5 +101,15 @@ describe("resolveAssetSrc", () => {
     expect(isAssetUrl(resolveAssetSrc("a.png"))).toBe(true);
     expect(isAssetUrl("https://example.com/a.png")).toBe(false);
     expect(isAssetUrl(null)).toBe(false);
+  });
+
+  it("names the document the reference belongs to", () => {
+    setAssetBaseDir("/Users/k/report");
+    expect(resolveAssetSrc("shots/a.png")).toBe(
+      `markie-asset://local/${encodeURIComponent("/Users/k/report/shots/a.png")}?doc=${encodeURIComponent("/Users/k/report")}`
+    );
+    expect(resolveAssetSrc("shots/a.png", "/elsewhere")).toBe(
+      `markie-asset://local/${encodeURIComponent("/elsewhere/shots/a.png")}?doc=${encodeURIComponent("/elsewhere")}`
+    );
   });
 });

@@ -65,6 +65,24 @@ function isConfigured() {
   return !!(config.token && config.serverURL);
 }
 
+// One asset of a cloud document, streamed with the session's token. Null for
+// anything but a 200, so a revoked share reads as "no such picture".
+async function fetchAsset(cloudId, ref) {
+  if (!isConfigured()) return null;
+  try {
+    const res = await fetch(`${config.serverURL}/api/docs/${encodeURIComponent(cloudId)}/assets/file?ref=${encodeURIComponent(ref)}`, {
+      headers: { Authorization: `Bearer ${config.token}` },
+      signal: AbortSignal.timeout(300000),
+    });
+    if (res.status !== 200 || !res.body) return null;
+    const hash = (res.headers.get("etag") ?? "").replace(/"/g, "");
+    if (!/^[a-f0-9]{64}$/.test(hash)) return null;
+    return { stream: res.body, mime: res.headers.get("content-type") ?? "application/octet-stream", hash, size: Number(res.headers.get("content-length") ?? 0) };
+  } catch {
+    return null;
+  }
+}
+
 // Status for a request that never reached the server (offline, DNS failure,
 // timeout). fetch throws in those cases, and a throw escaping from here used to
 // abort the caller before it could record the failure, leaving the registry
@@ -791,6 +809,7 @@ module.exports = {
   setConfig,
   setDocRole,
   api,
+  fetchAsset,
   syncOn,
   syncOff,
   push,

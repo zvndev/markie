@@ -213,6 +213,37 @@ describe("tracking files", () => {
   });
 });
 
+describe("cloudDocsInDir", () => {
+  it("finds the cloud-linked file directly inside the folder", () => {
+    registry.track("/tmp/report/a.md", "a.md", "x");
+    registry.update("/tmp/report/a.md", { cloud_doc_id: "doc-1" });
+    registry.track("/tmp/report/local.md", "local.md", "y");
+
+    const rows = registry.cloudDocsInDir("/tmp/report") as FileRow[];
+
+    expect(rows.map((r) => r.cloud_doc_id)).toEqual(["doc-1"]);
+  });
+
+  it("does not mistake a sibling folder whose name is a prefix for the folder itself", () => {
+    // A LIKE 'dir%' scan alone would match "/tmp/report-extra" for the query
+    // "/tmp/report"; the post-filter on dirname is what tells them apart.
+    registry.track("/tmp/report/a.md", "a.md", "x");
+    registry.update("/tmp/report/a.md", { cloud_doc_id: "doc-1" });
+    registry.track("/tmp/report-extra/b.md", "b.md", "y");
+    registry.update("/tmp/report-extra/b.md", { cloud_doc_id: "doc-2" });
+
+    const rows = registry.cloudDocsInDir("/tmp/report") as FileRow[];
+
+    expect(rows.map((r) => r.cloud_doc_id)).toEqual(["doc-1"]);
+  });
+
+  it("answers nothing for a folder with no cloud-linked file", () => {
+    registry.track("/tmp/report/local.md", "local.md", "y");
+
+    expect(registry.cloudDocsInDir("/tmp/report")).toEqual([]);
+  });
+});
+
 describe("stars", () => {
   it("toggles on and back off", () => {
     expect(registry.toggleStar("/tmp/notes", "folder")).toEqual({ starred: true });

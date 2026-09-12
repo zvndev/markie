@@ -384,6 +384,23 @@ function list() {
     .all();
 }
 
+// The cloud-linked rows whose file sits directly inside `dir`. Used to answer
+// "does a cloud document live in this folder" for a library that can hold
+// 200,000 rows, where a full table scan through list() on every picture
+// request is not something to do per request. The LIKE clause narrows to an
+// indexed prefix scan; it alone would also match a sibling folder whose name
+// happens to start with this one ("/tmp/report" matching "/tmp/report-extra"),
+// so the dirname check after it is what actually decides.
+function cloudDocsInDir(dir) {
+  const resolved = path.resolve(dir);
+  const canonicalDir = canonicalPath(resolved);
+  const prefix = canonicalDir.endsWith(path.sep) ? canonicalDir : canonicalDir + path.sep;
+  const rows = getDB()
+    .prepare("SELECT * FROM files WHERE cloud_doc_id IS NOT NULL AND path LIKE ? || '%'")
+    .all(prefix);
+  return rows.filter((r) => canonicalPath(path.dirname(r.path)) === canonicalDir);
+}
+
 function update(filePath, fields) {
   const allowed = [
     "name",
@@ -746,6 +763,7 @@ module.exports = {
   track,
   get,
   list,
+  cloudDocsInDir,
   forget,
   pruneMissing,
   update,

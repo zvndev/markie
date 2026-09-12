@@ -6,11 +6,14 @@
 // resolves it against the document's folder, which is what an author means and
 // what an agent writing a report produces without being told.
 //
-// So the src is rewritten to `markie-asset://local/<absolute path>` on the way
+// So the src is rewritten to
+// `markie-asset://local/<absolute path>?doc=<document folder>` on the way
 // into the DOM, and only there. The document on disk is untouched: the editor
 // keeps the original in the node's attribute, so what gets saved is what was
 // written. Main decides whether to actually serve it; this side only addresses
-// it, and an address is not a permission.
+// it, and an address is not a permission. The `doc` query names the folder
+// the reference resolved against, so main can look for the picture on a
+// cloud document landed there when the file itself is not on this machine.
 
 export const ASSET_SCHEME = "markie-asset";
 const ASSET_ORIGIN = `${ASSET_SCHEME}://local`;
@@ -83,7 +86,7 @@ export function resolveAssetSrc(src: string | null | undefined, base?: string | 
   }
 
   const absolute = decoded.startsWith("/") ? decoded : joinPath(dir, decoded);
-  return `${ASSET_ORIGIN}/${encodeURIComponent(absolute)}`;
+  return `${ASSET_ORIGIN}/${encodeURIComponent(absolute)}?doc=${encodeURIComponent(dir)}`;
 }
 
 // What to draw for a given source. Markdown has one syntax for embedded media

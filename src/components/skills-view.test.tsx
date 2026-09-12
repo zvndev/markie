@@ -102,9 +102,10 @@ beforeEach(() => {
 
 afterEach(() => setAssetBaseDir(null));
 
-/** The path a markie-asset:// url addresses. */
+/** The path a markie-asset:// url addresses, ignoring the `?doc=` suffix that
+ * names the document it belongs to. */
 const assetPath = (src: string | null) =>
-  decodeURIComponent(String(src ?? "").replace("markie-asset://local/", ""));
+  decodeURIComponent(String(src ?? "").replace("markie-asset://local/", "").split("?")[0]);
 
 describe("the two tabs", () => {
   it("opens on Installed and moves to Discover", async () => {

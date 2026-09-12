@@ -3,7 +3,7 @@
 import { Hono } from "hono";
 import { openDatabase } from "./db.ts";
 import { resolvePublicToken } from "./public-links.ts";
-import { serveAsset } from "./assets.ts";
+import { assetRefsFor, serveAsset } from "./assets.ts";
 import {
   renderDownloadPage,
   renderPublicPage,
@@ -127,12 +127,15 @@ publicShare.get("/s/:token", (c) => {
   const token = c.req.param("token");
   const doc = docForToken(token);
   if (!doc) return c.html(renderNotFoundPage(MARKIE_SITE), 404);
+  const refs = assetRefsFor(doc.doc_id);
+  const assetUrlFor = (ref: string) => (refs.has(ref) ? `/s/${encodeURIComponent(token)}/assets?ref=${encodeURIComponent(ref)}` : null);
   return c.html(
     renderPublicPage({
       title: doc.name,
       markdown: doc.content,
       token,
       siteUrl: MARKIE_SITE,
+      assetUrlFor,
     })
   );
 });

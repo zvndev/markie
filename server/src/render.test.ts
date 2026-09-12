@@ -290,3 +290,20 @@ test("renderMarkdownHTML draws a video link alone on its line as a linked thumbn
   assert.doesNotMatch(html, /<iframe/);
   assert.match(html, /See <a href="https:\/\/youtu.be\/dQw4w9WgXcQ">https:\/\/youtu.be\/dQw4w9WgXcQ<\/a> inline/);
 });
+
+test("a local media reference is rewritten when the document has it, and only then", () => {
+  const md = "![a](shots/a.png)\n\n![b](b.png)\n\n![](clip.mp4)\n\n![](https://x.test/c.png)\n\n<img src=\"d.png\">\n";
+  const html = renderMarkdownHTML(md, {
+    assetUrlFor: (ref) => (["shots/a.png", "clip.mp4", "d.png"].includes(ref) ? `/d/1/assets?ref=${encodeURIComponent(ref)}` : null),
+  });
+  assert.match(html, /src="\/d\/1\/assets\?ref=shots%2Fa\.png"/);
+  assert.match(html, /src="b\.png"/);
+  assert.match(html, /<video[^>]*src="\/d\/1\/assets\?ref=clip\.mp4"/);
+  assert.match(html, /src="https:\/\/x\.test\/c\.png"/);
+  assert.match(html, /src="\/d\/1\/assets\?ref=d\.png"/);
+});
+
+test("a percent-encoded reference matches its decoded form", () => {
+  const html = renderMarkdownHTML("![](my%20shot.png)\n", { assetUrlFor: (ref) => (ref === "my shot.png" ? "/d/1/assets?ref=my%20shot.png" : null) });
+  assert.match(html, /src="\/d\/1\/assets\?ref=my%20shot\.png"/);
+});

@@ -1,11 +1,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Hono } from "hono";
+import { getMigrations } from "better-auth/db/migration";
 
-// public.ts opens a sqlite handle at import - point it at a throwaway file first.
-process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-pub-")), "t.db");
+// public.ts opens a sqlite handle at import - point it at a throwaway file
+// first. ASSETS_DIR and the auth env vars are set here too, before docs.ts
+// (which pulls in auth.ts and assets.ts) is imported below: not the site URL,
+// which the download tests further down deliberately leave unset so they
+// exercise the canonical-URL fallback.
+const pubDir = mkdtempSync(join(tmpdir(), "markie-pub-"));
+process.env.DB_PATH = join(pubDir, "t.db");
+process.env.ASSETS_DIR = join(pubDir, "store");
+process.env.BETTER_AUTH_URL = "http://localhost:8787";
+process.env.BETTER_AUTH_SECRET = "markie-pub-test-secret-32-plus-chars";
 const {
   downloadPlatforms,
   feedForPlatform,
@@ -17,6 +28,30 @@ const {
   primaryDownloadCta,
 } = await import("./downloads.ts");
 const { clearDownloadCacheForTests, publicShare } = await import("./public.ts");
+const { auth } = await import("./auth.ts");
+const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.options);
+if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
+const { docs } = await import("./docs.ts");
+const { shares } = await import("./shares.ts");
+const { assetsApi } = await import("./assets.ts");
+const { signUpVerified } = await import("./test-users.ts");
+
+// A second app, distinct from the bare `publicShare` the download tests use
+// below: this one carries the doc/share/asset routes a cloud-assets test
+// needs to set up a document, so it also answers /s/:token the same way the
+// real server does.
+const fullApp = new Hono();
+fullApp.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+fullApp.route("/api/docs", docs);
+fullApp.route("/api/docs", shares);
+fullApp.route("/api", assetsApi);
+fullApp.route("/", publicShare);
+
+const H = (token?: string) => ({
+  Origin: "http://localhost:3000",
+  "x-forwarded-for": "127.0.0.1",
+  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+});
 
 const SAMPLE_YML = `version: 0.2.3
 files:
@@ -290,4 +325,52 @@ test("the Intel download route redirects to the x64 artifact", async (t) => {
     res.headers.get("location"),
     "https://f005.backblazeb2.com/file/markie-releases/mac/Markie-0.4.0-x64.dmg"
   );
+});
+
+test("the public page rewrites a linked asset's src through its own /s/ asset route", async () => {
+  const owner = await signUpVerified(fullApp, { name: "Owner", email: "pub-cloud-asset@test.local" });
+  const docId = crypto.randomUUID();
+  const content = "![a](a.png)\n\n![b](b.png)\n";
+  const hash = createHash("sha256").update(content, "utf8").digest("hex");
+  const created = await fullApp.request(`/api/docs/${docId}`, {
+    method: "PUT",
+    headers: { ...H(owner.token), "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "pub.md", content, hash, baseVersion: 0 }),
+  });
+  assert.equal(created.status, 200);
+
+  const png = Buffer.from("public-page-asset-bytes");
+  const pngHash = createHash("sha256").update(png).digest("hex");
+  const uploaded = await fullApp.request(`/api/assets/${pngHash}`, {
+    method: "PUT",
+    headers: { ...H(owner.token), "Content-Type": "image/png", "Content-Length": String(png.length) },
+    body: new Blob([png]),
+  });
+  assert.equal(uploaded.status, 200);
+
+  const linked = await fullApp.request(`/api/docs/${docId}/assets`, {
+    method: "PUT",
+    headers: { ...H(owner.token), "Content-Type": "application/json" },
+    body: JSON.stringify({ refs: [{ ref: "a.png", hash: pngHash }] }),
+  });
+  assert.equal(linked.status, 200);
+
+  const made = await fullApp.request(`/api/docs/${docId}/public-link`, {
+    method: "POST",
+    headers: { ...H(owner.token), "Content-Type": "application/json" },
+  });
+  assert.equal(made.status, 200);
+  const { url } = (await made.json()) as { url: string };
+  const token = url.split("/s/")[1];
+
+  const res = await fullApp.request(`/s/${token}`);
+  assert.equal(res.status, 200);
+  const body = await res.text();
+  assert.match(body, new RegExp(`src="/s/${token}/assets\\?ref=a\\.png"`));
+  // b.png was never linked, so it passes through as the document wrote it.
+  assert.match(body, /src="b\.png"/);
+
+  const asset = await fullApp.request(`/s/${token}/assets?ref=a.png`);
+  assert.equal(asset.status, 200);
+  assert.equal(await asset.text(), "public-page-asset-bytes");
 });

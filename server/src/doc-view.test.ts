@@ -15,7 +15,9 @@ import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
 import { signUpVerified } from "./test-users.ts";
 
-process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-doc-view-")), "t.db");
+const dvDir = mkdtempSync(join(tmpdir(), "markie-doc-view-"));
+process.env.DB_PATH = join(dvDir, "t.db");
+process.env.ASSETS_DIR = join(dvDir, "store");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
 process.env.BETTER_AUTH_SECRET = "markie-doc-view-test-secret-32-plus-chars";
 process.env.MARKIE_SITE_URL = "https://markie.test";
@@ -28,12 +30,14 @@ if (toBeCreated.length > 0 || toBeAdded.length > 0) {
 
 const { docs } = await import("./docs.ts");
 const { shares, ensureShareToken } = await import("./shares.ts");
+const { assetsApi } = await import("./assets.ts");
 const { docView } = await import("./doc-view.ts");
 
 const app = new Hono();
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/docs", docs);
 app.route("/api/docs", shares);
+app.route("/api", assetsApi);
 app.route("/", docView);
 
 const ORIGIN = { Origin: "http://localhost:3000" };
@@ -87,6 +91,29 @@ async function createDoc(token: string, docId: string) {
     baseVersion: 0,
   });
   assert.equal(res.status, 200);
+}
+
+// Uploads one small PNG under the owner's account and links it to the
+// document under the given ref, the same two-step handshake the app does.
+async function uploadAndLinkAsset(token: string, docId: string, ref: string) {
+  const bytes = Buffer.from(`asset-bytes-${ref}-${stamp}`);
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const uploaded = await app.request(`/api/assets/${hash}`, {
+    method: "PUT",
+    headers: new Headers({
+      Authorization: `Bearer ${token}`,
+      "x-forwarded-for": "127.0.0.1",
+      "Content-Type": "image/png",
+      "Content-Length": String(bytes.length),
+      ...ORIGIN,
+    }),
+    body: new Blob([bytes]),
+  });
+  assert.equal(uploaded.status, 200);
+  const linked = await jsonRequest("PUT", `/api/docs/${docId}/assets`, token, {
+    refs: [{ ref, hash }],
+  });
+  assert.equal(linked.status, 200);
 }
 
 test("a member's link opens the document, and stops the moment they are removed", async () => {
@@ -443,4 +470,67 @@ test("an unverified account at the invited address gains nothing extra from the 
     .prepare("SELECT role FROM pending_shares WHERE doc_id = ? AND email = ?")
     .get(docId, invitee);
   assert.ok(stillPending, "the invite is still waiting for proof of the address");
+});
+
+// ---------------------------------------------------------------------------
+// Cloud assets: the page rewrites a media src to the document's own asset
+// route only for a ref the document actually links, and carries the reader's
+// own ?k= token along for the ride so the rewritten URL stays theirs to use.
+// ---------------------------------------------------------------------------
+
+test("a linked asset renders through the doc's asset route, an unlinked ref does not", async () => {
+  const owner = await signUp("Owner", `dv.asset.${stamp}@test.local`);
+  const docId = `dv-asset-${stamp}`;
+  const content = "![a](a.png)\n\n![b](b.png)\n";
+  const hash = createHash("sha256").update(content, "utf8").digest("hex");
+  const created = await jsonRequest("PUT", `/api/docs/${docId}`, owner.token, {
+    name: "assets.md",
+    content,
+    hash,
+    baseVersion: 0,
+  });
+  assert.equal(created.status, 200);
+  await uploadAndLinkAsset(owner.token, docId, "a.png");
+
+  const view = await page(`/d/${docId}`, owner.token);
+  assert.equal(view.status, 200);
+  assert.match(view.body, new RegExp(`src="/d/${docId}/assets\\?ref=a\\.png"`));
+  // b.png was never linked, so the document's own text passes through as
+  // written: nothing here fetches an asset that does not exist.
+  assert.match(view.body, /src="b\.png"/);
+});
+
+test("a reader's rewritten asset src carries their own ?k= token", async () => {
+  const owner = await signUp("Owner", `dv.assetk.${stamp}@test.local`);
+  const bob = await signUp("Bob", `dv.assetkbob.${stamp}@test.local`);
+  const docId = `dv-asset-k-${stamp}`;
+  const content = "![a](a.png)\n";
+  const hash = createHash("sha256").update(content, "utf8").digest("hex");
+  const created = await jsonRequest("PUT", `/api/docs/${docId}`, owner.token, {
+    name: "assets.md",
+    content,
+    hash,
+    baseVersion: 0,
+  });
+  assert.equal(created.status, 200);
+  await uploadAndLinkAsset(owner.token, docId, "a.png");
+
+  const share = await jsonRequest<{ userId: string }>(
+    "POST",
+    `/api/docs/${docId}/shares`,
+    owner.token,
+    { email: bob.email, role: "viewer" }
+  );
+  const token = ensureShareToken(docId, share.data?.userId as string);
+
+  const view = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
+  assert.equal(view.status, 200);
+  // The HTML serializer entity-encodes the & in an attribute value
+  // (hast-util-to-html writes it as &#x26;), which a browser decodes back to
+  // a literal & when it parses the attribute; the query string still reaches
+  // the server as ref=a.png&k=<token>.
+  assert.match(
+    view.body,
+    new RegExp(`src="/d/${docId}/assets\\?ref=a\\.png&#x26;k=${token}"`)
+  );
 });

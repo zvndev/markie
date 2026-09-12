@@ -23,7 +23,7 @@ import {
   memberForToken,
 } from "./shares.ts";
 import { pendingForToken } from "./pending.ts";
-import { serveAsset } from "./assets.ts";
+import { assetRefsFor, serveAsset } from "./assets.ts";
 import { markieSiteUrl } from "./downloads.ts";
 import { renderAccessRequiredPage, renderSharedDocPage } from "./render.ts";
 
@@ -130,6 +130,10 @@ docView.get("/d/:id", async (c) => {
   // response: the page is served through a rewrite and must carry its own
   // policy.
   c.header("X-Frame-Options", "DENY");
+  const refs = assetRefsFor(docId);
+  const k = c.req.query("k");
+  const assetUrlFor = (ref: string) =>
+    refs.has(ref) ? `/d/${encodeURIComponent(docId)}/assets?ref=${encodeURIComponent(ref)}${k ? `&k=${encodeURIComponent(k)}` : ""}` : null;
   return c.html(
     renderSharedDocPage({
       title: doc.name,
@@ -139,6 +143,7 @@ docView.get("/d/:id", async (c) => {
       sharedBy: inviterName(doc.owner_id),
       canEdit: viewer.canEdit,
       invitedEmail: viewer.invitedEmail ?? null,
+      assetUrlFor,
     })
   );
 });

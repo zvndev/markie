@@ -444,7 +444,14 @@ export async function serveAsset(c: Context, docId: string, ref: string): Promis
       headers: { ETag: etag, "Cache-Control": cacheControl, ...ASSET_SAFETY_HEADERS },
     });
   }
-  const rangeHeader = c.req.header("range");
+  // A ref can be relinked to different bytes while a client holds a partial
+  // copy of the old ones. If-Range is how that client asks for the rest only
+  // if it is still the same representation; when the validator does not match
+  // the answer is the whole thing, never a slice of something else stitched
+  // onto what it already has. A date-form If-Range matches nothing here,
+  // since this route issues no Last-Modified to compare it against.
+  const ifRange = c.req.header("if-range");
+  const rangeHeader = ifRange && !etagMatches(ifRange, etag) ? undefined : c.req.header("range");
   let range: { start: number; end?: number } | undefined;
   if (rangeHeader) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());

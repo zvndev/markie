@@ -123,3 +123,33 @@ test("the /s/ route follows the public token and revocation", async () => {
   res = await app.request(`/s/${token}/assets?ref=a.png`, { headers: H() });
   assert.equal(res.status, 404);
 });
+
+// A ref can be relinked to different bytes while a client holds a partial
+// copy of the old ones. If the resume is answered with a slice of the new
+// object, the client stitches two different files together.
+test("a Range with a stale If-Range is ignored and the whole asset is served", async () => {
+  const path = `/api/docs/${docId}/assets/file?ref=a.png`;
+  const etag = `"${sha(PNG)}"`;
+  const range = { ...H(owner.token), Range: "bytes=2-4" };
+
+  let res = await app.request(path, { headers: { ...range, "If-Range": `"${"0".repeat(64)}"` } });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-range"), null);
+  assert.equal(res.headers.get("content-length"), "10");
+  assert.equal(await res.text(), "0123456789");
+
+  // A date-form If-Range names a validator this route never issues, so it
+  // cannot match either.
+  res = await app.request(path, { headers: { ...range, "If-Range": "Wed, 21 Oct 2026 07:28:00 GMT" } });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), "0123456789");
+
+  // The asset the client actually has: the slice it asked for.
+  res = await app.request(path, { headers: { ...range, "If-Range": etag } });
+  assert.equal(res.status, 206);
+  assert.equal(res.headers.get("content-range"), "bytes 2-4/10");
+  assert.equal(await res.text(), "234");
+  res = await app.request(path, { headers: { ...range, "If-Range": `W/${etag}` } });
+  assert.equal(res.status, 206);
+  assert.equal(await res.text(), "234");
+});

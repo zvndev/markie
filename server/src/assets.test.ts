@@ -405,3 +405,53 @@ test("a fifth concurrent upload from one account is refused", async () => {
     }
   }
 });
+
+// A document that shows one picture three times leaves three candidates
+// naming one object, and a bucket DELETE can wait up to two minutes.
+test("orphan collection deletes one object per hash, however many refs named it", async () => {
+  const id = await makeDoc(owner.token);
+  const bytes = Buffer.from("one-object-three-refs");
+  assert.equal((await upload(owner.token, bytes)).status, 200);
+  const refs = ["a.png", "b.png", "c.png"].map((ref) => ({ ref, hash: sha(bytes) }));
+  assert.equal((await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs })).status, 200);
+
+  const real = fsStore(process.env.ASSETS_DIR!);
+  const deletes: string[] = [];
+  setAssetStoreForTests({ ...real, delete: async (key: string) => { deletes.push(key); return real.delete(key); } });
+  try {
+    assert.equal((await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [] })).status, 200);
+    assert.deepEqual(deletes, [`${owner.id}/${sha(bytes)}`]);
+  } finally {
+    setAssetStoreForTests(real);
+  }
+});
+
+// Serially awaiting every DELETE makes a document with a lot of media hostage
+// to the slowest one, and docs.delete awaits this sweep before it answers.
+test("orphan deletes run four at a time, not one by one", async () => {
+  const id = await makeDoc(owner.token);
+  const many = [0, 1, 2, 3, 4, 5].map((n) => Buffer.from(`bounded-orphan-${n}`));
+  for (const bytes of many) assert.equal((await upload(owner.token, bytes)).status, 200);
+  const refs = many.map((bytes, i) => ({ ref: `o${i}.png`, hash: sha(bytes) }));
+  assert.equal((await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs })).status, 200);
+
+  const real = fsStore(process.env.ASSETS_DIR!);
+  let live = 0, peak = 0;
+  setAssetStoreForTests({
+    ...real,
+    delete: async (key: string) => {
+      live += 1;
+      peak = Math.max(peak, live);
+      await new Promise((r) => setTimeout(r, 5));
+      live -= 1;
+      return real.delete(key);
+    },
+  });
+  try {
+    assert.equal((await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [] })).status, 200);
+    assert.equal(peak, 4);
+    for (const bytes of many) assert.equal(await real.head(`${owner.id}/${sha(bytes)}`), null);
+  } finally {
+    setAssetStoreForTests(real);
+  }
+});

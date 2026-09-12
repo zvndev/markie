@@ -98,20 +98,45 @@ export function assetRefsFor(docId: string): Map<string, AssetRow> {
   return new Map(rows.map((r) => [r.ref, { owner_id: r.owner_id, hash: r.hash, size: r.size, mime: r.mime }]));
 }
 
+// How many storage deletes a single sweep keeps in the air. A bucket DELETE
+// can wait up to two minutes, and docs.delete awaits this sweep before it
+// answers, so a document with a lot of media must not be a queue of them.
+const ORPHAN_DELETE_CONCURRENCY = 4;
+
+// Runs fn over every item with at most `limit` of them in flight.
+async function eachLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
 // Rows in `assets` that no document links any more, removed from the table
 // and from storage. Storage failures are logged, not thrown: the link is
 // already gone, and a leftover object is a cost, not a leak.
+//
+// Candidates are deduplicated first, because a document that shows one
+// picture three times hands this three entries naming one object, and the
+// rows all go before any storage call does, so the database is consistent
+// whatever the bucket does next.
 async function collectOrphans(candidates: { owner_id: string; hash: string }[]): Promise<void> {
-  for (const { owner_id, hash } of candidates) {
+  const unique = new Map<string, { owner_id: string; hash: string }>();
+  for (const candidate of candidates) unique.set(`${candidate.owner_id}/${candidate.hash}`, candidate);
+  const doomed: string[] = [];
+  for (const { owner_id, hash } of unique.values()) {
     const still = db.prepare("SELECT 1 FROM doc_assets WHERE owner_id = ? AND hash = ? LIMIT 1").get(owner_id, hash);
     if (still) continue;
     db.prepare("DELETE FROM assets WHERE owner_id = ? AND hash = ?").run(owner_id, hash);
-    try {
-      await store?.delete(`${owner_id}/${hash}`);
-    } catch (err) {
-      console.error(`asset delete failed for ${owner_id}/${hash}:`, err);
-    }
+    doomed.push(`${owner_id}/${hash}`);
   }
+  await eachLimit(doomed, ORPHAN_DELETE_CONCURRENCY, async (key) => {
+    try {
+      await store?.delete(key);
+    } catch (err) {
+      console.error(`asset delete failed for ${key}:`, err);
+    }
+  });
 }
 
 // Async, not fire-and-forget: a caller that awaits this sees the storage

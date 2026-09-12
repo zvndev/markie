@@ -260,6 +260,18 @@ describe("cloudDocsInDir", () => {
     const rows = registry.cloudDocsInDir("/tmp/report") as FileRow[];
     expect(rows.map((r) => r.cloud_doc_id)).toEqual(["doc-new", "doc-old"]);
   });
+
+  it("finds a cloud-linked file whose name starts with an emoji", () => {
+    // U+FFFF (tried first as the range's upper bound) sorts as EF BF BF in
+    // SQLite's byte-wise BINARY collation; an astral character - an emoji
+    // among them - encodes with a leading byte of F0 or above, which sorts
+    // past that bound, so a row named this way was silently never found.
+    registry.track("/tmp/report/😀photo.png", "😀photo.png", "x");
+    registry.update("/tmp/report/😀photo.png", { cloud_doc_id: "doc-emoji" });
+
+    const rows = registry.cloudDocsInDir("/tmp/report") as FileRow[];
+    expect(rows.map((r) => r.cloud_doc_id)).toEqual(["doc-emoji"]);
+  });
 });
 
 describe("stars", () => {

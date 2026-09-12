@@ -109,6 +109,11 @@ function createAssetCache({ dir, fetchAsset, limitBytes = 2 * 1024 * 1024 * 1024
   }
 
   async function get(cloudId, ref) {
+    // Read synchronously, before the first await: a clear() that lands
+    // while this call is merely suspended inside load() must still bump
+    // the counter ahead of this capture, or the job it starts can never
+    // tell it was signed out from under it.
+    const startedInGeneration = generation;
     await load();
     const key = `${cloudId}\t${ref}`;
     const hit = index.entries[key];
@@ -118,7 +123,6 @@ function createAssetCache({ dir, fetchAsset, limitBytes = 2 * 1024 * 1024 * 1024
       return { path: fileFor(hit.hash), mime: hit.mime, size: hit.size };
     }
     if (inflight.has(key)) return inflight.get(key);
-    const startedInGeneration = generation;
     const job = (async () => {
       try {
         const fetched = await fetchAsset(cloudId, ref);

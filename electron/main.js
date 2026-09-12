@@ -872,7 +872,10 @@ function registerAssetProtocol() {
       const docDir = new URL(request.url).searchParams.get("doc");
       const cloud = docDir ? cloudDocForFolder(docDir, requested) : null;
       if (!cloud) return new Response("Forbidden", { status: 403 });
-      const cached = await assetCache.get(cloud.cloudId, cloud.ref);
+      // load()/save() do real disk I/O and can reject (a full disk, a
+      // permissions problem); a picture this session cannot serve reads the
+      // same whether the cause was "not cached" or "couldn't get to disk".
+      const cached = await assetCache.get(cloud.cloudId, cloud.ref).catch(() => null);
       if (!cached) return new Response("Not found", { status: 404 });
       // requestedMime, not cached.mime: the Content-Type the server sent
       // back is not trusted to decide what this protocol hands the

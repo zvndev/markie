@@ -390,9 +390,14 @@ function list() {
 // list() on every picture request is not something to do per request.
 //
 // `path` is the primary key, so a half-open range on it is an index scan
-// rather than a table scan; ? and ? + "￿" (higher than any realistic
-// path character) bound "the prefix, plus anything". That range alone would
-// also match a sibling folder whose name happens to start with this one
+// rather than a table scan; ? and ? + "\u{10FFFF}" (U+10FFFF, the highest
+// Unicode code point there is) bound "the prefix, plus anything". SQLite
+// compares TEXT as raw UTF-8 bytes, and U+10FFFF's encoding (F4 8F BF BF) is
+// the largest a real character's bytes can start with; U+FFFF (EF BF BF)
+// was tried first and is not: any astral character - an emoji among them -
+// encodes with a leading byte of F0 or above, which sorts past it, so a
+// filename starting with one was never found. That range alone would also
+// match a sibling folder whose name happens to start with this one
 // ("/tmp/report" matching "/tmp/report-extra"), so the dirname check after it
 // is what actually decides.
 //
@@ -407,7 +412,7 @@ function cloudDocsInDir(dir) {
     .prepare(
       "SELECT * FROM files WHERE cloud_doc_id IS NOT NULL AND path >= ? AND path < ? ORDER BY last_opened_at DESC"
     )
-    .all(prefix, prefix + "￿");
+    .all(prefix, prefix + "\u{10FFFF}");
   return rows.filter((r) => canonicalPath(path.dirname(r.path)) === canonicalDir);
 }
 

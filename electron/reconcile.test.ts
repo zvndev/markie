@@ -33,11 +33,12 @@ const sync = {
   },
 };
 let mediaBase: Array<number | undefined>;
+let mediaAnswer: () => Record<string, unknown>;
 const assetSync = {
   pushAssets: async (p: string, _cloudId: string, _content: string, opts?: { baseVersion?: number }) => {
     media.push(p);
     mediaBase.push(opts?.baseVersion);
-    return { ok: true, uploaded: 0, skipped: [] };
+    return mediaAnswer();
   },
 };
 
@@ -52,6 +53,7 @@ beforeEach(() => {
   pushed = [];
   media = [];
   mediaBase = [];
+  mediaAnswer = () => ({ ok: true, uploaded: 0, skipped: [] });
   listing = { docs: [] };
 });
 
@@ -147,6 +149,24 @@ describe("reconcile", () => {
     expect(mediaBase).toEqual([0]);
   });
 
+  // The renderer refreshes its whole library when a pass reports it pushed
+  // something. A steady-state pass pushes nothing: every document's media is
+  // already linked, and counting that as "pushed" made every ten minutes a
+  // forced refetch of the list.
+  it("separates media that was already linked from media it actually sent", async () => {
+    seed({ path: "/d/a.md", cloud_doc_id: "c1", content_hash: sha("a") }, "a");
+    seed({ path: "/d/b.md", cloud_doc_id: "c2", content_hash: sha("b") }, "b");
+    listing = { docs: [{ id: "c1", version: 1, hash: sha("a") }, { id: "c2", version: 1, hash: sha("b") }] };
+    mediaAnswer = () => ({ unchanged: true });
+
+    const r = await createReconciler({ sync, registry, assetSync, fs, sleep: async () => {} }).run();
+
+    expect(r.pushed).toEqual([]);
+    expect(r.mediaPushed).toEqual([]);
+    expect(r.mediaUnchanged.sort()).toEqual(["/d/a.md", "/d/b.md"]);
+    expect(r.errors).toEqual([]);
+  });
+
   it("does at most `limit` documents per pass and carries on next time", async () => {
     for (let i = 0; i < 5; i += 1) seed({ path: `/d/${i}.md`, cloud_doc_id: `c${i}`, sync_state: "unpushed" }, "x");
     listing = { docs: [0, 1, 2, 3, 4].map((i) => ({ id: `c${i}`, version: 1, hash: sha("x") })) };
@@ -160,7 +180,7 @@ describe("reconcile", () => {
     seed({ path: "/d/un.md", cloud_doc_id: "c1", sync_state: "unpushed" }, "x");
     listing = null;
     const r = await createReconciler({ sync, registry, assetSync, fs, sleep: async () => {} }).run();
-    expect(r).toEqual({ pushed: [], mediaPushed: [], skipped: [], errors: [{ path: "*", error: "listing unavailable" }] });
+    expect(r).toEqual({ pushed: [], mediaPushed: [], mediaUnchanged: [], skipped: [], errors: [{ path: "*", error: "listing unavailable" }] });
   });
 
   it("turns a throw while building the listing into an error result instead of rejecting", async () => {
@@ -173,7 +193,7 @@ describe("reconcile", () => {
       },
     };
     const r = await createReconciler({ sync, registry: brokenRegistry, assetSync, fs, sleep: async () => {} }).run();
-    expect(r).toEqual({ pushed: [], mediaPushed: [], skipped: [], errors: [{ path: "*", error: "registry unavailable" }] });
+    expect(r).toEqual({ pushed: [], mediaPushed: [], mediaUnchanged: [], skipped: [], errors: [{ path: "*", error: "registry unavailable" }] });
     expect(pushed).toEqual([]);
   });
 });

@@ -18,7 +18,7 @@ function createReconciler({ sync, registry, assetSync, fs = require("node:fs"), 
   let cursor = 0;
 
   async function run({ limit = 50 } = {}) {
-    const result = { pushed: [], mediaPushed: [], skipped: [], errors: [] };
+    const result = { pushed: [], mediaPushed: [], mediaUnchanged: [], skipped: [], errors: [] };
     let remote;
     let rows;
     // Building the listing is one unit: a throw from either the request or
@@ -84,7 +84,12 @@ function createReconciler({ sync, registry, assetSync, fs = require("node:fs"), 
         const media = await assetSync.pushAssets(row.path, row.cloud_doc_id, content, {
           baseVersion: row.cloud_version ?? 0,
         });
-        if (media && (media.ok || media.unchanged)) result.mediaPushed.push(row.path);
+        // "Pushed" means bytes or refs actually went. A document whose media
+        // was already linked is the steady state, and counting it here made
+        // every pass look like a change, which had the renderer refetch the
+        // whole library every ten minutes for nothing.
+        if (media && media.ok) result.mediaPushed.push(row.path);
+        else if (media && media.unchanged) result.mediaUnchanged.push(row.path);
         else if (media && media.error) result.errors.push({ path: row.path, error: media.error });
       } catch (err) {
         result.errors.push({ path: row.path, error: err && err.message ? err.message : String(err) });

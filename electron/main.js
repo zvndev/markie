@@ -1267,7 +1267,9 @@ async function reconcileIfDue(force = false) {
     // Library draws, and nothing else is going to say so: the pass is
     // fire-and-forget and the server's own listing did not move. Without this
     // an open Cloud panel reported "media pending" until something unrelated
-    // made it look again.
+    // made it look again. Only a pass that actually sent something counts:
+    // mediaUnchanged is the steady state and firing on it would make this a
+    // forced refetch of the whole library every ten minutes.
     if (
       (lastReconcileResult?.pushed?.length || lastReconcileResult?.mediaPushed?.length) &&
       mainWindow &&

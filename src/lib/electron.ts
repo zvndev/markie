@@ -728,6 +728,9 @@ export interface DocUpdate {
 export interface ReconcileResult {
   pushed: string[];
   mediaPushed: string[];
+  // Documents whose media was already linked. Not a change, so nothing
+  // refreshes off it; kept so a pass can still say what it looked at.
+  mediaUnchanged?: string[];
   skipped: { path: string; reason: string }[];
   errors: { path: string; error: string }[];
 }

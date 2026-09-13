@@ -43,14 +43,25 @@ function setDocRole(cloudId, role) {
 
 // Everything a `GET /api/docs` listing says about roles and exposure, recorded
 // in one place so every caller that fetches one (the Library, the update
-// check, reconciliation) leaves the same trace. Only the docs the listing
-// names are touched: one it omits is already read as not this account's.
+// check, reconciliation) leaves the same trace. Roles work as they always
+// have: only the docs the listing names are touched, because one it omits is
+// already read as not this account's. Exposure is stricter, and a doc the
+// listing does not name loses its answer entirely. The listing is complete,
+// so an absent doc is one the server no longer answers for at all (deleted
+// elsewhere, or this account's access revoked), and keeping "nobody else can
+// read it" from the listing before would be the one stale answer that lets a
+// file leave this machine.
 function noteListing(docs) {
   if (!Array.isArray(docs)) return;
+  const named = new Set();
   for (const d of docs) {
     if (!d || !d.id) continue;
+    named.add(d.id);
     setDocRole(d.id, d.shared ? d.role ?? "viewer" : "owner");
     docExposure.set(d.id, d.shared ? true : d.sharedOut !== false);
+  }
+  for (const id of [...docExposure.keys()]) {
+    if (!named.has(id)) docExposure.delete(id);
   }
 }
 

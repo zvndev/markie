@@ -37,19 +37,16 @@ function refEscapes(ref) {
   return ref.split(/[/\\]/).some((segment) => segment === "." || segment === "..");
 }
 
-// Whether the file a reference actually resolved to sits inside the
-// document's own folder. The resolved path is already a realpath
-// (local-assets.js resolves both sides), and this realpaths the folder, so a
-// symlink beside the document cannot point out of it.
-function insideDocFolder(resolvedPath, filePath) {
-  let realDir;
+// The document's own folder, resolved through realpath so a symlink beside
+// the document cannot point out of it. Null when there is no such folder, and
+// nothing is inside a folder that is not there. Read once per push rather
+// than once per reference: a document may name two thousand of them.
+function realDocFolder(filePath) {
   try {
-    realDir = fs.realpathSync(path.dirname(filePath));
+    return fs.realpathSync(path.dirname(filePath));
   } catch {
-    // No folder, nothing is inside it.
-    return false;
+    return null;
   }
-  return localAssets.containedIn(realDir, resolvedPath);
 }
 
 // The answer for a document no listing has covered. Named and typed so the
@@ -132,6 +129,9 @@ function createAssetSync({
     // document they own. So for an exposed document only the files beside it
     // travel: those are the ones that arrived with the document itself.
     const exposed = isExposed(cloudId) !== false;
+    // The resolved path of a reference is already a realpath (local-assets.js
+    // resolves both sides), so this is the other half of the comparison.
+    const docFolder = exposed ? realDocFolder(filePath) : null;
     const entries = [];
     const skipped = [];
     for (const r of resolved) {
@@ -139,7 +139,7 @@ function createAssetSync({
         skipped.push({ ref: r.ref, reason: r.skipped });
         continue;
       }
-      if (exposed && (refEscapes(r.ref) || !insideDocFolder(r.path, filePath))) {
+      if (exposed && (refEscapes(r.ref) || !localAssets.containedIn(docFolder, r.path))) {
         // Same reason string as a reference the local viewer would refuse:
         // to the reader of the synced copy the outcome is the same picture
         // missing, and the Cloud page names either one.

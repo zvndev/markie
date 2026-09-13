@@ -2402,6 +2402,21 @@ describe("what a document's exposure is", () => {
     expect(sync.isExposed("cloud-1")).toBeNull();
   });
 
+  it("forgets a document the next listing does not name", async () => {
+    row("cloud-1");
+    respondWith(
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 4, sharedOut: false }] } },
+      { status: 200, body: { docs: [] } }
+    );
+    await sync.libraryState();
+    expect(sync.isExposed("cloud-1")).toBe(false);
+    // Deleted on another machine, or this account's access revoked. Whatever
+    // the last listing said about it was said about a document the server no
+    // longer answers for, so it goes back to nobody having said.
+    await sync.libraryState();
+    expect(sync.isExposed("cloud-1")).toBeNull();
+  });
+
   it("takes a listing straight from a caller that fetched one itself", () => {
     sync.noteListing([{ id: "cloud-1", sharedOut: false }, { id: "cloud-2", shared: true, role: "editor" }]);
     expect(sync.isExposed("cloud-1")).toBe(false);

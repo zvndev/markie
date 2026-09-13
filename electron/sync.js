@@ -267,11 +267,11 @@ async function syncOn(filePath, name, content) {
   const cloudId = linked ?? crypto.randomUUID();
   const baseVersion = linked ? (row.cloud_version ?? 0) : 0;
   // For a document the server already has this is an ordinary push, so its
-  // media travels ahead of the snapshot that references it, exactly as in
-  // push(). A document the server has never seen is the one exception: both
-  // asset routes answer 404 for a cloud id it does not know, so media sent
-  // ahead of the create was left pending until a reconciliation pass retried
-  // it. That one sends its text first, below.
+  // bytes go up ahead of the snapshot that references them, exactly as in
+  // push(), and the refs are claimed after the text lands. A document the
+  // server has never seen is the one exception: both asset routes answer 404
+  // for a cloud id it does not know, so even the uploads have to wait. That
+  // one sends its text first, below, and stages after it.
   let staged = linked ? await stageMedia(filePath, cloudId, content) : null;
   let media = staged;
   const hash = registry.hashContent(content);

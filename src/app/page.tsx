@@ -1603,16 +1603,16 @@ export default function Home() {
         setShowFind(true);
       }),
       api.onMenuHistory?.(() => setShowHistory(true)),
-      // A background reconciliation pass pushed a document's text or media.
-      // Nothing else reports that: the pass is fire-and-forget, and the
-      // server's own listing does not move when only local media state does.
-      api.onLibraryChanged?.(() => setLibRefreshKey((k) => k + 1)),
       api.onMenuSave?.(() => handlersRef.current.save()),
       api.onMenuSaveAs?.(() => handlersRef.current.saveAs()),
       api.onMenuFork?.(() => handlersRef.current.fork()),
       api.onMenuReveal?.(() => handlersRef.current.reveal()),
       api.onMenuExportHTML?.(() => handlersRef.current.exportHTML()),
       api.onFileOpened?.((data) => handlersRef.current.fileOpened(data)),
+      // A background reconciliation pass pushed a document's text or media.
+      // Nothing else reports that: the pass is fire-and-forget, and the
+      // server's own listing does not move when only local media state does.
+      api.onLibraryChanged?.(() => setLibRefreshKey((k) => k + 1)),
       // Main is holding the window open for us. Settle, then answer, and
       // answer even if settling threw: a renderer that never replies just
       // makes the user wait out the two second cap.

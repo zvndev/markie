@@ -869,10 +869,10 @@ function registerAssetProtocol() {
       // Not here, or not allowed here. A document that lives in the cloud
       // may still have this picture on the server, under the reference the
       // text wrote: relative to the document's folder, or the absolute path
-      // itself when the picture lives outside it.
-      // Untrusted, like every other part of this URL: all it does is choose
-      // which registry row to ask about, and the server decides whether this
-      // session may read that document's media at all.
+      // itself when the picture lives outside it. The document is named by
+      // the request, which makes it untrusted like every other part of this
+      // URL. All it does is choose which registry row to ask about, and the
+      // server decides whether this session may read that document's media.
       const docPath = new URL(request.url).searchParams.get("doc");
       const cloud = docPath ? cloudDocForPath(docPath, requested) : null;
       if (!cloud) return new Response("Forbidden", { status: 403 });
@@ -1268,8 +1268,12 @@ async function reconcileIfDue(force = false) {
     // fire-and-forget and the server's own listing did not move. Without this
     // an open Cloud panel reported "media pending" until something unrelated
     // made it look again.
-    if (lastReconcileResult?.pushed?.length || lastReconcileResult?.mediaPushed?.length) {
-      mainWindow?.webContents.send("library-changed");
+    if (
+      (lastReconcileResult?.pushed?.length || lastReconcileResult?.mediaPushed?.length) &&
+      mainWindow &&
+      !mainWindow.isDestroyed()
+    ) {
+      mainWindow.webContents.send("library-changed");
     }
     return lastReconcileResult;
   } finally {

@@ -95,7 +95,11 @@ function createReconciler({ sync, registry, assetSync, fs = require("node:fs"), 
         // was already linked is the steady state, and counting it here made
         // every pass look like a change, which had the renderer refetch the
         // whole library every ten minutes for nothing.
-        if (media && media.ok) result.mediaPushed.push(row.path);
+        // A refusal settles the row, which is right, but it is not a push:
+        // counting it as one reads as "this document's media went up" and
+        // refreshes the library on the strength of it.
+        if (media && media.refused) result.errors.push({ path: row.path, error: `media refused (${media.refused})` });
+        else if (media && media.ok) result.mediaPushed.push(row.path);
         else if (media && media.unchanged) result.mediaUnchanged.push(row.path);
         else if (media && media.error) result.errors.push({ path: row.path, error: media.error });
       } catch (err) {

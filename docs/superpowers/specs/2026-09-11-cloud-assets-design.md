@@ -130,7 +130,7 @@ The cache is capped at 2 GB; when over, the least recently used entries are dele
 | Server `hash` differs from `content_hash` at the same version (the server lost or never took the write) | `push` the text. |
 | Text current and `assets_state` is not `synced`, or the fingerprint of the current extract differs | `pushAssets`. |
 
-Sequential, 250 ms between documents, at most `limit` documents per pass; the next pass continues with the rest. The result `{ pushed, mediaPushed, skipped, errors }` is sent to the renderer, and the Cloud page shows a per-row "media pending", "file too large: <name>" or "not uploaded: <ref> (outside the document's folder)" note from `assets_state` and `assets_skipped`. No new buttons.
+Sequential, 250 ms between documents, at most `limit` documents per pass; the next pass continues with the rest. The result `{ pushed, mediaPushed, skipped, errors }` is sent to the renderer, and the Cloud page shows a per-row note from `assets_state` and `assets_skipped`: "media pending", "media refused (<status>)" when the server turned the link body down, "file too large: <name>", "not uploaded: <ref> (outside the document's folder)" and "not uploaded: <ref> (type)", in that order. No new buttons.
 
 ## Security
 

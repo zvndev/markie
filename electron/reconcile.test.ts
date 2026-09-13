@@ -278,3 +278,19 @@ describe("a link refused while the session was stale", () => {
     expect(rows.get("/d/a.md")!.assets_state).toBe("synced");
   });
 });
+
+// A refused link settles the row, which is right, but it is not a push. It
+// used to land in mediaPushed, which reads as "this document's media went up"
+// and fires a library refresh on the strength of it.
+describe("a link the server refused", () => {
+  it("is reported as an error, not as media pushed", async () => {
+    seed({ path: "/d/a.md", cloud_doc_id: "c1", content_hash: sha("ok"), assets_state: "pending" }, "ok");
+    listing = { docs: [{ id: "c1", version: 1, hash: sha("ok") }] };
+    mediaAnswer = () => ({ ok: true, uploaded: 0, refused: 413, skipped: [{ ref: "*", reason: "refused", status: 413 }] });
+
+    const r = await createReconciler({ sync, registry, assetSync, fs, sleep: async () => {} }).run();
+
+    expect(r.mediaPushed).toEqual([]);
+    expect(r.errors).toEqual([{ path: "/d/a.md", error: "media refused (413)" }]);
+  });
+});

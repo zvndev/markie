@@ -415,6 +415,13 @@ function MediaNote({ item }: { item: LibraryItem }) {
   if (tooLarge) notes.push(`file too large: ${tooLarge.ref}`);
   const outside = media.skipped?.find((s) => s.reason === "outside");
   if (outside) notes.push(`not uploaded: ${outside.ref} (outside the document's folder)`);
+  // A picture whose stored bytes are not the type its name claims. The server
+  // will not serve it under that name, so it is a file Markie draws here and
+  // the reader of the synced copy does not get, which is worth as much
+  // explaining as one that sits outside the folder. Renaming it back, or
+  // giving it the extension its bytes really are, is the fix.
+  const wrongType = media.skipped?.find((s) => s.reason === "type");
+  if (wrongType) notes.push(`not uploaded: ${wrongType.ref} (type)`);
   if (notes.length === 0) return null;
   return (
     <div className="text-[10px] text-muted pl-5 truncate">{notes.join(" · ")}</div>

@@ -240,7 +240,7 @@ describe("a row's media note", () => {
     expect(await screen.findByText("media pending")).toBeInTheDocument();
   });
 
-  it("names the picture that was too large to sync, and stays quiet about other skip reasons", async () => {
+  it("names the picture that was too large to sync, and the one whose type will not serve", async () => {
     renderView({
       items: [
         synced({
@@ -254,8 +254,9 @@ describe("a row's media note", () => {
         }),
       ],
     });
-    expect(await screen.findByText("file too large: diagram.png")).toBeInTheDocument();
-    expect(screen.queryByText(/clip\.mov/)).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("file too large: diagram.png · not uploaded: clip.mov (type)")
+    ).toBeInTheDocument();
   });
 
   it("finds the oversized picture behind a skip of some other kind", async () => {
@@ -276,20 +277,21 @@ describe("a row's media note", () => {
       ],
     });
     // The oversized file is named whatever else is in the list ahead of it,
-    // and the reference left outside the folder is named after it.
+    // and the other two reasons are named after it in their own order.
     expect(
       await screen.findByText(
-        "file too large: diagram.png · not uploaded: elsewhere.png (outside the document's folder)"
+        "file too large: diagram.png · not uploaded: elsewhere.png (outside the document's folder) · not uploaded: clip.mov (type)"
       )
     ).toBeInTheDocument();
   });
 
-  it("stays quiet when nothing was skipped for being too large", async () => {
+  it("stays quiet when there is nothing to say", async () => {
     renderView({
-      items: [synced({ media: { state: "synced", skipped: [{ ref: "clip.mov", reason: "type" }] } })],
+      items: [synced({ media: { state: "synced", skipped: [{ ref: "notes.md", reason: "count" }] } })],
     });
     await screen.findByText("synced.md");
     expect(screen.queryByText(/file too large/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/not uploaded/)).not.toBeInTheDocument();
   });
 
   // The server refused the whole link body, which no retry of the same text
@@ -349,9 +351,57 @@ describe("a row's media note", () => {
       ],
     });
     expect(
-      await screen.findByText("not uploaded: ../notes/board.png (outside the document's folder)")
+      await screen.findByText(
+        "not uploaded: ../notes/board.png (outside the document's folder) · not uploaded: clip.mov (type)"
+      )
     ).toBeInTheDocument();
     expect(screen.queryByText(/plan\.png/)).not.toBeInTheDocument();
+  });
+
+  // After the rename fix a `type` skip is a file Markie draws locally and the
+  // reader of the synced copy does not get, which is worth exactly as much
+  // explaining as one that sits outside the folder. Before that it only ever
+  // meant a reference the local viewer would refuse too, which is why it used
+  // to stay quiet.
+  it("names the first picture whose type does not match the name it is stored under", async () => {
+    renderView({
+      items: [
+        synced({
+          media: {
+            state: "synced",
+            skipped: [
+              { ref: "logo.gif", reason: "type" },
+              { ref: "favicon.ico", reason: "type" },
+            ],
+          },
+        }),
+      ],
+    });
+    expect(await screen.findByText("not uploaded: logo.gif (type)")).toBeInTheDocument();
+    expect(screen.queryByText(/favicon\.ico/)).not.toBeInTheDocument();
+  });
+
+  it("orders the notes: refused, then size, then outside, then type", async () => {
+    renderView({
+      items: [
+        synced({
+          media: {
+            state: "synced",
+            skipped: [
+              { ref: "logo.gif", reason: "type" },
+              { ref: "../notes/board.png", reason: "outside" },
+              { ref: "diagram.png", reason: "size" },
+              { ref: "*", reason: "refused", status: 400 },
+            ],
+          },
+        }),
+      ],
+    });
+    expect(
+      await screen.findByText(
+        "media refused (400) · file too large: diagram.png · not uploaded: ../notes/board.png (outside the document's folder) · not uploaded: logo.gif (type)"
+      )
+    ).toBeInTheDocument();
   });
 
   it("puts the oversized picture first and the one outside the folder after it", async () => {

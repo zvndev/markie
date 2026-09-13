@@ -8,6 +8,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-13
+
 ### Added
 
 - **Pictures, video and audio travel with a synced document.** A file the

@@ -12,7 +12,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
-import { accessLevel, canEditLevel } from "./shares.ts";
+import { accessLevel, canEditLevel, isSharedOut } from "./shares.ts";
 import { assetMimeFor, ASSET_EXTENSIONS } from "./asset-mime.ts";
 import { assetStore, type AssetStore } from "./storage.ts";
 
@@ -188,7 +188,36 @@ async function requireEditor(c: Context, docId: string) {
   const level = accessLevel(docId, user.id);
   if (!docExists(docId) || level === null) return { error: c.json({ error: "not found" }, 404) };
   if (!canEditLevel(level)) return { error: c.json({ error: "forbidden" }, 403) };
-  return { user };
+  return { user, level };
+}
+
+// A reference nothing should ever be stored under, whoever is asking. None of
+// these is a name a renderer could resolve: they are the shapes that turn a
+// ref into something else downstream, where it is a Map key, a SQL parameter
+// and a query-string value. The cap is on bytes because that is what is
+// stored, and it matches the client's own bound on a bare destination run
+// (electron/doc-assets.js).
+function refIsMalformed(ref: string): boolean {
+  if (!ref) return true;
+  if (Buffer.byteLength(ref, "utf8") > 2048) return true;
+  // Spelled out rather than a regex with literal control characters in it,
+  // which every linter and half the editors in the world mangle.
+  for (let i = 0; i < ref.length; i += 1) {
+    const code = ref.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+// A reference that names something outside the document's own folder. This is
+// the shape the critical attack needs: a co-editor writes `../notes/x.png`
+// into a document's text, and the machine that syncs it resolves that against
+// its own disk and uploads whatever is there. Both separators are considered,
+// because a ref is written by hand and Windows text reaches the same table.
+function refEscapes(ref: string): boolean {
+  if (ref.startsWith("/") || ref.startsWith("\\")) return true;
+  if (/^[A-Za-z]:/.test(ref)) return true;
+  return ref.split(/[/\\]/).some((segment) => segment === "." || segment === "..");
 }
 
 // The decisive account-cap check: the real, measured size, checked and
@@ -387,15 +416,26 @@ assetsApi.put("/docs/:id/assets", async (c) => {
   if (baseVersion !== undefined && (typeof baseVersion !== "number" || !Number.isInteger(baseVersion) || baseVersion < 0)) {
     return c.json({ error: "bad request" }, 400);
   }
+  // Whether anybody but the caller can read this document at the moment these
+  // links are claimed. An owner alone with their document wrote every word of
+  // it themselves, so a reference that climbs out of its folder is their own
+  // repository layout (the spec's `../assets/logo.png`). Anyone else, and any
+  // owner whose document has a member, an invite or a public link, is a
+  // document whose text a second party can write, and the reference stops
+  // being evidence of anything. Read once, before the loop: one link call is
+  // one decision about one document.
+  const exposed = gate.level !== "owner" || isSharedOut(docId);
   const current = assetRefsFor(docId);
   const next = new Map<string, { owner_id: string; hash: string; size: number }>();
   let linked = 0, kept = 0, dropped = 0;
   for (const entry of body!.refs as { ref?: unknown; hash?: unknown }[]) {
     const ref = typeof entry?.ref === "string" ? entry.ref : "";
-    if (!ref || ref.length > 2048) {
-      dropped += 1;
-      continue;
-    }
+    // Refused, not dropped: a client sending one of these is either broken or
+    // hostile, and answering 200 to a body the server silently emptied tells
+    // neither of them anything. Checked before the hash is looked up, so the
+    // route cannot be used to probe which hashes an account holds.
+    if (refIsMalformed(ref)) return c.json({ error: "bad ref" }, 400);
+    if (exposed && refEscapes(ref)) return c.json({ error: "bad ref" }, 400);
     if (typeof entry.hash === "string") {
       if (!HASH.test(entry.hash)) return c.json({ error: "bad hash" }, 400);
       const own = db.prepare("SELECT size FROM assets WHERE owner_id = ? AND hash = ?").get(gate.user.id, entry.hash) as { size: number } | undefined;

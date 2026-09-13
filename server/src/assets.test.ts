@@ -551,3 +551,92 @@ test("re-uploading bytes the account already holds keeps them out of the sweep",
   assert.ok(db.prepare("SELECT 1 FROM assets WHERE owner_id = ? AND hash = ?").get(owner.id, sha(bytes)));
   assert.deepEqual(await fsStore(process.env.ASSETS_DIR!).head(`${owner.id}/${sha(bytes)}`), { size: bytes.length });
 });
+
+// ── The shape of a reference ───────────────────────────────────────────────
+// Who wrote the reference decides what may be uploaded under it. A reference
+// that climbs out of the document's own folder is the one shape an attacker
+// needs: a co-editor writes it into the text, and the machine that syncs the
+// document resolves it against its own disk. Markie refuses to stage those
+// (electron/asset-sync.js); this is the server refusing to store them, so a
+// client that does not have the rule, or has been made to lose it, still
+// cannot land the attack.
+const ESCAPING = ["../x.png", "./x.png", "a/../../x.png", "/abs/x.png", "\\abs\\x.png", "C:\\Users\\x.png", "\\\\server\\share\\x.png"];
+
+test("an editor cannot link a reference that leaves the document's folder", async () => {
+  const id = await makeDoc(owner.token);
+  const bytes = Buffer.from("editor-escaping-ref");
+  await json("POST", `/api/docs/${id}/shares`, owner.token, { email: "editor@markie.test", role: "editor" });
+  assert.equal((await upload(editor.token, bytes)).status, 200);
+  for (const ref of ESCAPING) {
+    const r = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref, hash: sha(bytes) }] });
+    assert.equal(r.status, 400, `${ref} should be refused`);
+    assert.equal(r.data.error, "bad ref");
+  }
+  // A reference beside the document is the ordinary case and still works.
+  const ok = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref: "x.png", hash: sha(bytes) }] });
+  assert.equal(ok.status, 200);
+  assert.deepEqual([...assetRefsFor(id).keys()], ["x.png"]);
+});
+
+test("the owner of a shared-out document cannot link one either, and a private document's owner can", async () => {
+  const id = await makeDoc(owner.token);
+  const bytes = Buffer.from("owner-repository-pattern");
+  assert.equal((await upload(owner.token, bytes)).status, 200);
+  // Private: the spec's repository pattern, where the document and its assets
+  // folder are checked in beside each other and there is no second party.
+  let r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "../assets/logo.png", hash: sha(bytes) }] });
+  assert.equal(r.status, 200);
+  assert.deepEqual([...assetRefsFor(id).keys()], ["../assets/logo.png"]);
+  // The moment somebody else can read it, the same reference is refused.
+  await json("POST", `/api/docs/${id}/shares`, owner.token, { email: "editor@markie.test", role: "viewer" });
+  r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "../assets/logo.png", hash: sha(bytes) }] });
+  assert.equal(r.status, 400);
+  assert.equal(r.data.error, "bad ref");
+  // And the previous set is untouched by the refusal.
+  assert.deepEqual([...assetRefsFor(id).keys()], ["../assets/logo.png"]);
+});
+
+test("a public link alone makes the owner's document shared out for this check", async () => {
+  const id = await makeDoc(owner.token);
+  const bytes = Buffer.from("public-link-escaping-ref");
+  assert.equal((await upload(owner.token, bytes)).status, 200);
+  assert.equal((await json("POST", `/api/docs/${id}/public-link`, owner.token, {})).status, 200);
+  const r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "../secret.png", hash: sha(bytes) }] });
+  assert.equal(r.status, 400);
+  assert.equal(r.data.error, "bad ref");
+});
+
+// These are refused for everyone, private document or not: none of them is a
+// reference any renderer could resolve, and a ref is written into a header
+// name, a query string and a Map key downstream.
+test("a malformed reference is refused whoever is asking", async () => {
+  const id = await makeDoc(owner.token);
+  const bytes = Buffer.from("malformed-ref-bytes");
+  assert.equal((await upload(owner.token, bytes)).status, 200);
+  const malformed = ["", "a\u0000b.png", "a\rb.png", "a\nb.png", "a\u007fb.png", `${"n".repeat(2049)}.png`];
+  for (const ref of malformed) {
+    const r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref, hash: sha(bytes) }] });
+    assert.equal(r.status, 400, `${JSON.stringify(ref)} should be refused`);
+    assert.equal(r.data.error, "bad ref");
+  }
+  // A ref missing from the entry altogether is the same malformed body.
+  assert.equal((await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ hash: sha(bytes) }] })).status, 400);
+  // 2048 bytes exactly is still allowed, and a multi-byte character counts
+  // its bytes: the cap is on what is stored, not on what JavaScript counts.
+  const long = `${"n".repeat(2044)}.png`;
+  assert.equal(Buffer.byteLength(long), 2048);
+  assert.equal((await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: long, hash: sha(bytes) }] })).status, 200);
+  const wide = `${"é".repeat(1023)}.png`;
+  assert.equal(Buffer.byteLength(wide), 2050);
+  assert.equal((await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: wide, hash: sha(bytes) }] })).status, 400);
+});
+
+// The refusal has to happen before the hash is looked up, or an editor could
+// still use the route to ask which hashes their account holds.
+test("an escaping reference with no hash at all is refused too", async () => {
+  const id = await makeDoc(owner.token);
+  await json("POST", `/api/docs/${id}/shares`, owner.token, { email: "editor@markie.test", role: "editor" });
+  const r = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref: "../kept.png" }] });
+  assert.equal(r.status, 400);
+  assert.equal(r.data.error, "bad ref");
+});

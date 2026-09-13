@@ -156,6 +156,40 @@ export function sharedDocsFor(userId: string) {
   }>;
 }
 
+// Owned, non-deleted docs anybody else can reach: a member, an invite still
+// waiting for an address to become an account, or a live public link. The
+// listing reports this per document, because the desktop client decides from
+// it what a document's references are allowed to pull off this machine. An
+// owned document nobody else can reach is the only place a reference outside
+// the document's own folder still travels; the moment somebody else can read
+// the document, whoever wrote the reference stops being certainly its owner.
+export function sharedOutDocIds(userId: string): Set<string> {
+  const rows = db
+    .prepare(
+      `SELECT d.id FROM docs d
+       WHERE d.owner_id = ? AND d.deleted_at IS NULL
+         AND ( EXISTS (SELECT 1 FROM shares s WHERE s.doc_id = d.id)
+            OR EXISTS (SELECT 1 FROM pending_shares p WHERE p.doc_id = d.id)
+            OR EXISTS (SELECT 1 FROM public_links l WHERE l.doc_id = d.id) )`
+    )
+    .all(userId) as Array<{ id: string }>;
+  return new Set(rows.map((r) => r.id));
+}
+
+// The same question about one document, asked without naming an owner: the
+// link route needs it for the document in hand, whoever is calling.
+export function isSharedOut(docId: string): boolean {
+  return !!db
+    .prepare(
+      `SELECT 1 FROM docs d
+       WHERE d.id = ? AND d.deleted_at IS NULL
+         AND ( EXISTS (SELECT 1 FROM shares s WHERE s.doc_id = d.id)
+            OR EXISTS (SELECT 1 FROM pending_shares p WHERE p.doc_id = d.id)
+            OR EXISTS (SELECT 1 FROM public_links l WHERE l.doc_id = d.id) )`
+    )
+    .get(docId);
+}
+
 // Owned, non-deleted docs that have at least one member or pending invite —
 // the "shared by me" tab. Counts members and pending invites separately.
 export function docsSharedByMe(userId: string) {

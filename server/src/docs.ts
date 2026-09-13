@@ -7,6 +7,7 @@ import {
   canReadLevel,
   sharedDocsFor,
   docsSharedByMe,
+  sharedOutDocIds,
   removeDocShares,
 } from "./shares.ts";
 import { claimPendingInvites, removeDocPending } from "./pending.ts";
@@ -77,8 +78,15 @@ docs.get("/", async (c) => {
       "SELECT id, name, version, hash, updated_at FROM docs WHERE owner_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC"
     )
     .all(user.id) as Omit<DocRow, "owner_id" | "content" | "deleted_at">[];
+  // Whether anybody else can reach each owned document. Markie reads this to
+  // decide what a document's references may pull off the machine it is on:
+  // once a second party can read the document, a reference in its text is no
+  // longer certainly the owner's own words, so only files beside the document
+  // travel. See sharedOutDocIds.
+  const out = sharedOutDocIds(user.id);
+  const owned = rows.map((d) => ({ ...d, sharedOut: out.has(d.id) }));
   const shared = sharedDocsFor(user.id).map((d) => ({ ...d, shared: true }));
-  return c.json({ docs: [...rows, ...shared] });
+  return c.json({ docs: [...owned, ...shared] });
 });
 
 // Owned docs I've shared with people — the "shared by me" tab. Registered

@@ -45,7 +45,7 @@ export function fsStore(dir: string): AssetStore {
     return full;
   };
   return {
-    async put(key, body, _size, _mime) {
+    async put(key, body) {
       const full = pathFor(key);
       await mkdir(dirname(full), { recursive: true });
       const tmp = `${full}.part`;

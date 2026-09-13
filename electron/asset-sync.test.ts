@@ -843,3 +843,57 @@ describe("a document whose references would serialise past the body budget", () 
     expect((calls[1].body as { refs: unknown[] }).refs).toHaveLength(3);
   });
 });
+
+// The client's refEscapes and the server's have to be the same function, or
+// the client stages something the link route answers 400 to, and 400 is
+// terminal: the document's media switches off in one pass. The server decodes
+// a reference before judging it and the client did not, so a directory
+// literally named `%2e%2e` beside a document was the gap. Markie's own
+// extraction percent-decodes once, so that is the reference a document
+// written as `%252e%252e/x.png` actually produces.
+describe("a reference that only becomes an escape once it is decoded", () => {
+  it("is refused on the client the way the link route refuses it", async () => {
+    const { root, docPath, grants: wide } = exposedFixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    // A real directory of that name, sitting inside the document's folder, so
+    // nothing else about the reference stops it: it resolves, it is media,
+    // and it is physically contained.
+    mkdirSync(path.join(root, "docs", "%2e%2e"));
+    writeFileSync(path.join(root, "docs", "%2e%2e", "x.png"), "trap");
+    const { api, calls } = fakeApi([
+      { status: 200, data: { missing: [sha("xxxx")] } },
+      { status: 200, data: { ok: true } },
+      { status: 200, data: { linked: 1, kept: 0, dropped: 0, droppedRefs: [] } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants: wide, sleep: async () => {}, isExposed: () => true });
+
+    const result = (await pushAssets(docPath, "c1", "![](%252e%252e/x.png)\n![](%25252e%25252e/x.png)\n![](x.png)\n")) as PushResult;
+
+    // Neither spelling is in the body, so neither can be the entry the server
+    // turns the whole body down for.
+    expect(calls[2].body).toEqual({ refs: [{ ref: "x.png", hash: sha("xxxx") }] });
+    expect(result.skipped).toEqual([
+      { ref: "%2e%2e/x.png", reason: "outside" },
+      { ref: "%252e%252e/x.png", reason: "outside" },
+    ]);
+  });
+
+  it("leaves a name with a stray percent in it alone", async () => {
+    const { root, docPath, grants: wide } = exposedFixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    // decodeURIComponent throws on this, which must be a reference judged as
+    // written rather than a push that falls over.
+    writeFileSync(path.join(root, "docs", "50%done.png"), "pct");
+    const { api, calls } = fakeApi([
+      { status: 200, data: { missing: [sha("pct")] } },
+      { status: 200, data: { ok: true } },
+      { status: 200, data: { linked: 1, kept: 0, dropped: 0, droppedRefs: [] } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants: wide, sleep: async () => {}, isExposed: () => true });
+
+    const result = (await pushAssets(docPath, "c1", "![](50%25done.png)\n")) as PushResult;
+
+    expect(result.skipped).toEqual([]);
+    expect(calls[2].body).toEqual({ refs: [{ ref: "50%done.png", hash: sha("pct") }] });
+  });
+});

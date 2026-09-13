@@ -62,7 +62,27 @@ const LINK_ENTRY_BYTES = 83;
 // Both separators count, because a reference is written by hand and Windows
 // text reaches the same check. Nothing here rewrites it: the reference is
 // staged and linked exactly as the document wrote it.
-function refEscapes(ref) {
+function refEscapes(raw) {
+  // Read as the path the reference means, not as the characters it is spelt
+  // with, and unwrapped until it stops changing: `%2e%2e/x.png` is `../x.png`
+  // to anything that resolves it, and `%252e%252e/x.png` is one decode away
+  // from that. Markie's own extraction decodes once, so `%2e%2e/x.png` is the
+  // reference a document written the second way actually produces, and a
+  // directory literally named `%2e%2e` beside a document is what made this a
+  // reachable disagreement rather than a theoretical one. Bounded, and a
+  // reference whose name really does contain a stray percent does not decode
+  // and is judged as written.
+  let ref = raw;
+  for (let pass = 0; pass < 3; pass += 1) {
+    let decoded;
+    try {
+      decoded = decodeURIComponent(ref);
+    } catch {
+      break;
+    }
+    if (decoded === ref) break;
+    ref = decoded;
+  }
   if (ref.startsWith("/") || ref.startsWith("\\")) return true;
   if (/^[A-Za-z]:/.test(ref)) return true;
   const stack = [];

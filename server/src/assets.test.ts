@@ -844,3 +844,21 @@ test("a bare escaping reference is named in the response as escaping", async () 
   // are named.
   assert.deepEqual(r.data.droppedRefs, [{ ref: "../y.png", reason: "escaping" }]);
 });
+
+// A ref is stored and matched exactly as written, and refEscapes reads it as
+// a path, so it has to read the path the reference actually means.
+test("an escaping reference spelt with percent escapes is still an escaping reference", async () => {
+  const id = await makeDoc(owner.token);
+  const bytes = Buffer.from("percent-encoded-traversal");
+  assert.equal((await upload(editor.token, bytes)).status, 200);
+  await json("POST", `/api/docs/${id}/shares`, owner.token, { email: "editor@markie.test", role: "editor" });
+  for (const ref of ["%2e%2e/x.png", "%2E%2E/x.png", "..%2fx.png", "%2e%2e%2fx.png", "a/%2e%2e/%2e%2e/x.png", "%2fabs%2fx.png"]) {
+    const r = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref, hash: sha(bytes) }] });
+    assert.equal(r.status, 400, `${ref} should be refused`);
+    assert.equal(r.data.error, "bad ref");
+  }
+  // A stray percent is not an escape and is not a reason to refuse a file
+  // whose name really does contain one.
+  const ok = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref: "50% done.png", hash: sha(bytes) }] });
+  assert.equal(ok.status, 200);
+});

@@ -246,7 +246,19 @@ function refIsMalformed(ref: string): boolean {
 // Nothing here rewrites the reference. It is stored, matched and served
 // exactly as the document wrote it; this only decides whether it may be
 // stored at all.
-function refEscapes(ref: string): boolean {
+function refEscapes(raw: string): boolean {
+  // Read as the path the reference means, not as the characters it is spelt
+  // with: `%2e%2e/x.png` is `../x.png` to anything that resolves it, and the
+  // client percent-decodes every reference before it sends one, so this is
+  // the shape only a client that is not Markie would send. A reference whose
+  // name really does contain a stray percent does not decode, and a name is
+  // not a reason to refuse a file.
+  let ref = raw;
+  try {
+    ref = decodeURIComponent(raw);
+  } catch {
+    ref = raw;
+  }
   if (ref.startsWith("/") || ref.startsWith("\\")) return true;
   if (/^[A-Za-z]:/.test(ref)) return true;
   const stack: string[] = [];

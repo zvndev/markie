@@ -2238,6 +2238,11 @@ describe("media and text push order", () => {
       media: { pending: true, error: "media push failed (disk full)" },
     });
     expect(rows.get("/docs/c.md")!.sync_state).toBe("synced");
+    // Same as the throwing link below. A stat that raced a deleted file or a
+    // read error out of hashFile would otherwise leave the row claiming its
+    // media is current against a fingerprint that was never recomputed, and
+    // reconcile only revisits rows that say pending.
+    expect(rows.get("/docs/c.md")!.assets_state).toBe("pending");
   });
 
   it("does not let a throwing link take the text push down with it", async () => {

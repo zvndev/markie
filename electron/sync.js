@@ -237,6 +237,12 @@ async function stageMedia(filePath, cloudId, content) {
   try {
     return await assetSync.stageAssets(filePath, cloudId, content);
   } catch (err) {
+    // Same as linkMedia's catch below. stageAssets throwing (a file that
+    // vanished between resolving the reference and stat'ing it, a read error
+    // out of hashFile) leaves the row claiming its media is current against a
+    // fingerprint nothing recomputed, and reconcile only revisits rows that
+    // say pending.
+    registry.update(filePath, { assets_state: "pending" });
     return mediaFailure(err);
   }
 }

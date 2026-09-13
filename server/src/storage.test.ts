@@ -18,6 +18,15 @@ test("assetMimeFor knows the allow-list and nothing else", () => {
   assert.equal(assetMimeFor("evil.html"), null);
 });
 
+// The table says it is kept in step with electron/local-assets.js, and these
+// are the two extensions where it was not: Markie draws an .m4v as video/mp4
+// and an .opus as audio/ogg, and those are the types it declares when it
+// uploads one.
+test("assetMimeFor answers with the types Markie itself uses", () => {
+  assert.equal(assetMimeFor("clip.m4v"), "video/mp4");
+  assert.equal(assetMimeFor("voice.opus"), "audio/ogg");
+});
+
 async function collect(stream: ReadableStream<Uint8Array>): Promise<Buffer> {
   const parts: Uint8Array[] = [];
   for await (const chunk of stream as never as AsyncIterable<Uint8Array>) parts.push(chunk);

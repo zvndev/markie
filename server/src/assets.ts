@@ -464,8 +464,16 @@ assetsApi.put("/docs/:id/assets", async (c) => {
     if (exposed && refEscapes(ref)) return c.json({ error: "bad ref" }, 400);
     if (typeof entry.hash === "string") {
       if (!HASH.test(entry.hash)) return c.json({ error: "bad hash" }, 400);
-      const own = db.prepare("SELECT size FROM assets WHERE owner_id = ? AND hash = ?").get(gate.user.id, entry.hash) as { size: number } | undefined;
+      const own = db.prepare("SELECT size, mime FROM assets WHERE owner_id = ? AND hash = ?").get(gate.user.id, entry.hash) as { size: number; mime: string } | undefined;
       if (!own) return c.json({ error: "unknown asset", hash: entry.hash }, 400);
+      // The upload route takes the type from the client and only checks that
+      // it is in the allow-list; the reference it is later linked under is
+      // never consulted, so HTML bytes declared image/svg+xml were stored and
+      // served back under the reference a.png. asset-mime.ts already maps
+      // extension to mime, so the two can simply be made to agree. A
+      // reference whose extension names no type at all cannot carry a hash
+      // either: nothing could serve it honestly.
+      if (assetMimeFor(ref) !== own.mime) return c.json({ error: "mime mismatch", ref }, 400);
       next.set(ref, { owner_id: gate.user.id, hash: entry.hash, size: own.size });
       linked += 1;
     } else if (current.has(ref)) {

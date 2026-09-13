@@ -658,3 +658,52 @@ test("link refuses a reference set longer than the cap, and the cap itself still
   // The refusal is a refusal: the document's set is untouched.
   assert.equal(assetRefsFor(id).size, 0);
 });
+
+// The upload route takes the Content-Type from the client and checks only
+// that it is in the allow-list; the reference it is later linked under is
+// never consulted. So HTML bytes declared image/svg+xml were stored and
+// served back as image/svg+xml under the reference a.png. On the web that is
+// contained by nosniff and the sandboxing CSP, and on the desktop the
+// protocol handler uses the requested path's extension rather than the
+// server's type, which is right and means the two sides label the same bytes
+// differently. asset-mime.ts already maps extension to mime, so the check is
+// free, and this is the one place a stored object's declared type is taken on
+// the client's word.
+test("link refuses an entry whose stored type is not the type its reference names", async () => {
+  const id = await makeDoc(owner.token);
+  const svg = Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'></svg>");
+  assert.equal((await upload(owner.token, svg, sha(svg), "image/svg+xml")).status, 200);
+  // The bytes really are this account's, so nothing else refuses them.
+  let r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "a.png", hash: sha(svg) }] });
+  assert.equal(r.status, 400);
+  assert.deepEqual(r.data, { error: "mime mismatch", ref: "a.png" });
+  assert.equal(assetRefsFor(id).size, 0);
+  // Under the reference that does name its type, it links.
+  r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "a.svg", hash: sha(svg) }] });
+  assert.equal(r.status, 200);
+  assert.deepEqual([...assetRefsFor(id).keys()], ["a.svg"]);
+  // The table's deliberate pairings are pairings, not drift: .m4v is
+  // video/mp4 and .opus is audio/ogg, in step with electron/local-assets.js.
+  const clip = Buffer.from("not really a movie");
+  assert.equal((await upload(owner.token, clip, sha(clip), "video/mp4")).status, 200);
+  r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "clip.m4v", hash: sha(clip) }] });
+  assert.equal(r.status, 200);
+});
+
+test("a reference whose extension names no type carries no hash", async () => {
+  const id = await makeDoc(owner.token);
+  const bytes = Buffer.from("typeless-ref-bytes");
+  assert.equal((await upload(owner.token, bytes)).status, 200);
+  for (const ref of ["README", "notes.txt", "a.png.exe"]) {
+    const r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref, hash: sha(bytes) }] });
+    assert.equal(r.status, 400, `${ref} should be refused with a hash`);
+    assert.deepEqual(r.data, { error: "mime mismatch", ref });
+  }
+  // The same references bare are the ordinary case: the document names a
+  // local file the push could not resolve, and the server keeps nothing.
+  const r = await json("PUT", `/api/docs/${id}/assets`, owner.token, {
+    refs: [{ ref: "README" }, { ref: "notes.txt" }, { ref: "a.png.exe" }],
+  });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data, { linked: 0, kept: 0, dropped: 3 });
+});

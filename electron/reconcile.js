@@ -68,7 +68,13 @@ function createReconciler({ sync, registry, assetSync, fs = require("node:fs"), 
           // push already sent the media (Task 7); nothing more to do here.
           continue;
         }
-        const media = await assetSync.pushAssets(row.path, row.cloud_doc_id, content);
+        // The version this pass's listing agreed on. Another device can
+        // advance the document between that listing and this call; without a
+        // base version the link would replace the newer snapshot's references
+        // with this device's stale set, and with one the server refuses it.
+        const media = await assetSync.pushAssets(row.path, row.cloud_doc_id, content, {
+          baseVersion: row.cloud_version ?? 0,
+        });
         if (media && (media.ok || media.unchanged)) result.mediaPushed.push(row.path);
         else if (media && media.error) result.errors.push({ path: row.path, error: media.error });
       } catch (err) {

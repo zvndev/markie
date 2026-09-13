@@ -219,15 +219,37 @@ let assetSync = null;
 function setAssetSync(next) {
   assetSync = next;
 }
-// `baseVersion` is the document version the text PUT around this call uses,
-// so the server commits the refs and the text against the same snapshot.
-async function pushMedia(filePath, cloudId, content, baseVersion) {
+const mediaFailure = (err) => ({ pending: true, error: `media push failed (${err && err.message ? err.message : err})` });
+
+// Everything up to and including the uploads. Safe before the text PUT: the
+// server keeps an uploaded asset nothing points at for an hour, so bytes can
+// wait for a snapshot that may never land.
+async function stageMedia(filePath, cloudId, content) {
   if (!assetSync) return null;
   try {
-    return await assetSync.pushAssets(filePath, cloudId, content, { baseVersion });
+    return await assetSync.stageAssets(filePath, cloudId, content);
   } catch (err) {
-    return { pending: true, error: `media push failed (${err && err.message ? err.message : err})` };
+    return mediaFailure(err);
   }
+}
+
+// What the document points at, committed only once its text has landed, and
+// against the version that PUT returned. Sent earlier, a link that succeeded
+// in front of a text PUT that failed would leave the server's old text beside
+// a media set that no longer holds its pictures.
+async function linkMedia(filePath, cloudId, staged, baseVersion) {
+  try {
+    return await assetSync.linkAssets(filePath, cloudId, staged, { baseVersion });
+  } catch (err) {
+    registry.update(filePath, { assets_state: "pending" });
+    return mediaFailure(err);
+  }
+}
+
+// The text never landed, so the refs are never sent. Anything already staged
+// is left for the reconciliation pass to finish.
+function mediaLeftPending(filePath, staged) {
+  if (staged && staged.staged) registry.update(filePath, { assets_state: "pending" });
 }
 
 // Turn syncing on for a file: create the cloud doc (or push a new snapshot).
@@ -245,7 +267,8 @@ async function syncOn(filePath, name, content) {
   // asset routes answer 404 for a cloud id it does not know, so media sent
   // ahead of the create was left pending until a reconciliation pass retried
   // it. That one sends its text first, below.
-  let media = linked ? await pushMedia(filePath, cloudId, content, baseVersion) : null;
+  let staged = linked ? await stageMedia(filePath, cloudId, content) : null;
+  let media = staged;
   const hash = registry.hashContent(content);
   const res = await api("PUT", `/api/docs/${cloudId}`, {
     name,
@@ -262,6 +285,7 @@ async function syncOn(filePath, name, content) {
       // minted a fresh uuid and left an orphan copy behind. No cloud_version is
       // recorded, so the row stays unpushed and the next push re-sends from 0.
       registry.update(filePath, { cloud_doc_id: cloudId, sync_state: "unpushed" });
+      mediaLeftPending(filePath, staged);
       return { error: UNREADABLE, media };
     }
     registry.update(filePath, {
@@ -271,16 +295,22 @@ async function syncOn(filePath, name, content) {
       sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
-    if (!linked) media = await pushMedia(filePath, cloudId, content, version);
+    if (!linked) {
+      staged = await stageMedia(filePath, cloudId, content);
+      media = staged;
+    }
+    if (staged && staged.staged) media = await linkMedia(filePath, cloudId, staged.staged, version);
     return { ok: true, version, media };
   }
   if (res.status === 409) {
     registry.update(filePath, { sync_state: "conflict" });
+    mediaLeftPending(filePath, staged);
     return { conflict: true, serverVersion: res.data?.serverVersion, media };
   }
   // The server did not take the snapshot, so nothing is backed up. Leaving the
   // row on its previous state would tell the user otherwise.
   registry.update(filePath, { sync_state: "unpushed" });
+  mediaLeftPending(filePath, staged);
   return { error: failure("push", res), media };
 }
 
@@ -298,7 +328,8 @@ async function push(filePath, name, content) {
   const refused = viewerRefusal(filePath, row.cloud_doc_id);
   if (refused) return refused;
   const baseVersion = row.cloud_version ?? 0;
-  const media = await pushMedia(filePath, row.cloud_doc_id, content, baseVersion);
+  const staged = await stageMedia(filePath, row.cloud_doc_id, content);
+  let media = staged;
   const hash = registry.hashContent(content);
   const res = await api("PUT", `/api/docs/${row.cloud_doc_id}`, {
     name,
@@ -310,6 +341,7 @@ async function push(filePath, name, content) {
     const version = readVersion(res);
     if (version === null) {
       registry.update(filePath, { sync_state: "unpushed" });
+      mediaLeftPending(filePath, staged);
       return { error: UNREADABLE, media };
     }
     registry.update(filePath, {
@@ -319,16 +351,19 @@ async function push(filePath, name, content) {
       sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
+    if (staged && staged.staged) media = await linkMedia(filePath, row.cloud_doc_id, staged.staged, version);
     return { ok: true, version, media };
   }
   if (res.status === 409) {
     registry.update(filePath, { sync_state: "conflict" });
+    mediaLeftPending(filePath, staged);
     return { conflict: true, media };
   }
   // This snapshot exists only on local disk. A row left on "synced" would tell
   // the user the edit is in the cloud and put "Take cloud" one click away from
   // overwriting it with an older copy the server never replaced.
   registry.update(filePath, { sync_state: "unpushed" });
+  mediaLeftPending(filePath, staged);
   return { error: failure("push", res), media };
 }
 
@@ -455,23 +490,31 @@ async function resolve(filePath, strategy) {
     return { error: `Couldn't read the local file: ${e.message}` };
   }
   // The local copy is what is about to become the cloud text, so it is what
-  // its media is pushed for.
-  const media = await pushMedia(filePath, row.cloud_doc_id, content, baseVersion);
+  // its media is staged for.
+  const staged = await stageMedia(filePath, row.cloud_doc_id, content);
+  let media = staged;
   const res = await api("PUT", `/api/docs/${row.cloud_doc_id}`, {
     name: row.name,
     content,
     hash: registry.hashContent(content),
     baseVersion,
   });
-  if (res.status !== 200) return { error: `push failed (${res.status})`, media };
+  if (res.status !== 200) {
+    mediaLeftPending(filePath, staged);
+    return { error: `push failed (${res.status})`, media };
+  }
   const pushedVersion = readVersion(res);
-  if (pushedVersion === null) return { error: UNREADABLE, media };
+  if (pushedVersion === null) {
+    mediaLeftPending(filePath, staged);
+    return { error: UNREADABLE, media };
+  }
   registry.update(filePath, {
     cloud_version: pushedVersion,
     content_hash: registry.hashContent(content),
     sync_state: "synced",
     last_synced_at: new Date().toISOString(),
   });
+  if (staged && staged.staged) media = await linkMedia(filePath, row.cloud_doc_id, staged.staged, pushedVersion);
   return { ok: true, pushed: true, media };
 }
 

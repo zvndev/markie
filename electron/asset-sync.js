@@ -1,7 +1,17 @@
-// Pushing a document's media ahead of its text. One pass: what does the
-// server lack, send exactly that, then tell it the document's full set. A
-// failure leaves the row "pending" for the reconciliation pass; the text push
-// that follows is never held up by a picture.
+// Pushing a document's media around its text, in two halves.
+//
+// Uploading bytes is safe at any time: an asset the server holds but nothing
+// points at is kept for an hour before it is swept, so `stageAssets` can send
+// every missing file before the text PUT goes out. Telling the server what
+// the document points at is not safe at any time: a link that lands and a
+// text PUT that then fails leaves the old text beside a media set that no
+// longer holds its pictures, and an hour later the sweep takes them. So
+// `linkAssets` runs only after the text has landed, against the version that
+// PUT returned. `pushAssets` is the two back to back, for reconciliation,
+// which writes no text at all.
+//
+// A failure in either half leaves the row "pending" for the reconciliation
+// pass; the text push is never held up by a picture.
 const fs = require("node:fs");
 const { Readable } = require("node:stream");
 const docAssets = require("./doc-assets");
@@ -46,11 +56,18 @@ function createAssetSync({
     return { error: failure("media upload", res) };
   }
 
-  // `baseVersion`, when given, is the document version the caller's text PUT
-  // is about to go on top of. The server refuses the link with a 409 when the
-  // document has moved on since, so refs never land for a snapshot the text
-  // push is then going to have refused.
-  async function pushAssets(filePath, cloudId, content, { baseVersion } = {}) {
+  function markPending(filePath, skipped, error) {
+    registry.update(filePath, { assets_state: "pending", assets_skipped: JSON.stringify(skipped) });
+    return error ? { pending: true, error } : { pending: true };
+  }
+
+  // Everything up to and including the uploads, and nothing that commits the
+  // document to them. `{ unchanged: true }` for a synced row whose reference
+  // set has not moved, `{ pending: true, error? }` for a failure (the row is
+  // written pending), else `{ staged: { linkRefs, uploaded, skipped,
+  // fingerprint } }` for the caller to hand to linkAssets once its text has
+  // landed.
+  async function stageAssets(filePath, cloudId, content) {
     const row = registry.get(filePath) ?? {};
     const refs = docAssets.extractRefs(content);
     const resolved = docAssets.resolveRefs(refs, { docPath: filePath, roots: grants.assetRoots(), files: grants.grantedFilePaths() });
@@ -72,25 +89,35 @@ function createAssetSync({
       const hash = await hashCached(r.path, stat.size, stat.mtimeMs);
       entries.push({ ref: r.ref, path: r.path, mime: r.mime, hash, size: stat.size });
     }
-    const fp = docAssets.fingerprint(entries);
-    if (row.assets_state === "synced" && row.assets_fingerprint === fp) return { unchanged: true };
 
-    const pending = (error) => {
-      registry.update(filePath, { assets_state: "pending", assets_skipped: JSON.stringify(skipped) });
-      return error ? { pending: true, error } : { pending: true };
-    };
+    // The document's every reference, in the order it wrote them: a hash for
+    // the ones that resolved and the server will hold, nothing for the rest.
+    // This whole set is what the server is told and what the fingerprint
+    // covers, so a ref that never resolved still counts as part of the
+    // document and its removal is a change like any other.
+    const byRef = new Map(entries.map((e) => [e.ref, e]));
+    const linkRefsNow = () =>
+      refs.map((ref) => {
+        const entry = byRef.get(ref);
+        return entry && !entry.dropped ? { ref, hash: entry.hash } : { ref };
+      });
+    if (row.assets_state === "synced" && row.assets_fingerprint === docAssets.fingerprint(linkRefsNow())) {
+      return { unchanged: true };
+    }
 
     let uploaded = 0;
     if (entries.length > 0) {
       const missing = await api("POST", `/api/docs/${cloudId}/assets/missing`, { hashes: entries.map((e) => e.hash) });
-      if (missing.status === 503) return pending();
-      if (missing.status !== 200 || !Array.isArray(missing.data?.missing)) return pending(failure("media check", missing));
+      if (missing.status === 503) return markPending(filePath, skipped);
+      if (missing.status !== 200 || !Array.isArray(missing.data?.missing)) {
+        return markPending(filePath, skipped, failure("media check", missing));
+      }
       const need = new Set(missing.data.missing);
       for (const entry of entries) {
         if (!need.has(entry.hash)) continue;
         const res = await upload(entry);
-        if (res.pending) return pending();
-        if (res.error) return pending(res.error);
+        if (res.pending) return markPending(filePath, skipped);
+        if (res.error) return markPending(filePath, skipped, res.error);
         if (res.skipped) {
           skipped.push({ ref: entry.ref, reason: res.skipped });
           entry.dropped = true;
@@ -102,27 +129,39 @@ function createAssetSync({
         uploaded += 1;
       }
     }
-    const linkRefs = [
-      ...entries.filter((e) => !e.dropped).map((e) => ({ ref: e.ref, hash: e.hash })),
-      ...refs.filter((ref) => !entries.some((e) => e.ref === ref && !e.dropped)).map((ref) => ({ ref })),
-    ];
-    const body = typeof baseVersion === "number" ? { refs: linkRefs, baseVersion } : { refs: linkRefs };
-    const link = await api("PUT", `/api/docs/${cloudId}/assets`, body);
-    if (link.status === 503) return pending();
-    // Somebody else's snapshot landed first. The text PUT that follows will
-    // be refused the same way and take the row into the conflict flow; all
-    // this has to do is leave the refs unclaimed for the retry.
-    if (link.status === 409) return { ...pending(), conflict: true };
-    if (link.status !== 200) return pending(failure("media link", link));
-    registry.update(filePath, {
-      assets_state: "synced",
-      assets_fingerprint: docAssets.fingerprint(entries.filter((e) => !e.dropped)),
-      assets_skipped: JSON.stringify(skipped),
-    });
-    return { ok: true, uploaded, skipped };
+    const linkRefs = linkRefsNow();
+    return { staged: { linkRefs, uploaded, skipped, fingerprint: docAssets.fingerprint(linkRefs) } };
   }
 
-  return { pushAssets };
+  // What the document points at, committed against `baseVersion`: the version
+  // the caller's text PUT landed on, so the refs and the text describe the
+  // same snapshot. The server answers 409 when the document has moved on
+  // since, which leaves the refs unclaimed for the retry.
+  async function linkAssets(filePath, cloudId, staged, { baseVersion } = {}) {
+    const body = typeof baseVersion === "number" ? { refs: staged.linkRefs, baseVersion } : { refs: staged.linkRefs };
+    const link = await api("PUT", `/api/docs/${cloudId}/assets`, body);
+    if (link.status === 503) return markPending(filePath, staged.skipped);
+    // Somebody else's snapshot landed in between. Reconciliation retries the
+    // whole pass; all this has to do is leave the refs unclaimed.
+    if (link.status === 409) return { ...markPending(filePath, staged.skipped), conflict: true };
+    if (link.status !== 200) return markPending(filePath, staged.skipped, failure("media link", link));
+    registry.update(filePath, {
+      assets_state: "synced",
+      assets_fingerprint: staged.fingerprint,
+      assets_skipped: JSON.stringify(staged.skipped),
+    });
+    return { ok: true, uploaded: staged.uploaded, skipped: staged.skipped };
+  }
+
+  // Both halves back to back, for reconciliation: it pushes no text, so
+  // there is no window between the two for a text failure to open.
+  async function pushAssets(filePath, cloudId, content, { baseVersion } = {}) {
+    const result = await stageAssets(filePath, cloudId, content);
+    if (!result.staged) return result;
+    return linkAssets(filePath, cloudId, result.staged, { baseVersion });
+  }
+
+  return { stageAssets, linkAssets, pushAssets };
 }
 
 module.exports = { createAssetSync };

@@ -59,4 +59,17 @@ describe("resolveRefs and hashFile", () => {
     expect(fingerprint([{ ref: "a.png", hash: "1" }])).not.toBe(a);
     expect(fingerprint([{ ref: "a.png", hash: "9" }, { ref: "b.png", hash: "2" }])).not.toBe(a);
   });
+
+  it("counts a ref with no hash, so a skipped reference is still part of the set", () => {
+    // An editor with no local copy of a picture resolves nothing either way.
+    // Without the hashless entry both of these hash the empty set, and
+    // removing the reference would never trigger a fresh link.
+    expect(fingerprint([{ ref: "gone.png" }])).not.toBe(fingerprint([]));
+    expect(fingerprint([{ ref: "gone.png" }])).not.toBe(fingerprint([{ ref: "other.png" }]));
+    expect(fingerprint([{ ref: "a.png", hash: "1" }, { ref: "gone.png" }])).not.toBe(
+      fingerprint([{ ref: "a.png", hash: "1" }])
+    );
+    // No hash is the empty hash, not the string "undefined".
+    expect(fingerprint([{ ref: "gone.png" }])).toBe(fingerprint([{ ref: "gone.png", hash: "" }]));
+  });
 });

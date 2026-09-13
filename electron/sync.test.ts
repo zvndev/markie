@@ -1815,22 +1815,27 @@ describe("resolve('local')", () => {
     expect(res.error).toContain("Couldn't read the local file");
   });
 
-  // "local" force-pushes the local file's text, so its media goes first, and
+  // "local" force-pushes the local file's text, so its bytes go up first, and
   // it is the local content's media that goes, not the cloud copy fetched
-  // above it for baseVersion. The link commits against that same base
-  // version (9 here), not the row's stale 4.
-  it("pushes media for the local content before pushing the text on top of the server version", async () => {
+  // above it for baseVersion. The refs are linked afterwards, against the
+  // version the text PUT landed on (10 here), not the row's stale 4.
+  it("stages media for the local content before the text and links it after", async () => {
     const p = path.join(tmpDir, "notes.md");
     fs.writeFileSync(p, "local content\n![](a.png)\n", "utf-8");
     seedRow({ path: p, sync_state: "conflict", cloud_doc_id: "cloud-1", cloud_version: 4 });
     const mediaCalls: string[] = [];
+    let calls: Call[] = [];
     sync.setAssetSync({
-      pushAssets: async (fp: string, cloudId: string, content: string, opts?: { baseVersion?: number }) => {
-        mediaCalls.push(`${cloudId}:${fp}:${content}:${opts?.baseVersion}`);
+      stageAssets: async (fp: string, cloudId: string, content: string) => {
+        mediaCalls.push(`stage:${cloudId}:${fp}:${content}:${calls.length}`);
+        return { staged: { linkRefs: [{ ref: "a.png", hash: "h" }], uploaded: 1, skipped: [], fingerprint: "fp" } };
+      },
+      linkAssets: async (_fp: string, cloudId: string, _staged: unknown, opts?: { baseVersion?: number }) => {
+        mediaCalls.push(`link:${cloudId}:${opts?.baseVersion}:${calls.length}`);
         return { ok: true, uploaded: 1, skipped: [] };
       },
     });
-    respondWith(
+    calls = respondWith(
       { status: 200, body: { doc: { content: "theirs\n", version: 9 } } },
       { status: 200, body: { version: 10 } }
     );
@@ -1838,7 +1843,10 @@ describe("resolve('local')", () => {
     const res = await sync.resolve(p, "local");
 
     expect(res).toEqual({ ok: true, pushed: true, media: { ok: true, uploaded: 1, skipped: [] } });
-    expect(mediaCalls).toEqual([`cloud-1:${p}:local content\n![](a.png)\n:9`]);
+    expect(mediaCalls).toEqual([
+      `stage:cloud-1:${p}:local content\n![](a.png)\n:1`,
+      "link:cloud-1:10:2",
+    ]);
     expect(rows.get(p)!.sync_state).toBe("synced");
     expect(rows.get(p)!.cloud_version).toBe(10);
   });
@@ -1968,115 +1976,170 @@ describe("landing", () => {
 });
 
 describe("media and text push order", () => {
-  let mediaCalls: string[];
-  beforeEach(() => {
-    mediaCalls = [];
+  // A stand-in for asset-sync that records the order of its two halves
+  // against the number of HTTP calls made so far, so a test can say exactly
+  // where each one landed relative to the text PUT.
+  function recordingAssetSync(calls: () => Call[], staged: unknown = { linkRefs: [], uploaded: 1, skipped: [], fingerprint: "fp" }) {
+    const log: Array<{ step: string; textCallsSoFar: number; filePath?: string; cloudId?: string; baseVersion?: number }> = [];
     sync.setAssetSync({
-      pushAssets: async (p: string, cloudId: string) => {
-        mediaCalls.push(`${cloudId}:${p}`);
+      stageAssets: async (filePath: string, cloudId: string) => {
+        log.push({ step: "stage", textCallsSoFar: calls().length, filePath, cloudId });
+        return staged === null ? { pending: true } : { staged };
+      },
+      linkAssets: async (filePath: string, cloudId: string, _staged: unknown, opts?: { baseVersion?: number }) => {
+        log.push({ step: "link", textCallsSoFar: calls().length, filePath, cloudId, baseVersion: opts?.baseVersion });
         return { ok: true, uploaded: 1, skipped: [] };
       },
     });
+    return log;
+  }
+
+  // The whole point of the split. Bytes may go up at any time: the server
+  // keeps an uploaded-but-unlinked asset for an hour. Telling the server what
+  // the document points at may not: a link that lands before a text PUT that
+  // fails leaves the old text beside a media set that no longer holds its
+  // pictures, and the sweep takes them an hour later.
+  it("push uploads before the text and links after it, against the version the PUT answered with", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/d.md", sync_state: "synced", cloud_doc_id: "cd", cloud_version: 7 });
+    let calls: Call[] = [];
+    const log = recordingAssetSync(() => calls);
+    calls = respondWith({ status: 200, body: { version: 8 } });
+
+    const res = await sync.push("/docs/d.md", "d.md", "![](d.png)\n");
+
+    expect(res.ok).toBe(true);
+    expect(res.media).toEqual({ ok: true, uploaded: 1, skipped: [] });
+    expect(log).toEqual([
+      { step: "stage", textCallsSoFar: 0, filePath: "/docs/d.md", cloudId: "cd" },
+      { step: "link", textCallsSoFar: 1, filePath: "/docs/d.md", cloudId: "cd", baseVersion: 8 },
+    ]);
+    expect(calls[0].body).toMatchObject({ baseVersion: 7 });
   });
 
-  // The one place the order is reversed. The server has no document to hang
-  // media on until the text lands: /assets and /assets/missing both answer
-  // 404 for a cloud id it has never seen, so media pushed first was always
-  // left pending until a reconciliation pass picked it up.
-  it("syncOn creates the document with the text, then pushes its media", async () => {
+  it("push sends no link when the text PUT fails, and leaves the media pending for reconcile", async () => {
     signIn("test-token", ME);
-    const calls = respondWith({ status: 200, body: { id: "x", version: 1 } });
-    const media: Array<{ textCallsSoFar: number; filePath: string; baseVersion?: number }> = [];
-    sync.setAssetSync({
-      pushAssets: async (filePath: string, _cloudId: string, _content: string, opts?: { baseVersion?: number }) => {
-        media.push({ textCallsSoFar: calls.length, filePath, baseVersion: opts?.baseVersion });
-        return { ok: true, uploaded: 1, skipped: [] };
-      },
-    });
+    seedRow({ path: "/docs/d.md", sync_state: "synced", cloud_doc_id: "cd", cloud_version: 7 });
+    let calls: Call[] = [];
+    const log = recordingAssetSync(() => calls);
+    calls = respondWith({ status: 500 });
+
+    const res = await sync.push("/docs/d.md", "d.md", "![](d.png)\n");
+
+    expect(res.error).toBe("push failed (500)");
+    expect(log.map((e) => e.step)).toEqual(["stage"]);
+    expect(rows.get("/docs/d.md")!.sync_state).toBe("unpushed");
+    expect(rows.get("/docs/d.md")!.assets_state).toBe("pending");
+  });
+
+  it("push sends no link when the server refuses the text as stale", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/d.md", sync_state: "synced", cloud_doc_id: "cd", cloud_version: 7 });
+    let calls: Call[] = [];
+    const log = recordingAssetSync(() => calls);
+    calls = respondWith({ status: 409, body: { serverVersion: 9 } });
+
+    const res = await sync.push("/docs/d.md", "d.md", "![](d.png)\n");
+
+    expect(res.conflict).toBe(true);
+    expect(log.map((e) => e.step)).toEqual(["stage"]);
+    expect(rows.get("/docs/d.md")!.assets_state).toBe("pending");
+  });
+
+  // A document the server has never seen has nothing to hang media on:
+  // /assets and /assets/missing both answer 404 for a cloud id it does not
+  // know. That one create goes first, and both halves follow it.
+  it("syncOn creates the document with the text, then stages and links its media", async () => {
+    signIn("test-token", ME);
+    let calls: Call[] = [];
+    const log = recordingAssetSync(() => calls);
+    calls = respondWith({ status: 200, body: { id: "x", version: 1 } });
 
     const res = await sync.syncOn("/docs/a.md", "a.md", "![](a.png)\n");
 
     expect(res.ok).toBe(true);
     expect(res.media).toEqual({ ok: true, uploaded: 1, skipped: [] });
-    // The create is already recorded by the time the media goes, and the link
-    // is committed against the version the create came back with.
-    expect(media).toEqual([{ textCallsSoFar: 1, filePath: "/docs/a.md", baseVersion: 1 }]);
+    expect(log).toEqual([
+      { step: "stage", textCallsSoFar: 1, filePath: "/docs/a.md", cloudId: expect.any(String) },
+      { step: "link", textCallsSoFar: 1, filePath: "/docs/a.md", cloudId: expect.any(String), baseVersion: 1 },
+    ]);
     expect(calls.map((c) => c.method)).toEqual(["PUT"]);
   });
 
-  // Only a document the server has never seen needs the reversal. Turning
-  // sync back on for one it already has is an ordinary push, and sending its
-  // text first would put a snapshot in the cloud that names pictures nobody
-  // else can fetch yet.
-  it("syncOn sends media first for a document the server already has", async () => {
+  it("syncOn uploads first for a document the server already has, and links after the text", async () => {
     signIn("test-token", ME);
     seedRow({ path: "/docs/e.md", sync_state: "paused", cloud_doc_id: "ce", cloud_version: 3 });
-    const calls = respondWith({ status: 200, body: { version: 4 } });
-    const media: Array<{ textCallsSoFar: number; baseVersion?: number }> = [];
-    sync.setAssetSync({
-      pushAssets: async (_p: string, _cloudId: string, _content: string, opts?: { baseVersion?: number }) => {
-        media.push({ textCallsSoFar: calls.length, baseVersion: opts?.baseVersion });
-        return { ok: true, uploaded: 1, skipped: [] };
-      },
-    });
+    let calls: Call[] = [];
+    const log = recordingAssetSync(() => calls);
+    calls = respondWith({ status: 200, body: { version: 4 } });
 
     const res = await sync.syncOn("/docs/e.md", "e.md", "![](e.png)\n");
 
     expect(res).toEqual({ ok: true, version: 4, media: { ok: true, uploaded: 1, skipped: [] } });
-    // Nothing had been sent when the media went, and it was linked against
-    // the version the text PUT names.
-    expect(media).toEqual([{ textCallsSoFar: 0, baseVersion: 3 }]);
+    expect(log).toEqual([
+      { step: "stage", textCallsSoFar: 0, filePath: "/docs/e.md", cloudId: "ce" },
+      { step: "link", textCallsSoFar: 1, filePath: "/docs/e.md", cloudId: "ce", baseVersion: 4 },
+    ]);
     expect(calls[0].body).toMatchObject({ baseVersion: 3 });
   });
 
-  it("syncOn pushes no media at all when the create is refused", async () => {
+  it("syncOn touches media not at all when the create is refused", async () => {
     signIn("test-token", ME);
-    respondWith({ status: 500 });
+    let calls: Call[] = [];
+    const log = recordingAssetSync(() => calls);
+    calls = respondWith({ status: 500 });
 
     const res = await sync.syncOn("/docs/a.md", "a.md", "![](a.png)\n");
 
     expect(res).toEqual({ error: "push failed (500)", media: null });
-    expect(mediaCalls).toHaveLength(0);
+    expect(log).toEqual([]);
   });
 
-  // The link and the text PUT have to name the same base version, or the
-  // server can accept refs for a snapshot it is about to refuse.
-  it("push links its media against the version its text PUT is going on top of", async () => {
-    signIn("test-token", ME);
-    seedRow({ path: "/docs/d.md", sync_state: "synced", cloud_doc_id: "cd", cloud_version: 7 });
-    const linkedAgainst: Array<number | undefined> = [];
-    sync.setAssetSync({
-      pushAssets: async (_p: string, _cloudId: string, _content: string, opts?: { baseVersion?: number }) => {
-        linkedAgainst.push(opts?.baseVersion);
-        return { ok: true, uploaded: 1, skipped: [] };
-      },
-    });
-    const calls = respondWith({ status: 200, body: { version: 8 } });
-
-    await sync.push("/docs/d.md", "d.md", "![](d.png)\n");
-
-    expect(linkedAgainst).toEqual([7]);
-    expect(calls[0].body).toMatchObject({ baseVersion: 7 });
-  });
-
-  it("push and resolve carry the same order, and a pending result does not stop the text", async () => {
+  it("carries a staging failure as the media result without stopping the text", async () => {
     signIn("test-token", ME);
     seedRow({ path: "/docs/b.md", sync_state: "synced", cloud_doc_id: "cb", cloud_version: 2 });
-    sync.setAssetSync({ pushAssets: async () => ({ pending: true, error: "media upload failed (offline)" }) });
+    sync.setAssetSync({
+      stageAssets: async () => ({ pending: true, error: "media upload failed (offline)" }),
+      linkAssets: async () => {
+        throw new Error("nothing staged, nothing to link");
+      },
+    });
     respondWith({ status: 200, body: { id: "cb", version: 3 } });
+
     const res = await sync.push("/docs/b.md", "b.md", "![](b.png)\n");
+
     expect(res.ok).toBe(true);
     expect(res.media).toEqual({ pending: true, error: "media upload failed (offline)" });
     expect(rows.get("/docs/b.md")!.sync_state).toBe("synced");
+  });
+
+  it("carries an unchanged reference set through without linking again", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/u.md", sync_state: "synced", cloud_doc_id: "cu", cloud_version: 2 });
+    const linked: number[] = [];
+    sync.setAssetSync({
+      stageAssets: async () => ({ unchanged: true }),
+      linkAssets: async () => {
+        linked.push(1);
+        return { ok: true, uploaded: 0, skipped: [] };
+      },
+    });
+    respondWith({ status: 200, body: { version: 3 } });
+
+    const res = await sync.push("/docs/u.md", "u.md", "words\n");
+
+    expect(res.media).toEqual({ unchanged: true });
+    expect(linked).toEqual([]);
   });
 
   it("does not let a throwing asset sync take the text push down with it", async () => {
     signIn("test-token", ME);
     seedRow({ path: "/docs/c.md", sync_state: "synced", cloud_doc_id: "cc", cloud_version: 1 });
     sync.setAssetSync({
-      pushAssets: async () => {
+      stageAssets: async () => {
         throw new Error("disk full");
       },
+      linkAssets: async () => ({ ok: true, uploaded: 0, skipped: [] }),
     });
     respondWith({ status: 200, body: { version: 2 } });
 
@@ -2088,5 +2151,27 @@ describe("media and text push order", () => {
       media: { pending: true, error: "media push failed (disk full)" },
     });
     expect(rows.get("/docs/c.md")!.sync_state).toBe("synced");
+  });
+
+  it("does not let a throwing link take the text push down with it", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/t.md", sync_state: "synced", cloud_doc_id: "ct", cloud_version: 1 });
+    sync.setAssetSync({
+      stageAssets: async () => ({ staged: { linkRefs: [], uploaded: 0, skipped: [], fingerprint: "fp" } }),
+      linkAssets: async () => {
+        throw new Error("disk full");
+      },
+    });
+    respondWith({ status: 200, body: { version: 2 } });
+
+    const res = await sync.push("/docs/t.md", "t.md", "new");
+
+    expect(res).toEqual({
+      ok: true,
+      version: 2,
+      media: { pending: true, error: "media push failed (disk full)" },
+    });
+    expect(rows.get("/docs/t.md")!.sync_state).toBe("synced");
+    expect(rows.get("/docs/t.md")!.assets_state).toBe("pending");
   });
 });

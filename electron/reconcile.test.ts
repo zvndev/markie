@@ -30,7 +30,14 @@ const sync = {
     return { ok: true };
   },
 };
-const assetSync = { pushAssets: async (p: string) => (media.push(p), { ok: true, uploaded: 0, skipped: [] }) };
+let mediaBase: Array<number | undefined>;
+const assetSync = {
+  pushAssets: async (p: string, _cloudId: string, _content: string, opts?: { baseVersion?: number }) => {
+    media.push(p);
+    mediaBase.push(opts?.baseVersion);
+    return { ok: true, uploaded: 0, skipped: [] };
+  },
+};
 
 function seed(row: Row, content: string | null) {
   rows.set(row.path, { name: "x.md", sync_state: "synced", cloud_doc_id: "c" + rows.size, cloud_version: 1, content_hash: null, assets_state: "synced", ...row });
@@ -42,6 +49,7 @@ beforeEach(() => {
   disk = new Map();
   pushed = [];
   media = [];
+  mediaBase = [];
   listing = { docs: [] };
 });
 
@@ -87,6 +95,24 @@ describe("reconcile", () => {
     listing = { docs: [{ id: "c1", version: 1, hash: sha("![](a.png)") }, { id: "c2", version: 1, hash: sha("b") }, { id: "c3", version: 1, hash: sha("c") }] };
     const r = await createReconciler({ sync, registry, assetSync, fs, sleep: async () => {} }).run();
     expect(r.mediaPushed.sort()).toEqual(["/d/a.md", "/d/b.md", "/d/c.md"]);
+  });
+
+  // Another device can advance the document between the listing and this
+  // call. Without a base version the link replaces the newer snapshot's
+  // references with this device's stale set; with one the server refuses it.
+  it("links media against the version the listing agreed on", async () => {
+    seed({ path: "/d/a.md", cloud_doc_id: "c1", cloud_version: 6, content_hash: sha("a"), assets_state: "pending" }, "a");
+    listing = { docs: [{ id: "c1", version: 6, hash: sha("a") }] };
+    await createReconciler({ sync, registry, assetSync, fs, sleep: async () => {} }).run();
+    expect(media).toEqual(["/d/a.md"]);
+    expect(mediaBase).toEqual([6]);
+  });
+
+  it("links against version 0 for a row that has never recorded one", async () => {
+    seed({ path: "/d/b.md", cloud_doc_id: "c2", cloud_version: null, content_hash: sha("b"), assets_state: "pending" }, "b");
+    listing = { docs: [{ id: "c2", version: 0, hash: sha("b") }] };
+    await createReconciler({ sync, registry, assetSync, fs, sleep: async () => {} }).run();
+    expect(mediaBase).toEqual([0]);
   });
 
   it("does at most `limit` documents per pass and carries on next time", async () => {

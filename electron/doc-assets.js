@@ -80,9 +80,14 @@ function hashFile(filePath) {
 }
 
 // One string for "these refs at these hashes", so an unchanged document costs
-// no request at all on the next push.
+// no request at all on the next push. Entries are `{ ref, hash? }` and cover
+// the document's whole reference set: a ref nothing resolved, or one that was
+// skipped, contributes an empty hash rather than being left out. Leaving it
+// out made "one unresolvable picture" and "no pictures at all" the same
+// string, so removing the reference never looked like a change and the old
+// asset stayed linked on the server.
 function fingerprint(entries) {
-  const lines = entries.map((e) => `${e.ref}\t${e.hash}`).sort();
+  const lines = entries.map((e) => `${e.ref}\t${e.hash ?? ""}`).sort();
   return crypto.createHash("sha256").update(lines.join("\n")).digest("hex");
 }
 

@@ -253,11 +253,22 @@ function refEscapes(raw: string): boolean {
   // the shape only a client that is not Markie would send. A reference whose
   // name really does contain a stray percent does not decode, and a name is
   // not a reason to refuse a file.
+  //
+  // Until it stops changing, because decoding once only moves the seam:
+  // `%252e%252e/x.png` decodes to `%2e%2e/x.png` and then to `../x.png`.
+  // Bounded, so a reference built to unwrap for ever is unwrapped a fixed
+  // number of times and judged on whatever it has become by then, which is
+  // no worse than judging it on what it arrived as.
   let ref = raw;
-  try {
-    ref = decodeURIComponent(raw);
-  } catch {
-    ref = raw;
+  for (let pass = 0; pass < 3; pass += 1) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(ref);
+    } catch {
+      break;
+    }
+    if (decoded === ref) break;
+    ref = decoded;
   }
   if (ref.startsWith("/") || ref.startsWith("\\")) return true;
   if (/^[A-Za-z]:/.test(ref)) return true;

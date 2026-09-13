@@ -862,3 +862,25 @@ test("an escaping reference spelt with percent escapes is still an escaping refe
   const ok = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref: "50% done.png", hash: sha(bytes) }] });
   assert.equal(ok.status, 200);
 });
+
+// Decoding once only moved the seam rather than closing it. Nothing decodes
+// twice on the way to a renderer, so this is still a shape only a client that
+// is not Markie would send, and the layer is only worth having if it holds
+// against one.
+test("an escaping reference encoded more than once is still an escaping reference", async () => {
+  const id = await makeDoc(owner.token);
+  const bytes = Buffer.from("double-encoded-traversal");
+  assert.equal((await upload(editor.token, bytes)).status, 200);
+  await json("POST", `/api/docs/${id}/shares`, owner.token, { email: "editor@markie.test", role: "editor" });
+  for (const ref of ["%252e%252e/x.png", "%25252e%25252e/x.png", "..%252fx.png", "%252fabs/x.png"]) {
+    const r = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref, hash: sha(bytes) }] });
+    assert.equal(r.status, 400, `${ref} should be refused`);
+    assert.equal(r.data.error, "bad ref");
+  }
+  // Still bounded: a reference built to be decoded for ever is decoded a
+  // fixed number of times and then judged on what it has become.
+  const deep = `${"%25".repeat(400)}2e%2e/x.png`;
+  assert.equal((await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref: deep, hash: sha(bytes) }] })).status, 200);
+  // And an ordinary name with a percent in it is still a name.
+  assert.equal((await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref: "50%25 done.png", hash: sha(bytes) }] })).status, 200);
+});

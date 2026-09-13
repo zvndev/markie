@@ -393,3 +393,66 @@ describe("the fingerprint covers the whole reference set", () => {
     expect(calls[1].body).toEqual({ refs: [] });
   });
 });
+
+describe("what an upload refusal means", () => {
+  it("retries a 400 and leaves the row pending, because it says the bytes moved", async () => {
+    // The server answers 400 when the body does not hash to the name it was
+    // sent under, which is a file that changed between the hash and the
+    // upload, not a file Markie may not send. Recording it as a type skip
+    // marked the row synced and hid a picture that never arrived.
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api, calls } = fakeApi([
+      { status: 200, data: { missing: [sha("bbbb")] } },
+      { status: 400 },
+      { status: 400 },
+      { status: 400 },
+    ]);
+    const { stageAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+    expect(await stageAssets(docPath, "c1", "![](b.png)\n")).toEqual({
+      pending: true,
+      error: "media upload failed (400)",
+    });
+    expect(calls).toHaveLength(4);
+    expect(rows.get(docPath)!.assets_state).toBe("pending");
+    expect(JSON.parse(rows.get(docPath)!.assets_skipped as string)).toEqual([]);
+  });
+
+  it("takes a 415 as a type this server will not hold, once", async () => {
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api, calls } = fakeApi([
+      { status: 200, data: { missing: [sha("bbbb")] } },
+      { status: 415 },
+      { status: 200, data: { linked: 0, kept: 0, dropped: 1 } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+    expect(await pushAssets(docPath, "c1", "![](b.png)\n")).toEqual({
+      ok: true,
+      uploaded: 0,
+      skipped: [{ ref: "b.png", reason: "type" }],
+    });
+    expect(calls).toHaveLength(3);
+    expect(calls[2].body).toEqual({ refs: [{ ref: "b.png" }] });
+  });
+
+  it("takes a 413 as a file this server will not hold, once", async () => {
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api, calls } = fakeApi([
+      { status: 200, data: { missing: [sha("bbbb")] } },
+      { status: 413 },
+      { status: 200, data: { linked: 0, kept: 0, dropped: 1 } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+    expect(await pushAssets(docPath, "c1", "![](b.png)\n")).toEqual({
+      ok: true,
+      uploaded: 0,
+      skipped: [{ ref: "b.png", reason: "size" }],
+    });
+    expect(calls).toHaveLength(3);
+  });
+});

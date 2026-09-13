@@ -51,7 +51,12 @@ function createAssetSync({
       });
       if (res.status >= 200 && res.status < 300) return { ok: true };
       if (res.status === 503) return { pending: true };
-      if (res.status === 413 || res.status === 415 || res.status === 400) return { skipped: res.status === 413 ? "size" : "type" };
+      // 413 and 415 are this server refusing the file itself, which no retry
+      // changes. A 400 is the body not hashing to the name it was sent under,
+      // which means the file moved between the hash and the upload: that is a
+      // retry, and then a pending row, because the hash cache is keyed by size
+      // and mtime and the next pass re-hashes a file that changed.
+      if (res.status === 413 || res.status === 415) return { skipped: res.status === 413 ? "size" : "type" };
     }
     return { error: failure("media upload", res) };
   }

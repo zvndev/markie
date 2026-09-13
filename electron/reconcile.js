@@ -50,6 +50,15 @@ function createReconciler({ sync, registry, assetSync, fs = require("node:fs"), 
           result.skipped.push({ path: row.path, reason: "delisted" });
           continue;
         }
+        // Somebody shared this document and gave this account reading rights
+        // only. Both the text push and the asset call answer 403, which left
+        // the row pending and retried it on every pass, so the Cloud panel
+        // showed "media pending" forever for a document nobody here may
+        // write.
+        if (r.shared && r.role === "viewer") {
+          result.skipped.push({ path: row.path, reason: "viewer" });
+          continue;
+        }
         if (!fs.existsSync(row.path)) {
           result.skipped.push({ path: row.path, reason: "missing" });
           continue;

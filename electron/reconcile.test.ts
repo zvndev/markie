@@ -9,7 +9,9 @@ let rows: Map<string, Row>;
 let disk: Map<string, string>;
 let pushed: string[];
 let media: string[];
-let listing: { docs: { id: string; version: number; hash: string }[] } | null;
+let listing: {
+  docs: { id: string; version: number; hash: string; shared?: boolean; role?: string }[];
+} | null;
 
 const registry = {
   list: () => [...rows.values()],
@@ -86,6 +88,36 @@ describe("reconcile", () => {
       { path: "/d/gone.md", reason: "missing" },
       { path: "/d/delisted.md", reason: "delisted" },
     ]);
+  });
+
+  it("leaves a shared document this account can only read alone", async () => {
+    // The asset call would 403, mark the row pending, and be retried on every
+    // pass, so the Cloud panel showed "media pending" forever for a document
+    // nobody here is allowed to write.
+    seed({ path: "/d/theirs.md", cloud_doc_id: "c1", sync_state: "unpushed", content_hash: sha("old") }, "new");
+    seed({ path: "/d/mine.md", cloud_doc_id: "c2", content_hash: sha("x") }, "x");
+    listing = {
+      docs: [
+        { id: "c1", version: 1, hash: sha("old"), shared: true, role: "viewer" },
+        { id: "c2", version: 1, hash: sha("x") },
+      ],
+    };
+
+    const r = await createReconciler({ sync, registry, assetSync, fs, sleep: async () => {} }).run();
+
+    expect(r.skipped).toEqual([{ path: "/d/theirs.md", reason: "viewer" }]);
+    expect(pushed).toEqual([]);
+    expect(media).toEqual(["/d/mine.md"]);
+  });
+
+  it("still reconciles a shared document this account may edit", async () => {
+    seed({ path: "/d/ours.md", cloud_doc_id: "c1", content_hash: sha("x") }, "x");
+    listing = { docs: [{ id: "c1", version: 1, hash: sha("x"), shared: true, role: "editor" }] };
+
+    const r = await createReconciler({ sync, registry, assetSync, fs, sleep: async () => {} }).run();
+
+    expect(r.skipped).toEqual([]);
+    expect(r.mediaPushed).toEqual(["/d/ours.md"]);
   });
 
   it("backfills media for a current document whose media is pending or stale", async () => {

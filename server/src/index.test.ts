@@ -189,3 +189,66 @@ test("a deliberate HTTPException keeps its own status and body", async () => {
   assert.equal(res.status, 429);
   assert.equal(await res.text(), "slow down");
 });
+
+// ── Body limits ────────────────────────────────────────────────────────────
+// Neither Hono nor @hono/node-server caps a request body, and c.req.json()
+// buffers the whole thing before any handler logic runs. One account could
+// therefore make the server allocate tens of megabytes for a request it was
+// about to refuse. The limit is a middleware, so it answers before any route
+// or auth check does.
+const MB = 1024 * 1024;
+
+test("a JSON body over 2 MB is refused before the route sees it", async () => {
+  const res = await request(`/api/docs/${crypto.randomUUID()}/assets`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refs: [{ ref: `${"x".repeat(3 * MB)}.png` }] }),
+  });
+  assert.equal(res.status, 413);
+  assert.deepEqual(await res.json(), { error: "body too large" });
+});
+
+test("the missing check is bounded the same way", async () => {
+  const res = await request(`/api/docs/${crypto.randomUUID()}/assets/missing`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ hashes: Array.from({ length: 80_000 }, () => "a".repeat(64)) }),
+  });
+  assert.equal(res.status, 413);
+  assert.deepEqual(await res.json(), { error: "body too large" });
+});
+
+// A document's text is not a JSON payload the server chose the shape of: it
+// is whatever the person wrote, and Markie opens files up to 100 MB. Holding
+// the text route to the JSON limit would refuse documents that sync today.
+test("a 1.5 MB document still syncs", async () => {
+  const email = `bodylimit-${stamp}@markie.test`;
+  const { token } = await signUpVerified(app, { name: "Wordy", email });
+  const content = "w".repeat(Math.floor(1.5 * MB));
+  const { createHash } = await import("node:crypto");
+  const res = await request(`/api/docs/${crypto.randomUUID()}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name: "big.md", content, hash: createHash("sha256").update(content).digest("hex"), baseVersion: 0 }),
+  });
+  assert.equal(res.status, 200);
+});
+
+// The asset upload's body is the asset. It is measured while it streams and
+// checked against the per-file cap twice, so buffering it against a 2 MB
+// limit here would refuse files the feature exists to carry.
+test("an asset upload well over the JSON limit is not refused by it", async () => {
+  const email = `assetlimit-${stamp}@markie.test`;
+  const { token } = await signUpVerified(app, { name: "Pixels", email });
+  const { createHash } = await import("node:crypto");
+  const bytes = Buffer.alloc(3 * MB, 7);
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const res = await request(`/api/assets/${hash}`, {
+    method: "PUT",
+    headers: { "Content-Type": "image/png", "Content-Length": String(bytes.length), Authorization: `Bearer ${token}` },
+    body: new Blob([bytes]),
+  });
+  // No store is configured in this test app, so the route's own answer is
+  // 503. What matters is that the body limit did not answer first.
+  assert.notEqual(res.status, 413);
+});

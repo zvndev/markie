@@ -157,3 +157,30 @@ test("a Range with a stale If-Range is ignored and the whole asset is served", a
   assert.equal(res.headers.get("content-range"), null);
   assert.equal(await res.text(), "0123456789");
 });
+
+// Answering one reference used to build the document's entire ref -> row Map
+// first, on every request, including every Range slice of a video and every
+// page render. The table's primary key is (doc_id, ref), so the answer is one
+// indexed row; assetRefsFor stays for the page rewrite, which really does
+// want the whole set.
+test("one reference is answered by one indexed row, not by the document's whole map", async () => {
+  const { assetRowFor, assetRefsFor } = await import("./assets.ts");
+  const { openDatabase } = await import("./db.ts");
+  const db = openDatabase();
+  const ins = db.prepare("INSERT OR REPLACE INTO doc_assets (doc_id, ref, owner_id, hash) VALUES (?, ?, ?, ?)");
+  for (let i = 0; i < 500; i += 1) ins.run(docId, `filler-${i}.png`, owner.id, sha(PNG));
+
+  const row = assetRowFor(docId, "a.png");
+  assert.deepEqual(row, { owner_id: owner.id, hash: sha(PNG), size: PNG.length, mime: "image/png" });
+  // The point lookup is scoped to the document and to the exact reference.
+  assert.equal(assetRowFor(docId, "not-a-ref.png"), undefined);
+  assert.equal(assetRowFor(crypto.randomUUID(), "a.png"), undefined);
+  // The whole-map builder still answers the same thing for the page rewrite.
+  assert.deepEqual(assetRefsFor(docId).get("a.png"), row);
+
+  // And the read still serves correctly from a document with a lot of refs.
+  const res = await app.request(`/api/docs/${docId}/assets/file?ref=a.png`, { headers: H(owner.token) });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), "0123456789");
+  db.prepare("DELETE FROM doc_assets WHERE doc_id = ? AND ref LIKE 'filler-%'").run(docId);
+});

@@ -18,6 +18,13 @@ const { Readable } = require("node:stream");
 const docAssets = require("./doc-assets");
 const localAssets = require("./local-assets");
 
+// How many references one push may claim. The server refuses a longer set
+// with 413 (MAX_DOC_REFS in server/src/assets.ts), and a client that sent the
+// whole set anyway would be refused on every reconciliation pass for ever.
+// Capping here instead means a document past the line degrades: the first
+// 2000 references travel and the rest are named as left out.
+const MAX_REFS = 2000;
+
 // A reference that, read anywhere else, names something outside the folder
 // the document is in. Kept identical to refEscapes in server/src/assets.ts:
 // the two have to agree, or a ref this stages is a ref the link route answers
@@ -109,7 +116,9 @@ function createAssetSync({
   // landed.
   async function stageAssets(filePath, cloudId, content) {
     const row = registry.get(filePath) ?? {};
-    const refs = docAssets.extractRefs(content);
+    const extracted = docAssets.extractRefs(content);
+    const refs = extracted.slice(0, MAX_REFS);
+    const overflow = extracted.slice(MAX_REFS);
     const resolved = docAssets.resolveRefs(refs, { docPath: filePath, roots: grants.assetRoots(), files: grants.grantedFilePaths() });
     // What this machine may draw is the wrong question for a document
     // somebody else can read. Their text can name any path, this machine
@@ -142,6 +151,9 @@ function createAssetSync({
       const hash = await hashCached(r.path, stat.size, stat.mtimeMs);
       entries.push({ ref: r.ref, path: r.path, mime: r.mime, hash, size: stat.size });
     }
+    // Last, so they read as what they are: the tail of the document, in the
+    // order it wrote them, past the point where anything more could be sent.
+    for (const ref of overflow) skipped.push({ ref, reason: "count" });
 
     // The document's every reference, in the order it wrote them: a hash for
     // the ones that resolved and the server will hold, nothing for the rest.

@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth.ts";
@@ -55,6 +56,41 @@ app.use("*", async (c, next) => {
   if ((h.get("content-type") ?? "").includes("text/html")) {
     h.set("Content-Security-Policy", CONTENT_SECURITY_POLICY);
   }
+});
+
+// How much of a request body the API will hold in memory.
+//
+// Neither Hono nor @hono/node-server caps a body, and every JSON route calls
+// c.req.json(), which buffers the whole thing before a handler runs. So the
+// allocation happened for callers who were about to be refused: a 19 MB link
+// body and a missing-check naming 100 000 hashes were both taken in full.
+//
+// Two routes are not JSON the server chose the shape of, and both keep their
+// own bound instead:
+//
+//   PUT /api/assets/:hash  is the asset itself. It is streamed, counted as it
+//   arrives and checked against the per-file cap twice (assets.ts), so
+//   buffering it here would refuse the files the feature exists to carry.
+//
+//   PUT /api/docs/:id      is somebody's document. Nothing on the server caps
+//   the text today; the desktop refuses to open a file at or above 100 MB
+//   (electron/doc-tiers.js MAX_DOC_BYTES) and will push anything under that,
+//   so the JSON limit would refuse documents that sync now. It is bounded
+//   just above the size the app itself refuses, which is loose, and a real
+//   server-side document cap is the thing that would tighten it.
+const JSON_BODY_LIMIT = 2 * 1024 * 1024;
+const TEXT_BODY_LIMIT = 100 * 1024 * 1024 + 1024 * 1024;
+const bodyTooLarge = (c: Context) => c.json({ error: "body too large" }, 413);
+const jsonBodyLimit = bodyLimit({ maxSize: JSON_BODY_LIMIT, onError: bodyTooLarge });
+const textBodyLimit = bodyLimit({ maxSize: TEXT_BODY_LIMIT, onError: bodyTooLarge });
+const ASSET_UPLOAD = /^\/api\/assets\/[^/]+$/;
+const DOC_TEXT = /^\/api\/docs\/[^/]+$/;
+
+app.use("/api/*", async (c, next) => {
+  if (c.req.method !== "POST" && c.req.method !== "PUT") return next();
+  if (ASSET_UPLOAD.test(c.req.path)) return next();
+  if (DOC_TEXT.test(c.req.path)) return textBodyLimit(c, next);
+  return jsonBodyLimit(c, next);
 });
 
 app.use(

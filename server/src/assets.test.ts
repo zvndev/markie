@@ -20,7 +20,7 @@ const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.optio
 if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 const { docs } = await import("./docs.ts");
 const { shares } = await import("./shares.ts");
-const { assetsApi, assetRefsFor, MAX_ASSET_BYTES, MAX_ACCOUNT_ASSET_BYTES, setAssetStoreForTests, setAssetLimitsForTests, inflightForTests, sweepOrphans } = await import("./assets.ts");
+const { assetsApi, assetRefsFor, assetRowFor, MAX_ASSET_BYTES, MAX_ACCOUNT_ASSET_BYTES, MAX_DOC_REFS, setAssetStoreForTests, setAssetLimitsForTests, inflightForTests, sweepOrphans } = await import("./assets.ts");
 const { fsStore } = await import("./storage.ts");
 
 const app = new Hono();
@@ -639,4 +639,22 @@ test("an escaping reference with no hash at all is refused too", async () => {
   const r = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref: "../kept.png" }] });
   assert.equal(r.status, 400);
   assert.equal(r.data.error, "bad ref");
+});
+
+// Nothing bounded how many references one document could carry. A single
+// request naming one 1-byte asset under 300 000 references turned every later
+// read of that document, including an anonymous one through a public link,
+// into a quarter of a second of CPU and tens of megabytes of allocation.
+test("link refuses a reference set longer than the cap, and the cap itself still works", async () => {
+  const id = await makeDoc(owner.token);
+  const atCap = Array.from({ length: MAX_DOC_REFS }, (_, i) => ({ ref: `f${i}.png` }));
+  let r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: atCap });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data, { linked: 0, kept: 0, dropped: MAX_DOC_REFS });
+
+  r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [...atCap, { ref: "one-too-many.png" }] });
+  assert.equal(r.status, 413);
+  assert.deepEqual(r.data, { error: "too many references", cap: MAX_DOC_REFS });
+  // The refusal is a refusal: the document's set is untouched.
+  assert.equal(assetRefsFor(id).size, 0);
 });

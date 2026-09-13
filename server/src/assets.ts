@@ -20,6 +20,14 @@ export const MAX_ASSET_BYTES = 100 * 1024 * 1024;
 export const MAX_DOC_ASSET_BYTES = 500 * 1024 * 1024;
 export const MAX_ACCOUNT_ASSET_BYTES = 5 * 1024 * 1024 * 1024;
 export const MAX_CONCURRENT_UPLOADS = 4;
+// How many references one document may carry. Nothing bounded this before,
+// and the document cap is a byte total, so N references to one 1-byte asset
+// never reached it: one request could put 300 000 rows on a document and make
+// every later read of it, anonymous ones through a public link included, cost
+// a quarter of a second. Well above any real document; electron/asset-sync.js
+// applies the same number locally so a huge document degrades instead of
+// retrying a 413 for ever.
+export const MAX_DOC_REFS = 2000;
 
 const db = openDatabase();
 db.exec(`
@@ -86,6 +94,19 @@ interface AssetRow {
   hash: string;
   size: number;
   mime: string;
+}
+
+// One reference's row, by the primary key doc_assets already has. This is
+// what a read needs: assetRefsFor below builds the document's whole map,
+// which the page rewrite wants and a single asset request does not.
+export function assetRowFor(docId: string, ref: string): AssetRow | undefined {
+  return db
+    .prepare(
+      `SELECT a.owner_id, a.hash, a.size, a.mime FROM doc_assets d
+       JOIN assets a ON a.owner_id = d.owner_id AND a.hash = d.hash
+       WHERE d.doc_id = ? AND d.ref = ?`
+    )
+    .get(docId, ref) as AssetRow | undefined;
 }
 
 export function assetRefsFor(docId: string): Map<string, AssetRow> {
@@ -410,6 +431,11 @@ assetsApi.put("/docs/:id/assets", async (c) => {
   if ("error" in gate) return gate.error;
   const body = (await c.req.json().catch(() => null)) as { refs?: unknown; baseVersion?: unknown } | null;
   if (!Array.isArray(body?.refs)) return c.json({ error: "bad request" }, 400);
+  // Before anything is read out of the array: the cost this bounds is the
+  // work of walking it and the rows it would leave behind.
+  if (body!.refs.length > MAX_DOC_REFS) {
+    return c.json({ error: "too many references", cap: MAX_DOC_REFS }, 413);
+  }
   // Present but malformed is a client bug, and ignoring it would quietly skip
   // the very check the client asked for.
   const baseVersion = body!.baseVersion;
@@ -495,7 +521,7 @@ const ASSET_SAFETY_HEADERS = {
 export async function serveAsset(c: Context, docId: string, ref: string): Promise<Response> {
   if (!store) return c.json({ error: "assets not configured" }, 503);
   if (!docExists(docId)) return c.text("Not found", 404);
-  const row = assetRefsFor(docId).get(ref);
+  const row = assetRowFor(docId, ref);
   if (!row) return c.text("Not found", 404);
   const etag = `"${row.hash}"`;
   const cacheControl = "private, max-age=3600";

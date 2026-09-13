@@ -581,3 +581,31 @@ describe("what an exposed document may stage", () => {
     expect(calls.map((c) => c.path)).toEqual(["/api/docs/c1/assets"]);
   });
 });
+
+// The server refuses a reference set over 2000 with 413. A client that sent
+// the whole set anyway would 413 on every reconciliation pass for ever, so it
+// caps first and says what it left out.
+describe("a document with more references than the server will take", () => {
+  it("keeps the first 2000 in document order and reports the rest", async () => {
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const md = Array.from({ length: 2003 }, (_, i) => `![](p${i}.png)`).join("\n");
+    const { api, calls } = fakeApi([{ status: 200, data: { linked: 0, kept: 0, dropped: 2000 } }]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+    const result = await pushAssets(docPath, "c1", md);
+
+    const sent = (calls[0].body as { refs: { ref: string }[] }).refs;
+    expect(sent).toHaveLength(2000);
+    expect(sent[0]).toEqual({ ref: "p0.png" });
+    expect(sent[1999]).toEqual({ ref: "p1999.png" });
+    // The three that did not fit are named, after the ones that were skipped
+    // for their own reasons.
+    expect(result.skipped.slice(-3)).toEqual([
+      { ref: "p2000.png", reason: "count" },
+      { ref: "p2001.png", reason: "count" },
+      { ref: "p2002.png", reason: "count" },
+    ]);
+    expect(result.skipped.filter((s: { reason: string }) => s.reason === "count")).toHaveLength(3);
+  });
+});

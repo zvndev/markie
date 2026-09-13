@@ -752,6 +752,26 @@ describe("checkUpdates listing", () => {
     expect(new Set([v1, v2, renamed]).size).toBe(3);
   });
 
+  it("moves when a row's media state changes and the server's list does not", async () => {
+    // A reconciliation pass turning "media pending" into synced changes what
+    // the Library draws without changing anything on the server. Left out of
+    // the fingerprint, the renderer deduplicated the refresh away and an open
+    // Cloud panel said "media pending" until something unrelated moved.
+    respondWith(
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 1, name: "a.md" }] } },
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 1, name: "a.md" }] } },
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 1, name: "a.md" }] } }
+    );
+    const before = await listing();
+
+    rows.get("/docs/one.md")!.assets_state = "synced";
+    const afterState = await listing();
+    expect(afterState).not.toBe(before);
+
+    rows.get("/docs/one.md")!.assets_skipped = JSON.stringify([{ ref: "big.png", reason: "size" }]);
+    expect(await listing()).not.toBe(afterState);
+  });
+
   it("reports no fingerprint for a list it never received, so nothing refreshes off a failure", async () => {
     respondWith({ status: 500 }, new Error("offline"));
     expect(await listing()).toBeNull();

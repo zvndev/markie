@@ -1603,6 +1603,10 @@ export default function Home() {
         setShowFind(true);
       }),
       api.onMenuHistory?.(() => setShowHistory(true)),
+      // A background reconciliation pass pushed a document's text or media.
+      // Nothing else reports that: the pass is fire-and-forget, and the
+      // server's own listing does not move when only local media state does.
+      api.onLibraryChanged?.(() => setLibRefreshKey((k) => k + 1)),
       api.onMenuSave?.(() => handlersRef.current.save()),
       api.onMenuSaveAs?.(() => handlersRef.current.saveAs()),
       api.onMenuFork?.(() => handlersRef.current.fork()),

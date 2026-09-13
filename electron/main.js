@@ -1263,6 +1263,14 @@ async function reconcileIfDue(force = false) {
   reconcileInFlight = reconciler.run();
   try {
     lastReconcileResult = await reconcileInFlight;
+    // A pass that moved a row from "media pending" to synced changed what the
+    // Library draws, and nothing else is going to say so: the pass is
+    // fire-and-forget and the server's own listing did not move. Without this
+    // an open Cloud panel reported "media pending" until something unrelated
+    // made it look again.
+    if (lastReconcileResult?.pushed?.length || lastReconcileResult?.mediaPushed?.length) {
+      mainWindow?.webContents.send("library-changed");
+    }
     return lastReconcileResult;
   } finally {
     reconcileInFlight = null;

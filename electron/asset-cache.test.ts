@@ -377,7 +377,7 @@ describe("asset cache", () => {
     const locked = hashOf("aaaa");
     const stubborn = {
       ...realFsp,
-      rm: async (target: string, opts?: object) => {
+      rm: async (target: Parameters<typeof realFsp.rm>[0], opts?: Parameters<typeof realFsp.rm>[1]) => {
         if (path.basename(String(target)) === locked) throw new Error("EPERM: file is open");
         return realFsp.rm(target, opts);
       },

@@ -545,9 +545,10 @@ async function checkUpdates() {
   // What the list looked like, in one string. The renderer keeps the previous
   // one and refreshes the Library when it moves, which is how a document synced
   // from another machine appears here without anyone reopening the panel.
-  const listing = listingFingerprint(res.data.docs);
+  const rows = registry.list();
+  const listing = listingFingerprint(res.data.docs, rows);
   const updates = [];
-  for (const row of registry.list()) {
+  for (const row of rows) {
     if (!row.cloud_doc_id) continue;
     const r = remote.get(row.cloud_doc_id);
     // Absent from the list means deleted or revoked, which libraryState reports
@@ -660,11 +661,19 @@ const safeJson = (s) => {
   }
 };
 
-function listingFingerprint(docs) {
+function listingFingerprint(docs, rows = []) {
   const parts = docs
     .map((d) => `${d.id}:${d.version ?? 0}:${d.shared ? 1 : 0}:${d.name ?? ""}`)
     .sort();
-  return crypto.createHash("sha1").update(parts.join("\n")).digest("hex");
+  // A row's media state is part of what the Library draws, and a background
+  // reconciliation pass moves it without anything on the server changing.
+  // Left out, the renderer deduplicated that refresh away and an open Cloud
+  // panel went on saying "media pending" until something unrelated moved.
+  const media = rows
+    .filter((r) => r.cloud_doc_id)
+    .map((r) => `${r.cloud_doc_id}:${r.assets_state ?? ""}:${r.assets_skipped ?? ""}`)
+    .sort();
+  return crypto.createHash("sha1").update([...parts, ...media].join("\n")).digest("hex");
 }
 
 // The server's copy of a doc, for showing what a pull would cost before it

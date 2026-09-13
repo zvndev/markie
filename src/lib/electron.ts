@@ -401,6 +401,10 @@ export interface ElectronAPI {
   historyList(path: string): Promise<HistoryEntry[]>;
   historyRead(args: { path: string; stamp: string }): Promise<{ content: string | null }>;
   onMenuHistory(cb: () => void): Unsubscribe;
+  // A background reconciliation pass pushed a document's text or media, so
+  // the library snapshot the renderer is holding is out of date. Optional so
+  // an older main process still type-checks.
+  onLibraryChanged?(cb: () => void): Unsubscribe;
   /** Whether crash reports may be sent, and whether a DSN is configured at all. */
   crashConsentGet(): Promise<{ enabled: boolean; available: boolean }>;
   crashConsentSet(

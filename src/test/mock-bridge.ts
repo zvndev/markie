@@ -188,6 +188,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     historyList: vi.fn(async () => []),
     historyRead: vi.fn(async () => ({ content: null })),
     onMenuHistory: vi.fn(subscribe("onMenuHistory")),
+    onLibraryChanged: vi.fn(subscribe("onLibraryChanged")),
 
     // Crash reporting (consent-gated; off and unavailable by default in tests)
     crashConsentGet: vi.fn(async () => ({ enabled: false, available: false })),

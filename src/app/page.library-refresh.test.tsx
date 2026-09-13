@@ -157,6 +157,23 @@ describe("the Library staying current", () => {
     await findLibraryRow("laptop.md");
   });
 
+  it("looks again when a background pass says it changed something", async () => {
+    // Reconciliation runs on its own, and a row it moves from "media pending"
+    // to synced changes nothing the server's listing would report. Main says
+    // so directly instead.
+    const libraryState = vi.fn(async () => ({ signedIn: true, items: [local()] }));
+    const docCheckUpdates = vi.fn(async () => ({ updates: [], listing: "same" }));
+    await boot({ libraryState, docCheckUpdates } as Partial<ElectronAPI>);
+    await findLibraryRow("notes.md");
+    const listedBefore = libraryState.mock.calls.length;
+
+    await act(async () => {
+      emit("onLibraryChanged");
+    });
+
+    await waitFor(() => expect(libraryState.mock.calls.length).toBeGreaterThan(listedBefore));
+  });
+
   it("does not refetch the Library while the server's list stands still", async () => {
     const libraryState = vi.fn(async () => ({ signedIn: true, items: [local()] }));
     const docCheckUpdates = vi.fn(async () => ({ updates: [], listing: "same" }));

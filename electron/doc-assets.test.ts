@@ -137,3 +137,31 @@ describe("extraction cannot be made expensive", () => {
     expect(extractRefs(`![](${atCap}.png)`)).toEqual([`${atCap}.png`]);
   });
 });
+
+// The link route refuses a malformed reference outright now, rather than
+// dropping it out of the set and answering 200. Refusing is right, and it
+// makes this the place that has to agree with it: a reference that reached
+// the push and was refused would leave the row pending and be retried on
+// every reconciliation pass for ever. The angle form and an HTML src have no
+// length bound of their own, and percent-decoding can put a control character
+// into a reference that was written without one.
+describe("references the server would refuse never leave here", () => {
+  it("drops a destination over 2048 bytes in every syntax that can carry one", () => {
+    const long = `${"n".repeat(2049)}.png`;
+    expect(extractRefs(`![](<${long}>)`)).toEqual([]);
+    expect(extractRefs(`<img src="${long}">`)).toEqual([]);
+    expect(extractRefs(`<img src='${long}'>`)).toEqual([]);
+    // Measured in bytes, the way the server measures it.
+    const wide = `${"é".repeat(1023)}.png`;
+    expect(Buffer.byteLength(wide)).toBe(2050);
+    expect(extractRefs(`<img src="${encodeURI(wide)}">`)).toEqual([]);
+  });
+
+  it("drops a reference that percent-decodes to a control character", () => {
+    expect(extractRefs("![](a%0Ab.png)")).toEqual([]);
+    expect(extractRefs("![](a%00b.png)")).toEqual([]);
+    expect(extractRefs("<img src=\"a%0D%0ASet-Cookie:%20x=1.png\">")).toEqual([]);
+    // The ordinary escaped space is still a reference, not a control code.
+    expect(extractRefs("![](my%20shot.png)")).toEqual(["my shot.png"]);
+  });
+});

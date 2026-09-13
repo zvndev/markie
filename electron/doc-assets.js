@@ -49,6 +49,22 @@ function isLocal(src) {
   return !!src && !src.startsWith("//") && !/^[a-z][a-z0-9+.-]*:/i.test(src);
 }
 
+// A reference the server would refuse to store at all, whoever sent it
+// (refIsMalformed in server/src/assets.ts). Dropping it here rather than
+// letting the push carry it is what keeps the two in step: a refused link is
+// a row left pending and retried on every reconciliation pass for ever. The
+// bare destination is already bounded by MD_IMAGE, but the angle form and an
+// HTML src are not, and percent-decoding can put a control character into a
+// reference that was written without one.
+function refIsMalformed(ref) {
+  if (Buffer.byteLength(ref, "utf8") > MAX_REF_CHARS) return true;
+  for (let i = 0; i < ref.length; i += 1) {
+    const code = ref.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
 function refOf(src) {
   const bare = src.trim().split("#")[0].split("?")[0];
   try {
@@ -77,7 +93,7 @@ function extractRefs(markdown) {
   for (const { src } of found) {
     if (!isLocal(src)) continue;
     const ref = refOf(src);
-    if (!ref || seen.has(ref)) continue;
+    if (!ref || refIsMalformed(ref) || seen.has(ref)) continue;
     seen.add(ref);
     out.push(ref);
   }

@@ -2175,3 +2175,41 @@ describe("media and text push order", () => {
     expect(rows.get("/docs/t.md")!.assets_state).toBe("pending");
   });
 });
+
+describe("setConfig reports whether the session changed", () => {
+  // Every account's cached media hangs off this answer. The cache keys carry
+  // no principal, so a token swapped straight from account A to account B
+  // with no sign-out in between would otherwise hand B whatever A had
+  // fetched.
+  it("says nothing changed when the renderer repeats the same config", () => {
+    sync.setConfig({ token: "a-token", serverURL: SERVER });
+    expect(sync.setConfig({ token: "a-token", serverURL: SERVER })).toEqual({ sessionChanged: false });
+    expect(sync.setConfig({ token: "a-token", serverURL: SERVER, userId: ME })).toEqual({ sessionChanged: false });
+  });
+
+  it("says the session changed when one account's token replaces another's", () => {
+    sync.setConfig({ token: "a-token", serverURL: SERVER, userId: ME });
+    expect(sync.setConfig({ token: "b-token", serverURL: SERVER })).toEqual({ sessionChanged: true });
+  });
+
+  it("says the session changed when the same token is offered to another server", () => {
+    sync.setConfig({ token: "a-token", serverURL: SERVER });
+    const env = process.env.NODE_ENV;
+    process.env.NODE_ENV = "development";
+    try {
+      expect(sync.setConfig({ token: "a-token", serverURL: "http://localhost:4010" })).toEqual({
+        sessionChanged: true,
+      });
+    } finally {
+      process.env.NODE_ENV = env;
+    }
+  });
+
+  it("says the session changed on sign-out", () => {
+    sync.setConfig({ token: "a-token", serverURL: SERVER });
+    expect(sync.setConfig({ token: null, serverURL: null })).toEqual({ sessionChanged: true });
+    // Signed out twice over is not a new session, and there is nothing left
+    // to clear.
+    expect(sync.setConfig({ token: null, serverURL: null })).toEqual({ sessionChanged: false });
+  });
+});

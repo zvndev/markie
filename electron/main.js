@@ -1339,13 +1339,17 @@ handle("term-open-external", (_e, { app, cwd }) => terminal.openExternal(app, cw
 
 handle("sync-config", (_event, cfg) => {
   const result = sync.setConfig(cfg);
-  // Signing out drops the session for good; the pictures cached under it
-  // belong to whatever account was signed in, and the next one to sign in
-  // here should not be handed a stranger's cached media. If the clear itself
-  // cannot finish (disk trouble, a locked file), a marker asks the cache to
-  // finish the job the next time it starts, rather than leaving this
-  // account's pictures behind for whoever signs in next.
-  if (cfg.token === null) void assetCache.clear().catch(() => assetCache.markPendingClear());
+  // Any change of session drops the one before it for good; the pictures
+  // cached under it belong to whatever account was signed in, and the next
+  // one here should not be handed a stranger's cached media. Signing out is
+  // only one way that happens: authentication can replace account A's token
+  // with account B's directly, and the cache keys carry no principal, so
+  // waiting for a null token left A's pictures on disk for B. An unchanged
+  // token at an unchanged server is the renderer repeating itself, which
+  // must clear nothing. If the clear itself cannot finish (disk trouble, a
+  // locked file), a marker asks the cache to finish the job the next time it
+  // starts.
+  if (result?.sessionChanged) void assetCache.clear().catch(() => assetCache.markPendingClear());
   // A push that names the signed-in user is the moment the session becomes a
   // confirmed principal, which is what reconciliation waits for.
   if (cfg.userId) void reconcileIfDue();

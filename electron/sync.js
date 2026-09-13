@@ -59,6 +59,11 @@ function setConfig(next) {
   // signed in.
   if (sessionChanged || !token) principal = null;
   else if (next.userId) principal = next.userId;
+  // The caller clears the asset cache on this. Cache keys carry no principal,
+  // so a token swapped straight from one account to another with no sign-out
+  // in between would otherwise leave the first account's pictures on disk for
+  // the second to be served from.
+  return { sessionChanged };
 }
 
 function isConfigured() {

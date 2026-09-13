@@ -103,13 +103,15 @@ describe("resolveRefs and hashFile", () => {
 // 1.8 s at 100 KB, 46 s at 500 KB, hours at a few megabytes, with no IPC, no
 // window and no menus for the duration.
 describe("extraction cannot be made expensive", () => {
-  it("reads a document made entirely of unterminated image openers in well under a second", () => {
+  it("reads a document made entirely of unterminated image openers in seconds, not minutes", () => {
     const payload = "![](a".repeat(100_000);
     const started = Date.now();
     const refs = extractRefs(payload);
     const elapsed = Date.now() - started;
     expect(refs).toEqual([]);
-    expect(elapsed).toBeLessThan(1000);
+    // Quadratic backtracking took 46 s on this input; linear is about a second on a
+    // slow CI runner, so the bound is generous and still tells the two apart.
+    expect(elapsed).toBeLessThan(5000);
   });
 
   it("bounds the same run inside a document that does have real references", () => {

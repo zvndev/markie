@@ -868,18 +868,26 @@ function registerAssetProtocol() {
     if (!real || !mime) {
       // Not here, or not allowed here. A document that lives in the cloud
       // may still have this picture on the server, under the reference the
-      // text wrote: relative to the document's folder, or the absolute path
-      // itself when the picture lives outside it. The document is named by
-      // the request, which makes it untrusted like every other part of this
-      // URL. All it does is choose which registry row to ask about, and the
+      // text wrote, which the renderer carries along. The document is named
+      // by the request, which makes it untrusted like every other part of
+      // this URL. All it does is choose which registry row to ask about, and the
       // server decides whether this session may read that document's media.
-      const docPath = new URL(request.url).searchParams.get("doc");
+      const query = new URL(request.url).searchParams;
+      const docPath = query.get("doc");
       const cloud = docPath ? cloudDocForPath(docPath, requested) : null;
       if (!cloud) return new Response("Forbidden", { status: 403 });
+      // The reference as the markdown wrote it, which is the string the
+      // uploader stored it under. Rebuilding one from the resolved path turns
+      // "./a.png" into "a.png" and "../img/a.png" into an absolute path, and
+      // the server holds nothing under either. The recomputed name stays the
+      // fallback for a renderer that sent no ref. Neither is trusted: it only
+      // names a picture inside a document this account may already read.
+      const sent = query.get("ref");
+      const ref = typeof sent === "string" && sent ? sent : cloud.ref;
       // load()/save() do real disk I/O and can reject (a full disk, a
       // permissions problem); a picture this session cannot serve reads the
       // same whether the cause was "not cached" or "couldn't get to disk".
-      const cached = await assetCache.get(cloud.cloudId, cloud.ref).catch(() => null);
+      const cached = await assetCache.get(cloud.cloudId, ref).catch(() => null);
       if (!cached) return new Response("Not found", { status: 404 });
       // requestedMime, not cached.mime: the Content-Type the server sent
       // back is not trusted to decide what this protocol hands the

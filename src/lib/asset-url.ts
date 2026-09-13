@@ -7,8 +7,8 @@
 // what an agent writing a report produces without being told.
 //
 // So the src is rewritten to
-// `markie-asset://local/<absolute path>?doc=<document path>` on the way into
-// the DOM, and only there. The document on disk is untouched: the editor
+// `markie-asset://local/<absolute path>?doc=<document path>&ref=<reference as
+// written>` on the way into the DOM, and only there. The document on disk is untouched: the editor
 // keeps the original in the node's attribute, so what gets saved is what was
 // written. Main decides whether to actually serve it; this side only addresses
 // it, and an address is not a permission. The `doc` query names the document
@@ -97,7 +97,13 @@ export function resolveAssetSrc(src: string | null | undefined, base?: string | 
   const absolute = decoded.startsWith("/") ? decoded : joinPath(dir, decoded);
   const address = `${ASSET_ORIGIN}/${encodeURIComponent(absolute)}`;
   if (override || !docPath) return address;
-  return `${address}?doc=${encodeURIComponent(docPath)}`;
+  // `ref` is the reference as the markdown wrote it, which is the exact string
+  // the uploader stored it under. Main can rebuild a name from the resolved
+  // path, but "./a.png" rebuilds as "a.png" and "../img/a.png" rebuilds as an
+  // absolute path, and the server holds nothing under either. Carrying the
+  // original costs one query parameter and is no more trusted than `doc` is:
+  // at the server a ref is a lookup key, never a path.
+  return `${address}?doc=${encodeURIComponent(docPath)}&ref=${encodeURIComponent(decoded)}`;
 }
 
 // What to draw for a given source. Markdown has one syntax for embedded media

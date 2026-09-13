@@ -292,6 +292,43 @@ describe("a row's media note", () => {
     expect(screen.queryByText(/file too large/)).not.toBeInTheDocument();
   });
 
+  // The server refused the whole link body, which no retry of the same text
+  // changes, so the row is settled rather than pending. Saying nothing would
+  // leave a document whose pictures never travelled looking exactly like one
+  // whose pictures did.
+  it("says when the server refused the document's media outright", async () => {
+    renderView({
+      items: [
+        synced({
+          media: {
+            state: "synced",
+            skipped: [{ ref: "*", reason: "refused", status: 413 }],
+          },
+        }),
+      ],
+    });
+    expect(await screen.findByText("media refused (413)")).toBeInTheDocument();
+  });
+
+  it("puts the refusal ahead of the per-picture notes", async () => {
+    renderView({
+      items: [
+        synced({
+          media: {
+            state: "synced",
+            skipped: [
+              { ref: "diagram.png", reason: "size" },
+              { ref: "*", reason: "refused", status: 400 },
+            ],
+          },
+        }),
+      ],
+    });
+    expect(
+      await screen.findByText("media refused (400) · file too large: diagram.png")
+    ).toBeInTheDocument();
+  });
+
   // A picture that stays behind because the document is shared is the one
   // skip the person looking at this page can do something about: move the
   // file in beside the document, and it travels. Saying nothing left them

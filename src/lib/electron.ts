@@ -681,7 +681,9 @@ export interface LibraryItem {
   // registry entry to read it from.
   media?: {
     state: "synced" | "pending" | null;
-    skipped: { ref: string; reason: string }[];
+    // `status` is set only on the `refused` entry, where the ref is "*": the
+    // server turned the whole link body down and this is what it answered.
+    skipped: { ref: string; reason: string; status?: number }[];
   };
 }
 

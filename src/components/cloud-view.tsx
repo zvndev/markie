@@ -405,6 +405,12 @@ function MediaNote({ item }: { item: LibraryItem }) {
   if (!media) return null;
   const notes: string[] = [];
   if (media.state === "pending") notes.push("media pending");
+  // The server refused the whole link body, which no retry of the same text
+  // changes, so the row is settled rather than pending and this is the only
+  // word anyone gets. First, because it is about the document rather than
+  // about one picture in it.
+  const refused = media.skipped?.find((s) => s.reason === "refused");
+  if (refused) notes.push(`media refused (${refused.status ?? "?"})`);
   const tooLarge = media.skipped?.find((s) => s.reason === "size");
   if (tooLarge) notes.push(`file too large: ${tooLarge.ref}`);
   const outside = media.skipped?.find((s) => s.reason === "outside");

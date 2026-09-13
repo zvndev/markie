@@ -683,3 +683,64 @@ describe("references the link route dropped", () => {
     expect(result.skipped).toEqual([{ ref: "notes.txt", reason: "type" }]);
   });
 });
+
+// 503 is the server without a bucket and 409 is a snapshot that moved on:
+// both are worth retrying. A 400 or a 413 is this body being wrong, and the
+// next pass sends the identical body, so filing it as pending was a
+// ten-minute loop for the life of the document.
+describe("a link the server will never accept", () => {
+  it("settles the row on a 400 and sends nothing again for the same content", async () => {
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api, calls } = fakeApi([
+      { status: 200, data: { missing: [] } },
+      { status: 400, data: { error: "bad ref" } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+    const result = await pushAssets(docPath, "c1", "![](b.png)\n");
+
+    expect(result).toEqual({ ok: true, uploaded: 0, refused: 400, skipped: [{ ref: "*", reason: "refused", status: 400 }] });
+    const row = rows.get(docPath)!;
+    expect(row.assets_state).toBe("synced");
+    expect(JSON.parse(row.assets_skipped as string)).toEqual([{ ref: "*", reason: "refused", status: 400 }]);
+    // The fingerprint is the one that was refused, so the next pass over the
+    // same text is a no-op rather than the same refusal again.
+    expect(await pushAssets(docPath, "c1", "![](b.png)\n")).toEqual({ unchanged: true });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("settles the row on a 413 too, and retries once the document changes", async () => {
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api } = fakeApi([
+      { status: 200, data: { missing: [] } },
+      { status: 413, data: { error: "too many references", cap: 2000 } },
+      { status: 200, data: { missing: [] } },
+      { status: 200, data: { linked: 1, kept: 0, dropped: 0, droppedRefs: [] } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+    expect((await pushAssets(docPath, "c1", "![](b.png)\n")).refused).toBe(413);
+    expect(rows.get(docPath)!.assets_state).toBe("synced");
+    // Editing the document is a new reference set, so it is worth one more go.
+    const second = await pushAssets(docPath, "c1", "![](shots/a.png)\n");
+    expect(second.ok).toBe(true);
+    expect(second.skipped).toEqual([]);
+  });
+
+  it("keeps a 500, a 429 and a network failure pending", async () => {
+    for (const reply of [{ status: 500 }, { status: 429 }, { status: 0 }]) {
+      const { docPath } = fixture();
+      rows.set(docPath, { cloud_doc_id: "c1" });
+      const { api } = fakeApi([{ status: 200, data: { missing: [] } }, reply]);
+      const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+      const result = await pushAssets(docPath, "c1", "![](b.png)\n");
+
+      expect(result.pending, `status ${reply.status}`).toBe(true);
+      expect(rows.get(docPath)!.assets_state, `status ${reply.status}`).toBe("pending");
+      expect(rows.get(docPath)!.assets_fingerprint, `status ${reply.status}`).toBeUndefined();
+    }
+  });
+});

@@ -128,6 +128,19 @@ function createAssetSync({
     return error ? { pending: true, error } : { pending: true };
   }
 
+  // A refusal no retry of the same body changes. The row is settled under the
+  // fingerprint that was refused, so the next pass over the same text sends
+  // nothing and an edit to the document is what tries again.
+  function markRefused(filePath, staged, status) {
+    const skipped = [...staged.skipped, { ref: "*", reason: "refused", status }];
+    registry.update(filePath, {
+      assets_state: "synced",
+      assets_fingerprint: staged.fingerprint,
+      assets_skipped: JSON.stringify(skipped),
+    });
+    return { ok: true, uploaded: staged.uploaded, refused: status, skipped };
+  }
+
   // The server's own verdicts, in the words the row already speaks: a mime
   // disagreement is a file whose type cannot be served under that name, which
   // reads the same way as any other unusable type, and an escaping reference
@@ -259,6 +272,18 @@ function createAssetSync({
     // Somebody else's snapshot landed in between. Reconciliation retries the
     // whole pass; all this has to do is leave the refs unclaimed.
     if (link.status === 409) return { ...markPending(filePath, staged.skipped), conflict: true };
+    // A 4xx is this body being wrong, and the next pass sends the identical
+    // body. Filing it as pending was a ten-minute loop for the life of the
+    // document, pointed at production, with the panel reporting "media
+    // pending" about something that was never going to land. So the row is
+    // settled under the fingerprint that was refused: nothing is sent again
+    // until the document's own references change, and the row carries the
+    // status so the panel can say what happened. 429 is the exception, being
+    // the server asking for a moment rather than refusing the content, and
+    // everything from 500 up is the server having a bad day.
+    if (link.status >= 400 && link.status < 500 && link.status !== 429) {
+      return markRefused(filePath, staged, link.status);
+    }
     if (link.status !== 200) return markPending(filePath, staged.skipped, failure("media link", link));
     // What the server decided against. It drops an entry it cannot store
     // honestly instead of refusing the body, so this is the only word anyone

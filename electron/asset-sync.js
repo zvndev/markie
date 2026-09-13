@@ -13,8 +13,37 @@
 // A failure in either half leaves the row "pending" for the reconciliation
 // pass; the text push is never held up by a picture.
 const fs = require("node:fs");
+const path = require("node:path");
 const { Readable } = require("node:stream");
 const docAssets = require("./doc-assets");
+const localAssets = require("./local-assets");
+
+// A reference that, read anywhere else, names something outside the folder
+// the document is in. Kept identical to refEscapes in server/src/assets.ts:
+// the two have to agree, or a ref this stages is a ref the link route answers
+// 400 to, and the row retries it on every pass for ever. Both separators are
+// considered, because a reference is written by hand and Windows text reaches
+// the same check.
+function refEscapes(ref) {
+  if (ref.startsWith("/") || ref.startsWith("\\")) return true;
+  if (/^[A-Za-z]:/.test(ref)) return true;
+  return ref.split(/[/\\]/).some((segment) => segment === "." || segment === "..");
+}
+
+// Whether the file a reference actually resolved to sits inside the
+// document's own folder. The resolved path is already a realpath
+// (local-assets.js resolves both sides), and this realpaths the folder, so a
+// symlink beside the document cannot point out of it.
+function insideDocFolder(resolvedPath, filePath) {
+  let realDir;
+  try {
+    realDir = fs.realpathSync(path.dirname(filePath));
+  } catch {
+    // No folder, nothing is inside it.
+    return false;
+  }
+  return localAssets.containedIn(realDir, resolvedPath);
+}
 
 function createAssetSync({
   api,
@@ -23,6 +52,12 @@ function createAssetSync({
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   maxBytes = docAssets.MAX_ASSET_BYTES,
   hashFile = docAssets.hashFile,
+  // Whether anybody but this account can read a cloud document, as the last
+  // listing the sync engine received said. Null or undefined is nobody having
+  // said, which reads as exposed: the cost of being wrong that way is a
+  // picture that does not travel, and the cost of being wrong the other way
+  // is somebody else's file leaving this machine.
+  isExposed = () => true,
 }) {
   const failure = (verb, res) => (res.status === 0 ? `${verb} failed (offline)` : `${verb} failed (${res.status})`);
 
@@ -76,11 +111,24 @@ function createAssetSync({
     const row = registry.get(filePath) ?? {};
     const refs = docAssets.extractRefs(content);
     const resolved = docAssets.resolveRefs(refs, { docPath: filePath, roots: grants.assetRoots(), files: grants.grantedFilePaths() });
+    // What this machine may draw is the wrong question for a document
+    // somebody else can read. Their text can name any path, this machine
+    // resolves it against this user's own grants, and the bytes land in a
+    // document they own. So for an exposed document only the files beside it
+    // travel: those are the ones that arrived with the document itself.
+    const exposed = isExposed(cloudId) !== false;
     const entries = [];
     const skipped = [];
     for (const r of resolved) {
       if (r.skipped) {
         skipped.push({ ref: r.ref, reason: r.skipped });
+        continue;
+      }
+      if (exposed && (refEscapes(r.ref) || !insideDocFolder(r.path, filePath))) {
+        // Same reason string as a reference the local viewer would refuse:
+        // to the reader of the synced copy the outcome is the same picture
+        // missing, and the Cloud page names either one.
+        skipped.push({ ref: r.ref, reason: "outside" });
         continue;
       }
       // A cheap stat before a full read-and-hash: the cap is checked on the

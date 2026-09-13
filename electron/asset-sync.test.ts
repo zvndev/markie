@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -454,5 +454,130 @@ describe("what an upload refusal means", () => {
       skipped: [{ ref: "b.png", reason: "size" }],
     });
     expect(calls).toHaveLength(3);
+  });
+});
+
+// ── Who wrote the reference ────────────────────────────────────────────────
+// A document somebody else can read is a document somebody else can write a
+// reference into. Resolving one against this machine's own grants is how a
+// co-editor's `../notes/board-deck.png` makes this machine upload that file
+// into their document. So an exposed document stages only what sits beside
+// it; a private one keeps the repository pattern the spec is built around.
+function exposedFixture() {
+  const root = realpathSync.native(mkdtempSync(path.join(tmpdir(), "markie-exposure-")));
+  mkdirSync(path.join(root, "docs"));
+  mkdirSync(path.join(root, "notes"));
+  writeFileSync(path.join(root, "docs", "x.png"), "xxxx");
+  writeFileSync(path.join(root, "notes", "board.png"), "board");
+  writeFileSync(path.join(root, "notes", "passport.png"), "passport");
+  const docPath = path.join(root, "docs", "doc.md");
+  const absolute = path.join(root, "notes", "passport.png");
+  const md = `![](x.png)\n![](../notes/board.png)\n![](${absolute})\n`;
+  // Everything under the fixture is a granted root, which is what the real
+  // machine looks like: the default workspace root holds Cloud/ inside it.
+  return { root, docPath, absolute, md, grants: { assetRoots: () => [root], grantedFilePaths: () => [] } };
+}
+
+describe("what an exposed document may stage", () => {
+  it("stages only what sits beside a document somebody else can read", async () => {
+    const { docPath, absolute, md, grants: wide } = exposedFixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api, calls } = fakeApi([
+      { status: 200, data: { missing: [sha("xxxx")] } },
+      { status: 200, data: { ok: true } },
+      { status: 200, data: { linked: 1, kept: 0, dropped: 2 } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants: wide, sleep: async () => {}, isExposed: () => true });
+
+    const result = await pushAssets(docPath, "c1", md);
+
+    expect(result).toEqual({
+      ok: true,
+      uploaded: 1,
+      skipped: [
+        { ref: "../notes/board.png", reason: "outside" },
+        { ref: absolute, reason: "outside" },
+      ],
+    });
+    // Only the sibling was ever offered to the server, and the other two are
+    // linked bare, so the document keeps no hash for them.
+    expect(calls[0].body).toEqual({ hashes: [sha("xxxx")] });
+    expect(calls.map((c) => c.path)).toEqual([
+      "/api/docs/c1/assets/missing",
+      `/api/assets/${sha("xxxx")}`,
+      "/api/docs/c1/assets",
+    ]);
+    expect(calls[2].body).toEqual({
+      refs: [{ ref: "x.png", hash: sha("xxxx") }, { ref: "../notes/board.png" }, { ref: absolute }],
+    });
+  });
+
+  it("stages everything this machine may draw for a document nobody else can read", async () => {
+    const { docPath, absolute, md, grants: wide } = exposedFixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api, calls } = fakeApi([
+      { status: 200, data: { missing: [sha("xxxx"), sha("board"), sha("passport")] } },
+      { status: 200, data: { ok: true } },
+      { status: 200, data: { ok: true } },
+      { status: 200, data: { ok: true } },
+      { status: 200, data: { linked: 3, kept: 0, dropped: 0 } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants: wide, sleep: async () => {}, isExposed: () => false });
+
+    expect(await pushAssets(docPath, "c1", md)).toEqual({ ok: true, uploaded: 3, skipped: [] });
+    expect(calls[4].body).toEqual({
+      refs: [
+        { ref: "x.png", hash: sha("xxxx") },
+        { ref: "../notes/board.png", hash: sha("board") },
+        { ref: absolute, hash: sha("passport") },
+      ],
+    });
+  });
+
+  it("treats a document whose exposure nobody has stated as exposed", async () => {
+    const { docPath, absolute, md, grants: wide } = exposedFixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api, calls } = fakeApi([
+      { status: 200, data: { missing: [] } },
+      { status: 200, data: { linked: 1, kept: 0, dropped: 2 } },
+    ]);
+    // No listing has been seen for this document, so nothing is known. The
+    // answer that leaks nothing is the one that treats it as shared.
+    const { pushAssets } = createAssetSync({ api, registry, grants: wide, sleep: async () => {}, isExposed: () => null });
+
+    const result = await pushAssets(docPath, "c1", md);
+
+    expect(result.skipped).toEqual([
+      { ref: "../notes/board.png", reason: "outside" },
+      { ref: absolute, reason: "outside" },
+    ]);
+    expect(calls[1].body).toEqual({
+      refs: [{ ref: "x.png", hash: sha("xxxx") }, { ref: "../notes/board.png" }, { ref: absolute }],
+    });
+  });
+
+  it("refuses the same shapes the server's link route refuses", async () => {
+    const { root, docPath, grants: wide } = exposedFixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    // `./x.png` resolves to the sibling and the local viewer draws it, but
+    // the server refuses a `.` segment from an exposed document, so staging
+    // it would upload bytes for a link that answers 400 on every pass.
+    // A symlink inside the folder pointing out is refused by resolveRefs
+    // itself, and lands in the same skip list.
+    symlinkSync(path.join(root, "notes", "passport.png"), path.join(root, "docs", "link.png"));
+    const { api, calls } = fakeApi([{ status: 200, data: { linked: 0, kept: 0, dropped: 2 } }]);
+    const { pushAssets } = createAssetSync({ api, registry, grants: wide, sleep: async () => {}, isExposed: () => true });
+
+    const result = await pushAssets(docPath, "c1", "![](./x.png)\n![](link.png)\n");
+
+    expect(result).toEqual({
+      ok: true,
+      uploaded: 0,
+      skipped: [
+        { ref: "./x.png", reason: "outside" },
+        { ref: "link.png", reason: "outside" },
+      ],
+    });
+    expect(calls.map((c) => c.path)).toEqual(["/api/docs/c1/assets"]);
   });
 });

@@ -275,7 +275,13 @@ describe("a row's media note", () => {
         }),
       ],
     });
-    expect(await screen.findByText("file too large: diagram.png")).toBeInTheDocument();
+    // The oversized file is named whatever else is in the list ahead of it,
+    // and the reference left outside the folder is named after it.
+    expect(
+      await screen.findByText(
+        "file too large: diagram.png · not uploaded: elsewhere.png (outside the document's folder)"
+      )
+    ).toBeInTheDocument();
   });
 
   it("stays quiet when nothing was skipped for being too large", async () => {
@@ -284,6 +290,52 @@ describe("a row's media note", () => {
     });
     await screen.findByText("synced.md");
     expect(screen.queryByText(/file too large/)).not.toBeInTheDocument();
+  });
+
+  // A picture that stays behind because the document is shared is the one
+  // skip the person looking at this page can do something about: move the
+  // file in beside the document, and it travels. Saying nothing left them
+  // with a document that renders here and not for the people they sent it to.
+  it("names the first picture that was left behind for sitting outside the document's folder", async () => {
+    renderView({
+      items: [
+        synced({
+          media: {
+            state: "synced",
+            skipped: [
+              { ref: "clip.mov", reason: "type" },
+              { ref: "../notes/board.png", reason: "outside" },
+              { ref: "../notes/plan.png", reason: "outside" },
+            ],
+          },
+        }),
+      ],
+    });
+    expect(
+      await screen.findByText("not uploaded: ../notes/board.png (outside the document's folder)")
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/plan\.png/)).not.toBeInTheDocument();
+  });
+
+  it("puts the oversized picture first and the one outside the folder after it", async () => {
+    renderView({
+      items: [
+        synced({
+          media: {
+            state: "pending",
+            skipped: [
+              { ref: "../notes/board.png", reason: "outside" },
+              { ref: "diagram.png", reason: "size" },
+            ],
+          },
+        }),
+      ],
+    });
+    expect(
+      await screen.findByText(
+        "media pending · file too large: diagram.png · not uploaded: ../notes/board.png (outside the document's folder)"
+      )
+    ).toBeInTheDocument();
   });
 });
 

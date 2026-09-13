@@ -18,6 +18,17 @@ let config = { token: null, serverURL: null };
 // Nothing is inferred locally, so an unreported doc stays unknown.
 const docRoles = new Map();
 
+// Whether anybody but this account can read each cloud doc, keyed by cloud
+// doc id, as the last listing the server sent said. A doc shared with me is
+// exposed by definition; one I own is exposed when the listing marks it
+// `sharedOut` (a member, an invite waiting for an address, or a public link).
+// The asset push asks this before deciding which of a document's references
+// may leave this machine, so a doc no listing has covered stays absent here
+// and reads as "nobody has said", which that caller treats as exposed. An
+// owned doc a listing names without saying is exposed too: a server that does
+// not answer the question has not answered it in this account's favour.
+const docExposure = new Map();
+
 // Who is signed in, as the renderer last confirmed with the server. The roles
 // the registry remembers were granted to one account, so reading them back for
 // any other is worth nothing. Unknown until a confirmed session says, and
@@ -28,6 +39,28 @@ function setDocRole(cloudId, role) {
   if (!cloudId) return;
   if (role) docRoles.set(cloudId, role);
   else docRoles.delete(cloudId);
+}
+
+// Everything a `GET /api/docs` listing says about roles and exposure, recorded
+// in one place so every caller that fetches one (the Library, the update
+// check, reconciliation) leaves the same trace. Only the docs the listing
+// names are touched: one it omits is already read as not this account's.
+function noteListing(docs) {
+  if (!Array.isArray(docs)) return;
+  for (const d of docs) {
+    if (!d || !d.id) continue;
+    setDocRole(d.id, d.shared ? d.role ?? "viewer" : "owner");
+    docExposure.set(d.id, d.shared ? true : d.sharedOut !== false);
+  }
+}
+
+// True when somebody else can read this doc, false when nobody can, null when
+// nobody has said. Null is not "private": the caller decides what to do with
+// silence, and the asset push fails closed on it.
+function isExposed(cloudId) {
+  if (!cloudId) return null;
+  const known = docExposure.get(cloudId);
+  return known === undefined ? null : known;
 }
 
 function setConfig(next) {
@@ -45,8 +78,9 @@ function setConfig(next) {
   const sessionChanged = token !== config.token || server !== config.serverURL;
   config = { token, serverURL: server };
   // Roles belong to whoever was signed in. Another account's grants on the same
-  // doc are a different answer entirely.
+  // doc are a different answer entirely, and so is who else can read it.
   docRoles.clear();
+  docExposure.clear();
   // The principal is evidence about one token at one server. A different
   // token or server is a different session, whether or not anyone signed out
   // in between, so the old answer goes at once, and a user named in the same
@@ -567,6 +601,7 @@ async function checkUpdates() {
   if (res.status !== 200 || !Array.isArray(res.data?.docs)) {
     return { updates: [], listing: null, landed: [] };
   }
+  noteListing(res.data.docs);
   // Before anything else: a document synced from another machine lands here
   // by itself, so the loop below sees it as a file of this device's own.
   const landed = await landCloudDocs(res.data.docs);
@@ -871,12 +906,11 @@ async function libraryState() {
       cloudError = listFailure(res.status);
     }
   }
-  // The list already says what this user may do with each doc, so record it and
-  // a later push can refuse without asking the server a second time. A doc that
-  // is shared but arrives without a role reads as view-only, not as an editor.
-  for (const d of remote) {
-    setDocRole(d.id, d.shared ? d.role ?? "viewer" : "owner");
-  }
+  // The list already says what this user may do with each doc and who else can
+  // read it, so record both and a later push can refuse without asking the
+  // server a second time. A doc that is shared but arrives without a role
+  // reads as view-only, not as an editor.
+  noteListing(remote);
   // Rows from before share_role_user existed carry a role and nobody beside
   // it, which offline reads as nobody having said. Opening the document
   // online writes the account in, and a document never opened again would
@@ -972,6 +1006,8 @@ module.exports = {
   hasPrincipal,
   setConfig,
   setDocRole,
+  noteListing,
+  isExposed,
   api,
   fetchAsset,
   syncOn,

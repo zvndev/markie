@@ -387,11 +387,19 @@ function RowWithMediaNote({
 }
 
 // "media pending" while a picture is still on its way up; the name of the
-// first one that will never fit, when there is one. Any other skip reason
-// stays silent: those are files the local viewer would not show either, so
-// there is nothing there worth telling someone about. They are still in the
-// list though, and reading only its first entry let one of them hide the
-// oversized file behind it.
+// first one that will never fit, when there is one; and the name of the first
+// one that was left behind for sitting outside the document's folder. Both
+// are things the person reading this can act on: shrink the file, or move it
+// in beside the document. Any other skip reason stays silent: those are files
+// the local viewer would not show either, so there is nothing there worth
+// telling someone about. They are still in the list though, and reading only
+// its first entry let one of them hide the oversized file behind it.
+//
+// "outside" covers two cases that look the same from here: a file the local
+// viewer would refuse anyway, and a file it draws happily but which does not
+// travel because somebody else can read this document (electron/asset-sync.js).
+// Naming both is right, because either way the copy the other side opens is
+// missing that picture.
 function MediaNote({ item }: { item: LibraryItem }) {
   const media = item.media;
   if (!media) return null;
@@ -399,6 +407,8 @@ function MediaNote({ item }: { item: LibraryItem }) {
   if (media.state === "pending") notes.push("media pending");
   const tooLarge = media.skipped?.find((s) => s.reason === "size");
   if (tooLarge) notes.push(`file too large: ${tooLarge.ref}`);
+  const outside = media.skipped?.find((s) => s.reason === "outside");
+  if (outside) notes.push(`not uploaded: ${outside.ref} (outside the document's folder)`);
   if (notes.length === 0) return null;
   return (
     <div className="text-[10px] text-muted pl-5 truncate">{notes.join(" · ")}</div>

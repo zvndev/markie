@@ -32,6 +32,13 @@ function createReconciler({ sync, registry, assetSync, fs = require("node:fs"), 
         result.errors.push({ path: "*", error: "listing unavailable" });
         return result;
       }
+      // The freshest listing there is at the moment this pass stages media,
+      // and the asset push reads each document's exposure out of the sync
+      // engine. Handing it over here is what keeps a launch-time pass from
+      // treating every document as unstated, which fails closed and would
+      // stop a private document's ../assets/logo.png travelling until
+      // somebody happened to open the Library.
+      if (typeof sync.noteListing === "function") sync.noteListing(res.data.docs);
       remote = new Map(res.data.docs.map((d) => [d.id, d]));
       rows = registry.list().filter((r) => r.cloud_doc_id && (r.sync_state === "synced" || r.sync_state === "unpushed"));
     } catch (err) {

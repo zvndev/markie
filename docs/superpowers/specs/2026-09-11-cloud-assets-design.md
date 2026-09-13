@@ -20,7 +20,7 @@ Design for the work Kirby asked for on 2026-09-11: when a synced document embeds
 
 - Caps: 100 MB per file, 500 MB of media per document, 5 GB of media per account. Over the cap the file is skipped, the document still syncs, and the Cloud page says which file was too large.
 - Only local references are handled. `http(s):`, `data:` and protocol-relative references are left alone on both sides.
-- What travels is exactly what Markie would show: the same allow-list and the same containment rules as the local asset protocol. A reference Markie refuses to render locally is not uploaded.
+- What travels is what Markie would show, bounded by who can read the document. The allow-list and the containment rules are the local asset protocol's, so a reference Markie refuses to render locally is never uploaded. On top of that sits the exposure rule, because "what this machine may draw" is the wrong question for a document a second party can write text into. A cloud document is **exposed** when the listing marks it `shared`, or when it is mine and the listing marks it `sharedOut` (it has a member, an invite waiting for an address, or a public link); a document the client has been told nothing about is read as exposed. For an exposed document only a reference resolving inside the document's own folder is staged, and every other resolved reference is recorded as `{ ref, reason: "outside" }` and linked with no hash, so the server keeps nothing for it. A private document keeps the repository pattern, where `../assets/logo.png` is the point and there is nobody else to have written it.
 - Storage is deduplicated by content hash within one uploader's scope, never across accounts, so no account can learn whether another holds a given file.
 - The document text is never rewritten. Markie fetches missing media on demand; the web viewer rewrites `src` at render time only.
 - SVG is stored and served, with a response policy that prevents it running scripts when opened directly.
@@ -95,7 +95,7 @@ Deleting a document (`docs.ts` delete) removes its `doc_assets` rows and garbage
 
 The push is two halves. `stageAssets(filePath, cloudId, content)`:
 
-1. extract, resolve and hash; compute `fingerprint` = SHA-256 of the sorted `ref\thash` lines over the document's whole reference set, a skipped or unresolvable ref contributing an empty hash;
+1. extract, resolve and hash, dropping every reference outside the document's own folder first when the document is exposed (`isExposed`, from the last listing `sync.js` received; unknown counts as exposed); compute `fingerprint` = SHA-256 of the sorted `ref\thash` lines over the document's whole reference set, a skipped or unresolvable ref contributing an empty hash;
 2. if the registry row's `assets_fingerprint` equals it and `assets_state` is `synced`, return `{ unchanged: true }`;
 3. `POST missing`; upload each missing hash with `PUT /api/assets/:hash`, one at a time, streaming from disk, up to three attempts each;
 4. return `{ staged: { linkRefs, uploaded, skipped, fingerprint } }`, where `linkRefs` is the full set (`{ ref, hash }` for resolved, `{ ref }` for skipped or unresolvable). On any failure write `assets_state = "pending"` and return the error.
@@ -128,7 +128,7 @@ The cache is capped at 2 GB; when over, the least recently used entries are dele
 | Server `hash` differs from `content_hash` at the same version (the server lost or never took the write) | `push` the text. |
 | Text current and `assets_state` is not `synced`, or the fingerprint of the current extract differs | `pushAssets`. |
 
-Sequential, 250 ms between documents, at most `limit` documents per pass; the next pass continues with the rest. The result `{ pushed, mediaPushed, skipped, errors }` is sent to the renderer, and the Cloud page shows a per-row "media pending" or "file too large: <name>" note from `assets_state` and `assets_skipped`. No new buttons.
+Sequential, 250 ms between documents, at most `limit` documents per pass; the next pass continues with the rest. The result `{ pushed, mediaPushed, skipped, errors }` is sent to the renderer, and the Cloud page shows a per-row "media pending", "file too large: <name>" or "not uploaded: <ref> (outside the document's folder)" note from `assets_state` and `assets_skipped`. No new buttons.
 
 ## Security
 
@@ -137,6 +137,7 @@ Sequential, 250 ms between documents, at most `limit` documents per pass; the ne
 - Storage keys are uploader id plus hash; a ref is data, never a path. Deduplication stays inside one account.
 - Uploads stream to a temp file and count bytes against the caps before anything reaches storage.
 - Markie's local handler is unchanged for local files; the cloud fallback only fires for a document the registry says is in the cloud, only through the signed-in `api()` helper, and only into a cache directory Markie owns.
+- A document somebody else can read uploads only the files beside it, on the client and again at the link route. Otherwise a co-editor's text is a list of paths this machine resolves against its own grants and uploads into their document.
 - `never-public.test.ts` gains the asset routes.
 
 ## Rollout

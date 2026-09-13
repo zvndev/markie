@@ -10,7 +10,7 @@ let disk: Map<string, string>;
 let pushed: string[];
 let media: string[];
 let listing: {
-  docs: { id: string; version: number; hash: string; shared?: boolean; role?: string }[];
+  docs: { id: string; version: number; hash: string; shared?: boolean; role?: string; sharedOut?: boolean }[];
 } | null;
 
 const registry = {
@@ -195,5 +195,45 @@ describe("reconcile", () => {
     const r = await createReconciler({ sync, registry: brokenRegistry, assetSync, fs, sleep: async () => {} }).run();
     expect(r).toEqual({ pushed: [], mediaPushed: [], mediaUnchanged: [], skipped: [], errors: [{ path: "*", error: "registry unavailable" }] });
     expect(pushed).toEqual([]);
+  });
+});
+
+// Reconciliation fetches its own listing, and it is the freshest one there
+// is at the moment it stages a document's media. The asset push reads the
+// exposure of each document out of the sync engine, so a pass that kept its
+// listing to itself would leave every document unstated, and unstated fails
+// closed: a private document's `../assets/logo.png` would stop travelling
+// until somebody opened the Library.
+describe("the listing a pass fetched", () => {
+  it("is handed to the sync engine before any document is staged", async () => {
+    const noted: unknown[] = [];
+    seed({ path: "/d/a.md", cloud_doc_id: "c1", content_hash: sha("ok"), assets_state: "pending" }, "ok");
+    listing = { docs: [{ id: "c1", version: 1, hash: sha("ok"), sharedOut: false }] };
+    const order: string[] = [];
+    const watched = {
+      ...sync,
+      noteListing: (docs: unknown[]) => {
+        noted.push(...docs);
+        order.push("noted");
+      },
+    };
+    const staging = {
+      pushAssets: async (p: string) => {
+        order.push("staged");
+        media.push(p);
+        return { ok: true, uploaded: 0, skipped: [] };
+      },
+    };
+    await createReconciler({ sync: watched, registry, assetSync: staging, fs, sleep: async () => {} }).run();
+    expect(noted).toEqual([{ id: "c1", version: 1, hash: sha("ok"), sharedOut: false }]);
+    expect(order).toEqual(["noted", "staged"]);
+  });
+
+  it("runs against a sync engine that has no noteListing at all", async () => {
+    seed({ path: "/d/a.md", cloud_doc_id: "c1", content_hash: sha("ok"), assets_state: "pending" }, "ok");
+    listing = { docs: [{ id: "c1", version: 1, hash: sha("ok") }] };
+    const r = await createReconciler({ sync, registry, assetSync, fs, sleep: async () => {} }).run();
+    expect(r.errors).toEqual([]);
+    expect(media).toEqual(["/d/a.md"]);
   });
 });

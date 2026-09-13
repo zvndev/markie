@@ -2339,3 +2339,72 @@ describe("setConfig names the session", () => {
     expect(keyOf({ token: "a-token", serverURL: "http://localhost:4010" })).toBeNull();
   });
 });
+
+// Whether anybody but this account can read a cloud document. The asset push
+// asks this before it decides which of a document's references may leave the
+// machine, so the only acceptable answer for a document nobody has said
+// anything about is the cautious one.
+describe("what a document's exposure is", () => {
+  const row = (cloudId: string) =>
+    seedRow({
+      path: `/docs/${cloudId}.md`,
+      sync_state: "synced",
+      cloud_doc_id: cloudId,
+      cloud_version: 4,
+      content_hash: "hash:old",
+    });
+
+  it("says nobody has said until a listing arrives", () => {
+    expect(sync.isExposed("cloud-1")).toBeNull();
+  });
+
+  it("reads a document shared with me as exposed", async () => {
+    row("cloud-1");
+    respondWith({ status: 200, body: { docs: [{ id: "cloud-1", version: 4, shared: true, role: "editor" }] } });
+    await sync.libraryState();
+    expect(sync.isExposed("cloud-1")).toBe(true);
+  });
+
+  it("reads my own document from sharedOut, either way", async () => {
+    row("cloud-1");
+    row("cloud-2");
+    respondWith({
+      status: 200,
+      body: { docs: [{ id: "cloud-1", version: 4, sharedOut: true }, { id: "cloud-2", version: 4, sharedOut: false }] },
+    });
+    await sync.libraryState();
+    expect(sync.isExposed("cloud-1")).toBe(true);
+    expect(sync.isExposed("cloud-2")).toBe(false);
+  });
+
+  it("reads my own document as exposed when the listing does not say", async () => {
+    // A server that predates sharedOut. Its silence is not "private".
+    row("cloud-1");
+    respondWith({ status: 200, body: { docs: [{ id: "cloud-1", version: 4 }] } });
+    await sync.libraryState();
+    expect(sync.isExposed("cloud-1")).toBe(true);
+  });
+
+  it("records it from the update check too, not only from the Library", async () => {
+    row("cloud-1");
+    respondWith({ status: 200, body: { docs: [{ id: "cloud-1", version: 4, sharedOut: false }] } });
+    await sync.checkUpdates();
+    expect(sync.isExposed("cloud-1")).toBe(false);
+  });
+
+  it("forgets everything when the session changes", async () => {
+    row("cloud-1");
+    respondWith({ status: 200, body: { docs: [{ id: "cloud-1", version: 4, sharedOut: false }] } });
+    await sync.libraryState();
+    expect(sync.isExposed("cloud-1")).toBe(false);
+    // Another account's answer about the same document id is worth nothing.
+    signIn("another-token", THEM);
+    expect(sync.isExposed("cloud-1")).toBeNull();
+  });
+
+  it("takes a listing straight from a caller that fetched one itself", () => {
+    sync.noteListing([{ id: "cloud-1", sharedOut: false }, { id: "cloud-2", shared: true, role: "editor" }]);
+    expect(sync.isExposed("cloud-1")).toBe(false);
+    expect(sync.isExposed("cloud-2")).toBe(true);
+  });
+});

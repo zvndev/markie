@@ -1250,7 +1250,10 @@ const fileGrants = createFileGrants({ workspaceRoots: () => workspace.roots() })
 // Module-level so a later handler can reuse the same instance rather than
 // building a second one with its own hash cache.
 const { createAssetSync } = require("./asset-sync");
-const assetSync = createAssetSync({ api: sync.api, registry, grants: fileGrants });
+// isExposed is what decides whether a document's references may pull files
+// from anywhere this machine may draw, or only from the folder the document
+// itself is in. It reads the last listing the sync engine received.
+const assetSync = createAssetSync({ api: sync.api, registry, grants: fileGrants, isExposed: sync.isExposed });
 sync.setAssetSync(assetSync);
 // Repairs documents told to sync that never landed, and backfills media on
 // ones that did. Runs on its own schedule below; never awaited from a caller

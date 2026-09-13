@@ -163,8 +163,8 @@ deploy.
 **Set the assets bucket before the deploy that ships cloud media.** `ASSETS_BUCKET`,
 `ASSETS_ENDPOINT`, `ASSETS_KEY_ID`, and `ASSETS_APP_KEY` must already be set on the Railway `api`
 service before that deploy goes out; see `deploy/DEPLOY.md`, Assets bucket, for creating the bucket
-and the scoped key. Until all four are set the asset routes answer 503 and Markie treats it as
-pending media rather than a failure, so this is a one-time setup step, not a per-release check.
+and the scoped key. Until all four are set the asset routes answer 503 and Markie shows "media pending"
+rather than a failure, so this is a one-time setup step, not a per-release check.
 
 The service has no GitHub connection, so nothing deploys on push. Compare the last successful
 deployment against the server commits, and deploy if anything is behind:

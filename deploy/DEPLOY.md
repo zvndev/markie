@@ -67,5 +67,5 @@ railway up server --path-as-root --service api --environment production --ci
 ```
 
 Until all four are set, the asset routes answer `503 {"error":"assets not
-configured"}` and Markie shows the media as pending rather than failing.
+configured"}` and Markie shows "media pending" on the Cloud page rather than a failure.
 Never write the values into the repo.

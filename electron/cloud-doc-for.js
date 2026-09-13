@@ -1,27 +1,31 @@
-// Which cloud document a folder belongs to, and the reference a requested
-// absolute path is under it, if the path does not walk out of that folder.
+// Which cloud document a request belongs to, and the reference the requested
+// path is under it.
 //
-// The renderer names the folder; a registry row for a file directly inside
-// it names the cloud id. Several documents can share a folder, so the first
-// row that is in the cloud wins.
+// The renderer names the open document by its own path, not by its folder:
+// two synced documents can sit in one folder and reference the same missing
+// picture, and answering with whichever of them was opened last would render
+// one document's media inside another.
 //
-// Pure and dependency-injected — `cloudDocsInDir` is registry.cloudDocsInDir
-// in production and whatever a test wants to answer with everywhere else —
-// so this can be unit tested without a database, and the caller in main.js
-// can wrap it in a try/catch of its own for when the real one throws.
+// Pure and dependency-injected: `get` is registry.get in production and
+// whatever a test wants to answer with everywhere else, so this can be unit
+// tested without a database, and the caller in main.js can wrap it in a
+// try/catch of its own for when the real one throws.
 const path = require("node:path");
 
-function cloudDocFor({ docDir, requested, cloudDocsInDir }) {
-  const rel = path.relative(docDir, requested);
-  // `rel.startsWith("..")` alone refuses a child folder literally named
+function cloudDocFor({ docPath, requested, get }) {
+  const row = get(docPath);
+  if (!row || !row.cloud_doc_id) return null;
+  const rel = path.relative(path.dirname(docPath), requested);
+  // `rel.startsWith("..")` alone would refuse a child folder literally named
   // "..hidden" along with an actual walk upward: the only two shapes a walk
   // upward can take are the parent itself ("..") and anything under it
   // ("../" + more).
-  const escapes = path.isAbsolute(rel) || rel === ".." || rel.startsWith(".." + path.sep);
-  if (escapes) return null;
-  const ref = rel.split(path.sep).join("/");
-  const rows = cloudDocsInDir(docDir);
-  return rows.length > 0 ? { cloudId: rows[0].cloud_doc_id, ref } : null;
+  const outside = path.isAbsolute(rel) || rel === ".." || rel.startsWith(".." + path.sep);
+  // A document may embed an allowed absolute path, and the uploader stored
+  // that absolute string verbatim as its ref. The reading device has to ask
+  // under the same name or the server holds nothing by it.
+  const ref = outside ? requested : rel.split(path.sep).join("/");
+  return { cloudId: row.cloud_doc_id, ref };
 }
 
 module.exports = { cloudDocFor };

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import Module, { createRequire } from "node:module";
 import fs from "node:fs";
 import os from "node:os";
@@ -210,67 +210,6 @@ describe("tracking files", () => {
 
     expect(registry.get("/tmp/a.md")).toBeUndefined();
     expect((registry.get("/tmp/b.md") as FileRow).name).toBe("b.md");
-  });
-});
-
-describe("cloudDocsInDir", () => {
-  it("finds the cloud-linked file directly inside the folder", () => {
-    registry.track("/tmp/report/a.md", "a.md", "x");
-    registry.update("/tmp/report/a.md", { cloud_doc_id: "doc-1" });
-    registry.track("/tmp/report/local.md", "local.md", "y");
-
-    const rows = registry.cloudDocsInDir("/tmp/report") as FileRow[];
-
-    expect(rows.map((r) => r.cloud_doc_id)).toEqual(["doc-1"]);
-  });
-
-  it("does not mistake a sibling folder whose name is a prefix for the folder itself", () => {
-    // A LIKE 'dir%' scan alone would match "/tmp/report-extra" for the query
-    // "/tmp/report"; the post-filter on dirname is what tells them apart.
-    registry.track("/tmp/report/a.md", "a.md", "x");
-    registry.update("/tmp/report/a.md", { cloud_doc_id: "doc-1" });
-    registry.track("/tmp/report-extra/b.md", "b.md", "y");
-    registry.update("/tmp/report-extra/b.md", { cloud_doc_id: "doc-2" });
-
-    const rows = registry.cloudDocsInDir("/tmp/report") as FileRow[];
-
-    expect(rows.map((r) => r.cloud_doc_id)).toEqual(["doc-1"]);
-  });
-
-  it("answers nothing for a folder with no cloud-linked file", () => {
-    registry.track("/tmp/report/local.md", "local.md", "y");
-
-    expect(registry.cloudDocsInDir("/tmp/report")).toEqual([]);
-  });
-
-  it("orders by last_opened_at, so of two cloud docs sharing a folder the most recently opened wins", () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-      registry.track("/tmp/report/older.md", "older.md", "x");
-      registry.update("/tmp/report/older.md", { cloud_doc_id: "doc-old" });
-
-      vi.setSystemTime(new Date("2026-01-02T00:00:00.000Z"));
-      registry.track("/tmp/report/newer.md", "newer.md", "y");
-      registry.update("/tmp/report/newer.md", { cloud_doc_id: "doc-new" });
-    } finally {
-      vi.useRealTimers();
-    }
-
-    const rows = registry.cloudDocsInDir("/tmp/report") as FileRow[];
-    expect(rows.map((r) => r.cloud_doc_id)).toEqual(["doc-new", "doc-old"]);
-  });
-
-  it("finds a cloud-linked file whose name starts with an emoji", () => {
-    // U+FFFF (tried first as the range's upper bound) sorts as EF BF BF in
-    // SQLite's byte-wise BINARY collation; an astral character - an emoji
-    // among them - encodes with a leading byte of F0 or above, which sorts
-    // past that bound, so a row named this way was silently never found.
-    registry.track("/tmp/report/😀photo.png", "😀photo.png", "x");
-    registry.update("/tmp/report/😀photo.png", { cloud_doc_id: "doc-emoji" });
-
-    const rows = registry.cloudDocsInDir("/tmp/report") as FileRow[];
-    expect(rows.map((r) => r.cloud_doc_id)).toEqual(["doc-emoji"]);
   });
 });
 

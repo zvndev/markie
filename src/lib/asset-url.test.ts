@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { getAssetBaseDir, isAssetUrl, resolveAssetSrc, setAssetBaseDir } from "@/lib/asset-url";
+import { getAssetBaseDir, isAssetUrl, resolveAssetSrc, setAssetDocPath } from "@/lib/asset-url";
 
-afterEach(() => setAssetBaseDir(null));
+afterEach(() => setAssetDocPath(null));
 
 // The `?doc=` suffix names the document a reference belongs to (see the
 // "names the document" test below); every other test here is about how the
@@ -13,12 +13,12 @@ const decoded = (url: string) =>
 
 describe("resolveAssetSrc", () => {
   it("resolves a relative path against the open document's folder", () => {
-    setAssetBaseDir("/Users/me/report");
+    setAssetDocPath("/Users/me/report/notes.md");
     expect(decoded(resolveAssetSrc("demo/shot.png"))).toBe("/Users/me/report/demo/shot.png");
   });
 
   it("leaves anything that already says where it lives", () => {
-    setAssetBaseDir("/Users/me/report");
+    setAssetDocPath("/Users/me/report/notes.md");
     for (const src of [
       "https://example.com/a.png",
       "http://example.com/a.png",
@@ -34,7 +34,7 @@ describe("resolveAssetSrc", () => {
   });
 
   it("normalises the path rather than handing main a string full of dots", () => {
-    setAssetBaseDir("/Users/me/report");
+    setAssetDocPath("/Users/me/report/notes.md");
     expect(decoded(resolveAssetSrc("./demo/../shot.png"))).toBe("/Users/me/report/shot.png");
     expect(decoded(resolveAssetSrc("../assets/logo.png"))).toBe("/Users/me/assets/logo.png");
   });
@@ -42,40 +42,40 @@ describe("resolveAssetSrc", () => {
   it("cannot be walked above the root", () => {
     // Main refuses this anyway. Producing a sane path here means the refusal
     // is about access rather than about a string nobody can read.
-    setAssetBaseDir("/Users/me/report");
+    setAssetDocPath("/Users/me/report/notes.md");
     expect(decoded(resolveAssetSrc("../../../../../../etc/passwd"))).toBe("/etc/passwd");
   });
 
   it("reads the src as a URL: escapes decoded, query and hash dropped", () => {
-    setAssetBaseDir("/Users/me/report");
+    setAssetDocPath("/Users/me/report/notes.md");
     expect(decoded(resolveAssetSrc("my%20image.png"))).toBe("/Users/me/report/my image.png");
     expect(decoded(resolveAssetSrc("a.png?v=2"))).toBe("/Users/me/report/a.png");
     expect(decoded(resolveAssetSrc("a.png#top"))).toBe("/Users/me/report/a.png");
   });
 
   it("keeps an absolute path absolute instead of nesting it under the folder", () => {
-    setAssetBaseDir("/Users/me/report");
+    setAssetDocPath("/Users/me/report/notes.md");
     expect(decoded(resolveAssetSrc("/Users/me/elsewhere/a.png"))).toBe("/Users/me/elsewhere/a.png");
   });
 
   it("survives a src that is empty or malformed", () => {
-    setAssetBaseDir("/Users/me/report");
+    setAssetDocPath("/Users/me/report/notes.md");
     expect(resolveAssetSrc(null)).toBe("");
     expect(resolveAssetSrc("   ")).toBe("");
     expect(decoded(resolveAssetSrc("100%.png"))).toBe("/Users/me/report/100%.png");
   });
 
-  it("remembers and clears the base", () => {
-    setAssetBaseDir("/Users/me/report");
+  it("remembers the open document and derives its folder", () => {
+    setAssetDocPath("/Users/me/report/notes.md");
     expect(getAssetBaseDir()).toBe("/Users/me/report");
-    setAssetBaseDir("");
+    setAssetDocPath("");
     expect(getAssetBaseDir()).toBeNull();
   });
 
   it("resolves against a base handed in, and leaves the document's alone", () => {
     // A SKILL.md previewed out of the catalog cache has its pictures beside
     // its own file, not beside whatever is open in the editor.
-    setAssetBaseDir("/Users/me/report");
+    setAssetDocPath("/Users/me/report/notes.md");
     expect(decoded(resolveAssetSrc("assets/demo.png", "/Users/me/cache/pdf"))).toBe(
       "/Users/me/cache/pdf/assets/demo.png"
     );
@@ -83,7 +83,7 @@ describe("resolveAssetSrc", () => {
   });
 
   it("falls back to the document's base when the one handed in is empty", () => {
-    setAssetBaseDir("/Users/me/report");
+    setAssetDocPath("/Users/me/report/notes.md");
     expect(decoded(resolveAssetSrc("a.png", undefined))).toBe("/Users/me/report/a.png");
     expect(decoded(resolveAssetSrc("a.png", null))).toBe("/Users/me/report/a.png");
     expect(decoded(resolveAssetSrc("a.png", "  "))).toBe("/Users/me/report/a.png");
@@ -97,19 +97,31 @@ describe("resolveAssetSrc", () => {
   });
 
   it("recognises its own urls", () => {
-    setAssetBaseDir("/Users/me/report");
+    setAssetDocPath("/Users/me/report/notes.md");
     expect(isAssetUrl(resolveAssetSrc("a.png"))).toBe(true);
     expect(isAssetUrl("https://example.com/a.png")).toBe(false);
     expect(isAssetUrl(null)).toBe(false);
   });
 
-  it("names the document the reference belongs to", () => {
-    setAssetBaseDir("/Users/k/report");
+  it("names the exact document the reference belongs to, not its folder", () => {
+    // Two synced documents can share a folder and reference the same missing
+    // picture. Naming the folder let main answer with whichever of them was
+    // opened last, which is how one document rendered another's media.
+    setAssetDocPath("/Users/k/report/notes.md");
     expect(resolveAssetSrc("shots/a.png")).toBe(
-      `markie-asset://local/${encodeURIComponent("/Users/k/report/shots/a.png")}?doc=${encodeURIComponent("/Users/k/report")}`
+      `markie-asset://local/${encodeURIComponent("/Users/k/report/shots/a.png")}?doc=${encodeURIComponent("/Users/k/report/notes.md")}`
     );
+  });
+
+  it("names no document when the caller resolved against some other folder", () => {
+    // A preview out of the catalog cache is not the open document, and there
+    // is no document to fall back on cloud media for.
+    setAssetDocPath("/Users/k/report/notes.md");
     expect(resolveAssetSrc("shots/a.png", "/elsewhere")).toBe(
-      `markie-asset://local/${encodeURIComponent("/elsewhere/shots/a.png")}?doc=${encodeURIComponent("/elsewhere")}`
+      `markie-asset://local/${encodeURIComponent("/elsewhere/shots/a.png")}`
+    );
+    expect(resolveAssetSrc("shots/a.png", "/Users/k/report")).toBe(
+      `markie-asset://local/${encodeURIComponent("/Users/k/report/shots/a.png")}`
     );
   });
 });

@@ -11,7 +11,7 @@ import type {
   SkillSource,
 } from "@/lib/electron";
 import { installBridge } from "@/test/mock-bridge";
-import { getAssetBaseDir, setAssetBaseDir } from "@/lib/asset-url";
+import { getAssetBaseDir, setAssetDocPath } from "@/lib/asset-url";
 import { SkillsView } from "./skills-view";
 
 const HOME = "/Users/me";
@@ -100,7 +100,7 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-afterEach(() => setAssetBaseDir(null));
+afterEach(() => setAssetDocPath(null));
 
 /** The path a markie-asset:// url addresses, ignoring the `?doc=` suffix that
  * names the document it belongs to. */
@@ -915,7 +915,7 @@ describe("one skill, in full", () => {
     });
 
   it("shows the skill's own pictures, and leaves the open document's base alone", async () => {
-    setAssetBaseDir("/Users/me/report");
+    setAssetDocPath("/Users/me/report/notes.md");
     const dir = "/Users/me/Library/Application Support/Markie/skill-cache/anthropics/skills/41bbe19d/pdf";
     const skillsSkillDir = vi.fn(async () => ({ dir }));
     const user = userEvent.setup();
@@ -937,7 +937,7 @@ describe("one skill, in full", () => {
     // An older main has no channel; a newer one may not have the skill cached.
     for (const skillsSkillDir of [undefined, vi.fn(async () => ({ error: "not cached" }))]) {
       cleanup();
-      setAssetBaseDir("/Users/me/report");
+      setAssetDocPath("/Users/me/report/notes.md");
       const user = userEvent.setup();
       renderSkills(
         detailApi({

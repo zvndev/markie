@@ -803,14 +803,14 @@ function registerProtocol() {
 
 const { cloudDocFor } = require("./cloud-doc-for");
 
-// registry.cloudDocsInDir opens the SQLite database lazily and throws when
-// the driver failed to load. A picture request is not the place to surface
-// that: it reads the same as any other file this session cannot show, so it
-// is caught here the same way every other registry caller in this file
-// swallows a driver failure rather than crashing the handler.
-function cloudDocForFolder(docDir, requested) {
+// registry.get opens the SQLite database lazily and throws when the driver
+// failed to load. A picture request is not the place to surface that: it
+// reads the same as any other file this session cannot show, so it is caught
+// here the same way every other registry caller in this file swallows a
+// driver failure rather than crashing the handler.
+function cloudDocForPath(docPath, requested) {
   try {
-    return cloudDocFor({ docDir, requested, cloudDocsInDir: registry.cloudDocsInDir });
+    return cloudDocFor({ docPath, requested, get: registry.get });
   } catch {
     return null;
   }
@@ -868,9 +868,13 @@ function registerAssetProtocol() {
     if (!real || !mime) {
       // Not here, or not allowed here. A document that lives in the cloud
       // may still have this picture on the server, under the reference the
-      // text wrote, relative to the document's folder.
-      const docDir = new URL(request.url).searchParams.get("doc");
-      const cloud = docDir ? cloudDocForFolder(docDir, requested) : null;
+      // text wrote: relative to the document's folder, or the absolute path
+      // itself when the picture lives outside it.
+      // Untrusted, like every other part of this URL: all it does is choose
+      // which registry row to ask about, and the server decides whether this
+      // session may read that document's media at all.
+      const docPath = new URL(request.url).searchParams.get("doc");
+      const cloud = docPath ? cloudDocForPath(docPath, requested) : null;
       if (!cloud) return new Response("Forbidden", { status: 403 });
       // load()/save() do real disk I/O and can reject (a full disk, a
       // permissions problem); a picture this session cannot serve reads the

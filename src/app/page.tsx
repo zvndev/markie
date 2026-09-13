@@ -112,7 +112,7 @@ import {
   type SaveResult,
 } from "@/lib/electron";
 import { pathDirname } from "@/lib/path-utils";
-import { setAssetBaseDir } from "@/lib/asset-url";
+import { setAssetDocPath } from "@/lib/asset-url";
 import { opensAsDocument } from "@/lib/attach";
 import { useDocument, type EditInput } from "@/lib/use-document";
 import { useSaveGuard, type SaveGuard } from "@/lib/use-save-guard";
@@ -326,12 +326,14 @@ export default function Home() {
     docRef.current = { filePath, content, isDirty };
   }, [filePath, content, isDirty]);
 
-  // Where a document's own pictures are, so `![](demo/shot.png)` resolves
-  // against the folder the file came from instead of against the app's origin.
-  // Set before paint: an effect that ran after would render every image once
-  // against the wrong base and only then correct itself.
+  // Which document is on screen, so `![](demo/shot.png)` resolves against the
+  // folder the file came from instead of against the app's origin, and so a
+  // picture main cannot find on this disk is looked for on this document's
+  // cloud copy rather than on a neighbour's. Set before paint: an effect that
+  // ran after would render every image once against the wrong base and only
+  // then correct itself.
   useLayoutEffect(() => {
-    setAssetBaseDir(filePath ? pathDirname(filePath) : null);
+    setAssetDocPath(filePath ?? null);
   }, [filePath]);
 
   // Whether rich edits may reach this document. Rendering rich is always safe,

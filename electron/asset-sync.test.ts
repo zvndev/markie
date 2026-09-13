@@ -792,3 +792,54 @@ describe("a link the server will never accept", () => {
     }
   });
 });
+
+// The count cap and the per-reference cap both held, and the body still went
+// over the server's 2 MB JSON limit: 2000 references of about 1030 characters
+// serialise past it. 413 is correctly terminal, so the document's media
+// switched off in one pass, and a prose edit did not clear it because the
+// fingerprint covers the reference set only. An editor writes the text of a
+// shared document, so an editor could do that to the owner's document.
+describe("a document whose references would serialise past the body budget", () => {
+  it("links the prefix and reports the rest, and the body stays under the budget", async () => {
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    // 2000 references of about 1030 characters is the shape that crossed
+    // 2 MB. Every one of them is under the per-reference cap and the set is
+    // exactly at the count cap, so nothing else here stops it.
+    const long = (i: number) => `${String(i).padStart(4, "0")}-${"n".repeat(1010)}.png`;
+    const md = Array.from({ length: 2000 }, (_, i) => `![](${long(i)})`).join("\n");
+    const { api, calls } = fakeApi([{ status: 200, data: { linked: 0, kept: 0, dropped: 0, droppedRefs: [] } }]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+    const result = (await pushAssets(docPath, "c1", md)) as PushResult;
+
+    const sent = (calls[0].body as { refs: { ref: string }[] }).refs;
+    // A prefix in document order, and the rest named the same way the count
+    // cap names what it left out.
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent.length).toBeLessThan(2000);
+    expect(sent[0]).toEqual({ ref: long(0) });
+    expect(sent[sent.length - 1]).toEqual({ ref: long(sent.length - 1) });
+    const overflow = result.skipped!.filter((s) => s.reason === "count");
+    expect(overflow).toHaveLength(2000 - sent.length);
+    expect(overflow[0]).toEqual({ ref: long(sent.length), reason: "count" });
+    // The point of the budget: this body can no longer be refused for size.
+    const serialised = Buffer.byteLength(JSON.stringify(calls[0].body), "utf8");
+    expect(serialised).toBeLessThan(1024 * 1024);
+  });
+
+  it("leaves an ordinary document untouched by the budget", async () => {
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api, calls } = fakeApi([
+      { status: 200, data: { missing: [] } },
+      { status: 200, data: { linked: 2, kept: 0, dropped: 1, droppedRefs: [] } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+    const result = (await pushAssets(docPath, "c1", "![](shots/a.png)\n![](b.png)\n![](notes.txt)\n")) as PushResult;
+
+    expect(result.skipped).toEqual([{ ref: "notes.txt", reason: "type" }]);
+    expect((calls[1].body as { refs: unknown[] }).refs).toHaveLength(3);
+  });
+});

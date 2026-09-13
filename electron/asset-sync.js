@@ -31,6 +31,24 @@ const MAX_REFS = 2000;
 // leaves the row pending for the next pass.
 const TERMINAL_LINK_STATUSES = new Set([400, 413, 415, 422]);
 
+// How many bytes the link body may serialise to. The count cap and the
+// per-reference cap both held and the body still crossed the server's 2 MB
+// JSON limit: 2000 references of about 1030 characters do it. The server
+// answers 413, which is terminal, so the document's media switched off in one
+// pass and a prose edit did not bring it back, because the fingerprint covers
+// the reference set only. An editor writes the text of a shared document, so
+// this was something an editor could do to the owner's document, and an owner
+// could reach it by accident with enough long image paths.
+//
+// Well under the server's limit, because the point is that the body can never
+// be refused for its size, not that it may come as close as possible.
+const MAX_LINK_BYTES = 1024 * 1024;
+// `{"refs":[...],"baseVersion":<n>}` around the entries.
+const LINK_ENVELOPE_BYTES = 64;
+// The most one entry adds: `{"ref":<json>,"hash":"<64 hex>"},`. The reference
+// is measured for real; this is everything around it.
+const LINK_ENTRY_BYTES = 83;
+
 // A reference that, read anywhere else, names something outside the folder
 // the document is in. Kept identical to refEscapes in server/src/assets.ts:
 // the two have to agree, or a ref this stages is a ref the link route answers
@@ -175,8 +193,19 @@ function createAssetSync({
   async function stageAssets(filePath, cloudId, content) {
     const row = registry.get(filePath) ?? {};
     const extracted = docAssets.extractRefs(content);
-    const refs = extracted.slice(0, MAX_REFS);
-    const overflow = extracted.slice(MAX_REFS);
+    // Both caps in one walk, in document order: as many references as the
+    // count allows and as the body can carry, and the tail past whichever
+    // runs out first is reported rather than sent.
+    const refs = [];
+    let linkBytes = LINK_ENVELOPE_BYTES;
+    for (const ref of extracted) {
+      if (refs.length >= MAX_REFS) break;
+      const cost = Buffer.byteLength(JSON.stringify(ref), "utf8") + LINK_ENTRY_BYTES;
+      if (linkBytes + cost > MAX_LINK_BYTES) break;
+      linkBytes += cost;
+      refs.push(ref);
+    }
+    const overflow = extracted.slice(refs.length);
     const resolved = docAssets.resolveRefs(refs, { docPath: filePath, roots: grants.assetRoots(), files: grants.grantedFilePaths() });
     // What this machine may draw is the wrong question for a document
     // somebody else can read. Their text can name any path, this machine

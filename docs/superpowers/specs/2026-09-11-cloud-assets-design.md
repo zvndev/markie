@@ -97,7 +97,7 @@ Deleting a document (`docs.ts` delete) removes its `doc_assets` rows and garbage
 
 The push is two halves. `stageAssets(filePath, cloudId, content)`:
 
-1. extract, keeping the first 2000 references in document order and recording the rest as `{ ref, reason: "count" }`, then resolve and hash, dropping every reference outside the document's own folder first when the document is exposed (`isExposed`, from the last listing `sync.js` received; unknown counts as exposed); compute `fingerprint` = SHA-256 of the sorted `ref\thash` lines over the document's whole reference set, a skipped or unresolvable ref contributing an empty hash;
+1. extract, keeping references in document order until either the 2000 cap or a 1 MB budget on the serialised link body runs out, so the body can never be refused for its size, and recording the rest as `{ ref, reason: "count" }`, then resolve and hash, dropping every reference outside the document's own folder first when the document is exposed (`isExposed`, from the last listing `sync.js` received; unknown counts as exposed); compute `fingerprint` = SHA-256 of the sorted `ref\thash` lines over the document's whole reference set, a skipped or unresolvable ref contributing an empty hash;
 2. if the registry row's `assets_fingerprint` equals it and `assets_state` is `synced`, return `{ unchanged: true }`;
 3. `POST missing`; upload each missing hash with `PUT /api/assets/:hash`, one at a time, streaming from disk, up to three attempts each;
 4. return `{ staged: { linkRefs, uploaded, skipped, fingerprint } }`, where `linkRefs` is the full set (`{ ref, hash }` for resolved, `{ ref }` for skipped or unresolvable). On any failure write `assets_state = "pending"` and return the error.

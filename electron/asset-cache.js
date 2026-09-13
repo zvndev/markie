@@ -2,7 +2,7 @@
 // fetched once. Keyed by hash, so two documents sharing a file share a copy;
 // the index maps (cloud id, ref) to that hash. Bounded, oldest use first.
 const fs = require("node:fs");
-const fsp = require("node:fs/promises");
+const nodeFsp = require("node:fs/promises");
 const path = require("node:path");
 const { Readable } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
@@ -32,9 +32,10 @@ const HASH_RE = /^[a-f0-9]{64}$/;
  *   revalidate?: (cloudId: string, ref: string, etag: string) =>
  *     Promise<{ fresh: true } | { fetched: FetchedAsset } | { gone: true } | null>,
  *   limitBytes?: number,
+ *   fsp?: typeof import("node:fs/promises"),
  * }} options
  */
-function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 * 1024 * 1024 }) {
+function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 * 1024 * 1024, fsp = nodeFsp }) {
   const indexPath = path.join(dir, "cache.json");
   let index = null; // { entries: { [cloudId\tref]: { hash, mime, size, used, validatedAt? } } }
   const inflight = new Map();
@@ -60,21 +61,26 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
   // Every entry in `dir` gone, one at a time, so a file the OS refuses to
   // remove (a video another handle is still reading, an EPERM mid-stream on
   // Windows) does not stop the rest of an account's pictures from going.
+  // Returns how many entries would not go: one locked file is not a reason to
+  // stop, but it is a reason for the caller to know the wipe is unfinished.
   async function wipeDir() {
     let names;
     try {
       names = await fsp.readdir(dir);
-    } catch {
-      return;
+    } catch (err) {
+      // Nothing there is nothing left behind. Any other failure means this
+      // cannot claim the account's pictures are gone.
+      return err && err.code === "ENOENT" ? 0 : 1;
     }
+    let failed = 0;
     for (const name of names) {
       try {
         await fsp.rm(path.join(dir, name), { recursive: true, force: true });
       } catch {
-        // Best effort. One locked file is not a reason to leave the rest of
-        // a signed-out account's pictures sitting on disk.
+        failed += 1;
       }
     }
+    return failed;
   }
 
   async function load() {
@@ -291,9 +297,14 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
   async function clear() {
     await load();
     generation += 1;
-    await wipeDir();
+    const failed = await wipeDir();
     index = { entries: {} };
     await save();
+    // The state is reset either way: nothing this cache remembers is the old
+    // account's to serve any more. But bytes the OS would not unlink are
+    // still that account's, sitting on this disk, so the caller is told and
+    // its catch leaves the marker that makes the next start finish the job.
+    if (failed > 0) throw new Error(`asset cache: ${failed} file(s) could not be removed`);
   }
 
   // Left by a caller whose own clear() could not finish, so the next time

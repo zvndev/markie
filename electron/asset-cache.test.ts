@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, readdirSync, existsSync, statSync } from "no
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
+import realFsp from "node:fs/promises";
 import { createHash } from "node:crypto";
 
 const { createAssetCache } = require("./asset-cache") as typeof import("./asset-cache");
@@ -329,6 +330,40 @@ describe("asset cache", () => {
     expect(second).toEqual(first);
     expect(readFileSync(second!.path, "utf8")).toBe("aaaa");
     expect(fetches).toBe(1);
+  });
+
+  it("refuses to say a sign-out finished when a file would not go", async () => {
+    // Windows will not unlink a cached video another handle is still reading.
+    // A clear that swallowed that resolved, main never wrote the marker, and
+    // the signed-out account's bytes stayed on this disk indefinitely.
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    let fetches = 0;
+    const fetchAsset = async () => {
+      fetches += 1;
+      return bytes("aaaa");
+    };
+    const locked = hashOf("aaaa");
+    const stubborn = {
+      ...realFsp,
+      rm: async (target: string, opts?: object) => {
+        if (path.basename(String(target)) === locked) throw new Error("EPERM: file is open");
+        return realFsp.rm(target, opts);
+      },
+    };
+    const cache = createAssetCache({ dir, fetchAsset, fsp: stubborn });
+    await cache.get("c1", "a.png");
+    expect(existsSync(path.join(dir, locked))).toBe(true);
+
+    await expect(cache.clear()).rejects.toThrow(/could not be removed/);
+    expect(existsSync(path.join(dir, locked))).toBe(true);
+
+    // What main.js does with that rejection.
+    await cache.markPendingClear();
+
+    // The next start finishes the job before it serves anything.
+    const reopened = createAssetCache({ dir, fetchAsset });
+    await reopened.get("c1", "a.png");
+    expect(fetches).toBe(2);
   });
 
   it("finishes an interrupted sign-out clear on the next load", async () => {

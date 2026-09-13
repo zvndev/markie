@@ -921,7 +921,13 @@ async function libraryState() {
   // read it, so record both and a later push can refuse without asking the
   // server a second time. A doc that is shared but arrives without a role
   // reads as view-only, not as an editor.
-  noteListing(remote);
+  //
+  // Only a list that actually loaded. A failed request leaves `remote` empty,
+  // which is indistinguishable from an account with no documents, and passing
+  // that on would clear every document's exposure and read as nobody having
+  // said. Unstated fails closed, so one transient error would stop a private
+  // document's ../assets/logo.png travelling for the length of an outage.
+  if (remoteLoaded) noteListing(remote);
   // Rows from before share_role_user existed carry a role and nobody beside
   // it, which offline reads as nobody having said. Opening the document
   // online writes the account in, and a document never opened again would

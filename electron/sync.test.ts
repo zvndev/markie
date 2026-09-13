@@ -2417,6 +2417,25 @@ describe("what a document's exposure is", () => {
     expect(sync.isExposed("cloud-1")).toBeNull();
   });
 
+  it("keeps what it knows when the listing cannot be fetched", async () => {
+    row("cloud-1");
+    respondWith(
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 4, sharedOut: false }] } },
+      new Error("offline"),
+      { status: 503 }
+    );
+    await sync.libraryState();
+    expect(sync.isExposed("cloud-1")).toBe(false);
+    // A list that failed says nothing about who can read anything. Reading it
+    // as an empty list would have made every document unstated, which fails
+    // closed and stops a private document's ../assets/logo.png travelling for
+    // the length of an outage.
+    await sync.libraryState();
+    expect(sync.isExposed("cloud-1")).toBe(false);
+    await sync.libraryState();
+    expect(sync.isExposed("cloud-1")).toBe(false);
+  });
+
   it("takes a listing straight from a caller that fetched one itself", () => {
     sync.noteListing([{ id: "cloud-1", sharedOut: false }, { id: "cloud-2", shared: true, role: "editor" }]);
     expect(sync.isExposed("cloud-1")).toBe(false);

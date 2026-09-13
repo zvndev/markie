@@ -526,3 +526,76 @@ describe("asset cache", () => {
     expect(fetches).toBe(2);
   });
 });
+
+// The hash the response carried in its ETag names the file on this disk, and
+// the cache is content-addressed and first-writer-wins, so one response that
+// lies about its ETag poisons every other (cloudId, ref) in the account that
+// later resolves to the same hash. Against the real server this is not
+// reachable, because the upload route recomputes the digest and refuses a
+// mismatch. That is the server's correctness standing in for the client's, on
+// the side that actually names a file in the user's home directory.
+describe("the cache checks its own bytes", () => {
+  const lying = (body: string, claimed: { hash?: string; size?: number } = {}) => ({
+    stream: Readable.toWeb(Readable.from(Buffer.from(body))),
+    mime: "image/png",
+    hash: claimed.hash ?? hashOf(body),
+    size: claimed.size ?? body.length,
+  });
+
+  it("files nothing when the bytes do not hash to the name they came under", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    const claimed = hashOf("the-real-picture");
+    const cache = createAssetCache({ dir, fetchAsset: async () => lying("something-else", { hash: claimed }) });
+
+    expect(await cache.get("c1", "a.png")).toBeNull();
+    // Neither the file under the claimed name nor a part file survives.
+    expect(existsSync(path.join(dir, claimed))).toBe(false);
+    // Nothing at all: no part file, and no index entry either, since the
+    // index is only written once something is filed.
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("keeps serving a later honest answer for the same ref", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    let honest = false;
+    const cache = createAssetCache({
+      dir,
+      fetchAsset: async () => (honest ? lying("aaaa") : lying("something-else", { hash: hashOf("aaaa") })),
+    });
+    expect(await cache.get("c1", "a.png")).toBeNull();
+    honest = true;
+    const got = await cache.get("c1", "a.png");
+    expect(got).toEqual({ path: path.join(dir, hashOf("aaaa")), mime: "image/png", size: 4 });
+    expect(readFileSync(got!.path, "utf8")).toBe("aaaa");
+  });
+
+  it("records the bytes it actually wrote, not the length the response declared", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    // A response with no Content-Length at all reaches store() as size 0, and
+    // a recorded 0 can never push the cache over its 2 GB bound: the
+    // directory grew without limit on the user's disk.
+    const cache = createAssetCache({ dir, fetchAsset: async () => lying("aaaaaaaa", { size: 0 }) });
+    const got = await cache.get("c1", "a.png");
+    expect(got?.size).toBe(8);
+    expect(statSync(got!.path).size).toBe(8);
+    const entry = JSON.parse(readFileSync(path.join(dir, "cache.json"), "utf8")).entries["c1\ta.png"];
+    expect(entry.size).toBe(8);
+  });
+
+  it("evicts on what is on disk, so a lied-about size cannot keep the cache over its bound", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    const bodies = ["a".repeat(40), "b".repeat(40), "c".repeat(40)];
+    let next = 0;
+    const cache = createAssetCache({
+      dir,
+      limitBytes: 100,
+      fetchAsset: async () => lying(bodies[next++], { size: 0 }),
+    });
+    await cache.get("c1", "a.png");
+    await cache.get("c1", "b.png");
+    await cache.get("c1", "c.png");
+    // 120 bytes of real content against a 100-byte bound: the oldest goes.
+    expect(existsSync(path.join(dir, hashOf(bodies[0])))).toBe(false);
+    expect(existsSync(path.join(dir, hashOf(bodies[2])))).toBe(true);
+  });
+});

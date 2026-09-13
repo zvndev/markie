@@ -5,7 +5,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const nodeFsp = require("node:fs/promises");
 const path = require("node:path");
-const { Readable } = require("node:stream");
+const { Readable, Transform } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
 
 // A stray marker file, not a cached picture, so the wipe loops and the hash
@@ -156,13 +156,37 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
       dir,
       `.${fetched.hash}.part-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`
     );
+    // Hashed and counted on the way past, because both numbers this cache
+    // runs on came from the server otherwise: the hash names the file, and
+    // first-writer-wins means one lying ETag poisons every other (cloudId,
+    // ref) in the account that later resolves to it; the size is what evict()
+    // sums against the 2 GB bound, and a response declaring 0 (or none at
+    // all) could never push the total over it. Neither is reachable against
+    // the real server, which recomputes the digest on upload. That is the
+    // server's correctness standing in for the client's, on the side that
+    // names a file in the user's home directory.
+    const hasher = crypto.createHash("sha256");
+    let written = 0;
+    const counted = new Transform({
+      transform(chunk, _encoding, done) {
+        hasher.update(chunk);
+        written += chunk.length;
+        done(null, chunk);
+      },
+    });
     try {
-      await pipeline(Readable.fromWeb(fetched.stream), fs.createWriteStream(tmp));
+      await pipeline(Readable.fromWeb(fetched.stream), counted, fs.createWriteStream(tmp));
     } catch (err) {
       // A download that died mid-stream leaves a part file nothing will ever
       // read, and nothing else knows its name.
       await fsp.rm(tmp, { force: true }).catch(() => {});
       throw err;
+    }
+    // A truncated download lands here too, and used to be filed as a
+    // permanently cached broken picture.
+    if (hasher.digest("hex") !== fetched.hash) {
+      await fsp.rm(tmp, { force: true }).catch(() => {});
+      return null;
     }
     if (generation !== startedInGeneration) {
       // A sign-out landed while this was in flight. The account that
@@ -192,10 +216,10 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
     }
     // validatedAt is undefined for a plain fetch, and JSON drops it: only a
     // revalidation's answer is worth memoing.
-    index.entries[key] = { hash: fetched.hash, mime: fetched.mime, size: fetched.size, used: nextUsed(), validatedAt };
+    index.entries[key] = { hash: fetched.hash, mime: fetched.mime, size: written, used: nextUsed(), validatedAt };
     await evict();
     await save();
-    return { path: fileFor(fetched.hash), mime: fetched.mime, size: fetched.size };
+    return { path: fileFor(fetched.hash), mime: fetched.mime, size: written };
   }
 
   // The file behind a hash the index no longer names. `force` covers a file

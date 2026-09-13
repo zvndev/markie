@@ -479,11 +479,21 @@ assetsApi.put("/docs/:id/assets", async (c) => {
     const ref = typeof entry?.ref === "string" ? entry.ref : "";
     // Refused, not dropped: a client sending one of these is either broken or
     // hostile, and answering 200 to a body the server silently emptied tells
-    // neither of them anything. Checked before the hash is looked up, so the
-    // route cannot be used to probe which hashes an account holds.
+    // neither of them anything.
     if (refIsMalformed(ref)) return c.json({ error: "bad ref" }, 400);
-    if (exposed && refEscapes(ref)) return c.json({ error: "bad ref" }, 400);
+    // An escaping reference is only dangerous when it carries a hash, because
+    // that is the half that stores bytes under it. A bare one stores nothing:
+    // it is a document saying "I point at this and could not resolve it", and
+    // refusing the body for it would mean a shared document containing
+    // ../x.png linked none of its media at all and retried the same refusal
+    // on every save and every reconciliation pass for ever. So it is dropped
+    // instead, and dropped rather than kept, so bytes already linked under
+    // that name do not survive a push from somebody who can only name it.
+    const escaping = exposed && refEscapes(ref);
     if (typeof entry.hash === "string") {
+      // Before the hash is looked up, so the route cannot be used to ask
+      // which hashes an account holds.
+      if (escaping) return c.json({ error: "bad ref" }, 400);
       if (!HASH.test(entry.hash)) return c.json({ error: "bad hash" }, 400);
       const own = db.prepare("SELECT size, mime FROM assets WHERE owner_id = ? AND hash = ?").get(gate.user.id, entry.hash) as { size: number; mime: string } | undefined;
       if (!own) return c.json({ error: "unknown asset", hash: entry.hash }, 400);
@@ -497,7 +507,7 @@ assetsApi.put("/docs/:id/assets", async (c) => {
       if (assetMimeFor(ref) !== own.mime) return c.json({ error: "mime mismatch", ref }, 400);
       next.set(ref, { owner_id: gate.user.id, hash: entry.hash, size: own.size });
       linked += 1;
-    } else if (current.has(ref)) {
+    } else if (!escaping && current.has(ref)) {
       const row = current.get(ref)!;
       next.set(ref, { owner_id: row.owner_id, hash: row.hash, size: row.size });
       kept += 1;

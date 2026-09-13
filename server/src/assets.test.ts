@@ -651,14 +651,58 @@ test("a malformed reference is refused whoever is asking", async () => {
   assert.equal((await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: wide, hash: sha(bytes) }] })).status, 400);
 });
 
-// The refusal has to happen before the hash is looked up, or an editor could
-// still use the route to ask which hashes their account holds.
-test("an escaping reference with no hash at all is refused too", async () => {
+// An escaping reference carrying a hash is a request to store bytes under it,
+// and that is refused. An escaping reference with no hash stores nothing: it
+// is a document saying "I point at this and could not resolve it". Refusing
+// the body for one of those would mean a shared document containing
+// ../x.png never linked any of its media at all, and retried the same refusal
+// on every save and every reconciliation pass for ever.
+test("an escaping reference with no hash is dropped, not refused", async () => {
   const id = await makeDoc(owner.token);
+  const bytes = Buffer.from("older-client-body-shape");
+  assert.equal((await upload(editor.token, bytes)).status, 200);
   await json("POST", `/api/docs/${id}/shares`, owner.token, { email: "editor@markie.test", role: "editor" });
-  const r = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref: "../kept.png" }] });
-  assert.equal(r.status, 400);
-  assert.equal(r.data.error, "bad ref");
+  // The exact body an older client builds for the document in the review's
+  // critical finding: what it could resolve beside the document, and the
+  // escaping reference it could not, sent bare. The server alone has to be
+  // safe against it, whatever the client does.
+  const r = await json("PUT", `/api/docs/${id}/assets`, editor.token, {
+    refs: [{ ref: "x.png", hash: sha(bytes) }, { ref: "../y.png" }],
+  });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data, { linked: 1, kept: 0, dropped: 1 });
+  assert.deepEqual([...assetRefsFor(id).keys()], ["x.png"]);
+});
+
+// The drop is a drop, not a keep: bytes already linked under an escaping
+// reference do not survive a push from somebody who can only name it.
+test("a bare escaping reference does not keep a link the document already had", async () => {
+  const id = await makeDoc(owner.token);
+  const bytes = Buffer.from("kept-under-an-escaping-ref");
+  assert.equal((await upload(owner.token, bytes)).status, 200);
+  // Linked while the document was private, which is allowed.
+  let r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "../logo.png", hash: sha(bytes) }] });
+  assert.equal(r.status, 200);
+  await json("POST", `/api/docs/${id}/shares`, owner.token, { email: "editor@markie.test", role: "editor" });
+  r = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref: "../logo.png" }] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data, { linked: 0, kept: 0, dropped: 1 });
+  assert.equal(assetRefsFor(id).size, 0);
+});
+
+// A private document's owner is not in the exposed set at all, so a bare
+// reference of any shape still keeps the link it already has. That is the
+// case an editor pushing text whose pictures the owner uploaded relies on.
+test("a private document's owner still keeps an escaping reference's existing link", async () => {
+  const id = await makeDoc(owner.token);
+  const bytes = Buffer.from("private-repository-pattern");
+  assert.equal((await upload(owner.token, bytes)).status, 200);
+  let r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "../assets/logo.png", hash: sha(bytes) }] });
+  assert.equal(r.status, 200);
+  r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "../assets/logo.png" }] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data, { linked: 0, kept: 1, dropped: 0 });
+  assert.deepEqual([...assetRefsFor(id).keys()], ["../assets/logo.png"]);
 });
 
 // Nothing bounded how many references one document could carry. A single

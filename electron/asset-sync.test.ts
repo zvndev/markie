@@ -488,7 +488,7 @@ describe("what an exposed document may stage", () => {
     const { api, calls } = fakeApi([
       { status: 200, data: { missing: [sha("xxxx")] } },
       { status: 200, data: { ok: true } },
-      { status: 200, data: { linked: 1, kept: 0, dropped: 2 } },
+      { status: 200, data: { linked: 1, kept: 0, dropped: 0 } },
     ]);
     const { pushAssets } = createAssetSync({ api, registry, grants: wide, sleep: async () => {}, isExposed: () => true });
 
@@ -510,9 +510,10 @@ describe("what an exposed document may stage", () => {
       `/api/assets/${sha("xxxx")}`,
       "/api/docs/c1/assets",
     ]);
-    expect(calls[2].body).toEqual({
-      refs: [{ ref: "x.png", hash: sha("xxxx") }, { ref: "../notes/board.png" }, { ref: absolute }],
-    });
+    // The escaping references are not in the link body at all. Sent bare they
+    // would be dropped by the server, and sent with a hash they would have it
+    // refuse the whole body, which would cost x.png its link too.
+    expect(calls[2].body).toEqual({ refs: [{ ref: "x.png", hash: sha("xxxx") }] });
   });
 
   it("stages everything this machine may draw for a document nobody else can read", async () => {
@@ -542,7 +543,7 @@ describe("what an exposed document may stage", () => {
     rows.set(docPath, { cloud_doc_id: "c1" });
     const { api, calls } = fakeApi([
       { status: 200, data: { missing: [] } },
-      { status: 200, data: { linked: 1, kept: 0, dropped: 2 } },
+      { status: 200, data: { linked: 1, kept: 0, dropped: 0 } },
     ]);
     // No listing has been seen for this document, so nothing is known. The
     // answer that leaks nothing is the one that treats it as shared.
@@ -554,9 +555,7 @@ describe("what an exposed document may stage", () => {
       { ref: "../notes/board.png", reason: "outside" },
       { ref: absolute, reason: "outside" },
     ]);
-    expect(calls[1].body).toEqual({
-      refs: [{ ref: "x.png", hash: sha("xxxx") }, { ref: "../notes/board.png" }, { ref: absolute }],
-    });
+    expect(calls[1].body).toEqual({ refs: [{ ref: "x.png", hash: sha("xxxx") }] });
   });
 
   it("stages a reference that only looks like it leaves the folder, and refuses one that does", async () => {
@@ -569,7 +568,7 @@ describe("what an exposed document may stage", () => {
     const { api, calls } = fakeApi([
       { status: 200, data: { missing: [sha("xxxx")] } },
       { status: 200, data: { ok: true } },
-      { status: 200, data: { linked: 2, kept: 0, dropped: 2 } },
+      { status: 200, data: { linked: 2, kept: 0, dropped: 1 } },
     ]);
     const { pushAssets } = createAssetSync({ api, registry, grants: wide, sleep: async () => {}, isExposed: () => true });
 
@@ -585,12 +584,14 @@ describe("what an exposed document may stage", () => {
       ],
     });
     // Both spellings of the sibling are the same bytes, so one upload covers
-    // them, and each is linked under the reference the document wrote.
+    // them, and each is linked under the reference the document wrote. The
+    // reference that resolves above the folder is left out of the body
+    // entirely; the symlink is an ordinary relative name the server has no
+    // quarrel with, so it goes bare and the server drops it.
     expect(calls[2].body).toEqual({
       refs: [
         { ref: "./x.png", hash: sha("xxxx") },
         { ref: "a/../x.png", hash: sha("xxxx") },
-        { ref: "a/../../notes/board.png" },
         { ref: "link.png" },
       ],
     });

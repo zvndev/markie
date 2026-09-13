@@ -149,6 +149,13 @@ function createAssetSync({
     // The resolved path of a reference is already a realpath (local-assets.js
     // resolves both sides), so this is the other half of the comparison.
     const docFolder = exposed ? realDocFolder(filePath) : null;
+    // For an exposed document an escaping reference never joins the set that
+    // travels at all. The link route refuses the whole body for one carrying
+    // a hash and drops a bare one, so leaving it in could only cost the
+    // document's other pictures their links, on every save and every
+    // reconciliation pass. It stays in `skipped`, which is what the Cloud
+    // page reads.
+    const escaping = new Set(exposed ? refs.filter(refEscapes) : []);
     const entries = [];
     const skipped = [];
     for (const r of resolved) {
@@ -156,7 +163,7 @@ function createAssetSync({
         skipped.push({ ref: r.ref, reason: r.skipped });
         continue;
       }
-      if (exposed && (refEscapes(r.ref) || !localAssets.containedIn(docFolder, r.path))) {
+      if (escaping.has(r.ref) || (exposed && !localAssets.containedIn(docFolder, r.path))) {
         // Same reason string as a reference the local viewer would refuse:
         // to the reader of the synced copy the outcome is the same picture
         // missing, and the Cloud page names either one.
@@ -185,9 +192,10 @@ function createAssetSync({
     // document and its removal is a change like any other.
     const byRef = new Map(entries.map((e) => [e.ref, e]));
     const linkRefsNow = () =>
-      refs.map((ref) => {
+      refs.flatMap((ref) => {
+        if (escaping.has(ref)) return [];
         const entry = byRef.get(ref);
-        return entry && !entry.dropped ? { ref, hash: entry.hash } : { ref };
+        return [entry && !entry.dropped ? { ref, hash: entry.hash } : { ref }];
       });
     if (row.assets_state === "synced" && row.assets_fingerprint === docAssets.fingerprint(linkRefsNow())) {
       return { unchanged: true };

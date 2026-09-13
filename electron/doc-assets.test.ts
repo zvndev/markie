@@ -36,6 +36,16 @@ describe("extractRefs", () => {
     expect(extractRefs("![](<>)")).toEqual([]);
   });
 
+  it("wants a real src attribute, not one a longer name happens to end with", () => {
+    // A lazy-loading attribute names a file the document does not render.
+    // Uploading it sent a picture nobody asked to publish.
+    expect(extractRefs('<img data-src="secret.png">')).toEqual([]);
+    expect(extractRefs('<img poster-src="secret.png">')).toEqual([]);
+    expect(extractRefs('<img src="a.png">')).toEqual(["a.png"]);
+    expect(extractRefs("<img class=\"x\" src='b.png'>")).toEqual(["b.png"]);
+    expect(extractRefs('<video\n  src="clip.mp4"\n></video>')).toEqual(["clip.mp4"]);
+  });
+
   it("returns nothing for a document without media", () => {
     expect(extractRefs("# Title\n\nJust words.\n")).toEqual([]);
   });

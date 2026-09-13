@@ -17,7 +17,10 @@ const FENCE = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g;
 // name with a space in it is written and which the local renderer already
 // draws, and the bare form, which cannot contain whitespace.
 const MD_IMAGE = /!\[[^\]]*\]\(\s*(?:<([^>\n]*)>|([^\s)>]+))(?:\s+"[^"]*")?\s*\)/g;
-const HTML_SRC = /<(?:img|video|audio|source)\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+// Whitespace before `src`, not a word boundary: \b matches after the hyphen
+// in `data-src`, so a lazy-loading attribute named a file the document does
+// not render and Markie uploaded it.
+const HTML_SRC = /<(?:img|video|audio|source)\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
 
 function isLocal(src) {
   return !!src && !src.startsWith("//") && !/^[a-z][a-z0-9+.-]*:/i.test(src);

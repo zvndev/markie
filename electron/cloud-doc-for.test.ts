@@ -49,6 +49,24 @@ describe("cloudDocFor", () => {
     });
   });
 
+  it("normalises the document path before it looks anything up", () => {
+    // registry.get canonicalises what it is handed, so a spelling with a "."
+    // segment still finds the row, and the folder computed from the raw
+    // string would then name the reference wrongly.
+    const asked: string[] = [];
+    const get = (p: string) => {
+      asked.push(p);
+      return cloudRow();
+    };
+    expect(
+      cloudDocFor({ docPath: "/Users/k/report/./notes.md", requested: "/Users/k/report/shots/a.png", get })
+    ).toEqual({ cloudId: "doc-1", ref: "shots/a.png" });
+    expect(asked).toEqual([docPath]);
+    expect(
+      cloudDocFor({ docPath: "/Users/k/other/../report/notes.md", requested: "/Users/k/report/a.png", get: cloudRow })
+    ).toEqual({ cloudId: "doc-1", ref: "a.png" });
+  });
+
   it("answers null when the registry has no row for the document", () => {
     expect(cloudDocFor({ docPath, requested: "/Users/k/report/a.png", get: () => null })).toBeNull();
     expect(

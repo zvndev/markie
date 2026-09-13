@@ -2152,6 +2152,30 @@ describe("media and text push order", () => {
     expect(linked).toEqual([]);
   });
 
+  it("syncOn leaves staged media pending when it cannot read the version back", async () => {
+    // The text may well have landed; this device just cannot say which
+    // version it landed as, so it has no base to link against. Reconciliation
+    // finishes the job, which needs the row to say so.
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/u.md", sync_state: "paused", cloud_doc_id: "cu", cloud_version: 1 });
+    const linked: number[] = [];
+    sync.setAssetSync({
+      stageAssets: async () => ({ staged: { linkRefs: [], uploaded: 1, skipped: [], fingerprint: "fp" } }),
+      linkAssets: async () => {
+        linked.push(1);
+        return { ok: true, uploaded: 1, skipped: [] };
+      },
+    });
+    respondWith({ status: 200, body: { id: "cu" } });
+
+    const res = await sync.syncOn("/docs/u.md", "u.md", "![](u.png)\n");
+
+    expect(res.error).toBe("The server sent an unreadable copy of this document.");
+    expect(linked).toEqual([]);
+    expect(rows.get("/docs/u.md")!.sync_state).toBe("unpushed");
+    expect(rows.get("/docs/u.md")!.assets_state).toBe("pending");
+  });
+
   it("does not let a throwing asset sync take the text push down with it", async () => {
     signIn("test-token", ME);
     seedRow({ path: "/docs/c.md", sync_state: "synced", cloud_doc_id: "cc", cloud_version: 1 });

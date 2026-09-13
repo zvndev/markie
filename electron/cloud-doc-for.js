@@ -13,9 +13,13 @@
 const path = require("node:path");
 
 function cloudDocFor({ docPath, requested, get }) {
-  const row = get(docPath);
+  // Normalised first: the registry canonicalises what it is handed, so a
+  // spelling with a "." or ".." segment in it still finds the row, and the
+  // folder taken from the raw string would then name the reference wrongly.
+  const resolved = path.resolve(docPath);
+  const row = get(resolved);
   if (!row || !row.cloud_doc_id) return null;
-  const rel = path.relative(path.dirname(docPath), requested);
+  const rel = path.relative(path.dirname(resolved), requested);
   // `rel.startsWith("..")` alone would refuse a child folder literally named
   // "..hidden" along with an actual walk upward: the only two shapes a walk
   // upward can take are the parent itself ("..") and anything under it

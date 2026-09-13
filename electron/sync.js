@@ -246,6 +246,7 @@ async function stageMedia(filePath, cloudId, content) {
 // in front of a text PUT that failed would leave the server's old text beside
 // a media set that no longer holds its pictures.
 async function linkMedia(filePath, cloudId, staged, baseVersion) {
+  if (!assetSync) return null;
   try {
     return await assetSync.linkAssets(filePath, cloudId, staged, { baseVersion });
   } catch (err) {

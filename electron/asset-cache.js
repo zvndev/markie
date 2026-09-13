@@ -174,14 +174,20 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
     // Somebody else stored this hash while this download was running. The
     // file is named by its own bytes, so what is already there is what this
     // would write; renaming over it risks EPERM on Windows for no gain.
+    let renamed = false;
     if (fs.existsSync(fileFor(fetched.hash))) await fsp.rm(tmp, { force: true });
-    else await fsp.rename(tmp, fileFor(fetched.hash));
+    else {
+      await fsp.rename(tmp, fileFor(fetched.hash));
+      renamed = true;
+    }
     // Checked again: a clear() that lands during the rename itself
     // already took its snapshot of the directory before this file
     // existed, so it never touches it. Undoing it here is what keeps it
-    // from outliving the account it was fetched for.
+    // from outliving the account it was fetched for. Only what this call
+    // actually put there is undone: a file that was already on disk is
+    // somebody else's to account for, not this call's to delete.
     if (generation !== startedInGeneration) {
-      await fsp.rm(fileFor(fetched.hash), { force: true });
+      if (renamed) await fsp.rm(fileFor(fetched.hash), { force: true });
       return null;
     }
     // validatedAt is undefined for a plain fetch, and JSON drops it: only a

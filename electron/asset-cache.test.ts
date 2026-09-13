@@ -78,9 +78,10 @@ describe("asset cache", () => {
     expect(first).toEqual(second);
   });
 
-  it("evicts the least recently used past the limit and clears on demand", async () => {
+  it("evicts the least recently used past the limit and empties on sign-out", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
     const cache = createAssetCache({ dir, fetchAsset: async (_c: string, ref: string) => bytes(ref.replace(".png", "").repeat(4)), limitBytes: 10 });
+    await cache.bindSession("s1");
     await cache.get("c1", "a.png"); // 4 bytes
     await cache.get("c1", "b.png"); // 8
     await cache.get("c1", "a.png"); // a is now most recent
@@ -88,7 +89,7 @@ describe("asset cache", () => {
     expect(existsSync(path.join(dir, hashOf("aaaa")))).toBe(true);
     expect(existsSync(path.join(dir, hashOf("bbbb")))).toBe(false);
     expect(existsSync(path.join(dir, hashOf("cccc")))).toBe(true);
-    await cache.clear();
+    await cache.bindSession(null); // the sign-out
     expect(existsSync(path.join(dir, hashOf("aaaa")))).toBe(false);
     expect(statSync(dir).isDirectory()).toBe(true);
   });
@@ -128,9 +129,10 @@ describe("asset cache", () => {
       resolveFetch = resolve;
     });
     const cache = createAssetCache({ dir, fetchAsset: async () => deferred });
+    await cache.bindSession("s1");
 
     const pending = cache.get("c1", "a.png");
-    await cache.clear(); // a sign-out lands while the fetch is still in flight
+    await cache.bindSession(null); // a sign-out lands while the fetch is still in flight
     resolveFetch(bytes("aaaa"));
 
     expect(await pending).toBeNull();
@@ -216,11 +218,12 @@ describe("asset cache", () => {
       fetchAsset: async () => bytes("aaaa"),
       revalidate: async () => ({ fresh: true }),
     });
+    await cache.bindSession("s1");
     await cache.get("c1", "a.png"); // fills the cache
     await cache.get("c1", "a.png"); // validates it, so the next get is memoed
 
     const pending = cache.get("c1", "a.png");
-    await cache.clear(); // a sign-out lands while the hit is being recorded
+    await cache.bindSession(null); // a sign-out lands while the hit is being recorded
 
     // The memo is the one path that returns without asking anything, so it is
     // the one that could hand back a file the wipe failed to unlink.
@@ -304,10 +307,11 @@ describe("asset cache", () => {
       fetchAsset: async () => bytes("aaaa"),
       revalidate: async () => deferred,
     });
+    await cache.bindSession("s1");
     await cache.get("c1", "a.png");
 
     const pending = cache.get("c1", "a.png");
-    await cache.clear(); // a sign-out lands while the revalidation is still out
+    await cache.bindSession(null); // a sign-out lands while the revalidation is still out
     answerRevalidate(null);
 
     // The cached copy this would otherwise fall back to went with the rest of
@@ -484,10 +488,11 @@ describe("asset cache", () => {
       },
     };
     const cache = createAssetCache({ dir, fetchAsset, fsp: stubborn });
+    await cache.bindSession("s1");
     await cache.get("c1", "a.png");
     expect(existsSync(path.join(dir, locked))).toBe(true);
 
-    await expect(cache.clear()).rejects.toThrow(/could not be removed/);
+    await expect(cache.bindSession(null)).rejects.toThrow(/could not be removed/);
     expect(existsSync(path.join(dir, locked))).toBe(true);
 
     // What main.js does with that rejection.
@@ -510,7 +515,7 @@ describe("asset cache", () => {
     await cache.get("c1", "a.png");
     expect(fetches).toBe(1);
 
-    // The clear() itself could not finish (disk trouble, a locked file);
+    // The wipe itself could not finish (disk trouble, a locked file);
     // main.js leaves this marker in that case.
     await cache.markPendingClear();
 

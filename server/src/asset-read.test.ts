@@ -77,6 +77,28 @@ test("a range with both sides empty is refused, not silently served in full", as
   assert.equal(res.status, 416);
 });
 
+// A suffix range asking for more bytes than the object has is asking for all
+// of them, and the honest answer to "all of them" is 200. Answering 206 with
+// Content-Range 0-4/5 is legal but tells a client that treats 206 as partial
+// to come back for the rest of something it already holds.
+test("a suffix range that covers the whole object answers 200, not 206", async () => {
+  const path = `/api/docs/${docId}/assets/file?ref=a.png`;
+  for (const header of ["bytes=-10", "bytes=-99999999999999999999"]) {
+    const res = await app.request(path, { headers: { ...H(owner.token), Range: header } });
+    assert.equal(res.status, 200, header);
+    assert.equal(res.headers.get("content-range"), null, header);
+    assert.equal(res.headers.get("content-length"), "10", header);
+    assert.equal(await res.text(), "0123456789", header);
+  }
+  // One byte short of the whole thing is still a real partial answer.
+  const res = await app.request(path, { headers: { ...H(owner.token), Range: "bytes=-9" } });
+  assert.equal(res.status, 206);
+  assert.equal(res.headers.get("content-range"), "bytes 1-9/10");
+  assert.equal(await res.text(), "123456789");
+  // And a suffix of zero bytes names nothing at all, which is not the object.
+  assert.equal((await app.request(path, { headers: { ...H(owner.token), Range: "bytes=-0" } })).status, 416);
+});
+
 test("a matching If-None-Match answers 304 with no body, weak prefix tolerated", async () => {
   const path = `/api/docs/${docId}/assets/file?ref=a.png`;
   const etag = `"${sha(PNG)}"`;

@@ -96,3 +96,15 @@ railway up server --path-as-root --service api --environment production --ci
 Until all four are set, the asset routes answer `503 {"error":"assets not
 configured"}` and Markie shows "media pending" on the Cloud page rather than a failure.
 Never write the values into the repo.
+
+### One replica
+
+Two things about assets are correct only because a single `api` process runs
+them: the in-flight upload reservation that makes the 5 GB account cap bound
+disk and bandwidth rather than only stored bytes, and the orphan sweep's
+check-then-delete, which is safe because better-sqlite3 is synchronous and
+Node is single-threaded. With two replicas each one reserves independently, so
+the account cap becomes advisory, and a link racing another replica's sweep can
+leave a `doc_assets` row whose `assets` row is gone. Scaling `api` past one
+replica means moving both of those into the database first. It is a decision,
+not a dial.

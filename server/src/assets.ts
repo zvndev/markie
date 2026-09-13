@@ -561,7 +561,14 @@ export async function serveAsset(c: Context, docId: string, ref: string): Promis
     // to being silently served in full.
     if (!m || (!m[1] && !m[2])) return c.text("Range Not Satisfiable", 416);
     if (m[1]) range = { start: Number(m[1]), end: m[2] ? Number(m[2]) : undefined };
-    else range = { start: Math.max(0, row.size - Number(m[2])) };
+    // A suffix asking for at least as many bytes as the object has is asking
+    // for the whole object, and the honest answer to that is 200. A 206 with
+    // Content-Range 0-4/5 is legal, but a client that reads 206 as "partial"
+    // comes back for the rest of something it already holds. A suffix of zero
+    // names no bytes at all, which is not the object, and falls through to
+    // the 416 the store's own read produces.
+    else if (Number(m[2]) >= row.size) range = undefined;
+    else range = { start: row.size - Number(m[2]) };
   }
   const read = await store.get(`${row.owner_id}/${row.hash}`, range);
   if (!read) return c.text(range ? "Range Not Satisfiable" : "Not found", range ? 416 : 404);

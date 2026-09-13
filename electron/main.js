@@ -1367,7 +1367,7 @@ handle("term-kill", (_e, id) => terminal.kill(id));
 handle("term-external-apps", () => terminal.externalApps(), { onFailure: () => [] });
 handle("term-open-external", (_e, { app, cwd }) => terminal.openExternal(app, cwd));
 
-handle("sync-config", (_event, cfg) => {
+handle("sync-config", async (_event, cfg) => {
   const result = sync.setConfig(cfg);
   // Whose cached pictures this machine is holding. The cache keys carry no
   // principal, so the directory has to belong to one session at a time: it
@@ -1379,7 +1379,12 @@ handle("sync-config", (_event, cfg) => {
   // session and emptied the cache every time. If the wipe cannot finish
   // (disk trouble, a locked file), a marker asks the cache to finish the job
   // the next time it starts.
-  void assetCache.bindSession(result?.sessionKey ?? null).catch(() => assetCache.markPendingClear());
+  //
+  // Awaited, not fired and forgotten: the renderer's next request used to be
+  // able to arrive while the wipe was still running, and a cache hit that
+  // resolved before wipeTo bumped the generation handed back the outgoing
+  // session's file. Same machine, same person, millisecond window.
+  await assetCache.bindSession(result?.sessionKey ?? null).catch(() => assetCache.markPendingClear());
   // A push that names the signed-in user is the moment the session becomes a
   // confirmed principal, which is what reconciliation waits for.
   if (cfg.userId) void reconcileIfDue();

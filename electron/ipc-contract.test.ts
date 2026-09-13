@@ -128,3 +128,31 @@ describe("IPC contract", () => {
     }
   });
 });
+
+// The sync-config handler is the one place the asset cache is told whose
+// pictures it is holding. It used to fire the wipe and return, so the
+// renderer's next request could be answered out of the outgoing session's
+// files: same machine, same person, millisecond window. The generation
+// counter closes the in-flight-fetch race, but not a cache hit that resolves
+// before wipeTo has bumped it. main.js cannot be loaded without Electron, so
+// this reads the source, the way the channel lists above do.
+describe("the sync-config handler", () => {
+  const body = (() => {
+    const start = mainSrc.indexOf('handle("sync-config"');
+    expect(start, "the sync-config handler should exist").toBeGreaterThan(-1);
+    const end = mainSrc.indexOf('\nhandle("', start + 1);
+    return mainSrc.slice(start, end === -1 ? mainSrc.length : end);
+  })();
+
+  it("waits for the cache to be bound before it answers", () => {
+    expect(body).toMatch(/await\s+assetCache\.bindSession\(/);
+    // A fire-and-forget `void` on the same call is exactly what this replaces.
+    expect(body).not.toMatch(/void\s+assetCache\.bindSession\(/);
+  });
+
+  it("still falls back to a marker when the wipe cannot finish", () => {
+    // Disk trouble or a locked file must not turn signing in into an error;
+    // the cache finishes the job the next time it starts.
+    expect(body).toMatch(/assetCache\.markPendingClear\(\)/);
+  });
+});

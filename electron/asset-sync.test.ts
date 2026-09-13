@@ -463,6 +463,9 @@ describe("what an upload refusal means", () => {
 // co-editor's `../notes/board-deck.png` makes this machine upload that file
 // into their document. So an exposed document stages only what sits beside
 // it; a private one keeps the repository pattern the spec is built around.
+// pushAssets returns a union; these cases only ever reach the success arm.
+type Staged = { skipped: Array<{ ref: string; reason: string }> };
+
 function exposedFixture() {
   const root = realpathSync.native(mkdtempSync(path.join(tmpdir(), "markie-exposure-")));
   mkdirSync(path.join(root, "docs"));
@@ -545,7 +548,7 @@ describe("what an exposed document may stage", () => {
     // answer that leaks nothing is the one that treats it as shared.
     const { pushAssets } = createAssetSync({ api, registry, grants: wide, sleep: async () => {}, isExposed: () => null });
 
-    const result = await pushAssets(docPath, "c1", md);
+    const result = (await pushAssets(docPath, "c1", md)) as unknown as Staged;
 
     expect(result.skipped).toEqual([
       { ref: "../notes/board.png", reason: "outside" },
@@ -593,7 +596,7 @@ describe("a document with more references than the server will take", () => {
     const { api, calls } = fakeApi([{ status: 200, data: { linked: 0, kept: 0, dropped: 2000 } }]);
     const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
 
-    const result = await pushAssets(docPath, "c1", md);
+    const result = (await pushAssets(docPath, "c1", md)) as unknown as Staged;
 
     const sent = (calls[0].body as { refs: { ref: string }[] }).refs;
     expect(sent).toHaveLength(2000);
@@ -606,6 +609,6 @@ describe("a document with more references than the server will take", () => {
       { ref: "p2001.png", reason: "count" },
       { ref: "p2002.png", reason: "count" },
     ]);
-    expect(result.skipped.filter((s: { reason: string }) => s.reason === "count")).toHaveLength(3);
+    expect(result.skipped.filter((s) => s.reason === "count")).toHaveLength(3);
   });
 });

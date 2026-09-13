@@ -52,6 +52,12 @@ function insideDocFolder(resolvedPath, filePath) {
   return localAssets.containedIn(realDir, resolvedPath);
 }
 
+// The answer for a document no listing has covered. Named and typed so the
+// dependency reads as "boolean or nobody has said" rather than as "boolean",
+// which is the distinction the whole rule turns on.
+/** @type {(cloudId: string) => boolean | null} */
+const ASSUME_EXPOSED = () => true;
+
 function createAssetSync({
   api,
   registry,
@@ -64,7 +70,7 @@ function createAssetSync({
   // said, which reads as exposed: the cost of being wrong that way is a
   // picture that does not travel, and the cost of being wrong the other way
   // is somebody else's file leaving this machine.
-  isExposed = () => true,
+  isExposed = ASSUME_EXPOSED,
 }) {
   const failure = (verb, res) => (res.status === 0 ? `${verb} failed (offline)` : `${verb} failed (${res.status})`);
 

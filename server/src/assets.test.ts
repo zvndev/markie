@@ -20,7 +20,7 @@ const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.optio
 if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 const { docs } = await import("./docs.ts");
 const { shares } = await import("./shares.ts");
-const { assetsApi, assetRefsFor, assetRowFor, MAX_ASSET_BYTES, MAX_ACCOUNT_ASSET_BYTES, MAX_DOC_REFS, setAssetStoreForTests, setAssetLimitsForTests, inflightForTests, sweepOrphans } = await import("./assets.ts");
+const { assetsApi, assetRefsFor, MAX_ASSET_BYTES, MAX_ACCOUNT_ASSET_BYTES, MAX_DOC_REFS, setAssetStoreForTests, setAssetLimitsForTests, inflightForTests, sweepOrphans } = await import("./assets.ts");
 const { fsStore } = await import("./storage.ts");
 
 const app = new Hono();

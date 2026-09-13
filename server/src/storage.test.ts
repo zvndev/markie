@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { fsStore, s3Store, assetStore, sigV4Headers } from "./storage.ts";
 import { assetMimeFor } from "./asset-mime.ts";
 
@@ -67,6 +68,36 @@ test("sigV4Headers matches the AWS known answer", () => {
     "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"
   );
   assert.equal(headers["x-amz-date"], "20150830T123600Z");
+});
+
+// AWS's own S3 example ("Example: GET Object", a ranged read of test.txt),
+// which is the shape production actually signs: service "s3", the content
+// hash header in the signed set, and a caller-supplied header beside it. The
+// vanilla vector above signs neither, so without this one the signature the
+// bucket sees was never checked against a known answer.
+test("sigV4Headers matches the AWS known answer for S3 with a caller's header", () => {
+  const headers = sigV4Headers({
+    method: "GET",
+    url: new URL("https://examplebucket.s3.amazonaws.com/test.txt"),
+    headers: { Range: "bytes=0-9" },
+    payloadHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    keyId: "AKIAIOSFODNN7EXAMPLE",
+    secret: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    region: "us-east-1",
+    service: "s3",
+    now: new Date("2013-05-24T00:00:00Z"),
+  });
+  assert.equal(
+    headers.Authorization,
+    "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, " +
+      "SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, " +
+      "Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
+  );
+  assert.equal(headers["x-amz-date"], "20130524T000000Z");
+  assert.equal(
+    headers["x-amz-content-sha256"],
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  );
 });
 
 test("s3Store issues signed requests against the bucket and streams a range back", async () => {
@@ -134,7 +165,12 @@ test("assetStore picks the filesystem, then S3, then nothing", () => {
 test("the real bucket round-trips (ASSETS_LIVE_TEST=1 only)", { skip: process.env.ASSETS_LIVE_TEST !== "1" }, async () => {
   const store = assetStore(process.env)!;
   const key = `livetest/${"0".repeat(60)}beef`;
-  await store.put(key, Buffer.from("live"), 4, "image/png");
+  // A web ReadableStream with the size and mime declared separately, which is
+  // exactly what assets.ts hands the store for a real upload. A Buffer body
+  // takes a different path through fetch and would leave the streaming PUT
+  // that production uses unproven.
+  const body = Readable.toWeb(Readable.from(Buffer.from("live"))) as ReadableStream<Uint8Array>;
+  await store.put(key, body, 4, "image/png");
   try {
     assert.deepEqual(await store.head(key), { size: 4 });
     const part = await store.get(key, { start: 1, end: 2 });

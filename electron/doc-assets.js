@@ -13,7 +13,10 @@ const MAX_ASSET_BYTES = 100 * 1024 * 1024;
 // HTML. Fenced and inline code are cut out first so an example is not an
 // embed.
 const FENCE = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g;
-const MD_IMAGE = /!\[[^\]]*\]\(\s*<?([^\s)>]+)>?(?:\s+"[^"]*")?\s*\)/g;
+// Two destination forms, because CommonMark has two: `<...>`, which is how a
+// name with a space in it is written and which the local renderer already
+// draws, and the bare form, which cannot contain whitespace.
+const MD_IMAGE = /!\[[^\]]*\]\(\s*(?:<([^>\n]*)>|([^\s)>]+))(?:\s+"[^"]*")?\s*\)/g;
 const HTML_SRC = /<(?:img|video|audio|source)\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
 
 function isLocal(src) {
@@ -35,7 +38,7 @@ function extractRefs(markdown) {
   // that come from different syntaxes still land in the order the document
   // actually wrote them.
   const found = [];
-  for (const m of text.matchAll(MD_IMAGE)) found.push({ index: m.index, src: m[1] });
+  for (const m of text.matchAll(MD_IMAGE)) found.push({ index: m.index, src: m[1] ?? m[2] });
   for (const m of text.matchAll(HTML_SRC)) found.push({ index: m.index, src: m[1] ?? m[2] ?? m[3] });
   found.sort((a, b) => a.index - b.index);
 

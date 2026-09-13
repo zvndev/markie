@@ -25,6 +25,17 @@ describe("extractRefs", () => {
     expect(extractRefs(md)).toEqual(["shots/a.png", "my shot.png", "d.png", "clip.mp4", "song.mp3"]);
   });
 
+  it("reads an angle-bracket destination, which is how a name with a space is written", () => {
+    // Valid CommonMark, and the local renderer draws it. Extraction returned
+    // no ref at all, so the cloud copy of the document stayed broken.
+    expect(extractRefs("![](<my image.png>)")).toEqual(["my image.png"]);
+    expect(extractRefs('![a](<shots/my image.png> "title")')).toEqual(["shots/my image.png"]);
+    expect(extractRefs("![](<a.png>)")).toEqual(["a.png"]);
+    // The bare form is untouched, and an empty destination is still nothing.
+    expect(extractRefs("![](a.png)")).toEqual(["a.png"]);
+    expect(extractRefs("![](<>)")).toEqual([]);
+  });
+
   it("returns nothing for a document without media", () => {
     expect(extractRefs("# Title\n\nJust words.\n")).toEqual([]);
   });

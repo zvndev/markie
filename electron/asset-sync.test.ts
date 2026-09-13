@@ -465,6 +465,15 @@ describe("what an upload refusal means", () => {
 // it; a private one keeps the repository pattern the spec is built around.
 // pushAssets returns a union; these cases only ever reach the success arm.
 type Staged = { skipped: Array<{ ref: string; reason: string }> };
+// Every arm of it, for the cases that assert on which one came back.
+type PushResult = {
+  ok?: boolean;
+  pending?: boolean;
+  unchanged?: boolean;
+  refused?: number;
+  error?: string;
+  skipped?: Array<{ ref: string; reason: string; status?: number }>;
+};
 
 function exposedFixture() {
   const root = realpathSync.native(mkdtempSync(path.join(tmpdir(), "markie-exposure-")));
@@ -652,7 +661,7 @@ describe("references the link route dropped", () => {
     ]);
     const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
 
-    const result = await pushAssets(docPath, "c1", "![](shots/a.png)\n![](b.png)\n![](notes.txt)\n");
+    const result = (await pushAssets(docPath, "c1", "![](shots/a.png)\n![](b.png)\n![](notes.txt)\n")) as PushResult;
 
     const row = rows.get(docPath)!;
     expect(row.assets_state).toBe("synced");
@@ -678,7 +687,7 @@ describe("references the link route dropped", () => {
     ]);
     const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
 
-    const result = await pushAssets(docPath, "c1", "![](notes.txt)\n");
+    const result = (await pushAssets(docPath, "c1", "![](notes.txt)\n")) as PushResult;
 
     expect(result.skipped).toEqual([{ ref: "notes.txt", reason: "type" }]);
   });
@@ -721,10 +730,10 @@ describe("a link the server will never accept", () => {
     ]);
     const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
 
-    expect((await pushAssets(docPath, "c1", "![](b.png)\n")).refused).toBe(413);
+    expect(((await pushAssets(docPath, "c1", "![](b.png)\n")) as PushResult).refused).toBe(413);
     expect(rows.get(docPath)!.assets_state).toBe("synced");
     // Editing the document is a new reference set, so it is worth one more go.
-    const second = await pushAssets(docPath, "c1", "![](shots/a.png)\n");
+    const second = (await pushAssets(docPath, "c1", "![](shots/a.png)\n")) as PushResult;
     expect(second.ok).toBe(true);
     expect(second.skipped).toEqual([]);
   });
@@ -736,7 +745,7 @@ describe("a link the server will never accept", () => {
       const { api } = fakeApi([{ status: 200, data: { missing: [] } }, reply]);
       const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
 
-      const result = await pushAssets(docPath, "c1", "![](b.png)\n");
+      const result = (await pushAssets(docPath, "c1", "![](b.png)\n")) as PushResult;
 
       expect(result.pending, `status ${reply.status}`).toBe(true);
       expect(rows.get(docPath)!.assets_state, `status ${reply.status}`).toBe("pending");

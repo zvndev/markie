@@ -475,6 +475,12 @@ assetsApi.put("/docs/:id/assets", async (c) => {
   const current = assetRefsFor(docId);
   const next = new Map<string, { owner_id: string; hash: string; size: number }>();
   let linked = 0, kept = 0, dropped = 0;
+  // The references the server decided against, and why. An ordinary drop is a
+  // reference the document names and nothing holds, and there is nothing to
+  // say about it; these two are the server refusing to store something the
+  // client offered, and a client that is not told cannot settle the row and
+  // stops retrying a body that will never be accepted.
+  const droppedRefs: { ref: string; reason: "mime" | "escaping" }[] = [];
   for (const entry of body!.refs as { ref?: unknown; hash?: unknown }[]) {
     const ref = typeof entry?.ref === "string" ? entry.ref : "";
     // Refused, not dropped: a client sending one of these is either broken or
@@ -504,7 +510,21 @@ assetsApi.put("/docs/:id/assets", async (c) => {
       // extension to mime, so the two can simply be made to agree. A
       // reference whose extension names no type at all cannot carry a hash
       // either: nothing could serve it honestly.
-      if (assetMimeFor(ref) !== own.mime) return c.json({ error: "mime mismatch", ref }, 400);
+      //
+      // Dropped rather than refused, because an asset row's mime is written
+      // once, by the upload that created it, and the dedupe branch returns
+      // 200 for bytes the account already holds without touching it. So one
+      // set of bytes has exactly one type for the life of the account, and
+      // refusing the body made an ordinary rename permanent: the document's
+      // other pictures never linked either, and the client retried the same
+      // refused body every ten minutes for ever. Nothing is stored under a
+      // name that lies about its type either way; only the blast radius
+      // changes.
+      if (assetMimeFor(ref) !== own.mime) {
+        dropped += 1;
+        droppedRefs.push({ ref, reason: "mime" });
+        continue;
+      }
       next.set(ref, { owner_id: gate.user.id, hash: entry.hash, size: own.size });
       linked += 1;
     } else if (!escaping && current.has(ref)) {
@@ -513,6 +533,7 @@ assetsApi.put("/docs/:id/assets", async (c) => {
       kept += 1;
     } else {
       dropped += 1;
+      if (escaping) droppedRefs.push({ ref, reason: "escaping" });
     }
   }
   const total = [...next.values()].reduce((n, r) => n + r.size, 0);
@@ -534,7 +555,7 @@ assetsApi.put("/docs/:id/assets", async (c) => {
   // set, and the bytes the refused set named, exactly as they were.
   if (stale) return c.json({ error: "version mismatch", serverVersion: stale.serverVersion }, 409);
   await collectOrphans(before);
-  return c.json({ linked, kept, dropped });
+  return c.json({ linked, kept, dropped, droppedRefs });
 });
 
 // True when an If-None-Match header names this ETag, weak (`W/`) prefix

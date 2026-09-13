@@ -128,6 +128,25 @@ function createAssetSync({
     return error ? { pending: true, error } : { pending: true };
   }
 
+  // The server's own verdicts, in the words the row already speaks: a mime
+  // disagreement is a file whose type cannot be served under that name, which
+  // reads the same way as any other unusable type, and an escaping reference
+  // is one that sits outside the document's folder. A reference this push had
+  // already skipped for itself is not said twice.
+  const DROP_REASONS = { mime: "type", escaping: "outside" };
+  function withDroppedRefs(skipped, droppedRefs) {
+    if (!Array.isArray(droppedRefs) || droppedRefs.length === 0) return skipped;
+    const named = new Set(skipped.map((s) => s.ref));
+    const extra = [];
+    for (const dropped of droppedRefs) {
+      const reason = dropped && DROP_REASONS[dropped.reason];
+      if (!reason || !dropped.ref || named.has(dropped.ref)) continue;
+      named.add(dropped.ref);
+      extra.push({ ref: dropped.ref, reason });
+    }
+    return extra.length === 0 ? skipped : [...skipped, ...extra];
+  }
+
   // Everything up to and including the uploads, and nothing that commits the
   // document to them. `{ unchanged: true }` for a synced row whose reference
   // set has not moved, `{ pending: true, error? }` for a failure (the row is
@@ -241,12 +260,16 @@ function createAssetSync({
     // whole pass; all this has to do is leave the refs unclaimed.
     if (link.status === 409) return { ...markPending(filePath, staged.skipped), conflict: true };
     if (link.status !== 200) return markPending(filePath, staged.skipped, failure("media link", link));
+    // What the server decided against. It drops an entry it cannot store
+    // honestly instead of refusing the body, so this is the only word anyone
+    // gets about a picture that did not link, and it has to reach the row.
+    const skipped = withDroppedRefs(staged.skipped, link.data && link.data.droppedRefs);
     registry.update(filePath, {
       assets_state: "synced",
       assets_fingerprint: staged.fingerprint,
-      assets_skipped: JSON.stringify(staged.skipped),
+      assets_skipped: JSON.stringify(skipped),
     });
-    return { ok: true, uploaded: staged.uploaded, skipped: staged.skipped };
+    return { ok: true, uploaded: staged.uploaded, skipped };
   }
 
   // Both halves back to back, for reconciliation: it pushes no text, so

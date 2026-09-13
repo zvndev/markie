@@ -189,12 +189,12 @@ test("link replaces the set, keeps an entry without a hash, and collects orphans
   assert.equal((await upload(owner.token, b)).status, 200);
   let r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "a.png", hash: sha(a) }, { ref: "b.png", hash: sha(b) }] });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.data, { linked: 2, kept: 0, dropped: 0 });
+  assert.deepEqual(r.data, { linked: 2, kept: 0, dropped: 0, droppedRefs: [] });
   assert.deepEqual([...assetRefsFor(id).keys()].sort(), ["a.png", "b.png"]);
   // An editor pushes text it cannot resolve b.png for: the link survives.
   await json("POST", `/api/docs/${id}/shares`, owner.token, { email: "editor@markie.test", role: "editor" });
   r = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref: "b.png" }] });
-  assert.deepEqual(r.data, { linked: 0, kept: 1, dropped: 0 });
+  assert.deepEqual(r.data, { linked: 0, kept: 1, dropped: 0, droppedRefs: [] });
   assert.deepEqual([...assetRefsFor(id).keys()], ["b.png"]);
   // a.png is referenced by nothing now: gone from the table and the store.
   const store = fsStore(process.env.ASSETS_DIR!);
@@ -204,7 +204,7 @@ test("link replaces the set, keeps an entry without a hash, and collects orphans
   r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "c.png", hash: "1".repeat(64) }, { ref: "z.png" }] });
   assert.equal(r.status, 400);
   r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "b.png" }, { ref: "z.png" }] });
-  assert.deepEqual(r.data, { linked: 0, kept: 1, dropped: 1 });
+  assert.deepEqual(r.data, { linked: 0, kept: 1, dropped: 1, droppedRefs: [] });
 });
 
 test("a hash another account really holds cannot be linked by someone who never uploaded it", async () => {
@@ -213,7 +213,7 @@ test("a hash another account really holds cannot be linked by someone who never 
   // The owner can link their own upload.
   const mine = await makeDoc(owner.token);
   const own = await json("PUT", `/api/docs/${mine}/assets`, owner.token, { refs: [{ ref: "s.png", hash: sha(secret) }] });
-  assert.deepEqual(own.data, { linked: 1, kept: 0, dropped: 0 });
+  assert.deepEqual(own.data, { linked: 1, kept: 0, dropped: 0, droppedRefs: [] });
   // A stranger who knows the real hash (e.g. saw it referenced in shared
   // markdown) never uploaded those bytes under their own account, so it does
   // not exist in their scope: this is not the "nobody holds this hash" case,
@@ -278,7 +278,7 @@ test("link with a stale baseVersion is refused and the previous set survives", a
   // makeDoc wrote version 1, so that is the snapshot these links describe.
   let r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { baseVersion: 1, refs: [{ ref: "a.png", hash: sha(a) }] });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.data, { linked: 1, kept: 0, dropped: 0 });
+  assert.deepEqual(r.data, { linked: 1, kept: 0, dropped: 0, droppedRefs: [] });
 
   r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { baseVersion: 0, refs: [{ ref: "a.png", hash: sha(b) }] });
   assert.equal(r.status, 409);
@@ -670,7 +670,7 @@ test("an escaping reference with no hash is dropped, not refused", async () => {
     refs: [{ ref: "x.png", hash: sha(bytes) }, { ref: "../y.png" }],
   });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.data, { linked: 1, kept: 0, dropped: 1 });
+  assert.deepEqual(r.data, { linked: 1, kept: 0, dropped: 1, droppedRefs: [{ ref: "../y.png", reason: "escaping" }] });
   assert.deepEqual([...assetRefsFor(id).keys()], ["x.png"]);
 });
 
@@ -686,7 +686,7 @@ test("a bare escaping reference does not keep a link the document already had", 
   await json("POST", `/api/docs/${id}/shares`, owner.token, { email: "editor@markie.test", role: "editor" });
   r = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref: "../logo.png" }] });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.data, { linked: 0, kept: 0, dropped: 1 });
+  assert.deepEqual(r.data, { linked: 0, kept: 0, dropped: 1, droppedRefs: [{ ref: "../logo.png", reason: "escaping" }] });
   assert.equal(assetRefsFor(id).size, 0);
 });
 
@@ -701,7 +701,7 @@ test("a private document's owner still keeps an escaping reference's existing li
   assert.equal(r.status, 200);
   r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "../assets/logo.png" }] });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.data, { linked: 0, kept: 1, dropped: 0 });
+  assert.deepEqual(r.data, { linked: 0, kept: 1, dropped: 0, droppedRefs: [] });
   assert.deepEqual([...assetRefsFor(id).keys()], ["../assets/logo.png"]);
 });
 
@@ -714,7 +714,7 @@ test("link refuses a reference set longer than the cap, and the cap itself still
   const atCap = Array.from({ length: MAX_DOC_REFS }, (_, i) => ({ ref: `f${i}.png` }));
   let r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: atCap });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.data, { linked: 0, kept: 0, dropped: MAX_DOC_REFS });
+  assert.deepEqual(r.data, { linked: 0, kept: 0, dropped: MAX_DOC_REFS, droppedRefs: [] });
 
   r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [...atCap, { ref: "one-too-many.png" }] });
   assert.equal(r.status, 413);
@@ -733,14 +733,14 @@ test("link refuses a reference set longer than the cap, and the cap itself still
 // differently. asset-mime.ts already maps extension to mime, so the check is
 // free, and this is the one place a stored object's declared type is taken on
 // the client's word.
-test("link refuses an entry whose stored type is not the type its reference names", async () => {
+test("link drops an entry whose stored type is not the type its reference names", async () => {
   const id = await makeDoc(owner.token);
   const svg = Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'></svg>");
   assert.equal((await upload(owner.token, svg, sha(svg), "image/svg+xml")).status, 200);
   // The bytes really are this account's, so nothing else refuses them.
   let r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "a.png", hash: sha(svg) }] });
-  assert.equal(r.status, 400);
-  assert.deepEqual(r.data, { error: "mime mismatch", ref: "a.png" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data, { linked: 0, kept: 0, dropped: 1, droppedRefs: [{ ref: "a.png", reason: "mime" }] });
   assert.equal(assetRefsFor(id).size, 0);
   // Under the reference that does name its type, it links.
   r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "a.svg", hash: sha(svg) }] });
@@ -760,8 +760,9 @@ test("a reference whose extension names no type carries no hash", async () => {
   assert.equal((await upload(owner.token, bytes)).status, 200);
   for (const ref of ["README", "notes.txt", "a.png.exe"]) {
     const r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref, hash: sha(bytes) }] });
-    assert.equal(r.status, 400, `${ref} should be refused with a hash`);
-    assert.deepEqual(r.data, { error: "mime mismatch", ref });
+    assert.equal(r.status, 200, `${ref} should be accepted and dropped`);
+    assert.deepEqual(r.data, { linked: 0, kept: 0, dropped: 1, droppedRefs: [{ ref, reason: "mime" }] });
+    assert.equal(assetRefsFor(id).size, 0);
   }
   // The same references bare are the ordinary case: the document names a
   // local file the push could not resolve, and the server keeps nothing.
@@ -769,5 +770,77 @@ test("a reference whose extension names no type carries no hash", async () => {
     refs: [{ ref: "README" }, { ref: "notes.txt" }, { ref: "a.png.exe" }],
   });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.data, { linked: 0, kept: 0, dropped: 3 });
+  assert.deepEqual(r.data, { linked: 0, kept: 0, dropped: 3, droppedRefs: [] });
+});
+
+// An asset row is keyed (owner_id, hash) and its mime is written once, by the
+// upload that created it; the dedupe branch returns 200 for bytes the account
+// already holds without touching it. So one set of bytes has exactly one type
+// for the life of the account, and refusing the whole body over a reference
+// whose extension disagrees made an ordinary rename permanent: the document's
+// other pictures never linked either, and the client retried the identical
+// refused body every ten minutes for ever. The security property is the same
+// whichever way it goes, because no bytes are stored under a name that lies
+// about their type. Only the blast radius changes.
+test("a reference whose extension disagrees with the stored type is dropped, not refused", async () => {
+  const id = await makeDoc(owner.token);
+  const icon = Buffer.from("these bytes were uploaded as a png");
+  const other = Buffer.from("an unrelated picture");
+  assert.equal((await upload(owner.token, icon)).status, 200);
+  assert.equal((await upload(owner.token, other)).status, 200);
+
+  // The everyday case: one file copied to a second name, which most .ico
+  // files really are, plus a perfectly ordinary second picture.
+  const r = await json("PUT", `/api/docs/${id}/assets`, owner.token, {
+    refs: [
+      { ref: "icon.png", hash: sha(icon) },
+      { ref: "favicon.ico", hash: sha(icon) },
+      { ref: "shot.png", hash: sha(other) },
+    ],
+  });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data, {
+    linked: 2,
+    kept: 0,
+    dropped: 1,
+    droppedRefs: [{ ref: "favicon.ico", reason: "mime" }],
+  });
+  // The two that agree are stored, and the one that cannot be served
+  // honestly is not.
+  assert.deepEqual([...assetRefsFor(id).keys()].sort(), ["icon.png", "shot.png"]);
+});
+
+test("renaming a synced picture's extension leaves the rest of the document linked", async () => {
+  const id = await makeDoc(owner.token);
+  const logo = Buffer.from("uploaded once, as a png");
+  assert.equal((await upload(owner.token, logo)).status, 200);
+  let r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "logo.png", hash: sha(logo) }] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data.droppedRefs, []);
+  // The user renames the file and updates the markdown. The bytes, and so the
+  // hash, and so the row's mime, are all unchanged.
+  r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "logo.gif", hash: sha(logo) }] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data, { linked: 0, kept: 0, dropped: 1, droppedRefs: [{ ref: "logo.gif", reason: "mime" }] });
+  // And the stale link is gone rather than being kept alive for ever by a
+  // body the server never accepted.
+  assert.equal(assetRefsFor(id).size, 0);
+});
+
+// The response has to say why an entry did not survive, or the client cannot
+// tell "dropped, settle the row" from "refused, try again".
+test("a bare escaping reference is named in the response as escaping", async () => {
+  const id = await makeDoc(owner.token);
+  const bytes = Buffer.from("named-in-the-response");
+  assert.equal((await upload(editor.token, bytes)).status, 200);
+  await json("POST", `/api/docs/${id}/shares`, owner.token, { email: "editor@markie.test", role: "editor" });
+  const r = await json("PUT", `/api/docs/${id}/assets`, editor.token, {
+    refs: [{ ref: "x.png", hash: sha(bytes) }, { ref: "../y.png" }, { ref: "never-linked.png" }],
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.dropped, 2);
+  // An ordinary drop is a reference the document names and nothing holds, and
+  // there is nothing to say about it. Only the two the server decided against
+  // are named.
+  assert.deepEqual(r.data.droppedRefs, [{ ref: "../y.png", reason: "escaping" }]);
 });

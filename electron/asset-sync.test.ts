@@ -625,3 +625,61 @@ describe("a document with more references than the server will take", () => {
     expect(result.skipped.filter((s) => s.reason === "count")).toHaveLength(3);
   });
 });
+
+// What the link route decided against, folded into the row. The server drops
+// an entry it cannot store honestly rather than refusing the body, so the
+// push succeeded and the row has to settle: leaving it pending would retry an
+// identical body every ten minutes for ever, and the Cloud page would say
+// "media pending" about a document where nothing is pending.
+describe("references the link route dropped", () => {
+  it("settles the row and names the picture that did not link", async () => {
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api } = fakeApi([
+      { status: 200, data: { missing: [] } },
+      {
+        status: 200,
+        data: {
+          linked: 1,
+          kept: 0,
+          dropped: 2,
+          droppedRefs: [
+            { ref: "b.png", reason: "mime" },
+            { ref: "../y.png", reason: "escaping" },
+          ],
+        },
+      },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+    const result = await pushAssets(docPath, "c1", "![](shots/a.png)\n![](b.png)\n![](notes.txt)\n");
+
+    const row = rows.get(docPath)!;
+    expect(row.assets_state).toBe("synced");
+    expect(row.assets_fingerprint).toBeTruthy();
+    // "mime" is a picture whose name does not match its bytes, which reads
+    // the same way to the person looking at the row as any other unusable
+    // type; an escaping reference is the one that sits outside the folder.
+    expect(JSON.parse(row.assets_skipped as string)).toEqual([
+      { ref: "notes.txt", reason: "type" },
+      { ref: "b.png", reason: "type" },
+      { ref: "../y.png", reason: "outside" },
+    ]);
+    expect(result.skipped).toEqual(JSON.parse(row.assets_skipped as string));
+    expect(result.ok).toBe(true);
+  });
+
+  it("says nothing twice about a reference it had already skipped itself", async () => {
+    const { docPath } = fixture();
+    rows.set(docPath, { cloud_doc_id: "c1" });
+    const { api } = fakeApi([
+      { status: 200, data: { missing: [] } },
+      { status: 200, data: { linked: 0, kept: 0, dropped: 1, droppedRefs: [{ ref: "notes.txt", reason: "mime" }] } },
+    ]);
+    const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+    const result = await pushAssets(docPath, "c1", "![](notes.txt)\n");
+
+    expect(result.skipped).toEqual([{ ref: "notes.txt", reason: "type" }]);
+  });
+});

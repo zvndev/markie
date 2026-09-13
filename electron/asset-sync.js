@@ -28,13 +28,30 @@ const MAX_REFS = 2000;
 // A reference that, read anywhere else, names something outside the folder
 // the document is in. Kept identical to refEscapes in server/src/assets.ts:
 // the two have to agree, or a ref this stages is a ref the link route answers
-// 400 to, and the row retries it on every pass for ever. Both separators are
-// considered, because a reference is written by hand and Windows text reaches
-// the same check.
+// 400 to, and the row retries it on every pass for ever.
+//
+// Where the reference lands is the question, not how it is spelt. `./shot.png`
+// is how a great many people write the file beside the document, and a
+// segment a later `..` pops never left the folder either, so the segments are
+// walked the way a path resolver walks them: `.` dropped, `..` popping, and a
+// pop with nothing left to pop is the reference reaching the folder's parent.
+// Both separators count, because a reference is written by hand and Windows
+// text reaches the same check. Nothing here rewrites it: the reference is
+// staged and linked exactly as the document wrote it.
 function refEscapes(ref) {
   if (ref.startsWith("/") || ref.startsWith("\\")) return true;
   if (/^[A-Za-z]:/.test(ref)) return true;
-  return ref.split(/[/\\]/).some((segment) => segment === "." || segment === "..");
+  const stack = [];
+  for (const segment of ref.split(/[/\\]/)) {
+    if (segment === "" || segment === ".") continue;
+    if (segment !== "..") {
+      stack.push(segment);
+      continue;
+    }
+    if (stack.length === 0) return true;
+    stack.pop();
+  }
+  return false;
 }
 
 // The document's own folder, resolved through realpath so a symlink beside

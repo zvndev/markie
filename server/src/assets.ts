@@ -233,12 +233,33 @@ function refIsMalformed(ref: string): boolean {
 // A reference that names something outside the document's own folder. This is
 // the shape the critical attack needs: a co-editor writes `../notes/x.png`
 // into a document's text, and the machine that syncs it resolves that against
-// its own disk and uploads whatever is there. Both separators are considered,
-// because a ref is written by hand and Windows text reaches the same table.
+// its own disk and uploads whatever is there.
+//
+// The question is where the reference lands, not which characters it is spelt
+// with. `./shot.png` is how a great many people write the file beside the
+// document, and a segment a later `..` pops never left the folder either, so
+// the segments are walked the way a path resolver walks them: `.` dropped,
+// `..` popping, and a pop with nothing left to pop is the moment the
+// reference reaches the folder's own parent. Both separators count, because a
+// reference is written by hand and Windows text reaches the same table.
+//
+// Nothing here rewrites the reference. It is stored, matched and served
+// exactly as the document wrote it; this only decides whether it may be
+// stored at all.
 function refEscapes(ref: string): boolean {
   if (ref.startsWith("/") || ref.startsWith("\\")) return true;
   if (/^[A-Za-z]:/.test(ref)) return true;
-  return ref.split(/[/\\]/).some((segment) => segment === "." || segment === "..");
+  const stack: string[] = [];
+  for (const segment of ref.split(/[/\\]/)) {
+    if (segment === "" || segment === ".") continue;
+    if (segment !== "..") {
+      stack.push(segment);
+      continue;
+    }
+    if (stack.length === 0) return true;
+    stack.pop();
+  }
+  return false;
 }
 
 // The decisive account-cap check: the real, measured size, checked and

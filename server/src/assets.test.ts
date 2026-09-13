@@ -560,7 +560,12 @@ test("re-uploading bytes the account already holds keeps them out of the sweep",
 // (electron/asset-sync.js); this is the server refusing to store them, so a
 // client that does not have the rule, or has been made to lose it, still
 // cannot land the attack.
-const ESCAPING = ["../x.png", "./x.png", "a/../../x.png", "/abs/x.png", "\\abs\\x.png", "C:\\Users\\x.png", "\\\\server\\share\\x.png"];
+const ESCAPING = ["../x.png", "a/../../x.png", "/abs/x.png", "\\abs\\x.png", "C:\\Users\\x.png", "\\\\server\\share\\x.png"];
+// Forms that read like an escape and are not one. `./shot.png` is how a lot
+// of people write a reference to the file beside the document, and a segment
+// that is popped by a later `..` never left the folder at all. Refusing them
+// would mean those pictures never travel with a shared document.
+const INSIDE = ["./x.png", "a/../x.png", "a/b/../../x.png"];
 
 test("an editor cannot link a reference that leaves the document's folder", async () => {
   const id = await makeDoc(owner.token);
@@ -572,10 +577,14 @@ test("an editor cannot link a reference that leaves the document's folder", asyn
     assert.equal(r.status, 400, `${ref} should be refused`);
     assert.equal(r.data.error, "bad ref");
   }
-  // A reference beside the document is the ordinary case and still works.
-  const ok = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref: "x.png", hash: sha(bytes) }] });
-  assert.equal(ok.status, 200);
-  assert.deepEqual([...assetRefsFor(id).keys()], ["x.png"]);
+  // A reference beside the document is the ordinary case and still works, and
+  // so does every spelling of it that normalises to the same place. The ref
+  // is stored exactly as it was written, never rewritten.
+  for (const ref of ["x.png", ...INSIDE]) {
+    const ok = await json("PUT", `/api/docs/${id}/assets`, editor.token, { refs: [{ ref, hash: sha(bytes) }] });
+    assert.equal(ok.status, 200, `${ref} should be accepted`);
+    assert.deepEqual([...assetRefsFor(id).keys()], [ref]);
+  }
 });
 
 test("the owner of a shared-out document cannot link one either, and a private document's owner can", async () => {
@@ -594,6 +603,17 @@ test("the owner of a shared-out document cannot link one either, and a private d
   assert.equal(r.data.error, "bad ref");
   // And the previous set is untouched by the refusal.
   assert.deepEqual([...assetRefsFor(id).keys()], ["../assets/logo.png"]);
+  // Popping out of the folder twice is the same escape written differently.
+  r = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref: "a/../../x.png", hash: sha(bytes) }] });
+  assert.equal(r.status, 400);
+  assert.equal(r.data.error, "bad ref");
+  // The forms that never actually leave the folder still link for the owner
+  // of a shared-out document, exactly as they do for an editor.
+  for (const ref of INSIDE) {
+    const ok = await json("PUT", `/api/docs/${id}/assets`, owner.token, { refs: [{ ref, hash: sha(bytes) }] });
+    assert.equal(ok.status, 200, `${ref} should be accepted`);
+    assert.deepEqual([...assetRefsFor(id).keys()], [ref]);
+  }
 });
 
 test("a public link alone makes the owner's document shared out for this check", async () => {

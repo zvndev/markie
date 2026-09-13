@@ -559,29 +559,41 @@ describe("what an exposed document may stage", () => {
     });
   });
 
-  it("refuses the same shapes the server's link route refuses", async () => {
+  it("stages a reference that only looks like it leaves the folder, and refuses one that does", async () => {
     const { root, docPath, grants: wide } = exposedFixture();
     rows.set(docPath, { cloud_doc_id: "c1" });
-    // `./x.png` resolves to the sibling and the local viewer draws it, but
-    // the server refuses a `.` segment from an exposed document, so staging
-    // it would upload bytes for a link that answers 400 on every pass.
     // A symlink inside the folder pointing out is refused by resolveRefs
-    // itself, and lands in the same skip list.
+    // itself, and lands in the same skip list as a reference that resolves
+    // above the folder.
     symlinkSync(path.join(root, "notes", "passport.png"), path.join(root, "docs", "link.png"));
-    const { api, calls } = fakeApi([{ status: 200, data: { linked: 0, kept: 0, dropped: 2 } }]);
+    const { api, calls } = fakeApi([
+      { status: 200, data: { missing: [sha("xxxx")] } },
+      { status: 200, data: { ok: true } },
+      { status: 200, data: { linked: 2, kept: 0, dropped: 2 } },
+    ]);
     const { pushAssets } = createAssetSync({ api, registry, grants: wide, sleep: async () => {}, isExposed: () => true });
 
-    const result = await pushAssets(docPath, "c1", "![](./x.png)\n![](link.png)\n");
+    const md = "![](./x.png)\n![](a/../x.png)\n![](a/../../notes/board.png)\n![](link.png)\n";
+    const result = await pushAssets(docPath, "c1", md);
 
     expect(result).toEqual({
       ok: true,
-      uploaded: 0,
+      uploaded: 1,
       skipped: [
-        { ref: "./x.png", reason: "outside" },
+        { ref: "a/../../notes/board.png", reason: "outside" },
         { ref: "link.png", reason: "outside" },
       ],
     });
-    expect(calls.map((c) => c.path)).toEqual(["/api/docs/c1/assets"]);
+    // Both spellings of the sibling are the same bytes, so one upload covers
+    // them, and each is linked under the reference the document wrote.
+    expect(calls[2].body).toEqual({
+      refs: [
+        { ref: "./x.png", hash: sha("xxxx") },
+        { ref: "a/../x.png", hash: sha("xxxx") },
+        { ref: "a/../../notes/board.png" },
+        { ref: "link.png" },
+      ],
+    });
   });
 });
 

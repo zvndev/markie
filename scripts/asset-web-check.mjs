@@ -239,6 +239,19 @@ async function main() {
   check("owner reads it over the bearer route", (await get(`/api/docs/${id}/assets/file?ref=shot.png`, owner)).status === 200);
   check("a stranger gets 404", (await get(`/api/docs/${id}/assets/file?ref=shot.png`, stranger)).status === 404);
   check("the web page rewrites the src", /\/d\/[^"]+\/assets\?ref=shot\.png/.test(await (await fetch(`${SERVER}/d/${id}`, { headers: cookieFor(viewer) })).text()));
+  // And the route that rewritten src actually points at. It is a different
+  // gate from the bearer route above: /d/:id/assets goes through the same
+  // resolveViewer the page itself does, so asserting only that the page
+  // rewrote the src left the reader's side of it unproven. The pending-invite
+  // "?k=" form of the same route is covered by server/src/asset-read.test.ts.
+  check(
+    "a member reads the picture off the page's own asset route",
+    (await fetch(`${SERVER}/d/${id}/assets?ref=shot.png`, { headers: cookieFor(viewer) })).status === 200
+  );
+  check(
+    "a stranger gets 404 from the page's asset route",
+    (await fetch(`${SERVER}/d/${id}/assets?ref=shot.png`, { headers: cookieFor(stranger) })).status === 404
+  );
   check("the public page serves it by token", (await fetch(`${SERVER}/s/${token}/assets?ref=shot.png`)).status === 200);
 
   const revoked = await fetch(`${SERVER}/api/docs/${id}/public-link`, {

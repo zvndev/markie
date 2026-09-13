@@ -738,6 +738,45 @@ describe("a link the server will never accept", () => {
     expect(second.skipped).toEqual([]);
   });
 
+  it("settles the row on every status that is about the body", async () => {
+    // 400 a bad ref, 413 a body or set over a cap, 415 a type this server
+    // will not take, 422 a body it could read and would not act on. Sending
+    // any of them again unchanged gets the same answer.
+    for (const status of [400, 413, 415, 422]) {
+      const { docPath } = fixture();
+      rows.set(docPath, { cloud_doc_id: "c1" });
+      const { api } = fakeApi([{ status: 200, data: { missing: [] } }, { status }]);
+      const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+      const result = (await pushAssets(docPath, "c1", "![](b.png)\n")) as PushResult;
+
+      expect(result.refused, `status ${status}`).toBe(status);
+      expect(rows.get(docPath)!.assets_state, `status ${status}`).toBe("synced");
+    }
+  });
+
+  // 401, 403 and 404 are 4xx, and none of them is about the body. They are
+  // about who is asking and whether the document is still reachable, and the
+  // next pass may well ask as a freshly signed-in caller. Treating them as
+  // terminal meant a session that lapsed in the seconds between the missing
+  // check and the link settled the row for ever: signing back in never
+  // retried it, the picture was missing from the web copy permanently, and
+  // the panel said "media refused (401)".
+  it("keeps a lapsed session, a lost role and a missing document pending", async () => {
+    for (const status of [401, 403, 404]) {
+      const { docPath } = fixture();
+      rows.set(docPath, { cloud_doc_id: "c1" });
+      const { api } = fakeApi([{ status: 200, data: { missing: [] } }, { status }]);
+      const { pushAssets } = createAssetSync({ api, registry, grants, sleep: async () => {} });
+
+      const result = (await pushAssets(docPath, "c1", "![](b.png)\n")) as PushResult;
+
+      expect(result.pending, `status ${status}`).toBe(true);
+      expect(rows.get(docPath)!.assets_state, `status ${status}`).toBe("pending");
+      expect(rows.get(docPath)!.assets_fingerprint, `status ${status}`).toBeUndefined();
+    }
+  });
+
   it("keeps a 500, a 429 and a network failure pending", async () => {
     for (const reply of [{ status: 500 }, { status: 429 }, { status: 0 }]) {
       const { docPath } = fixture();

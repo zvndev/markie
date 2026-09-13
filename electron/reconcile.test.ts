@@ -237,3 +237,44 @@ describe("the listing a pass fetched", () => {
     expect(media).toEqual(["/d/a.md"]);
   });
 });
+
+// The refusal classifier, through the real asset push rather than a stand-in,
+// because the thing worth proving is that a pass which failed for a reason
+// that has nothing to do with the body is tried again by the next pass.
+describe("a link refused while the session was stale", () => {
+  const { createAssetSync } = require("./asset-sync") as typeof import("./asset-sync");
+
+  function realAssetSync(linkReplies: Array<{ status: number; data?: unknown }>) {
+    const links: unknown[] = [];
+    const api = async (method: string, p: string, body?: unknown) => {
+      if (method === "PUT" && p.endsWith("/assets")) {
+        links.push(body);
+        const next = linkReplies.shift();
+        return { status: next?.status ?? 500, data: next?.data ?? null };
+      }
+      throw new Error(`unexpected ${method} ${p}`);
+    };
+    return { links, assetSync: createAssetSync({ api, registry, grants: { assetRoots: () => [], grantedFilePaths: () => [] }, sleep: async () => {} }) };
+  }
+
+  it("is tried again on the next pass and lands", async () => {
+    // No references at all, so the push is the link call and nothing else.
+    seed({ path: "/d/a.md", cloud_doc_id: "c1", content_hash: sha("words"), assets_state: "pending" }, "words");
+    listing = { docs: [{ id: "c1", version: 1, hash: sha("words") }] };
+    const { links, assetSync: real } = realAssetSync([
+      { status: 401, data: { error: "unauthorized" } },
+      { status: 200, data: { linked: 0, kept: 0, dropped: 0, droppedRefs: [] } },
+    ]);
+    const reconciler = createReconciler({ sync, registry, assetSync: real, fs, sleep: async () => {} });
+
+    const first = await reconciler.run();
+    expect(rows.get("/d/a.md")!.assets_state).toBe("pending");
+    expect(first.errors).toEqual([{ path: "/d/a.md", error: "media link failed (401)" }]);
+
+    // Signed in again. The row was never settled, so this pass sends it.
+    const second = await reconciler.run();
+    expect(links).toHaveLength(2);
+    expect(second.mediaPushed).toEqual(["/d/a.md"]);
+    expect(rows.get("/d/a.md")!.assets_state).toBe("synced");
+  });
+});

@@ -25,6 +25,12 @@ const localAssets = require("./local-assets");
 // 2000 references travel and the rest are named as left out.
 const MAX_REFS = 2000;
 
+// Link refusals no retry of the same body changes: a bad reference, a body or
+// reference set over a cap, a type this server will not take, a body it could
+// read and would not act on. Everything else, 401 and 403 and 404 included,
+// leaves the row pending for the next pass.
+const TERMINAL_LINK_STATUSES = new Set([400, 413, 415, 422]);
+
 // A reference that, read anywhere else, names something outside the folder
 // the document is in. Kept identical to refEscapes in server/src/assets.ts:
 // the two have to agree, or a ref this stages is a ref the link route answers
@@ -272,16 +278,24 @@ function createAssetSync({
     // Somebody else's snapshot landed in between. Reconciliation retries the
     // whole pass; all this has to do is leave the refs unclaimed.
     if (link.status === 409) return { ...markPending(filePath, staged.skipped), conflict: true };
-    // A 4xx is this body being wrong, and the next pass sends the identical
-    // body. Filing it as pending was a ten-minute loop for the life of the
-    // document, pointed at production, with the panel reporting "media
+    // A refusal of the body itself, which the next pass would send unchanged.
+    // Filing one of these as pending was a ten-minute loop for the life of
+    // the document, pointed at production, with the panel reporting "media
     // pending" about something that was never going to land. So the row is
     // settled under the fingerprint that was refused: nothing is sent again
     // until the document's own references change, and the row carries the
-    // status so the panel can say what happened. 429 is the exception, being
-    // the server asking for a moment rather than refusing the content, and
-    // everything from 500 up is the server having a bad day.
-    if (link.status >= 400 && link.status < 500 && link.status !== 429) {
+    // status so the panel can say what happened.
+    //
+    // Named one by one rather than taken as "any 4xx". 401, 403 and 404 are
+    // 4xx and none of them is about the body: they are about who is asking
+    // and whether the document is still reachable, and the next pass may ask
+    // as a freshly signed-in caller. A session that lapsed in the seconds
+    // between the missing check and the link used to settle the row for ever,
+    // so signing back in never retried it and the picture was missing from
+    // the web copy permanently. 429 is the server asking for a moment rather
+    // than refusing the content, and everything from 500 up is the server
+    // having a bad day.
+    if (TERMINAL_LINK_STATUSES.has(link.status)) {
       return markRefused(filePath, staged, link.status);
     }
     if (link.status !== 200) return markPending(filePath, staged.skipped, failure("media link", link));

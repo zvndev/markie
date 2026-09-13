@@ -48,3 +48,24 @@ docker compose stop markie-api
 docker compose run --rm litestream restore -config /etc/litestream.yml /data/markie.db
 docker compose start markie-api
 ```
+
+## Assets bucket
+
+Pictures, video and audio synced with a document live in their own private
+Backblaze B2 bucket, separate from the Litestream backup bucket above.
+
+1. Create a private bucket (suggested name `markie-assets`).
+2. Create an application key scoped to that bucket, with read and write.
+3. Set the four variables on the Railway `api` service, then deploy:
+
+```bash
+railway variable set ASSETS_BUCKET=<bucket name> --skip-deploys
+railway variable set ASSETS_ENDPOINT=<bucket's S3 endpoint, for example https://s3.us-west-004.backblazeb2.com> --skip-deploys
+railway variable set ASSETS_KEY_ID=<application key id> --skip-deploys
+railway variable set ASSETS_APP_KEY=<application key> --skip-deploys
+railway up server --path-as-root --service api --environment production --ci
+```
+
+Until all four are set, the asset routes answer `503 {"error":"assets not
+configured"}` and Markie shows the media as pending rather than failing.
+Never write the values into the repo.

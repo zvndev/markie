@@ -8,6 +8,19 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Pictures, video and audio travel with a synced document.** A file the
+  document embeds is uploaded alongside it and shown to exactly the people
+  who can read the document: in Markie on another machine, on the shared web
+  page, and through a public link while that link stands. Revoke the share
+  or the link and the media goes with it. Files over 100 MB stay local and
+  the Cloud page says which.
+- **Markie repairs sync on its own.** At launch and every ten minutes it
+  checks every document you told it to sync against the cloud and pushes
+  anything that never landed or fell behind, media included. It never
+  pulls over an edit.
+
 ## [0.6.0] - 2026-09-08
 
 ### Added

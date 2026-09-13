@@ -9,6 +9,20 @@ const localAssets = require("./local-assets");
 
 const MAX_ASSET_BYTES = 100 * 1024 * 1024;
 
+// Above this a document is not read for references at all. The renderer
+// already opens a file at 1 MB in Source view only and refuses one at 100 MB
+// (electron/doc-tiers.js), so nothing between here and there is a document
+// somebody is working in; what it is instead is the shape that makes
+// extraction expensive. This runs on the Electron main thread, where the cost
+// of reading a document is the cost of the app answering anything at all.
+const MAX_EXTRACT_CHARS = 4 * 1024 * 1024;
+
+// The longest bare destination a reference may have. It is what removes the
+// quadratic term from MD_IMAGE below, and it costs nothing real: the server
+// refuses to store a ref over 2048 bytes anyway (MAX_DOC_REFS' neighbour in
+// server/src/assets.ts).
+const MAX_REF_CHARS = 2048;
+
 // A markdown image, then the src of an img, video, audio or source tag in raw
 // HTML. Fenced and inline code are cut out first so an example is not an
 // embed.
@@ -16,7 +30,16 @@ const FENCE = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g;
 // Two destination forms, because CommonMark has two: `<...>`, which is how a
 // name with a space in it is written and which the local renderer already
 // draws, and the bare form, which cannot contain whitespace.
-const MD_IMAGE = /!\[[^\]]*\]\(\s*(?:<([^>\n]*)>|([^\s)>]+))(?:\s+"[^"]*")?\s*\)/g;
+// The bare destination is bounded. Unbounded, `([^\s)>]+)` swallowed the whole
+// remaining document on text with no closing paren in it, failed the `\s*\)`
+// that follows, and backtracked a character at a time; every `![](` was
+// another start, so the cost was quadratic in the length of the document. A
+// run that cannot contain whitespace, ')' or '>' is a single unambiguous
+// match, and there was never a reason to let the engine try shorter ones.
+const MD_IMAGE = new RegExp(
+  `!\\[[^\\]]*\\]\\(\\s*(?:<([^>\\n]*)>|([^\\s)>]{1,${MAX_REF_CHARS}}))(?:\\s+"[^"]*")?\\s*\\)`,
+  "g"
+);
 // Whitespace before `src`, not a word boundary: \b matches after the hyphen
 // in `data-src`, so a lazy-loading attribute named a file the document does
 // not render and Markie uploaded it.
@@ -36,7 +59,11 @@ function refOf(src) {
 }
 
 function extractRefs(markdown) {
-  const text = String(markdown ?? "").replace(FENCE, "");
+  const source = String(markdown ?? "");
+  // Checked before the fence strip, which is a regex over the whole document
+  // in its own right.
+  if (source.length > MAX_EXTRACT_CHARS) return [];
+  const text = source.replace(FENCE, "");
   // Both patterns are collected with their position, then merged, so two refs
   // that come from different syntaxes still land in the order the document
   // actually wrote them.
@@ -97,4 +124,4 @@ function fingerprint(entries) {
   return crypto.createHash("sha256").update(lines.join("\n")).digest("hex");
 }
 
-module.exports = { MAX_ASSET_BYTES, extractRefs, resolveRefs, hashFile, fingerprint };
+module.exports = { MAX_ASSET_BYTES, MAX_EXTRACT_CHARS, MAX_REF_CHARS, extractRefs, resolveRefs, hashFile, fingerprint };

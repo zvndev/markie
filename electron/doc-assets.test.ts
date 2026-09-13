@@ -94,3 +94,46 @@ describe("resolveRefs and hashFile", () => {
     expect(fingerprint([{ ref: "gone.png" }])).toBe(fingerprint([{ ref: "gone.png", hash: "" }]));
   });
 });
+
+// A shared document reaches this on the Electron main thread, so the cost of
+// reading it is the cost of the whole app being responsive. The bare
+// destination group used to have no upper bound, so on text made of repeated
+// "![](a" it swallowed the rest of the document, failed to find the closing
+// paren and backtracked a character at a time, from every one of the starts:
+// 1.8 s at 100 KB, 46 s at 500 KB, hours at a few megabytes, with no IPC, no
+// window and no menus for the duration.
+describe("extraction cannot be made expensive", () => {
+  it("reads a document made entirely of unterminated image openers in well under a second", () => {
+    const payload = "![](a".repeat(100_000);
+    const started = Date.now();
+    const refs = extractRefs(payload);
+    const elapsed = Date.now() - started;
+    expect(refs).toEqual([]);
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it("bounds the same run inside a document that does have real references", () => {
+    const payload = `![](real.png)\n${"![](a".repeat(50_000)}\n![](other.png)\n`;
+    const started = Date.now();
+    expect(extractRefs(payload)).toEqual(["real.png", "other.png"]);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("takes no reference at all out of a document over 4 MB", () => {
+    // Above this the document is not one anybody is reading in Markie: the
+    // renderer opens it in Source view at 1 MB and refuses it at 100 MB. A
+    // pass that reads it costs the main thread more than its pictures are
+    // worth, and a document this size is the shape an attack takes.
+    const big = `![](a.png)\n${"x".repeat(4 * 1024 * 1024)}`;
+    expect(extractRefs(big)).toEqual([]);
+    // Just under, and it reads normally.
+    expect(extractRefs(`![](a.png)\n${"x".repeat(1000)}`)).toEqual(["a.png"]);
+  });
+
+  it("drops a destination longer than the server would store anyway", () => {
+    const long = "n".repeat(2049);
+    expect(extractRefs(`![](${long}.png)`)).toEqual([]);
+    const atCap = "n".repeat(2044);
+    expect(extractRefs(`![](${atCap}.png)`)).toEqual([`${atCap}.png`]);
+  });
+});

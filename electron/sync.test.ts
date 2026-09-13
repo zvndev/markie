@@ -2203,13 +2203,13 @@ describe("setConfig reports whether the session changed", () => {
   // fetched.
   it("says nothing changed when the renderer repeats the same config", () => {
     sync.setConfig({ token: "a-token", serverURL: SERVER });
-    expect(sync.setConfig({ token: "a-token", serverURL: SERVER })).toEqual({ sessionChanged: false });
-    expect(sync.setConfig({ token: "a-token", serverURL: SERVER, userId: ME })).toEqual({ sessionChanged: false });
+    expect(sync.setConfig({ token: "a-token", serverURL: SERVER }).sessionChanged).toBe(false);
+    expect(sync.setConfig({ token: "a-token", serverURL: SERVER, userId: ME }).sessionChanged).toBe(false);
   });
 
   it("says the session changed when one account's token replaces another's", () => {
     sync.setConfig({ token: "a-token", serverURL: SERVER, userId: ME });
-    expect(sync.setConfig({ token: "b-token", serverURL: SERVER })).toEqual({ sessionChanged: true });
+    expect(sync.setConfig({ token: "b-token", serverURL: SERVER }).sessionChanged).toBe(true);
   });
 
   it("says the session changed when the same token is offered to another server", () => {
@@ -2217,9 +2217,7 @@ describe("setConfig reports whether the session changed", () => {
     const env = process.env.NODE_ENV;
     process.env.NODE_ENV = "development";
     try {
-      expect(sync.setConfig({ token: "a-token", serverURL: "http://localhost:4010" })).toEqual({
-        sessionChanged: true,
-      });
+      expect(sync.setConfig({ token: "a-token", serverURL: "http://localhost:4010" }).sessionChanged).toBe(true);
     } finally {
       process.env.NODE_ENV = env;
     }
@@ -2227,9 +2225,45 @@ describe("setConfig reports whether the session changed", () => {
 
   it("says the session changed on sign-out", () => {
     sync.setConfig({ token: "a-token", serverURL: SERVER });
-    expect(sync.setConfig({ token: null, serverURL: null })).toEqual({ sessionChanged: true });
+    expect(sync.setConfig({ token: null, serverURL: null }).sessionChanged).toBe(true);
     // Signed out twice over is not a new session, and there is nothing left
     // to clear.
-    expect(sync.setConfig({ token: null, serverURL: null })).toEqual({ sessionChanged: false });
+    expect(sync.setConfig({ token: null, serverURL: null }).sessionChanged).toBe(false);
+  });
+});
+
+describe("setConfig names the session", () => {
+  // The asset cache keeps this beside its index so a relaunch of the same
+  // account keeps the pictures it fetched. "Did the config change since the
+  // last push" cannot answer that: a new main process has no last push.
+  const keyOf = (cfg: { token: string | null; serverURL: string | null }) =>
+    sync.setConfig(cfg).sessionKey as string | null;
+
+  it("gives the same token at the same server the same name every time", () => {
+    const first = keyOf({ token: "a-token", serverURL: SERVER });
+    keyOf({ token: null, serverURL: null });
+    expect(keyOf({ token: "a-token", serverURL: SERVER })).toBe(first);
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("is not the token, and is a different name for another token or another server", () => {
+    const a = keyOf({ token: "a-token", serverURL: SERVER });
+    expect(a).not.toContain("a-token");
+    expect(keyOf({ token: "b-token", serverURL: SERVER })).not.toBe(a);
+
+    const env = process.env.NODE_ENV;
+    process.env.NODE_ENV = "development";
+    try {
+      expect(keyOf({ token: "a-token", serverURL: "http://localhost:4010" })).not.toBe(a);
+    } finally {
+      process.env.NODE_ENV = env;
+    }
+  });
+
+  it("names nothing without a token, or without a server this app will talk to", () => {
+    expect(keyOf({ token: null, serverURL: null })).toBeNull();
+    expect(keyOf({ token: null, serverURL: SERVER })).toBeNull();
+    // An origin the allow-list refuses is no server at all outside dev.
+    expect(keyOf({ token: "a-token", serverURL: "http://localhost:4010" })).toBeNull();
   });
 });

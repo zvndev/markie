@@ -38,7 +38,8 @@ const HASH_RE = /^[a-f0-9]{64}$/;
  */
 function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 * 1024 * 1024, fsp = nodeFsp }) {
   const indexPath = path.join(dir, "cache.json");
-  let index = null; // { entries: { [cloudId\tref]: { hash, mime, size, used, validatedAt? } } }
+  // { session: string | null, entries: { [cloudId\tref]: { hash, mime, size, used, validatedAt? } } }
+  let index = null;
   const inflight = new Map();
   // Bumped by clear(). A fetch already in flight when a sign-out lands
   // captured the generation it started under; if that no longer matches by
@@ -94,15 +95,17 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
     if (fs.existsSync(path.join(dir, PENDING_CLEAR_MARKER))) {
       generation += 1;
       await wipeDir();
-      index = { entries: {} };
+      // No session recorded: the wipe was somebody's sign-out, and the next
+      // bindSession is what says whose this directory is now.
+      index = { session: null, entries: {} };
       await save();
       return index;
     }
     try {
       index = JSON.parse(await fsp.readFile(indexPath, "utf8"));
-      if (!index || typeof index.entries !== "object") index = { entries: {} };
+      if (!index || typeof index.entries !== "object") index = { session: null, entries: {} };
     } catch {
-      index = { entries: {} };
+      index = { session: null, entries: {} };
     }
     // Seeds the clock from whatever this index already recorded, so a
     // system clock that moved backward since the last run (DST, an NTP
@@ -305,17 +308,43 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
     });
   }
 
-  async function clear() {
-    await load();
+  // Everything gone, and the empty directory recorded as belonging to
+  // `sessionKey`. The state is reset either way: nothing this cache remembers
+  // is the old account's to serve any more. But bytes the OS would not unlink
+  // are still that account's, sitting on this disk, so the caller is told and
+  // its catch leaves the marker that makes the next start finish the job.
+  async function wipeTo(sessionKey) {
     generation += 1;
     const failed = await wipeDir();
-    index = { entries: {} };
+    index = { session: sessionKey ?? null, entries: {} };
     await save();
-    // The state is reset either way: nothing this cache remembers is the old
-    // account's to serve any more. But bytes the OS would not unlink are
-    // still that account's, sitting on this disk, so the caller is told and
-    // its catch leaves the marker that makes the next start finish the job.
     if (failed > 0) throw new Error(`asset cache: ${failed} file(s) could not be removed`);
+  }
+
+  async function clear() {
+    await load();
+    await wipeTo(null);
+  }
+
+  // Whose pictures this directory holds, checked on every config push.
+  //
+  // "Has the session changed since the last push" cannot answer this: the
+  // main process starts every launch with no config at all, and the
+  // renderer's first push carries the token it had in storage, so that
+  // question says yes on every cold start of a signed-in app and emptied the
+  // cache each time. The directory itself remembers instead, so a relaunch of
+  // the same session keeps what it fetched and only a genuinely different
+  // session (or none, or a cache from a build that recorded nothing) loses
+  // it. The key is a digest, never the token.
+  async function bindSession(sessionKey) {
+    await load();
+    const key = sessionKey ?? null;
+    if ((index.session ?? null) === key) return;
+    // Always the full wipe, even for an index with nothing in it: the
+    // generation bump is what stops a fetch still in flight for the session
+    // being left from landing under the one arriving. An empty directory has
+    // nothing to remove, so this costs a readdir.
+    await wipeTo(key);
   }
 
   // Left by a caller whose own clear() could not finish, so the next time
@@ -331,7 +360,7 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
     }
   }
 
-  return { get, clear, markPendingClear };
+  return { get, clear, bindSession, markPendingClear };
 }
 
 module.exports = { createAssetCache };

@@ -59,11 +59,14 @@ function setConfig(next) {
   // signed in.
   if (sessionChanged || !token) principal = null;
   else if (next.userId) principal = next.userId;
-  // The caller clears the asset cache on this. Cache keys carry no principal,
-  // so a token swapped straight from one account to another with no sign-out
-  // in between would otherwise leave the first account's pictures on disk for
-  // the second to be served from.
-  return { sessionChanged };
+  // `sessionKey` names this session without being it: the asset cache stores
+  // it beside its index, so a relaunch of the same account keeps the pictures
+  // it fetched and any other account's binding empties the directory. A
+  // digest rather than the token, because this is written to a plain file
+  // next to the cached bytes and the token is a bearer credential.
+  const sessionKey =
+    token && server ? crypto.createHash("sha256").update(`${token}\n${server}`).digest("hex") : null;
+  return { sessionChanged, sessionKey };
 }
 
 function isConfigured() {

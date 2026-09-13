@@ -364,6 +364,107 @@ describe("asset cache", () => {
     }
   });
 
+  it("keeps the cache across a relaunch of the same session", async () => {
+    // The whole reason the cache remembers a session key. `config` starts
+    // empty in every new main process and the renderer's first push carries
+    // the stored token, so a clear driven by "the session changed" emptied
+    // this directory on every cold start of a signed-in app.
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    let fetches = 0;
+    const fetchAsset = async () => {
+      fetches += 1;
+      return bytes("aaaa");
+    };
+    const first = createAssetCache({ dir, fetchAsset });
+    await first.bindSession("key-a");
+    await first.get("c1", "a.png");
+    expect(fetches).toBe(1);
+
+    // A new process, the same account: the index on disk already says whose
+    // these are.
+    const relaunched = createAssetCache({ dir, fetchAsset });
+    await relaunched.bindSession("key-a");
+    await relaunched.get("c1", "a.png");
+    expect(fetches).toBe(1);
+  });
+
+  it("binds a key to a fresh cache without disturbing it, and keeps it on a repeat", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    let fetches = 0;
+    const fetchAsset = async () => {
+      fetches += 1;
+      return bytes("aaaa");
+    };
+    const cache = createAssetCache({ dir, fetchAsset });
+
+    // An empty cache has nothing to lose to the binding.
+    await cache.bindSession("key-a");
+    await cache.get("c1", "a.png");
+    expect(fetches).toBe(1);
+
+    // The renderer pushes the same config often. None of those may clear.
+    await cache.bindSession("key-a");
+    await cache.bindSession("key-a");
+    await cache.get("c1", "a.png");
+    expect(fetches).toBe(1);
+  });
+
+  it("empties the cache when another session binds to it", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    let fetches = 0;
+    const fetchAsset = async () => {
+      fetches += 1;
+      return bytes("aaaa");
+    };
+    const cache = createAssetCache({ dir, fetchAsset });
+    await cache.bindSession("key-a");
+    await cache.get("c1", "a.png");
+    expect(readdirSync(dir)).toContain(hashOf("aaaa"));
+
+    // Account B's token replaces account A's, with no sign-out in between.
+    await cache.bindSession("key-b");
+    expect(readdirSync(dir)).not.toContain(hashOf("aaaa"));
+    await cache.get("c1", "a.png");
+    expect(fetches).toBe(2);
+  });
+
+  it("empties the cache on sign-out, and again when a session follows one", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    let fetches = 0;
+    const fetchAsset = async () => {
+      fetches += 1;
+      return bytes("aaaa");
+    };
+    const cache = createAssetCache({ dir, fetchAsset });
+    await cache.bindSession("key-a");
+    await cache.get("c1", "a.png");
+
+    await cache.bindSession(null);
+    expect(readdirSync(dir)).not.toContain(hashOf("aaaa"));
+
+    await cache.bindSession("key-a");
+    await cache.get("c1", "a.png");
+    expect(fetches).toBe(2);
+  });
+
+  it("empties a cache an older build left with no session recorded", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    let fetches = 0;
+    const fetchAsset = async () => {
+      fetches += 1;
+      return bytes("aaaa");
+    };
+    const before = createAssetCache({ dir, fetchAsset });
+    await before.get("c1", "a.png");
+    expect(fetches).toBe(1);
+
+    // Nothing on disk says whose those bytes are, so they go.
+    const upgraded = createAssetCache({ dir, fetchAsset });
+    await upgraded.bindSession("key-a");
+    await upgraded.get("c1", "a.png");
+    expect(fetches).toBe(2);
+  });
+
   it("refuses to say a sign-out finished when a file would not go", async () => {
     // Windows will not unlink a cached video another handle is still reading.
     // A clear that swallowed that resolved, main never wrote the marker, and

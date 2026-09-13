@@ -8,15 +8,17 @@
 //
 // So the src is rewritten to
 // `markie-asset://local/<absolute path>?doc=<document path>&ref=<reference as
-// written>` on the way into the DOM, and only there. The document on disk is untouched: the editor
-// keeps the original in the node's attribute, so what gets saved is what was
-// written. Main decides whether to actually serve it; this side only addresses
-// it, and an address is not a permission. The `doc` query names the document
-// the reference belongs to, so main can look for the picture on that one
-// cloud document when the file itself is not on this machine. The document
-// and not its folder: two synced documents can share a folder and reference
-// the same missing picture, and a folder let main answer with whichever of
-// them happened to be opened last.
+// written>` on the way into the DOM, and only there. The document on disk is
+// untouched: the editor keeps the original in the node's attribute, so what
+// gets saved is what was written. Main decides whether to actually serve it;
+// this side only addresses it, and an address is not a permission. The `doc`
+// query names the document the reference belongs to, so main can look for the
+// picture on that one cloud document when the file itself is not on this
+// machine. The document and not its folder: two synced documents can share a
+// folder and reference the same missing picture, and a folder let main answer
+// with whichever of them happened to be opened last. The `ref` query is that
+// reference as the markdown wrote it, which is the name the server holds the
+// picture under.
 
 import { pathDirname } from "@/lib/path-utils";
 

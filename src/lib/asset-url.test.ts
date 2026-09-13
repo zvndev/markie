@@ -4,11 +4,10 @@ import { getAssetBaseDir, isAssetUrl, resolveAssetSrc, setAssetDocPath } from "@
 afterEach(() => setAssetDocPath(null));
 
 // The query suffix names the document a reference belongs to and the
-// reference as written (see the two tests at the bottom); every other test
-// here is about how the
-// path itself gets built, so this strips the suffix the way a caller who only
-// wants the path would (new URL(...).pathname does the same on the main
-// side).
+// reference as written (see the tests at the bottom); every other test here
+// is about how the path itself gets built, so this strips the suffix the way
+// a caller who only wants the path would (new URL(...).pathname does the same
+// on the main side).
 const decoded = (url: string) =>
   decodeURIComponent(url.replace("markie-asset://local/", "").split("?")[0]);
 

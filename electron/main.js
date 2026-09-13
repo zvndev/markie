@@ -870,8 +870,9 @@ function registerAssetProtocol() {
       // may still have this picture on the server, under the reference the
       // text wrote, which the renderer carries along. The document is named
       // by the request, which makes it untrusted like every other part of
-      // this URL. All it does is choose which registry row to ask about, and the
-      // server decides whether this session may read that document's media.
+      // this URL. All it does is choose which registry row to ask about, and
+      // the server decides whether this session may read that document's
+      // media.
       const query = new URL(request.url).searchParams;
       const docPath = query.get("doc");
       const cloud = docPath ? cloudDocForPath(docPath, requested) : null;

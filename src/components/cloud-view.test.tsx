@@ -257,6 +257,34 @@ describe("a row's media note", () => {
     expect(await screen.findByText("file too large: diagram.png")).toBeInTheDocument();
     expect(screen.queryByText(/clip\.mov/)).not.toBeInTheDocument();
   });
+
+  it("finds the oversized picture behind a skip of some other kind", async () => {
+    // Reading only the first entry meant a reference the viewer would refuse
+    // anyway, listed first, hid the one thing worth telling someone about.
+    renderView({
+      items: [
+        synced({
+          media: {
+            state: "synced",
+            skipped: [
+              { ref: "clip.mov", reason: "type" },
+              { ref: "elsewhere.png", reason: "outside" },
+              { ref: "diagram.png", reason: "size" },
+            ],
+          },
+        }),
+      ],
+    });
+    expect(await screen.findByText("file too large: diagram.png")).toBeInTheDocument();
+  });
+
+  it("stays quiet when nothing was skipped for being too large", async () => {
+    renderView({
+      items: [synced({ media: { state: "synced", skipped: [{ ref: "clip.mov", reason: "type" }] } })],
+    });
+    await screen.findByText("synced.md");
+    expect(screen.queryByText(/file too large/)).not.toBeInTheDocument();
+  });
 });
 
 describe("the Cloud page's header band", () => {

@@ -387,16 +387,18 @@ function RowWithMediaNote({
 }
 
 // "media pending" while a picture is still on its way up; the name of the
-// first one that will never fit, when that is why it stopped. Any other skip
-// reason stays silent: those are files the local viewer would not show
-// either, so there is nothing here worth telling someone about.
+// first one that will never fit, when there is one. Any other skip reason
+// stays silent: those are files the local viewer would not show either, so
+// there is nothing there worth telling someone about. They are still in the
+// list though, and reading only its first entry let one of them hide the
+// oversized file behind it.
 function MediaNote({ item }: { item: LibraryItem }) {
   const media = item.media;
   if (!media) return null;
   const notes: string[] = [];
   if (media.state === "pending") notes.push("media pending");
-  const first = media.skipped?.[0];
-  if (first?.reason === "size") notes.push(`file too large: ${first.ref}`);
+  const tooLarge = media.skipped?.find((s) => s.reason === "size");
+  if (tooLarge) notes.push(`file too large: ${tooLarge.ref}`);
   if (notes.length === 0) return null;
   return (
     <div className="text-[10px] text-muted pl-5 truncate">{notes.join(" · ")}</div>

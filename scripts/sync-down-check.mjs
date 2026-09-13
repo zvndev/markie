@@ -328,6 +328,36 @@ async function main() {
   const v1 = syncedOn.version;
   if (!docId) throw new Error(`no cloud id after sync: ${JSON.stringify(row)}`);
 
+  // ── The app's own upload ────────────────────────────────────────────────
+  // docSyncOn just ran electron/sync.js's raw asset PUT against a real
+  // server: a web ReadableStream body with a hand-set Content-Length. Nothing
+  // else in this script would notice that transport failing, because a media
+  // failure never blocks the text and never surfaces as an error, so the run
+  // would pass while no picture ever left the machine. The one below is
+  // fetched as Alice, over the same bearer route the second device uses.
+  // Polled: for a document the server did not have yet the text goes first
+  // and the media follows, so the upload can still be in flight here.
+  let ownAssetStatus = 0;
+  let ownAssetBytes = 0;
+  const ownAsset = await waitFor(
+    "the app's own upload of shot.png",
+    async () => {
+      const res = await fetch(`${SERVER}/api/docs/${docId}/assets/file?ref=shot.png`, {
+        headers: { Authorization: `Bearer ${token}`, ...ORIGIN },
+      });
+      ownAssetStatus = res.status;
+      // Drained either way: an unread body holds the socket open.
+      ownAssetBytes = (await res.arrayBuffer()).byteLength;
+      return res.status === 200 ? { status: res.status } : null;
+    },
+    20000
+  ).catch(() => null);
+  check(
+    "the app uploaded the picture beside its own document",
+    ownAsset?.status === 200,
+    `GET /api/docs/${docId}/assets/file?ref=shot.png answered ${ownAssetStatus}, ${ownAssetBytes} bytes`
+  );
+
   const focus = async () => {
     await cdp.ev(`window.dispatchEvent(new Event("focus"))`);
     await new Promise((r) => setTimeout(r, 900));

@@ -1,6 +1,7 @@
 // Media for a document that lives in the cloud, kept on disk so a picture is
 // fetched once. Keyed by hash, so two documents sharing a file share a copy;
 // the index maps (cloud id, ref) to that hash. Bounded, oldest use first.
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const nodeFsp = require("node:fs/promises");
 const path = require("node:path");
@@ -145,7 +146,13 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
     // that is not one is not a filename, it is an attempt to write
     // somewhere else on this disk.
     if (!HASH_RE.test(fetched.hash)) return null;
-    const tmp = path.join(dir, `.${fetched.hash}.part-${process.pid}-${Date.now()}`);
+    // Random as well as pid and time: two refs to one picture finishing in
+    // the same millisecond otherwise shared a temp path, and the second
+    // rename hit ENOENT after the first had already moved the file away.
+    const tmp = path.join(
+      dir,
+      `.${fetched.hash}.part-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`
+    );
     try {
       await pipeline(Readable.fromWeb(fetched.stream), fs.createWriteStream(tmp));
     } catch (err) {
@@ -161,7 +168,11 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
       await fsp.rm(tmp, { force: true });
       return null;
     }
-    await fsp.rename(tmp, fileFor(fetched.hash));
+    // Somebody else stored this hash while this download was running. The
+    // file is named by its own bytes, so what is already there is what this
+    // would write; renaming over it risks EPERM on Windows for no gain.
+    if (fs.existsSync(fileFor(fetched.hash))) await fsp.rm(tmp, { force: true });
+    else await fsp.rename(tmp, fileFor(fetched.hash));
     // Checked again: a clear() that lands during the rename itself
     // already took its snapshot of the directory before this file
     // existed, so it never touches it. Undoing it here is what keeps it

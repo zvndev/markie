@@ -332,6 +332,38 @@ describe("asset cache", () => {
     expect(fetches).toBe(1);
   });
 
+  it("stores the same bytes twice over without either request losing its file", async () => {
+    // Two refs to one picture, finishing together. Both temp files were named
+    // hash + pid + millisecond, so inside the same millisecond they were the
+    // same path: one rename won, the other hit ENOENT and its request 404ed.
+    const dir = mkdtempSync(path.join(tmpdir(), "markie-asset-cache-"));
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    try {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const cache = createAssetCache({
+        dir,
+        fetchAsset: async () => {
+          await gate;
+          return bytes("aaaa");
+        },
+      });
+
+      const both = Promise.all([cache.get("c1", "a.png"), cache.get("c1", "b.png")]);
+      release();
+      const [first, second] = await both;
+
+      expect(first).toEqual({ path: path.join(dir, hashOf("aaaa")), mime: "image/png", size: 4 });
+      expect(second).toEqual(first);
+      expect(readFileSync(first!.path, "utf8")).toBe("aaaa");
+      expect(readdirSync(dir).filter((name) => name.includes(".part"))).toEqual([]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("refuses to say a sign-out finished when a file would not go", async () => {
     // Windows will not unlink a cached video another handle is still reading.
     // A clear that swallowed that resolved, main never wrote the marker, and

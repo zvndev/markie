@@ -173,14 +173,22 @@ describe("BrowseView browsing", () => {
   });
 
   it("prints how long ago each file changed, with the full date behind it", async () => {
-    const when = Date.now() - 2 * HOUR;
-    renderBrowse(scan({ files: [row({ mtimeMs: when })] }));
-    await screen.findByText("one.md");
-    const cell = document.querySelector("[data-markie-browse-updated]");
-    expect(cell?.textContent).toBe("2h ago");
-    expect(cell?.getAttribute("title")).toBe(new Date(when).toLocaleString());
-    // A name squeezed out by the indent is still one hover from readable.
-    expect(screen.getByText("one.md")).toHaveAttribute("title", "/home/me/notes/one.md");
+    // Pinned to midday: two hours before a real clock that has just passed
+    // midnight is "yesterday", and this test is about the hours form.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 8, 7, 12, 0, 0));
+      const when = Date.now() - 2 * HOUR;
+      renderBrowse(scan({ files: [row({ mtimeMs: when })] }));
+      await act(async () => {});
+      const cell = document.querySelector("[data-markie-browse-updated]");
+      expect(cell?.textContent).toBe("2h ago");
+      expect(cell?.getAttribute("title")).toBe(new Date(when).toLocaleString());
+      // A name squeezed out by the indent is still one hover from readable.
+      expect(screen.getByText("one.md")).toHaveAttribute("title", "/home/me/notes/one.md");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sorts files by name, and by when they changed when asked to", async () => {

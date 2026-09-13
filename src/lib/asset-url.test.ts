@@ -3,11 +3,11 @@ import { getAssetBaseDir, isAssetUrl, resolveAssetSrc, setAssetDocPath } from "@
 
 afterEach(() => setAssetDocPath(null));
 
-// The `?doc=` suffix names the document a reference belongs to (see the
-// "names the document" test below); every other test here is about how the
-// path itself gets built, so this strips the suffix the way a caller who only
-// wants the path would (new URL(...).pathname does the same on the main
-// side).
+// The query suffix names the document a reference belongs to and the
+// reference as written (see the tests at the bottom); every other test here
+// is about how the path itself gets built, so this strips the suffix the way
+// a caller who only wants the path would (new URL(...).pathname does the same
+// on the main side).
 const decoded = (url: string) =>
   decodeURIComponent(url.replace("markie-asset://local/", "").split("?")[0]);
 
@@ -109,8 +109,28 @@ describe("resolveAssetSrc", () => {
     // opened last, which is how one document rendered another's media.
     setAssetDocPath("/Users/k/report/notes.md");
     expect(resolveAssetSrc("shots/a.png")).toBe(
-      `markie-asset://local/${encodeURIComponent("/Users/k/report/shots/a.png")}?doc=${encodeURIComponent("/Users/k/report/notes.md")}`
+      `markie-asset://local/${encodeURIComponent("/Users/k/report/shots/a.png")}?doc=${encodeURIComponent("/Users/k/report/notes.md")}&ref=${encodeURIComponent("shots/a.png")}`
     );
+  });
+
+  it("carries the reference as it was written, not one rebuilt from the path", () => {
+    // The uploader stores the reference verbatim, so "./a.png" is linked under
+    // "./a.png" and "../img/a.png" under "../img/a.png". A reading machine that
+    // recomputes the name from the resolved path asks for "a.png" and for an
+    // absolute path, and the server holds nothing under either.
+    setAssetDocPath("/Users/k/report/notes.md");
+    const refOf = (url: string) => new URL(url).searchParams.get("ref");
+    expect(refOf(resolveAssetSrc("./a.png"))).toBe("./a.png");
+    expect(refOf(resolveAssetSrc("../img/a.png"))).toBe("../img/a.png");
+    expect(refOf(resolveAssetSrc("a%20b.png"))).toBe("a b.png");
+    expect(refOf(resolveAssetSrc("/abs/a.png"))).toBe("/abs/a.png");
+  });
+
+  it("names no reference when it names no document", () => {
+    // Without a document there is nothing to look the reference up against,
+    // and a preview resolved against some other folder is not the open one.
+    setAssetDocPath("/Users/k/report/notes.md");
+    expect(new URL(resolveAssetSrc("a.png", "/elsewhere")).searchParams.get("ref")).toBeNull();
   });
 
   it("names no document when the caller resolved against some other folder", () => {

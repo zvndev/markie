@@ -155,6 +155,42 @@ function check(name, passed, detail = "") {
 const ORIGIN = { Origin: "http://localhost:3000" };
 const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 
+// A real, valid 1x1 PNG (not just a fixture's fake header), so Chromium
+// actually decodes and paints it: naturalWidth is 0 for bytes it cannot draw,
+// whatever the server thinks of them. Every CRC and chunk length here checks
+// out against the PNG spec.
+const PNG_BYTES = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64"
+);
+const PNG_HASH = createHash("sha256").update(PNG_BYTES).digest("hex");
+
+// The two-step handshake asset-sync.js does from inside the app, done here by
+// hand: bytes first (safe at any time, kept an hour even if nothing ever
+// claims them), then the ref→hash link against the document that names it.
+async function uploadAsset(token, hash, bytes, mime) {
+  const res = await fetch(`${SERVER}/api/assets/${hash}`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": mime,
+      "Content-Length": String(bytes.length),
+      ...ORIGIN,
+    },
+    body: bytes,
+  });
+  if (!res.ok) throw new Error(`upload asset: ${res.status} ${await res.text()}`);
+}
+
+async function linkAssets(token, docId, refs) {
+  const res = await fetch(`${SERVER}/api/docs/${docId}/assets`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...ORIGIN },
+    body: JSON.stringify({ refs }),
+  });
+  if (!res.ok) throw new Error(`link assets: ${res.status} ${await res.text()}`);
+}
+
 async function putDoc(token, docId, name, content, baseVersion) {
   const res = await fetch(`${SERVER}/api/docs/${docId}`, {
     method: "PUT",
@@ -214,7 +250,8 @@ async function main() {
   const homeDir = await mkdtemp(path.join(tmpdir(), "markie-syncdown-home-"));
   tempPaths.push(dbDir, userDataDir, workDir, homeDir);
   const dbPath = path.join(dbDir, "markie.db");
-  const serverEnv = { ...baseEnv, DB_PATH: dbPath, PORT: String(SERVER_PORT) };
+  const assetsDir = path.join(dbDir, "assets");
+  const serverEnv = { ...baseEnv, DB_PATH: dbPath, PORT: String(SERVER_PORT), ASSETS_DIR: assetsDir };
 
   await new Promise((resolve, reject) => {
     const m = spawn(node, ["--experimental-strip-types", "src/migrate.ts"], {
@@ -230,12 +267,15 @@ async function main() {
 
   const aliceEmail = `alice.${Date.now()}@test.local`;
   const token = await signUp("Alice", aliceEmail, "password-123");
-  const V1 = "# Notes\n\nline one\nline two\nline three\n";
+  const V1 = "# Notes\n\nline one\nline two\nline three\n\n![](shot.png)\n";
   // Written into a temp dir this run owns. An earlier version of this script
   // used docOpenShared, which writes to the OS Downloads folder; Electron
   // resolves that through the OS, not $HOME, so it left files in the real one.
   const docPath = await realpath(workDir).then((d) => path.join(d, "sync-down.md"));
   await writeFile(docPath, V1, "utf-8");
+  // Beside the document, so the app's own sync (docSyncOn below) pushes it to
+  // the cloud the same way a real "Sync to cloud" click would.
+  await writeFile(path.join(path.dirname(docPath), "shot.png"), PNG_BYTES);
 
   const devPort = await pickPort();
   const debugPort = await pickPort();
@@ -287,6 +327,36 @@ async function main() {
   const docId = row.cloud_doc_id;
   const v1 = syncedOn.version;
   if (!docId) throw new Error(`no cloud id after sync: ${JSON.stringify(row)}`);
+
+  // ── The app's own upload ────────────────────────────────────────────────
+  // docSyncOn just ran electron/sync.js's raw asset PUT against a real
+  // server: a web ReadableStream body with a hand-set Content-Length. Nothing
+  // else in this script would notice that transport failing, because a media
+  // failure never blocks the text and never surfaces as an error, so the run
+  // would pass while no picture ever left the machine. The one below is
+  // fetched as Alice, over the same bearer route the second device uses.
+  // Polled: for a document the server did not have yet the text goes first
+  // and the media follows, so the upload can still be in flight here.
+  let ownAssetStatus = 0;
+  let ownAssetBytes = 0;
+  const ownAsset = await waitFor(
+    "the app's own upload of shot.png",
+    async () => {
+      const res = await fetch(`${SERVER}/api/docs/${docId}/assets/file?ref=shot.png`, {
+        headers: { Authorization: `Bearer ${token}`, ...ORIGIN },
+      });
+      ownAssetStatus = res.status;
+      // Drained either way: an unread body holds the socket open.
+      ownAssetBytes = (await res.arrayBuffer()).byteLength;
+      return res.status === 200 ? { status: res.status } : null;
+    },
+    20000
+  ).catch(() => null);
+  check(
+    "the app uploaded the picture beside its own document",
+    ownAsset?.status === 200,
+    `GET /api/docs/${docId}/assets/file?ref=shot.png answered ${ownAssetStatus}, ${ownAssetBytes} bytes`
+  );
 
   const focus = async () => {
     await cdp.ev(`window.dispatchEvent(new Event("focus"))`);
@@ -467,7 +537,14 @@ async function main() {
     (await waitFor("library row", () => cdp.ev(rowsNamed("sync-down.md")), 20000)) === 1
   );
   const laptopDocId = `laptop-${Date.now()}`;
-  await putDoc(token, laptopDocId, "from-the-laptop.md", "# From the laptop\n", 0);
+  const LAPTOP_CONTENT = "# From the laptop\n\n![](shot.png)\n";
+  await putDoc(token, laptopDocId, "from-the-laptop.md", LAPTOP_CONTENT, 0);
+  // The laptop's own upload: the same bytes, hashed and linked under Alice's
+  // account, the way asset-sync.js would from inside the app. This machine
+  // never receives shot.png itself, only the document that names it — the
+  // picture has to come from the cloud, not from a file this run wrote here.
+  await uploadAsset(token, PNG_HASH, PNG_BYTES, "image/png");
+  await linkAssets(token, laptopDocId, [{ ref: "shot.png", hash: PNG_HASH }]);
   check("the new document is not listed until the app looks", (await cdp.ev(rowsNamed("from-the-laptop.md"))) === 0);
   await focus();
   check(
@@ -475,6 +552,7 @@ async function main() {
     (await waitFor("laptop row", () => cdp.ev(rowsNamed("from-the-laptop.md")), 20000)) === 1
   );
   const landedPath = path.join(await realpath(homeDir), "Documents", "Markie", "Cloud", "from-the-laptop.md");
+  const landedDir = path.dirname(landedPath);
   check(
     "it landed on disk under Documents/Markie/Cloud",
     await waitFor("landed file", async () => existsSync(landedPath) || null, 10000),
@@ -482,7 +560,7 @@ async function main() {
   );
   check(
     "with the text the other machine wrote",
-    existsSync(landedPath) && readFileSync(landedPath, "utf-8") === "# From the laptop\n"
+    existsSync(landedPath) && readFileSync(landedPath, "utf-8") === LAPTOP_CONTENT
   );
   // By cloud id through the Library's own list: the app spells the home
   // folder the way $HOME does, and the registry keys on that spelling.
@@ -499,6 +577,45 @@ async function main() {
   check(
     "it is listed as a file of this device, not as something to fetch",
     !(await cdp.ev(`[...document.querySelectorAll("*")].some(el => el.childElementCount === 0 && el.textContent.trim() === "In your cloud")`))
+  );
+
+  // ── The picture travels with the document that names it ────────────────
+  // shot.png was never written into landedDir: the machine has only the
+  // document, not the file. Opening it must draw the picture through the
+  // private cache, fetched from the cloud under the ref the text wrote.
+  const clickRow = (name) =>
+    cdp.ev(
+      `(() => { const row = [...document.querySelectorAll("div.group")].find(g => g.textContent.includes(${JSON.stringify(name)})); if (!row) return false; row.click(); return true; })()`
+    );
+  check("the laptop's document opens from its Library row", await clickRow("from-the-laptop.md"));
+  await waitFor(
+    "the laptop document on screen",
+    () => cdp.ev(`window.__markieEditor.getText().includes("From the laptop")`),
+    15000
+  );
+  const pictureShown = await waitFor(
+    "the picture to render through the cloud",
+    () =>
+      cdp.ev(
+        `(() => { const img = document.querySelector('img[data-markie-src="shot.png"], img[src*="shot.png"]'); return (!!img && img.naturalWidth > 0) || null; })()`
+      ),
+    20000
+  ).catch(() => false);
+  const debugDom = await cdp.ev(
+    `JSON.stringify([...document.querySelectorAll("img")].map(i => ({ src: i.src, dataMarkieSrc: i.getAttribute("data-markie-src"), naturalWidth: i.naturalWidth, complete: i.complete })))`
+  );
+  check("the second machine's copy shows the picture through the cloud", !!pictureShown, debugDom);
+  check(
+    "the picture never landed on the disk of the machine that only received the document",
+    !existsSync(path.join(landedDir, "shot.png"))
+  );
+
+  // Back to the document the rename section below expects to be on screen.
+  check("the original document is reopened", await clickRow("sync-down.md"));
+  await waitFor(
+    "the original document back on screen",
+    () => cdp.ev(`window.__markieEditor.getText().includes("sixth from elsewhere")`),
+    15000
   );
 
   // ── A rename reaches the Library at once ────────────────────────────────

@@ -237,6 +237,12 @@ async function stageMedia(filePath, cloudId, content) {
   try {
     return await assetSync.stageAssets(filePath, cloudId, content);
   } catch (err) {
+    // Same as linkMedia's catch below. stageAssets throwing (a file that
+    // vanished between resolving the reference and stat'ing it, a read error
+    // out of hashFile) leaves the row claiming its media is current against a
+    // fingerprint nothing recomputed, and reconcile only revisits rows that
+    // say pending.
+    registry.update(filePath, { assets_state: "pending" });
     return mediaFailure(err);
   }
 }
@@ -413,8 +419,27 @@ async function pull(cloudId, targetPath) {
   } catch (e) {
     return { error: `Couldn't write ${targetPath}: ${e.message}` };
   }
-  registry.track(targetPath, name, doc.content);
-  registry.update(targetPath, {
+  // The Library opens a file by the path fileGrants hands back, and that is
+  // always realpath'd (electron/file-grants.js, for symlink-escape safety).
+  // targetPath itself is not: it comes from the raw, un-realpath'd default
+  // workspace root (electron/workspace.js's defaultRootPath honours a HOME
+  // override with no symlink resolution, deliberately, so the e2e scripts'
+  // temporary HOME works at all) or from wherever a save dialog pointed.
+  // Tracking the row under targetPath when the two differ — any symlink in
+  // the chain, from a test's tmpdir to a real user's iCloud-redirected
+  // Documents folder — left a cloud-linked row nothing would ever look up
+  // again: the next open of this same file resolves to the realpath, tracks
+  // a second, cloud-less row there, and the document's media (and its own
+  // push/pull) silently stops working.
+  const realPath = (() => {
+    try {
+      return fs.realpathSync(targetPath);
+    } catch {
+      return targetPath;
+    }
+  })();
+  registry.track(realPath, name, doc.content);
+  registry.update(realPath, {
     cloud_doc_id: cloudId,
     cloud_version: typeof doc.version === "number" ? doc.version : 0,
     sync_state: "synced",
@@ -427,10 +452,10 @@ async function pull(cloudId, targetPath) {
   // restored. A row whose file is still on disk is a different situation
   // (two live copies) and is left alone.
   for (const row of registry.list()) {
-    if (row.cloud_doc_id !== cloudId || row.path === targetPath) continue;
+    if (row.cloud_doc_id !== cloudId || row.path === realPath) continue;
     if (!fs.existsSync(row.path)) registry.forget(row.path);
   }
-  return { ok: true, path: targetPath, name };
+  return { ok: true, path: realPath, name };
 }
 
 // A cloud copy over the cap is never written to disk: Markie could not open

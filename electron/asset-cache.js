@@ -41,7 +41,7 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
   // { session: string | null, entries: { [cloudId\tref]: { hash, mime, size, used, validatedAt? } } }
   let index = null;
   const inflight = new Map();
-  // Bumped by clear(). A fetch already in flight when a sign-out lands
+  // Bumped by every wipe. A fetch already in flight when a sign-out lands
   // captured the generation it started under; if that no longer matches by
   // the time it is ready to write, the account it was fetching for is gone,
   // and the file must not outlive it. The cache key alone does not carry an
@@ -88,7 +88,7 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
   async function load() {
     if (index) return index;
     await fsp.mkdir(dir, { recursive: true });
-    // A sign-out's clear() can fail to finish; main.js's own catch leaves
+    // A sign-out's wipe can fail to finish; main.js's own catch leaves
     // this marker when it does. Honour it before this session reads or
     // writes anything, so the account that never got wiped still gets wiped
     // before the next one signs in and this cache serves anything at all.
@@ -180,7 +180,7 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
       await fsp.rename(tmp, fileFor(fetched.hash));
       renamed = true;
     }
-    // Checked again: a clear() that lands during the rename itself
+    // Checked again: a wipe that lands during the rename itself
     // already took its snapshot of the directory before this file
     // existed, so it never touches it. Undoing it here is what keeps it
     // from outliving the account it was fetched for. Only what this call
@@ -234,7 +234,7 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
   }
 
   async function get(cloudId, ref) {
-    // Read synchronously, before the first await: a clear() that lands
+    // Read synchronously, before the first await: a wipe that lands
     // while this call is merely suspended inside load() must still bump
     // the counter ahead of this capture, or the job it starts can never
     // tell it was signed out from under it.
@@ -327,12 +327,10 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
     if (failed > 0) throw new Error(`asset cache: ${failed} file(s) could not be removed`);
   }
 
-  async function clear() {
-    await load();
-    await wipeTo(null);
-  }
-
   // Whose pictures this directory holds, checked on every config push.
+  // Binding to null is what a sign-out does, and it is the only way to empty
+  // this cache: there is no second entry point that wipes without saying
+  // whose the directory is afterwards.
   //
   // "Has the session changed since the last push" cannot answer this: the
   // main process starts every launch with no config at all, and the
@@ -353,7 +351,7 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
     await wipeTo(key);
   }
 
-  // Left by a caller whose own clear() could not finish, so the next time
+  // Left by a caller whose own wipe could not finish, so the next time
   // this cache starts, load() finishes the wipe before anything is served
   // from what is left of the old account's index.
   async function markPendingClear() {
@@ -366,7 +364,7 @@ function createAssetCache({ dir, fetchAsset, revalidate, limitBytes = 2 * 1024 *
     }
   }
 
-  return { get, clear, bindSession, markPendingClear };
+  return { get, bindSession, markPendingClear };
 }
 
 module.exports = { createAssetCache };

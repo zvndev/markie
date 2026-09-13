@@ -1,6 +1,10 @@
 // The one list of what a document may embed, shared by every asset route.
 // Kept in step with electron/local-assets.js: a file Markie will not draw
-// locally is not one it uploads, and one it uploads is one this table names.
+// locally is not one it uploads, one it uploads is one this table names, and
+// the type here is the one Markie declares for it. The last part is why .m4v
+// is video/mp4 rather than video/x-m4v and .opus is audio/ogg rather than
+// audio/opus: the upload route checks a declared type against this table, so
+// a second opinion about a container would refuse the upload outright.
 const MIME_BY_EXT: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -12,7 +16,7 @@ const MIME_BY_EXT: Record<string, string> = {
   ".bmp": "image/bmp",
   ".ico": "image/x-icon",
   ".mp4": "video/mp4",
-  ".m4v": "video/x-m4v",
+  ".m4v": "video/mp4",
   ".webm": "video/webm",
   ".ogv": "video/ogg",
   ".mov": "video/quicktime",
@@ -22,7 +26,7 @@ const MIME_BY_EXT: Record<string, string> = {
   ".wav": "audio/wav",
   ".flac": "audio/flac",
   ".oga": "audio/ogg",
-  ".opus": "audio/opus",
+  ".opus": "audio/ogg",
 };
 
 export const ASSET_EXTENSIONS = Object.keys(MIME_BY_EXT);

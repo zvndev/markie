@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { installBridge } from "@/test/mock-bridge";
-import { setAssetBaseDir } from "@/lib/asset-url";
+import { setAssetDocPath } from "@/lib/asset-url";
 import { handleDocumentClick, localLinkTarget } from "@/lib/local-link";
 
 function anchor(href: string | null): HTMLAnchorElement {
@@ -45,7 +45,7 @@ describe("localLinkTarget", () => {
 
 describe("handleDocumentClick", () => {
   beforeEach(() => {
-    setAssetBaseDir("/Users/me/report");
+    setAssetDocPath("/Users/me/report/notes.md");
     document.body.innerHTML = "";
   });
 

@@ -801,6 +801,21 @@ function registerProtocol() {
   });
 }
 
+const { cloudDocFor } = require("./cloud-doc-for");
+
+// registry.get opens the SQLite database lazily and throws when the driver
+// failed to load. A picture request is not the place to surface that: it
+// reads the same as any other file this session cannot show, so it is caught
+// here the same way every other registry caller in this file swallows a
+// driver failure rather than crashing the handler.
+function cloudDocForPath(docPath, requested) {
+  try {
+    return cloudDocFor({ docPath, requested, get: registry.get });
+  } catch {
+    return null;
+  }
+}
+
 // Serve a picture that lives beside the open document.
 //
 // The renderer resolves a document's relative image against the document's own
@@ -811,8 +826,13 @@ function registerProtocol() {
 // traversal, a file with the wrong extension, and a path that simply is not in
 // scope. The exporter answers to the same module, so what you see is what
 // travels.
+//
+// A picture that fails all of that may still exist: the document it belongs
+// to can have landed here from the cloud, on a machine that never had the
+// file beside it. That fallback runs only after the local answer is a
+// refusal, never instead of it.
 function registerAssetProtocol() {
-  protocol.handle(ASSET_SCHEME, (request) => {
+  protocol.handle(ASSET_SCHEME, async (request) => {
     let requested;
     try {
       // The path is one percent-encoded segment, so the standard scheme's own
@@ -836,7 +856,8 @@ function registerAssetProtocol() {
     // file's own directory as a bound makes every path contained in itself,
     // which is a check that passes everything. It did, once, for exactly one
     // test run.
-    if (!localAssets.mediaMimeFor(requested)) return new Response("Forbidden", { status: 403 });
+    const requestedMime = localAssets.mediaMimeFor(requested);
+    if (!requestedMime) return new Response("Forbidden", { status: 403 });
     const real = localAssets.allowedRealPath(requested, {
       roots: fileGrants.assetRoots(),
       files: fileGrants.grantedFilePaths(),
@@ -844,7 +865,28 @@ function registerAssetProtocol() {
     // Checked again on the realpath: a symlink must not be able to swap a .png
     // for something else between the two.
     const mime = real ? localAssets.mediaMimeFor(real) : null;
-    if (!real || !mime) return new Response("Forbidden", { status: 403 });
+    if (!real || !mime) {
+      // Not here, or not allowed here. A document that lives in the cloud
+      // may still have this picture on the server, under the reference the
+      // text wrote: relative to the document's folder, or the absolute path
+      // itself when the picture lives outside it. The document is named by
+      // the request, which makes it untrusted like every other part of this
+      // URL. All it does is choose which registry row to ask about, and the
+      // server decides whether this session may read that document's media.
+      const docPath = new URL(request.url).searchParams.get("doc");
+      const cloud = docPath ? cloudDocForPath(docPath, requested) : null;
+      if (!cloud) return new Response("Forbidden", { status: 403 });
+      // load()/save() do real disk I/O and can reject (a full disk, a
+      // permissions problem); a picture this session cannot serve reads the
+      // same whether the cause was "not cached" or "couldn't get to disk".
+      const cached = await assetCache.get(cloud.cloudId, cloud.ref).catch(() => null);
+      if (!cached) return new Response("Not found", { status: 404 });
+      // requestedMime, not cached.mime: the Content-Type the server sent
+      // back is not trusted to decide what this protocol hands the
+      // renderer. Only our own extension allow-list gets to say that, the
+      // same as it already does for a local file below.
+      return serveFileRange(cached.path, requestedMime, request.headers.get("range"));
+    }
 
     // A video needs ranges or it cannot be seeked, and Chromium asks for one
     // the moment you drag the scrubber. Serving the whole file for every range
@@ -1196,6 +1238,68 @@ const mdindex = require("./mdindex");
 const sync = require("./sync");
 const workspace = require("./workspace");
 const fileGrants = createFileGrants({ workspaceRoots: () => workspace.roots() });
+// Module-level so a later handler can reuse the same instance rather than
+// building a second one with its own hash cache.
+const { createAssetSync } = require("./asset-sync");
+const assetSync = createAssetSync({ api: sync.api, registry, grants: fileGrants });
+sync.setAssetSync(assetSync);
+// Repairs documents told to sync that never landed, and backfills media on
+// ones that did. Runs on its own schedule below; never awaited from a caller
+// that has to stay fast.
+const { createReconciler } = require("./reconcile");
+const reconciler = createReconciler({ sync, registry, assetSync });
+let lastReconcile = 0;
+let lastReconcileResult = null;
+// A run in progress, shared by every caller that arrives while it is still
+// going. Without this, the force=true path (asset-reconcile) skips the
+// cooldown that stops the other two callers from overlapping, and two runs
+// racing over the reconciler's cursor state at once double-count.
+let reconcileInFlight = null;
+async function reconcileIfDue(force = false) {
+  if (!sync.isConfigured() || !sync.hasPrincipal()) return lastReconcileResult;
+  if (reconcileInFlight) return reconcileInFlight;
+  if (!force && Date.now() - lastReconcile < 10 * 60 * 1000) return lastReconcileResult;
+  lastReconcile = Date.now();
+  reconcileInFlight = reconciler.run();
+  try {
+    lastReconcileResult = await reconcileInFlight;
+    // A pass that moved a row from "media pending" to synced changed what the
+    // Library draws, and nothing else is going to say so: the pass is
+    // fire-and-forget and the server's own listing did not move. Without this
+    // an open Cloud panel reported "media pending" until something unrelated
+    // made it look again. Only a pass that actually sent something counts:
+    // mediaUnchanged is the steady state and firing on it would make this a
+    // forced refetch of the whole library every ten minutes.
+    if (
+      (lastReconcileResult?.pushed?.length || lastReconcileResult?.mediaPushed?.length) &&
+      mainWindow &&
+      !mainWindow.isDestroyed()
+    ) {
+      mainWindow.webContents.send("library-changed");
+    }
+    return lastReconcileResult;
+  } finally {
+    reconcileInFlight = null;
+  }
+}
+// A cloud document's pictures, kept on disk once fetched so the protocol
+// handler below can answer for a folder that has no local file at all.
+const { createAssetCache } = require("./asset-cache");
+const assetCache = createAssetCache({
+  dir: path.join(app.getPath("userData"), "asset-cache"),
+  fetchAsset: sync.fetchAsset,
+  // A cached picture is keyed by the reference the text wrote, and the same
+  // reference can be relinked to different bytes. Ask before serving one:
+  // a 304 keeps it, new bytes replace it, and no answer at all leaves it
+  // showing rather than blanking a picture because the network is down.
+  revalidate: async (cloudId, ref, etag) => {
+    const res = await sync.fetchAsset(cloudId, ref, etag);
+    if (!res) return null;
+    if (res.notModified) return { fresh: true };
+    if (res.gone) return { gone: true };
+    return { fetched: res };
+  },
+});
 
 // ── Workspace / Files-view IPC ──
 const wsTry = (fn) => {
@@ -1251,7 +1355,24 @@ handle("term-kill", (_e, id) => terminal.kill(id));
 handle("term-external-apps", () => terminal.externalApps(), { onFailure: () => [] });
 handle("term-open-external", (_e, { app, cwd }) => terminal.openExternal(app, cwd));
 
-handle("sync-config", (_event, cfg) => sync.setConfig(cfg));
+handle("sync-config", (_event, cfg) => {
+  const result = sync.setConfig(cfg);
+  // Whose cached pictures this machine is holding. The cache keys carry no
+  // principal, so the directory has to belong to one session at a time: it
+  // records the key it was bound to and empties itself when another one
+  // arrives. Signing out is only one way that happens, and authentication
+  // can replace account A's token with account B's directly. Asking instead
+  // whether the config changed since the last push cannot work here: a new
+  // main process has no last push, so a signed-in relaunch looked like a new
+  // session and emptied the cache every time. If the wipe cannot finish
+  // (disk trouble, a locked file), a marker asks the cache to finish the job
+  // the next time it starts.
+  void assetCache.bindSession(result?.sessionKey ?? null).catch(() => assetCache.markPendingClear());
+  // A push that names the signed-in user is the moment the session becomes a
+  // confirmed principal, which is what reconciliation waits for.
+  if (cfg.userId) void reconcileIfDue();
+  return result;
+});
 // The renderer resolved this doc's share role against the server; the sync
 // engine needs it so a save can refuse a push the server would only 403.
 handle("sync-doc-role", (_event, { cloudId, role }) =>
@@ -1458,6 +1579,10 @@ handle(
   "doc-check-updates",
   async () => {
     const result = await sync.checkUpdates();
+    // Piggybacks on the same timer as the update check rather than running
+    // its own; not awaited, so a slow reconcile pass never holds up this
+    // handler's answer.
+    void reconcileIfDue();
     // A document that just landed from another machine is a new file under
     // the workspace: Browse and Projects should list it now, not after the
     // next walk of the disk.
@@ -1466,6 +1591,7 @@ handle(
   },
   { onFailure: (err) => ({ updates: [], error: errorMessage(err) }) }
 );
+handle("asset-reconcile", () => reconcileIfDue(true));
 // The server's copy, for showing what a pull would cost before doing it.
 handle("doc-remote-content", (_event, { path: p }) =>
   sync.remoteContent(p)

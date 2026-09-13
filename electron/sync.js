@@ -59,10 +59,88 @@ function setConfig(next) {
   // signed in.
   if (sessionChanged || !token) principal = null;
   else if (next.userId) principal = next.userId;
+  // `sessionKey` names this session without being it: the asset cache stores
+  // it beside its index, so a relaunch of the same account keeps the pictures
+  // it fetched and any other account's binding empties the directory. A
+  // digest rather than the token, because this is written to a plain file
+  // next to the cached bytes and the token is a bearer credential.
+  const sessionKey =
+    token && server ? crypto.createHash("sha256").update(`${token}\n${server}`).digest("hex") : null;
+  return { sessionChanged, sessionKey };
 }
 
 function isConfigured() {
   return !!(config.token && config.serverURL);
+}
+
+// Whether a session has been confirmed to belong to somebody, as opposed to
+// merely holding a token. Reconciliation needs an account on the other end
+// before it goes looking for what that account's server thinks it has.
+function hasPrincipal() {
+  return principal !== null;
+}
+
+// One asset of a cloud document, streamed with the session's token.
+// `{ stream, mime, hash, size }` for a 200, `{ gone: true }` for a 404 or a
+// 403, and null for anything else, so a caller can tell a revoked share from
+// a server having a bad minute.
+//
+// `ifNoneMatch` is the ETag of a copy the caller already holds (the asset
+// cache revalidating a hit). With one, an unchanged picture answers 304,
+// reported as `{ notModified: true }`, and sends no bytes at all.
+// How long to wait for the server to answer a revalidation, which happens
+// while somebody is looking at the picture and the protocol handler waits on
+// it, and how long a transfer may then take.
+const ANSWER_TIMEOUT_MS = 5000;
+const TRANSFER_TIMEOUT_MS = 300000;
+
+async function fetchAsset(cloudId, ref, ifNoneMatch) {
+  if (!isConfigured()) return null;
+  // Two deadlines, not one. A signal handed to fetch governs the response
+  // body as well as the wait for its headers, so a single five-second cap on
+  // a revalidation would be five seconds for the whole replacement to
+  // download: anything bigger would fail every time, the cache would keep
+  // serving the copy it has, and the relink would never land. This one bounds
+  // the answer, then is re-armed to bound the transfer.
+  const abort = new AbortController();
+  let deadline = setTimeout(() => abort.abort(), ifNoneMatch ? ANSWER_TIMEOUT_MS : TRANSFER_TIMEOUT_MS);
+  let streaming = false;
+  try {
+    const headers = { Authorization: `Bearer ${config.token}` };
+    if (ifNoneMatch) headers["If-None-Match"] = ifNoneMatch;
+    const res = await fetch(`${config.serverURL}/api/docs/${encodeURIComponent(cloudId)}/assets/file?ref=${encodeURIComponent(ref)}`, {
+      headers,
+      signal: abort.signal,
+    });
+    clearTimeout(deadline);
+    deadline = setTimeout(() => abort.abort(), TRANSFER_TIMEOUT_MS);
+    if (ifNoneMatch && res.status === 304) return { notModified: true };
+    // Definitive answers: the document has no such ref any more, or this
+    // account may no longer read it. A cached copy has to go. Anything else,
+    // a 5xx or a proxy's error page, says nothing about whether the picture
+    // is still there, so it reads as no answer at all.
+    if (res.status === 404 || res.status === 403) return { gone: true };
+    if (res.status !== 200 || !res.body) return null;
+    const hash = (res.headers.get("etag") ?? "").replace(/"/g, "");
+    if (!/^[a-f0-9]{64}$/.test(hash)) return null;
+    streaming = true;
+    const stream = res.body.pipeThrough(
+      new TransformStream({
+        // The transfer's deadline goes when the transfer does, whether the
+        // body ran out or died on the way.
+        flush: () => clearTimeout(deadline),
+        cancel: () => clearTimeout(deadline),
+      })
+    );
+    return { stream, mime: res.headers.get("content-type") ?? "application/octet-stream", hash, size: Number(res.headers.get("content-length") ?? 0) };
+  } catch {
+    return null;
+  } finally {
+    // Every path but the one that hands the body to a caller is done with the
+    // connection here, and a timer left armed would abort nothing five
+    // minutes later.
+    if (!streaming) clearTimeout(deadline);
+  }
 }
 
 // Status for a request that never reached the server (offline, DNS failure,
@@ -71,18 +149,19 @@ function isConfigured() {
 // claiming a push had succeeded. Every caller now sees a status it must handle.
 const NO_RESPONSE = 0;
 
-async function api(method, p, body) {
+async function api(method, p, body, opts = {}) {
   // Abort a hung request so the renderer's invoke() can't pend forever
   // (e.g. an unreachable server would otherwise freeze the save indicator).
   try {
+    const raw = opts.raw ?? null;
     const res = await fetch(`${config.serverURL}${p}`, {
       method,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.token}`,
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15000),
+      headers: raw
+        ? { "Content-Type": raw.mime, "Content-Length": String(raw.size), Authorization: `Bearer ${config.token}` }
+        : { "Content-Type": "application/json", Authorization: `Bearer ${config.token}` },
+      body: raw ? raw.stream : body ? JSON.stringify(body) : undefined,
+      duplex: raw ? "half" : undefined,
+      signal: AbortSignal.timeout(raw ? 300000 : 15000),
     });
     // A 2xx whose body is not JSON — an HTML error page from a proxy, a
     // text/plain response from a server with no JSON notFound handler — is not
@@ -142,15 +221,64 @@ function viewerRefusal(filePath, cloudId) {
   };
 }
 
+// Set by main once file grants exist; a null here means media is not pushed,
+// which is what the tests that do not care about it get.
+let assetSync = null;
+function setAssetSync(next) {
+  assetSync = next;
+}
+const mediaFailure = (err) => ({ pending: true, error: `media push failed (${err && err.message ? err.message : err})` });
+
+// Everything up to and including the uploads. Safe before the text PUT: the
+// server keeps an uploaded asset nothing points at for an hour, so bytes can
+// wait for a snapshot that may never land.
+async function stageMedia(filePath, cloudId, content) {
+  if (!assetSync) return null;
+  try {
+    return await assetSync.stageAssets(filePath, cloudId, content);
+  } catch (err) {
+    return mediaFailure(err);
+  }
+}
+
+// What the document points at, committed only once its text has landed, and
+// against the version that PUT returned. Sent earlier, a link that succeeded
+// in front of a text PUT that failed would leave the server's old text beside
+// a media set that no longer holds its pictures.
+async function linkMedia(filePath, cloudId, staged, baseVersion) {
+  if (!assetSync) return null;
+  try {
+    return await assetSync.linkAssets(filePath, cloudId, staged, { baseVersion });
+  } catch (err) {
+    registry.update(filePath, { assets_state: "pending" });
+    return mediaFailure(err);
+  }
+}
+
+// The text never landed, so the refs are never sent. Anything already staged
+// is left for the reconciliation pass to finish.
+function mediaLeftPending(filePath, staged) {
+  if (staged && staged.staged) registry.update(filePath, { assets_state: "pending" });
+}
+
 // Turn syncing on for a file: create the cloud doc (or push a new snapshot).
 async function syncOn(filePath, name, content) {
   if (!isConfigured()) return { error: "not signed in" };
   const row = registry.get(filePath);
   const refused = viewerRefusal(filePath, row?.cloud_doc_id);
   if (refused) return refused;
-  const cloudId = row?.cloud_doc_id ?? crypto.randomUUID();
+  const linked = row?.cloud_doc_id ?? null;
+  const cloudId = linked ?? crypto.randomUUID();
+  const baseVersion = linked ? (row.cloud_version ?? 0) : 0;
+  // For a document the server already has this is an ordinary push, so its
+  // bytes go up ahead of the snapshot that references them, exactly as in
+  // push(), and the refs are claimed after the text lands. A document the
+  // server has never seen is the one exception: both asset routes answer 404
+  // for a cloud id it does not know, so even the uploads have to wait. That
+  // one sends its text first, below, and stages after it.
+  let staged = linked ? await stageMedia(filePath, cloudId, content) : null;
+  let media = staged;
   const hash = registry.hashContent(content);
-  const baseVersion = row?.cloud_doc_id ? (row.cloud_version ?? 0) : 0;
   const res = await api("PUT", `/api/docs/${cloudId}`, {
     name,
     content,
@@ -166,7 +294,8 @@ async function syncOn(filePath, name, content) {
       // minted a fresh uuid and left an orphan copy behind. No cloud_version is
       // recorded, so the row stays unpushed and the next push re-sends from 0.
       registry.update(filePath, { cloud_doc_id: cloudId, sync_state: "unpushed" });
-      return { error: UNREADABLE };
+      mediaLeftPending(filePath, staged);
+      return { error: UNREADABLE, media };
     }
     registry.update(filePath, {
       cloud_doc_id: cloudId,
@@ -175,16 +304,23 @@ async function syncOn(filePath, name, content) {
       sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
-    return { ok: true, version };
+    if (!linked) {
+      staged = await stageMedia(filePath, cloudId, content);
+      media = staged;
+    }
+    if (staged && staged.staged) media = await linkMedia(filePath, cloudId, staged.staged, version);
+    return { ok: true, version, media };
   }
   if (res.status === 409) {
     registry.update(filePath, { sync_state: "conflict" });
-    return { conflict: true, serverVersion: res.data?.serverVersion };
+    mediaLeftPending(filePath, staged);
+    return { conflict: true, serverVersion: res.data?.serverVersion, media };
   }
   // The server did not take the snapshot, so nothing is backed up. Leaving the
   // row on its previous state would tell the user otherwise.
   registry.update(filePath, { sync_state: "unpushed" });
-  return { error: failure("push", res) };
+  mediaLeftPending(filePath, staged);
+  return { error: failure("push", res), media };
 }
 
 // Push after save, only when tracked, cloud-linked, and content actually
@@ -200,18 +336,22 @@ async function push(filePath, name, content) {
   }
   const refused = viewerRefusal(filePath, row.cloud_doc_id);
   if (refused) return refused;
+  const baseVersion = row.cloud_version ?? 0;
+  const staged = await stageMedia(filePath, row.cloud_doc_id, content);
+  let media = staged;
   const hash = registry.hashContent(content);
   const res = await api("PUT", `/api/docs/${row.cloud_doc_id}`, {
     name,
     content,
     hash,
-    baseVersion: row.cloud_version ?? 0,
+    baseVersion,
   });
   if (res.status === 200) {
     const version = readVersion(res);
     if (version === null) {
       registry.update(filePath, { sync_state: "unpushed" });
-      return { error: UNREADABLE };
+      mediaLeftPending(filePath, staged);
+      return { error: UNREADABLE, media };
     }
     registry.update(filePath, {
       cloud_version: version,
@@ -220,17 +360,20 @@ async function push(filePath, name, content) {
       sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
-    return { ok: true, version };
+    if (staged && staged.staged) media = await linkMedia(filePath, row.cloud_doc_id, staged.staged, version);
+    return { ok: true, version, media };
   }
   if (res.status === 409) {
     registry.update(filePath, { sync_state: "conflict" });
-    return { conflict: true };
+    mediaLeftPending(filePath, staged);
+    return { conflict: true, media };
   }
   // This snapshot exists only on local disk. A row left on "synced" would tell
   // the user the edit is in the cloud and put "Take cloud" one click away from
   // overwriting it with an older copy the server never replaced.
   registry.update(filePath, { sync_state: "unpushed" });
-  return { error: failure("push", res) };
+  mediaLeftPending(filePath, staged);
+  return { error: failure("push", res), media };
 }
 
 // Turn syncing off; optionally delete the cloud copy.
@@ -355,22 +498,33 @@ async function resolve(filePath, strategy) {
   } catch (e) {
     return { error: `Couldn't read the local file: ${e.message}` };
   }
+  // The local copy is what is about to become the cloud text, so it is what
+  // its media is staged for.
+  const staged = await stageMedia(filePath, row.cloud_doc_id, content);
+  let media = staged;
   const res = await api("PUT", `/api/docs/${row.cloud_doc_id}`, {
     name: row.name,
     content,
     hash: registry.hashContent(content),
     baseVersion,
   });
-  if (res.status !== 200) return { error: `push failed (${res.status})` };
+  if (res.status !== 200) {
+    mediaLeftPending(filePath, staged);
+    return { error: `push failed (${res.status})`, media };
+  }
   const pushedVersion = readVersion(res);
-  if (pushedVersion === null) return { error: UNREADABLE };
+  if (pushedVersion === null) {
+    mediaLeftPending(filePath, staged);
+    return { error: UNREADABLE, media };
+  }
   registry.update(filePath, {
     cloud_version: pushedVersion,
     content_hash: registry.hashContent(content),
     sync_state: "synced",
     last_synced_at: new Date().toISOString(),
   });
-  return { ok: true, pushed: true };
+  if (staged && staged.staged) media = await linkMedia(filePath, row.cloud_doc_id, staged.staged, pushedVersion);
+  return { ok: true, pushed: true, media };
 }
 
 // Which tracked files the server has a newer snapshot of.
@@ -395,9 +549,10 @@ async function checkUpdates() {
   // What the list looked like, in one string. The renderer keeps the previous
   // one and refreshes the Library when it moves, which is how a document synced
   // from another machine appears here without anyone reopening the panel.
-  const listing = listingFingerprint(res.data.docs);
+  const rows = registry.list();
+  const listing = listingFingerprint(res.data.docs, rows);
   const updates = [];
-  for (const row of registry.list()) {
+  for (const row of rows) {
     if (!row.cloud_doc_id) continue;
     const r = remote.get(row.cloud_doc_id);
     // Absent from the list means deleted or revoked, which libraryState reports
@@ -498,11 +653,31 @@ async function landCloudDocs(docs) {
   return landed;
 }
 
-function listingFingerprint(docs) {
+// assets_skipped is stored as JSON text; a row from before Task 6, or one no
+// asset was ever skipped on, has none. Either way the Cloud page gets a list,
+// never a string to guard against or a parse error to catch itself.
+const safeJson = (s) => {
+  try {
+    const parsed = s ? JSON.parse(s) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+function listingFingerprint(docs, rows = []) {
   const parts = docs
     .map((d) => `${d.id}:${d.version ?? 0}:${d.shared ? 1 : 0}:${d.name ?? ""}`)
     .sort();
-  return crypto.createHash("sha1").update(parts.join("\n")).digest("hex");
+  // A row's media state is part of what the Library draws, and a background
+  // reconciliation pass moves it without anything on the server changing.
+  // Left out, the renderer deduplicated that refresh away and an open Cloud
+  // panel went on saying "media pending" until something unrelated moved.
+  const media = rows
+    .filter((r) => r.cloud_doc_id)
+    .map((r) => `${r.cloud_doc_id}:${r.assets_state ?? ""}:${r.assets_skipped ?? ""}`)
+    .sort();
+  return crypto.createHash("sha1").update([...parts, ...media].join("\n")).digest("hex");
 }
 
 // The server's copy of a doc, for showing what a pull would cost before it
@@ -555,6 +730,11 @@ function keepBothPath(filePath, exists = fs.existsSync) {
 // dialog counted the lines of; reading the file instead would rescue the last
 // saved copy and drop every unsaved edit, in the one feature whose entire job
 // is not losing them. Falls back to disk for callers with no buffer.
+// No media push here: this function never PUTs text to the cloud. The kept
+// copy is deliberately local-only (cloud_doc_id: null below) and never gets a
+// cloud id to push its media against, and the original path only pulls the
+// cloud's existing content over local, the same "pull, don't push" case as
+// resolve("cloud").
 async function resolveKeepBoth(filePath, localContent) {
   const row = registry.get(filePath);
   if (!row?.cloud_doc_id) return { error: "not synced" };
@@ -724,6 +904,10 @@ async function libraryState() {
       shared: !!r?.shared || sharedFromMemory,
       role: r?.role ?? (sharedFromMemory ? remembered : null),
       sharedBy: r?.shared_by ?? null,
+      media: {
+        state: f.assets_state ?? null,
+        skipped: safeJson(f.assets_skipped),
+      },
     };
   });
   for (const d of remote) {
@@ -760,13 +944,17 @@ function listFailure(status) {
 
 module.exports = {
   isConfigured,
+  hasPrincipal,
   setConfig,
   setDocRole,
+  api,
+  fetchAsset,
   syncOn,
   syncOff,
   push,
   pull,
   resolve,
+  setAssetSync,
   checkUpdates,
   remoteContent,
   resolveKeepBoth,

@@ -170,6 +170,13 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     docPull: vi.fn(async () => noopResult),
     docRetryPush: vi.fn(async () => ({ ok: true, pushed: true })),
     docCheckUpdates: vi.fn(async () => ({ updates: [] })),
+    assetReconcile: vi.fn(async () => ({
+      pushed: [],
+      mediaPushed: [],
+      mediaUnchanged: [],
+      skipped: [],
+      errors: [],
+    })),
     docRemoteContent: vi.fn(async () => ({ ok: true, content: "", version: 1 })),
     docKeepBoth: vi.fn(async () => noopResult),
     docOpenShared: vi.fn(async () => ({ ok: true, path: "/tmp/shared.md" })),
@@ -187,6 +194,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     historyList: vi.fn(async () => []),
     historyRead: vi.fn(async () => ({ content: null })),
     onMenuHistory: vi.fn(subscribe("onMenuHistory")),
+    onLibraryChanged: vi.fn(subscribe("onLibraryChanged")),
 
     // Crash reporting (consent-gated; off and unavailable by default in tests)
     crashConsentGet: vi.fn(async () => ({ enabled: false, available: false })),

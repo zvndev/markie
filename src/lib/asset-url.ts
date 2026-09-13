@@ -6,27 +6,37 @@
 // resolves it against the document's folder, which is what an author means and
 // what an agent writing a report produces without being told.
 //
-// So the src is rewritten to `markie-asset://local/<absolute path>` on the way
-// into the DOM, and only there. The document on disk is untouched: the editor
+// So the src is rewritten to
+// `markie-asset://local/<absolute path>?doc=<document path>` on the way into
+// the DOM, and only there. The document on disk is untouched: the editor
 // keeps the original in the node's attribute, so what gets saved is what was
 // written. Main decides whether to actually serve it; this side only addresses
-// it, and an address is not a permission.
+// it, and an address is not a permission. The `doc` query names the document
+// the reference belongs to, so main can look for the picture on that one
+// cloud document when the file itself is not on this machine. The document
+// and not its folder: two synced documents can share a folder and reference
+// the same missing picture, and a folder let main answer with whichever of
+// them happened to be opened last.
+
+import { pathDirname } from "@/lib/path-utils";
 
 export const ASSET_SCHEME = "markie-asset";
 const ASSET_ORIGIN = `${ASSET_SCHEME}://local`;
 
-// The folder of the document on screen. Module scope rather than a prop
-// because the value is needed inside a ProseMirror node's renderHTML, which is
-// called by the editor with no access to React state, and because it changes
-// when a different file is opened rather than when a component re-renders.
-let baseDir: string | null = null;
+// The path of the document on screen. Module scope rather than a prop because
+// the value is needed inside a ProseMirror node's renderHTML, which is called
+// by the editor with no access to React state, and because it changes when a
+// different file is opened rather than when a component re-renders.
+let docPath: string | null = null;
 
-export function setAssetBaseDir(dir: string | null): void {
-  baseDir = dir && dir.trim() ? dir : null;
+export function setAssetDocPath(path: string | null): void {
+  docPath = path && path.trim() ? path : null;
 }
 
+/** The folder of the document on screen, which is what a relative src
+ * resolves against. */
 export function getAssetBaseDir(): string | null {
-  return baseDir;
+  return docPath ? pathDirname(docPath) : null;
 }
 
 // Windows paths and POSIX paths both arrive here, and the renderer has no
@@ -58,16 +68,18 @@ function hasScheme(src: string): boolean {
  * The URL to put in the DOM for a document's image reference.
  *
  * Resolves against `base` when one is handed in, else against the open
- * document's folder. The module-level base is the open document's by design,
- * and a file previewed from somewhere else (a SKILL.md out of the catalog
- * cache) has its pictures beside its own file, not beside whatever is open.
+ * document's folder. A file previewed from somewhere else (a SKILL.md out of
+ * the catalog cache) has its pictures beside its own file, not beside
+ * whatever is open, so a handed-in base names no document: it is a folder,
+ * and no one document in it is the one this picture belongs to.
  * Returns the src unchanged when it is not a local file reference, or when
  * there is nothing to resolve it against.
  */
 export function resolveAssetSrc(src: string | null | undefined, base?: string | null): string {
   const raw = typeof src === "string" ? src.trim() : "";
   if (!raw || hasScheme(raw)) return raw;
-  const dir = base && base.trim() ? base : baseDir;
+  const override = base && base.trim() ? base : null;
+  const dir = override ?? getAssetBaseDir();
   if (!dir) return raw;
 
   // Strip the query and hash the way a browser would before treating what is
@@ -83,7 +95,9 @@ export function resolveAssetSrc(src: string | null | undefined, base?: string | 
   }
 
   const absolute = decoded.startsWith("/") ? decoded : joinPath(dir, decoded);
-  return `${ASSET_ORIGIN}/${encodeURIComponent(absolute)}`;
+  const address = `${ASSET_ORIGIN}/${encodeURIComponent(absolute)}`;
+  if (override || !docPath) return address;
+  return `${address}?doc=${encodeURIComponent(docPath)}`;
 }
 
 // What to draw for a given source. Markdown has one syntax for embedded media

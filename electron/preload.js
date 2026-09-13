@@ -133,6 +133,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   docResolve: (args) => ipcRenderer.invoke("doc-resolve", args),
   docRetryPush: (args) => ipcRenderer.invoke("doc-retry-push", args),
   docCheckUpdates: () => ipcRenderer.invoke("doc-check-updates"),
+  assetReconcile: () => ipcRenderer.invoke("asset-reconcile"),
   docRemoteContent: (args) => ipcRenderer.invoke("doc-remote-content", args),
   docKeepBoth: (args) => ipcRenderer.invoke("doc-keep-both", args),
   docPull: (args) => ipcRenderer.invoke("doc-pull", args),
@@ -155,6 +156,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   historyList: (path) => ipcRenderer.invoke("history-list", path),
   historyRead: (args) => ipcRenderer.invoke("history-read", args),
   onMenuHistory: (callback) => subscribe("menu-history", callback),
+  // A background reconciliation pass changed a document's text or media, so
+  // whatever is showing the library should look again.
+  onLibraryChanged: (callback) => subscribe("library-changed", callback),
   appCloseReady: () => ipcRenderer.send("app-close-ready"),
   crashConsentGet: () => ipcRenderer.invoke("crash-consent-get"),
   crashConsentSet: (enabled) => ipcRenderer.invoke("crash-consent-set", enabled),

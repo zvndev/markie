@@ -40,6 +40,10 @@ interface Row {
   // confirmed for.
   share_role?: "owner" | "editor" | "viewer" | null;
   share_role_user?: string | null;
+  // What reconciliation (electron/reconcile.js) last learned about this
+  // row's media.
+  assets_state?: string | null;
+  assets_skipped?: string | null;
 }
 
 const realRegistry = { ...registry };
@@ -127,6 +131,9 @@ beforeEach(() => {
 
 afterEach(() => {
   Object.assign(registry, realRegistry);
+  // Reset for every test regardless of which one set it, so a test that
+  // configures asset sync can never leak it into one that runs after.
+  sync.setAssetSync(null);
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -149,7 +156,7 @@ describe("push", () => {
 
     const res = await sync.push("/docs/a.md", "a.md", "new");
 
-    expect(res).toEqual({ ok: true, version: 5 });
+    expect(res).toEqual({ ok: true, version: 5, media: null });
     expect(row.sync_state).toBe("synced");
     expect(row.cloud_version).toBe(5);
     expect(row.content_hash).toBe("hash:new");
@@ -187,6 +194,7 @@ describe("push", () => {
     // an unhandled rejection, so the row was never updated at all.
     await expect(sync.push("/docs/a.md", "a.md", "new")).resolves.toEqual({
       error: "push failed (offline)",
+      media: null,
     });
     expect(row.sync_state).toBe("unpushed");
     expect(row.content_hash).toBe("hash:old");
@@ -208,7 +216,7 @@ describe("push", () => {
     const res = await sync.push("/docs/a.md", "a.md", "new");
 
     expect(row.sync_state).toBe("conflict");
-    expect(res).toEqual({ conflict: true });
+    expect(res).toEqual({ conflict: true, media: null });
   });
 
   it("retries an unpushed row and restores it to synced once the push lands", async () => {
@@ -224,7 +232,7 @@ describe("push", () => {
 
     const res = await sync.push("/docs/a.md", "a.md", "recovered");
 
-    expect(res).toEqual({ ok: true, version: 5 });
+    expect(res).toEqual({ ok: true, version: 5, media: null });
     expect(row.sync_state).toBe("synced");
     expect(row.cloud_version).toBe(5);
   });
@@ -256,6 +264,7 @@ describe("syncOn", () => {
 
     await expect(sync.syncOn("/docs/a.md", "a.md", "hello")).resolves.toEqual({
       error: "push failed (offline)",
+      media: null,
     });
     expect(row.sync_state).toBe("unpushed");
   });
@@ -266,7 +275,7 @@ describe("syncOn", () => {
 
     const res = await sync.syncOn("/docs/a.md", "a.md", "hello");
 
-    expect(res).toEqual({ ok: true, version: 1 });
+    expect(res).toEqual({ ok: true, version: 1, media: null });
     expect(row.sync_state).toBe("synced");
     expect(row.cloud_doc_id).toBeTruthy();
   });
@@ -288,7 +297,7 @@ describe("syncOn", () => {
     respondWith({ status: 200, body: { version: 2 } });
     const second = await sync.syncOn("/docs/a.md", "a.md", "hello");
 
-    expect(second).toEqual({ ok: true, version: 2 });
+    expect(second).toEqual({ ok: true, version: 2, media: null });
     expect(row.cloud_doc_id).toBe(minted);
   });
 });
@@ -323,6 +332,15 @@ describe("resolve", () => {
       cloud_doc_id: "cloud-1",
       cloud_version: 4,
     });
+    // Pulling the cloud copy over local is not a text push, so nothing here
+    // should ever reach the asset sync.
+    const mediaCalls: string[] = [];
+    sync.setAssetSync({
+      pushAssets: async (p: string, cloudId: string) => {
+        mediaCalls.push(`${cloudId}:${p}`);
+        return { ok: true, uploaded: 1, skipped: [] };
+      },
+    });
     respondWith({ status: 200, body: { doc: { content: "from cloud", version: 9 } } });
 
     const res = await sync.resolve(filePath, "cloud");
@@ -331,6 +349,138 @@ describe("resolve", () => {
     expect(fs.readFileSync(filePath, "utf-8")).toBe("from cloud");
     expect(row.sync_state).toBe("synced");
     expect(row.cloud_version).toBe(9);
+    expect(mediaCalls).toHaveLength(0);
+    expect(res.media).toBeUndefined();
+  });
+});
+
+describe("fetchAsset", () => {
+  // The asset cache revalidates a hit with the ETag of the copy it holds, so
+  // an unchanged picture costs a 304 and no bytes at all.
+  it("sends the cached copy's ETag and reads a 304 as not modified", async () => {
+    const etag = `"${"a".repeat(64)}"`;
+    const headers: Array<Record<string, string>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: { headers: Record<string, string> }) => {
+        headers.push(init.headers);
+        return { status: 304, headers: new Headers(), body: null };
+      })
+    );
+
+    expect(await sync.fetchAsset("cloud-1", "a.png", etag)).toEqual({ notModified: true });
+    expect(headers[0]["If-None-Match"]).toBe(etag);
+  });
+
+  // A revalidation runs while somebody is looking at the picture, and the
+  // protocol handler waits on it. Five minutes is the budget for downloading
+  // a video, not for asking whether a cached one changed.
+  it("gives a revalidation five seconds to answer, and a download five minutes", async () => {
+    const aborted: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            init.signal.addEventListener("abort", () => {
+              aborted.push(_url);
+              reject(new Error("aborted"));
+            });
+          })
+      )
+    );
+    vi.useFakeTimers();
+    try {
+      const revalidation = sync.fetchAsset("cloud-1", "a.png", `"${"a".repeat(64)}"`);
+      await vi.advanceTimersByTimeAsync(5001);
+      expect(aborted).toHaveLength(1);
+      expect(await revalidation).toBeNull();
+
+      const download = sync.fetchAsset("cloud-1", "a.png");
+      await vi.advanceTimersByTimeAsync(5001);
+      // Still waiting: a picture nobody has a copy of is worth five minutes.
+      expect(aborted).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(300000);
+      expect(aborted).toHaveLength(2);
+      expect(await download).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The signal handed to fetch governs the response body too, so one 5 s cap
+  // would have given a relinked video five seconds to download, failed it,
+  // and gone on showing the old bytes forever.
+  it("holds the five-second deadline to the answer, not to the download behind it", async () => {
+    const hash = "b".repeat(64);
+    let sendBody: (() => void) | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: { signal: AbortSignal }) => ({
+        status: 200,
+        headers: new Headers({ etag: `"${hash}"`, "content-type": "image/png", "content-length": "4" }),
+        body: new ReadableStream({
+          start(controller) {
+            init.signal.addEventListener("abort", () => controller.error(new Error("aborted")));
+            sendBody = () => {
+              controller.enqueue(new TextEncoder().encode("bbbb"));
+              controller.close();
+            };
+          },
+        }),
+      }))
+    );
+    vi.useFakeTimers();
+    try {
+      const res = await sync.fetchAsset("cloud-1", "a.png", `"${"a".repeat(64)}"`);
+      expect(res).toMatchObject({ hash, mime: "image/png", size: 4 });
+
+      // Eight seconds of a slow download later, the body is still welcome.
+      await vi.advanceTimersByTimeAsync(8000);
+      sendBody!();
+      const reader = res!.stream.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe("bbbb");
+      expect((await reader.read()).done).toBe(true);
+      // And the transfer's own deadline goes with the transfer.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a revoked or missing picture as gone, and a server fault as nothing", async () => {
+    const answer = async (status: number, ifNoneMatch?: string) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({ status, headers: new Headers(), body: null }))
+      );
+      return sync.fetchAsset("cloud-1", "a.png", ifNoneMatch);
+    };
+    const etag = `"${"a".repeat(64)}"`;
+
+    // Definitive: the document no longer has this ref, or this account may no
+    // longer read it. The cache has to forget it, not keep showing it.
+    expect(await answer(404)).toEqual({ gone: true });
+    expect(await answer(403)).toEqual({ gone: true });
+    expect(await answer(404, etag)).toEqual({ gone: true });
+    expect(await answer(403, etag)).toEqual({ gone: true });
+    // Not definitive: the picture may well still be there.
+    expect(await answer(500)).toBeNull();
+    expect(await answer(503, etag)).toBeNull();
+  });
+
+  it("sends no conditional header when there is nothing cached to revalidate", async () => {
+    const headers: Array<Record<string, string>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: { headers: Record<string, string> }) => {
+        headers.push(init.headers);
+        return { status: 404, headers: new Headers(), body: null };
+      })
+    );
+
+    expect(await sync.fetchAsset("cloud-1", "a.png")).toEqual({ gone: true });
+    expect(headers[0]["If-None-Match"]).toBeUndefined();
   });
 });
 
@@ -479,6 +629,7 @@ describe("viewer access", () => {
     expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
       ok: true,
       version: 5,
+      media: null,
     });
     expect(row.sync_state).toBe("synced");
   });
@@ -491,6 +642,7 @@ describe("viewer access", () => {
     expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
       ok: true,
       version: 5,
+      media: null,
     });
     expect(row.sync_state).toBe("synced");
   });
@@ -504,6 +656,7 @@ describe("viewer access", () => {
     expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
       ok: true,
       version: 5,
+      media: null,
     });
   });
 
@@ -517,6 +670,7 @@ describe("viewer access", () => {
     expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
       ok: true,
       version: 5,
+      media: null,
     });
   });
 
@@ -560,6 +714,7 @@ describe("viewer access", () => {
     expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
       ok: true,
       version: 5,
+      media: null,
     });
   });
 });
@@ -595,6 +750,26 @@ describe("checkUpdates listing", () => {
     const v2 = await listing();
     const renamed = await listing();
     expect(new Set([v1, v2, renamed]).size).toBe(3);
+  });
+
+  it("moves when a row's media state changes and the server's list does not", async () => {
+    // A reconciliation pass turning "media pending" into synced changes what
+    // the Library draws without changing anything on the server. Left out of
+    // the fingerprint, the renderer deduplicated the refresh away and an open
+    // Cloud panel said "media pending" until something unrelated moved.
+    respondWith(
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 1, name: "a.md" }] } },
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 1, name: "a.md" }] } },
+      { status: 200, body: { docs: [{ id: "cloud-1", version: 1, name: "a.md" }] } }
+    );
+    const before = await listing();
+
+    rows.get("/docs/one.md")!.assets_state = "synced";
+    const afterState = await listing();
+    expect(afterState).not.toBe(before);
+
+    rows.get("/docs/one.md")!.assets_skipped = JSON.stringify([{ ref: "big.png", reason: "size" }]);
+    expect(await listing()).not.toBe(afterState);
   });
 
   it("reports no fingerprint for a list it never received, so nothing refreshes off a failure", async () => {
@@ -1098,6 +1273,56 @@ describe("libraryState", () => {
 
     expect(state.items[0].state).toBe("unpushed");
   });
+
+  describe("media", () => {
+    it("reports what reconciliation last learned about a row's pictures", async () => {
+      seedRow({
+        path: "/docs/pics.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-20",
+        cloud_version: 1,
+        assets_state: "pending",
+        assets_skipped: '[{"ref":"a.png","reason":"size"}]',
+      });
+      respondWith({ status: 200, body: { docs: [{ id: "cloud-20", version: 1 }] } });
+
+      const state = await sync.libraryState();
+
+      expect(state.items[0].media).toEqual({
+        state: "pending",
+        skipped: [{ ref: "a.png", reason: "size" }],
+      });
+    });
+
+    it("reads as no state and no skips for a row reconciliation has never touched", async () => {
+      seedRow({
+        path: "/docs/untouched.md",
+        sync_state: "synced",
+        cloud_doc_id: "cloud-21",
+        cloud_version: 1,
+      });
+      respondWith({ status: 200, body: { docs: [{ id: "cloud-21", version: 1 }] } });
+
+      const state = await sync.libraryState();
+
+      expect(state.items[0].media).toEqual({ state: null, skipped: [] });
+    });
+  });
+});
+
+describe("hasPrincipal", () => {
+  it("is false before anyone is confirmed signed in", () => {
+    sync.setConfig({ token: null, serverURL: null });
+    expect(sync.hasPrincipal()).toBe(false);
+  });
+
+  it("is true once a config push confirms who the token belongs to", () => {
+    sync.setConfig({ token: null, serverURL: null });
+    sync.setConfig({ token: "test-token", serverURL: SERVER });
+    expect(sync.hasPrincipal()).toBe(false);
+    sync.setConfig({ token: "test-token", serverURL: SERVER, userId: ME });
+    expect(sync.hasPrincipal()).toBe(true);
+  });
 });
 
 describe("checkUpdates", () => {
@@ -1242,6 +1467,29 @@ describe("resolveKeepBoth", () => {
     expect(fs.readFileSync(p, "utf-8")).toBe("theirs\n");
     expect(rows.get(p)!.sync_state).toBe("synced");
     expect(rows.get(p)!.cloud_version).toBe(9);
+  });
+
+  // No text ever reaches the cloud here: the kept copy is tracked local-only
+  // (see "tracks the copy as local-only with no cloud link" below) and has no
+  // cloud id to push its media against, and the original path only pulls the
+  // server's existing content over local, same as resolve("cloud"). Nothing
+  // in this function should ever call the asset sync.
+  it("never pushes media: nothing here writes text to the cloud", async () => {
+    const p = seedOnDisk("notes.md", "mine\n![](mine.png)\n");
+    const mediaCalls: string[] = [];
+    sync.setAssetSync({
+      pushAssets: async (fp: string, cloudId: string) => {
+        mediaCalls.push(`${cloudId}:${fp}`);
+        return { ok: true, uploaded: 1, skipped: [] };
+      },
+    });
+    respondWith({ status: 200, body: { doc: { content: "theirs\n", version: 9, name: "notes.md" } } });
+
+    const res = await sync.resolveKeepBoth(p);
+
+    expect(res.ok).toBe(true);
+    expect(mediaCalls).toHaveLength(0);
+    expect(res.media).toBeUndefined();
   });
 
   // Caught by the end-to-end run, not by inspection: the dialog counts the
@@ -1586,6 +1834,42 @@ describe("resolve('local')", () => {
 
     expect(res.error).toContain("Couldn't read the local file");
   });
+
+  // "local" force-pushes the local file's text, so its bytes go up first, and
+  // it is the local content's media that goes, not the cloud copy fetched
+  // above it for baseVersion. The refs are linked afterwards, against the
+  // version the text PUT landed on (10 here), not the row's stale 4.
+  it("stages media for the local content before the text and links it after", async () => {
+    const p = path.join(tmpDir, "notes.md");
+    fs.writeFileSync(p, "local content\n![](a.png)\n", "utf-8");
+    seedRow({ path: p, sync_state: "conflict", cloud_doc_id: "cloud-1", cloud_version: 4 });
+    const mediaCalls: string[] = [];
+    let calls: Call[] = [];
+    sync.setAssetSync({
+      stageAssets: async (fp: string, cloudId: string, content: string) => {
+        mediaCalls.push(`stage:${cloudId}:${fp}:${content}:${calls.length}`);
+        return { staged: { linkRefs: [{ ref: "a.png", hash: "h" }], uploaded: 1, skipped: [], fingerprint: "fp" } };
+      },
+      linkAssets: async (_fp: string, cloudId: string, _staged: unknown, opts?: { baseVersion?: number }) => {
+        mediaCalls.push(`link:${cloudId}:${opts?.baseVersion}:${calls.length}`);
+        return { ok: true, uploaded: 1, skipped: [] };
+      },
+    });
+    calls = respondWith(
+      { status: 200, body: { doc: { content: "theirs\n", version: 9 } } },
+      { status: 200, body: { version: 10 } }
+    );
+
+    const res = await sync.resolve(p, "local");
+
+    expect(res).toEqual({ ok: true, pushed: true, media: { ok: true, uploaded: 1, skipped: [] } });
+    expect(mediaCalls).toEqual([
+      `stage:cloud-1:${p}:local content\n![](a.png)\n:1`,
+      "link:cloud-1:10:2",
+    ]);
+    expect(rows.get(p)!.sync_state).toBe("synced");
+    expect(rows.get(p)!.cloud_version).toBe(10);
+  });
 });
 
 describe("resolve('cloud') failures", () => {
@@ -1708,5 +1992,302 @@ describe("landing", () => {
     expect(sync.freePath("/d", "notes.md", exists)).toBe("/d/notes (3).md");
     expect(sync.freePath("/d", "fresh.md", exists)).toBe("/d/fresh.md");
     expect(sync.freePath("/d", "README", exists)).toBe("/d/README");
+  });
+});
+
+describe("media and text push order", () => {
+  // A stand-in for asset-sync that records the order of its two halves
+  // against the number of HTTP calls made so far, so a test can say exactly
+  // where each one landed relative to the text PUT.
+  function recordingAssetSync(calls: () => Call[], staged: unknown = { linkRefs: [], uploaded: 1, skipped: [], fingerprint: "fp" }) {
+    const log: Array<{ step: string; textCallsSoFar: number; filePath?: string; cloudId?: string; baseVersion?: number }> = [];
+    sync.setAssetSync({
+      stageAssets: async (filePath: string, cloudId: string) => {
+        log.push({ step: "stage", textCallsSoFar: calls().length, filePath, cloudId });
+        return staged === null ? { pending: true } : { staged };
+      },
+      linkAssets: async (filePath: string, cloudId: string, _staged: unknown, opts?: { baseVersion?: number }) => {
+        log.push({ step: "link", textCallsSoFar: calls().length, filePath, cloudId, baseVersion: opts?.baseVersion });
+        return { ok: true, uploaded: 1, skipped: [] };
+      },
+    });
+    return log;
+  }
+
+  // The whole point of the split. Bytes may go up at any time: the server
+  // keeps an uploaded-but-unlinked asset for an hour. Telling the server what
+  // the document points at may not: a link that lands before a text PUT that
+  // fails leaves the old text beside a media set that no longer holds its
+  // pictures, and the sweep takes them an hour later.
+  it("push uploads before the text and links after it, against the version the PUT answered with", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/d.md", sync_state: "synced", cloud_doc_id: "cd", cloud_version: 7 });
+    let calls: Call[] = [];
+    const log = recordingAssetSync(() => calls);
+    calls = respondWith({ status: 200, body: { version: 8 } });
+
+    const res = await sync.push("/docs/d.md", "d.md", "![](d.png)\n");
+
+    expect(res.ok).toBe(true);
+    expect(res.media).toEqual({ ok: true, uploaded: 1, skipped: [] });
+    expect(log).toEqual([
+      { step: "stage", textCallsSoFar: 0, filePath: "/docs/d.md", cloudId: "cd" },
+      { step: "link", textCallsSoFar: 1, filePath: "/docs/d.md", cloudId: "cd", baseVersion: 8 },
+    ]);
+    expect(calls[0].body).toMatchObject({ baseVersion: 7 });
+  });
+
+  it("push sends no link when the text PUT fails, and leaves the media pending for reconcile", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/d.md", sync_state: "synced", cloud_doc_id: "cd", cloud_version: 7 });
+    let calls: Call[] = [];
+    const log = recordingAssetSync(() => calls);
+    calls = respondWith({ status: 500 });
+
+    const res = await sync.push("/docs/d.md", "d.md", "![](d.png)\n");
+
+    expect(res.error).toBe("push failed (500)");
+    expect(log.map((e) => e.step)).toEqual(["stage"]);
+    expect(rows.get("/docs/d.md")!.sync_state).toBe("unpushed");
+    expect(rows.get("/docs/d.md")!.assets_state).toBe("pending");
+  });
+
+  it("push sends no link when the server refuses the text as stale", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/d.md", sync_state: "synced", cloud_doc_id: "cd", cloud_version: 7 });
+    let calls: Call[] = [];
+    const log = recordingAssetSync(() => calls);
+    calls = respondWith({ status: 409, body: { serverVersion: 9 } });
+
+    const res = await sync.push("/docs/d.md", "d.md", "![](d.png)\n");
+
+    expect(res.conflict).toBe(true);
+    expect(log.map((e) => e.step)).toEqual(["stage"]);
+    expect(rows.get("/docs/d.md")!.assets_state).toBe("pending");
+  });
+
+  // A document the server has never seen has nothing to hang media on:
+  // /assets and /assets/missing both answer 404 for a cloud id it does not
+  // know. That one create goes first, and both halves follow it.
+  it("syncOn creates the document with the text, then stages and links its media", async () => {
+    signIn("test-token", ME);
+    let calls: Call[] = [];
+    const log = recordingAssetSync(() => calls);
+    calls = respondWith({ status: 200, body: { id: "x", version: 1 } });
+
+    const res = await sync.syncOn("/docs/a.md", "a.md", "![](a.png)\n");
+
+    expect(res.ok).toBe(true);
+    expect(res.media).toEqual({ ok: true, uploaded: 1, skipped: [] });
+    expect(log).toEqual([
+      { step: "stage", textCallsSoFar: 1, filePath: "/docs/a.md", cloudId: expect.any(String) },
+      { step: "link", textCallsSoFar: 1, filePath: "/docs/a.md", cloudId: expect.any(String), baseVersion: 1 },
+    ]);
+    expect(calls.map((c) => c.method)).toEqual(["PUT"]);
+  });
+
+  it("syncOn uploads first for a document the server already has, and links after the text", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/e.md", sync_state: "paused", cloud_doc_id: "ce", cloud_version: 3 });
+    let calls: Call[] = [];
+    const log = recordingAssetSync(() => calls);
+    calls = respondWith({ status: 200, body: { version: 4 } });
+
+    const res = await sync.syncOn("/docs/e.md", "e.md", "![](e.png)\n");
+
+    expect(res).toEqual({ ok: true, version: 4, media: { ok: true, uploaded: 1, skipped: [] } });
+    expect(log).toEqual([
+      { step: "stage", textCallsSoFar: 0, filePath: "/docs/e.md", cloudId: "ce" },
+      { step: "link", textCallsSoFar: 1, filePath: "/docs/e.md", cloudId: "ce", baseVersion: 4 },
+    ]);
+    expect(calls[0].body).toMatchObject({ baseVersion: 3 });
+  });
+
+  it("syncOn touches media not at all when the create is refused", async () => {
+    signIn("test-token", ME);
+    let calls: Call[] = [];
+    const log = recordingAssetSync(() => calls);
+    calls = respondWith({ status: 500 });
+
+    const res = await sync.syncOn("/docs/a.md", "a.md", "![](a.png)\n");
+
+    expect(res).toEqual({ error: "push failed (500)", media: null });
+    expect(log).toEqual([]);
+  });
+
+  it("carries a staging failure as the media result without stopping the text", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/b.md", sync_state: "synced", cloud_doc_id: "cb", cloud_version: 2 });
+    sync.setAssetSync({
+      stageAssets: async () => ({ pending: true, error: "media upload failed (offline)" }),
+      linkAssets: async () => {
+        throw new Error("nothing staged, nothing to link");
+      },
+    });
+    respondWith({ status: 200, body: { id: "cb", version: 3 } });
+
+    const res = await sync.push("/docs/b.md", "b.md", "![](b.png)\n");
+
+    expect(res.ok).toBe(true);
+    expect(res.media).toEqual({ pending: true, error: "media upload failed (offline)" });
+    expect(rows.get("/docs/b.md")!.sync_state).toBe("synced");
+  });
+
+  it("carries an unchanged reference set through without linking again", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/u.md", sync_state: "synced", cloud_doc_id: "cu", cloud_version: 2 });
+    const linked: number[] = [];
+    sync.setAssetSync({
+      stageAssets: async () => ({ unchanged: true }),
+      linkAssets: async () => {
+        linked.push(1);
+        return { ok: true, uploaded: 0, skipped: [] };
+      },
+    });
+    respondWith({ status: 200, body: { version: 3 } });
+
+    const res = await sync.push("/docs/u.md", "u.md", "words\n");
+
+    expect(res.media).toEqual({ unchanged: true });
+    expect(linked).toEqual([]);
+  });
+
+  it("syncOn leaves staged media pending when it cannot read the version back", async () => {
+    // The text may well have landed; this device just cannot say which
+    // version it landed as, so it has no base to link against. Reconciliation
+    // finishes the job, which needs the row to say so.
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/u.md", sync_state: "paused", cloud_doc_id: "cu", cloud_version: 1 });
+    const linked: number[] = [];
+    sync.setAssetSync({
+      stageAssets: async () => ({ staged: { linkRefs: [], uploaded: 1, skipped: [], fingerprint: "fp" } }),
+      linkAssets: async () => {
+        linked.push(1);
+        return { ok: true, uploaded: 1, skipped: [] };
+      },
+    });
+    respondWith({ status: 200, body: { id: "cu" } });
+
+    const res = await sync.syncOn("/docs/u.md", "u.md", "![](u.png)\n");
+
+    expect(res.error).toBe("The server sent an unreadable copy of this document.");
+    expect(linked).toEqual([]);
+    expect(rows.get("/docs/u.md")!.sync_state).toBe("unpushed");
+    expect(rows.get("/docs/u.md")!.assets_state).toBe("pending");
+  });
+
+  it("does not let a throwing asset sync take the text push down with it", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/c.md", sync_state: "synced", cloud_doc_id: "cc", cloud_version: 1 });
+    sync.setAssetSync({
+      stageAssets: async () => {
+        throw new Error("disk full");
+      },
+      linkAssets: async () => ({ ok: true, uploaded: 0, skipped: [] }),
+    });
+    respondWith({ status: 200, body: { version: 2 } });
+
+    const res = await sync.push("/docs/c.md", "c.md", "new");
+
+    expect(res).toEqual({
+      ok: true,
+      version: 2,
+      media: { pending: true, error: "media push failed (disk full)" },
+    });
+    expect(rows.get("/docs/c.md")!.sync_state).toBe("synced");
+  });
+
+  it("does not let a throwing link take the text push down with it", async () => {
+    signIn("test-token", ME);
+    seedRow({ path: "/docs/t.md", sync_state: "synced", cloud_doc_id: "ct", cloud_version: 1 });
+    sync.setAssetSync({
+      stageAssets: async () => ({ staged: { linkRefs: [], uploaded: 0, skipped: [], fingerprint: "fp" } }),
+      linkAssets: async () => {
+        throw new Error("disk full");
+      },
+    });
+    respondWith({ status: 200, body: { version: 2 } });
+
+    const res = await sync.push("/docs/t.md", "t.md", "new");
+
+    expect(res).toEqual({
+      ok: true,
+      version: 2,
+      media: { pending: true, error: "media push failed (disk full)" },
+    });
+    expect(rows.get("/docs/t.md")!.sync_state).toBe("synced");
+    expect(rows.get("/docs/t.md")!.assets_state).toBe("pending");
+  });
+});
+
+describe("setConfig reports whether the session changed", () => {
+  // Every account's cached media hangs off this answer. The cache keys carry
+  // no principal, so a token swapped straight from account A to account B
+  // with no sign-out in between would otherwise hand B whatever A had
+  // fetched.
+  it("says nothing changed when the renderer repeats the same config", () => {
+    sync.setConfig({ token: "a-token", serverURL: SERVER });
+    expect(sync.setConfig({ token: "a-token", serverURL: SERVER }).sessionChanged).toBe(false);
+    expect(sync.setConfig({ token: "a-token", serverURL: SERVER, userId: ME }).sessionChanged).toBe(false);
+  });
+
+  it("says the session changed when one account's token replaces another's", () => {
+    sync.setConfig({ token: "a-token", serverURL: SERVER, userId: ME });
+    expect(sync.setConfig({ token: "b-token", serverURL: SERVER }).sessionChanged).toBe(true);
+  });
+
+  it("says the session changed when the same token is offered to another server", () => {
+    sync.setConfig({ token: "a-token", serverURL: SERVER });
+    const env = process.env.NODE_ENV;
+    process.env.NODE_ENV = "development";
+    try {
+      expect(sync.setConfig({ token: "a-token", serverURL: "http://localhost:4010" }).sessionChanged).toBe(true);
+    } finally {
+      process.env.NODE_ENV = env;
+    }
+  });
+
+  it("says the session changed on sign-out", () => {
+    sync.setConfig({ token: "a-token", serverURL: SERVER });
+    expect(sync.setConfig({ token: null, serverURL: null }).sessionChanged).toBe(true);
+    // Signed out twice over is not a new session, and there is nothing left
+    // to clear.
+    expect(sync.setConfig({ token: null, serverURL: null }).sessionChanged).toBe(false);
+  });
+});
+
+describe("setConfig names the session", () => {
+  // The asset cache keeps this beside its index so a relaunch of the same
+  // account keeps the pictures it fetched. "Did the config change since the
+  // last push" cannot answer that: a new main process has no last push.
+  const keyOf = (cfg: { token: string | null; serverURL: string | null }) =>
+    sync.setConfig(cfg).sessionKey as string | null;
+
+  it("gives the same token at the same server the same name every time", () => {
+    const first = keyOf({ token: "a-token", serverURL: SERVER });
+    keyOf({ token: null, serverURL: null });
+    expect(keyOf({ token: "a-token", serverURL: SERVER })).toBe(first);
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("is not the token, and is a different name for another token or another server", () => {
+    const a = keyOf({ token: "a-token", serverURL: SERVER });
+    expect(a).not.toContain("a-token");
+    expect(keyOf({ token: "b-token", serverURL: SERVER })).not.toBe(a);
+
+    const env = process.env.NODE_ENV;
+    process.env.NODE_ENV = "development";
+    try {
+      expect(keyOf({ token: "a-token", serverURL: "http://localhost:4010" })).not.toBe(a);
+    } finally {
+      process.env.NODE_ENV = env;
+    }
+  });
+
+  it("names nothing without a token, or without a server this app will talk to", () => {
+    expect(keyOf({ token: null, serverURL: null })).toBeNull();
+    expect(keyOf({ token: null, serverURL: SERVER })).toBeNull();
+    // An origin the allow-list refuses is no server at all outside dev.
+    expect(keyOf({ token: "a-token", serverURL: "http://localhost:4010" })).toBeNull();
   });
 });

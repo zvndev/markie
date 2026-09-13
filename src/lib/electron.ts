@@ -354,6 +354,10 @@ export interface ElectronAPI {
     landed?: LandedDoc[];
     error?: string;
   }>;
+  // Force a reconciliation pass right now (electron/reconcile.js), instead of
+  // waiting for the next scheduled one. Returns the pass's own result, not a
+  // cached one, since forcing it is asking to see what it did.
+  assetReconcile?(): Promise<ReconcileResult>;
   // The server's copy, for costing a pull before making it.
   docRemoteContent?(args: {
     path: string;
@@ -397,6 +401,10 @@ export interface ElectronAPI {
   historyList(path: string): Promise<HistoryEntry[]>;
   historyRead(args: { path: string; stamp: string }): Promise<{ content: string | null }>;
   onMenuHistory(cb: () => void): Unsubscribe;
+  // A background reconciliation pass pushed a document's text or media, so
+  // the library snapshot the renderer is holding is out of date. Optional so
+  // an older main process still type-checks.
+  onLibraryChanged?(cb: () => void): Unsubscribe;
   /** Whether crash reports may be sent, and whether a DSN is configured at all. */
   crashConsentGet(): Promise<{ enabled: boolean; available: boolean }>;
   crashConsentSet(
@@ -668,6 +676,13 @@ export interface LibraryItem {
   shared?: boolean;
   role?: "viewer" | "editor" | null;
   sharedBy?: string | null;
+  // What reconciliation (electron/reconcile.js) knows about this document's
+  // pictures. Present only for a local row; a cloud-only listing has no
+  // registry entry to read it from.
+  media?: {
+    state: "synced" | "pending" | null;
+    skipped: { ref: string; reason: string }[];
+  };
 }
 
 export interface SyncResult {
@@ -706,6 +721,18 @@ export interface DocUpdate {
   // "conflict" and "unpushed" mean the file on disk holds changes the server
   // never took. A clean buffer does not make those safe to overwrite.
   syncState: string;
+}
+
+// What one pass of electron/reconcile.js did: which rows it pushed text or
+// media for, which it left alone and why, and which it could not finish.
+export interface ReconcileResult {
+  pushed: string[];
+  mediaPushed: string[];
+  // Documents whose media was already linked. Not a change, so nothing
+  // refreshes off it; kept so a pass can still say what it looked at.
+  mediaUnchanged?: string[];
+  skipped: { path: string; reason: string }[];
+  errors: { path: string; error: string }[];
 }
 
 export function getElectronAPI(): ElectronAPI | null {

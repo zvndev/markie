@@ -93,15 +93,16 @@ Deleting a document (`docs.ts` delete) removes its `doc_assets` rows and garbage
 
 ### Pushing (`electron/asset-sync.js`)
 
-`pushAssets(filePath, cloudId, content)`:
+The push is two halves. `stageAssets(filePath, cloudId, content)`:
 
-1. extract, resolve and hash; compute `fingerprint` = SHA-256 of the sorted `ref\thash` lines;
+1. extract, resolve and hash; compute `fingerprint` = SHA-256 of the sorted `ref\thash` lines over the document's whole reference set, a skipped or unresolvable ref contributing an empty hash;
 2. if the registry row's `assets_fingerprint` equals it and `assets_state` is `synced`, return `{ unchanged: true }`;
 3. `POST missing`; upload each missing hash with `PUT /api/assets/:hash`, one at a time, streaming from disk, up to three attempts each;
-4. `PUT /api/docs/:id/assets` with the full set (`{ ref, hash }` for resolved, `{ ref }` for skipped or unresolvable);
-5. write `assets_state = "synced"`, `assets_fingerprint`, `assets_skipped` (JSON of skipped refs and reasons) to the row; on any failure write `assets_state = "pending"` and return the error.
+4. return `{ staged: { linkRefs, uploaded, skipped, fingerprint } }`, where `linkRefs` is the full set (`{ ref, hash }` for resolved, `{ ref }` for skipped or unresolvable). On any failure write `assets_state = "pending"` and return the error.
 
-`syncOn`, `push`, `resolve` and `resolveKeepBoth` in `sync.js` call `pushAssets` before the text `PUT`. A media failure never blocks the text: the text still lands, the row is left `pending`, and reconciliation retries. A 503 "not configured" counts as pending without an error in the UI.
+`linkAssets(filePath, cloudId, staged, { baseVersion })` then sends `PUT /api/docs/:id/assets` with `staged.linkRefs`, carrying `baseVersion`. A `409 { error: "version mismatch", serverVersion }` means the document moved on since that version: the refs are left unclaimed and the result is `{ pending: true, conflict: true }`. On success it writes `assets_state = "synced"`, `assets_fingerprint`, `assets_skipped` (JSON of skipped refs and reasons) to the row. `pushAssets(filePath, cloudId, content, { baseVersion })` runs the two back to back, which is what reconciliation calls.
+
+`push`, the text-writing branch of `resolve` and both branches of `syncOn` in `sync.js` upload the bytes before the text `PUT` and link the refs only after it, against the version that `PUT` returned. Uploading early is safe because the server keeps an uploaded asset nothing points at for an hour; linking early is not, because a link that lands in front of a text `PUT` that fails leaves the server's old text beside a media set that no longer holds its pictures. A document the server has never seen has nothing to attach media to at all: that one create goes first, and both halves follow it. When the text `PUT` fails no link is sent and the row is left `pending` for reconciliation. A media failure never blocks the text: the text still lands, the row is left `pending`, and reconciliation retries. A 503 "not configured" counts as pending without an error in the UI.
 
 Registry gains three columns through the existing `PRAGMA table_info` + `ALTER` pattern: `assets_state TEXT`, `assets_fingerprint TEXT`, `assets_skipped TEXT`.
 
@@ -109,7 +110,7 @@ Registry gains three columns through the existing `PRAGMA table_info` + `ALTER` 
 
 The renderer's `resolveAssetSrc` appends `?doc=<encoded document path>` to every `markie-asset://` URL (the original reference is already the encoded path's tail relative to the document; the handler recomputes `ref` as the path relative to the document's folder, and falls back to the absolute reference when the file is outside it). The protocol handler tries the local file first, exactly as today. When the file does not exist or is not allowed, and the document's registry row has a `cloud_doc_id`, it asks `asset-cache.js` for `(cloudId, ref)`:
 
-- cache hit under `<userData>/asset-cache/<hash>` (index `cache.json` maps `cloudId\tref` to hash, mime, size, last used): serve with ranges;
+- cache hit under `<userData>/asset-cache/<hash>` (index `cache.json` maps `cloudId\tref` to hash, mime, size, last used, last validated): revalidated before it is served, because a ref is a name and the same name can be relinked to different bytes. One answer stands for 60 seconds, so seeking through a video is not a conditional request per Range slice. The conditional `GET` carries `If-None-Match: "<hash>"` and has 5 seconds to answer, after which the deadline is re-armed at 300 seconds for whatever body follows, so a big replacement is not held to the answer's budget: a 304 serves the cached copy, new bytes are stored like a miss and replace the index entry (the old file is removed unless another entry shares it), a 404 or 403 drops the entry and the file and serves nothing, and anything else (offline, a 5xx, a replacement that died mid-download) serves the cached copy rather than blanking the picture;
 - miss: `GET /api/docs/:id/assets/file?ref=` through `sync.js`'s authenticated `api()` helper, stream to a temp file, move into the cache under the `ETag` hash, then serve.
 
 The cache is capped at 2 GB; when over, the least recently used entries are deleted first. Sign-out clears it. A document pulled to `Documents/Markie/Cloud` therefore shows its images with no files written beside it and no change to its text.

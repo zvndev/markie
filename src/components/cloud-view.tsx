@@ -296,14 +296,22 @@ export function CloudView({
               onToggle={toggle}
             >
               {syncedFromDevice.length > 0 ? (
-                syncedFromDevice.map(renderRow)
+                syncedFromDevice.map((i) => (
+                  <RowWithMediaNote key={i.cloudId ?? i.path ?? i.name} item={i} renderRow={renderRow} />
+                ))
               ) : (
                 <SectionEmpty id="synced" />
               )}
             </Section>
 
             <Section id="cloud" count={myCloudOnly.length} open={open.cloud} onToggle={toggle}>
-              {myCloudOnly.length > 0 ? myCloudOnly.map(renderRow) : <SectionEmpty id="cloud" />}
+              {myCloudOnly.length > 0 ? (
+                myCloudOnly.map((i) => (
+                  <RowWithMediaNote key={i.cloudId ?? i.path ?? i.name} item={i} renderRow={renderRow} />
+                ))
+              ) : (
+                <SectionEmpty id="cloud" />
+              )}
             </Section>
 
             <Section
@@ -313,7 +321,9 @@ export function CloudView({
               onToggle={toggle}
             >
               {sharedItems.length > 0 ? (
-                sharedItems.map(renderRow)
+                sharedItems.map((i) => (
+                  <RowWithMediaNote key={i.cloudId ?? i.path ?? i.name} item={i} renderRow={renderRow} />
+                ))
               ) : (
                 <SectionEmpty id="with-me" />
               )}
@@ -355,6 +365,43 @@ export function CloudView({
 
       <PanelNotice notice={notice} />
     </div>
+  );
+}
+
+// A row plus what reconciliation (electron/reconcile.js) knows about its
+// pictures. The row itself stays the Library's renderer so open, pull and
+// badges live in one place; this only adds a line beneath it.
+function RowWithMediaNote({
+  item,
+  renderRow,
+}: {
+  item: LibraryItem;
+  renderRow: (item: LibraryItem) => ReactNode;
+}) {
+  return (
+    <div>
+      {renderRow(item)}
+      <MediaNote item={item} />
+    </div>
+  );
+}
+
+// "media pending" while a picture is still on its way up; the name of the
+// first one that will never fit, when there is one. Any other skip reason
+// stays silent: those are files the local viewer would not show either, so
+// there is nothing there worth telling someone about. They are still in the
+// list though, and reading only its first entry let one of them hide the
+// oversized file behind it.
+function MediaNote({ item }: { item: LibraryItem }) {
+  const media = item.media;
+  if (!media) return null;
+  const notes: string[] = [];
+  if (media.state === "pending") notes.push("media pending");
+  const tooLarge = media.skipped?.find((s) => s.reason === "size");
+  if (tooLarge) notes.push(`file too large: ${tooLarge.ref}`);
+  if (notes.length === 0) return null;
+  return (
+    <div className="text-[10px] text-muted pl-5 truncate">{notes.join(" · ")}</div>
   );
 }
 

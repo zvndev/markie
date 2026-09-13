@@ -1712,6 +1712,37 @@ describe("pull", () => {
     expect(calls).toHaveLength(0);
   });
 
+  // The Library opens a file by the path fileGrants hands back, which is
+  // always realpath'd (electron/file-grants.js, for symlink-escape safety).
+  // A landing folder that is itself reached through a symlink — the e2e
+  // scripts' temporary HOME, or a real user's iCloud-redirected Documents —
+  // must not be tracked under a spelling nothing will ever open it by again.
+  it("tracks a landed document under the realpath, even when the landing folder is reached through a symlink", async () => {
+    // The default stand-in swallows track(); make it real so the row this
+    // test inspects is the one pull() actually writes to.
+    registry.track = (p: string, name: string) => {
+      if (!rows.has(p)) seedRow({ path: p, name });
+    };
+    // Nested under tmpDir so the top-level afterEach's rmSync cleans up both
+    // the real directory and the symlink to it.
+    const realDir = fs.mkdtempSync(path.join(tmpDir, "real-"));
+    const linkDir = path.join(tmpDir, "via-symlink");
+    fs.symlinkSync(realDir, linkDir, "dir");
+    const target = path.join(linkDir, "pulled.md");
+    const expectedPath = path.join(fs.realpathSync(realDir), "pulled.md");
+    respondWith({
+      status: 200,
+      body: { doc: { content: "cloud text\n", name: "pulled.md", version: 3 } },
+    });
+
+    const res = await sync.pull("cloud-1", target);
+
+    expect(res.ok).toBe(true);
+    expect(res.path).toBe(expectedPath);
+    expect(rows.get(expectedPath)).toMatchObject({ cloud_doc_id: "cloud-1", sync_state: "synced" });
+    expect(rows.has(target)).toBe(false);
+  });
+
   // Bringing back a synced file that was deleted from disk. The save dialog
   // may put the copy anywhere, and a document must end up with one row per
   // file, not one per attempt: two rows on one cloud document are two files
@@ -1737,7 +1768,10 @@ describe("pull", () => {
 
       expect((await sync.pull("cloud-1", restored)).ok).toBe(true);
 
-      expect(linkedRows().map((r) => r.path)).toEqual([restored]);
+      // tmpDir itself can sit behind a symlink (macOS's /var), so the row
+      // pull() actually writes to is restored's realpath, not the literal
+      // string handed in.
+      expect(linkedRows().map((r) => r.path)).toEqual([fs.realpathSync(restored)]);
       expect(rows.has(old)).toBe(false);
     });
 
@@ -1751,11 +1785,16 @@ describe("pull", () => {
 
       await sync.pull("cloud-1", restored);
 
-      expect(linkedRows().map((r) => r.path).sort()).toEqual([old, restored].sort());
+      expect(linkedRows().map((r) => r.path).sort()).toEqual(
+        [old, fs.realpathSync(restored)].sort()
+      );
     });
 
     it("needs nothing when the copy lands back at the old path", async () => {
-      const old = path.join(tmpDir, "old.md");
+      // Seeded under its own realpath: once the fix ships, that is the only
+      // spelling a cloud-linked row is ever created under, so a real re-pull
+      // of an already-tracked file always names it this way.
+      const old = path.join(fs.realpathSync(tmpDir), "old.md");
       seedRow({ path: old, sync_state: "synced", cloud_doc_id: "cloud-1", cloud_version: 2 });
 
       await sync.pull("cloud-1", old);
@@ -1910,10 +1949,14 @@ describe("landing", () => {
 
     const res = await sync.checkUpdates();
 
+    // tmpDir (this test's HOME) can itself sit behind a symlink (macOS's
+    // /var), so the row lands under the target's realpath, the same
+    // spelling the Library will later open it by.
     const target = path.join(cloudDir(), "from-the-laptop.md");
-    expect(res.landed).toEqual([{ path: target, name: "from-the-laptop.md", cloudId: "cloud-9" }]);
+    const realTarget = fs.realpathSync(target);
+    expect(res.landed).toEqual([{ path: realTarget, name: "from-the-laptop.md", cloudId: "cloud-9" }]);
     expect(fs.readFileSync(target, "utf-8")).toBe(TEXT);
-    expect(rows.get(target)).toMatchObject({
+    expect(rows.get(realTarget)).toMatchObject({
       sync_state: "synced",
       cloud_doc_id: "cloud-9",
       cloud_version: 1,
@@ -1953,7 +1996,7 @@ describe("landing", () => {
 
     const res = await sync.checkUpdates();
 
-    expect(res.landed[0].path).toBe(path.join(cloudDir(), "notes (2).md"));
+    expect(res.landed[0].path).toBe(fs.realpathSync(path.join(cloudDir(), "notes (2).md")));
     expect(fs.readFileSync(path.join(cloudDir(), "notes.md"), "utf-8")).toBe("mine, from before\n");
     expect(fs.readFileSync(path.join(cloudDir(), "notes (2).md"), "utf-8")).toBe(TEXT);
   });

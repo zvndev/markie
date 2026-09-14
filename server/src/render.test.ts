@@ -307,3 +307,45 @@ test("a percent-encoded reference matches its decoded form", () => {
   const html = renderMarkdownHTML("![](my%20shot.png)\n", { assetUrlFor: (ref) => (ref === "my shot.png" ? "/d/1/assets?ref=my%20shot.png" : null) });
   assert.match(html, /src="\/d\/1\/assets\?ref=my%20shot\.png"/);
 });
+
+test("renderMarkdownHTML rewrites a document link the reader may follow and mutes one they may not", () => {
+  const html = renderMarkdownHTML("[plan](plan.md) [secret](notes/secret.md) [free](other.md) [web](https://x.test/a.md)", {
+    docLinkFor: (ref) => (ref === "plan.md" ? { href: "/d/target-1" } : ref === "notes/secret.md" ? { muted: true } : null),
+  });
+  assert.match(html, /<a href="\/d\/target-1">plan<\/a>/);
+  assert.match(html, /<a class="doc-link-muted" title="This document isn't shared with you\.">secret<\/a>/);
+  assert.match(html, /<a href="other\.md">free<\/a>/);
+  assert.match(html, /<a href="https:\/\/x\.test\/a\.md">web<\/a>/);
+});
+
+test("renderMarkdownHTML looks a document link up by its decoded reference without query or fragment", () => {
+  const seen: string[] = [];
+  renderMarkdownHTML("[a](my%20plan.md#top) [b](b.md?x=1)", {
+    docLinkFor: (ref) => {
+      seen.push(ref);
+      return null;
+    },
+  });
+  assert.deepEqual(seen, ["my plan.md", "b.md"]);
+});
+
+test("the shared and public pages carry the muted link style and thread docLinkFor through", () => {
+  const shared = renderSharedDocPage({
+    title: "t",
+    markdown: "[x](x.md)",
+    docId: "d1",
+    siteUrl: "https://markie.example.com",
+    canEdit: false,
+    docLinkFor: () => ({ muted: true }),
+  });
+  assert.match(shared, /doc-link-muted \{/);
+  assert.match(shared, /<a class="doc-link-muted" title="This document isn't shared with you\.">x<\/a>/);
+  const pub = renderPublicPage({
+    title: "t",
+    markdown: "[x](x.md)",
+    token: "tok",
+    siteUrl: "https://markie.example.com",
+    docLinkFor: () => ({ href: "/s/other" }),
+  });
+  assert.match(pub, /<a href="\/s\/other">x<\/a>/);
+});

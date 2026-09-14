@@ -12,7 +12,7 @@ interface ElementNode {
 
 const MEDIA_TAGS = new Set(["img", "video", "audio", "source"]);
 
-function isLocal(src: string): boolean {
+export function isLocal(src: string): boolean {
   return !!src && !src.startsWith("//") && !/^[a-z][a-z0-9+.-]*:/i.test(src);
 }
 

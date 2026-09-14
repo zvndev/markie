@@ -12,8 +12,10 @@ import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { rehypeMedia } from "./rehype-media.ts";
 import { rehypeCloudAssets } from "./rehype-cloud-assets.ts";
+import { rehypeDocLinks, MUTED_LINK_TITLE } from "./rehype-doc-links.ts";
 import { rehypeEmbeds } from "./rehype-embeds.ts";
 import rehypeStringify from "rehype-stringify";
+import type { DocLinkAnswer } from "./doc-links.ts";
 import {
   downloadHref,
   downloadPlatforms,
@@ -60,6 +62,20 @@ const sanitizeSchema = {
   attributes: {
     ...defaultSchema.attributes,
     "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "ariaHidden", "ariaLabel"],
+    // defaultSchema.attributes.a restricts className to the single value
+    // "data-footnote-backref" (a hast-util-sanitize allow list, `[key,
+    // ...allowedValues]`), which is checked before the wildcard "*" list
+    // above and wins even though it is more specific, not more permissive:
+    // a tag-specific match short-circuits the wildcard rather than adding to
+    // it. Left alone, a muted doc link's class is silently emptied. Dropping
+    // that one entry and re-adding className unrestricted (everything else
+    // on the link, including data-footnote-backref itself, is unaffected)
+    // brings `a` in line with what the wildcard already intends everywhere
+    // else.
+    a: [
+      ...(defaultSchema.attributes?.a ?? []).filter((entry) => !(Array.isArray(entry) && entry[0] === "className")),
+      "className",
+    ],
     span: ["className", "style", "ariaHidden"],
     div: ["className", "style"],
     mark: ["style"],
@@ -85,6 +101,7 @@ const sanitizeSchema = {
 
 export interface RenderOptions {
   assetUrlFor?: (ref: string) => string | null;
+  docLinkFor?: (ref: string) => DocLinkAnswer;
 }
 
 function buildProcessor(opts: RenderOptions) {
@@ -98,16 +115,31 @@ function buildProcessor(opts: RenderOptions) {
     .use(rehypeRaw)
     .use(rehypeMedia);
   if (opts.assetUrlFor) p.use(rehypeCloudAssets, opts.assetUrlFor);
+  if (opts.docLinkFor) p.use(rehypeDocLinks, opts.docLinkFor);
   return p.use(rehypeEmbeds).use(rehypeHighlight).use(rehypeKatex).use(rehypeSanitize, sanitizeSchema).use(rehypeStringify);
 }
 
-// The no-assets case (most renders: public-page previews with no doc context,
-// and every existing test) is cached rather than rebuilt per call.
+// The no-context case (public-page previews with no doc context, and every
+// existing test) is cached rather than rebuilt per call.
 const plain = buildProcessor({});
 
+// hast-util-to-html's default (allowDangerousCharacters: false) escapes `'`
+// in every attribute value it writes, even a double-quoted one: the escaping
+// guards against a backtick-only quirk in very old IE that never applied to
+// an apostrophe, but the library's safe subset bundles the two together, and
+// there is no supported option that narrows it per attribute. Turning the
+// default off would stop escaping a backtick in an attribute value an
+// author's own document supplies (a title, an alt text), so it stays on for
+// everything the pipeline renders; only MUTED_LINK_TITLE, a fixed string
+// this server writes and no document ever supplies, gets its apostrophe put
+// back after stringify has already run.
+const MUTED_TITLE_ATTR = `title="${MUTED_LINK_TITLE}"`;
+const MUTED_TITLE_ATTR_ESCAPED = `title="${MUTED_LINK_TITLE.replace(/'/g, "&#x27;")}"`;
+
 export function renderMarkdownHTML(markdown: string, opts: RenderOptions = {}): string {
-  const processor = opts.assetUrlFor ? buildProcessor(opts) : plain;
-  return String(processor.processSync(markdown));
+  const processor = opts.assetUrlFor || opts.docLinkFor ? buildProcessor(opts) : plain;
+  const html = String(processor.processSync(markdown));
+  return opts.docLinkFor ? html.replaceAll(MUTED_TITLE_ATTR_ESCAPED, MUTED_TITLE_ATTR) : html;
 }
 
 const esc = (s: string) =>
@@ -174,6 +206,7 @@ const PAGE_CSS = `
   main :not(pre) > code { background: var(--code-bg); padding: 1px 5px; border-radius: 5px;
     font-size: 0.9em; }
   main a { color: var(--accent); }
+  main a.doc-link-muted { color: var(--muted); text-decoration: underline dotted; cursor: not-allowed; }
   main blockquote { border-left: 3px solid var(--line); margin: 1em 0; padding: 2px 16px;
     color: var(--muted); }
   main table { border-collapse: collapse; }
@@ -214,9 +247,10 @@ export function renderPublicPage(opts: {
   token: string;
   siteUrl: string;
   assetUrlFor?: (ref: string) => string | null;
+  docLinkFor?: (ref: string) => DocLinkAnswer;
 }): string {
   const { title, markdown, token, siteUrl } = opts;
-  const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor });
+  const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
   const safeTitle = esc(title);
   const download = primaryDownloadCta();
   return `<!doctype html>
@@ -356,9 +390,10 @@ export function renderSharedDocPage(opts: {
    */
   invitedEmail?: string | null;
   assetUrlFor?: (ref: string) => string | null;
+  docLinkFor?: (ref: string) => DocLinkAnswer;
 }): string {
   const { title, markdown, docId, siteUrl, sharedBy, canEdit, invitedEmail } = opts;
-  const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor });
+  const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
   const safeTitle = esc(title);
   const download = primaryDownloadCta(siteUrl);
   const openInMarkie = `markie://doc?id=${encodeURIComponent(docId)}&src=${encodeURIComponent(siteUrl)}`;

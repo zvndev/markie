@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildPDFHTML, buildPDFHTMLSync, getPDFStyles, getPDFStylesSync } from "./pdf-styles";
+import { buildPDFHTML, buildPDFHTMLSync, FIT_SCRIPT, getPDFStyles, getPDFStylesSync } from "./pdf-styles";
 
 describe("getPDFStyles", () => {
   it("produces one closed style block per theme", async () => {
@@ -60,14 +60,16 @@ describe("buildPDFHTML", () => {
     expect(head.match(/<\/style>/g)).toHaveLength(1);
 
     // And the closing sequences themselves are neutralised, so the injected
-    // markup cannot end an enclosing element or introduce a live <script>.
-    expect(html).not.toContain("<script>");
-    expect(html).toContain("&lt;/script");
+    // markup cannot end an enclosing element.
     expect(html).toContain("&lt;/style");
 
-    // Every style/script close tag in the document belongs to the template.
-    expect(html.match(/<\/style>/g)).toHaveLength(1);
-    expect(html.match(/<\/script>/g)).toBeNull();
+    // The template's own fit script is the only script in the document, and
+    // it sits in the head; the injected one never becomes live.
+    expect(html.match(/<script>/g)).toHaveLength(1);
+    expect(html.match(/<\/script>/g)).toHaveLength(1);
+    expect(html.indexOf("<script>")).toBeLessThan(html.indexOf("</head>"));
+    expect(html).toContain("&lt;/script");
+    expect(html).toContain("&lt;script");
   });
 
   it("leaves ordinary rendered markdown untouched", async () => {
@@ -83,5 +85,29 @@ describe("buildPDFHTML", () => {
     expect(without).toContain("<article class=\"markdown-body\"><p>hi</p></article>");
     expect(without).not.toContain("data:font/woff2;base64,");
     expect(withMath.length).toBeGreaterThan(without.length);
+  });
+});
+
+describe("print layout", () => {
+  it("wraps what cannot scroll on paper and lets long tables break between rows", () => {
+    const css = getPDFStylesSync("light");
+    expect(css).toContain(".markdown-body { overflow-wrap: anywhere; }");
+    expect(css).toMatch(/\.markdown-body pre \{[^}]*white-space: pre-wrap;/);
+    expect(css).not.toMatch(/\.markdown-body pre \{[^}]*overflow-x: auto/);
+    expect(css).toMatch(/\.markdown-body table \{[^}]*max-width: 100%;/);
+    expect(css).not.toMatch(/\.markdown-body table \{[^}]*page-break-inside: avoid/);
+    expect(css).toContain(".markdown-body thead { display: table-header-group; }");
+    expect(css).toContain(".markdown-body tr { page-break-inside: avoid; }");
+    expect(css).toContain(".markdown-body th, .markdown-body td { overflow-wrap: anywhere; }");
+  });
+
+  it("ships the fit script once, in the head, with nothing that could close it early", async () => {
+    const html = await buildPDFHTML("<p>hi</p>", "light");
+    expect(html.match(/<script>/g)).toHaveLength(1);
+    expect(html.indexOf("<script>")).toBeLessThan(html.indexOf("</head>"));
+    expect(html).toContain(FIT_SCRIPT);
+    expect(FIT_SCRIPT).not.toMatch(/<\/script/i);
+    expect(FIT_SCRIPT).toContain("style.zoom");
+    expect(FIT_SCRIPT).toContain('breakInside = "auto"');
   });
 });

@@ -150,6 +150,14 @@ function getDB() {
     if (!fileCols.some((c) => c.name === col)) db.exec(`ALTER TABLE files ADD COLUMN ${col} TEXT`);
   }
 
+  // Links to other documents. "synced" when the server holds the map at the
+  // fingerprint; "pending" when a push is owed; "refused" when the server
+  // rejected the body, held at the fingerprint so it is not resent until the
+  // document's links change.
+  for (const col of ["links_state", "links_fingerprint"]) {
+    if (!fileCols.some((c) => c.name === col)) db.exec(`ALTER TABLE files ADD COLUMN ${col} TEXT`);
+  }
+
   // Schema versioning starts at 0.5.0. Version 0 is every database that
   // predates it; the PRAGMA-guarded share_role ALTER above predates versioning
   // and stays as-is so any skipped-version database still heals.
@@ -400,6 +408,8 @@ function update(filePath, fields) {
     "assets_state",
     "assets_fingerprint",
     "assets_skipped",
+    "links_state",
+    "links_fingerprint",
   ];
   const sets = [];
   const values = [];

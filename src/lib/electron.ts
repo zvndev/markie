@@ -90,6 +90,14 @@ export interface LinkPreview {
   image: string | null;
 }
 
+export type DocLinkKind = "local" | "cloud" | "none" | "unknown";
+
+export interface DocLinkAnswer {
+  href: string;
+  kind: DocLinkKind;
+  target?: string;
+}
+
 // ── Skills ──
 // A skill is a folder with a SKILL.md, installed by copying it into whichever
 // agent tool's folder the user picks. `{ project }` installs into a workspace
@@ -282,6 +290,15 @@ export interface ElectronAPI {
     href: string;
     docDir: string | null;
   }): Promise<{ ok: boolean; error?: string }>;
+  /** What each document link in the open document is: see electron/doc-link-open.js. */
+  resolveDocLinks(payload: { docPath: string | null; hrefs: string[] }): Promise<DocLinkAnswer[]>;
+  /**
+   * Open a document link resolved as "cloud": a copy this machine has, or one
+   * landed once. main re-resolves on every open, so a failure can carry the
+   * kind it found instead (the target may since have landed on disk, and the
+   * caller falls back to openLocalFile rather than reporting a broken link).
+   */
+  openDocLink(payload: { href: string; docPath: string | null }): Promise<{ ok: true } | { ok: false; kind?: DocLinkKind; error?: string }>;
   syncConfig(cfg: {
     token: string | null;
     serverURL: string;

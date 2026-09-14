@@ -38,9 +38,10 @@ import {
   attachmentFor,
   opensAsDocument,
 } from "@/lib/attach";
-import { getAssetBaseDir } from "@/lib/asset-url";
+import { getAssetBaseDir, getAssetDocPath } from "@/lib/asset-url";
 import { getElectronAPI } from "@/lib/electron";
 import { findHighlightPlugin, findPluginKey } from "@/lib/rich-find";
+import { markDocLinks } from "@/lib/doc-links";
 
 interface RichViewProps {
   value: string; // canonical markdown
@@ -415,6 +416,31 @@ function RichViewInner({
     // role raised an update event, which the handler above took for an edit.
     if (editor && editor.isEditable !== shouldEdit) editor.setEditable(shouldEdit, false);
   }, [editor, locked]);
+
+  // Document links: once the editor has drawn, ask main what each
+  // `[x](plan.md)` is for this reader and mark the anchors, so a link to a
+  // document this account may not open reads as muted before the click.
+  // Re-run after edits, debounced, since TipTap redraws the nodes it changes.
+  // A preview of somebody else's file (assetBaseDir set) is not the open
+  // document, so its links are left alone.
+  useEffect(() => {
+    if (!editor || assetBaseDir) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const run = () => {
+      timer = null;
+      void markDocLinks(editor.view.dom, getAssetDocPath());
+    };
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(run, 300);
+    };
+    schedule();
+    editor.on("update", schedule);
+    return () => {
+      editor.off("update", schedule);
+      if (timer) clearTimeout(timer);
+    };
+  }, [editor, assetBaseDir, value]);
 
   // Settle the debounce now and hand back what the document currently says.
   // Null means nothing was pending, so the parent's own copy is already current.

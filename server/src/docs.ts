@@ -15,6 +15,7 @@ import { closeRoom, purgeDocUpdates } from "./collab.ts";
 import { purgeDocThreads } from "./comments.ts";
 import { revokePublicLink } from "./public-links.ts";
 import { serveAsset, unlinkDocAssets } from "./assets.ts";
+import { removeDocLinks } from "./doc-links.ts";
 
 const db = openDatabase();
 
@@ -204,6 +205,7 @@ docs.delete("/:id", async (c) => {
   removeDocPending(docId);
   revokePublicLink(docId);
   purgeDocThreads(docId);
+  removeDocLinks(docId);
   await unlinkDocAssets(docId);
   return c.json({ ok: true });
 });

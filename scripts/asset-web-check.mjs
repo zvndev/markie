@@ -6,7 +6,9 @@
 // No Markie window here — sync-down-check.mjs already proves the app draws a
 // picture it fetched through the cloud. This proves the server's own gates:
 // the bearer route, the signed-in web page, and the public link, including
-// what happens the moment that link is revoked.
+// what happens the moment that link is revoked. It also proves document
+// links: a pointer resolves, mutes, or opens depending on who is reading and
+// whether the target has been shared or made public.
 //
 //   node scripts/asset-web-check.mjs
 import { spawn } from "node:child_process";
@@ -253,6 +255,60 @@ async function main() {
     (await fetch(`${SERVER}/d/${id}/assets?ref=shot.png`, { headers: cookieFor(stranger) })).status === 404
   );
   check("the public page serves it by token", (await fetch(`${SERVER}/s/${token}/assets?ref=shot.png`)).status === 200);
+
+  // Document links: the same server, the same three accounts. A second
+  // document beside the first, linked by name, and one more pointer at an id
+  // nobody owns. The member may read the source and not the target, so the
+  // link is muted for them and open for the owner; then the target is shared
+  // and the same page opens it; then the public page resolves only once the
+  // target has a public link of its own.
+  const targetId = `asset-web-target-${Date.now()}`;
+  await putDoc(owner.token, targetId, "plan.md", "# The plan\n", 0);
+  const sourceVersion = await putDoc(owner.token, id, "asset-web.md", "# Asset web check\n\n![](shot.png)\n\n[the plan](plan.md) [nowhere](nowhere.md)\n", 1);
+  const linked2 = await fetch(`${SERVER}/api/docs/${id}/links`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${owner.token}`, ...ORIGIN },
+    body: JSON.stringify({ links: [{ ref: "plan.md", target: targetId }, { ref: "nowhere.md", target: "never-minted" }], baseVersion: sourceVersion }),
+  });
+  if (!linked2.ok) throw new Error(`link docs: ${linked2.status} ${await linked2.text()}`);
+
+  const ownerLinks = await (await get(`/api/docs/${id}/links`, owner)).json();
+  check("the owner reads the link with its target over the bearer route", ownerLinks.links?.some((l) => l.ref === "plan.md" && l.target === targetId) === true);
+  const viewerLinks = await (await get(`/api/docs/${id}/links`, viewer)).json();
+  check("a member who may not read the target gets the ref alone", viewerLinks.links?.some((l) => l.ref === "plan.md" && l.target === undefined) === true);
+  check("a stranger gets 404 from the link route", (await get(`/api/docs/${id}/links`, stranger)).status === 404);
+
+  const mutedPage = await (await fetch(`${SERVER}/d/${id}`, { headers: cookieFor(viewer) })).text();
+  // rehype-stringify entity-encodes the apostrophe in the title attribute
+  // (&#x27;), the same quirk server/src/doc-view.test.ts, render.test.ts and
+  // public.test.ts already match with this same alternation.
+  check("the shared page mutes the link for a member without the target", /class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\."/.test(mutedPage) && !mutedPage.includes(`/d/${targetId}`));
+  const ownerPage = await (await fetch(`${SERVER}/d/${id}`, { headers: cookieFor(owner) })).text();
+  check("the shared page opens the link for the owner", ownerPage.includes(`href="/d/${targetId}"`));
+
+  const shareTarget = await fetch(`${SERVER}/api/docs/${targetId}/shares`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${owner.token}`, ...ORIGIN },
+    body: JSON.stringify({ email: viewer.email, role: "viewer" }),
+  });
+  if (!shareTarget.ok) throw new Error(`share target: ${shareTarget.status} ${await shareTarget.text()}`);
+  const openPage = await (await fetch(`${SERVER}/d/${id}`, { headers: cookieFor(viewer) })).text();
+  check("sharing the target opens the link for the member", openPage.includes(`href="/d/${targetId}"`));
+  check("a pointer at an id nobody owns stays muted", /class="doc-link-muted"[^>]*>nowhere</.test(openPage));
+
+  const publicMuted = await (await fetch(`${SERVER}/s/${token}`)).text();
+  // Anchor-level, not just the class name anywhere on the page: the page's
+  // own <style> always carries "main a.doc-link-muted { ... }", so a bare
+  // substring match would pass even with no muted anchor on the page.
+  check("the public page mutes a link to a private target", /class="doc-link-muted"[^>]*>the plan</.test(publicMuted) && !publicMuted.includes(targetId));
+  const targetLink = await fetch(`${SERVER}/api/docs/${targetId}/public-link`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${owner.token}`, ...ORIGIN },
+  });
+  if (!targetLink.ok) throw new Error(`target public-link: ${targetLink.status} ${await targetLink.text()}`);
+  const targetToken = String((await targetLink.json()).url).split("/s/")[1];
+  const publicOpen = await (await fetch(`${SERVER}/s/${token}`)).text();
+  check("the public page opens a link to a public target by its token", publicOpen.includes(`href="/s/${targetToken}"`));
 
   const revoked = await fetch(`${SERVER}/api/docs/${id}/public-link`, {
     method: "DELETE",

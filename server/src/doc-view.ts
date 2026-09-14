@@ -23,6 +23,7 @@ import {
   memberForToken,
 } from "./shares.ts";
 import { pendingForToken } from "./pending.ts";
+import { sharedPageLinkFor } from "./doc-links.ts";
 import { assetRefsFor, assetVersion, serveAsset } from "./assets.ts";
 import { markieSiteUrl } from "./downloads.ts";
 import { renderAccessRequiredPage, renderSharedDocPage } from "./render.ts";
@@ -60,6 +61,14 @@ function inviterName(userId: string): string | null {
 export interface DocViewer {
   canEdit: boolean;
   /**
+   * The account this viewer is, when they are one. A member token maps to
+   * its member; a session names its user; a pending invite has nobody yet.
+   * Document links are followed as this user, so a viewer without one sees
+   * every link muted: the target page could not be opened with what they
+   * hold anyway.
+   */
+  userId?: string;
+  /**
    * The address an unclaimed invite was sent to, when that invite is what
    * granted this read. Absent for members and for signed-in owners, who already
    * have the document in their Library.
@@ -80,7 +89,7 @@ export async function resolveViewer(
     // token for one document would open any other.
     if (member && member.docId === docId) {
       const level = accessLevel(docId, member.userId);
-      if (canReadLevel(level)) return { canEdit: canEditLevel(level) };
+      if (canReadLevel(level)) return { canEdit: canEditLevel(level), userId: member.userId };
     }
     const pending = pendingForToken(token);
     // A pending invite has no user to check, so the row's own existence is the
@@ -102,7 +111,7 @@ export async function resolveViewer(
   const userId = session?.user?.id;
   if (userId) {
     const level = accessLevel(docId, userId);
-    if (canReadLevel(level)) return { canEdit: canEditLevel(level) };
+    if (canReadLevel(level)) return { canEdit: canEditLevel(level), userId };
   }
 
   return null;
@@ -153,6 +162,7 @@ docView.get("/d/:id", async (c) => {
       canEdit: viewer.canEdit,
       invitedEmail: viewer.invitedEmail ?? null,
       assetUrlFor,
+      docLinkFor: sharedPageLinkFor(docId, viewer.userId ?? null),
     })
   );
 });

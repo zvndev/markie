@@ -513,6 +513,17 @@ body {
   border-bottom-color: var(--blue);
 }
 
+/* A document link this reader may not follow (src/lib/doc-links.ts). */
+.markdown-body a[data-doc-link="none"] {
+  color: var(--muted);
+  border-bottom: 1px dotted var(--muted);
+  cursor: not-allowed;
+}
+
+.markdown-body a[data-doc-link="none"]:hover {
+  border-bottom-color: var(--muted);
+}
+
 .markdown-body strong {
   font-weight: 650;
   color: var(--foreground);

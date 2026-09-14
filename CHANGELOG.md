@@ -8,6 +8,17 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **A link to another document follows the reader.** `[the plan](plan.md)`
+  in a synced document opens the plan for anyone who may read it: in Markie,
+  on the shared web page, and on a public page when the plan has a public
+  link of its own. A reader who may not read it sees the link muted and, on
+  a click, "This document isn't shared with you." Linking never shares or
+  syncs the target; it points at whatever its owner already chose. In Markie
+  a linked document you already have opens in place; one you do not lands
+  once as a view-only copy.
+
 ## [0.7.0] - 2026-09-13
 
 ### Added

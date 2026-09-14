@@ -41,6 +41,16 @@ const assetSync = {
     return mediaAnswer();
   },
 };
+let links: string[];
+let linkBase: Array<number | undefined>;
+let linkAnswer: () => Record<string, unknown>;
+const linkSync = {
+  pushLinks: async (p: string, _cloudId: string, _content: string, opts?: { baseVersion?: number }) => {
+    links.push(p);
+    linkBase.push(opts?.baseVersion);
+    return linkAnswer();
+  },
+};
 
 function seed(row: Row, content: string | null) {
   rows.set(row.path, { name: "x.md", sync_state: "synced", cloud_doc_id: "c" + rows.size, cloud_version: 1, content_hash: null, assets_state: "synced", ...row });
@@ -54,6 +64,9 @@ beforeEach(() => {
   media = [];
   mediaBase = [];
   mediaAnswer = () => ({ ok: true, uploaded: 0, skipped: [] });
+  links = [];
+  linkBase = [];
+  linkAnswer = () => ({ unchanged: true });
   listing = { docs: [] };
 });
 
@@ -180,7 +193,7 @@ describe("reconcile", () => {
     seed({ path: "/d/un.md", cloud_doc_id: "c1", sync_state: "unpushed" }, "x");
     listing = null;
     const r = await createReconciler({ sync, registry, assetSync, fs, sleep: async () => {} }).run();
-    expect(r).toEqual({ pushed: [], mediaPushed: [], mediaUnchanged: [], skipped: [], errors: [{ path: "*", error: "listing unavailable" }] });
+    expect(r).toEqual({ pushed: [], mediaPushed: [], mediaUnchanged: [], linksPushed: [], linksUnchanged: [], skipped: [], errors: [{ path: "*", error: "listing unavailable" }] });
   });
 
   it("turns a throw while building the listing into an error result instead of rejecting", async () => {
@@ -193,8 +206,46 @@ describe("reconcile", () => {
       },
     };
     const r = await createReconciler({ sync, registry: brokenRegistry, assetSync, fs, sleep: async () => {} }).run();
-    expect(r).toEqual({ pushed: [], mediaPushed: [], mediaUnchanged: [], skipped: [], errors: [{ path: "*", error: "registry unavailable" }] });
+    expect(r).toEqual({ pushed: [], mediaPushed: [], mediaUnchanged: [], linksPushed: [], linksUnchanged: [], skipped: [], errors: [{ path: "*", error: "registry unavailable" }] });
     expect(pushed).toEqual([]);
+  });
+
+  it("pushes links for a row whose text is current, with the listing's version, and counts the answers", async () => {
+    seed({ path: "/d/fine.md", cloud_doc_id: "c1", cloud_version: 4, content_hash: sha("ok") }, "ok");
+    seed({ path: "/d/same.md", cloud_doc_id: "c2", cloud_version: 2, content_hash: sha("ok") }, "ok");
+    listing = { docs: [{ id: "c1", version: 4, hash: sha("ok") }, { id: "c2", version: 2, hash: sha("ok") }] };
+    let n = 0;
+    linkAnswer = () => (n++ === 0 ? { ok: true, linked: 1 } : { unchanged: true });
+    const r = await createReconciler({ sync, registry, assetSync, linkSync, fs, sleep: async () => {} }).run();
+    expect(links).toEqual(["/d/fine.md", "/d/same.md"]);
+    expect(linkBase).toEqual([4, 2]);
+    expect(r.linksPushed).toEqual(["/d/fine.md"]);
+    expect(r.linksUnchanged).toEqual(["/d/same.md"]);
+    expect(r.errors).toEqual([]);
+  });
+
+  it("does not push links itself for a row whose text it pushed, and reports refusals and errors", async () => {
+    seed({ path: "/d/un.md", cloud_doc_id: "c1", sync_state: "unpushed", content_hash: sha("old") }, "old");
+    seed({ path: "/d/bad.md", cloud_doc_id: "c2", content_hash: sha("ok") }, "ok");
+    seed({ path: "/d/off.md", cloud_doc_id: "c3", content_hash: sha("ok") }, "ok");
+    listing = { docs: [{ id: "c1", version: 1, hash: sha("old") }, { id: "c2", version: 1, hash: sha("ok") }, { id: "c3", version: 1, hash: sha("ok") }] };
+    let n = 0;
+    linkAnswer = () => (n++ === 0 ? { refused: 413 } : { error: "link push failed (offline)" });
+    const r = await createReconciler({ sync, registry, assetSync, linkSync, fs, sleep: async () => {} }).run();
+    expect(pushed).toEqual(["/d/un.md"]);
+    expect(links).toEqual(["/d/bad.md", "/d/off.md"]);
+    expect(r.errors).toEqual([
+      { path: "/d/bad.md", error: "links refused (413)" },
+      { path: "/d/off.md", error: "link push failed (offline)" },
+    ]);
+  });
+
+  it("runs without a link sync at all", async () => {
+    seed({ path: "/d/fine.md", cloud_doc_id: "c1", content_hash: sha("ok") }, "ok");
+    listing = { docs: [{ id: "c1", version: 1, hash: sha("ok") }] };
+    const r = await createReconciler({ sync, registry, assetSync, fs, sleep: async () => {} }).run();
+    expect(r.linksPushed).toEqual([]);
+    expect(r.linksUnchanged).toEqual([]);
   });
 });
 

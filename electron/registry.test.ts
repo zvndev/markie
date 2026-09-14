@@ -198,6 +198,14 @@ describe("tracking files", () => {
     expect(row.assets_skipped).toBe("[]");
   });
 
+  it("carries the link columns and lets update write them", () => {
+    registry.track("/docs/a.md", "a.md");
+    registry.update("/docs/a.md", { links_state: "pending", links_fingerprint: "f" });
+    const row = registry.get("/docs/a.md");
+    expect(row.links_state).toBe("pending");
+    expect(row.links_fingerprint).toBe("f");
+  });
+
   it("forgets one row and leaves the rest", () => {
     // pruneMissing only ever drops rows the cloud never heard of. A row that
     // is cloud-linked and dead on disk needs to be let go of by name, which

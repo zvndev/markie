@@ -88,7 +88,7 @@ A plugin shaped like `rehypeCloudAssets`, given a function `linkFor(ref)` that r
 
 - `null` (the document has no stored pointer for this ref): leaves the anchor as written.
 - `{ href }`: replaces the href.
-- `{ muted: true }`: removes the href, adds class `doc-link-muted` and `title="This document isn't shared with you"`. The page styles draw it in the muted colour with a dotted underline and a not-allowed cursor.
+- `{ muted: true }`: removes the href, adds class `doc-link-muted` and `title="This document isn't shared with you."`. The page styles draw it in the muted colour with a dotted underline and a not-allowed cursor.
 
 The plugin runs before sanitize, which already lets `className` and `title` through on every element.
 

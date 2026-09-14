@@ -12,8 +12,10 @@ import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { rehypeMedia } from "./rehype-media.ts";
 import { rehypeCloudAssets } from "./rehype-cloud-assets.ts";
+import { rehypeDocLinks } from "./rehype-doc-links.ts";
 import { rehypeEmbeds } from "./rehype-embeds.ts";
 import rehypeStringify from "rehype-stringify";
+import type { DocLinkAnswer } from "./doc-links.ts";
 import {
   downloadHref,
   downloadPlatforms,
@@ -60,6 +62,24 @@ const sanitizeSchema = {
   attributes: {
     ...defaultSchema.attributes,
     "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "ariaHidden", "ariaLabel"],
+    // defaultSchema.attributes.a restricts className to the single value
+    // "data-footnote-backref" (a hast-util-sanitize allow list, `[key,
+    // ...allowedValues]`), which is checked before the wildcard "*" list
+    // above and wins even though it is more specific, not more permissive: a
+    // tag-specific match short-circuits the wildcard rather than adding to
+    // it. Left alone, a muted doc link's class is silently emptied. The fix
+    // stays just as narrow as the entry it replaces: the one existing value
+    // plus the one new value the muted style needs, nothing unrestricted.
+    // (Appending a second ["className", ...] entry instead of replacing the
+    // first would not work: findDefinition below returns on the first name
+    // match, so the original, narrower entry would still win and the
+    // muted class would go on being emptied.) An author's own
+    // `class="btn primary"` still cannot survive sanitize and impersonate
+    // the page's real buttons.
+    a: [
+      ...(defaultSchema.attributes?.a ?? []).filter((entry) => !(Array.isArray(entry) && entry[0] === "className")),
+      ["className", "data-footnote-backref", "doc-link-muted"],
+    ],
     span: ["className", "style", "ariaHidden"],
     div: ["className", "style"],
     mark: ["style"],
@@ -85,6 +105,7 @@ const sanitizeSchema = {
 
 export interface RenderOptions {
   assetUrlFor?: (ref: string) => string | null;
+  docLinkFor?: (ref: string) => DocLinkAnswer;
 }
 
 function buildProcessor(opts: RenderOptions) {
@@ -98,15 +119,21 @@ function buildProcessor(opts: RenderOptions) {
     .use(rehypeRaw)
     .use(rehypeMedia);
   if (opts.assetUrlFor) p.use(rehypeCloudAssets, opts.assetUrlFor);
+  // Installed unconditionally, even when no caller passed docLinkFor: the
+  // plugin's own job of scrubbing an author's borrowed doc-link-muted class
+  // (rehype-doc-links.ts) must run on every render path, not just the ones
+  // that resolve links. Its default docLinkFor answers null for everything,
+  // so a caller that does pass one sees no change in behaviour.
+  p.use(rehypeDocLinks, opts.docLinkFor);
   return p.use(rehypeEmbeds).use(rehypeHighlight).use(rehypeKatex).use(rehypeSanitize, sanitizeSchema).use(rehypeStringify);
 }
 
-// The no-assets case (most renders: public-page previews with no doc context,
-// and every existing test) is cached rather than rebuilt per call.
+// The no-context case (public-page previews with no doc context, and every
+// existing test) is cached rather than rebuilt per call.
 const plain = buildProcessor({});
 
 export function renderMarkdownHTML(markdown: string, opts: RenderOptions = {}): string {
-  const processor = opts.assetUrlFor ? buildProcessor(opts) : plain;
+  const processor = opts.assetUrlFor || opts.docLinkFor ? buildProcessor(opts) : plain;
   return String(processor.processSync(markdown));
 }
 
@@ -174,6 +201,7 @@ const PAGE_CSS = `
   main :not(pre) > code { background: var(--code-bg); padding: 1px 5px; border-radius: 5px;
     font-size: 0.9em; }
   main a { color: var(--accent); }
+  main a.doc-link-muted { color: var(--muted); text-decoration: underline dotted; cursor: not-allowed; }
   main blockquote { border-left: 3px solid var(--line); margin: 1em 0; padding: 2px 16px;
     color: var(--muted); }
   main table { border-collapse: collapse; }
@@ -214,9 +242,10 @@ export function renderPublicPage(opts: {
   token: string;
   siteUrl: string;
   assetUrlFor?: (ref: string) => string | null;
+  docLinkFor?: (ref: string) => DocLinkAnswer;
 }): string {
   const { title, markdown, token, siteUrl } = opts;
-  const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor });
+  const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
   const safeTitle = esc(title);
   const download = primaryDownloadCta();
   return `<!doctype html>
@@ -356,9 +385,10 @@ export function renderSharedDocPage(opts: {
    */
   invitedEmail?: string | null;
   assetUrlFor?: (ref: string) => string | null;
+  docLinkFor?: (ref: string) => DocLinkAnswer;
 }): string {
   const { title, markdown, docId, siteUrl, sharedBy, canEdit, invitedEmail } = opts;
-  const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor });
+  const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
   const safeTitle = esc(title);
   const download = primaryDownloadCta(siteUrl);
   const openInMarkie = `markie://doc?id=${encodeURIComponent(docId)}&src=${encodeURIComponent(siteUrl)}`;

@@ -274,6 +274,24 @@ function setAssetSync(next) {
 }
 const mediaFailure = (err) => ({ pending: true, error: `media push failed (${err && err.message ? err.message : err})` });
 
+// The link push (electron/link-sync.js), handed in by main the same way the
+// asset sync is, so this module needs no Electron and the tests can stub it.
+let linkSync = null;
+function setLinkSync(next) {
+  linkSync = next;
+}
+async function pushLinksSafe(filePath, cloudId, content, baseVersion) {
+  if (!linkSync) return null;
+  try {
+    return await linkSync.pushLinks(filePath, cloudId, content, { baseVersion });
+  } catch (err) {
+    // Same reasoning as linkMedia's catch: a throw must not leave the row
+    // claiming its links are current.
+    registry.update(filePath, { links_state: "pending" });
+    return { error: `link push failed (${err && err.message ? err.message : err})` };
+  }
+}
+
 // Everything up to and including the uploads. Safe before the text PUT: the
 // server keeps an uploaded asset nothing points at for an hour, so bytes can
 // wait for a snapshot that may never land.
@@ -412,7 +430,8 @@ async function push(filePath, name, content) {
       last_synced_at: new Date().toISOString(),
     });
     if (staged && staged.staged) media = await linkMedia(filePath, row.cloud_doc_id, staged.staged, version);
-    return { ok: true, version, media };
+    const links = await pushLinksSafe(filePath, row.cloud_doc_id, content, version);
+    return { ok: true, version, media, links };
   }
   if (res.status === 409) {
     registry.update(filePath, { sync_state: "conflict" });
@@ -1033,6 +1052,7 @@ module.exports = {
   pull,
   resolve,
   setAssetSync,
+  setLinkSync,
   checkUpdates,
   remoteContent,
   resolveKeepBoth,

@@ -8,6 +8,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-14
+
 ### Added
 
 - **A link to another document follows the reader.** `[the plan](plan.md)`

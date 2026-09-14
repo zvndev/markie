@@ -9,16 +9,17 @@
  *   sync: { api: Function, push: Function },
  *   registry: { list: Function, get: Function, update: Function, hashContent: Function },
  *   assetSync: { pushAssets: Function },
+ *   linkSync?: { pushLinks: Function } | null,
  *   fs?: { existsSync: (path: string) => boolean, readFileSync: (path: string, encoding: string) => string },
  *   sleep?: (ms: number) => Promise<void>,
  *   gapMs?: number,
  * }} deps
  */
-function createReconciler({ sync, registry, assetSync, fs = require("node:fs"), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), gapMs = 250 }) {
+function createReconciler({ sync, registry, assetSync, linkSync = null, fs = require("node:fs"), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), gapMs = 250 }) {
   let cursor = 0;
 
   async function run({ limit = 50 } = {}) {
-    const result = { pushed: [], mediaPushed: [], mediaUnchanged: [], skipped: [], errors: [] };
+    const result = { pushed: [], mediaPushed: [], mediaUnchanged: [], linksPushed: [], linksUnchanged: [], skipped: [], errors: [] };
     let remote;
     let rows;
     // Building the listing is one unit: a throw from either the request or
@@ -102,6 +103,17 @@ function createReconciler({ sync, registry, assetSync, fs = require("node:fs"), 
         else if (media && media.ok) result.mediaPushed.push(row.path);
         else if (media && media.unchanged) result.mediaUnchanged.push(row.path);
         else if (media && media.error) result.errors.push({ path: row.path, error: media.error });
+        // Links are pointers, so there is nothing to stage; one call with the
+        // same base version the media used. A row whose text was pushed above
+        // already had its links pushed by sync.push and never reaches here.
+        if (linkSync) {
+          const links = await linkSync.pushLinks(row.path, row.cloud_doc_id, content, { baseVersion: row.cloud_version ?? 0 });
+          if (links && links.ok) result.linksPushed.push(row.path);
+          else if (links && links.unchanged) result.linksUnchanged.push(row.path);
+          else if (links && links.refused) result.errors.push({ path: row.path, error: `links refused (${links.refused})` });
+          else if (links && links.conflict) result.errors.push({ path: row.path, error: "links conflict" });
+          else if (links && links.error) result.errors.push({ path: row.path, error: links.error });
+        }
       } catch (err) {
         result.errors.push({ path: row.path, error: err && err.message ? err.message : String(err) });
       }

@@ -44,6 +44,9 @@ interface Row {
   // row's media.
   assets_state?: string | null;
   assets_skipped?: string | null;
+  // What the link push (electron/link-sync.js) last learned about this row's
+  // link map.
+  links_state?: string | null;
 }
 
 const realRegistry = { ...registry };
@@ -156,7 +159,7 @@ describe("push", () => {
 
     const res = await sync.push("/docs/a.md", "a.md", "new");
 
-    expect(res).toEqual({ ok: true, version: 5, media: null });
+    expect(res).toEqual({ ok: true, version: 5, media: null, links: null });
     expect(row.sync_state).toBe("synced");
     expect(row.cloud_version).toBe(5);
     expect(row.content_hash).toBe("hash:new");
@@ -232,7 +235,7 @@ describe("push", () => {
 
     const res = await sync.push("/docs/a.md", "a.md", "recovered");
 
-    expect(res).toEqual({ ok: true, version: 5, media: null });
+    expect(res).toEqual({ ok: true, version: 5, media: null, links: null });
     expect(row.sync_state).toBe("synced");
     expect(row.cloud_version).toBe(5);
   });
@@ -244,6 +247,41 @@ describe("push", () => {
     expect(await sync.push("/docs/a.md", "a.md", "new")).toEqual({
       skipped: "not synced",
     });
+  });
+
+  it("pushes the document's links after the text and the media, with the new version", async () => {
+    const row = syncedRow("/docs/a.md");
+    const calls = respondWith({ status: 200, body: { version: 5 } });
+    const seen: unknown[] = [];
+    sync.setLinkSync({
+      pushLinks: async (filePath: string, cloudId: string, content: string, opts: { baseVersion?: number }) => {
+        seen.push([filePath, cloudId, content, opts]);
+        return { ok: true, linked: 1 };
+      },
+    });
+    try {
+      const res = await sync.push("/docs/a.md", "a.md", "[p](p.md)");
+      expect(res).toEqual({ ok: true, version: 5, media: null, links: { ok: true, linked: 1 } });
+      expect(seen).toEqual([["/docs/a.md", "cloud-1", "[p](p.md)", { baseVersion: 5 }]]);
+      expect(row.sync_state).toBe("synced");
+      expect(calls).toHaveLength(1);
+    } finally {
+      sync.setLinkSync(null);
+    }
+  });
+
+  it("reports a link push that threw without failing the text push", async () => {
+    const row = syncedRow("/docs/a.md");
+    respondWith({ status: 200, body: { version: 5 } });
+    sync.setLinkSync({ pushLinks: async () => { throw new Error("boom"); } });
+    try {
+      const res = await sync.push("/docs/a.md", "a.md", "x");
+      expect(res).toEqual({ ok: true, version: 5, media: null, links: { error: "link push failed (boom)" } });
+      expect(row.sync_state).toBe("synced");
+      expect(row.links_state).toBe("pending");
+    } finally {
+      sync.setLinkSync(null);
+    }
   });
 });
 
@@ -630,6 +668,7 @@ describe("viewer access", () => {
       ok: true,
       version: 5,
       media: null,
+      links: null,
     });
     expect(row.sync_state).toBe("synced");
   });
@@ -643,6 +682,7 @@ describe("viewer access", () => {
       ok: true,
       version: 5,
       media: null,
+      links: null,
     });
     expect(row.sync_state).toBe("synced");
   });
@@ -657,6 +697,7 @@ describe("viewer access", () => {
       ok: true,
       version: 5,
       media: null,
+      links: null,
     });
   });
 
@@ -671,6 +712,7 @@ describe("viewer access", () => {
       ok: true,
       version: 5,
       media: null,
+      links: null,
     });
   });
 
@@ -715,6 +757,7 @@ describe("viewer access", () => {
       ok: true,
       version: 5,
       media: null,
+      links: null,
     });
   });
 });
@@ -2236,6 +2279,7 @@ describe("media and text push order", () => {
       ok: true,
       version: 2,
       media: { pending: true, error: "media push failed (disk full)" },
+      links: null,
     });
     expect(rows.get("/docs/c.md")!.sync_state).toBe("synced");
     // Same as the throwing link below. A stat that raced a deleted file or a
@@ -2262,6 +2306,7 @@ describe("media and text push order", () => {
       ok: true,
       version: 2,
       media: { pending: true, error: "media push failed (disk full)" },
+      links: null,
     });
     expect(rows.get("/docs/t.md")!.sync_state).toBe("synced");
     expect(rows.get("/docs/t.md")!.assets_state).toBe("pending");

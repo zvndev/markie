@@ -108,4 +108,48 @@ describe("handleDocumentClick", () => {
     expect(handleDocumentClick(clickOn(strong), vi.fn())).toBe(true);
     expect(openLocalFile).toHaveBeenCalled();
   });
+
+  it("shows the notice for a link the reader may not follow, without asking main", async () => {
+    const openLocalFile = vi.fn(async () => ({ ok: true }));
+    const openDocLink = vi.fn(async () => ({ ok: true }));
+    installBridge({ openLocalFile, openDocLink });
+    const a = anchor("secret.md");
+    a.dataset.docLink = "none";
+    document.body.append(a);
+    const onError = vi.fn();
+    const event = clickOn(a);
+    expect(handleDocumentClick(event, onError)).toBe(true);
+    expect(event.defaultPrevented).toBe(true);
+    expect(onError).toHaveBeenCalledWith("This document isn't shared with you.");
+    expect(openLocalFile).not.toHaveBeenCalled();
+    expect(openDocLink).not.toHaveBeenCalled();
+  });
+
+  it("opens a cloud link through main with the document's path, and reports a failure", async () => {
+    const openLocalFile = vi.fn(async () => ({ ok: true }));
+    const openDocLink = vi.fn(async () => ({ ok: false, error: "Couldn't open that document." }));
+    installBridge({ openLocalFile, openDocLink });
+    const a = anchor("plan.md#top");
+    a.dataset.docLink = "cloud";
+    document.body.append(a);
+    const onError = vi.fn();
+    expect(handleDocumentClick(clickOn(a), onError)).toBe(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(openDocLink).toHaveBeenCalledWith({ href: "plan.md#top", docPath: "/Users/me/report/notes.md" });
+    expect(openLocalFile).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith("Couldn't open that document.");
+  });
+
+  it("still opens a local or unmarked link the old way", async () => {
+    const openLocalFile = vi.fn(async () => ({ ok: true }));
+    const openDocLink = vi.fn(async () => ({ ok: true }));
+    installBridge({ openLocalFile, openDocLink });
+    const a = anchor("here.md");
+    a.dataset.docLink = "local";
+    document.body.append(a);
+    expect(handleDocumentClick(clickOn(a), vi.fn())).toBe(true);
+    expect(openLocalFile).toHaveBeenCalledWith({ href: "here.md", docDir: "/Users/me/report" });
+    expect(openDocLink).not.toHaveBeenCalled();
+  });
 });

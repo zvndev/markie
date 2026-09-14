@@ -35,6 +35,11 @@ export function setAssetDocPath(path: string | null): void {
   docPath = path && path.trim() ? path : null;
 }
 
+/** The path of the document on screen, as main knows it. */
+export function getAssetDocPath(): string | null {
+  return docPath;
+}
+
 /** The folder of the document on screen, which is what a relative src
  * resolves against. */
 export function getAssetBaseDir(): string | null {

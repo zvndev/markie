@@ -90,6 +90,14 @@ export interface LinkPreview {
   image: string | null;
 }
 
+export type DocLinkKind = "local" | "cloud" | "none" | "unknown";
+
+export interface DocLinkAnswer {
+  href: string;
+  kind: DocLinkKind;
+  target?: string;
+}
+
 // ── Skills ──
 // A skill is a folder with a SKILL.md, installed by copying it into whichever
 // agent tool's folder the user picks. `{ project }` installs into a workspace
@@ -282,19 +290,10 @@ export interface ElectronAPI {
     href: string;
     docDir: string | null;
   }): Promise<{ ok: boolean; error?: string }>;
-  // What each document link in the open document is, so the renderer can mark
-  // the ones this account may not follow before anyone clicks. See
-  // electron/doc-link-open.js.
-  resolveDocLinks(payload: {
-    docPath: string | null;
-    hrefs: string[];
-  }): Promise<Array<{ href: string; kind: "local" | "cloud" | "none" | "unknown"; target?: string }>>;
-  // Open a document link resolved as "cloud": the copy this machine already
-  // has, or a view-only copy landed once into Downloads.
-  openDocLink(payload: {
-    docPath: string | null;
-    href: string;
-  }): Promise<{ ok: boolean; error?: string }>;
+  /** What each document link in the open document is: see electron/doc-link-open.js. */
+  resolveDocLinks(payload: { docPath: string | null; hrefs: string[] }): Promise<DocLinkAnswer[]>;
+  /** Open a document link resolved as "cloud": a copy this machine has, or one landed once. */
+  openDocLink(payload: { href: string; docPath: string | null }): Promise<{ ok: boolean; error?: string }>;
   syncConfig(cfg: {
     token: string | null;
     serverURL: string;

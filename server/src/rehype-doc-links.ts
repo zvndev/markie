@@ -14,10 +14,17 @@ interface ElementNode {
 
 export const MUTED_LINK_TITLE = "This document isn't shared with you.";
 
-export function rehypeDocLinks(linkFor: (ref: string) => DocLinkAnswer) {
+export function rehypeDocLinks(linkFor: (ref: string) => DocLinkAnswer = () => null) {
   return (tree: unknown) => {
     visit(tree as never, "element", (node: ElementNode) => {
       if (node.tagName !== "a") return;
+      // An author's own `class="doc-link-muted"` would otherwise ride along
+      // unchanged on every early return below (including the `{ href }`
+      // rewrite), rendering muted while still navigating. Scrubbed up front,
+      // it is appended again below only when this plugin is the one muting.
+      const cls = Array.isArray(node.properties?.className) ? node.properties.className : [];
+      const clean = cls.filter((c) => c !== "doc-link-muted");
+      if (clean.length !== cls.length) node.properties = { ...node.properties, className: clean };
       const href = node.properties?.href;
       if (typeof href !== "string" || !isLocal(href)) return;
       const ref = refOf(href);

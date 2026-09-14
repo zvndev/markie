@@ -94,11 +94,19 @@ export type DocLinkAnswer = { href: string } | { muted: true } | null;
 // link, or nothing to say (the document stored no pointer for it).
 export function sharedPageLinkFor(docId: string, userId: string | null): (ref: string) => DocLinkAnswer {
   const rows = docLinksFor(docId);
+  // Keyed by target, not ref: several refs in one document can name the same
+  // target, and each one otherwise repeats the same docExists + accessLevel
+  // lookups (500 links to a handful of targets is 1000 queries per render).
+  const cache = new Map<string, DocLinkAnswer>();
   return (ref) => {
     const target = rows.get(ref);
     if (target === undefined) return null;
-    if (userId && readableTarget(target, userId)) return { href: `/d/${encodeURIComponent(target)}` };
-    return { muted: true };
+    const cached = cache.get(target);
+    if (cached !== undefined) return cached;
+    const answer: DocLinkAnswer =
+      userId && readableTarget(target, userId) ? { href: `/d/${encodeURIComponent(target)}` } : { muted: true };
+    cache.set(target, answer);
+    return answer;
   };
 }
 
@@ -106,12 +114,24 @@ export function sharedPageLinkFor(docId: string, userId: string | null): (ref: s
 // page, so a target without a live public link is muted.
 export function publicPageLinkFor(docId: string): (ref: string) => DocLinkAnswer {
   const rows = docLinksFor(docId);
+  // Same per-target memo as sharedPageLinkFor, and worth more here: this path
+  // is unauthenticated, so a page with many repeated links is a free way to
+  // run its docExists + getPublicLinkToken lookups over and over.
+  const cache = new Map<string, DocLinkAnswer>();
   return (ref) => {
     const target = rows.get(ref);
     if (target === undefined) return null;
-    if (!docExists(target)) return { muted: true };
-    const token = getPublicLinkToken(target);
-    return token ? { href: `/s/${encodeURIComponent(token)}` } : { muted: true };
+    const cached = cache.get(target);
+    if (cached !== undefined) return cached;
+    let answer: DocLinkAnswer;
+    if (!docExists(target)) {
+      answer = { muted: true };
+    } else {
+      const token = getPublicLinkToken(target);
+      answer = token ? { href: `/s/${encodeURIComponent(token)}` } : { muted: true };
+    }
+    cache.set(target, answer);
+    return answer;
   };
 }
 

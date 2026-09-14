@@ -363,3 +363,36 @@ test("an author's own class does not survive sanitize, but a muted doc link's do
   });
   assert.match(muted, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">secret<\/a>/);
 });
+
+test("an author cannot borrow the muted class on a link the plugin leaves alone", () => {
+  // A scheme href never reaches isLocal's local-only path; the scrub has to
+  // run before that check, not inside it.
+  const html = renderMarkdownHTML(
+    '<a class="doc-link-muted" href="https://evil.example">the plan</a>',
+    { docLinkFor: () => null }
+  );
+  assert.doesNotMatch(html, /doc-link-muted/);
+  assert.match(html, /<a(?: class="")? href="https:\/\/evil\.example">the plan<\/a>/);
+});
+
+test("an author cannot borrow the muted class when no docLinkFor is passed at all", () => {
+  const html = renderMarkdownHTML('<a class="doc-link-muted" href="https://evil.example">the plan</a>');
+  assert.doesNotMatch(html, /doc-link-muted/);
+  assert.match(html, /<a(?: class="")? href="https:\/\/evil\.example">the plan<\/a>/);
+});
+
+test("an anchor the plugin actually mutes gets exactly one doc-link-muted, even when the author supplied one", () => {
+  const html = renderMarkdownHTML('<a class="doc-link-muted" href="notes/secret.md">x</a>', {
+    docLinkFor: (ref) => (ref === "notes/secret.md" ? { muted: true } : null),
+  });
+  assert.equal((html.match(/doc-link-muted/g) ?? []).length, 1);
+  assert.match(html, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">x<\/a>/);
+});
+
+test("an author's class does not survive onto a link the plugin rewrites to a resolved href", () => {
+  const html = renderMarkdownHTML('<a class="doc-link-muted" href="plan.md">x</a>', {
+    docLinkFor: (ref) => (ref === "plan.md" ? { href: "/d/target-1" } : null),
+  });
+  assert.doesNotMatch(html, /doc-link-muted/);
+  assert.match(html, /<a(?: class="")? href="\/d\/target-1">x<\/a>/);
+});

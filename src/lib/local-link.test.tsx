@@ -141,6 +141,23 @@ describe("handleDocumentClick", () => {
     expect(onError).toHaveBeenCalledWith("Couldn't open that document.");
   });
 
+  it("falls back to opening the file locally when a cloud-marked link has since landed on disk", async () => {
+    const openLocalFile = vi.fn(async () => ({ ok: true }));
+    const openDocLink = vi.fn(async () => ({ ok: false as const, kind: "local" as const, error: "That link does not point at a synced document." }));
+    installBridge({ openLocalFile, openDocLink });
+    const a = anchor("plan.md");
+    a.dataset.docLink = "cloud";
+    document.body.append(a);
+    const onError = vi.fn();
+    expect(handleDocumentClick(clickOn(a), onError)).toBe(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(openDocLink).toHaveBeenCalledWith({ href: "plan.md", docPath: "/Users/me/report/notes.md" });
+    expect(openLocalFile).toHaveBeenCalledOnce();
+    expect(openLocalFile).toHaveBeenCalledWith({ href: "plan.md", docDir: "/Users/me/report" });
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it("still opens a local or unmarked link the old way", async () => {
     const openLocalFile = vi.fn(async () => ({ ok: true }));
     const openDocLink = vi.fn(async () => ({ ok: true }));

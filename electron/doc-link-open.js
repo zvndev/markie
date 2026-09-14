@@ -11,7 +11,7 @@
 // Kept out of main.js so the ordering and the memo can be tested without
 // Electron.
 const path = require("node:path");
-const { refOf, refIsMalformed } = require("./doc-assets");
+const { isLocal, refOf, refIsMalformed } = require("./doc-assets");
 const { isDocRef } = require("./doc-links");
 
 const NOT_SHARED = "This document isn't shared with you.";
@@ -61,6 +61,11 @@ function createDocLinkOpener({ sync, registry, localAssets, land, fs = require("
     let cloud = null;
     let asked = false;
     for (const entry of out) {
+      // Agrees with extractLinks/resolveLinks (electron/doc-links.js), which
+      // both refuse a scheme href before ever looking at its reference:
+      // isDocRef alone would pass file:///etc/hosts.txt or //cdn/x.md
+      // straight through to the disk and cloud checks below.
+      if (!isLocal(entry.href)) continue;
       const ref = refOf(entry.href);
       if (!ref || refIsMalformed(ref) || !isDocRef(ref)) continue;
       const candidate = localAssets.candidatePath(entry.href, docDir);

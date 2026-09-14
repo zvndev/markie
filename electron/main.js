@@ -1714,7 +1714,11 @@ handle(
     if (typeof href !== "string" || !href) return { ok: false, error: "That link does not point at a file." };
     const result = await docLinkOpener.open(typeof docPath === "string" ? docPath : null, href);
     if (!result.ok) {
-      return { ok: false, error: result.error ?? "That link does not point at a synced document." };
+      // Passed through rather than dropped: a stale "cloud" mark whose target
+      // has since landed on disk answers kind "local" here, and the renderer
+      // falls back to the ordinary open-local-file path instead of reporting
+      // a broken link (src/lib/local-link.ts).
+      return { ok: false, kind: result.kind, error: result.error ?? "That link does not point at a synced document." };
     }
     openLocalFile(result.path);
     return { ok: true };

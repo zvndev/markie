@@ -8,6 +8,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
+import Database from "better-sqlite3";
 import { getMigrations } from "better-auth/db/migration";
 import { signUpVerified } from "./test-users.ts";
 
@@ -162,4 +163,59 @@ test("the page resolvers answer per reader and per public link", async () => {
   const token = String(made.data.url).split("/s/")[1];
   assert.deepEqual(publicPageLinkFor(a)("plan.md"), { href: `/s/${token}` });
   assert.equal(publicPageLinkFor(a)("unlinked.md"), null);
+});
+
+// Counts calls to Database.prototype.prepare whose SQL contains `needle`,
+// across every handle any module opened (db.ts hands each module its own
+// connection to the same file, so this is the only vantage point common to
+// all of them). Patched on the shared prototype and restored after.
+async function countPrepares<T>(needle: string, run: () => T): Promise<{ result: T; count: number }> {
+  const original = Database.prototype.prepare;
+  let count = 0;
+  Database.prototype.prepare = function (sql: string, ...rest: unknown[]) {
+    if (typeof sql === "string" && sql.includes(needle)) count += 1;
+    // @ts-expect-error - forwarding to the original with whatever arity better-sqlite3 gives it
+    return original.call(this, sql, ...rest);
+  };
+  try {
+    return { result: run(), count };
+  } finally {
+    Database.prototype.prepare = original;
+  }
+}
+
+test("the page resolvers look a repeated target up once per page, not once per link to it", async () => {
+  const a = await makeDoc(owner.token);
+  const b = await makeDoc(owner.token, "# b\n");
+  await json("PUT", `/api/docs/${a}/links`, owner.token, {
+    links: [{ ref: "plan.md", target: b }, { ref: "plan-again.md", target: b }, { ref: "plan-once-more.md", target: b }],
+  });
+  const made = await json("POST", `/api/docs/${b}/public-link`, owner.token);
+  assert.equal(made.status, 200);
+  const token = String(made.data.url).split("/s/")[1];
+
+  const forOwner = sharedPageLinkFor(a, owner.id);
+  const { result: sharedAnswers, count: docsLookups } = await countPrepares("FROM docs WHERE id", () => [
+    forOwner("plan.md"),
+    forOwner("plan-again.md"),
+    forOwner("plan-once-more.md"),
+  ]);
+  assert.deepEqual(sharedAnswers[0], { href: `/d/${b}` });
+  assert.deepEqual(sharedAnswers[1], sharedAnswers[0]);
+  assert.deepEqual(sharedAnswers[2], sharedAnswers[0]);
+  // docExists (SELECT 1 FROM docs...) plus accessLevel's isOwner (SELECT
+  // owner_id FROM docs...) run once each for the one distinct target: 2, not
+  // 2 per ref (6).
+  assert.equal(docsLookups, 2);
+
+  const pub = publicPageLinkFor(a);
+  const { result: publicAnswers, count: tokenLookups } = await countPrepares("FROM public_links WHERE doc_id", () => [
+    pub("plan.md"),
+    pub("plan-again.md"),
+    pub("plan-once-more.md"),
+  ]);
+  assert.deepEqual(publicAnswers[0], { href: `/s/${token}` });
+  assert.deepEqual(publicAnswers[1], publicAnswers[0]);
+  assert.deepEqual(publicAnswers[2], publicAnswers[0]);
+  assert.equal(tokenLookups, 1);
 });

@@ -94,6 +94,25 @@ describe("resolve", () => {
     const hugeRef = `${"a".repeat(2097)}.md`;
     expect(await make().resolve(DOC, [hugeRef])).toEqual([{ href: hugeRef, kind: "unknown" }]);
   });
+
+  it("answers unknown for a scheme href, agreeing with extractLinks/resolveLinks, even when the resolver would otherwise find them", async () => {
+    // The test's candidatePath stub resolves a scheme href as a bare relative
+    // path (the same crude way a naive resolver would), so a file sitting
+    // there would otherwise be found; and the cloud is made to know a link by
+    // that exact ref, so it would otherwise resolve to "cloud". isLocal must
+    // refuse both before either check runs.
+    disk.add(path.resolve("/Users/me/report", "file:/tmp/x.md"));
+    apiAnswer = () => ({
+      status: 200,
+      data: { links: [{ ref: "https://x.test/plan.md", target: "c-evil" }] },
+    });
+    const out = await make().resolve(DOC, ["file:///tmp/x.md", "https://x.test/plan.md"]);
+    expect(out).toEqual([
+      { href: "file:///tmp/x.md", kind: "unknown" },
+      { href: "https://x.test/plan.md", kind: "unknown" },
+    ]);
+    expect(apiCalls).toEqual([]);
+  });
 });
 
 describe("open", () => {

@@ -28,6 +28,24 @@ export function localLinkTarget(anchor: HTMLAnchorElement | null): string | null
   return raw;
 }
 
+// The ordinary "open what sits beside this document" path: local-file grants
+// are checked in main's open-local-file handler, never here. Shared by the
+// local/unmarked branch below and by the cloud branch's fallback when a
+// stale "cloud" mark turns out to name a file that has since landed on disk.
+function openAsLocalFile(
+  api: ReturnType<typeof getSafeAPI>,
+  href: string,
+  onError: (message: string) => void
+) {
+  if (!api?.openLocalFile) return;
+  void api
+    .openLocalFile({ href, docDir: getAssetBaseDir() })
+    .then((result) => {
+      if (result && result.ok === false && result.error) onError(result.error);
+    })
+    .catch(() => onError("Markie couldn't open that file."));
+}
+
 /**
  * Handle a click inside a rendered document. Returns true when the click was
  * a local file link and has been taken over.
@@ -58,17 +76,20 @@ export function handleDocumentClick(
     void api
       .openDocLink({ href, docPath: getAssetDocPath() })
       .then((result) => {
-        if (result && result.ok === false && result.error) onError(result.error);
+        if (!result || result.ok) return;
+        // The mark was made before this click; the target may have landed on
+        // disk beside the document since (this account synced it, or the
+        // author's own copy sits right there). main re-resolves on every
+        // open and says so rather than reporting a broken cloud link.
+        if (result.kind === "local") {
+          openAsLocalFile(api, href, onError);
+          return;
+        }
+        if (result.error) onError(result.error);
       })
       .catch(() => onError("Markie couldn't open that document."));
     return true;
   }
-  if (!api?.openLocalFile) return true;
-  void api
-    .openLocalFile({ href, docDir: getAssetBaseDir() })
-    .then((result) => {
-      if (result && result.ok === false && result.error) onError(result.error);
-    })
-    .catch(() => onError("Markie couldn't open that file."));
+  openAsLocalFile(api, href, onError);
   return true;
 }

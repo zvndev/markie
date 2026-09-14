@@ -119,7 +119,12 @@ function buildProcessor(opts: RenderOptions) {
     .use(rehypeRaw)
     .use(rehypeMedia);
   if (opts.assetUrlFor) p.use(rehypeCloudAssets, opts.assetUrlFor);
-  if (opts.docLinkFor) p.use(rehypeDocLinks, opts.docLinkFor);
+  // Installed unconditionally, even when no caller passed docLinkFor: the
+  // plugin's own job of scrubbing an author's borrowed doc-link-muted class
+  // (rehype-doc-links.ts) must run on every render path, not just the ones
+  // that resolve links. Its default docLinkFor answers null for everything,
+  // so a caller that does pass one sees no change in behaviour.
+  p.use(rehypeDocLinks, opts.docLinkFor);
   return p.use(rehypeEmbeds).use(rehypeHighlight).use(rehypeKatex).use(rehypeSanitize, sanitizeSchema).use(rehypeStringify);
 }
 

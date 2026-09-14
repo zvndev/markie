@@ -140,4 +140,4 @@ function fingerprint(entries) {
   return crypto.createHash("sha256").update(lines.join("\n")).digest("hex");
 }
 
-module.exports = { MAX_ASSET_BYTES, MAX_EXTRACT_CHARS, MAX_REF_CHARS, extractRefs, resolveRefs, hashFile, fingerprint };
+module.exports = { MAX_ASSET_BYTES, MAX_EXTRACT_CHARS, MAX_REF_CHARS, extractRefs, resolveRefs, hashFile, fingerprint, isLocal, refOf, refIsMalformed };

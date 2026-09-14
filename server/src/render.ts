@@ -12,7 +12,7 @@ import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { rehypeMedia } from "./rehype-media.ts";
 import { rehypeCloudAssets } from "./rehype-cloud-assets.ts";
-import { rehypeDocLinks, MUTED_LINK_TITLE } from "./rehype-doc-links.ts";
+import { rehypeDocLinks } from "./rehype-doc-links.ts";
 import { rehypeEmbeds } from "./rehype-embeds.ts";
 import rehypeStringify from "rehype-stringify";
 import type { DocLinkAnswer } from "./doc-links.ts";
@@ -65,16 +65,20 @@ const sanitizeSchema = {
     // defaultSchema.attributes.a restricts className to the single value
     // "data-footnote-backref" (a hast-util-sanitize allow list, `[key,
     // ...allowedValues]`), which is checked before the wildcard "*" list
-    // above and wins even though it is more specific, not more permissive:
-    // a tag-specific match short-circuits the wildcard rather than adding to
-    // it. Left alone, a muted doc link's class is silently emptied. Dropping
-    // that one entry and re-adding className unrestricted (everything else
-    // on the link, including data-footnote-backref itself, is unaffected)
-    // brings `a` in line with what the wildcard already intends everywhere
-    // else.
+    // above and wins even though it is more specific, not more permissive: a
+    // tag-specific match short-circuits the wildcard rather than adding to
+    // it. Left alone, a muted doc link's class is silently emptied. The fix
+    // stays just as narrow as the entry it replaces: the one existing value
+    // plus the one new value the muted style needs, nothing unrestricted.
+    // (Appending a second ["className", ...] entry instead of replacing the
+    // first would not work: findDefinition below returns on the first name
+    // match, so the original, narrower entry would still win and the
+    // muted class would go on being emptied.) An author's own
+    // `class="btn primary"` still cannot survive sanitize and impersonate
+    // the page's real buttons.
     a: [
       ...(defaultSchema.attributes?.a ?? []).filter((entry) => !(Array.isArray(entry) && entry[0] === "className")),
-      "className",
+      ["className", "data-footnote-backref", "doc-link-muted"],
     ],
     span: ["className", "style", "ariaHidden"],
     div: ["className", "style"],
@@ -123,23 +127,9 @@ function buildProcessor(opts: RenderOptions) {
 // existing test) is cached rather than rebuilt per call.
 const plain = buildProcessor({});
 
-// hast-util-to-html's default (allowDangerousCharacters: false) escapes `'`
-// in every attribute value it writes, even a double-quoted one: the escaping
-// guards against a backtick-only quirk in very old IE that never applied to
-// an apostrophe, but the library's safe subset bundles the two together, and
-// there is no supported option that narrows it per attribute. Turning the
-// default off would stop escaping a backtick in an attribute value an
-// author's own document supplies (a title, an alt text), so it stays on for
-// everything the pipeline renders; only MUTED_LINK_TITLE, a fixed string
-// this server writes and no document ever supplies, gets its apostrophe put
-// back after stringify has already run.
-const MUTED_TITLE_ATTR = `title="${MUTED_LINK_TITLE}"`;
-const MUTED_TITLE_ATTR_ESCAPED = `title="${MUTED_LINK_TITLE.replace(/'/g, "&#x27;")}"`;
-
 export function renderMarkdownHTML(markdown: string, opts: RenderOptions = {}): string {
   const processor = opts.assetUrlFor || opts.docLinkFor ? buildProcessor(opts) : plain;
-  const html = String(processor.processSync(markdown));
-  return opts.docLinkFor ? html.replaceAll(MUTED_TITLE_ATTR_ESCAPED, MUTED_TITLE_ATTR) : html;
+  return String(processor.processSync(markdown));
 }
 
 const esc = (s: string) =>

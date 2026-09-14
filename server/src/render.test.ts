@@ -313,7 +313,7 @@ test("renderMarkdownHTML rewrites a document link the reader may follow and mute
     docLinkFor: (ref) => (ref === "plan.md" ? { href: "/d/target-1" } : ref === "notes/secret.md" ? { muted: true } : null),
   });
   assert.match(html, /<a href="\/d\/target-1">plan<\/a>/);
-  assert.match(html, /<a class="doc-link-muted" title="This document isn't shared with you\.">secret<\/a>/);
+  assert.match(html, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">secret<\/a>/);
   assert.match(html, /<a href="other\.md">free<\/a>/);
   assert.match(html, /<a href="https:\/\/x\.test\/a\.md">web<\/a>/);
 });
@@ -339,7 +339,7 @@ test("the shared and public pages carry the muted link style and thread docLinkF
     docLinkFor: () => ({ muted: true }),
   });
   assert.match(shared, /doc-link-muted \{/);
-  assert.match(shared, /<a class="doc-link-muted" title="This document isn't shared with you\.">x<\/a>/);
+  assert.match(shared, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">x<\/a>/);
   const pub = renderPublicPage({
     title: "t",
     markdown: "[x](x.md)",
@@ -348,4 +348,18 @@ test("the shared and public pages carry the muted link style and thread docLinkF
     docLinkFor: () => ({ href: "/s/other" }),
   });
   assert.match(pub, /<a href="\/s\/other">x<\/a>/);
+});
+
+test("an author's own class does not survive sanitize, but a muted doc link's does", () => {
+  // The className array is filtered rather than dropped, so an emptied list
+  // still serializes as class="": harmless (it selects nothing), but worth
+  // pinning down so a future schema change that widens it again is caught.
+  const authored = renderMarkdownHTML('<a class="btn primary" href="https://x.test">x</a>');
+  assert.match(authored, /<a(?: class="")? href="https:\/\/x\.test">x<\/a>/);
+  assert.doesNotMatch(authored, /class="btn/);
+
+  const muted = renderMarkdownHTML("[secret](notes/secret.md)", {
+    docLinkFor: () => ({ muted: true }),
+  });
+  assert.match(muted, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">secret<\/a>/);
 });

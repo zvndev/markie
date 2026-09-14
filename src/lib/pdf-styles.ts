@@ -342,8 +342,8 @@ function styleBody(theme: PDFTheme): string {
   return `${shared}\n${theme === "dark" ? darkTheme : lightTheme}\n${mathTheme}`;
 }
 
-// Runs inside the print window once fonts are ready, before printToPDF.
-// Two things CSS cannot do on its own:
+// Runs inside the print window once the page has loaded and fonts are ready,
+// before printToPDF. Two things CSS cannot do on its own:
 //  - a block that is still wider than the column after wrapping (a table of
 //    many short numeric columns, a display formula) is scaled down to fit,
 //    never clipped and never allowed to scale the whole document;
@@ -351,6 +351,15 @@ function styleBody(theme: PDFTheme): string {
 //    long code block or table does not leave the previous page empty.
 // The page height is A4 (297mm at 96dpi) less the body's own inset, read
 // from the stylesheet rather than repeated here.
+//
+// This script is inlined in <head>, ahead of <body>: run at parse time,
+// document.querySelector("article.markdown-body") is null and fit() would
+// silently no-op, and an image's scrollWidth can be measured before it has
+// decoded even once the body exists. So it waits for the window's load event
+// (body parsed, images decoded) as well as fonts.ready before measuring
+// anything. electron/export-pdf.js awaits loadFile, which resolves after
+// that same load event, and only then waits on fonts.ready and two animation
+// frames itself, so this still runs before printToPDF is called.
 //
 // Must never contain the literal text "</script" — it is emitted inline
 // inside a <script> element and that sequence would close it early. The test
@@ -371,7 +380,14 @@ export const FIT_SCRIPT = `
       if (el.getBoundingClientRect().height > pageHeight * 0.5) el.style.breakInside = "auto";
     }
   }
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit, fit); else fit();
+  function whenReady(run) {
+    var loaded = document.readyState === "complete"
+      ? Promise.resolve()
+      : new Promise(function (resolve) { window.addEventListener("load", resolve, { once: true }); });
+    var fonts = (document.fonts && document.fonts.ready) || Promise.resolve();
+    Promise.all([loaded, Promise.resolve(fonts)]).then(run, run);
+  }
+  whenReady(fit);
 })();
 `;
 

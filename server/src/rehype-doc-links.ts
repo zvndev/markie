@@ -31,7 +31,8 @@ export function rehypeDocLinks(linkFor: (ref: string) => DocLinkAnswer) {
       // Muted: no href at all, so nothing is navigable, and a class and title
       // the page styles and the reader's hover can read. Both survive
       // sanitize, which allows className and title on every element.
-      const { href: _dropped, ...rest } = node.properties ?? {};
+      const rest = { ...(node.properties ?? {}) } as Record<string, unknown>;
+      delete rest.href;
       const existing = Array.isArray(rest.className) ? rest.className : [];
       node.properties = { ...rest, className: [...existing, "doc-link-muted"], title: MUTED_LINK_TITLE };
     });

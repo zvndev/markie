@@ -19,6 +19,15 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a linked document you already have opens in place; one you do not lands
   once as a view-only copy.
 
+### Fixed
+
+- **PDF export no longer cuts content off or shrinks the page.** A wide
+  table, a long link, or a long line of code used to run off the paper, or
+  make Chromium scale the whole document down to tiny text. Long text now
+  wraps, code wraps, a table too wide for the page is scaled to fit on its
+  own, a long table breaks between rows with its header repeated, and a tall
+  code block no longer leaves the page before it empty.
+
 ## [0.7.0] - 2026-09-13
 
 ### Added

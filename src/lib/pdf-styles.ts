@@ -41,6 +41,12 @@ const shared = `
 
   .markdown-body { max-width: 100%; }
 
+  /* Nothing may be wider than the column. Chromium scales the whole document
+     down to the widest box when printing, so one long URL or one wide table
+     used to turn every page into tiny text. Long words and links break
+     anywhere rather than run off the page. */
+  .markdown-body { overflow-wrap: anywhere; }
+
   /* Export HTML is read in a browser as often as it is printed, and a body
      the width of a monitor is a body nobody finishes a line of. Screen only:
      paper already has its measure from the page size. */
@@ -122,12 +128,15 @@ const shared = `
     border: 1px solid;
   }
 
+  /* A scroll container does not scroll on paper: overflow-x: auto used to
+     clip a long line silently at the block's right edge. It wraps instead. */
   .markdown-body pre {
     margin: 1em 0;
     padding: 1em 1.2em;
     border-radius: 8px;
     border: 1px solid;
-    overflow-x: auto;
+    white-space: pre-wrap;
+    overflow: visible;
     page-break-inside: avoid;
   }
 
@@ -138,6 +147,8 @@ const shared = `
     border-radius: 0;
     font-size: 0.85em;
     line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   .markdown-body hr {
@@ -148,6 +159,7 @@ const shared = `
 
   .markdown-body img {
     max-width: 100%;
+    height: auto;
     border-radius: 8px;
     margin: 1em 0;
     page-break-inside: avoid;
@@ -164,12 +176,18 @@ const shared = `
   }
 
   .markdown-body table {
-    width: 100%;
+    width: auto;
+    max-width: 100%;
     margin: 1em 0;
     border-collapse: collapse;
     font-size: 0.9em;
-    page-break-inside: avoid;
   }
+
+  /* A long table breaks between rows, never inside one, and the header
+     repeats on every page it spans. */
+  .markdown-body thead { display: table-header-group; }
+  .markdown-body tr { page-break-inside: avoid; }
+  .markdown-body th, .markdown-body td { overflow-wrap: anywhere; }
 
   .markdown-body thead th {
     text-align: left;
@@ -324,6 +342,55 @@ function styleBody(theme: PDFTheme): string {
   return `${shared}\n${theme === "dark" ? darkTheme : lightTheme}\n${mathTheme}`;
 }
 
+// Runs inside the print window once the page has loaded and fonts are ready,
+// before printToPDF. Two things CSS cannot do on its own:
+//  - a block that is still wider than the column after wrapping (a table of
+//    many short numeric columns, a display formula) is scaled down to fit,
+//    never clipped and never allowed to scale the whole document;
+//  - a block taller than half a page is allowed to break across pages, so a
+//    long code block or table does not leave the previous page empty.
+// The page height is A4 (297mm at 96dpi) less the body's own inset, read
+// from the stylesheet rather than repeated here.
+//
+// This script is inlined in <head>, ahead of <body>: run at parse time,
+// document.querySelector("article.markdown-body") is null and fit() would
+// silently no-op, and an image's scrollWidth can be measured before it has
+// decoded even once the body exists. So it waits for the window's load event
+// (body parsed, images decoded) as well as fonts.ready before measuring
+// anything. electron/export-pdf.js awaits loadFile, which resolves after
+// that same load event, and only then waits on fonts.ready and two animation
+// frames itself, so this still runs before printToPDF is called.
+//
+// Must never contain the literal text "</script" — it is emitted inline
+// inside a <script> element and that sequence would close it early. The test
+// in pdf-styles.test.ts asserts this.
+export const FIT_SCRIPT = `
+(function () {
+  function fit() {
+    var article = document.querySelector("article.markdown-body");
+    if (!article) return;
+    var max = article.clientWidth;
+    var body = getComputedStyle(document.body);
+    var pageHeight = 1122.5 - parseFloat(body.paddingTop) - parseFloat(body.paddingBottom);
+    var blocks = article.querySelectorAll("table, pre, .katex-display, img, p.markie-embed");
+    for (var i = 0; i < blocks.length; i += 1) {
+      var el = blocks[i];
+      var width = el.scrollWidth;
+      if (width > max + 1) el.style.zoom = String(Math.max(0.4, max / width));
+      if (el.getBoundingClientRect().height > pageHeight * 0.5) el.style.breakInside = "auto";
+    }
+  }
+  function whenReady(run) {
+    var loaded = document.readyState === "complete"
+      ? Promise.resolve()
+      : new Promise(function (resolve) { window.addEventListener("load", resolve, { once: true }); });
+    var fonts = (document.fonts && document.fonts.ready) || Promise.resolve();
+    Promise.all([loaded, Promise.resolve(fonts)]).then(run, run);
+  }
+  whenReady(fit);
+})();
+`;
+
 // The rendered body is dropped into a plain <body>, after the <style> block has
 // already been closed, so it cannot reach the stylesheet. renderMarkdownHTML
 // escapes raw HTML anyway (a document's <script> arrives as text), but
@@ -354,6 +421,7 @@ function pdfDocument(styles: string, markdownHTML: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 ${styles}
+<script>${FIT_SCRIPT}</script>
 </head>
 <body>
 <article class="markdown-body">${neutralizeBodyBreakouts(markdownHTML)}</article>

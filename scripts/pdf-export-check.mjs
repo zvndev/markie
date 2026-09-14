@@ -7,10 +7,15 @@
 // was correct, and the defect only exists once Chromium has paginated it onto
 // paper. So this check prints the document and reads the corners back.
 //
+// It also proves the margins survive wide content: a stress document (a wide
+// table, a long URL, a long code line, a display formula, a tall code block)
+// used to run ink into the page margins or shrink the whole document to fit
+// its widest box. See STRESS_FIXTURE below.
+//
 // Run with:  MARKIE_ALLOW_E2E=1 npm run pdf:check
 // Needs poppler for rasterising (brew install poppler).
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -54,6 +59,55 @@ const exposed = await fetch("/products.json").then((r) => r.json());
 ${"Body text that has to run long enough to paginate, so that the second page exists and can be looked at. ".repeat(45)}
 `;
 
+// Every shape that used to run off the page or shrink the document: a table
+// wider than the column, a cell with a long URL and a long unbroken token, a
+// long code line, a long URL in prose, a wide display formula, a code block
+// taller than a page. See src/lib/pdf-styles.ts (FIT_SCRIPT) for what each
+// one needs.
+const LONG_TOKEN = "averyveryverylongunbrokenidentifier_".repeat(6);
+const COLUMNS = Array.from({ length: 14 }, (_, i) => `Column ${i + 1}`);
+const STRESS_FIXTURE = `# Stress export
+
+## Wide table
+
+| ${COLUMNS.join(" | ")} |
+| ${COLUMNS.map(() => "---").join(" | ")} |
+| ${COLUMNS.map((_, i) => `value ${i} with some words`).join(" | ")} |
+| ${COLUMNS.map((_, i) => `${i * 1000}`).join(" | ")} |
+
+## Table with a long URL and a long token
+
+| Name | Link | Token |
+| --- | --- | --- |
+| first | https://example.com/a/very/long/path/that/keeps/going/and/going/and/going/until/it/passes/the/edge/of/the/page/for/sure | ${LONG_TOKEN} |
+
+## Long code line
+
+\`\`\`js
+const result = await fetch("https://example.com/api/v1/resources?include=everything&filter=" + encodeURIComponent(JSON.stringify({ a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8 })) + "&page=1&limit=100&sort=desc&fields=id,name,createdAt,updatedAt");
+\`\`\`
+
+## Long URL in prose
+
+See https://example.com/a/very/long/path/that/keeps/going/and/going/and/going/until/it/passes/the/edge/of/the/page/for/sure/and/then/some/more for details, and the token ${LONG_TOKEN} too.
+
+## Math
+
+$$
+\\sum_{i=1}^{n} x_i^2 + \\int_0^1 f(x)\\,dx = \\frac{a+b+c+d+e+f+g+h+i+j+k+l+m+n+o+p+q+r+s+t+u+v+w+x+y+z}{2}
+$$
+
+${"Body text that runs long enough to paginate. ".repeat(60)}
+
+## Tall code block
+
+\`\`\`text
+${Array.from({ length: 90 }, (_, i) => `line ${i + 1}`).join("\n")}
+\`\`\`
+
+Last paragraph.
+`;
+
 // Reads a PNG's pixels through Python, which is on every Mac, rather than
 // adding an image library to the app's dependencies for one check.
 function probe(pngPath) {
@@ -65,13 +119,32 @@ w, h = im.size
 px = im.load()
 corners = [px[2, 2], px[w - 3, 2], px[2, h - 3], px[w - 3, h - 3]]
 corner = corners[0]
+
+def inked(c):
+    return abs(c[0] - corner[0]) + abs(c[1] - corner[1]) + abs(c[2] - corner[2]) > 60
+
 first = None
 for y in range(h):
     row = [px[x, y] for x in range(0, w, 7)]
-    if any(abs(c[0] - corner[0]) + abs(c[1] - corner[1]) + abs(c[2] - corner[2]) > 60 for c in row):
+    if any(inked(c) for c in row):
         first = y
         break
-print(repr({"size": (w, h), "corners": corners, "firstInk": first}))
+
+# At 70 dpi, 2.2cm is 60px and 2cm is 55px: the same side and bottom insets
+# the body's padding produces. Any ink in those bands means content ran off
+# the printable column, either past the right edge or off the bottom.
+right_margin = 60
+bottom_margin = 55
+right_ink = sum(
+    1 for x in range(max(0, w - right_margin), w)
+    if any(inked(px[x, y]) for y in range(0, h, 7))
+)
+bottom_ink = sum(
+    1 for y in range(max(0, h - bottom_margin), h)
+    if any(inked(px[x, y]) for x in range(0, w, 7))
+)
+
+print(repr({"size": (w, h), "corners": corners, "firstInk": first, "rightInk": right_ink, "bottomInk": bottom_ink}))
 `;
   const out = execFileSync("python3", ["-c", script, pngPath], { encoding: "utf-8" });
   return JSON.parse(out.trim().replace(/\(/g, "[").replace(/\)/g, "]").replace(/'/g, '"').replace(/None/g, "null"));
@@ -101,7 +174,7 @@ async function main() {
   }
 
   const { renderMarkdownHTML } = await import("../src/lib/markdown-html.ts");
-  const { buildPDFHTMLSync } = await import("../src/lib/pdf-styles.ts");
+  const { buildPDFHTML, buildPDFHTMLSync } = await import("../src/lib/pdf-styles.ts");
   const body = renderMarkdownHTML(FIXTURE);
 
   const dir = await mkdtemp(path.join(tmpdir(), "markie-pdf-check-"));
@@ -134,6 +207,31 @@ async function main() {
           `first ink at row ${page.firstInk}`
         );
       }
+    }
+
+    // The stress document needs the KaTeX stylesheet for the display formula,
+    // which buildPDFHTMLSync leaves out, so build it with the async variant.
+    // Light theme only: this pass is about layout, not color.
+    const stressBody = renderMarkdownHTML(STRESS_FIXTURE);
+    await writeFile(path.join(dir, "stress.html"), await buildPDFHTML(stressBody, "light"), "utf-8");
+    await printOne(dir, "stress");
+    execFileSync("pdftoppm", ["-png", "-r", "70", path.join(dir, "stress.pdf"), path.join(dir, "stress")]);
+
+    const stressPages = (await readdir(dir))
+      .filter((name) => /^stress-\d+\.png$/.test(name))
+      .sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0]))
+      .map((name) => probe(path.join(dir, name)));
+
+    // A shrunken document comes out shorter: the unfixed stylesheet produced
+    // 4 pages of tiny text, the fixed one produces 7.
+    check(
+      "stress: prints at its natural length (5 pages or more)",
+      stressPages.length >= 5,
+      `${stressPages.length} pages`
+    );
+    for (const [i, page] of stressPages.entries()) {
+      check(`stress: page ${i + 1} keeps its right margin`, page.rightInk === 0, `rightInk ${page.rightInk}`);
+      check(`stress: page ${i + 1} keeps its bottom margin`, page.bottomInk === 0, `bottomInk ${page.bottomInk}`);
     }
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});

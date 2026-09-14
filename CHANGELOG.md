@@ -18,6 +18,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   syncs the target; it points at whatever its owner already chose. In Markie
   a linked document you already have opens in place; one you do not lands
   once as a view-only copy.
+- **Make the page wider when a table needs it.** Next to zoom, the toolbar
+  has Narrower and Wider, and the View menu has Wider Page (Option Command ])
+  and Narrower Page (Option Command [). Five widths from the default to the
+  full window, remembered per document like font and zoom.
 
 ### Fixed
 

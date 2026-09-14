@@ -13,7 +13,13 @@ export interface DocAppearance {
   fontFamily: string;
   fontSize: number; // px, the document body
   zoom: number; // 1 = 100%
+  width: DocWidth;
 }
+
+// A per-document override of the reading column's width, stepped through
+// five settings like zoom rather than a free-form number. "default" leaves
+// the theme's own contentWidth in charge; "full" gives the window.
+export type DocWidth = "default" | "900" | "1040" | "1200" | "full";
 
 // Stacks rather than single names, so a document still renders if the first
 // choice is missing. Serif first: this is a reading app.
@@ -30,6 +36,7 @@ export const DEFAULT_APPEARANCE: DocAppearance = {
   fontFamily: "system",
   fontSize: 16,
   zoom: 1,
+  width: "default",
 };
 
 // Bounds are about legibility, not taste: below 11px the reading column stops
@@ -38,6 +45,8 @@ export const MIN_FONT_SIZE = 11;
 export const MAX_FONT_SIZE = 32;
 
 export const ZOOM_STEPS = [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 2] as const;
+
+export const WIDTH_STEPS: readonly DocWidth[] = ["default", "900", "1040", "1200", "full"];
 
 export function clampFontSize(size: number): number {
   if (!Number.isFinite(size)) return DEFAULT_APPEARANCE.fontSize;
@@ -62,6 +71,23 @@ export function zoomLabel(zoom: number): string {
   return `${Math.round(zoom * 100)}%`;
 }
 
+// Same shape as stepZoom: one preset at a time, clamped at the ends rather
+// than wrapping.
+export function stepWidth(current: DocWidth, direction: 1 | -1): DocWidth {
+  const index = WIDTH_STEPS.indexOf(current);
+  const from = index < 0 ? 0 : index;
+  const next = from + direction;
+  if (next < 0) return WIDTH_STEPS[0];
+  if (next >= WIDTH_STEPS.length) return WIDTH_STEPS[WIDTH_STEPS.length - 1];
+  return WIDTH_STEPS[next];
+}
+
+export function widthLabel(width: DocWidth): string {
+  if (width === "default") return "Default";
+  if (width === "full") return "Full";
+  return `${width} px`;
+}
+
 export function fontStack(fontFamily: string): string {
   return (
     DOC_FONTS.find((f) => f.id === fontFamily)?.stack ?? DOC_FONTS[0].stack
@@ -74,6 +100,7 @@ export function normalizeAppearance(raw: unknown): DocAppearance {
   const value = (raw ?? {}) as Partial<DocAppearance>;
   const known = DOC_FONTS.some((f) => f.id === value.fontFamily);
   const zoom = Number(value.zoom);
+  const knownWidth = (WIDTH_STEPS as readonly string[]).includes(value.width as string);
   return {
     fontFamily: known ? (value.fontFamily as string) : DEFAULT_APPEARANCE.fontFamily,
     fontSize: clampFontSize(Number(value.fontSize ?? DEFAULT_APPEARANCE.fontSize)),
@@ -81,6 +108,7 @@ export function normalizeAppearance(raw: unknown): DocAppearance {
       Number.isFinite(zoom) && zoom > 0
         ? Math.min(ZOOM_STEPS[ZOOM_STEPS.length - 1], Math.max(ZOOM_STEPS[0], zoom))
         : DEFAULT_APPEARANCE.zoom,
+    width: knownWidth ? (value.width as DocWidth) : DEFAULT_APPEARANCE.width,
   };
 }
 
@@ -89,10 +117,17 @@ export function normalizeAppearance(raw: unknown): DocAppearance {
 export function appearanceVars(
   appearance: DocAppearance
 ): Record<string, string> {
-  return {
+  const vars: Record<string, string> = {
     "--doc-font-family": fontStack(appearance.fontFamily),
     "--doc-font-size": `${(appearance.fontSize * appearance.zoom).toFixed(2)}px`,
   };
+  // At "default" the key is left out entirely so the theme's own
+  // --doc-width shows through, the same way a document with no override reads
+  // as if this rule were never written.
+  if (appearance.width !== "default") {
+    vars["--doc-width"] = appearance.width === "full" ? "100%" : `${appearance.width}px`;
+  }
+  return vars;
 }
 
 // Keyed per document so two files can be read differently, and by path when
@@ -105,6 +140,7 @@ export function isDefault(appearance: DocAppearance): boolean {
   return (
     appearance.fontFamily === DEFAULT_APPEARANCE.fontFamily &&
     appearance.fontSize === DEFAULT_APPEARANCE.fontSize &&
-    appearance.zoom === DEFAULT_APPEARANCE.zoom
+    appearance.zoom === DEFAULT_APPEARANCE.zoom &&
+    appearance.width === DEFAULT_APPEARANCE.width
   );
 }

@@ -9,6 +9,7 @@ import {
   appearanceVars,
   DEFAULT_APPEARANCE,
   normalizeAppearance,
+  stepWidth,
   stepZoom,
   type DocAppearance,
 } from "@/lib/doc-appearance";
@@ -1466,6 +1467,9 @@ export default function Home() {
     zoom: (step: number) => {
       void step;
     },
+    pageWidth: (step: number) => {
+      void step;
+    },
   });
   useEffect(() => {
     // Kept current so the once-registered IPC listeners always call the latest
@@ -1596,6 +1600,7 @@ export default function Home() {
       }),
       api.onMenuPrint?.(() => handlersRef.current.print()),
       api.onMenuZoom?.((step) => handlersRef.current.zoom(step)),
+      api.onMenuPageWidth?.((step) => handlersRef.current.pageWidth(step)),
       api.onMenuUndo?.(() => handlersRef.current.undoRedo("undo")),
       api.onMenuRedo?.(() => handlersRef.current.undoRedo("redo")),
       api.onMenuFindReplace?.(() => {
@@ -1794,11 +1799,32 @@ export default function Home() {
     [appearanceStore]
   );
 
-  // Zoom is declared after the IPC handlers are registered, so it is the one
-  // that still has to be kept current here.
+  // The View menu's Wider/Narrower Page, mirroring handleZoom: one step along
+  // the width presets, persisted the same way.
+  const handlePageWidth = useCallback(
+    (step: number) => {
+      setAppearance((prev) => {
+        const next = normalizeAppearance({
+          ...prev,
+          width: stepWidth(prev.width, step > 0 ? 1 : -1),
+        });
+        try {
+          window.localStorage.setItem(appearanceStore, JSON.stringify(next));
+        } catch {
+          // Out of quota or private mode: it still applies for this session.
+        }
+        return next;
+      });
+    },
+    [appearanceStore]
+  );
+
+  // Zoom and page width are declared after the IPC handlers are registered,
+  // so they are the ones that still have to be kept current here.
   useEffect(() => {
     handlersRef.current.zoom = handleZoom;
-  }, [handleZoom]);
+    handlersRef.current.pageWidth = handlePageWidth;
+  }, [handleZoom, handlePageWidth]);
 
 
   if (!booted) {

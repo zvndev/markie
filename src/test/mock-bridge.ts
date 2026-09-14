@@ -140,6 +140,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     onMenuFind: vi.fn(subscribe("onMenuFind")),
     onMenuPrint: vi.fn(subscribe("onMenuPrint")),
     onMenuZoom: vi.fn(subscribe("onMenuZoom")),
+    onMenuPageWidth: vi.fn(subscribe("onMenuPageWidth")),
     onMenuUndo: vi.fn(subscribe("onMenuUndo")),
     onMenuRedo: vi.fn(subscribe("onMenuRedo")),
     onMenuFindReplace: vi.fn(subscribe("onMenuFindReplace")),

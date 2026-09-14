@@ -40,6 +40,8 @@ export const MENU_ACCELERATORS = [
   "Mod-=", // Zoom in
   "Mod--", // Zoom out
   "Mod-0", // Reset zoom
+  "Mod-Alt-]", // Wider page
+  "Mod-Alt-[", // Narrower page
 ] as const;
 
 // What actually toggles each control. Values are either bound by a TipTap
@@ -66,13 +68,24 @@ export const CONTROL_KEYS: Record<string, string> = {
   print: "Mod-p", // File menu
   zoomIn: "Mod-=", // View menu
   zoomOut: "Mod--", // View menu
+  pageWider: "Mod-Alt-]", // View menu
+  pageNarrower: "Mod-Alt-[", // View menu
 };
 
 // Accelerators the menu owns AND some control also claims. Anything listed
 // here is a bug in one of the two tables, except for the entries Markie
-// deliberately routes through the menu (undo, redo, print, zoom), which are the
-// same command reached two ways rather than two commands fighting.
-const MENU_ROUTED = new Set(["undo", "redo", "print", "zoomIn", "zoomOut"]);
+// deliberately routes through the menu (undo, redo, print, zoom, page width),
+// which are the same command reached two ways rather than two commands
+// fighting.
+const MENU_ROUTED = new Set([
+  "undo",
+  "redo",
+  "print",
+  "zoomIn",
+  "zoomOut",
+  "pageWider",
+  "pageNarrower",
+]);
 
 // Modifiers read in a fixed order on macOS (⌃⌥⇧⌘) no matter how the chord was
 // written, because that is the order every Mac menu prints them in.

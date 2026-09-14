@@ -69,14 +69,26 @@ describe("the declared menu matches the real one", () => {
   it("leaves the editor's chords alone", () => {
     const real = new Set(acceleratorsInMenu(main).map(normalize));
     const stolen = Object.entries(CONTROL_KEYS)
-      .filter(([id]) => !["undo", "redo", "print", "zoomIn", "zoomOut"].includes(id))
+      .filter(
+        ([id]) =>
+          !["undo", "redo", "print", "zoomIn", "zoomOut", "pageWider", "pageNarrower"].includes(
+            id
+          )
+      )
       .filter(([, key]) => real.has(normalize(key)))
       .map(([id, key]) => `${id} (${key})`);
     expect(stolen).toEqual([]);
   });
 
   it("has the menu items the toolbar promises exist", () => {
-    for (const accelerator of ["CmdOrCtrl+P", "CmdOrCtrl+=", "CmdOrCtrl+-", "CmdOrCtrl+0"]) {
+    for (const accelerator of [
+      "CmdOrCtrl+P",
+      "CmdOrCtrl+=",
+      "CmdOrCtrl+-",
+      "CmdOrCtrl+0",
+      "Alt+CmdOrCtrl+]",
+      "Alt+CmdOrCtrl+[",
+    ]) {
       expect(main).toContain(`accelerator: "${accelerator}"`);
     }
   });

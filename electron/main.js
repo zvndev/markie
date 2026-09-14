@@ -397,6 +397,28 @@ async function openSharedFromDeepLink(link) {
   }
 }
 
+// Pull a cloud document this account may read into Downloads under its own
+// name, track it, grant it, and answer its path. Shared by the markie://doc
+// deep link and a document link clicked inside another document.
+async function landCloudDoc(cloudId) {
+  const res = await sync.pull(cloudId, downloadsUniquePath("Shared document.md"));
+  if (!res || res.error) return { error: res && res.error ? res.error : "pull failed" };
+  // pull() writes under a placeholder name because the real one only comes back
+  // with the document. Rename before opening so the Library shows what the
+  // sender called it, not "Shared document".
+  let finalPath = res.path;
+  if (res.name) {
+    const preferred = downloadsUniquePath(res.name);
+    try {
+      fs.renameSync(res.path, preferred);
+      registry.movePath(res.path, preferred);
+      finalPath = preferred;
+    } catch { /* keep the placeholder name rather than lose the file */ }
+  }
+  fileGrants.grantFile(finalPath);
+  return { path: finalPath };
+}
+
 // markie://doc?id=… — open a document that is shared with the signed-in
 // account. The link carries no credential of its own, so a stranger who gets
 // hold of it opens nothing: the fetch uses this app's own session, and the
@@ -431,8 +453,8 @@ async function openCloudDocFromDeepLink(link) {
     return;
   }
 
-  const res = await sync.pull(cloudId, downloadsUniquePath("Shared document.md"));
-  if (res && res.error) {
+  const landedDoc = await landCloudDoc(cloudId);
+  if (landedDoc.error) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       dialog.showMessageBox(mainWindow, {
         type: "warning",
@@ -442,20 +464,7 @@ async function openCloudDocFromDeepLink(link) {
     }
     return;
   }
-  // pull() writes under a placeholder name because the real one only comes back
-  // with the document. Rename before opening so the Library shows what the
-  // sender called it, not "Shared document".
-  let finalPath = res.path;
-  if (res.name) {
-    const preferred = downloadsUniquePath(res.name);
-    try {
-      fs.renameSync(res.path, preferred);
-      registry.movePath(res.path, preferred);
-      finalPath = preferred;
-    } catch { /* keep the placeholder name rather than lose the file */ }
-  }
-  fileGrants.grantFile(finalPath);
-  openLocalFile(finalPath);
+  openLocalFile(landedDoc.path);
 }
 
 // Resolve once the renderer has configured the sync engine with a session, or
@@ -1255,11 +1264,15 @@ const { createAssetSync } = require("./asset-sync");
 // itself is in. It reads the last listing the sync engine received.
 const assetSync = createAssetSync({ api: sync.api, registry, grants: fileGrants, isExposed: sync.isExposed });
 sync.setAssetSync(assetSync);
+// Pointers to other documents, pushed after the text the way media is.
+const { createLinkSync } = require("./link-sync");
+const linkSync = createLinkSync({ api: sync.api, registry });
+sync.setLinkSync(linkSync);
 // Repairs documents told to sync that never landed, and backfills media on
 // ones that did. Runs on its own schedule below; never awaited from a caller
 // that has to stay fast.
 const { createReconciler } = require("./reconcile");
-const reconciler = createReconciler({ sync, registry, assetSync });
+const reconciler = createReconciler({ sync, registry, assetSync, linkSync });
 let lastReconcile = 0;
 let lastReconcileResult = null;
 // A run in progress, shared by every caller that arrives while it is still
@@ -1677,6 +1690,32 @@ handle("open-local-file", async (_event, { href, docDir } = {}) => {
   const failure = await shell.openPath(allowed);
   // openPath answers with a message on failure and an empty string on success.
   return failure ? { ok: false, error: failure } : { ok: true };
+});
+
+// IPC: what each document link in the open document is (local, cloud, none,
+// unknown), so the renderer can mark the ones this account may not follow
+// before anyone clicks. See electron/doc-link-open.js.
+const { createDocLinkOpener, NOT_SHARED } = require("./doc-link-open");
+const docLinkOpener = createDocLinkOpener({ sync, registry, localAssets, land: landCloudDoc });
+handle(
+  "resolve-doc-links",
+  async (_event, { docPath, hrefs } = {}) => {
+    const list = Array.isArray(hrefs) ? hrefs.filter((h) => typeof h === "string").slice(0, 500) : [];
+    return docLinkOpener.resolve(typeof docPath === "string" ? docPath : null, list);
+  },
+  { onFailure: () => [] }
+);
+
+// IPC: open a document link the renderer resolved as "cloud": the copy this
+// machine already has, or a view-only copy landed once into Downloads.
+handle("open-doc-link", async (_event, { docPath, href } = {}) => {
+  if (typeof href !== "string" || !href) return { ok: false, error: "That link does not point at a file." };
+  const result = await docLinkOpener.open(typeof docPath === "string" ? docPath : null, href);
+  if (!result.ok) {
+    return { ok: false, error: result.error ?? (result.kind === "none" ? NOT_SHARED : "That link does not point at a synced document.") };
+  }
+  openLocalFile(result.path);
+  return { ok: true };
 });
 
 // IPC: the card that appears when somebody hovers a link.

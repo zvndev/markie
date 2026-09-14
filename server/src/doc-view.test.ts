@@ -568,7 +568,7 @@ test("a document link on the shared page opens for a member who may read the tar
   // Through Bob's personal token the answer is the same: it maps to Bob.
   const token = ensureShareToken(sourceId, bobId);
   view = await page(`/d/${sourceId}?k=${encodeURIComponent(token)}`);
-  assert.match(view.body, /doc-link-muted/);
+  assert.match(view.body, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">the plan<\/a>/);
 
   // Once the target is shared with Bob the link opens.
   const shareTarget = await jsonRequest("POST", `/api/docs/${targetId}/shares`, owner.token, { email: bob.email, role: "viewer" });
@@ -608,6 +608,7 @@ test("a pending invite's link shows every document link muted", async () => {
   assert.ok(pendingToken, "a pending invite has a token in pending_shares");
   const view = await page(`/d/${sourceId}?k=${encodeURIComponent(pendingToken)}`);
   assert.equal(view.status, 200);
-  assert.match(view.body, /doc-link-muted/);
+  assert.match(view.body, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">the plan<\/a>/);
   assert.ok(!view.body.includes(`/d/${targetId}`));
+  assert.ok(!view.body.includes(`href="/d/${targetId}"`));
 });

@@ -408,5 +408,5 @@ test("a document link on a public page resolves only to another public page", as
 
   assert.equal((await fullApp.request(`/api/docs/${targetId}/public-link`, { method: "DELETE", headers })).status, 200);
   html = await (await fullApp.request(`/s/${sourceToken}`)).text();
-  assert.match(html, /doc-link-muted/);
+  assert.match(html, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">the plan<\/a>/);
 });

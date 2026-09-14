@@ -89,6 +89,11 @@ describe("resolve", () => {
     await opener.resolve(DOC, ["plan.md"]);
     expect(apiCalls).toHaveLength(3);
   });
+
+  it("answers unknown for a ref too long for the server to have ever stored", async () => {
+    const hugeRef = `${"a".repeat(2097)}.md`;
+    expect(await make().resolve(DOC, [hugeRef])).toEqual([{ href: hugeRef, kind: "unknown" }]);
+  });
 });
 
 describe("open", () => {

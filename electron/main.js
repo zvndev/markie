@@ -1695,7 +1695,7 @@ handle("open-local-file", async (_event, { href, docDir } = {}) => {
 // IPC: what each document link in the open document is (local, cloud, none,
 // unknown), so the renderer can mark the ones this account may not follow
 // before anyone clicks. See electron/doc-link-open.js.
-const { createDocLinkOpener, NOT_SHARED } = require("./doc-link-open");
+const { createDocLinkOpener } = require("./doc-link-open");
 const docLinkOpener = createDocLinkOpener({ sync, registry, localAssets, land: landCloudDoc });
 handle(
   "resolve-doc-links",
@@ -1708,15 +1708,19 @@ handle(
 
 // IPC: open a document link the renderer resolved as "cloud": the copy this
 // machine already has, or a view-only copy landed once into Downloads.
-handle("open-doc-link", async (_event, { docPath, href } = {}) => {
-  if (typeof href !== "string" || !href) return { ok: false, error: "That link does not point at a file." };
-  const result = await docLinkOpener.open(typeof docPath === "string" ? docPath : null, href);
-  if (!result.ok) {
-    return { ok: false, error: result.error ?? (result.kind === "none" ? NOT_SHARED : "That link does not point at a synced document.") };
-  }
-  openLocalFile(result.path);
-  return { ok: true };
-});
+handle(
+  "open-doc-link",
+  async (_event, { docPath, href } = {}) => {
+    if (typeof href !== "string" || !href) return { ok: false, error: "That link does not point at a file." };
+    const result = await docLinkOpener.open(typeof docPath === "string" ? docPath : null, href);
+    if (!result.ok) {
+      return { ok: false, error: result.error ?? "That link does not point at a synced document." };
+    }
+    openLocalFile(result.path);
+    return { ok: true };
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
 
 // IPC: the card that appears when somebody hovers a link.
 //

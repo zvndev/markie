@@ -11,7 +11,7 @@
 // Kept out of main.js so the ordering and the memo can be tested without
 // Electron.
 const path = require("node:path");
-const { refOf } = require("./doc-assets");
+const { refOf, refIsMalformed } = require("./doc-assets");
 const { isDocRef } = require("./doc-links");
 
 const NOT_SHARED = "This document isn't shared with you.";
@@ -62,7 +62,7 @@ function createDocLinkOpener({ sync, registry, localAssets, land, fs = require("
     let asked = false;
     for (const entry of out) {
       const ref = refOf(entry.href);
-      if (!ref || !isDocRef(ref)) continue;
+      if (!ref || refIsMalformed(ref) || !isDocRef(ref)) continue;
       const candidate = localAssets.candidatePath(entry.href, docDir);
       if (candidate && fs.existsSync(candidate)) {
         entry.kind = "local";

@@ -52,7 +52,12 @@ describe("what a control may advertise", () => {
   // adds a menu accelerator later and a tooltip quietly starts lying.
   it("has no editor control claiming a chord the menu already owns", () => {
     const lying = Object.entries(CONTROL_KEYS)
-      .filter(([id]) => !["undo", "redo", "print", "zoomIn", "zoomOut"].includes(id))
+      .filter(
+        ([id]) =>
+          !["undo", "redo", "print", "zoomIn", "zoomOut", "pageWider", "pageNarrower"].includes(
+            id
+          )
+      )
       .filter(([, key]) => isMenuReserved(key));
     expect(lying).toEqual([]);
   });

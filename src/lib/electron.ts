@@ -271,6 +271,8 @@ export interface ElectronAPI {
   onMenuPrint(cb: () => void): Unsubscribe;
   // -1 out, +1 in, 0 back to 100%
   onMenuZoom(cb: (step: number) => void): Unsubscribe;
+  // -1 narrower, +1 wider, one step along the width presets
+  onMenuPageWidth(cb: (step: number) => void): Unsubscribe;
   onMenuUndo(cb: () => void): Unsubscribe;
   onMenuRedo(cb: () => void): Unsubscribe;
   onMenuFindReplace(cb: () => void): Unsubscribe;

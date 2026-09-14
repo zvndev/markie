@@ -109,6 +109,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onMenuFind: (callback) => subscribe("menu-find", callback),
   onMenuPrint: (callback) => subscribe("menu-print", callback),
   onMenuZoom: (callback) => subscribe("menu-zoom", callback, (step) => step),
+  onMenuPageWidth: (callback) => subscribe("menu-page-width", callback, (step) => step),
   onMenuUndo: (callback) => subscribe("menu-undo", callback),
   onMenuRedo: (callback) => subscribe("menu-redo", callback),
   onMenuFindReplace: (callback) => subscribe("menu-find-replace", callback),

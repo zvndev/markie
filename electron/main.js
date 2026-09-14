@@ -2870,6 +2870,16 @@ const template = [
         accelerator: "CmdOrCtrl+0",
         click: () => mainWindow?.webContents.send("menu-zoom", 0),
       },
+      {
+        label: "Wider Page",
+        accelerator: "Alt+CmdOrCtrl+]",
+        click: () => mainWindow?.webContents.send("menu-page-width", 1),
+      },
+      {
+        label: "Narrower Page",
+        accelerator: "Alt+CmdOrCtrl+[",
+        click: () => mainWindow?.webContents.send("menu-page-width", -1),
+      },
       { type: "separator" },
       {
         label: "Command Palette…",

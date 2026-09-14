@@ -1,5 +1,7 @@
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { docToolbarState } from "./doc-toolbar";
+import { docToolbarState, DocToolbar } from "./doc-toolbar";
+import { DEFAULT_APPEARANCE } from "@/lib/doc-appearance";
 import type { Editor } from "@tiptap/react";
 
 // The toolbar reads the document through a live TipTap editor. The pane switch
@@ -63,5 +65,24 @@ describe("docToolbarState", () => {
     docToolbarState({ isDestroyed: true, isActive, can } as unknown as Editor);
     expect(isActive).not.toHaveBeenCalled();
     expect(can).not.toHaveBeenCalled();
+  });
+});
+
+describe("page width control", () => {
+  it("steps the width up from the default when Wider is clicked", () => {
+    const onAppearance = vi.fn();
+    render(
+      <DocToolbar
+        editor={null}
+        appearance={DEFAULT_APPEARANCE}
+        onAppearance={onAppearance}
+        onPrint={() => {}}
+        canEdit
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Wider" }));
+
+    expect(onAppearance).toHaveBeenCalledWith({ ...DEFAULT_APPEARANCE, width: "900" });
   });
 });

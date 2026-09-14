@@ -10,7 +10,10 @@ import {
   MAX_FONT_SIZE,
   MIN_FONT_SIZE,
   normalizeAppearance,
+  stepWidth,
   stepZoom,
+  widthLabel,
+  WIDTH_STEPS,
   ZOOM_STEPS,
   zoomLabel,
 } from "./doc-appearance";
@@ -65,6 +68,27 @@ describe("zoom", () => {
   });
 });
 
+describe("width", () => {
+  it("steps between presets", () => {
+    expect(stepWidth("default", 1)).toBe("900");
+  });
+
+  it("stops at the ends instead of wrapping", () => {
+    const [narrowest] = WIDTH_STEPS;
+    const widest = WIDTH_STEPS[WIDTH_STEPS.length - 1];
+    expect(stepWidth(widest, 1)).toBe(widest);
+    expect(stepWidth(narrowest, -1)).toBe(narrowest);
+  });
+
+  it("reads as a plain label", () => {
+    expect(widthLabel("default")).toBe("Default");
+    expect(widthLabel("900")).toBe("900 px");
+    expect(widthLabel("1040")).toBe("1040 px");
+    expect(widthLabel("1200")).toBe("1200 px");
+    expect(widthLabel("full")).toBe("Full");
+  });
+});
+
 describe("fonts", () => {
   it("resolves a known font to its stack", () => {
     expect(fontStack("charter")).toContain("Charter");
@@ -112,17 +136,55 @@ describe("stored settings are never trusted", () => {
     expect(normalizeAppearance({ zoom: 0 }).zoom).toBe(DEFAULT_APPEARANCE.zoom);
     expect(normalizeAppearance({ zoom: -2 }).zoom).toBe(DEFAULT_APPEARANCE.zoom);
   });
+
+  // Only the five preset values are real widths; anything else, including a
+  // number instead of one of the strings, becomes the default rather than
+  // rendering at a width nothing offered.
+  it("drops a width it does not recognise", () => {
+    expect(normalizeAppearance({ width: "850" }).width).toBe("default");
+    expect(normalizeAppearance({ width: 1040 }).width).toBe("default");
+    expect(normalizeAppearance({ width: undefined }).width).toBe("default");
+  });
+
+  it("keeps a width it does recognise", () => {
+    expect(normalizeAppearance({ width: "1200" }).width).toBe("1200");
+  });
+
+  // An appearance saved before this feature existed has no width field at
+  // all, not an invalid one - it still has to normalize cleanly.
+  it("normalizes an old stored record with no width field", () => {
+    const out = normalizeAppearance({ fontFamily: "georgia", fontSize: 18, zoom: 1.25 });
+    expect(out.width).toBe("default");
+  });
 });
 
 describe("what the canvas reads", () => {
   it("multiplies size by zoom so text reflows instead of overflowing", () => {
-    const vars = appearanceVars({ fontFamily: "system", fontSize: 16, zoom: 1.5 });
+    const vars = appearanceVars({ fontFamily: "system", fontSize: 16, zoom: 1.5, width: "default" });
     expect(vars["--doc-font-size"]).toBe("24.00px");
   });
 
   it("names a real font stack", () => {
-    const vars = appearanceVars({ fontFamily: "georgia", fontSize: 16, zoom: 1 });
+    const vars = appearanceVars({ fontFamily: "georgia", fontSize: 16, zoom: 1, width: "default" });
     expect(vars["--doc-font-family"]).toContain("Georgia");
+  });
+
+  // At "default" the theme's own --doc-width is left to show through, so the
+  // key must be absent rather than set to some value that just happens to
+  // match it.
+  it("has no --doc-width at the default width", () => {
+    const vars = appearanceVars({ fontFamily: "system", fontSize: 16, zoom: 1, width: "default" });
+    expect(vars["--doc-width"]).toBeUndefined();
+  });
+
+  it("sets a pixel width for a numeric preset", () => {
+    const vars = appearanceVars({ fontFamily: "system", fontSize: 16, zoom: 1, width: "1200" });
+    expect(vars["--doc-width"]).toBe("1200px");
+  });
+
+  it("sets a full-width percentage for the full preset", () => {
+    const vars = appearanceVars({ fontFamily: "system", fontSize: 16, zoom: 1, width: "full" });
+    expect(vars["--doc-width"]).toBe("100%");
   });
 });
 
@@ -140,5 +202,9 @@ describe("knowing when nothing has been changed", () => {
   it("recognises the default", () => {
     expect(isDefault(DEFAULT_APPEARANCE)).toBe(true);
     expect(isDefault({ ...DEFAULT_APPEARANCE, zoom: 1.25 })).toBe(false);
+  });
+
+  it("is not the default at a non-default width", () => {
+    expect(isDefault({ ...DEFAULT_APPEARANCE, width: "900" })).toBe(false);
   });
 });

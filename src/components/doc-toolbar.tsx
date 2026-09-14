@@ -6,7 +6,9 @@ import {
   clampFontSize,
   DOC_FONTS,
   fontStack,
+  stepWidth,
   stepZoom,
+  widthLabel,
   zoomLabel,
   type DocAppearance,
 } from "@/lib/doc-appearance";
@@ -280,6 +282,26 @@ export function DocToolbar({
         label="Zoom in"
       >
         <Icon><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /><path d="M11 8v6" /><path d="M8 11h6" /></Icon>
+      </TButton>
+
+      {/* Page width, beside zoom: a per-document override of the reading
+          column, for the table that gets squished at the default width. */}
+      <TButton
+        onClick={() => onAppearance({ ...appearance, width: stepWidth(appearance.width, -1) })}
+        title={controlTitle("pageNarrower", "Narrower page")}
+        label="Narrower"
+      >
+        <Icon><path d="M5 7 9 12 5 17" /><path d="M19 7 15 12 19 17" /></Icon>
+      </TButton>
+      <span className="text-[11px] text-muted tabular-nums w-[52px] text-center shrink-0">
+        {widthLabel(appearance.width)}
+      </span>
+      <TButton
+        onClick={() => onAppearance({ ...appearance, width: stepWidth(appearance.width, 1) })}
+        title={controlTitle("pageWider", "Wider page")}
+        label="Wider"
+      >
+        <Icon><path d="M7 7 3 12 7 17" /><path d="M17 7 21 12 17 17" /></Icon>
       </TButton>
 
       <Divider />

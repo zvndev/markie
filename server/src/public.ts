@@ -3,6 +3,7 @@
 import { Hono } from "hono";
 import { openDatabase } from "./db.ts";
 import { resolvePublicToken } from "./public-links.ts";
+import { publicPageLinkFor } from "./doc-links.ts";
 import { assetRefsFor, assetVersion, serveAsset } from "./assets.ts";
 import {
   renderDownloadPage,
@@ -142,6 +143,7 @@ publicShare.get("/s/:token", (c) => {
       token,
       siteUrl: MARKIE_SITE,
       assetUrlFor,
+      docLinkFor: publicPageLinkFor(doc.doc_id),
     })
   );
 });

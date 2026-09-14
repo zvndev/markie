@@ -34,6 +34,7 @@ if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 const { docs } = await import("./docs.ts");
 const { shares } = await import("./shares.ts");
 const { assetsApi } = await import("./assets.ts");
+const { docLinksApi } = await import("./doc-links.ts");
 const { signUpVerified } = await import("./test-users.ts");
 
 // A second app, distinct from the bare `publicShare` the download tests use
@@ -45,6 +46,7 @@ fullApp.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 fullApp.route("/api/docs", docs);
 fullApp.route("/api/docs", shares);
 fullApp.route("/api", assetsApi);
+fullApp.route("/api", docLinksApi);
 fullApp.route("/", publicShare);
 
 const H = (token?: string) => ({
@@ -377,4 +379,34 @@ test("the public page rewrites a linked asset's src through its own /s/ asset ro
   assert.equal(asset.status, 200);
   assert.equal(asset.headers.get("cache-control"), "private, max-age=3600");
   assert.equal(await asset.text(), "public-page-asset-bytes");
+});
+
+test("a document link on a public page resolves only to another public page", async () => {
+  const owner = await signUpVerified(fullApp, { name: "Owner", email: `pl.owner.${Date.now()}@test.local` });
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${owner.token}`, Origin: "http://localhost:3000", "x-forwarded-for": "127.0.0.1" };
+  const sourceId = `pl-source-${Date.now()}`;
+  const targetId = `pl-target-${Date.now()}`;
+  const content = "# Source\n\n[the plan](plan.md)\n";
+  const hash = createHash("sha256").update(content, "utf8").digest("hex");
+  for (const [id, body] of [[sourceId, content], [targetId, "# Target\n"]] as const) {
+    const r = await fullApp.request(`/api/docs/${id}`, { method: "PUT", headers, body: JSON.stringify({ name: `${id}.md`, content: body, hash: id === sourceId ? hash : createHash("sha256").update(body, "utf8").digest("hex"), baseVersion: 0 }) });
+    assert.equal(r.status, 200);
+  }
+  assert.equal((await fullApp.request(`/api/docs/${sourceId}/links`, { method: "PUT", headers, body: JSON.stringify({ links: [{ ref: "plan.md", target: targetId }] }) })).status, 200);
+  const made = await fullApp.request(`/api/docs/${sourceId}/public-link`, { method: "POST", headers });
+  assert.equal(made.status, 200);
+  const sourceToken = String(((await made.json()) as { url: string }).url).split("/s/")[1];
+
+  let html = await (await fullApp.request(`/s/${sourceToken}`)).text();
+  assert.match(html, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">the plan<\/a>/);
+  assert.ok(!html.includes(targetId));
+
+  const madeTarget = await fullApp.request(`/api/docs/${targetId}/public-link`, { method: "POST", headers });
+  const targetToken = String(((await madeTarget.json()) as { url: string }).url).split("/s/")[1];
+  html = await (await fullApp.request(`/s/${sourceToken}`)).text();
+  assert.match(html, new RegExp(`<a href="/s/${targetToken}">the plan</a>`));
+
+  assert.equal((await fullApp.request(`/api/docs/${targetId}/public-link`, { method: "DELETE", headers })).status, 200);
+  html = await (await fullApp.request(`/s/${sourceToken}`)).text();
+  assert.match(html, /doc-link-muted/);
 });

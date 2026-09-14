@@ -31,6 +31,7 @@ if (toBeCreated.length > 0 || toBeAdded.length > 0) {
 const { docs } = await import("./docs.ts");
 const { shares, ensureShareToken } = await import("./shares.ts");
 const { assetsApi } = await import("./assets.ts");
+const { docLinksApi } = await import("./doc-links.ts");
 const { docView } = await import("./doc-view.ts");
 
 const app = new Hono();
@@ -38,6 +39,7 @@ app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/docs", docs);
 app.route("/api/docs", shares);
 app.route("/api", assetsApi);
+app.route("/api", docLinksApi);
 app.route("/", docView);
 
 const ORIGIN = { Origin: "http://localhost:3000" };
@@ -537,4 +539,75 @@ test("a reader's rewritten asset src carries their own ?k= token", async () => {
     view.body,
     new RegExp(`src="/d/${docId}/assets\\?ref=a\\.png&#x26;k=${token}&#x26;v=${assetHash.slice(0, 16)}"`)
   );
+});
+
+test("a document link on the shared page opens for a member who may read the target and is muted for one who may not", async () => {
+  const owner = await signUp("Owner", `dl.owner.${stamp}@test.local`);
+  const bob = await signUp("Bob", `dl.bob.${stamp}@test.local`);
+  const sourceId = `dl-source-${stamp}`;
+  const targetId = `dl-target-${stamp}`;
+  await createDoc(owner.token, sourceId);
+  await createDoc(owner.token, targetId);
+  const withLink = "# Source\n\n[the plan](plan.md)\n";
+  const hash = createHash("sha256").update(withLink, "utf8").digest("hex");
+  const put = await jsonRequest<{ version: number }>("PUT", `/api/docs/${sourceId}`, owner.token, { name: "source.md", content: withLink, hash, baseVersion: 1 });
+  assert.equal(put.status, 200);
+  const linked = await jsonRequest("PUT", `/api/docs/${sourceId}/links`, owner.token, { links: [{ ref: "plan.md", target: targetId }] });
+  assert.equal(linked.status, 200);
+
+  const share = await jsonRequest<{ userId: string }>("POST", `/api/docs/${sourceId}/shares`, owner.token, { email: bob.email, role: "viewer" });
+  assert.equal(share.status, 200);
+  const bobId = share.data?.userId as string;
+
+  // Bob may read the source but not the target: muted, with no target named.
+  let view = await page(`/d/${sourceId}`, bob.token);
+  assert.equal(view.status, 200);
+  assert.match(view.body, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">the plan<\/a>/);
+  assert.ok(!view.body.includes(targetId), "the muted page must not name the target");
+
+  // Through Bob's personal token the answer is the same: it maps to Bob.
+  const token = ensureShareToken(sourceId, bobId);
+  view = await page(`/d/${sourceId}?k=${encodeURIComponent(token)}`);
+  assert.match(view.body, /doc-link-muted/);
+
+  // Once the target is shared with Bob the link opens.
+  const shareTarget = await jsonRequest("POST", `/api/docs/${targetId}/shares`, owner.token, { email: bob.email, role: "viewer" });
+  assert.equal(shareTarget.status, 200);
+  view = await page(`/d/${sourceId}`, bob.token);
+  assert.match(view.body, new RegExp(`<a href="/d/${targetId}">the plan</a>`));
+  view = await page(`/d/${sourceId}?k=${encodeURIComponent(token)}`);
+  assert.match(view.body, new RegExp(`<a href="/d/${targetId}">the plan</a>`));
+
+  // The owner always may.
+  view = await page(`/d/${sourceId}`, owner.token);
+  assert.match(view.body, new RegExp(`<a href="/d/${targetId}">the plan</a>`));
+});
+
+test("a pending invite's link shows every document link muted", async () => {
+  const owner = await signUp("Owner", `dl2.owner.${stamp}@test.local`);
+  const sourceId = `dl2-source-${stamp}`;
+  const targetId = `dl2-target-${stamp}`;
+  await createDoc(owner.token, sourceId);
+  await createDoc(owner.token, targetId);
+  const withLink = "# Source\n\n[the plan](plan.md)\n";
+  const hash = createHash("sha256").update(withLink, "utf8").digest("hex");
+  await jsonRequest("PUT", `/api/docs/${sourceId}`, owner.token, { name: "source.md", content: withLink, hash, baseVersion: 1 });
+  await jsonRequest("PUT", `/api/docs/${sourceId}/links`, owner.token, { links: [{ ref: "plan.md", target: targetId }] });
+  const invitee = `dl2.nobody.${stamp}@test.local`;
+  const invite = await jsonRequest<{ status: string }>("POST", `/api/docs/${sourceId}/shares`, owner.token, { email: invitee, role: "viewer" });
+  assert.equal(invite.status, 200);
+  assert.equal(invite.data?.status, "invited");
+  // The POST response never carries the pending invite's token (see
+  // shares.ts); doc-view.test.ts's own pending-invite test above reads it
+  // straight off the pending_shares row, so this does the same.
+  const db = new (await import("better-sqlite3")).default(process.env.DB_PATH as string);
+  const row = db
+    .prepare("SELECT token FROM pending_shares WHERE doc_id = ? AND email = ?")
+    .get(sourceId, invitee) as { token: string };
+  const pendingToken = row?.token;
+  assert.ok(pendingToken, "a pending invite has a token in pending_shares");
+  const view = await page(`/d/${sourceId}?k=${encodeURIComponent(pendingToken)}`);
+  assert.equal(view.status, 200);
+  assert.match(view.body, /doc-link-muted/);
+  assert.ok(!view.body.includes(`/d/${targetId}`));
 });

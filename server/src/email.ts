@@ -1,6 +1,8 @@
 // Email delivery: Resend in production (RESEND_API_KEY set), console locally.
+// RESEND_BASE_URL points the same call at a Resend-compatible API, such as JustEmail's /compat/resend.
 
 const FROM = process.env.EMAIL_FROM ?? "Markie <noreply@markie.local>";
+const BASE_URL = (process.env.RESEND_BASE_URL || "https://api.resend.com").replace(/\/+$/, "");
 
 export async function sendEmail(args: {
   to: string;
@@ -15,7 +17,7 @@ export async function sendEmail(args: {
     );
     return;
   }
-  const res = await fetch("https://api.resend.com/emails", {
+  const res = await fetch(`${BASE_URL}/emails`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,

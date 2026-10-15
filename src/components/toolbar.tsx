@@ -9,20 +9,11 @@ import {
   type ColorMode,
 } from "@/lib/color-mode";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
-import { RICH_UNAVAILABLE_TITLE } from "@/lib/doc-tiers";
-
-type ViewMode = "edit" | "preview" | "split";
 
 interface ToolbarProps {
-  mode: ViewMode;
-  onModeChange: (mode: ViewMode) => void;
   documentMode?: boolean;
   onSave?: () => void;
   onCommands?: () => void;
-  // The open document is too big for the rich pane (src/lib/doc-tiers.ts):
-  // Rich and Split are shown but cannot be chosen, and say why on hover.
-  richUnavailable?: boolean;
-  richUnavailableReason?: string;
   onOpenFile: () => void;
   onExportPDF: (theme: PDFTheme) => void;
   // "Save a Copy" writes the markdown itself somewhere else; Export HTML and
@@ -40,7 +31,7 @@ interface ToolbarProps {
   // shareable and the "sign in / sync first" cases. canShare drives styling.
   onShare: () => void;
   canShare?: boolean;
-  // Open the theme-presets dialog (palette button next to the mode switch).
+  // Open the theme-presets dialog from the appearance controls.
   onThemePresets: () => void;
   live?: boolean;
   liveStatus?: "connecting" | "connected" | "disconnected";
@@ -50,13 +41,9 @@ interface ToolbarProps {
 }
 
 export function Toolbar({
-  mode,
-  onModeChange,
   documentMode = false,
   onSave,
   onCommands,
-  richUnavailable = false,
-  richUnavailableReason = RICH_UNAVAILABLE_TITLE,
   onOpenFile,
   onExportPDF,
   onSaveAs,
@@ -107,7 +94,7 @@ export function Toolbar({
   return (
     <div
       data-window-drag-surface
-      className={`markie-toolbar h-10 border-b border-border bg-surface grid ${documentMode ? "grid-cols-[minmax(0,1fr)_auto]" : "grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"} items-center gap-3 pr-3 sm:pr-4 select-none shrink-0 ${
+      className={`markie-toolbar h-10 border-b border-border bg-surface grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 pr-3 sm:pr-4 select-none shrink-0 ${
         trafficLightPad ? "pl-[82px]" : "pl-3 sm:pl-4"
       }`}
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
@@ -252,47 +239,7 @@ export function Toolbar({
         </div>
       </div>
 
-      {/* Center: mode toggle. Three equal labelled segments — the old
-          "View / pencil / split" implied one was a mode and the others were
-          buttons, and called the WYSIWYG editor "View" when it edits. */}
-      {!documentMode ? <div
-        data-window-control-region="mode"
-        role="group"
-        aria-label="Editing mode"
-        className="w-fit justify-self-center flex items-center bg-background rounded-md p-0.5 gap-0.5"
-        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-      >
-        {(
-          [
-            ["preview", "Rich", "⌘1"],
-            ["edit", "Source", "⌘2"],
-            ["split", "Split", "⌘3"],
-          ] as const
-        ).map(([value, label, shortcut]) => {
-          const unavailable = richUnavailable && value !== "edit";
-          return (
-            <button
-              key={value}
-              onClick={() => onModeChange(value)}
-              disabled={unavailable}
-              title={unavailable ? richUnavailableReason : `${label} (${shortcut})`}
-              aria-label={`${label} mode (${shortcut})`}
-              aria-pressed={mode === value}
-              className={`px-3 py-1 text-[11px] font-medium rounded transition-all ${
-                mode === value
-                  ? "bg-accent text-foreground"
-                  : unavailable
-                    ? "text-muted/50 cursor-default"
-                    : "text-muted hover:text-foreground"
-              }`}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div> : null}
-
-      {/* Right: theme/mode + presence + share */}
+      {/* Right: appearance + presence + share */}
       <div
         data-window-control-region="document"
         className="min-w-0 w-fit max-w-full justify-self-end flex items-center justify-end gap-2"

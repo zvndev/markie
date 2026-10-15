@@ -446,8 +446,8 @@ async function main() {
     const file = rect('[data-window-control-region="file"]');
     const mode = rect('[data-window-control-region="mode"]');
     const documentControls = rect('[data-window-control-region="document"]');
-    const dragGap = file && mode && documentControls
-      ? Math.max(0, mode.left - file.right) + Math.max(0, documentControls.left - mode.right)
+    const dragGap = file && documentControls
+      ? Math.max(0, documentControls.left - file.right)
       : 0;
     return { toolbar, handle, file, mode, documentControls, dragGap };
   })()`);
@@ -456,7 +456,7 @@ async function main() {
     dragRegions.toolbar.region !== "drag" ||
     dragRegions.handle?.region !== "drag" ||
     dragRegions.file?.region !== "no-drag" ||
-    dragRegions.mode?.region !== "no-drag" ||
+    dragRegions.mode !== null ||
     dragRegions.documentControls?.region !== "no-drag" ||
     dragRegions.dragGap < 80
   ) {

@@ -10,6 +10,8 @@ Use the normal Library and Open flow to select a different document. The retaine
 
 On macOS and Windows, advanced actions live in the native **Format**, **Insert**, **Layout** and **Review** application menus, alongside the existing **File**, **Edit** and **View** menus. Menu availability follows the active renderer, permissions and current modal/lock state. File includes document creation, details and History; supported Word View actions include layout, outline and zoom. Parameterized operations open focused tools rather than another toolbar. The browser exposes supported actions through Markie's existing command palette, not a copied desktop menu bar or ribbon.
 
+For Markdown, choose **View → Rich Text**, **Markdown Source** or **Split** instead of a top-bar mode toggle. Cmd/Ctrl+1, 2 and 3 still work, and the command palette offers the same modes on the web. Literal text and oversized documents retain their existing source-only protections.
+
 The isolated **Markie Preview** desktop build runs the same Markie shell from bundled assets. It does not need a development server or browser tab. The preview name is for testing isolation, not a separate product: it has a separate app identifier, profile, session and logs, and neither replaces installed Markie nor registers its file associations or `markie://` links. Automatic updates and the production browser OAuth callback are disabled in this preview. Email sign-in can still use the configured service, but new document-platform sharing requires the matching server deployment.
 
 ## Testing the desktop preview

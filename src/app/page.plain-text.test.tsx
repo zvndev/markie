@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { installBridge } from "@/test/mock-bridge";
+import { emit, installBridge } from "@/test/mock-bridge";
 import type { ElectronAPI } from "@/lib/electron";
 
 const auth = vi.hoisted(() => ({ active: false, role: "owner" as "owner" | "editor" | "viewer" }));
@@ -57,7 +57,10 @@ describe("plain text is not Markdown", () => {
     expect(source).toHaveAttribute("data-plain-text", "true");
     expect(view.container.querySelector("[data-markie-rich-pane]")).toBeNull();
     expect(screen.queryByRole("toolbar", { name: "Document formatting" })).toBeNull();
-    expect(screen.getByRole("button", { name: /^Rich mode/ })).toBeDisabled();
+    expect(screen.queryByRole("group", { name: "Editing mode" })).not.toBeInTheDocument();
+    await act(async () => { emit("onSetMode", "preview"); emit("onSetMode", "split"); });
+    expect(source).toHaveValue(content);
+    expect(view.container.querySelector("[data-markie-rich-pane]")).toBeNull();
   });
 
   it("saves literal edits without Markdown normalization", async () => {

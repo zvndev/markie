@@ -323,8 +323,8 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
-  // Rich and Split cannot be chosen while a large document is open; the mode
-  // buttons say why. Source is always allowed.
+  // View menu, palette and shortcut requests share the same size/literal-text
+  // guard. The document strip explains source-only limitations.
   const requestMode = useCallback((m: ViewMode) => {
     if ((largeDocRef.current || plainText) && m !== "edit") return;
     setMode(m);
@@ -2038,10 +2038,6 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         onCommands={documentsEnabled ? () => setShowPalette(true) : undefined}
         documentMode={documentsOpen}
         onSave={documentsOpen && documentShell?.hasSession && !documentShell.private ? () => documentShell.save() : undefined}
-        mode={mode}
-        onModeChange={requestMode}
-        richUnavailable={largeDocSize !== null || plainText}
-        richUnavailableReason={plainText ? "Plain text stays literal in the text editor." : undefined}
         onOpenFile={handleOpenFile}
         onExportPDF={exportPDF}
         onSaveAs={() => documentsOpen ? documentShellRef.current?.save(true) : handleSaveAs()}

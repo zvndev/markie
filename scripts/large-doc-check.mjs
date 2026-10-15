@@ -149,7 +149,6 @@ const RICH_PANE = `!!document.querySelector('[data-markie-rich-pane]')`;
 const SOURCE_PANE = `!!document.querySelector('.cm-editor')`;
 const LARGE_STRIP = `document.querySelector('[data-markie-large-doc-strip]')?.textContent ?? ""`;
 const REFUSAL_STRIP = `document.querySelector('[data-markie-too-large-strip]')?.textContent ?? ""`;
-const RICH_BUTTON = `(() => { const b = [...document.querySelectorAll('button')].find((x) => /rich mode/i.test(x.getAttribute('aria-label') || '')); return b ? { disabled: b.disabled, title: b.title } : null; })()`;
 
 // Once a second for `seconds`, does the renderer answer inside the deadline?
 // The sample reads the document's title and the rich editor's size rather than
@@ -266,8 +265,8 @@ async function main() {
   const strip = await cdp.ev(LARGE_STRIP);
   check("large document strip explains Source view", /Large document \(4\.4 MB\)\. Opened in source view; rich editing and live collaboration are off for files over 1\.0 MB\./.test(strip), JSON.stringify(strip));
   check("large document shows the source pane and no rich pane", (await cdp.ev(SOURCE_PANE)) === true && (await cdp.ev(RICH_PANE)) === false);
-  const richButton = await cdp.ev(RICH_BUTTON);
-  check("Rich mode button is disabled with the reason", richButton?.disabled === true && richButton?.title === "Too large for rich view", JSON.stringify(richButton));
+  await cdp.ev("window.dispatchEvent(new KeyboardEvent('keydown', { key: '1', metaKey: true, bubbles: true })); window.dispatchEvent(new KeyboardEvent('keydown', { key: '3', metaKey: true, bubbles: true }))");
+  check("Rich and Split requests keep a large document in source", (await cdp.ev(SOURCE_PANE)) === true && (await cdp.ev(RICH_PANE)) === false);
   const sourceHolds = await cdp.ev(`(() => { const cm = document.querySelector('.cm-content'); return !!cm && cm.textContent.includes('Large document'); })()`, 5000);
   check("source pane holds the document", sourceHolds === true);
 
@@ -278,8 +277,7 @@ async function main() {
   const switchMs = Date.now() - switchClick;
   check("switching from the large document to a small one completes under 1 s", switchMs < 1000, `${switchMs} ms`);
   check("large document strip is gone after the switch", (await cdp.ev(LARGE_STRIP)) === "");
-  const richAgain = await cdp.ev(RICH_BUTTON);
-  check("Rich mode button is available again", richAgain?.disabled === false, JSON.stringify(richAgain));
+  check("no duplicate mode toggle appears after switching files", (await cdp.ev("document.querySelector('[aria-label=\"Editing mode\"]') === null")) === true);
 
   // 3. A file over the cap is refused with the message, and nothing changes.
   if (!(await cdp.ev(rowClick(hugePath), 5000))) throw new Error("could not click the huge file's row");

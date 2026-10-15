@@ -27,6 +27,8 @@ Preserve Markie's existing Toolbar, activity bar, resizable Library with Recent/
 
 Keep one simplified Markie formatting toolbar. Reuse its actual controls for overlapping functions across renderers, with format-aware behavior and honest capability limits. Do not copy Microsoft Word's Home/Insert/Layout/Review/View tab strip or ribbon. Advanced Format, Insert, Layout, Review and View actions belong in native macOS/Windows application menus; parameterized actions may open focused dialogs. Browser fallback uses Markie's existing command palette, not a new ribbon. Vault content stays explicitly scoped and excluded from ordinary search.
 
+Markdown's Rich Text, Markdown Source and Split choices belong in the native View menu, not a mode toggle in the top toolbar. Preserve Cmd/Ctrl+1/2/3 and the existing command-palette alternatives, including browser access, with the same large-file and literal-text safety checks.
+
 ## Design principles
 
 1. Files and editing lead; chrome stays compact.

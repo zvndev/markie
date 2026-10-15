@@ -133,15 +133,20 @@ describe("page menu pushes", () => {
 
   it("set-mode drives the view mode", async () => {
     await boot();
-    const pressed = (name: string) =>
-      screen.getByRole("button", { name }).getAttribute("aria-pressed");
-    expect(pressed("Rich mode (⌘1)")).toBe("true");
+    const pane = (kind: string) => document.querySelector(`[data-markie-${kind}-pane]`);
+    expect(pane("rich")).toBeInTheDocument();
+    expect(pane("source")).not.toBeInTheDocument();
     await push("onSetMode", "edit");
-    await waitFor(() => expect(pressed("Source mode (⌘2)")).toBe("true"));
+    await waitFor(() => expect(pane("source")).toBeInTheDocument());
+    expect(pane("rich")).not.toBeInTheDocument();
     await push("onSetMode", "split");
-    await waitFor(() => expect(pressed("Split mode (⌘3)")).toBe("true"));
+    await waitFor(() => expect(pane("rich")).toBeInTheDocument());
+    expect(pane("source")).toBeInTheDocument();
     await push("onSetMode", "preview");
-    await waitFor(() => expect(pressed("Rich mode (⌘1)")).toBe("true"));
+    await waitFor(() => expect(pane("source")).not.toBeInTheDocument());
+    expect(pane("rich")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Editing mode" })).not.toBeInTheDocument();
+    expect(await screen.findByText("opened content")).toBeInTheDocument();
   });
 
   it("toggle-stats and menu-shortcuts open their panels", async () => {

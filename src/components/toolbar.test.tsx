@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installBridge } from "@/test/mock-bridge";
@@ -6,22 +6,20 @@ import { Toolbar } from "./toolbar";
 
 function renderToolbar(props: Partial<React.ComponentProps<typeof Toolbar>> = {}) {
   const handlers = {
-    onModeChange: vi.fn(), onOpenFile: vi.fn(), onExportPDF: vi.fn(), onSaveAs: vi.fn(),
+    onOpenFile: vi.fn(), onExportPDF: vi.fn(), onSaveAs: vi.fn(),
     onExportHTML: vi.fn(), onRename: vi.fn(), onShare: vi.fn(), onThemePresets: vi.fn(),
   };
-  const view = render(<Toolbar mode="preview" fileName="notes.md" isDirty={false} canRename {...handlers} {...props} />);
+  const view = render(<Toolbar fileName="notes.md" isDirty={false} canRename {...handlers} {...props} />);
   return { ...handlers, view };
 }
 
 beforeEach(() => { installBridge(); });
 
 describe("the existing Markie top bar", () => {
-  it("preserves Markdown modes and rendered export actions by default", async () => {
-    const { onModeChange, onExportHTML } = renderToolbar();
-    const modes = screen.getByRole("group", { name: "Editing mode" });
-    expect(within(modes).getAllByRole("button")).toHaveLength(3);
-    await userEvent.click(screen.getByRole("button", { name: "Source mode (⌘2)" }));
-    expect(onModeChange).toHaveBeenCalledWith("edit");
+  it("keeps Markdown modes out of the top bar while preserving rendered export actions", async () => {
+    const { onExportHTML } = renderToolbar();
+    expect(screen.queryByRole("group", { name: "Editing mode" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(Rich|Source|Split) mode/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save file" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Export menu" }));
     expect(screen.getByRole("button", { name: "Save a Copy…" })).toBeInTheDocument();

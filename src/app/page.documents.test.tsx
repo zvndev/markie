@@ -56,7 +56,7 @@ describe("document capabilities inside the existing Markie app", () => {
     expect(screen.queryByRole("button", { name: /Return to|Classic workspace/i })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Library: recent and projects (⌘L)" }));
     await userEvent.click(screen.getByRole("button", { name: /Untitled\.md/ }));
-    await waitFor(() => expect(screen.getByRole("group", { name: "Editing mode" })).toBeVisible());
+    await waitFor(() => expect(document.querySelector("[data-markie-rich-pane]")).toBeVisible());
   });
   it("keeps one original shell and the mounted Markdown buffer across format changes", async () => {
     await boot();

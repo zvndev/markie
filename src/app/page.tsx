@@ -205,6 +205,9 @@ const DocumentEditor = lazy(() => import("@/components/document-workspace-host")
 
 export default function Home({ onOpenDocuments, documentsEnabled = false }: { onOpenDocuments?: () => void; documentsEnabled?: boolean } = {}) {
   const [documentsOpen, setDocumentsOpen] = useState(false);
+  const [nativeDocumentRequest, setNativeDocumentRequest] = useState(0);
+  const handledNativeRequest = useRef(0);
+  const requestNativeDocument = useCallback(() => setNativeDocumentRequest((value) => value + 1), []);
   const [closingWindow, setClosingWindow] = useState(false);
   const closeGeneration = useRef(0);
   const documentsOpenRef = useRef(false);
@@ -1182,6 +1185,7 @@ export default function Home({ onOpenDocuments, documentsEnabled = false }: { on
   }, [saveGuard]);
 
   const openDocumentsWorkspace = useCallback(async () => {
+    if (documentsEnabled && documentsOpenRef.current) return true;
     currentMarkdown();
     await settleDocument();
     const md = currentMarkdown();
@@ -1210,6 +1214,12 @@ export default function Home({ onOpenDocuments, documentsEnabled = false }: { on
     else onOpenDocuments?.();
     return true;
   }, [currentMarkdown, onOpenDocuments, settleDocument, documentsEnabled]);
+  useEffect(() => {
+    if (!booted || (!plainText && mode !== "edit" && largeDocSize === null && !richEditor)
+      || nativeDocumentRequest === handledNativeRequest.current) return;
+    handledNativeRequest.current = nativeDocumentRequest;
+    void openDocumentsWorkspace();
+  }, [booted, plainText, mode, largeDocSize, richEditor, nativeDocumentRequest, openDocumentsWorkspace]);
   const prepareMarkdownClose = useCallback(async () => {
     currentMarkdown();
     await settleDocument();
@@ -2230,7 +2240,7 @@ export default function Home({ onOpenDocuments, documentsEnabled = false }: { on
         {documentsEnabled ? <div inert={!documentsOpen} style={!documentsOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 min-h-0 overflow-hidden">
           {forkError ? <div role="alert" className="px-3 py-2 border-b border-border text-sm text-foreground bg-surface">{forkError}<button type="button" className="ml-3 text-muted" onClick={() => setForkError(null)}>Dismiss</button></div> : null}
           <Suspense fallback={<p role="status" className="p-4 text-sm text-muted">Loading document tools…</p>}>
-            <DocumentEditor embedded active={documentsOpen} onActivate={() => { void openDocumentsWorkspace(); }} onShellChange={updateDocumentShell} onExit={deactivateDocuments} />
+            <DocumentEditor embedded active={documentsOpen} onActivate={requestNativeDocument} onShellChange={updateDocumentShell} onExit={deactivateDocuments} />
           </Suspense>
         </div> : null}
       </div>

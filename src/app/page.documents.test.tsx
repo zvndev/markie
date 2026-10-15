@@ -5,16 +5,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { emit, installBridge } from "@/test/mock-bridge";
 import type { DocumentShellState } from "@/lib/document-shell";
 
-const state = vi.hoisted(() => ({ shell: null as DocumentShellState | null }));
+const state = vi.hoisted(() => ({ shell: null as DocumentShellState | null, activate: null as (() => void) | null, nativeOnMount: false }));
 vi.mock("@/lib/auth-client", () => ({
   authClient: { me: async () => null },
   sharesClient: { access: async () => null, list: async () => null, sharedByMe: async () => [] },
   collabWsBase: () => "ws://localhost", getAuthToken: () => null, adoptAuthToken: () => {}, pushSyncConfig: () => {},
 }));
-vi.mock("@/components/document-workspace-host", () => ({ DocumentWorkspaceHost: ({ active, embedded, onShellChange, onExit }: {
-  active: boolean; embedded: boolean; onShellChange: (shell: DocumentShellState | null) => void; onExit: () => void;
+vi.mock("@/components/document-workspace-host", () => ({ DocumentWorkspaceHost: ({ active, embedded, onShellChange, onExit, onActivate }: {
+  active: boolean; embedded: boolean; onShellChange: (shell: DocumentShellState | null) => void; onExit: () => void; onActivate: () => void;
 }) => {
   useEffect(() => { onShellChange(state.shell); return () => onShellChange(null); }, [onShellChange]);
+  useEffect(() => { state.activate = onActivate; if (state.nativeOnMount) onActivate(); }, [onActivate]);
   return <section data-testid="format-editor" data-embedded={embedded}>
     {active ? <><p>Word content inside Markie</p><button type="button" onClick={() => { void state.shell!.prepareLeave().then((allowed) => { if (allowed) onExit(); }); }}>Return to Markdown</button></> : null}
   </section>;
@@ -23,6 +24,7 @@ import Home from "./page";
 
 beforeEach(() => {
   localStorage.clear();
+  state.nativeOnMount = false; state.activate = null;
   state.shell = {
     name: "proposal.docx", dirty: true, hasSession: true, private: false, ready: true, busy: false, records: [],
     create: vi.fn(), open: vi.fn(), importFile: vi.fn(), save: vi.fn(), share: vi.fn(), showVault: vi.fn(),
@@ -44,6 +46,14 @@ async function openWord() {
 }
 
 describe("document capabilities inside the existing Markie app", () => {
+  it("hands a cold native Word request to the original shell after Markdown initialization", async () => {
+    state.nativeOnMount = true;
+    installBridge({ getInitialFile: vi.fn(async () => null) });
+    render(<Home documentsEnabled />);
+    await screen.findByText("Word content inside Markie");
+    expect(document.querySelectorAll(".markie-toolbar")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Return to Markdown" })).toBeVisible();
+  });
   it("keeps one original shell and the mounted Markdown buffer across format changes", async () => {
     await boot();
     const markdown = screen.getByText("Retained Markdown buffer");

@@ -36,6 +36,7 @@ const {
   writeCrashConsent,
 } = require("./crash-reporting");
 const { createCrashLog } = require("./crash-log");
+const { guardStdio, isBrokenPipeError } = require("./stdio-guard");
 const { createPdfExporter, ensureExtension } = require("./export-pdf");
 const { createLinkPreviews } = require("./link-preview");
 const { createIpcHandler, errorMessage } = require("./ipc-result");
@@ -172,10 +173,14 @@ function uploadCrash(kind, detail) {
 }
 
 function logCrash(kind, detail) {
-  try {
-    console.error(`${kind}:`, detail);
-  } catch {
-    // The thing we would report it to is the thing that broke.
+  // Writing a dead console's EPIPE back to that console only queues the next
+  // one (electron/stdio-guard.js).
+  if (!isBrokenPipeError(detail)) {
+    try {
+      console.error(`${kind}:`, detail);
+    } catch {
+      // The thing we would report it to is the thing that broke.
+    }
   }
   try {
     crashLog().log(kind, detail);
@@ -184,6 +189,8 @@ function logCrash(kind, detail) {
   }
   uploadCrash(kind, detail);
 }
+
+guardStdio();
 
 for (const signal of ["uncaughtException", "unhandledRejection"]) {
   process.on(signal, (error) => {

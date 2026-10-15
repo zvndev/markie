@@ -10,6 +10,17 @@
  */
 import { DEFAULT_ZIP_LIMITS, readZip, resolveZipLimits, writeZip, type ZipEntry, type ZipLimits } from "./zip";
 import { escapeXmlText, parseXml, xmlAttribute, xmlDescendants, XML_NAMESPACE, type XmlElement } from "./xml";
+import { DocxError, type DocxDiagnostic, type DocxRunStyle, type DocxRun, type DocxParagraph, type DocxDocument, type DocxTextEdit, type DocxOperation } from "./docx-types";
+import { applyDocxXmlOperation, docxPageLayout, indexDocxIdentities, patchDocxSource, type DocxPatch } from "./docx-edit";
+import { docxEntries, docxPart, ensureDocxNamedStyle, readDocxStyles } from "./docx-parts";
+import { applyDocxCommentOperation, inspectDocxComments } from "./docx-comments";
+import { inspectDocxNumbering, setDocxList } from "./docx-numbering";
+import { deleteDocxImage, inspectDocxImages, insertDocxImage, type DocxMediaState } from "./docx-media";
+import { formatDocxTextRange } from "./docx-revisions-range";
+import { applyDocxRevisionOperation, inspectDocxRevisions, projectDocxRevisionView, type DocxRevisionState } from "./docx-revisions";
+import { inspectDocxHyperlinks, removeDocxHyperlink, setDocxHyperlink, updateDocxHyperlink } from "./docx-hyperlinks";
+import { inspectDocxPageBreaks, insertDocxPageBreak, removeDocxPageBreak } from "./docx-page-breaks";
+export * from "./docx-types";
 
 const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const W_STRICT = "http://purl.oclc.org/ooxml/wordprocessingml/main";
@@ -21,70 +32,14 @@ const MAIN_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingm
 const XMLNS = "http://www.w3.org/2000/xmlns/";
 const encoder = new TextEncoder();
 
-export interface DocxDiagnostic {
-  readonly code: string;
-  readonly message: string;
-  readonly severity: "info" | "warning";
-  readonly part?: string;
-}
-
-export interface DocxRunStyle {
-  readonly bold?: boolean;
-  readonly italic?: boolean;
-  readonly underline?: string;
-  readonly color?: string;
-  readonly fontFamily?: string;
-  readonly fontSizePoints?: number;
-}
-
-export interface DocxRun {
-  readonly id: string;
-  readonly text: string;
-  /** Direct formatting only; styles and theme inheritance are not resolved. */
-  readonly style: Readonly<DocxRunStyle>;
-  readonly canEdit: boolean;
-}
-
-export interface DocxParagraph {
-  readonly id: string;
-  readonly text: string;
-  readonly styleId?: string;
-  readonly alignment?: string;
-  readonly runs: readonly DocxRun[];
-}
-
-export interface DocxDocument {
-  readonly format: "docx";
-  readonly text: string;
-  readonly paragraphs: readonly DocxParagraph[];
-  readonly metadata: Readonly<Record<string, string>>;
-  readonly diagnostics: readonly DocxDiagnostic[];
-  readonly canEdit: boolean;
-  /** Immutable revision of this in-memory session, not Word revision markup. */
-  readonly revision: number;
-  readonly modified: boolean;
-}
-
-export interface DocxTextEdit {
-  readonly runId: string;
-  readonly text: string;
-}
-
-export class DocxError extends Error {
-  constructor(public readonly code: string, message: string) {
-    super(message);
-    this.name = "DocxError";
-  }
-}
-
 interface Relationship { id: string; type: string; target: string; external: boolean }
-interface State {
+interface State extends DocxMediaState, DocxRevisionState {
   original: Uint8Array;
   entries: readonly ZipEntry[];
   mainPart: string;
-  source: string;
+  originalSource: string;
   runNodes: Map<string, XmlElement>;
-  replacements: Map<string, string>;
+  originalRunNodes: Map<string, { text: string; xml: string }>;
   limits: ZipLimits;
 }
 const states = new WeakMap<DocxDocument, State>();
@@ -201,10 +156,14 @@ function contentTypes(root: XmlElement, parts: Map<string, ZipEntry>): Map<strin
 }
 
 const allowedChildren: Record<string, readonly string[]> = {
-  document: ["body"], body: ["p", "sectPr"], p: ["pPr", "r"],
-  pPr: ["pStyle", "jc", "spacing", "ind", "keepNext", "keepLines", "pageBreakBefore", "widowControl"],
-  r: ["rPr", "t"], rPr: ["b", "i", "u", "color", "sz", "szCs", "rFonts", "rStyle", "lang", "bCs", "iCs"],
+  document: ["body"], body: ["p", "tbl", "sectPr"], p: ["pPr", "commentRangeStart", "r", "hyperlink", "ins", "del", "commentRangeEnd"],
+  pPr: ["pStyle", "numPr", "jc", "spacing", "ind", "keepNext", "keepLines", "pageBreakBefore", "widowControl"],
+  numPr: ["ilvl", "numId"],
+  r: ["rPr", "t", "delText", "br", "commentReference", "drawing"], rPr: ["b", "i", "u", "color", "sz", "szCs", "rFonts", "rStyle", "lang", "bCs", "iCs"],
+  hyperlink: ["r"],
+  ins: ["r"], del: ["r"],
   sectPr: ["pgSz", "pgMar", "cols", "docGrid", "type"],
+  tbl: ["tblPr", "tblGrid", "tr"], tblPr: ["tblW"], tblGrid: ["gridCol"], tr: ["tc"], tc: ["tcPr", "p"], tcPr: ["tcW"],
 };
 const allowedAttributes: Record<string, readonly string[]> = {
   document: [], body: [], p: ["rsidR", "rsidRDefault", "rsidP", "rsidDel"],
@@ -218,23 +177,41 @@ const allowedAttributes: Record<string, readonly string[]> = {
   keepNext: ["val"], keepLines: ["val"], pageBreakBefore: ["val"], widowControl: ["val"],
   pgSz: ["w", "h", "orient", "code"], pgMar: ["top", "right", "bottom", "left", "header", "footer", "gutter"],
   cols: ["equalWidth", "space", "num", "sep"], docGrid: ["type", "linePitch", "charSpace"], type: ["val"],
+  tbl: [], tblPr: [], tblGrid: [], gridCol: ["w"], tblW: ["w", "type"], tr: [], tc: [], tcPr: [], tcW: ["w", "type"],
+  commentRangeStart: ["id"], commentRangeEnd: ["id"], commentReference: ["id"],
+  numPr: [], ilvl: ["val"], numId: ["val"],
+  ins: ["id", "author", "date"], del: ["id", "author", "date"], delText: [],
+  hyperlink: ["history", "tooltip"], br: ["type"],
 };
 
-function unsupportedMarkup(root: XmlElement): string | undefined {
+function unsupportedMarkup(root: XmlElement, safeDrawings: readonly XmlElement[] = []): string | undefined {
   for (const node of xmlDescendants(root)) {
+    if (safeDrawings.some((drawing) => node.start >= drawing.start && node.end <= drawing.end)) continue;
     if (!word(node) || !Object.hasOwn(allowedAttributes, node.localName)) return node.name;
     const allowed = allowedChildren[node.localName] || [];
     if (node.children.some((c) => !word(c) || c.namespace !== node.namespace || !allowed.includes(c.localName))) return node.name;
-    if (node.localName !== "t" && hasNonWhitespace(node.text)) return node.name;
+    if (!["t", "delText"].includes(node.localName) && hasNonWhitespace(node.text)) return node.name;
     if (node.attributes.some((a) => a.namespace !== XMLNS
-      && !(node.localName === "t" && a.namespace === XML_NAMESPACE && a.localName === "space" && ["default", "preserve"].includes(a.value))
-      && !(a.namespace === node.namespace && allowedAttributes[node.localName].includes(a.localName)))) return node.name;
+      && !(["t", "delText"].includes(node.localName) && a.namespace === XML_NAMESPACE && a.localName === "space" && ["default", "preserve"].includes(a.value))
+      && !(a.namespace === node.namespace && allowedAttributes[node.localName].includes(a.localName))
+      && !(node.localName === "hyperlink" && [R, R_STRICT].includes(a.namespace) && a.localName === "id")
+      && !(node.localName === "document" && a.namespace === "http://schemas.openxmlformats.org/markup-compatibility/2006" && a.localName === "Ignorable" && /^[A-Za-z_][A-Za-z0-9_.-]*(?:[\x20\t\r\n]+[A-Za-z_][A-Za-z0-9_.-]*)*$/.test(a.value))
+      && !(node.localName === "p" && a.namespace === "http://schemas.microsoft.com/office/word/2010/wordml" && ["paraId", "textId"].includes(a.localName) && /^[0-9A-Fa-f]{8}$/.test(a.value)))) return node.name;
     const names = node.children.map((c) => c.localName);
     if ((node.localName === "document" && names.join() !== "body")
       || (node.localName === "body" && (names.filter((n) => n === "sectPr").length > 1 || (names.includes("sectPr") && names.at(-1) !== "sectPr")))
       || (["p", "r"].includes(node.localName) && (names.filter((n) => n === `${node.localName}Pr`).length > 1
         || (names.includes(`${node.localName}Pr`) && names[0] !== `${node.localName}Pr`)))
       || (node.localName === "r" && names.filter((n) => n === "t").length > 1)) return node.name;
+    if (node.localName === "r" && names.includes("commentReference") && (names.includes("t") || names.filter((n) => n === "commentReference").length !== 1)) return node.name;
+    if (["pPr", "rPr", "sectPr", "tblPr", "tcPr"].includes(node.localName) && new Set(names).size !== names.length) return node.name;
+    if (node.localName === "tbl") {
+      const rows = node.children.filter((n) => word(n, "tr"));
+      const columns = child(node, "tblGrid")?.children.length || 0;
+      if (!columns || columns > 20 || !rows.length || rows.length > 100 || rows.length * columns > 1000
+        || names[0] !== "tblPr" || names[1] !== "tblGrid" || rows.some((r) => r.children.length !== columns)) return node.name;
+    }
+    if (node.localName === "tc" && (!names.includes("p") || names.at(-1) !== "p" || names.filter((n) => n === "tcPr").length > 1 || (names.includes("tcPr") && names[0] !== "tcPr"))) return node.name;
   }
   return undefined;
 }
@@ -256,24 +233,76 @@ function runStyle(run: XmlElement): DocxRunStyle {
 
 function snapshot(state: State, diagnostics: readonly DocxDiagnostic[], metadata: Readonly<Record<string, string>>, revision: number): DocxDocument {
   const root = parseXml(state.source);
+  indexDocxIdentities(state);
   const editable = !diagnostics.some((d) => d.severity === "warning");
-  const paragraphs = xmlDescendants(root).filter((n) => word(n, "p")).map((p, pIndex): DocxParagraph => {
-    const runs = xmlDescendants(p).filter((n) => word(n, "r")).map((r, rIndex): DocxRun => {
-      const id = `p${pIndex}:r${rIndex}`;
+  const revisionInspection = inspectDocxRevisions(state);
+  const hyperlinks = inspectDocxHyperlinks(state);
+  const pageBreaks = inspectDocxPageBreaks(state);
+  const revisionForRun = (r: XmlElement) => revisionInspection.ranges.find((range) => r.start > range.node.start && r.end < range.node.end);
+  const paragraphByOffset = new Map<number, DocxParagraph>();
+  const numbering = inspectDocxNumbering(state).definitions;
+  const listCounts = new Map<string, number>();
+  const paragraphs = xmlDescendants(root).filter((n) => word(n, "p")).map((p): DocxParagraph => {
+    const pendingParagraph = revisionInspection.ranges.some((range) => range.paragraph.start === p.start);
+    const allRuns = xmlDescendants(p).filter((n) => word(n, "r"));
+    const readRun = (r: XmlElement, original = false): DocxRun => {
+      if (!state.identities.has(r.start)) state.identities.set(r.start, `r~${state.nextId++}`);
+      const id = state.identities.get(r.start)!;
       const textNode = child(r, "t");
-      if (textNode) state.runNodes.set(id, textNode);
-      const text = state.replacements.get(id) ?? xmlDescendants(r).map((n) =>
-        word(n, "t") ? n.text : word(n, "tab") ? "\t" : word(n, "br") || word(n, "cr") ? "\n" : "").join("");
-      return Object.freeze({ id, text, style: runStyle(r), canEdit: editable && !!textNode });
-    });
-    return Object.freeze({
-      id: `p${pIndex}`, text: runs.map((r) => r.text).join(""), runs: Object.freeze(runs),
+      const tracked = revisionForRun(r);
+      const hyperlink = hyperlinks.links.find((l) => l.runIds.includes(id));
+      if (textNode && !tracked && !pendingParagraph) state.runNodes.set(id, textNode);
+      const text = xmlDescendants(r).map((n) =>
+        word(n, "t") || (original && word(n, "delText")) ? n.text : word(n, "tab") ? "\t" : word(n, "br") ? xmlAttribute(n, "type", n.namespace) === "page" ? "" : "\n" : word(n, "cr") ? "\n" : "").join("");
+      return Object.freeze({ id, text, style: runStyle(r), canEdit: editable && !!textNode && !tracked && !original && !pendingParagraph,
+        hyperlinkId: hyperlink?.id, target: hyperlink?.target,
+        pageBreaks: Object.freeze(pageBreaks.breaks.filter((b) => b.run.start === r.start).map((b) => Object.freeze({ id: b.id, offset: b.localOffset }))),
+      });
+    };
+    const runs = allRuns.filter((r) => revisionForRun(r)?.type !== "deletion").map((r) => readRun(r));
+    const originalRuns = revisionInspection.problem ? undefined : Object.freeze(allRuns.filter((r) => revisionForRun(r)?.type !== "insertion").map((r) => readRun(r, true)));
+    const spacing = child(child(p, "pPr"), "spacing");
+    const numId = value(child(child(child(p, "pPr"), "numPr"), "numId"));
+    const definition = numId ? numbering.get(numId) : undefined;
+    const listNumber = definition ? (listCounts.get(definition.id) ?? definition.start - 1) + 1 : undefined;
+    if (definition && listNumber !== undefined) listCounts.set(definition.id, listNumber);
+    const spacingNumber = (name: string, divisor: number) => {
+      const text = spacing && xmlAttribute(spacing, name, spacing.namespace);
+      return text && /^\d+$/.test(text) ? Number(text) / divisor : undefined;
+    };
+    const paragraph = Object.freeze({
+      id: state.identities.get(p.start)!, text: runs.map((r) => r.text).join(""), runs: Object.freeze(runs),
       styleId: value(child(child(p, "pPr"), "pStyle")), alignment: value(child(child(p, "pPr"), "jc")),
+      spacingBeforePoints: spacingNumber("before", 20), spacingAfterPoints: spacingNumber("after", 20),
+      lineSpacingMultiple: !spacing || [undefined, "auto"].includes(xmlAttribute(spacing, "lineRule", spacing.namespace)) ? spacingNumber("line", 240) : undefined,
+      listKind: definition ? definition.kind : undefined, listNumber: definition?.kind === "numbered" ? listNumber : undefined,
+      originalText: originalRuns?.map((r) => r.text).join(""), originalRuns,
+      revisionIds: Object.freeze(revisionInspection.ranges.filter((range) => range.paragraph.start === p.start).map((range) => range.id)),
     });
+    paragraphByOffset.set(p.start, paragraph);
+    return paragraph;
   });
+  const body = child(root, "body")!;
+  const tables = body.children.filter((n) => word(n, "tbl")).map((table) => Object.freeze({
+    id: state.identities.get(table.start)!, rows: Object.freeze(table.children.filter((n) => word(n, "tr")).map((row) => Object.freeze({
+      cells: Object.freeze(row.children.filter((n) => word(n, "tc")).map((cell) => Object.freeze({
+        paragraphs: Object.freeze(cell.children.filter((n) => word(n, "p")).map((p) => paragraphByOffset.get(p.start)!)),
+      }))),
+    }))),
+  }));
+  const blocks = body.children.flatMap((node): DocxDocument["blocks"][number][] => word(node, "p")
+    ? [{ kind: "paragraph", paragraphId: state.identities.get(node.start)! }]
+    : word(node, "tbl") ? [{ kind: "table", tableId: state.identities.get(node.start)! }] : []);
   const result: DocxDocument = Object.freeze({
     format: "docx", text: paragraphs.map((p) => p.text).join("\n"), paragraphs: Object.freeze(paragraphs),
-    metadata, diagnostics, canEdit: editable, revision, modified: state.replacements.size > 0,
+    tables: Object.freeze(tables), blocks: Object.freeze(blocks.map((b) => Object.freeze(b))), pageLayout: docxPageLayout(root),
+    comments: inspectDocxComments(revisionInspection.problem ? state : projectDocxRevisionView(state, "final")).comments, styles: readDocxStyles(state),
+    originalText: revisionInspection.problem ? undefined : paragraphs.map((p) => p.originalText).join("\n"),
+    revisions: Object.freeze(revisionInspection.ranges.map(({ id, paragraphId, type, author, date, text }) => Object.freeze({ id, paragraphId, type, author, date, text }))),
+    images: Object.freeze(inspectDocxImages(state).images.map(({ id, paragraphId, widthPoints, heightPoints, altText, contentType }) => Object.freeze({ id, paragraphId, widthPoints, heightPoints, altText, contentType }))),
+    hyperlinks: Object.freeze(hyperlinks.links.map(({ id, paragraphId, text, target, runIds }) => Object.freeze({ id, paragraphId, text, target, runIds }))),
+    pageBreaks: Object.freeze(pageBreaks.breaks.map(({ id, paragraphId, runId, offset }) => Object.freeze({ id, paragraphId, runId, offset }))),
+    metadata, diagnostics, canEdit: editable, revision, modified: state.source !== state.originalSource || state.partOverrides.size > 0 || state.deletedParts.size > 0,
   });
   states.set(result, state);
   return result;
@@ -334,9 +363,17 @@ export async function openDocx(input: Uint8Array, options: Partial<ZipLimits> = 
       }
     }
   }
-  const diagnostics: DocxDiagnostic[] = [{ code: "limited-foundation", severity: "info", message: "Plain-run text editing only. No pagination, style inheritance, review editing or Word compatibility guarantee." }];
-  const unsupported = unsupportedMarkup(root);
+  const diagnostics: DocxDiagnostic[] = [{ code: "limited-foundation", severity: "info", message: "Supported direct formatting, paragraphs, page properties and basic rectangular tables. No pagination, style inheritance or generic Word compatibility guarantee." }];
+  const initialMediaState: DocxMediaState = { source, entries, mainPart, identities: new Map(), nextId: 0, partOverrides: new Map(), deletedParts: new Set() };
+  indexDocxIdentities(initialMediaState);
+  const hyperlinks = inspectDocxHyperlinks(initialMediaState);
+  const pageBreaks = inspectDocxPageBreaks(initialMediaState);
+  const media = inspectDocxImages(initialMediaState);
+  const unsupported = unsupportedMarkup(root, media.problem ? [] : media.images.map((image) => image.drawing));
   if (unsupported) diagnostics.push({ code: "unsupported-markup", severity: "warning", part: mainPart, message: `Read-only: ${unsupported} contains markup outside the safe text-editing subset.` });
+  if (media.problem) diagnostics.push({ code: "unsupported-image", severity: "warning", part: mainPart, message: `Read-only: ${media.problem}` });
+  if (hyperlinks.problem) diagnostics.push({ code: "unsupported-hyperlink", severity: "warning", part: mainPart, message: `Read-only: ${hyperlinks.problem}` });
+  if (pageBreaks.problem) diagnostics.push({ code: "unsupported-page-break", severity: "warning", part: mainPart, message: `Read-only: ${pageBreaks.problem}` });
   for (const [name, type] of types) {
     if (/macro|vba|oleObject|digital-signature/i.test(type) || /^_xmlsignatures\//i.test(name)
       || /(?:^|\/)vbaProject\./i.test(name)) {
@@ -346,17 +383,18 @@ export async function openDocx(input: Uint8Array, options: Partial<ZipLimits> = 
   // Part dependencies can carry range/field state even when body markup seems
   // simple. Only inert formatting/metadata dependencies are eligible for edits.
   const safeRelationships = new Set([
-    ...[R, R_STRICT].flatMap((namespace) => ["officeDocument", "styles", "theme", "fontTable", "settings", "webSettings", "extended-properties", "custom-properties"].map((kind) => `${namespace}/${kind}`)),
+    ...[R, R_STRICT].flatMap((namespace) => ["officeDocument", "styles", "theme", "fontTable", "settings", "webSettings", "extended-properties", "custom-properties", "comments", "numbering", "image"].map((kind) => `${namespace}/${kind}`)),
     `${REL}/metadata/core-properties`,
   ]);
   for (const [part, rels] of relationships) {
     for (const rel of rels) {
       const kind = rel.type.slice(rel.type.lastIndexOf("/") + 1);
+      if (rel.external && part === mainPart && [R, R_STRICT].some((namespace) => rel.type === `${namespace}/hyperlink`) && hyperlinks.links.some((link) => link.relationshipId === rel.id)) continue;
       if (rel.external || !safeRelationships.has(rel.type)) diagnostics.push({
         code: rel.external ? "external-relationship" : "unsupported-dependency", severity: "warning", part: part || "_rels/.rels",
         message: rel.external ? "Read-only: package contains an external relationship; it was not fetched." : `Read-only: ${kind} dependencies are not supported for safe editing.`,
       });
-      else if (!roots.has(rel.target)) diagnostics.push({
+      else if (kind !== "image" && !roots.has(rel.target)) diagnostics.push({
         code: "opaque-formatting-dependency", severity: "warning", part: rel.target,
         message: "Read-only: a formatting or settings dependency was not inspectable as declared XML.",
       });
@@ -377,8 +415,18 @@ export async function openDocx(input: Uint8Array, options: Partial<ZipLimits> = 
       if (namespaces.has(node.namespace) && !node.children.length) metadata[node.localName] = node.text;
     }
   }
-  return snapshot({ original, entries, mainPart, source, runNodes: new Map(), replacements: new Map(), limits },
-    Object.freeze(diagnostics.map((d) => Object.freeze(d))), Object.freeze(metadata), 0);
+  const state: State = { ...initialMediaState, original, originalSource: source, runNodes: new Map(), originalRunNodes: new Map(), limits };
+  indexDocxIdentities(state);
+  const revisionInspection = inspectDocxRevisions(state);
+  if (revisionInspection.problem) diagnostics.push({ code: "unsupported-revisions", severity: "warning", message: `Read-only: ${revisionInspection.problem}` });
+  const commentProblem = inspectDocxComments(revisionInspection.problem ? state : projectDocxRevisionView(state, "final")).problem;
+  if (commentProblem) diagnostics.push({ code: "unsupported-comments", severity: "warning", message: commentProblem.startsWith("Read-only:") ? commentProblem : `Read-only: ${commentProblem}` });
+  const numbering = inspectDocxNumbering(state);
+  const unresolvedNumbering = xmlDescendants(root).filter((n) => word(n, "numPr")).some((n) => value(child(n, "ilvl")) !== "0" || !numbering.definitions.has(value(child(n, "numId")) || ""));
+  if (numbering.problem || unresolvedNumbering) diagnostics.push({ code: "unsupported-numbering", severity: "warning", message: `Read-only: ${numbering.problem || "Paragraph numbering is unresolved or outside the supported single level."}` });
+  const document = snapshot(state, Object.freeze(diagnostics.map((d) => Object.freeze(d))), Object.freeze(metadata), 0);
+  for (const [id, node] of state.runNodes) state.originalRunNodes.set(id, { text: node.text, xml: source.slice(node.start, node.end) });
+  return document;
 }
 
 /** Edits are atomic, snapshot-local and only target supported run IDs. */
@@ -387,7 +435,7 @@ export function replaceDocxText(document: DocxDocument, edits: readonly DocxText
   if (!state) throw new DocxError("invalid-session", "DOCX snapshot did not originate from this engine.");
   if (!document.canEdit) throw new DocxError("read-only", "This package cannot be safely edited by the current engine.");
   const seen = new Set<string>();
-  const replacements = new Map(state.replacements);
+  const patches: DocxPatch[] = [];
   for (const edit of edits) {
     const node = state.runNodes.get(edit.runId);
     if (!node || seen.has(edit.runId)) throw new DocxError("invalid-edit", "Unknown or duplicate run ID.");
@@ -396,34 +444,104 @@ export function replaceDocxText(document: DocxDocument, edits: readonly DocxText
       throw new DocxError("unsupported-edit", "Run replacement cannot insert tabs or paragraph breaks.");
     }
     escapeXmlText(edit.text);
-    if (edit.text === node.text) replacements.delete(edit.runId);
-    else replacements.set(edit.runId, edit.text);
+    const original = state.originalRunNodes.get(edit.runId);
+    let opening = state.source.slice(node.start, node.startTagEnd);
+    // Keep locally declared namespaces on the text node; rebuilding only its
+    // QName would unbind a perfectly valid prefix declared here, not on the run.
+    opening = /xml:space[\x20\t\r\n]*=/.test(opening)
+      ? opening.replace(/xml:space[\x20\t\r\n]*=[\x20\t\r\n]*(["'])[^]*?\1/, 'xml:space="preserve"').replace(/\/>$/, ">")
+      : opening.replace(/\/?>$/, ' xml:space="preserve">');
+    const text = original?.text === edit.text ? original.xml : `${opening}${escapeXmlText(edit.text)}</${node.name}>`;
+    patches.push({ start: node.start, end: node.end, text });
   }
-  const replacementBytes = [...replacements.values()].reduce((size, text) => size + encoder.encode(escapeXmlText(text)).length, 0);
-  if (replacementBytes + encoder.encode(state.source).length > state.limits.maxEntryBytes) {
+  const next = patchDocxSource(state, patches);
+  if (encoder.encode(next.source).length > state.limits.maxEntryBytes) {
     throw new DocxError("edit-limit", "Text edits exceed the document-part size limit.");
   }
-  return snapshot({ ...state, runNodes: new Map(), replacements }, document.diagnostics, document.metadata, document.revision + 1);
+  return snapshot({ ...state, ...next, runNodes: new Map() }, document.diagnostics, document.metadata, document.revision + 1);
+}
+
+/** Atomic, immutable rich operations; input snapshots remain usable as undo history. */
+export function applyDocxOperations(document: DocxDocument, operations: readonly DocxOperation[]): DocxDocument {
+  const state = states.get(document);
+  if (!state) throw new DocxError("invalid-session", "DOCX snapshot did not originate from this engine.");
+  if (!document.canEdit) throw new DocxError("read-only", "This package cannot be safely edited by the current engine.");
+  if (!Array.isArray(operations) || operations.length > 1000) throw new DocxError("invalid-edit", "Invalid operation batch.");
+  let next: State = { ...state, identities: new Map(state.identities), partOverrides: new Map(state.partOverrides) };
+  for (const operation of operations) {
+    if (["replace-paragraph", "delete-paragraph", "track-paragraph-text"].includes(operation.type) && "paragraphId" in operation) {
+      const paragraph = xmlDescendants(parseXml(next.source)).find((n) => word(n, "p") && next.identities.get(n.start) === operation.paragraphId);
+      if (paragraph && xmlDescendants(paragraph).some((n) => word(n, "hyperlink") || word(n, "br"))) throw new DocxError("unsupported-inline-content", "Remove hyperlinks and explicit page breaks before replacing, deleting or tracking all paragraph text.");
+    }
+    if (operation.type === "delete-table") {
+      const table = xmlDescendants(parseXml(next.source)).find((n) => word(n, "tbl") && next.identities.get(n.start) === operation.tableId);
+      if (table && xmlDescendants(table).some((n) => word(n, "hyperlink") || word(n, "br"))) throw new DocxError("unsupported-inline-content", "Remove table hyperlinks and explicit page breaks before deleting the table.");
+    }
+    const pending = inspectDocxRevisions(next).ranges;
+    const resolves = ["track-paragraph-text", "accept-revision", "reject-revision", "accept-all-revisions", "reject-all-revisions"].includes(operation.type);
+    if (!resolves && pending.length) {
+      if ((operation.type === "add-comment" || operation.type === "delete-comment")) throw new DocxError("unsupported-revision", "Resolve text revisions before changing comment annotations.");
+      if (["replace-paragraph", "delete-paragraph", "format-range"].includes(operation.type) && "paragraphId" in operation && pending.some((r) => r.paragraphId === operation.paragraphId)) throw new DocxError("unsupported-revision", "Resolve paragraph revisions before an untracked replacement, deletion or inline format edit.");
+      if (operation.type === "format-run") {
+        const run = xmlDescendants(parseXml(next.source)).find((n) => word(n, "r") && next.identities.get(n.start) === operation.runId);
+        if (run && pending.some((r) => run.start > r.paragraph.start && run.end < r.paragraph.end)) throw new DocxError("unsupported-revision", "Resolve paragraph revisions before changing run formatting.");
+      }
+      if (operation.type === "delete-table") {
+        const table = xmlDescendants(parseXml(next.source)).find((n) => word(n, "tbl") && next.identities.get(n.start) === operation.tableId);
+        if (table && pending.some((r) => r.paragraph.start > table.start && r.paragraph.end < table.end)) throw new DocxError("unsupported-revision", "Resolve table text revisions before deleting the table.");
+      }
+    }
+    if (operation.type === "format-paragraph" && operation.format.styleId) next = ensureDocxNamedStyle(next, operation.format.styleId);
+    if (resolves) next = applyDocxRevisionOperation(next, operation as Parameters<typeof applyDocxRevisionOperation>[1]);
+    else if (operation.type === "add-comment" || operation.type === "delete-comment") next = applyDocxCommentOperation(next, operation);
+    else if (operation.type === "set-list") next = setDocxList(next, operation.paragraphId, operation.kind);
+    else if (operation.type === "insert-image") next = insertDocxImage(next, operation);
+    else if (operation.type === "delete-image") next = deleteDocxImage(next, operation.imageId);
+    else if (operation.type === "format-range") next = formatDocxTextRange(next, operation.paragraphId, operation.start, operation.end, operation.style);
+    else if (operation.type === "set-hyperlink") next = setDocxHyperlink(next, operation.paragraphId, operation.start, operation.end, operation.target);
+    else if (operation.type === "update-hyperlink") next = updateDocxHyperlink(next, operation.hyperlinkId, operation.target);
+    else if (operation.type === "remove-hyperlink") next = removeDocxHyperlink(next, operation.hyperlinkId);
+    else if (operation.type === "insert-page-break") next = insertDocxPageBreak(next, operation.paragraphId, operation.offset);
+    else if (operation.type === "remove-page-break") next = removeDocxPageBreak(next, operation.pageBreakId);
+    else next = { ...next, ...applyDocxXmlOperation(next, operation) };
+    if (encoder.encode(next.source).length > state.limits.maxEntryBytes) throw new DocxError("edit-limit", "Document edits exceed the part size limit.");
+    for (const part of next.partOverrides.values()) if (part.length > state.limits.maxEntryBytes) throw new DocxError("edit-limit", "Document part edits exceed the size limit.");
+    const media = inspectDocxImages(next);
+    if (media.problem) throw new DocxError("unsupported-image", media.problem);
+    const links = inspectDocxHyperlinks(next);
+    if (links.problem) throw new DocxError("unsupported-hyperlink", links.problem);
+    const breaks = inspectDocxPageBreaks(next);
+    if (breaks.problem) throw new DocxError("unsupported-page-break", breaks.problem);
+    const unsupported = unsupportedMarkup(parseXml(next.source), media.images.map((image) => image.drawing));
+    if (unsupported) throw new DocxError("unsupported-edit", `Operation produced unsupported markup: ${unsupported}.`);
+    const revisions = inspectDocxRevisions(next);
+    if (revisions.problem) throw new DocxError("unsupported-revisions", revisions.problem);
+    const commentsProblem = inspectDocxComments(projectDocxRevisionView(next, "final")).problem;
+    if (commentsProblem) throw new DocxError("unsupported-comments", commentsProblem);
+  }
+  return snapshot({ ...state, ...next, runNodes: new Map() }, document.diagnostics, document.metadata, document.revision + 1);
 }
 
 /** Untouched (or reverted) snapshots return an owned byte-identical original. */
 export async function exportDocx(document: DocxDocument): Promise<Uint8Array> {
   const state = states.get(document);
   if (!state) throw new DocxError("invalid-session", "DOCX snapshot did not originate from this engine.");
-  if (!state.replacements.size) return new Uint8Array(state.original);
+  if (state.source === state.originalSource && !state.partOverrides.size && !state.deletedParts.size) return new Uint8Array(state.original);
   if (!document.canEdit) throw new DocxError("read-only", "Cannot export edits to an unsupported package.");
-  const patches = [...state.replacements].map(([id, text]) => ({ node: state.runNodes.get(id)!, text }))
-    .sort((a, b) => b.node.start - a.node.start);
-  let source = state.source;
-  for (const { node, text } of patches) {
-    const replacement = `<${node.name} xml:space="preserve">${escapeXmlText(text)}</${node.name}>`;
-    source = source.slice(0, node.start) + replacement + source.slice(node.end);
-  }
-  const bytes = writeZip(state.entries.map((part) => part.name === state.mainPart ? { name: part.name, data: encoder.encode(source) } : part), state.limits);
+  const bytes = writeZip(docxEntries(state).map((part) => part.name === state.mainPart ? { name: part.name, data: encoder.encode(state.source) } : part), state.limits);
   // Re-read output before releasing it; size/relationship/XML guarantees apply
   // equally to output. This is not an independent Word fidelity verifier.
   await openDocx(bytes, state.limits);
   return bytes;
+}
+
+/** Returns an owned copy for a host-managed Blob URL; never a remote URL. */
+export function getDocxImageBytes(document: DocxDocument, imageId: string): Uint8Array {
+  const state = states.get(document);
+  if (!state) throw new DocxError("invalid-session", "DOCX snapshot did not originate from this engine.");
+  const image = inspectDocxImages(state).images.find((i) => i.id === imageId);
+  if (!image) throw new DocxError("invalid-image", "Unknown image identity.");
+  return new Uint8Array(docxPart(state, image.partName)!);
 }
 
 /** Minimal interoperable package authored from the public OPC/WordML vocabulary. */

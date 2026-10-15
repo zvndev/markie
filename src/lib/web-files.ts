@@ -160,7 +160,7 @@ function downloadMimeType(document: WebSaveDocument): string {
   // document. A caller-supplied MIME is only accepted for known safe formats.
   if (format.editing === "unsupported") return "application/octet-stream";
   const mime = document.mimeType ?? format.mimeType;
-  return /^(?:text\/(?:plain|markdown|csv)|application\/(?:octet-stream|msword|vnd\.openxmlformats-officedocument\.wordprocessingml\.document))(?:;charset=(?:utf-8|utf-16le|utf-16be))?$/i.test(mime)
+  return /^(?:text\/(?:plain|markdown|csv)|application\/(?:json|octet-stream|msword|vnd\.openxmlformats-officedocument\.wordprocessingml\.document))(?:;charset=(?:utf-8|utf-16le|utf-16be))?$/i.test(mime)
     ? mime : format.mimeType;
 }
 

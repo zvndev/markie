@@ -1,5 +1,5 @@
 /** Routing information, not a claim that an engine can safely edit a file. */
-export type DocumentFormatKind = "markdown" | "text" | "csv" | "docx" | "doc" | "rtf" | "html" | "odt" | "unsupported";
+export type DocumentFormatKind = "markdown" | "text" | "csv" | "json" | "yaml" | "xml" | "docx" | "doc" | "rtf" | "html" | "odt" | "unsupported";
 
 export type DocumentFormatInfo = Readonly<{
   kind: DocumentFormatKind;
@@ -12,6 +12,9 @@ const FORMATS: Record<DocumentFormatKind, DocumentFormatInfo> = {
   markdown: { kind: "markdown", representation: "text", editing: "text", mimeType: "text/markdown" },
   text: { kind: "text", representation: "text", editing: "text", mimeType: "text/plain" },
   csv: { kind: "csv", representation: "text", editing: "text", mimeType: "text/csv" },
+  json: { kind: "json", representation: "text", editing: "text", mimeType: "application/json" },
+  yaml: { kind: "yaml", representation: "text", editing: "text", mimeType: "text/plain" },
+  xml: { kind: "xml", representation: "text", editing: "text", mimeType: "text/plain" },
   docx: { kind: "docx", representation: "bytes", editing: "engine", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
   doc: { kind: "doc", representation: "bytes", editing: "engine", mimeType: "application/msword" },
   rtf: { kind: "rtf", representation: "bytes", editing: "unsupported", mimeType: "application/rtf" },
@@ -24,6 +27,7 @@ Object.values(FORMATS).forEach(Object.freeze);
 const EXTENSIONS: Record<string, DocumentFormatKind> = {
   md: "markdown", markdown: "markdown", mdx: "markdown",
   txt: "text", text: "text", log: "text", csv: "csv",
+  json: "json", yaml: "yaml", yml: "yaml", xml: "xml",
   docx: "docx", doc: "doc", rtf: "rtf", html: "html", htm: "html", odt: "odt",
 };
 

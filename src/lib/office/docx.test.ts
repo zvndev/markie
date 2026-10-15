@@ -116,7 +116,7 @@ describe("original DOCX package text foundation", () => {
     const bytes = await fixture((entries) => body(entries, markup));
     const doc = await openDocx(bytes);
     expect(doc.canEdit).toBe(false);
-    expect(doc.diagnostics.some((d) => d.code === "unsupported-markup" && d.message.includes("Read-only"))).toBe(true);
+    expect(doc.diagnostics.some((d) => ["unsupported-markup", "unsupported-comments", "unsupported-revisions"].includes(d.code) && d.message.includes("Read-only"))).toBe(true);
     expect(() => replaceDocxText(doc, [{ runId: "p0:r0", text: "no" }])).toThrow(/safely edited/);
     expect(await exportDocx(doc)).toEqual(bytes);
   });

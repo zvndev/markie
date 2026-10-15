@@ -5,7 +5,7 @@ import { emit, installBridge, listenerCount } from "@/test/mock-bridge";
 import type { DocumentWorkspaceProps } from "./documents/document-workspace";
 import type { DocumentShellState } from "@/lib/document-shell";
 
-const state = vi.hoisted(() => ({ props: null as DocumentWorkspaceProps | null, prepare: vi.fn<() => Promise<boolean>>(), cloudGuard: vi.fn<() => boolean>() }));
+const state = vi.hoisted(() => ({ props: null as DocumentWorkspaceProps | null, prepare: vi.fn<() => Promise<boolean>>(), cloudGuard: vi.fn<() => boolean>(), execute: vi.fn() }));
 vi.mock("./documents/document-workspace", () => ({ DocumentWorkspace: (props: DocumentWorkspaceProps) => {
   state.props = props;
   const { onPrepareClose } = props;
@@ -13,7 +13,7 @@ vi.mock("./documents/document-workspace", () => ({ DocumentWorkspace: (props: Do
   const { onShellChange } = props;
   useEffect(() => {
     onShellChange?.({ name: "synthetic.txt", dirty: false, hasSession: true, private: false, ready: true, busy: false, records: [],
-      create: vi.fn(), open: vi.fn(), importFile: vi.fn(), save: vi.fn(), share: vi.fn(), showVault: vi.fn(), prepareClose: state.prepare, prepareLeave: state.prepare });
+      create: vi.fn(), open: vi.fn(), importFile: vi.fn(), save: vi.fn(), share: vi.fn(), showVault: vi.fn(), prepareClose: state.prepare, prepareLeave: state.prepare, commands: { enabledCommands: ["undo", "redo", "find"], execute: state.execute } });
     return () => onShellChange?.(null);
   }, [onShellChange]);
   return <div><p>{props.incomingDocument?.payload.name ?? "No incoming document"}</p><button type="button" onClick={() => void props.shareDocument?.({ name: "synthetic.txt", bytes: new Uint8Array(), text: "" })}>Share fixture</button></div>;
@@ -24,7 +24,7 @@ vi.mock("./document-cloud-dialog", () => ({ DocumentCloudDialog: ({ onCloseGuard
 } }));
 import { DocumentWorkspaceHost } from "./document-workspace-host";
 
-beforeEach(() => { state.props = null; state.prepare.mockReset().mockResolvedValue(true); state.cloudGuard.mockReset().mockReturnValue(true); });
+beforeEach(() => { state.props = null; state.prepare.mockReset().mockResolvedValue(true); state.cloudGuard.mockReset().mockReturnValue(true); state.execute.mockReset(); });
 
 describe("native document workspace host lifecycle", () => {
   it("embeds content without owning the native frame, app close, file commands or legacy text events", async () => {
@@ -77,30 +77,23 @@ describe("native document workspace host lifecycle", () => {
     const view = render(<DocumentWorkspaceHost />);
     const editor = document.createElement("div"); editor.tabIndex = 0; editor.className = "docs-word-host";
     view.container.firstElementChild!.append(editor); editor.focus();
-    const received: { key: string; redo: boolean }[] = [];
-    editor.addEventListener("keydown", (event) => { received.push({ key: event.key, redo: event.shiftKey }); event.preventDefault(); });
     await act(async () => { emit("onMenuUndo"); emit("onMenuRedo"); });
-    expect(received).toEqual([{ key: "z", redo: false }, { key: "z", redo: true }]);
+    expect(state.execute.mock.calls).toEqual([["undo"], ["redo"]]);
   });
   it("offers native undo to the document textarea's own history before browser fallback", async () => {
     installBridge(); const view = render(<DocumentWorkspaceHost />);
     const field = document.createElement("textarea"); field.setAttribute("data-document-text-editor", ""); view.container.firstElementChild!.append(field); field.focus();
-    const handled = vi.fn((event: KeyboardEvent) => event.preventDefault()); field.addEventListener("keydown", handled);
     await act(async () => { emit("onMenuUndo"); });
-    expect(handled).toHaveBeenCalledOnce();
+    expect(state.execute).toHaveBeenCalledWith("undo");
   });
   it("routes active document menus back to the editor after a shell button takes focus", async () => {
     installBridge(); const view = render(<DocumentWorkspaceHost embedded />);
     const editor = document.createElement("div"); editor.className = "docs-word-host";
-    const home = document.createElement("button"); home.role = "tab"; home.textContent = "Home"; const clicked = vi.fn(); home.addEventListener("click", clicked);
-    const find = document.createElement("input"); find.setAttribute("aria-label", "Find Word text"); editor.append(home, find);
     const shellButton = document.createElement("button"); shellButton.textContent = "Markie toolbar";
     view.container.firstElementChild!.append(editor); view.container.append(shellButton); shellButton.focus();
-    const received: string[] = [];
-    editor.addEventListener("keydown", (event) => { received.push(event.key); if (event.key !== "f") event.preventDefault(); });
     await act(async () => { emit("onMenuUndo"); emit("onMenuRedo"); emit("onMenuFind"); });
-    expect(received).toEqual(["z", "z", "f"]); expect(clicked).toHaveBeenCalledOnce();
-    await waitFor(() => expect(find).toHaveFocus());
+    expect(state.execute.mock.calls).toEqual([["undo"], ["redo"], ["find"]]);
+    expect(view.container.querySelector('[role="tab"]')).toBeNull();
   });
   it("refuses native editor fallbacks while a parent shell is inert for combined close", async () => {
     installBridge(); const view = render(<div inert><DocumentWorkspaceHost embedded /></div>);
@@ -109,6 +102,7 @@ describe("native document workspace host lifecycle", () => {
     const shellButton = document.createElement("button"); view.container.append(shellButton); shellButton.focus();
     await act(async () => { emit("onMenuUndo"); emit("onMenuRedo"); emit("onMenuFind"); });
     expect(received).not.toHaveBeenCalled();
+    expect(state.execute).not.toHaveBeenCalled();
   });
   it("acknowledges only the exact close ticket after recovery succeeds", async () => {
     const bridge = installBridge();

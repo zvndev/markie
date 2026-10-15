@@ -100,7 +100,9 @@ describe("actual shared document workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Recover now" }));
     await waitFor(() => expect(shell?.records).toHaveLength(1));
     expect(shell).toMatchObject({ dirty: true }); // Local recovery is not an external file save.
-    expect(screen.getByRole("button", { name: "Document details" })).toHaveTextContent("Details & recovery");
+    await waitFor(() => expect((shell as DocumentShellState | null)?.commands?.enabledCommands).toContain("document-details"));
+    await act(async () => { shell!.commands!.execute("document-details"); });
+    expect(screen.getByRole("region", { name: "Document organization" })).toBeInTheDocument();
     view.unmount(); expect(shell).toBeNull();
   });
 
@@ -123,15 +125,15 @@ describe("actual shared document workspace", () => {
     expect(field).not.toHaveAttribute("readonly"); expect(field).toHaveValue("Retain these edits");
   });
 
-  it("protects ordinary recovery before returning to Markdown", async () => {
-    const library = createMemoryDocumentLibrary(), onExit = vi.fn(); let shell: DocumentShellState | null = null;
-    render(<DocumentWorkspace embedded library={library} onExit={onExit} onShellChange={(value) => { shell = value; }} />);
+  it("protects ordinary recovery before selecting another document", async () => {
+    const library = createMemoryDocumentLibrary(); let shell: DocumentShellState | null = null;
+    render(<DocumentWorkspace embedded library={library} onShellChange={(value) => { shell = value; }} />);
     await waitFor(() => expect(shell?.ready).toBe(true));
     await act(async () => { shell!.create("text"); });
     await screen.findByRole("textbox", { name: "Document text" });
-    fireEvent.click(screen.getByRole("button", { name: "Return to Markdown" }));
+    await act(async () => { expect(await shell!.prepareLeave()).toBe(false); });
     expect(await screen.findByText(/Durable local recovery is unavailable/)).toBeInTheDocument();
-    expect(onExit).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /Return to|Classic workspace/i })).not.toBeInTheDocument();
   });
 
   it("creates, edits, recovers, reopens and searches a literal text document", async () => {
@@ -228,21 +230,25 @@ describe("actual shared document workspace", () => {
     const library = createMemoryDocumentLibrary();
     const original = await exportDocx(await createDocx("Hello Word"));
     const save = vi.fn().mockResolvedValue({ method: "download", name: "letter.docx" });
-    render(<DocumentWorkspace library={library} pickDocument={async () => payload("letter.docx", original)} saveDocument={save} />);
+    const shell = { current: null as DocumentShellState | null };
+    render(<DocumentWorkspace library={library} pickDocument={async () => payload("letter.docx", original)} saveDocument={save} onShellChange={(value) => { shell.current = value; }} />);
     fireEvent.click(screen.getByRole("button", { name: "Import a file" }));
     const paragraph = await screen.findByRole("textbox", { name: "Paragraph 1" });
     await waitFor(() => expect(paragraph).toHaveAttribute("contenteditable", "true"));
+    await waitFor(() => expect(shell.current?.commands?.enabledCommands).toContain("document-history"));
+    expect(new Set(shell.current!.commands!.enabledCommands).size).toBe(shell.current!.commands!.enabledCommands.length);
     fireEvent.click(screen.getByRole("button", { name: "Bold" }));
-    fireEvent.click(screen.getByRole("button", { name: "Numbering" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Insert" }));
+    fireEvent.click(screen.getByRole("button", { name: "Numbered list" }));
+    act(() => shell.current!.commands!.execute("insert-table"));
     fireEvent.click(screen.getByRole("button", { name: "Insert table" }));
     expect(screen.getByRole("table", { name: "Document table" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Layout" }));
-    fireEvent.click(screen.getByRole("button", { name: "Landscape" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Review" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Table" }));
+    act(() => shell.current!.commands!.execute("layout-landscape"));
+    act(() => shell.current!.commands!.execute("review-comments"));
     fireEvent.change(screen.getByRole("textbox", { name: "Comment text" }), { target: { value: "Please check this." } });
     fireEvent.click(screen.getByRole("button", { name: "Add comment" }));
     expect(screen.getByText("Please check this.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close Document Review" }));
     fireEvent.click(screen.getByRole("button", { name: "Export copy" }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
     const reopened = await openDocx(save.mock.calls[0][0].bytes);
@@ -270,19 +276,23 @@ describe("actual shared document workspace", () => {
     expect(Array.from(save.mock.calls[0][0].bytes)).toEqual(Array.from(bytes));
   });
 
-  it("finds and replaces actual Word text from Home tools", async () => {
+  it("finds and replaces actual Word text through native command tools", async () => {
     const library = createMemoryDocumentLibrary();
     const bytes = await exportDocx(await createDocx("Hello Hello"));
     const save = vi.fn().mockResolvedValue({ method: "download", name: "find.docx" });
-    render(<DocumentWorkspace library={library} pickDocument={async () => payload("find.docx", bytes)} saveDocument={save} />);
+    const shell = { current: null as DocumentShellState | null };
+    render(<DocumentWorkspace library={library} pickDocument={async () => payload("find.docx", bytes)} saveDocument={save} onShellChange={(value) => { shell.current = value; }} />);
     fireEvent.click(screen.getByRole("button", { name: "Import a file" }));
     const paragraph = await screen.findByRole("textbox", { name: "Paragraph 1" });
     await waitFor(() => expect(paragraph).toHaveAttribute("contenteditable", "true"));
+    await waitFor(() => expect(shell.current?.commands?.enabledCommands).toContain("find"));
+    act(() => shell.current!.commands!.execute("find"));
     fireEvent.change(screen.getByRole("textbox", { name: "Find Word text" }), { target: { value: "Hello" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Replacement text" }), { target: { value: "Draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Replace all" }));
     expect(screen.getByText("Replaced 2 matches.")).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Paragraph 1" })).toHaveTextContent("Draft Draft");
+    fireEvent.click(screen.getByRole("button", { name: "Close Find and Replace" }));
     fireEvent.click(screen.getByRole("button", { name: "Export copy" }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
     expect((await openDocx(save.mock.calls[0][0].bytes)).text).toBe("Draft Draft");
@@ -315,34 +325,46 @@ describe("actual shared document workspace", () => {
     const library = createMemoryDocumentLibrary();
     const bytes = await exportDocx(await createDocx("Original text"));
     const save = vi.fn().mockResolvedValue({ method: "download", name: "review.docx" });
-    render(<DocumentWorkspace library={library} pickDocument={async () => payload("review.docx", bytes)} saveDocument={save} />);
+    const shell = { current: null as DocumentShellState | null };
+    render(<DocumentWorkspace library={library} pickDocument={async () => payload("review.docx", bytes)} saveDocument={save} onShellChange={(value) => { shell.current = value; }} />);
     fireEvent.click(screen.getByRole("button", { name: "Import a file" }));
     const paragraph = await screen.findByRole("textbox", { name: "Paragraph 1" });
     await waitFor(() => expect(paragraph).toHaveAttribute("contenteditable", "true"));
-    fireEvent.click(screen.getByRole("tab", { name: "Review" }));
+    await waitFor(() => expect(shell.current?.commands?.enabledCommands).toContain("review-tracking"));
+    act(() => shell.current!.commands!.execute("review-tracking"));
     fireEvent.click(screen.getByRole("button", { name: "Track paragraph text only" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Document Review" }));
     paragraph.querySelector("span")!.textContent = "Updated text";
     fireEvent.input(paragraph);
     expect(paragraph).toHaveTextContent("Updated text");
     paragraph.querySelector("span")!.textContent = "Updated text!";
     fireEvent.input(paragraph);
+    await waitFor(() => expect(shell.current?.commands?.enabledCommands).toContain("review-changes"));
+    act(() => shell.current!.commands!.execute("review-changes"));
     expect(screen.getByRole("button", { name: "Add comment" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Original text" }));
     expect(paragraph).toHaveTextContent("Original text");
     expect(paragraph).toHaveAttribute("contenteditable", "false");
     fireEvent.click(screen.getByRole("button", { name: "Final text" }));
     expect(paragraph).toHaveTextContent("Updated text!");
+    fireEvent.click(screen.getByRole("button", { name: "Close Document Review" }));
     fireEvent.click(screen.getByRole("button", { name: "Export copy" }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
     const pending = await openDocx(save.mock.calls[0][0].bytes);
     expect(pending.text).toBe("Updated text!"); expect(pending.originalText).toBe("Original text"); expect(pending.revisions).toHaveLength(2);
+    await waitFor(() => expect(shell.current?.commands?.enabledCommands).toContain("review-changes"));
+    act(() => shell.current!.commands!.execute("review-changes"));
     await waitFor(() => expect(screen.getByRole("button", { name: "Reject all text changes" })).not.toBeDisabled());
     fireEvent.click(screen.getByRole("button", { name: "Reject all text changes" }));
     expect(paragraph).toHaveTextContent("Original text");
+    fireEvent.click(screen.getByRole("button", { name: "Close Document Review" }));
     paragraph.querySelector("span")!.textContent = "Accepted text";
     fireEvent.input(paragraph);
+    await waitFor(() => expect(shell.current?.commands?.enabledCommands).toContain("review-changes"));
+    act(() => shell.current!.commands!.execute("review-changes"));
     fireEvent.click(screen.getByRole("button", { name: "Accept all text changes" }));
     expect(screen.getByText("No pending tracked text changes.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close Document Review" }));
     fireEvent.click(screen.getByRole("button", { name: "Export copy" }));
     await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
     const accepted = await openDocx(save.mock.calls[1][0].bytes);

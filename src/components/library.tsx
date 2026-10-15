@@ -34,10 +34,12 @@ import {
 import type { WorkspaceBootstrapResult } from "@/lib/workspace-default";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 import { PanelNotice, type Notice, type NoticeKind } from "@/components/panel-notice";
+import { sameDocumentPath } from "@/lib/path-utils";
 import type { LibraryRecord } from "@/lib/document-library";
 import type { EditableDocumentFormat } from "@/lib/document-session";
 
 interface LibraryProps {
+  retainedDocument?: { name: string; path: string | null; dirty: boolean; selected: boolean; onSelect: () => void };
   // which view the left rail selected (library | browse | cloud | skills)
   view: PanelView;
   onClose: () => void;
@@ -133,6 +135,7 @@ const BADGE: Record<LibraryItem["state"], [string, string]> = {
 };
 
 export function Library({
+  retainedDocument,
   view,
   onClose,
   onOpenPath,
@@ -413,6 +416,8 @@ export function Library({
   );
 
   const { localFiles } = organizeLibraryItems(visibleItems);
+  const retainedVisible = !!retainedDocument && (!retainedDocument.path || !items.some((item) => sameDocumentPath(item.path, retainedDocument.path, getElectronAPI()?.platform)))
+    && (!filter.trim() || `${retainedDocument.name}\n${retainedDocument.path ?? ""}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()));
   const overview = summarizeLibrary(items);
   const visibleDocuments = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase();
@@ -607,13 +612,14 @@ export function Library({
           {libTab === "recent" && (onCreateDocument || onOpenVault) && (
             <div className="flex flex-wrap gap-1 px-2 py-1.5 border-b border-border/60" role="group" aria-label="Document actions">
               {onCreateDocument ? <>
+                <button type="button" onClick={() => onCreateDocument("markdown")} className="text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-2 py-1">New Markdown document</button>
                 <button type="button" onClick={() => onCreateDocument("docx")} className="text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-2 py-1">New Word document</button>
                 <button type="button" onClick={() => onCreateDocument("text")} className="text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-2 py-1">New text document</button>
               </> : null}
               {onOpenVault ? <button type="button" onClick={onOpenVault} className="text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-2 py-1">Locked vault</button> : null}
             </div>
           )}
-          {!loading && libTab === "recent" && (items.length > 0 || documentRecords.length > 0) && (
+          {!loading && libTab === "recent" && (items.length > 0 || documentRecords.length > 0 || retainedDocument) && (
               <div className="px-2 pt-1.5 pb-1.5 shrink-0">
                 <input
                   value={filter}
@@ -659,8 +665,8 @@ export function Library({
             activePath={activePath}
             onOpenPath={onOpenPath}
           />
-        ) : localFiles.length === 0 && visibleDocuments.length === 0 ? (
-          filter.trim() && (items.length > 0 || documentRecords.length > 0) ? <p className="px-2 py-2 text-[12px] text-muted">No documents match this filter.</p> :
+        ) : localFiles.length === 0 && visibleDocuments.length === 0 && !retainedVisible ? (
+          filter.trim() && (items.length > 0 || documentRecords.length > 0 || retainedDocument) ? <p className="px-2 py-2 text-[12px] text-muted">No documents match this filter.</p> :
           <RecentEmptyState
             onOpenFile={onOpenFile}
             onShowProjects={() => pickTab("projects")}
@@ -668,6 +674,11 @@ export function Library({
           />
         ) : (
           <>
+            {retainedVisible && retainedDocument ? <button type="button" onClick={retainedDocument.onSelect}
+              aria-current={retainedDocument.selected ? "true" : undefined}
+              className={`group w-full text-left rounded-md px-2 py-1.5 ${retainedDocument.selected ? "bg-accent" : "hover:bg-accent/40"}`}>
+              <span className="flex items-center gap-1.5"><FileIcon /><span className="text-[12.5px] text-foreground truncate flex-1">{retainedDocument.name}</span><span className="text-[9px] px-1 py-px rounded border shrink-0 text-muted border-border">{retainedDocument.dirty ? "Unsaved" : "Open"}</span></span>
+            </button> : null}
             {localFiles.length > 0 ? <>
               <LibrarySectionHeader label="On this device" items={localFiles} />
               {localFiles.map(fileRow)}

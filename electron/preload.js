@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     takeInitial: () => ipcRenderer.invoke("document-files:take-initial"),
   },
   onDocumentFileOpened: (callback) => subscribe("document-file-opened", callback),
+  onDocumentCommand: (callback) => subscribe("document-command", callback, (command) => command),
+  setDocumentMenuState: (state) => ipcRenderer.invoke("document-menu-state", state),
   openFile: (args) => ipcRenderer.invoke("open-file", args),
   openFilePath: (path) => ipcRenderer.invoke("open-file-path", path),
   // Electron 32+ removed File.path; resolve a dropped File to its disk path.

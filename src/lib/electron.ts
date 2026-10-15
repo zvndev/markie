@@ -181,6 +181,8 @@ export interface ElectronAPI {
   platform: string;
   documentFiles?: NativeDocumentFileApi;
   onDocumentFileOpened?(callback: () => void): Unsubscribe;
+  onDocumentCommand?(callback: (command: string) => void): Unsubscribe;
+  setDocumentMenuState?(state: { renderer: "markdown" | "word" | "text" | "none"; enabledCommands: readonly string[] }): Promise<{ ok: boolean; error?: string }>;
   openFile(args?: { near?: string | null }): Promise<OpenResult | null>;
   openFilePath(path: string): Promise<OpenResult | null>;
   // resolve a dropped File to its on-disk path (Electron webUtils)

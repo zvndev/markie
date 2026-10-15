@@ -14,5 +14,12 @@ describe("native document preload IPC mapping", () => {
     let notified = 0; const cleanup = (api.onDocumentFileOpened as (callback: () => void) => () => void)(() => notified++); listeners.get("document-file-opened")!({}); expect(notified).toBe(1); cleanup(); expect(listeners.has("document-file-opened")).toBe(false);
     let ticket: number | undefined; (api.onAppWillClose as (callback: (requestId?: number) => void) => void)((requestId) => { ticket = requestId; }); listeners.get("app-will-close")!({}, 42); expect(ticket).toBe(42);
     (api.appCloseReady as (ticket: number) => void)(42); (api.appCloseCancel as (ticket: number) => void)(43); expect(calls.slice(-2)).toEqual([["app-close-ready", 42], ["app-close-cancel", 43]]);
+    let command: string | undefined;
+    const offCommand = (api.onDocumentCommand as (callback: (command: string) => void) => () => void)((value) => { command = value; });
+    listeners.get("document-command")!({}, "format-bold"); expect(command).toBe("format-bold");
+    offCommand(); expect(listeners.has("document-command")).toBe(false);
+    const menuState = { renderer: "word", enabledCommands: ["format-bold"] };
+    await (api.setDocumentMenuState as (state: typeof menuState) => Promise<unknown>)(menuState);
+    expect(calls.at(-1)).toEqual(["document-menu-state", menuState]);
   });
 });

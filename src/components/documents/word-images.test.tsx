@@ -44,7 +44,7 @@ describe("local Word pictures", () => {
       return <WordDocumentEditor document={document} onChange={(next) => { latest = next; setDocument(next); }} />;
     }
     render(<Host />);
-    fireEvent.click(screen.getByRole("tab", { name: "Insert" }));
+    fireEvent.click(screen.getByRole("button", { name: "Insert image" }));
     fireEvent.change(screen.getByLabelText("Insert local picture"), { target: { files: [bitmapFile()] } });
     expect(await screen.findByRole("img", { name: "pixel.png" })).toHaveAttribute("src", "blob:local-picture");
     const reopened = await openDocx(await exportDocx(latest));

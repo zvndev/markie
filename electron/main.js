@@ -47,6 +47,7 @@ const { writeFileAtomic } = require("./atomic-write");
 const { createHistory } = require("./history");
 const { saveConflictAction } = require("./save-conflict");
 const { createCloseFlusher } = require("./close-flush");
+const { createDocumentMenuController } = require("./document-menu");
 
 // The renderer answers app-will-close here once it has flushed. Registered at
 // module scope, once, because ipcMain listeners outlive any one window.
@@ -249,6 +250,12 @@ try {
 }
 
 let mainWindow;
+const documentMenu = createDocumentMenuController({
+  getWindow: () => mainWindow,
+  getMenu: () => Menu.getApplicationMenu(),
+  sendCommand: (command) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("document-command", command); },
+  canUseLegacy: (id) => id !== REVERT_MENU_ID || (!!currentDocPath && history().has(currentDocPath)),
+});
 const documentFiles = createDocumentFileService({ dialog, getWindow: () => mainWindow });
 let pendingNativeDocumentError = null;
 let nativeDocumentQueued = false;
@@ -596,9 +603,7 @@ function setCurrentDoc(filePath) {
 
 function refreshRevertMenuItem() {
   try {
-    const item = Menu.getApplicationMenu()?.getMenuItemById(REVERT_MENU_ID);
-    if (!item) return; // menu not built yet (startup) or not this platform
-    item.enabled = !!currentDocPath && history().has(currentDocPath);
+    documentMenu.refresh();
   } catch {
     // A menu that stays enabled is a dialog that explains itself instead.
   }
@@ -681,6 +686,7 @@ function documentsWorkspaceActive() {
 }
 
 function createWindow() {
+  documentMenu.reset();
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -700,9 +706,9 @@ function createWindow() {
     },
   });
   const nativeDocumentOwner = mainWindow.webContents.id;
-  mainWindow.webContents.once("destroyed", () => documentFiles.releaseOwner(nativeDocumentOwner));
-  mainWindow.webContents.on("render-process-gone", () => documentFiles.releaseOwner(nativeDocumentOwner));
-  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) documentFiles.releaseOwner(nativeDocumentOwner); });
+  mainWindow.webContents.once("destroyed", () => { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); });
+  mainWindow.webContents.on("render-process-gone", () => { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); });
+  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); } });
 
   mainWindow.once("ready-to-show", () => {
     // E2E drivers keep the window hidden so runs don't steal focus
@@ -814,6 +820,7 @@ function createWindow() {
 
   mainWindow.on("closed", () => {
     mainWindow = null;
+    documentMenu.reset();
     rendererReady = false;
     _closeReadyCb = null;
     _closeCancelCb = null;
@@ -1058,6 +1065,10 @@ const handle = createIpcHandler({
   ipcMain,
   onError: (channel, err) => logCrash(`ipc:${channel}`, err),
 });
+handle("document-menu-state", (event, state) => {
+  if (!currentCloseSender(event)) return { ok: false, error: "This frame cannot update document menus." };
+  return documentMenu.update(state);
+}, { onFailure: () => ({ ok: false, error: "Document menus could not be updated." }) });
 registerDocumentFileIpc({
   handle,
   service: { ...documentFiles, takeInitial(owner) {
@@ -2835,11 +2846,13 @@ const template = [
         click: () => mainWindow?.webContents.send("menu-history"),
       },
       {
+        id: "markdown-fork",
         label: "Duplicate (Fork)",
         accelerator: "CmdOrCtrl+Shift+D",
         click: () => mainWindow?.webContents.send("menu-fork"),
       },
       {
+        id: "markdown-reveal",
         label:
           process.platform === "darwin"
             ? "Reveal in Finder"
@@ -2851,6 +2864,7 @@ const template = [
       },
       { type: "separator" },
       {
+        id: "markdown-print",
         label: "Print…",
         accelerator: "CmdOrCtrl+P",
         click: () => mainWindow?.webContents.send("menu-print"),
@@ -2859,14 +2873,17 @@ const template = [
         label: "Export",
         submenu: [
           {
+            id: "markdown-export-pdf-dark",
             label: "PDF (Dark)…",
             click: () => mainWindow?.webContents.send("menu-export-pdf", "dark"),
           },
           {
+            id: "markdown-export-pdf-light",
             label: "PDF (Light)…",
             click: () => mainWindow?.webContents.send("menu-export-pdf", "light"),
           },
           {
+            id: "markdown-export-html",
             label: "HTML…",
             click: () => mainWindow?.webContents.send("menu-export-html"),
           },
@@ -2922,6 +2939,7 @@ const template = [
       },
       { type: "separator" },
       {
+        id: "markdown-format-tables",
         label: "Format Tables",
         accelerator: "CmdOrCtrl+Alt+T",
         click: () => mainWindow?.webContents.send("menu-format-tables"),
@@ -2932,42 +2950,50 @@ const template = [
     label: "View",
     submenu: [
       {
+        id: "markdown-view-rich",
         label: "Rich Text",
         accelerator: "CmdOrCtrl+1",
         click: () => mainWindow?.webContents.send("set-mode", "preview"),
       },
       {
+        id: "markdown-view-source",
         label: "Markdown Source",
         accelerator: "CmdOrCtrl+2",
         click: () => mainWindow?.webContents.send("set-mode", "edit"),
       },
       {
+        id: "markdown-view-split",
         label: "Split",
         accelerator: "CmdOrCtrl+3",
         click: () => mainWindow?.webContents.send("set-mode", "split"),
       },
       { type: "separator" },
       {
+        id: "markdown-zoom-in",
         label: "Zoom In",
         accelerator: "CmdOrCtrl+=",
         click: () => mainWindow?.webContents.send("menu-zoom", 1),
       },
       {
+        id: "markdown-zoom-out",
         label: "Zoom Out",
         accelerator: "CmdOrCtrl+-",
         click: () => mainWindow?.webContents.send("menu-zoom", -1),
       },
       {
+        id: "markdown-zoom-reset",
         label: "Actual Size",
         accelerator: "CmdOrCtrl+0",
         click: () => mainWindow?.webContents.send("menu-zoom", 0),
       },
       {
+        id: "markdown-page-wider",
         label: "Wider Page",
         accelerator: "Alt+CmdOrCtrl+]",
         click: () => mainWindow?.webContents.send("menu-page-width", 1),
       },
       {
+        id: "markdown-page-narrower",
         label: "Narrower Page",
         accelerator: "Alt+CmdOrCtrl+[",
         click: () => mainWindow?.webContents.send("menu-page-width", -1),
@@ -2988,6 +3014,7 @@ const template = [
         click: () => mainWindow?.webContents.send("menu-shortcuts"),
       },
       {
+        id: "markdown-statistics",
         label: "Statistics",
         accelerator: "CmdOrCtrl+Shift+I",
         click: () => mainWindow?.webContents.send("toggle-stats"),
@@ -3062,7 +3089,7 @@ if (!gotLock) {
     registerProtocol();
     registerAssetProtocol();
     setupCSP();
-    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+    Menu.setApplicationMenu(Menu.buildFromTemplate(documentMenu.install(template)));
     // The menu is built after the first file may already have been opened.
     refreshRevertMenuItem();
     createWindow();

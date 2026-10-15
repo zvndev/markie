@@ -8,35 +8,38 @@ Priority update from Kirby, October 15, 2026: Windows and macOS desktop apps are
 
 Product continuity correction from Kirby, October 15, 2026: extend the existing real Markie application. Preserve its shell, navigation, Library, editor conventions, settings and identity. New original document engines plug into that app; they do not authorize a new standalone Documents application, branded dashboard or replacement interface. Word mode belongs in the current editor area. Isolated preview identities protect installed data only and are not a new product direction. Keep Markdown editing state when switching formats and have one active owner for commands plus combined recovery on close.
 
+Interaction correction from Kirby, October 15, 2026: formats are renderers inside Markie, not workspaces to enter and leave. Select documents through the existing Library/Open flow, including the retained named or untitled Markdown document, without reloading the shell. Reuse the actual compact formatting controls across renderers. Do not add a Word ribbon/tab strip, a duplicate toolbar or a switch-back action. Format, Insert, Layout and Review are native top-level system menus on macOS/Windows; existing File/Edit/View remain. Browser fallback uses the existing command palette. These constraints supersede the earlier tab-based Word UI proposal throughout this plan.
+
 One local-first workspace for text, documents, and written copy: open, write, organize, search, sort, share, and collaborate on the same material on desktop and web. Desktop provides deeper filesystem integration; web is a first-class editor, not a read-only companion. Accounts and cloud storage remain optional for local editing. A protected vault encrypts sensitive content and metadata at rest and exposes it only during an authorized unlocked session.
 
 Kirby explicitly selected Markie's existing Electron desktop experience, approved a from-scratch DOC/DOCX engine rather than a third-party document engine, requested ordinary text-file support, and requested a passcode/biometric protected area. The October 14 instruction authorizes this product expansion. Existing VISION.md and CONSTITUTION.md are human-maintained and are not silently rewritten. Markdown remains canonical for Markdown files; Office packages remain canonical for Office files. A later human-owned reconciliation of the older Markdown-only vision is required before a public product/release change.
 
 ## Existing implementation and integration points
 
-- The React/Vite renderer is shared-capable, but currently targets Electron's Chromium. Browser support needs its own build target and real Safari/Firefox validation: vite.config.ts.
-- RichView accepts canonical Markdown, and rich updates serialize back into it: src/components/rich-view.tsx:46,376. Keep this path for Markdown only.
-- Open has a browser file-input fallback: src/app/page.tsx:921. Save/Save As require Electron: src/app/page.tsx:978,1044. These need actual web implementations rather than silent returns.
-- Font/size with selected text modifies document content; without selection it changes viewing preferences: src/components/doc-toolbar.tsx:192. Word document styles/default fonts must be distinct from zoom and reading preferences.
-- Page width is a reading-column setting: src/lib/doc-appearance.ts. Current PDF styling hardcodes A4: src/lib/pdf-styles.ts:22. Neither is an Office pagination engine.
-- Comments currently mount only with a live Yjs session: src/components/rich-view.tsx:686. Local portable Word comments need their own package-aware persistence and anchor mapping.
-- Electron authorization, atomic replacement, conflict handling and recovery patterns are useful. Existing payloads, hashes and snapshots are text-only: src/lib/electron.ts, electron/main.js, electron/snapshots.js:143.
-- Server docs.content is TEXT, and current sync/MCP/indexing contracts assume Markdown: server/src/docs.ts:23, electron/sync.js, electron/mdindex.js, mcp/markie-mcp.mjs. Do not stuff Office bytes into those text contracts or silently broaden tool permissions.
+- The React/Vite renderer shares the existing Markie shell across Electron and browser builds. Offline shell caching exists; Safari/Firefox and platform-specific browser acceptance still require independent validation: vite.config.ts, src/lib/offline-app.ts.
+- RichView accepts canonical Markdown and rich updates serialize back into it. Retain that editor and buffer while another format is selected; represent the retained named or untitled document in the normal Library: src/components/rich-view.tsx, src/app/page.tsx, src/components/library.tsx.
+- Desktop Open offers supported formats through the normal file dialog. Opaque byte leases handle Office and encoding-sensitive text without broadening the classic UTF-8 grant path. Browser document adapters use permission-granted handles or explicit downloads: electron/document-files.cjs, src/lib/native-document-files.ts, src/lib/web-files.ts.
+- Markdown and Word reuse the same compact formatting component through format-specific adapters. Selection styling, document properties and viewing preferences remain distinct; shared controls do not imply identical format semantics: src/components/formatting-toolbar.tsx, src/components/doc-toolbar.tsx, src/components/documents/word-toolbar.tsx.
+- The native menu command catalog is capability-based and shared with the existing browser command palette. Disabled, read-only, modal and private states must be enforced again at execution, not only reflected in menu appearance: electron/document-menu-commands.json, electron/document-menu.js, src/lib/document-commands.ts, src/app/page.tsx.
+- Markdown page width is a reading-column setting, and its existing PDF styling is not an Office pagination engine. Word automatic pagination and print/PDF remain separate work: src/lib/doc-appearance.ts, src/lib/pdf-styles.ts.
+- Existing Markdown multiplayer/comments remain on their Yjs path. Local Word comments and supported text revisions use the original package-aware document model; neither implies live Office co-editing.
+- Desktop text registry/history contracts remain distinct from byte-oriented document sessions and IndexedDB recovery. Reuse authorization, atomic replacement and conflict handling without putting Office packages into text payloads: src/lib/electron.ts, electron/main.js, src/lib/document-library/.
+- Existing server docs.content, Markdown sync, MCP and device index contracts remain text-oriented. The additive document-platform service uses versioned byte snapshots and requires a separate server deployment; it is not silently substituted into those contracts: server/src/docs.ts, server/src/document-platform.ts, electron/sync.js, electron/mdindex.js, mcp/markie-mcp.mjs.
 
 ## Architecture
 
-Keep a shared document/workspace layer with explicit format capabilities and separate platform implementations. Avoid a universal Markdown buffer and avoid replacing the entire existing editor at once.
+Keep shared document logic with explicit format capabilities and separate platform implementations inside Markie's existing shell. The active format selects a renderer, not another app destination. Avoid a universal Markdown buffer or replacement navigation, and retain the original Markdown editor and unsaved state across selections.
 
 ```text
-Shared workspace, organization, permissions and document actions
+Existing Markie shell, Library, shared compact controls and document actions
   Markdown -> existing Markdown editor/codec
   Plain text -> source text without Markdown normalization
   CSV -> current table adapter with CSV preservation
   DOCX -> original OOXML package model, editor and writer
   DOC -> original CFB/MS-DOC reader, then explicit conversion/editing support
-  Future RTF/HTML/ODT -> explicit codecs, not renamed Markdown
+  RTF/HTML/ODT -> explicit text-only imports; richer codecs are future work
 
-Desktop host: authorized filesystem, binary recovery, local index, native unlock
+Desktop host: authorized filesystem, native menus, binary recovery, local index
 Web host: browser pickers/downloads, browser recovery, offline app cache
 Optional cloud: versioned documents/assets, ACLs, multiplayer and sharing
 Protected vault: encrypted storage, unlocked-only local index and key lifecycle
@@ -55,7 +58,7 @@ Keep interfaces narrow: classify/open, inspect capabilities, apply supported edi
 | .csv | Existing behavior preserved | Explicit table/text workflow without accidental conversion |
 | .docx | Original bounded ZIP/OOXML opening and safe supported text edits | Rich document model, layout, review and package-preserving export |
 | .doc | Original bounded CFB/Word97-2003 text reader | Honest import capability, original retained; richer interpretation follows |
-| .rtf/.html/.odt | Recognize as unimplemented/import-only until codecs exist | Implement separately; HTML sanitized and active content never executed |
+| .rtf/.html/.odt | Explicit text-only import copies with loss warnings | Richer codecs implemented separately; originals retained and active content never executed |
 | Unknown/binary | Reject or attach read-only | Never reinterpret arbitrary binary bytes as editable text |
 
 Legacy .doc is not OOXML. Text extraction is not a complete DOC editor. Native DOC saving is a separate milestone; conversion to a new DOCX is explicit and never overwrites the original DOC. Reject encrypted/protected/macro-enabled variants until their behavior and security model are implemented.
@@ -68,11 +71,15 @@ Implementers must cite the relevant public specification in code/tests where non
 
 ## Document editing experience
 
-Keep a compact Home, Insert, Layout, Review and View toolbar for Word mode. Keep Markdown's established experience separate.
+Use one compact Markie formatting toolbar, reusing the actual controls for overlapping Markdown and Word actions. Format-aware adapters determine which actions work, what they change and whether they are enabled. Do not reproduce Word's tab strip or ribbon. On desktop, advanced operations use native Format, Insert, Layout and Review system menus alongside the existing File/Edit/View menus. Browser users find supported operations in the existing command palette. Parameterized actions may open focused dialogs.
+
+Library/Open remains the document-selection model. A retained Markdown file, including an unnamed `Untitled.md` buffer, stays selectable there while a Word or text renderer is active. Selecting another document must not reload the shell, replace its navigation or discard unsaved work. Private and modal scopes must settle safely before selection changes.
+
+The following is the full target scope, not a claim that every item is implemented in the preview:
 
 | Area | Product scope |
 | --- | --- |
-| Home | Character styling, named paragraph/character styles, lists/numbering, alignment, indents, spacing, search/replace |
+| Shared controls and Format | Character styling, named paragraph/character styles, lists/numbering, alignment, indents, spacing, search/replace |
 | Insert | Tables with widths/merged cells, inline pictures, links, page breaks, supported fields, headers/footers and page numbers |
 | Layout | Letter/A4, units, margins, orientation, paragraph rules, explicit sections and pagination |
 | Review | Portable local comments/replies, authors, resolved state, then true revisions and accept/reject |
@@ -92,6 +99,8 @@ Comments, undo history, durable versions and Track Changes are distinct. An unsu
 8. Validate Safari, Firefox and Chromium, including IME, keyboard selection, clipboard, accessibility, mobile/touch behavior, print and local-file permission changes. Desktop-only Chromium compatibility is insufficient.
 
 Web acceptance: open/edit/export supported Markdown/TXT/DOCX without an account; supported operations work offline after caching; zero document uploads without explicit user action; reload restores recovery state; permission denial/storage exhaustion/export failure cannot report successful durable saving; non-Chromium download fallback remains usable.
+
+Web uses the same Markie shell and existing command palette. It does not copy the desktop menu bar into the renderer or introduce a different document application. Web completion follows desktop integration and packaged native verification, rather than displacing them.
 
 ## Search and organization
 
@@ -113,15 +122,15 @@ Start with a high-entropy passphrase. A short numeric PIN alone is inadequate ag
 
 Lock on explicit request and supported inactivity/system-lock events. Lock must cancel pending operations and dispose of decrypted sessions, in-memory indices, previews and object URLs. JavaScript memory cannot promise forensic zeroization, and a compromised unlocked client/XSS remains outside the protection of at-rest encryption. Threat model clipboard, print/export, screen capture, temporary files, crash dumps, telemetry, OS indexing and multiplayer before offering a vault UI. Never move or delete a user's original plaintext source automatically.
 
-The initial crypto library is not a shipped vault. A user-facing vault requires platform key protection, encrypted storage/recovery, lifecycle integration, independent security review and negative leak tests. Forgotten-secret recovery is an explicit product choice, not an implicit server backdoor.
+The experimental passphrase vault now has encrypted local storage/recovery and lifecycle integration; this is not a production security certification or biometric unlock. OS-protected keys, native biometric integration and independent security/leak acceptance remain further gates. Forgotten-secret recovery is an explicit product choice, not an implicit server backdoor. Do not put irreplaceable sensitive originals into the preview.
 
 ## Delivery sequence and verification
 
 1. Preserve the current baseline and create the original engine provenance contract. Write regression and adversarial tests alongside new modules. No dependency, server schema, production-data or release changes in this foundation.
 2. Build four isolated foundations in parallel: DOCX package editing, CFB/DOC text import, format/browser file utilities, and vault cryptographic primitives/threat model. Keep shared-file integration leader-owned.
-3. Expose a clearly marked local engine workbench for generated/test files; opening or previewing does not grant permission to overwrite an original. Show unsupported features and export copies only. Do not use a workbench as evidence of completed Word UI support.
-4. Integrate text mode and actual browser saving, preserving existing Markdown behavior. Add binary-aware desktop sessions/history/recovery only after package tests and conflict tests pass.
-5. Grow the rich model/editor: paragraph/run styling, named styles/numbering, tables/media, page properties, headers/footers, page numbering, comments and revisions. Every feature needs import/edit/export support, not only a toolbar icon.
+3. Restrict the development engine workbench to generated/test fixtures, never the primary product route. Opening or previewing does not grant permission to overwrite an original. Show unsupported features and explicit copy exports; a workbench is not evidence of completed Word UI support.
+4. Integrate format renderers into the existing Markie shell, shared compact controls and Library/Open selection flow, retaining named and untitled Markdown buffers. Route desktop advanced actions through native system menus and browser actions through the existing command palette. Add binary-aware desktop sessions/history/recovery only after package and conflict tests pass. Build and exercise isolated packaged macOS/Windows previews throughout integration, before further web expansion.
+5. Grow the rich model/editor: paragraph/run styling, named styles/numbering, tables/media, page properties, headers/footers, page numbering, comments and revisions. Every enabled control or command needs import/edit/export support, not only an icon or menu label.
 6. Implement shared layout/pagination and print/PDF, using font-aware measurements and worker/time budgets. Test tall/merged tables, missing fonts, explicit breaks and section boundaries.
 7. Complete web offline storage/cache/auth and cross-browser acceptance. Add format-aware local search/sorting. Keep vault plaintext out of all global indexing paths.
 8. Integrate encrypted vault storage and trusted unlock adapters; run independent security/leak review before user data enters it.
@@ -134,14 +143,14 @@ Security/robustness acceptance: reject malicious paths, duplicate package parts,
 
 Save acceptance: flush immediate keystrokes, capture immutable revision N, validate candidate, recheck source fingerprint, make recoverable checkpoint, atomically replace, acknowledge only N. A concurrent N+1 remains dirty. Test disk full, aborted export, crash before rename, revoked permission, external edit, browser eviction and stale async unlock/save results.
 
-Regression gates: targeted tests first, then npm test, npm run typecheck, npm run lint, npm run build, MCP/server tests where contracts change, and real browser/desktop workflows when wired. No broad compatibility claim until independent Word-generated fixtures and real Word reopening have been tested.
+Regression gates: targeted tests first, then npm test, npm run typecheck, npm run lint, npm run build, MCP/server tests where contracts change, and real browser/desktop workflows when wired. Desktop UI acceptance must prove one retained shell, shared compact controls, native context-aware menus, Library/Open selection of named and untitled Markdown without reload, and preservation of edits and lock state. No broad compatibility claim until independent Word-generated fixtures and real Word reopening have been tested.
 
 ## Risks and decisions kept explicit
 
 - Original DOC/DOCX interpretation is a long-lived engineering investment. Basic UI does not make compatibility simple. Scope support feature-by-feature and report failures instead of destructive approximation.
 - Browser and Electron use the same engine logic, not identical host capabilities. Do not reduce web to a viewer or imply full native file privileges.
 - Local encryption does not solve client compromise, key recovery, encrypted search or multiplayer key distribution by itself.
-- Human-owned checkpoints remain for production schemas/public APIs, visible product redesign, dependencies, biometric/keychain configuration and release. This milestone keeps those surfaces unchanged.
+- Human-owned checkpoints remain for production schemas/public APIs, visible product redesign, dependencies, biometric/keychain configuration and release. Local implementations or preview artifacts do not authorize deployment, publication or a new product identity.
 - No third-party document-engine adoption. Do not revive the earlier SDK recommendation without a new user decision.
 
 ## Primary specifications

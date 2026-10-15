@@ -18,6 +18,7 @@ interface ToolbarProps {
   onModeChange: (mode: ViewMode) => void;
   documentMode?: boolean;
   onSave?: () => void;
+  onCommands?: () => void;
   // The open document is too big for the rich pane (src/lib/doc-tiers.ts):
   // Rich and Split are shown but cannot be chosen, and say why on hover.
   richUnavailable?: boolean;
@@ -53,6 +54,7 @@ export function Toolbar({
   onModeChange,
   documentMode = false,
   onSave,
+  onCommands,
   richUnavailable = false,
   richUnavailableReason = RICH_UNAVAILABLE_TITLE,
   onOpenFile,
@@ -296,6 +298,7 @@ export function Toolbar({
         className="min-w-0 w-fit max-w-full justify-self-end flex items-center justify-end gap-2"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
+        {onCommands ? <button type="button" onClick={onCommands} aria-label="Commands (⌘K)" title="Commands (⌘K)" className="w-7 h-7 rounded flex items-center justify-center text-muted hover:text-foreground hover:bg-accent/40" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m5 7 5 5-5 5M13 17h6" /></svg></button> : null}
         {themeLocked && (
           <div
             className="flex items-center gap-1 text-muted"

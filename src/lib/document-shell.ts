@@ -1,5 +1,6 @@
 import type { LibraryRecord } from "./document-library";
 import type { EditableDocumentFormat } from "./document-session";
+import type { DocumentCommandTarget } from "./document-commands";
 
 /** Format-specific content plugs into Markie's existing app controls. */
 export interface DocumentShellState {
@@ -11,6 +12,8 @@ export interface DocumentShellState {
   busy: boolean;
   records: readonly LibraryRecord[];
   selectedId?: string;
+  renderer?: "word" | "text" | "none";
+  commands?: DocumentCommandTarget;
   create(format: EditableDocumentFormat): void;
   open(record: LibraryRecord): void;
   importFile(): void;

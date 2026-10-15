@@ -128,6 +128,8 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
       takeInitial: vi.fn(async () => ({ ok: true as const, value: null })),
     },
     onDocumentFileOpened: vi.fn(subscribe("onDocumentFileOpened")),
+    onDocumentCommand: vi.fn(subscribe("onDocumentCommand")),
+    setDocumentMenuState: vi.fn(async () => noopResult),
     exportPDF: vi.fn(async () => ({ success: true, path: "/tmp/out.pdf" })),
     exportHTML: vi.fn(async () => ({ success: true, path: "/tmp/out.html" })),
     saveFile: vi.fn(async () => ({ success: true, path: "/tmp/doc.md" })),

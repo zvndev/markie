@@ -11,13 +11,12 @@ import { classifyDocumentFormat, decodeTextDocument } from "@/lib/document-forma
 const CloudDialog = lazy(() => import("./document-cloud-dialog").then((module) => ({ default: module.DocumentCloudDialog })));
 
 export interface DocumentWorkspaceHostProps {
-  onExit?: () => void;
   embedded?: boolean;
   active?: boolean;
   onActivate?: () => void;
   onShellChange?: (state: DocumentShellState | null) => void;
 }
-export function DocumentWorkspaceHost({ onExit, embedded = false, active = true, onActivate, onShellChange }: DocumentWorkspaceHostProps) {
+export function DocumentWorkspaceHost({ embedded = false, active = true, onActivate, onShellChange }: DocumentWorkspaceHostProps) {
   const [pending, setPending] = useState<CloudFile | null>(null);
   const [desktop] = useState(getElectronAPI);
   const [native] = useState(() => desktop?.documentFiles ? createNativeDocumentFileAdapter(desktop.documentFiles, desktop) : null);
@@ -27,6 +26,7 @@ export function DocumentWorkspaceHost({ onExit, embedded = false, active = true,
   const host = useRef<HTMLDivElement>(null);
   const resolve = useRef<((message: string | null) => void) | null>(null);
   const prepareClose = useRef<(() => Promise<boolean>) | null>(null);
+  const editorShell = useRef<DocumentShellState | null>(null);
   const cloudCloseGuard = useRef<(() => boolean) | null>(null);
   const pendingRef = useRef(pending); pendingRef.current = pending;
   const activate = useRef(onActivate); activate.current = onActivate;
@@ -39,6 +39,7 @@ export function DocumentWorkspaceHost({ onExit, embedded = false, active = true,
     catch { setHostError("Recovery did not finish. The document was kept open."); return false; }
   }, []);
   const receiveShell = useCallback((state: DocumentShellState | null) => {
+    editorShell.current = state;
     onShellChange?.(state ? { ...state, prepareClose: () => guardCloud(state.prepareClose), prepareLeave: () => guardCloud(state.prepareLeave) } : null);
   }, [guardCloud, onShellChange]);
   useEffect(() => {
@@ -105,19 +106,9 @@ export function DocumentWorkspaceHost({ onExit, embedded = false, active = true,
       if (command !== "find" && focused instanceof HTMLElement && ["INPUT", "TEXTAREA", "SELECT"].includes(focused.tagName) && !focused.hasAttribute("data-document-text-editor")) {
         document.execCommand(command); return;
       }
-      const editor = focused instanceof HTMLElement && root.contains(focused) && (focused.closest(".docs-word-host") || focused.hasAttribute("data-document-text-editor"))
-        ? focused : root.querySelector<HTMLElement>(".docs-word-host, [data-document-text-editor]");
-      if (!editor || editor.closest("[inert]")) return;
-      const key = command === "find" ? "f" : "z";
-      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, metaKey: desktop.platform === "darwin", ctrlKey: desktop.platform !== "darwin", shiftKey: command === "redo" });
-      editor.dispatchEvent(event);
-      if (command !== "find" && !event.defaultPrevented && editor.hasAttribute("data-document-text-editor")) { editor.focus(); document.execCommand(command); }
-      if (command === "find" && !event.defaultPrevented) {
-        const word = editor.closest(".docs-word-host");
-        const home = [...(word?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])].find((tab) => tab.textContent === "Home");
-        home?.click();
-        requestAnimationFrame(() => word?.querySelector<HTMLInputElement>('[aria-label="Find Word text"]')?.focus());
-      }
+      if (root.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      const target = editorShell.current?.commands;
+      if (target?.enabledCommands.includes(command)) target.execute(command);
     };
     const unsubscribe = [desktop.onMenuUndo?.(() => editorCommand("undo")), desktop.onMenuRedo?.(() => editorCommand("redo")), desktop.onMenuFind?.(() => editorCommand("find")), desktop.onMenuFindReplace?.(() => editorCommand("find"))];
     return () => { for (const off of unsubscribe) off?.(); };
@@ -132,11 +123,10 @@ export function DocumentWorkspaceHost({ onExit, embedded = false, active = true,
     resolve.current?.(message);
     resolve.current = null;
   };
-  const exit = () => { void guardCloud(async () => true).then((allowed) => { if (allowed) onExit?.(); }); };
   return <div ref={host} inert={closing || !active} className={embedded ? "docs-embedded-host" : desktop?.platform === "darwin" ? "docs-desktop-host docs-desktop-mac" : "docs-desktop-host"}>
     {!embedded && desktop?.platform === "darwin" ? <div className="docs-native-titlebar" data-window-drag-surface="true" aria-hidden="true">Markie</div> : null}
     {hostError ? <div role="alert" className="fixed top-2 left-1/2 -translate-x-1/2 z-[60] rounded-md border border-border bg-surface text-foreground p-3 text-sm">{hostError}<button type="button" className="ml-3" aria-label="Dismiss native file error" onClick={() => setHostError(null)}>×</button></div> : null}
-    <div className={embedded ? "docs-embedded-content" : undefined} inert={!!pending}><DocumentWorkspace onExit={onExit ? exit : undefined} embedded={embedded} active={active} onShellChange={receiveShell} shareDocument={requestShare} externalModalOpen={!!pending}
+    <div className={embedded ? "docs-embedded-content" : undefined} inert={!!pending}><DocumentWorkspace embedded={embedded} active={active} onShellChange={receiveShell} shareDocument={requestShare} externalModalOpen={!!pending}
       pickDocument={native?.pickDocument} saveDocument={native?.saveDocument} subscribeCommands={embedded ? undefined : native?.subscribeCommands}
       releaseDocument={native?.releaseDocument} incomingDocument={incoming[0]}
       onIncomingDocumentHandled={(requestId) => setIncoming((items) => items.filter((item) => item.requestId !== requestId))}

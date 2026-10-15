@@ -1,10 +1,14 @@
-# Document workspace
+# Documents in Markie
 
-Markie's document workspace brings imported documents, notes and working copy into a searchable local library. Windows and macOS desktop apps are the primary product surface; the new web surface is secondary. Both use the original Office engine, not a Markdown conversion or third-party Word editor. Local editing does not require an account.
+Markie adds imported documents, notes and working copy to its existing app and Library. Windows and macOS desktop apps are the primary product surface; the new web surface is secondary. Supported Word files use the original Office engine, not a Markdown conversion or third-party Word editor. Local editing does not require an account.
 
-## Opening the workspace
+## Opening and editing documents
 
-Markie keeps its established toolbar, activity bar, resizable Library, Projects, Browse, Cloud, Skills, settings and themes. Opening a Word file changes only the editor inside that shell. It does not navigate to a second app or replace the Markdown interface. Word's Home, Insert, Layout, Review and View tools appear below Markie's top bar. Return to Markdown restores the retained editor and buffer, rather than reloading the page.
+Markie keeps its established toolbar, activity bar, resizable Library, Projects, Browse, Cloud, Skills, settings and themes. Opening a Word file changes only the renderer inside that shell. Markdown and Word reuse the same compact formatting controls where their capabilities overlap; unsupported actions are not presented as working tools. There is no Word ribbon, tab strip, separate document destination or switch-back control.
+
+Use the normal Library and Open flow to select a different document. The retained Markdown document stays selectable in Recent under its filename, or as `Untitled.md` when it has not been named. Selecting it restores its existing editor and unsaved buffer without reloading the app.
+
+On macOS and Windows, advanced actions live in the native **Format**, **Insert**, **Layout** and **Review** application menus, alongside the existing **File**, **Edit** and **View** menus. Menu availability follows the active renderer, permissions and current modal/lock state. File includes document creation, details and History; supported Word View actions include layout, outline and zoom. Parameterized operations open focused tools rather than another toolbar. The browser exposes supported actions through Markie's existing command palette, not a copied desktop menu bar or ribbon.
 
 The isolated **Markie Preview** desktop build runs the same Markie shell from bundled assets. It does not need a development server or browser tab. The preview name is for testing isolation, not a separate product: it has a separate app identifier, profile, session and logs, and neither replaces installed Markie nor registers its file associations or `markie://` links. Automatic updates and the production browser OAuth callback are disabled in this preview. Email sign-in can still use the configured service, but new document-platform sharing requires the matching server deployment.
 
@@ -12,7 +16,9 @@ The isolated **Markie Preview** desktop build runs the same Markie shell from bu
 
 On macOS, open `Markie Preview.app`. Apple Silicon and Intel builds are separate; the local build is ad-hoc signed, not Developer ID signed or notarized. It is a development preview, not an installer or public release. On Windows, extract the entire x64 archive and open `Markie Preview.exe` inside its folder. Keep the accompanying DLLs, locales and resources together. The Windows preview is unsigned.
 
-Use copies of documents first. Choose **Open** from Markie's current toolbar or File menu and select a DOCX. Edit a supported paragraph, then choose **Export → Save a Copy** to make a new Word file without touching the original. Reopen that copy in Markie and Microsoft Word. The existing Library's Recent section contains recovered document rows plus **New Word document**, **New text document** and **Locked vault** actions. Recovery copies are labeled separately from synced files. Test **Save file** on an expendable TXT copy. Local recovery and external-file saving have distinct status messages.
+Use copies of documents first. Choose **Open** from Markie's current toolbar or File menu and select a DOCX. Edit a supported paragraph with the shared formatting controls; try a supported native menu action such as **Insert → Link** or **Layout → Page Setup**. Choose **Export → Save a Copy** to make a new Word file without touching the original. Reopen that copy in Markie and Microsoft Word. In Recent, select the retained named or untitled Markdown row and confirm its unsaved text remains, then select the recovered Word row. Neither selection should reload the shell.
+
+The existing Library's Recent section contains recovered document rows plus **New Markdown document**, **New Word document**, **New text document** and **Locked vault** actions. Recovery copies are labeled separately from synced files. Test **Save file** on an expendable TXT copy, including a supported BOM/CRLF fixture. Local recovery and external-file saving have distinct status messages. Unsupported Word print/PDF/HTML actions are not enabled just because the Markdown editor supports them.
 
 The vault is experimental. Use a synthetic note and a new long passphrase to test save, lock, quit, relaunch and unlock. Do not put irreplaceable or sensitive originals into this preview. There is no forgotten-passphrase reset or biometric unlock yet.
 
@@ -26,7 +32,7 @@ npm run desktop:preview:windows
 
 The Windows build can be produced on this Mac but must run on Windows. Explicit Intel Mac builds use `node scripts/desktop-preview.mjs build mac-x64`. Each build writes a unique ignored `.desktop-preview/` directory and a target-specific latest receipt. No command installs into Applications or publishes a release. The Codex Run action builds and opens only the preview; it does not force-close existing app windows.
 
-Imported files become local library records. Search covers names, tags, collection and indexed body text, with type filters and name/recent sorting. Body indexing is capped at the first million characters. Tags and collections belong to local records, not automatically to the original file's metadata. The classic desktop index is not silently migrated into this library.
+Imported files become local recovery records displayed in the existing Library. Recent's filter includes their names, tags, collection and indexed body text. Body indexing is capped at the first million characters. Tags and collections belong to local records, not automatically to the original file's metadata. Expanded type filters and sorting remain follow-up work; the integrated Library does not expose every storage-query option. The established desktop index and cloud rows remain distinct from these recovery records.
 
 ## Supported formats
 
@@ -40,7 +46,7 @@ Imported files become local library records. Search covers names, tags, collecti
 | Legacy DOC | Word 97–2003 main-story extraction in a disposable local worker, producing a text-only copy. No DOC writer. Five-second worker time budget and 32 MiB input limit. |
 | RTF, HTML, ODT | Explicit conversion consent creates a newly named UTF-8 TXT copy with loss warnings. Originals are not overwritten or relabeled; active content and external resources are not loaded. |
 
-The Word toolbar contains Home, Insert, Layout, Review and View. Page-shaped rendering and explicit page breaks are not Word-equivalent automatic pagination. Text tracking records actual authored OOXML insertion/deletion ranges inside existing paragraphs. It does not track new paragraph marks, formatting, table/layout or picture changes; unsupported revision forms remain read-only. Comments, undo history, local recovery and tracked changes are separate mechanisms.
+The shared formatting controls and native menus operate only on supported document capabilities. Page-shaped rendering and explicit page breaks are not Word-equivalent automatic pagination. Text tracking records actual authored OOXML insertion/deletion ranges inside existing paragraphs. It does not track new paragraph marks, formatting, table/layout or picture changes; unsupported revision forms remain read-only. Comments, undo history, local recovery and tracked changes are separate mechanisms. The supported subset is not a claim of full Microsoft Word fidelity.
 
 ## Saving and recovery
 

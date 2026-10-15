@@ -54,7 +54,7 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
     node.replaceChildren(...paragraph.runs.map((run) => {
       const span = document.createElement("span");
       span.dataset.runId = run.id;
-      if (run.hyperlinkId) { span.dataset.hyperlinkId = run.hyperlinkId; span.title = `Link: ${run.target ?? ""}. Use Insert to open or update.`; }
+      if (run.hyperlinkId) { span.dataset.hyperlinkId = run.hyperlinkId; span.title = `Link: ${run.target ?? ""}. Use the Insert menu or command palette to open or update.`; }
       let textOffset = 0;
       for (const pageBreak of run.pageBreaks) {
         span.append(document.createTextNode(run.text.slice(textOffset, pageBreak.offset)));
@@ -94,7 +94,7 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
     const spans = [...node.querySelectorAll<HTMLElement>(":scope > span[data-run-id]")];
     if (spans.some((span) => (span.getAttribute("style") ?? "") !== span.dataset.expectedStyle
       || [...span.querySelectorAll<HTMLElement>("*")].some((child) => !child.hasAttribute("data-page-break-id")))) {
-      onRejectStructure("Use the Home formatting tools. Browser-inserted styling was not applied to the document."); return;
+      onRejectStructure("Use the formatting toolbar. Browser-inserted styling was not applied to the document."); return;
     }
     if (spans.length === paragraph.runs.length && spans.every((span, i) => span.dataset.runId === paragraph.runs[i].id)
       && spans.map((span) => span.textContent ?? "").join("") === node.textContent) {

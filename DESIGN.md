@@ -23,7 +23,9 @@ Writers, researchers and people managing working copy across formats. Jobs: find
 
 ## Information architecture
 
-Preserve Markie's existing Toolbar, activity bar, resizable Library with Recent/Projects, Browse, Cloud, Skills, settings, themes and account surfaces. Word and other formats change the editor content inside that shell, not the application identity, navigation or page. Add recovered document records to the current Library instead of creating a second branded sidebar or a separate Documents destination. Keep Markdown state while another format is open. The Word editor groups tools into Home, Insert, Layout, Review and View below Markie's current top bar. Vault content remains explicitly scoped and excluded from ordinary search.
+Preserve Markie's existing Toolbar, activity bar, resizable Library with Recent/Projects, Browse, Cloud, Skills, settings, themes and account surfaces. Word and other formats are renderers for documents inside that shell, not separate destinations. There is no Return to Markie, Return to Markdown, Classic workspace or switch-back action. Select documents through the normal Library/Open flow; retain unsaved buffers, including untitled Markdown, as selectable documents there.
+
+Keep one simplified Markie formatting toolbar. Reuse its actual controls for overlapping functions across renderers, with format-aware behavior and honest capability limits. Do not copy Microsoft Word's Home/Insert/Layout/Review/View tab strip or ribbon. Advanced Format, Insert, Layout, Review and View actions belong in native macOS/Windows application menus; parameterized actions may open focused dialogs. Browser fallback uses Markie's existing command palette, not a new ribbon. Vault content stays explicitly scoped and excluded from ordinary search.
 
 ## Design principles
 

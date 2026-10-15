@@ -13,6 +13,15 @@ function subscribe(channel, callback, map) {
 
 contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
+  documentFiles: {
+    open: () => ipcRenderer.invoke("document-files:open"),
+    saveAs: (args) => ipcRenderer.invoke("document-files:save-as", args),
+    read: (args) => ipcRenderer.invoke("document-files:read", args),
+    write: (args) => ipcRenderer.invoke("document-files:write", args),
+    release: (args) => ipcRenderer.invoke("document-files:release", args),
+    takeInitial: () => ipcRenderer.invoke("document-files:take-initial"),
+  },
+  onDocumentFileOpened: (callback) => subscribe("document-file-opened", callback),
   openFile: (args) => ipcRenderer.invoke("open-file", args),
   openFilePath: (path) => ipcRenderer.invoke("open-file-path", path),
   // Electron 32+ removed File.path; resolve a dropped File to its disk path.
@@ -150,7 +159,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     subscribe("file-changed-on-disk", callback, (data) => data),
   watchFile: (filePath) => ipcRenderer.invoke("watch-file", filePath),
   // The window is closing: settle the document, then answer.
-  onAppWillClose: (callback) => subscribe("app-will-close", callback),
+  onAppWillClose: (callback) => subscribe("app-will-close", callback, (requestId) => requestId),
   // Crash journal
   draftSave: (args) => ipcRenderer.invoke("draft-save", args),
   draftCheck: () => ipcRenderer.invoke("draft-check"),
@@ -162,7 +171,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // A background reconciliation pass changed a document's text or media, so
   // whatever is showing the library should look again.
   onLibraryChanged: (callback) => subscribe("library-changed", callback),
-  appCloseReady: () => ipcRenderer.send("app-close-ready"),
+  appCloseReady: (requestId) => ipcRenderer.send("app-close-ready", requestId),
+  appCloseCancel: (requestId) => ipcRenderer.send("app-close-cancel", requestId),
   crashConsentGet: () => ipcRenderer.invoke("crash-consent-get"),
   crashConsentSet: (enabled) => ipcRenderer.invoke("crash-consent-set", enabled),
   crashLogReveal: () => ipcRenderer.invoke("crash-log-reveal"),

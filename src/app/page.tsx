@@ -198,7 +198,7 @@ const fromDisk = (name: string | null, raw: string) =>
 const toDisk = (name: string | null, md: string) =>
   isCSVName(name) ? markdownTableToCSV(md) : md;
 
-export default function Home() {
+export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void } = {}) {
   // The confirmed account, for the surfaces that keep state per account. The
   // Library's own signedIn only says main holds a token, which stays true
   // when one account's token is replaced by another's.
@@ -326,10 +326,10 @@ export default function Home() {
 
   // Latest open-doc path + content, read by palette command closures without
   // rebuilding the command list on every keystroke.
-  const docRef = useRef({ filePath, content, isDirty });
+  const docRef = useRef({ filePath, fileName, content, isDirty, savedContent: doc.savedContent });
   useEffect(() => {
-    docRef.current = { filePath, content, isDirty };
-  }, [filePath, content, isDirty]);
+    docRef.current = { filePath, fileName, content, isDirty, savedContent: doc.savedContent };
+  }, [filePath, fileName, content, isDirty, doc.savedContent]);
 
   // Which document is on screen, so `![](demo/shot.png)` resolves against the
   // folder the file came from instead of against the app's origin, and so a
@@ -1154,6 +1154,36 @@ export default function Home() {
     saveGuardRef.current = saveGuard;
   }, [saveGuard]);
 
+  const openDocumentsWorkspace = useCallback(async () => {
+    currentMarkdown();
+    await settleDocument();
+    const md = currentMarkdown();
+    const previousPath = docRef.current.filePath;
+    if (md !== docRef.current.savedContent) {
+      const api = getElectronAPI();
+      if (!api?.draftSave) {
+        setForkError("Save or copy your Markdown changes before opening Documents.");
+        return;
+      }
+      try {
+        const saved = await api.draftSave({ path: previousPath, name: docRef.current.fileName, content: md });
+        if (!saved?.ok) throw new Error("Recovery was not saved.");
+      } catch {
+        setForkError("Your Markdown recovery copy could not be saved. Keep this window open and save the file first.");
+        return;
+      }
+    }
+    if (previousPath !== docRef.current.filePath || md !== currentMarkdown()) {
+      setForkError("New Markdown edits arrived while saving recovery. Open Documents again when you are ready.");
+      return;
+    }
+    onOpenDocuments?.();
+  }, [currentMarkdown, onOpenDocuments, settleDocument]);
+  useEffect(() => {
+    if (!onOpenDocuments) return;
+    return getElectronAPI()?.onDocumentFileOpened?.(() => void openDocumentsWorkspace());
+  }, [onOpenDocuments, openDocumentsWorkspace]);
+
   // The one way a user edit reaches the buffer, and so the only thing that may
   // ever arm a write. Loads, pulls, and reloads go through the document hook's
   // other transitions and must never come through here.
@@ -1670,6 +1700,7 @@ export default function Home() {
   const commands = useMemo<AppCommand[]>(
     () => [
       { id: "open", title: "Open File…", group: "File", shortcut: "⌘O", run: handleOpenFile },
+      ...(onOpenDocuments ? [{ id: "documents-workspace", title: "Documents: Word, text and private files", group: "File", keywords: "doc docx vault office workspace", run: openDocumentsWorkspace }] as AppCommand[] : []),
       { id: "save", title: "Save", group: "File", shortcut: "⌘S", run: handleSave },
       { id: "save-as", title: "Save As…", group: "File", shortcut: "⇧⌘S", run: () => handleSaveAs() },
       { id: "fork", title: "Duplicate (Fork)", group: "File", shortcut: "⇧⌘D", keywords: "copy fork duplicate", run: handleMakeCopy },
@@ -1727,6 +1758,8 @@ export default function Home() {
     [
     requestMode,
       handleOpenFile,
+      onOpenDocuments,
+      openDocumentsWorkspace,
       handleSave,
       handleSaveAs,
       handleMakeCopy,
@@ -1886,6 +1919,7 @@ export default function Home() {
           onAgents={() => setShowAgents(true)}
           onShortcuts={() => setShowHelp((v) => !v)}
           onAccount={() => setShowSettings(true)}
+          onDocuments={onOpenDocuments ? () => void openDocumentsWorkspace() : undefined}
         />
 
         {/* Docked side panel (Library / Browse / Cloud / Skills) */}

@@ -1,7 +1,7 @@
 // Autosave shares the open document with a disk watcher, a sync engine and a
 // CSV encoder. Each boundary gets a test, so a refactor cannot cross one in
 // silence. A failure here is a real bug, not a stale expectation.
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElectronAPI, SaveResult } from "@/lib/electron";
@@ -45,6 +45,28 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("autosave truce lines", () => {
+  it("keeps the latest dirty Markdown recovery before entering Documents", async () => {
+    const draftSave = vi.fn(async () => ({ ok: true }));
+    const onOpenDocuments = vi.fn();
+    installBridge({ getInitialFile: vi.fn(async () => OPEN), saveFile: vi.fn(async () => ({ success: false, canceled: true })), draftSave });
+    render(<Home onOpenDocuments={onOpenDocuments} />);
+    await waitFor(() => expect(richEditor()?.isEditable).toBe(true));
+    await act(async () => { richEditor().commands.setContent("keep this dirty buffer"); });
+    fireEvent.click(screen.getByRole("button", { name: "Documents: Word, text and private files" }));
+    await waitFor(() => expect(onOpenDocuments).toHaveBeenCalledOnce());
+    expect(draftSave).toHaveBeenCalledWith(expect.objectContaining({ path: OPEN.path, name: OPEN.name, content: expect.stringContaining("keep this dirty buffer") }));
+  });
+
+  it("does not leave dirty Markdown when the recovery write fails", async () => {
+    const onOpenDocuments = vi.fn();
+    installBridge({ getInitialFile: vi.fn(async () => OPEN), saveFile: vi.fn(async () => ({ success: false, canceled: true })), draftSave: vi.fn(async () => ({ ok: false })) });
+    render(<Home onOpenDocuments={onOpenDocuments} />);
+    await waitFor(() => expect(richEditor()?.isEditable).toBe(true));
+    await act(async () => { richEditor().commands.setContent("keep this window"); });
+    fireEvent.click(screen.getByRole("button", { name: "Documents: Word, text and private files" }));
+    await screen.findByText(/Markdown recovery copy could not be saved/);
+    expect(onOpenDocuments).not.toHaveBeenCalled();
+  });
   it("keeps writing the CSV encoding to disk, not the markdown it edits", async () => {
     const saveFile = okSave(CSV.path);
     await bootWith(CSV, { saveFile });

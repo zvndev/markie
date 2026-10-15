@@ -18,6 +18,7 @@ const { shareBaseFromSrc } = require("./share-origin");
 const { classifyDeepLink, cloudDocId } = require("./deep-links");
 const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
+const { createDocumentFileService, findNativeDocumentLaunchFile, registerDocumentFileIpc } = require("./document-files.cjs");
 const docTiers = require("./doc-tiers");
 const { createDiskMemory } = require("./disk-memory");
 const { ASSET_SCHEME, buildAppCsp } = require("./csp");
@@ -47,8 +48,16 @@ const { createCloseFlusher } = require("./close-flush");
 // The renderer answers app-will-close here once it has flushed. Registered at
 // module scope, once, because ipcMain listeners outlive any one window.
 let _closeReadyCb = null;
-ipcMain.on("app-close-ready", () => {
-  if (_closeReadyCb) _closeReadyCb();
+let _closeCancelCb = null;
+function currentCloseSender(event) {
+  return mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
+    && event.senderFrame === mainWindow.webContents.mainFrame && isAppUrl(event.senderFrame.url);
+}
+ipcMain.on("app-close-ready", (event, requestId) => {
+  if (currentCloseSender(event) && _closeReadyCb) _closeReadyCb(requestId);
+});
+ipcMain.on("app-close-cancel", (event, requestId) => {
+  if (currentCloseSender(event) && _closeCancelCb) _closeCancelCb(requestId);
 });
 
 // Electron answers an uncaught exception in the main process with a modal
@@ -237,6 +246,9 @@ try {
 }
 
 let mainWindow;
+const documentFiles = createDocumentFileService({ dialog, getWindow: () => mainWindow });
+let pendingNativeDocumentError = null;
+let nativeDocumentQueued = false;
 let rendererReady = false;
 // Set once the user has asked to quit. The close interception below prevents
 // the window close that a quit performs, and a prevented close cancels the
@@ -245,6 +257,21 @@ let quitRequested = false;
 let pendingFilePath = null;
 // markie:// deep link that arrived before the renderer was ready to receive it
 let pendingDeepLink = null;
+
+// OS paths never cross the renderer boundary: it receives only a notification,
+// then claims a bounded opaque file grant through document-files:take-initial.
+function queueNativeDocumentOpen(filePath, options = {}) {
+  const result = documentFiles.queueOsFile(filePath, options);
+  if (!result.ok) pendingNativeDocumentError = result;
+  else if (!result.value) return false;
+  nativeDocumentQueued = true;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (rendererReady) mainWindow.webContents.send("document-file-opened");
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show(); mainWindow.focus();
+  } else if (app.isReady()) createWindow();
+  return true;
+}
 
 // Deliver a markie:// deep link to the renderer, or queue it if the window
 // isn't ready yet (cold start from the OAuth browser hand-off). Always raises
@@ -341,6 +368,7 @@ function openLocalFile(filePath) {
   // macOS reopens the last document by sending open-file at launch, which is
   // the path that renamed the window during the packaging gate.
   if (preflightMode) return;
+  if (documentsWorkspaceActive() && queueNativeDocumentOpen(filePath, { includeClassic: true })) return;
   if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
     const payload = readFilePayload(filePath, { grant: true });
     if (payload) mainWindow.webContents.send("file-opened", payload);
@@ -612,6 +640,7 @@ function readFilePayload(filePath, { grant = false } = {}) {
 // File passed as a CLI argument (dev runs, Windows/Linux double-click)
 const argFile = preflightMode ? null : findOpenableLaunchFile(process.argv.slice(1));
 if (argFile) pendingFilePath = argFile;
+else if (!preflightMode) { const nativeFile = findNativeDocumentLaunchFile(process.argv.slice(1)); if (nativeFile) queueNativeDocumentOpen(nativeFile); }
 
 // markie:// deep link passed as a CLI argument (Windows/Linux cold start)
 const argDeepLink = findDeepLinkArg(process.argv.slice(1));
@@ -631,6 +660,12 @@ function isAppUrl(target) {
   } catch {
     return false;
   }
+}
+function documentsWorkspaceActive() {
+  try {
+    const params = new URL(mainWindow.webContents.getURL()).searchParams;
+    return params.get("workspace") === "1" && params.get("classic") !== "1" && !(isDev && params.get("documents") === "1");
+  } catch { return false; }
 }
 
 function createWindow() {
@@ -652,6 +687,10 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  const nativeDocumentOwner = mainWindow.webContents.id;
+  mainWindow.webContents.once("destroyed", () => documentFiles.releaseOwner(nativeDocumentOwner));
+  mainWindow.webContents.on("render-process-gone", () => documentFiles.releaseOwner(nativeDocumentOwner));
+  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) documentFiles.releaseOwner(nativeDocumentOwner); });
 
   mainWindow.once("ready-to-show", () => {
     // E2E drivers keep the window hidden so runs don't steal focus
@@ -731,17 +770,20 @@ function createWindow() {
   // same interception: quit closes the window, this settles once, and
   // window-all-closed then quits as it always did.
   const closeFlusher = createCloseFlusher({
-    send: (channel) => {
+    send: (channel, requestId) => {
       // Spelled out rather than forwarded, so electron/ipc-contract.test.ts can
       // see main.js as the sender of this channel.
       if (channel !== "app-will-close") return;
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("app-will-close");
+        mainWindow.webContents.send("app-will-close", requestId);
       }
     },
     onReady: (cb) => {
       _closeReadyCb = cb;
     },
+    onCancel: (cb) => { _closeCancelCb = cb; },
+    onCanceled: () => { quitRequested = false; },
+    forceOnTimeout: () => !documentsWorkspaceActive(),
     destroy: () => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
     },
@@ -759,6 +801,7 @@ function createWindow() {
     mainWindow = null;
     rendererReady = false;
     _closeReadyCb = null;
+    _closeCancelCb = null;
     // never leave orphaned shells behind
     try {
       require("./terminal").killAll();
@@ -999,6 +1042,24 @@ function setupCSP() {
 const handle = createIpcHandler({
   ipcMain,
   onError: (channel, err) => logCrash(`ipc:${channel}`, err),
+});
+registerDocumentFileIpc({
+  handle,
+  service: { ...documentFiles, takeInitial(owner) {
+    rendererReady = true;
+    if (pendingFilePath && documentsWorkspaceActive()) {
+      const file = pendingFilePath; pendingFilePath = null;
+      queueNativeDocumentOpen(file, { includeClassic: true });
+    }
+    if (pendingNativeDocumentError) { const error = pendingNativeDocumentError; pendingNativeDocumentError = null; return error; }
+    const result = documentFiles.takeInitial(owner);
+    // takeInitial is asynchronous; the null receipt marks the queue drained.
+    return Promise.resolve(result).then((value) => { if (value.ok && !value.value) nativeDocumentQueued = false; return value; });
+  } },
+  ownerForEvent: (event) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents || !event.senderFrame || event.senderFrame !== mainWindow.webContents.mainFrame || !isAppUrl(event.senderFrame.url)) return null;
+    return event.sender.id;
+  },
 });
 
 // Export handlers answer `{ success, error }`; their callers show `error`.
@@ -2503,6 +2564,7 @@ handle("set-default-md", async () => {
 // IPC: renderer signals it has mounted and asks for any queued file
 handle("get-initial-file", () => {
   rendererReady = true;
+  setTimeout(() => { if (nativeDocumentQueued && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("document-file-opened"); }, 0);
   // The packaging gate watches for this. It is written from the handshake the
   // renderer only makes once React has mounted, which is the thing the gate is
   // actually trying to establish — a window whose HTML parsed but whose app
@@ -2949,11 +3011,15 @@ if (!gotLock) {
       return;
     }
     const file = findOpenableLaunchFile(argv);
+    if (file && documentsWorkspaceActive() && queueNativeDocumentOpen(file, { includeClassic: true })) return;
     if (file && rendererReady && mainWindow && !mainWindow.isDestroyed()) {
       const payload = readFilePayload(file, { grant: true });
       if (payload) mainWindow.webContents.send("file-opened", payload);
     } else if (file) {
       pendingFilePath = file;
+    } else {
+      const nativeFile = findNativeDocumentLaunchFile(argv);
+      if (nativeFile) queueNativeDocumentOpen(nativeFile);
     }
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
@@ -3013,6 +3079,8 @@ app.on("before-quit", () => {
 // the get-initial-file handshake when the renderer mounts.
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
+  if (!preflightMode && documentsWorkspaceActive() && queueNativeDocumentOpen(filePath, { includeClassic: true })) return;
+  if (!preflightMode && !OPENABLE.test(filePath) && queueNativeDocumentOpen(filePath)) return;
   if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
     const payload = readFilePayload(filePath, { grant: true });
     if (payload) mainWindow.webContents.send("file-opened", payload);

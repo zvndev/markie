@@ -16,6 +16,7 @@ interface ActivityBarProps {
   onAgents: () => void;
   onShortcuts: () => void;
   onAccount: () => void;
+  onDocuments?: () => void;
 }
 
 export function ActivityBar({
@@ -27,6 +28,7 @@ export function ActivityBar({
   onAgents,
   onShortcuts,
   onAccount,
+  onDocuments,
 }: ActivityBarProps) {
   const { user } = useAuth();
 
@@ -45,6 +47,9 @@ export function ActivityBar({
         </svg>
       </NavButton>
       <div className="w-6 h-px bg-border my-1" />
+      {onDocuments ? <NavButton label="Documents: Word, text and private files" onClick={onDocuments}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3h8l4 4v14H8zM16 3v5h4M4 7v14M11 12h6M11 16h6" /></svg>
+      </NavButton> : null}
 
       <NavButton label="Library: recent and projects (⌘L)" active={isActive("library")} onClick={() => onSelectView("library")}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

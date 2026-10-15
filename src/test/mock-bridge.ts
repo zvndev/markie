@@ -119,6 +119,15 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     termOpenExternal: vi.fn(async () => noopResult),
 
     getInitialFile: vi.fn(async () => null),
+    documentFiles: {
+      open: vi.fn(async () => ({ ok: true as const, value: null })),
+      saveAs: vi.fn(async () => ({ ok: true as const, value: null })),
+      read: vi.fn(async () => ({ ok: false as const, error: { code: "unavailable", message: "No synthetic native file was supplied." } })),
+      write: vi.fn(async () => ({ ok: false as const, error: { code: "unavailable", message: "No synthetic native file was supplied." } })),
+      release: vi.fn(async () => ({ ok: true as const, value: null })),
+      takeInitial: vi.fn(async () => ({ ok: true as const, value: null })),
+    },
+    onDocumentFileOpened: vi.fn(subscribe("onDocumentFileOpened")),
     exportPDF: vi.fn(async () => ({ success: true, path: "/tmp/out.pdf" })),
     exportHTML: vi.fn(async () => ({ success: true, path: "/tmp/out.html" })),
     saveFile: vi.fn(async () => ({ success: true, path: "/tmp/doc.md" })),
@@ -191,6 +200,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     watchFile: vi.fn(async () => ({ ok: true })),
     onAppWillClose: vi.fn(subscribe("onAppWillClose")),
     appCloseReady: vi.fn(() => undefined),
+    appCloseCancel: vi.fn(() => undefined),
     draftSave: vi.fn(async () => noopResult),
     draftCheck: vi.fn(async () => []),
     draftDiscard: vi.fn(async () => noopResult),

@@ -21,6 +21,8 @@ interface SignInFormProps {
   reason: SignInReason;
   /** Fired once a session actually exists. */
   onDone?: () => void;
+  /** Browser document sharing uses email sign-in, not the desktop deep-link bridge. */
+  allowGoogle?: boolean;
 }
 
 const FIELD = "markie-overlay-field w-full text-[13px] px-3 py-2 rounded-md";
@@ -30,7 +32,7 @@ const SECONDARY =
   "markie-overlay-button w-full text-[13px] py-2 rounded-md border border-border text-foreground/90 hover:bg-accent/40 disabled:opacity-50";
 const LINK = "text-[11px] text-muted hover:text-foreground";
 
-export function SignInForm({ reason, onDone }: SignInFormProps) {
+export function SignInForm({ reason, onDone, allowGoogle = true }: SignInFormProps) {
   const [view, setView] = useState<View>("choose");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -190,15 +192,15 @@ export function SignInForm({ reason, onDone }: SignInFormProps) {
 
       {view === "choose" && (
         <>
-          <button className={PRIMARY} onClick={startGoogle} disabled={busy}>
+          {allowGoogle && <button className={PRIMARY} onClick={startGoogle} disabled={busy}>
             Continue with Google
-          </button>
+          </button>}
 
-          <div className="flex items-center gap-3 py-1" aria-hidden="true">
+          {allowGoogle && <div className="flex items-center gap-3 py-1" aria-hidden="true">
             <div className="h-px flex-1 bg-border" />
             <span className="text-[11px] text-muted">or</span>
             <div className="h-px flex-1 bg-border" />
-          </div>
+          </div>}
 
           <input
             className={FIELD}

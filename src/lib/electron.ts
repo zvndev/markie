@@ -1,5 +1,6 @@
 import type { BlockRecord } from "@/lib/projects/cluster";
 import type { ProjectNameRecord } from "@/lib/projects/taxonomy";
+import type { NativeDocumentFileApi } from "./native-document-files";
 
 export interface FilePayload {
   name: string;
@@ -178,6 +179,8 @@ export interface InstalledSkill {
 
 export interface ElectronAPI {
   platform: string;
+  documentFiles?: NativeDocumentFileApi;
+  onDocumentFileOpened?(callback: () => void): Unsubscribe;
   openFile(args?: { near?: string | null }): Promise<OpenResult | null>;
   openFilePath(path: string): Promise<OpenResult | null>;
   // resolve a dropped File to its on-disk path (Electron webUtils)
@@ -401,10 +404,11 @@ export interface ElectronAPI {
   onFileChangedOnDisk(cb: (data: DiskChangeEvent) => void): Unsubscribe;
   /** Follow this path for external edits (after Save As, or a new document). */
   watchFile(filePath: string | null): Promise<{ ok: boolean } | { error: string } | null>;
-  // Main is holding the window open until the renderer answers appCloseReady,
-  // capped at two seconds. Everything that must land goes in between.
-  onAppWillClose(cb: () => void): Unsubscribe;
-  appCloseReady(): void;
+  // Main holds the window until acknowledgement. Documents uses a ticketed
+  // ready/cancel response and stays open on timeout; classic keeps its fallback.
+  onAppWillClose(cb: (requestId?: number) => void): Unsubscribe;
+  appCloseReady(requestId?: number): void;
+  appCloseCancel?(requestId?: number): void;
   // The crash journal: written ahead of the file debounce, offered back on the
   // next launch. An empty `content` clears the entry, which is how a committed
   // save discards it.

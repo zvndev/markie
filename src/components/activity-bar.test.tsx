@@ -32,6 +32,12 @@ beforeEach(() => {
 });
 
 describe("ActivityBar", () => {
+  it("offers a distinct entry to Word, text and private documents when provided", async () => {
+    const onDocuments = vi.fn();
+    render(<ActivityBar {...props({ onDocuments })} />);
+    await userEvent.click(screen.getByRole("button", { name: "Documents: Word, text and private files" }));
+    expect(onDocuments).toHaveBeenCalledOnce();
+  });
   it("labels every rail action for screen readers", async () => {
     render(<ActivityBar {...props()} />);
     for (const label of [

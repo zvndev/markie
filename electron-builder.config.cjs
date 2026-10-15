@@ -180,5 +180,10 @@ module.exports = {
     { ext: "markdown", name: "Markdown", role: "Editor" },
     { ext: "mdx", name: "MDX", role: "Editor" },
     { ext: "csv", name: "CSV", role: "Editor" },
+    { ext: "docx", name: "Word document", role: "Editor" },
+    { ext: "doc", name: "Legacy Word document import", role: "Viewer" },
+    { ext: "txt", name: "Plain text", role: "Editor" },
+    { ext: "rtf", name: "Rich text import", role: "Viewer" },
+    { ext: "odt", name: "OpenDocument text import", role: "Viewer" },
   ],
 };

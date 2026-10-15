@@ -2,6 +2,41 @@ import { describe, expect, it, vi } from "vitest";
 const { createCloseFlusher } = require("./close-flush.js");
 
 describe("createCloseFlusher", () => {
+  it("keeps a protected document window open when recovery times out", () => {
+    vi.useFakeTimers();
+    const destroy = vi.fn(), quit = vi.fn(), onCanceled = vi.fn();
+    const f = createCloseFlusher({ send: vi.fn(), onReady: () => {}, destroy, quit, quitting: () => true, forceOnTimeout: () => false, onCanceled });
+    f.requestClose();
+    vi.advanceTimersByTime(2000);
+    expect(destroy).not.toHaveBeenCalled(); expect(quit).not.toHaveBeenCalled();
+    expect(onCanceled).toHaveBeenCalledOnce(); expect(f.isSettled()).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("ignores canceled close acknowledgments when a newer close is pending", () => {
+    let ready: (ticket?: number) => void = () => {};
+    let cancel: (ticket?: number) => void = () => {};
+    const send = vi.fn(), destroy = vi.fn();
+    const f = createCloseFlusher({ send, onReady: (cb: typeof ready) => { ready = cb; }, onCancel: (cb: typeof cancel) => { cancel = cb; }, forceOnTimeout: () => false, destroy });
+    f.requestClose(); const first = send.mock.calls[0][1];
+    cancel(first); f.requestClose(); const second = send.mock.calls[1][1];
+    expect(second).not.toBe(first);
+    ready(first); ready(); cancel(first);
+    expect(destroy).not.toHaveBeenCalled();
+    ready(second); expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it("can retry a protected close after timeout without accepting its old result", () => {
+    vi.useFakeTimers();
+    let ready: (ticket?: number) => void = () => {};
+    const send = vi.fn(), destroy = vi.fn();
+    const f = createCloseFlusher({ send, onReady: (cb: typeof ready) => { ready = cb; }, forceOnTimeout: () => false, destroy });
+    f.requestClose(); const first = send.mock.calls[0][1];
+    vi.advanceTimersByTime(2000); f.requestClose();
+    ready(first); expect(destroy).not.toHaveBeenCalled();
+    ready(send.mock.calls[1][1]); expect(destroy).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
   it("destroys after the renderer reports ready", () => {
     vi.useFakeTimers();
     let ready: () => void = () => {};

@@ -14,6 +14,10 @@ import { publicShare } from "./public.ts";
 import { docView } from "./doc-view.ts";
 import { attachCollab } from "./collab.ts";
 import { desktopAuthDeepLink, desktopAuthState } from "./desktop-auth.ts";
+import { applicationOrigins } from "./application-origins.ts";
+import { openDatabase } from "./db.ts";
+import { createDocumentPlatform } from "./document-platform.ts";
+import { createSqliteDocumentPlatformStore } from "./document-platform-store.ts";
 
 const app = new Hono();
 
@@ -51,7 +55,8 @@ app.use("*", async (c, next) => {
   const h = c.res.headers;
   h.set("X-Content-Type-Options", "nosniff");
   h.set("X-Frame-Options", "DENY");
-  h.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  // Token download routes deliberately use the stricter no-referrer policy.
+  if (!h.has("Referrer-Policy")) h.set("Referrer-Policy", "strict-origin-when-cross-origin");
   h.set("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
   h.set("Strict-Transport-Security", "max-age=63072000");
   if ((h.get("content-type") ?? "").includes("text/html")) {
@@ -88,6 +93,9 @@ const ASSET_UPLOAD = /^\/api\/assets\/[^/]+$/;
 const DOC_TEXT = /^\/api\/docs\/[^/]+$/;
 
 app.use("/api/*", async (c, next) => {
+  // Versioned snapshots have their own authenticated streaming body reader.
+  // Keep the legacy JSON cap unchanged and avoid buffering Office bytes here.
+  if (c.req.path === "/api/document-platform" || c.req.path.startsWith("/api/document-platform/")) return next();
   if (c.req.method !== "POST" && c.req.method !== "PUT") return next();
   if (ASSET_UPLOAD.test(c.req.path)) return next();
   if (DOC_TEXT.test(c.req.path)) return textBodyLimit(c, next);
@@ -97,7 +105,7 @@ app.use("/api/*", async (c, next) => {
 app.use(
   "*",
   cors({
-    origin: ["app://markie", "http://localhost:3000"],
+    origin: applicationOrigins(),
     credentials: true,
     exposeHeaders: ["set-auth-token"],
   })
@@ -182,6 +190,10 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
 });
 
 app.route("/api/docs", docs);
+app.route("/api/document-platform", createDocumentPlatform({
+  store: createSqliteDocumentPlatformStore(openDatabase()),
+  resolveUser: async (request) => (await auth.api.getSession({ headers: request.headers }))?.user ?? null,
+}));
 app.route("/api/docs", shares);
 app.route("/api/docs", comments);
 app.route("/api", themes);

@@ -5,6 +5,7 @@ import { sendEmail } from "./email.ts";
 import { claimPendingInvites } from "./pending.ts";
 import { resolveAuthSecret } from "./auth-secret.ts";
 import { otpEmail } from "./otp-email.ts";
+import { applicationOrigins } from "./application-origins.ts";
 
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
@@ -14,8 +15,7 @@ export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:8787",
   secret: resolveAuthSecret(process.env),
   trustedOrigins: [
-    "app://markie", // packaged desktop app
-    "http://localhost:3000", // dev renderer
+    ...applicationOrigins(),
     "markie://", // desktop deep-link auth bridge target
   ],
   rateLimit: {

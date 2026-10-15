@@ -12,7 +12,10 @@ export function thinMachOArch(bytes) {
 }
 function assertArch(file, arch) { if (thinMachOArch(readFileSync(file)) !== arch) throw new Error(`Native preview file is not Mach-O ${arch}: ${file}`); }
 
-/** Installs only into the new app bundle, never the project's host modules. */
+/**
+ * Installs only into the new app bundle, never the project's host modules.
+ * @param {{ appDir?: string, arch?: string, projectDir?: string, spawn?: typeof spawnSync }} [options]
+ */
 export function installMacPreviewNative({ appDir, arch, projectDir = project, spawn = spawnSync } = {}) {
   if (!["arm64", "x64"].includes(arch) || !path.isAbsolute(appDir ?? "") || !appDir.endsWith("Markie Preview.app") || !existsSync(path.join(appDir, "Contents/Resources/app.asar"))) throw new Error("A packaged Markie Preview macOS target is required.");
   const version = JSON.parse(readFileSync(path.join(projectDir, "node_modules/electron/package.json"), "utf8")).version;
@@ -36,7 +39,9 @@ export function installMacPreviewNative({ appDir, arch, projectDir = project, sp
       mkdirSync(path.dirname(target), { recursive: true }); copyFileSync(source, target);
       if (filename === "spawn-helper") chmodSync(target, 0o755);
     }
-    writeFileSync(path.join(appDir, "Contents/Resources/macos-native-prebuild.json"), JSON.stringify({ schemaVersion: 1, electronVersion: version, moduleVersion: pkg.version, platform: "darwin", arch, sha256: createHash("sha256").update(readFileSync(destination)).digest("hex") }, null, 2));
+    // Electron Builder signs native bindings after this hook. The download
+    // digest describes the pre-sign input, not the final signed Mach-O bytes.
+    writeFileSync(path.join(appDir, "Contents/Resources/macos-native-prebuild.json"), JSON.stringify({ schemaVersion: 1, electronVersion: version, moduleVersion: pkg.version, platform: "darwin", arch, hashPhase: "before-code-signing", preSignSha256: createHash("sha256").update(readFileSync(destination)).digest("hex") }, null, 2));
     console.log(`[preview-native] verified Electron ${version} darwin-${arch} native modules in bundle`);
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 }

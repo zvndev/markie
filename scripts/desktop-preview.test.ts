@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { previewBuildEnv, previewTarget } from "./desktop-preview.mjs";
-import { thinMachOArch } from "./install-macos-preview-native.mjs";
+import { thinMachOArch, installMacPreviewNative } from "./install-macos-preview-native.mjs";
 import { createRequire } from "node:module";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import path from "node:path";
 const require = createRequire(import.meta.url);
 describe("desktop-first preview packaging", () => {
   it("separates identity, protocol, outputs, feeds, signing and notarization", () => {
@@ -31,5 +35,22 @@ describe("desktop-first preview packaging", () => {
     const header = Buffer.alloc(8); header.writeUInt32LE(0xfeedfacf); header.writeUInt32LE(0x100000c, 4);
     expect(thinMachOArch(header)).toBe("arm64"); header.writeUInt32LE(0x1000007, 4); expect(thinMachOArch(header)).toBe("x64");
     expect(thinMachOArch(Buffer.from("MZ"))).toBeNull(); header.writeUInt32LE(0, 4); expect(thinMachOArch(header)).toBeNull();
+  });
+  it("labels the native input digest as pre-sign instead of claiming signed bytes", () => {
+    const temporary = mkdtempSync(path.join(tmpdir(), "markie-preview-receipt-test-"));
+    try {
+      const projectDir = path.join(temporary, "project"), appDir = path.join(temporary, "Markie Preview.app");
+      const put = (file: string, data: string | Buffer) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, data); };
+      const binding = Buffer.alloc(8); binding.writeUInt32LE(0xfeedfacf); binding.writeUInt32LE(0x100000c, 4);
+      put(path.join(projectDir, "node_modules/electron/package.json"), JSON.stringify({ version: "41.0.2" }));
+      put(path.join(projectDir, "node_modules/better-sqlite3/package.json"), JSON.stringify({ version: "12.10.0" }));
+      for (const name of ["pty.node", "spawn-helper"]) put(path.join(projectDir, "node_modules/node-pty/prebuilds/darwin-arm64", name), binding);
+      put(path.join(appDir, "Contents/Resources/app.asar"), "synthetic");
+      const spawn = ((_command: string, _args: string[], options: { cwd: string }) => { put(path.join(options.cwd, "build/Release/better_sqlite3.node"), binding); return { status: 0 }; }) as unknown as typeof import("node:child_process").spawnSync;
+      installMacPreviewNative({ appDir, arch: "arm64", projectDir, spawn });
+      const receipt = JSON.parse(readFileSync(path.join(appDir, "Contents/Resources/macos-native-prebuild.json"), "utf8"));
+      expect(receipt).toMatchObject({ hashPhase: "before-code-signing", preSignSha256: createHash("sha256").update(binding).digest("hex"), arch: "arm64" });
+      expect(receipt).not.toHaveProperty("sha256");
+    } finally { rmSync(temporary, { recursive: true, force: true }); }
   });
 });

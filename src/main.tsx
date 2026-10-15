@@ -9,7 +9,6 @@ import { registerOfflineApp } from "./lib/offline-app";
 import { appRoute } from "./lib/app-route";
 
 const DocumentWorkbench = lazy(() => import("./components/document-workbench").then((module) => ({ default: module.DocumentWorkbench })));
-const DocumentWorkspace = lazy(() => import("./components/document-workspace-host").then((module) => ({ default: module.DocumentWorkspaceHost })));
 const route = appRoute(window.location.search, !!getElectronAPI(), import.meta.env.DEV);
 
 if (import.meta.env.PROD) {
@@ -29,8 +28,6 @@ createRoot(document.getElementById("root")!).render(
     <CrashProbe />
     {route === "workbench"
       ? <Suspense fallback={<p>Loading document workbench…</p>}><DocumentWorkbench /></Suspense>
-      : route === "documents"
-        ? <Suspense fallback={<p>Loading documents…</p>}><DocumentWorkspace onExit={() => window.location.assign("?classic=1")} /></Suspense>
-        : <Home onOpenDocuments={() => window.location.assign("?workspace=1")} />}
+      : <Home documentsEnabled />}
   </ErrorBoundary>
 );

@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElectronAPI, LibraryItem } from "@/lib/electron";
+import type { LibraryRecord } from "@/lib/document-library";
 import { installBridge } from "@/test/mock-bridge";
 
 vi.mock("@/lib/auth-client", () => ({
@@ -25,6 +26,12 @@ const item = (o: Partial<LibraryItem> = {}): LibraryItem =>
     owned: true,
     ...o,
   }) as LibraryItem;
+
+const documentRecord = (overrides: Partial<LibraryRecord> = {}): LibraryRecord => ({
+  schemaVersion: 1, id: "word-one", name: "proposal.docx", format: "docx", bytes: new Uint8Array(),
+  createdAt: 1, updatedAt: 2, revision: 3, exportedRevision: null, tags: ["client"],
+  collection: "Launch", extractedText: "A distinctive project brief", ...overrides,
+});
 
 function renderLibrary(
   items: LibraryItem[],
@@ -143,6 +150,72 @@ describe("Library rows", () => {
     const { onOpenPath } = renderLibrary([item({ name: "here.md" })]);
     await userEvent.click(await rowFor("here.md"));
     expect(onOpenPath).toHaveBeenCalledExactlyOnceWith("/notes/one.md");
+  });
+});
+
+describe("documents in the existing Library", () => {
+  it("opens a recovered Word document beside native files without claiming it is synced", async () => {
+    const record = documentRecord();
+    const onOpenDocument = vi.fn();
+    const { onOpenPath } = renderLibrary([item()], { props: { documentRecords: [record], activeDocumentId: record.id, onOpenDocument } });
+    const row = await screen.findByRole("button", { name: /proposal\.docx/ });
+    expect(row).toHaveAttribute("aria-current", "true");
+    expect(within(row).getByText("Recovered")).toBeInTheDocument();
+    expect(within(row).queryByText("Synced")).not.toBeInTheDocument();
+    expect(screen.getByText("one.md")).toBeInTheDocument();
+    expect(document.querySelectorAll(".markie-side-panel")).toHaveLength(1);
+    expect(screen.queryByRole("complementary", { name: "Document library" })).not.toBeInTheDocument();
+    await userEvent.click(row);
+    expect(onOpenDocument).toHaveBeenCalledExactlyOnceWith(record);
+    expect(onOpenPath).not.toHaveBeenCalled();
+  });
+
+  it.each(["proposal", "distinctive", "client", "Launch"])("searches recovered document metadata and text for %s", async (query) => {
+    renderLibrary([item()], { props: { documentRecords: [documentRecord()], onOpenDocument: vi.fn() } });
+    const search = await screen.findByRole("textbox", { name: "Filter documents" });
+    await userEvent.type(search, query);
+    expect(screen.getByRole("button", { name: /proposal\.docx/ })).toBeInTheDocument();
+    expect(screen.queryByText("one.md")).not.toBeInTheDocument();
+    await userEvent.clear(search);
+    await userEvent.type(search, "unmatched");
+    expect(screen.queryByRole("button", { name: /proposal\.docx/ })).not.toBeInTheDocument();
+    expect(screen.getByText("No documents match this filter.")).toBeInTheDocument();
+  });
+
+  it("shows recovered documents and search even when there are no native registry files", async () => {
+    renderLibrary([], { props: { documentRecords: [documentRecord()], onOpenDocument: vi.fn() } });
+    expect(await screen.findByRole("button", { name: /proposal\.docx/ })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Filter documents" })).toBeInTheDocument();
+    expect(screen.getByText("0 files · 1 recovered")).toBeInTheDocument();
+    expect(screen.queryByText("Workspace ready")).not.toBeInTheDocument();
+  });
+
+  it("routes creation and vault actions without adding another navigation tab", async () => {
+    const onCreateDocument = vi.fn(), onOpenVault = vi.fn();
+    renderLibrary([], { props: { onCreateDocument, onOpenVault } });
+    await userEvent.click(screen.getByRole("button", { name: "New Word document" }));
+    await userEvent.click(screen.getByRole("button", { name: "New text document" }));
+    await userEvent.click(screen.getByRole("button", { name: "Locked vault" }));
+    expect(onCreateDocument.mock.calls).toEqual([["docx"], ["text"]]);
+    expect(onOpenVault).toHaveBeenCalledTimes(1);
+    expect(within(screen.getByRole("group", { name: "Library sections" })).getAllByRole("button")).toHaveLength(2);
+    await userEvent.click(within(screen.getByRole("group", { name: "Library sections" })).getByRole("button", { name: "Projects" }));
+    expect(screen.queryByRole("group", { name: "Document actions" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Recent" })).toBeInTheDocument();
+  });
+
+  it("does not add document actions to the unchanged Markdown Library", async () => {
+    renderLibrary([item()]);
+    await screen.findByText("one.md");
+    expect(screen.queryByRole("group", { name: "Document actions" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Recovered documents")).not.toBeInTheDocument();
+  });
+
+  it("keeps ordinary recovery records out of the existing Cloud view", async () => {
+    renderLibrary([], { props: { view: "cloud", documentRecords: [documentRecord()], onOpenDocument: vi.fn(), onCreateDocument: vi.fn(), onOpenVault: vi.fn() } });
+    await screen.findByText("Nothing synced from this device yet");
+    expect(screen.queryByRole("button", { name: /proposal\.docx/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Document actions" })).not.toBeInTheDocument();
   });
 });
 

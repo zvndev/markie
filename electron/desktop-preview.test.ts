@@ -25,8 +25,9 @@ describe("trusted desktop preview runtime", () => {
     expect(isDesktopPreview({ isPackaged: false, metadata })).toBe(false);
   });
 
-  it("selects bundled Documents even with inherited development environment", () => {
-    expect(desktopStartUrl({ isPreview: true, isDev: true, devUrl: "https://untrusted.invalid" })).toBe("app://markie/index.html?workspace=1");
+  it("opens the original bundled Markie shell even with inherited development environment", () => {
+    expect(desktopStartUrl({ isPreview: true, isDev: true, devUrl: "https://untrusted.invalid" })).toBe("app://markie/index.html");
+    expect(desktopStartUrl({ isPreview: true })).toBe(desktopStartUrl());
     expect(desktopStartUrl()).toBe("app://markie/index.html");
     expect(desktopStartUrl({ isDev: true, devUrl: "http://localhost:3000/?classic=1" })).toBe("http://localhost:3000/?classic=1");
   });

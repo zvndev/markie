@@ -20,8 +20,9 @@ const { shareBaseFromSrc } = require("./share-origin");
 const { classifyDeepLink, cloudDocId } = require("./deep-links");
 const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
-const { createDocumentFileService, findNativeDocumentLaunchFile, registerDocumentFileIpc } = require("./document-files.cjs");
+const { createDocumentFileService, findNativeDocumentLaunchFile, registerDocumentFileIpc, DOCUMENT_EXTENSIONS } = require("./document-files.cjs");
 const docTiers = require("./doc-tiers");
+const { hasUtf16Bom, needsBytePreservingText } = require("./text-byte-route");
 const { createDiskMemory } = require("./disk-memory");
 const { ASSET_SCHEME, buildAppCsp } = require("./csp");
 const localAssets = require("./local-assets");
@@ -615,9 +616,17 @@ function readFilePayload(filePath, { grant = false } = {}) {
     const access = grant ? fileGrants.grantFile(filePath) : fileGrants.canRead(filePath);
     if (!access.ok) return null;
     const name = path.basename(access.path);
+    if (hasUtf16Bom(access.path)) {
+      queueNativeDocumentOpen(access.path, { includeClassic: true });
+      return null;
+    }
     const doc = docTiers.readDocumentTiered(access.path);
     if (doc.tooLarge) {
       return { tooLarge: true, size: doc.size, name, path: access.path };
+    }
+    if (needsBytePreservingText(name, doc.content)) {
+      queueNativeDocumentOpen(access.path, { includeClassic: true });
+      return null;
     }
     diskMemory.remember(access.path, doc.content);
     setCurrentDoc(access.path);
@@ -786,7 +795,10 @@ function createWindow() {
     },
     onCancel: (cb) => { _closeCancelCb = cb; },
     onCanceled: () => { quitRequested = false; },
-    forceOnTimeout: () => !documentsWorkspaceActive(),
+    // Word and private documents now share Markie's original shell. Its URL
+    // cannot tell us whether all recovery guards have finished, so a missing
+    // acknowledgement keeps the window open instead of discarding edits.
+    forceOnTimeout: () => false,
     destroy: () => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
     },
@@ -1077,6 +1089,7 @@ handle("open-file", async (_event, args) => {
     properties: ["openFile"],
     ...(startDir ? { defaultPath: startDir } : {}),
     filters: [
+      { name: "Documents", extensions: DOCUMENT_EXTENSIONS },
       { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
       { name: "CSV", extensions: ["csv"] },
       { name: "Text", extensions: ["txt", "text", "log"] },
@@ -1088,8 +1101,12 @@ handle("open-file", async (_event, args) => {
     return null;
   }
 
+  const filePath = result.filePaths[0];
+  // Rich and structured formats use opaque byte grants, never the classic
+  // UTF-8 Markdown reader. Its event opens them inside the existing shell.
+  if (!OPENABLE.test(filePath) && queueNativeDocumentOpen(filePath)) return null;
   // The dialog is the user grant. Store it in main before returning the file.
-  return readFilePayload(result.filePaths[0], { grant: true });
+  return readFilePayload(filePath, { grant: true });
 }, { onFailure: () => null });
 
 // IPC: Export PDF — the hidden-window rendering lives in export-pdf.js.

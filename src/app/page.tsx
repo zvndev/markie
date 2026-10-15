@@ -1,4 +1,7 @@
-import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { lazy, Suspense, useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import type { DocumentShellState } from "@/lib/document-shell";
+import type { EditableDocumentFormat } from "@/lib/document-session";
+import type { LibraryRecord } from "@/lib/document-library";
 import { Toolbar } from "@/components/toolbar";
 import { preloadSourceEditor, SourceEditor } from "@/components/source-editor";
 import { RichView, type FlushRich } from "@/components/rich-view";
@@ -198,7 +201,23 @@ const fromDisk = (name: string | null, raw: string) =>
 const toDisk = (name: string | null, md: string) =>
   isCSVName(name) ? markdownTableToCSV(md) : md;
 
-export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void } = {}) {
+const DocumentEditor = lazy(() => import("@/components/document-workspace-host").then((module) => ({ default: module.DocumentWorkspaceHost })));
+
+export default function Home({ onOpenDocuments, documentsEnabled = false }: { onOpenDocuments?: () => void; documentsEnabled?: boolean } = {}) {
+  const [documentsOpen, setDocumentsOpen] = useState(false);
+  const [closingWindow, setClosingWindow] = useState(false);
+  const closeGeneration = useRef(0);
+  const documentsOpenRef = useRef(false);
+  const [documentShell, setDocumentShell] = useState<DocumentShellState | null>(null);
+  const documentShellRef = useRef<DocumentShellState | null>(null);
+  const updateDocumentShell = useCallback((state: DocumentShellState | null) => { documentShellRef.current = state; setDocumentShell(state); }, []);
+  const deactivateDocuments = useCallback(() => { documentsOpenRef.current = false; setDocumentsOpen(false); }, []);
+  const leaveDocuments = useCallback(async () => {
+    if (!documentsOpenRef.current) return true;
+    if (!await documentShellRef.current?.prepareLeave()) return false;
+    documentsOpenRef.current = false; setDocumentsOpen(false);
+    return true;
+  }, []);
   // The confirmed account, for the surfaces that keep state per account. The
   // Library's own signedIn only says main holds a token, which stays true
   // when one account's token is replaced by another's.
@@ -808,6 +827,7 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
 
   // Start a fresh, unsaved markdown doc.
   const handleNewFile = useCallback(async () => {
+    if (documentsOpenRef.current) { documentShellRef.current?.create("docx"); return; }
     await settleDocument();
     dismissDocumentUI();
     resetDocAccess();
@@ -837,6 +857,7 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
         | { name: string; content: string; path: string | null; unsaved?: boolean; size?: number; large?: boolean }
         | TooLargePayload
     ) => {
+      if (!await leaveDocuments()) return false;
       // Main refused the file for its size before reading it. Nothing about
       // the open document changes; the strip says what happened.
       if (isTooLarge(data)) {
@@ -883,7 +904,7 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
       setLibRefreshKey((k) => k + 1);
       return true;
     },
-    [dismissDocumentUI, resetDocAccess, admitUnderCap, enterTier, loadDoc, settleDocument]
+    [dismissDocumentUI, resetDocAccess, admitUnderCap, enterTier, loadDoc, settleDocument, leaveDocuments]
   );
 
   const openPath = useCallback(
@@ -932,6 +953,12 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
       return;
     }
 
+    if (documentsEnabled && documentShellRef.current) {
+      documentShellRef.current.importFile();
+      documentsOpenRef.current = true; setDocumentsOpen(true);
+      return;
+    }
+
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".md,.markdown,.mdx,.txt,.text,.log,.csv";
@@ -942,7 +969,7 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
       loadFile({ name: file.name, content: text, path: null });
     };
     input.click();
-  }, [loadFile]);
+  }, [loadFile, documentsEnabled]);
 
   // Imported here rather than at the top of the file because unified, remark,
   // rehype-katex, KaTeX and highlight.js are the heaviest thing the renderer
@@ -1161,28 +1188,56 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
     const previousPath = docRef.current.filePath;
     if (md !== docRef.current.savedContent) {
       const api = getElectronAPI();
-      if (!api?.draftSave) {
+      if (!api?.draftSave && !documentsEnabled) {
         setForkError("Save or copy your Markdown changes before opening Documents.");
-        return;
+        return false;
       }
       try {
-        const saved = await api.draftSave({ path: previousPath, name: docRef.current.fileName, content: md });
-        if (!saved?.ok) throw new Error("Recovery was not saved.");
+        if (api?.draftSave) {
+          const saved = await api.draftSave({ path: previousPath, name: docRef.current.fileName, content: md });
+          if (!saved?.ok) throw new Error("Recovery was not saved.");
+        }
       } catch {
         setForkError("Your Markdown recovery copy could not be saved. Keep this window open and save the file first.");
-        return;
+        return false;
       }
     }
     if (previousPath !== docRef.current.filePath || md !== currentMarkdown()) {
       setForkError("New Markdown edits arrived while saving recovery. Open Documents again when you are ready.");
-      return;
+      return false;
     }
-    onOpenDocuments?.();
-  }, [currentMarkdown, onOpenDocuments, settleDocument]);
+    if (documentsEnabled) { documentsOpenRef.current = true; setDocumentsOpen(true); setShowFind(false); }
+    else onOpenDocuments?.();
+    return true;
+  }, [currentMarkdown, onOpenDocuments, settleDocument, documentsEnabled]);
+  const prepareMarkdownClose = useCallback(async () => {
+    currentMarkdown();
+    await settleDocument();
+    const snapshot = { path: docRef.current.filePath, name: docRef.current.fileName, content: currentMarkdown() };
+    if (snapshot.content === docRef.current.savedContent) return true;
+    try {
+      const saved = await getElectronAPI()?.draftSave?.(snapshot);
+      if (!saved?.ok) throw new Error("Recovery was not saved.");
+      if (snapshot.path !== docRef.current.filePath || snapshot.content !== currentMarkdown()) throw new Error("Newer edits arrived.");
+      return true;
+    } catch {
+      setForkError("Window kept open. Your Markdown recovery could not be confirmed. Save or export it before closing.");
+      return false;
+    }
+  }, [currentMarkdown, settleDocument]);
+  const createDocument = useCallback(async (format: EditableDocumentFormat) => {
+    if (await openDocumentsWorkspace()) documentShellRef.current?.create(format);
+  }, [openDocumentsWorkspace]);
+  const openDocument = useCallback(async (record: LibraryRecord) => {
+    if (await openDocumentsWorkspace()) documentShellRef.current?.open(record);
+  }, [openDocumentsWorkspace]);
+  const openVault = useCallback(async () => {
+    if (await openDocumentsWorkspace()) documentShellRef.current?.showVault();
+  }, [openDocumentsWorkspace]);
   useEffect(() => {
-    if (!onOpenDocuments) return;
+    if (!onOpenDocuments || documentsEnabled) return;
     return getElectronAPI()?.onDocumentFileOpened?.(() => void openDocumentsWorkspace());
-  }, [onOpenDocuments, openDocumentsWorkspace]);
+  }, [onOpenDocuments, openDocumentsWorkspace, documentsEnabled]);
 
   // The one way a user edit reaches the buffer, and so the only thing that may
   // ever arm a write. Loads, pulls, and reloads go through the document hook's
@@ -1279,10 +1334,12 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
 
   // Window title tracks the open file and dirty state
   useEffect(() => {
-    document.title = fileName
-      ? `${isDirty ? "• " : ""}${fileName} — Markie`
+    const name = documentsOpen ? documentShell?.name : fileName;
+    const dirty = documentsOpen ? documentShell?.dirty : isDirty;
+    document.title = name
+      ? `${dirty ? "• " : ""}${name} — Markie`
       : "Markie";
-  }, [fileName, isDirty]);
+  }, [fileName, isDirty, documentsOpen, documentShell?.name, documentShell?.dirty]);
 
   // Drag and drop
   useEffect(() => {
@@ -1347,6 +1404,7 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
         setShowTerminal((v) => !v);
         return;
       }
+      if (documentsOpenRef.current && !["k", "l", "/"].includes(e.key.toLowerCase())) return;
       if (e.metaKey || e.ctrlKey) {
         // Matched on e.code, not e.key: holding Option on macOS turns "f" into
         // "ƒ", so ⌥⌘F would never be recognised by name.
@@ -1535,14 +1593,14 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
 
   // Owner-pinned themes override the local choice while the doc is open
   useEffect(() => {
-    if (enforcedTheme) {
+    if (enforcedTheme && !documentsOpen) {
       applyTheme(enforcedTheme);
       return () => {
         const store = loadThemeStore();
         applyTheme(findTheme(store, store.activeId).tokens);
       };
     }
-  }, [enforcedTheme]);
+  }, [enforcedTheme, documentsOpen]);
 
   // Boot: decide the first painted document — the OS-opened file, the one-time
   // welcome document, or the sample — before rendering anything, so the wrong
@@ -1589,14 +1647,15 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
   useEffect(() => {
     const api = getElectronAPI();
     if (!api) return;
+    const closeRequests = closeGeneration;
     const offs = [
       api.onMenuOpenFile?.(() => handlersRef.current.openFile()),
-      api.onMenuNewFile?.(() => handlersRef.current.newFile()),
+      api.onMenuNewFile?.(() => documentsOpenRef.current ? documentShellRef.current?.create("docx") : handlersRef.current.newFile()),
       api.onMenuExportPDF?.((theme) =>
-        handlersRef.current.exportPDF(theme ?? "dark")
+        !documentsOpenRef.current && handlersRef.current.exportPDF(theme ?? "dark")
       ),
-      api.onSetMode?.((m) => requestMode(m)),
-      api.onToggleStats?.(() => setShowStats((s) => !s)),
+      api.onSetMode?.((m) => { if (!documentsOpenRef.current) requestMode(m); }),
+      api.onToggleStats?.(() => { if (!documentsOpenRef.current) setShowStats((s) => !s); }),
       api.onMenuCommandPalette?.(() => setShowPalette((v) => !v)),
       api.onMenuShortcuts?.(() => setShowHelp((v) => !v)),
       api.onMenuTheme?.(() => setShowTheme((v) => !v)),
@@ -1628,42 +1687,58 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
         setShowSettings(true);
       }),
       api.onMenuFormatTables?.(() =>
-        editContent((prev) => formatMarkdownTables(prev))
+        !documentsOpenRef.current && editContent((prev) => formatMarkdownTables(prev))
       ),
       api.onMenuFind?.(() => {
+        if (documentsOpenRef.current) return;
         setFindWithReplace(false);
         setShowFind(true);
       }),
-      api.onMenuPrint?.(() => handlersRef.current.print()),
-      api.onMenuZoom?.((step) => handlersRef.current.zoom(step)),
-      api.onMenuPageWidth?.((step) => handlersRef.current.pageWidth(step)),
-      api.onMenuUndo?.(() => handlersRef.current.undoRedo("undo")),
-      api.onMenuRedo?.(() => handlersRef.current.undoRedo("redo")),
+      api.onMenuPrint?.(() => { if (!documentsOpenRef.current) handlersRef.current.print(); }),
+      api.onMenuZoom?.((step) => { if (!documentsOpenRef.current) handlersRef.current.zoom(step); }),
+      api.onMenuPageWidth?.((step) => { if (!documentsOpenRef.current) handlersRef.current.pageWidth(step); }),
+      api.onMenuUndo?.(() => { if (!documentsOpenRef.current) handlersRef.current.undoRedo("undo"); }),
+      api.onMenuRedo?.(() => { if (!documentsOpenRef.current) handlersRef.current.undoRedo("redo"); }),
       api.onMenuFindReplace?.(() => {
+        if (documentsOpenRef.current) return;
         setFindWithReplace(true);
         setShowFind(true);
       }),
-      api.onMenuHistory?.(() => setShowHistory(true)),
-      api.onMenuSave?.(() => handlersRef.current.save()),
-      api.onMenuSaveAs?.(() => handlersRef.current.saveAs()),
-      api.onMenuFork?.(() => handlersRef.current.fork()),
-      api.onMenuReveal?.(() => handlersRef.current.reveal()),
-      api.onMenuExportHTML?.(() => handlersRef.current.exportHTML()),
+      api.onMenuHistory?.(() => { if (!documentsOpenRef.current) setShowHistory(true); }),
+      api.onMenuSave?.(() => documentsOpenRef.current ? documentShellRef.current?.save() : handlersRef.current.save()),
+      api.onMenuSaveAs?.(() => documentsOpenRef.current ? documentShellRef.current?.save(true) : handlersRef.current.saveAs()),
+      api.onMenuFork?.(() => documentsOpenRef.current ? documentShellRef.current?.save(true) : handlersRef.current.fork()),
+      api.onMenuReveal?.(() => { if (!documentsOpenRef.current) handlersRef.current.reveal(); }),
+      api.onMenuExportHTML?.(() => { if (!documentsOpenRef.current) handlersRef.current.exportHTML(); }),
       api.onFileOpened?.((data) => handlersRef.current.fileOpened(data)),
       // A background reconciliation pass pushed a document's text or media.
       // Nothing else reports that: the pass is fire-and-forget, and the
       // server's own listing does not move when only local media state does.
       api.onLibraryChanged?.(() => setLibRefreshKey((k) => k + 1)),
-      // Main is holding the window open for us. Settle, then answer, and
-      // answer even if settling threw: a renderer that never replies just
-      // makes the user wait out the two second cap.
-      api.onAppWillClose?.(() => {
+      // One ticket covers every retained editor. Block input until recovery
+      // finishes, and cancel rather than acknowledging an unconfirmed save.
+      api.onAppWillClose?.((requestId) => {
+        const generation = ++closeRequests.current;
+        setClosingWindow(true);
+        const current = () => generation === closeRequests.current;
+        const cancel = () => { if (current()) api.appCloseCancel?.(requestId); };
+        const timeout = setTimeout(() => {
+          if (!current()) return;
+          api.appCloseCancel?.(requestId);
+          closeRequests.current++;
+          setClosingWindow(false);
+        }, 2200);
         void (async () => {
           try {
-            await handlersRef.current.settle();
-          } finally {
-            getElectronAPI()?.appCloseReady?.();
-          }
+            if (documentsEnabled && (!documentShellRef.current || !await documentShellRef.current.prepareClose())) {
+              cancel(); return;
+            }
+            if (documentsEnabled) {
+              if (!await prepareMarkdownClose()) { cancel(); return; }
+            } else await handlersRef.current.settle();
+            if (current()) api.appCloseReady?.(requestId);
+          } catch { cancel(); }
+          finally { clearTimeout(timeout); if (current()) setClosingWindow(false); }
         })();
       }),
       api.onFileChangedOnDisk?.((data) => {
@@ -1688,8 +1763,8 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
         setDiskChange({ content: data.content, size: data.size });
       }),
     ];
-    return () => offs.forEach((off) => off?.());
-  }, [requestMode, selectView, editContent]);
+    return () => { closeRequests.current++; offs.forEach((off) => off?.()); };
+  }, [requestMode, selectView, editContent, documentsEnabled, prepareMarkdownClose]);
 
   // The source editor's chunk, fetched while idle so the first switch to
   // Source view does not wait on it (src/components/source-editor.tsx).
@@ -1698,12 +1773,18 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
   }, [booted]);
 
   const commands = useMemo<AppCommand[]>(
-    () => [
+    () => ([
       { id: "open", title: "Open File…", group: "File", shortcut: "⌘O", run: handleOpenFile },
       ...(onOpenDocuments ? [{ id: "documents-workspace", title: "Documents: Word, text and private files", group: "File", keywords: "doc docx vault office workspace", run: openDocumentsWorkspace }] as AppCommand[] : []),
-      { id: "save", title: "Save", group: "File", shortcut: "⌘S", run: handleSave },
-      { id: "save-as", title: "Save As…", group: "File", shortcut: "⇧⌘S", run: () => handleSaveAs() },
-      { id: "fork", title: "Duplicate (Fork)", group: "File", shortcut: "⇧⌘D", keywords: "copy fork duplicate", run: handleMakeCopy },
+      ...(documentsEnabled ? [
+        { id: "new-word", title: "New Word document", group: "File", keywords: "docx office", run: () => createDocument("docx") },
+        { id: "new-text", title: "New text document", group: "File", keywords: "txt plain", run: () => createDocument("text") },
+        { id: "private-vault", title: "Locked vault", group: "File", keywords: "private secure passphrase", run: openVault },
+        { id: "return-markdown", title: "Return to Markdown", group: "File", run: leaveDocuments },
+      ] as AppCommand[] : []),
+      { id: "save", title: "Save", group: "File", shortcut: "⌘S", run: () => documentsOpenRef.current ? documentShellRef.current?.save() : handleSave() },
+      { id: "save-as", title: "Save As…", group: "File", shortcut: "⇧⌘S", run: () => documentsOpenRef.current ? documentShellRef.current?.save(true) : handleSaveAs() },
+      { id: "fork", title: "Duplicate (Fork)", group: "File", shortcut: "⇧⌘D", keywords: "copy fork duplicate", run: () => documentsOpenRef.current ? documentShellRef.current?.save(true) : handleMakeCopy() },
       { id: "reveal", title: revealLabel, group: "File", shortcut: "⌥⌘R", keywords: "finder explorer folder show reveal drag locate", run: handleReveal },
       { id: "export-pdf-dark", title: "Export PDF (Dark)", group: "File", shortcut: "⇧⌘E", keywords: "print", run: () => exportPDF("dark") },
       { id: "export-pdf-light", title: "Export PDF (Light)", group: "File", keywords: "print", run: () => exportPDF("light") },
@@ -1751,10 +1832,10 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
       // Ungated on purpose: this used to vanish from the palette exactly when
       // the user could not work out how to share, which is when they search for
       // it. ShareGate explains whatever is missing.
-      { id: "share", title: "Share…", group: "File", keywords: "collaborate invite live people sync cloud link", run: () => setShowShare(true) },
+      { id: "share", title: "Share…", group: "File", keywords: "collaborate invite live people sync cloud link", run: () => documentsOpenRef.current ? documentShellRef.current?.share() : setShowShare(true) },
       { id: "history", title: "History…", group: "File", keywords: "versions restore snapshot revert previous", run: () => setShowHistory(true) },
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
-    ],
+    ] satisfies AppCommand[]).filter((command) => !documentsOpen || !["reveal", "export-pdf-dark", "export-pdf-light", "export-html", "mode-view", "mode-edit", "mode-split", "stats", "find", "find-replace", "copy-path", "copy-content", "format-tables", "history"].includes(command.id)),
     [
     requestMode,
       handleOpenFile,
@@ -1770,6 +1851,11 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
       handleNewFile,
       selectView,
       editContent,
+      documentsEnabled,
+      documentsOpen,
+      createDocument,
+      openVault,
+      leaveDocuments,
     ]
   );
 
@@ -1884,28 +1970,30 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
   };
 
   return (
-    <div className="markie-shell h-screen flex flex-col bg-background relative">
+    <div inert={closingWindow} className="markie-shell h-screen flex flex-col bg-background relative">
       <Toolbar
+        documentMode={documentsOpen}
+        onSave={documentsOpen && documentShell?.hasSession && !documentShell.private ? () => documentShell.save() : undefined}
         mode={mode}
         onModeChange={requestMode}
         richUnavailable={largeDocSize !== null || plainText}
         richUnavailableReason={plainText ? "Plain text stays literal in the text editor." : undefined}
         onOpenFile={handleOpenFile}
         onExportPDF={exportPDF}
-        onSaveAs={() => handleSaveAs()}
+        onSaveAs={() => documentsOpen ? documentShellRef.current?.save(true) : handleSaveAs()}
         onExportHTML={exportHTML}
-        exporting={exporting}
-        fileName={fileName}
-        isDirty={isDirty}
-        canRename={filePath !== null}
+        exporting={documentsOpen ? !!documentShell?.busy : exporting}
+        fileName={documentsOpen ? documentShell?.name ?? null : fileName}
+        isDirty={documentsOpen ? !!documentShell?.dirty : isDirty}
+        canRename={!documentsOpen && filePath !== null}
         onRename={handleRename}
-        onShare={handleShareClick}
-        canShare={canShare}
+        onShare={() => documentsOpen ? documentShellRef.current?.share() : handleShareClick()}
+        canShare={documentsOpen ? !!documentShell?.hasSession && !documentShell.private : canShare}
         onThemePresets={() => setShowTheme(true)}
-        live={!!collabCfg}
+        live={!documentsOpen && !!collabCfg}
         liveStatus={liveStatus}
-        peers={peers}
-        themeLocked={!!enforcedTheme}
+        peers={documentsOpen ? [] : peers}
+        themeLocked={!documentsOpen && !!enforcedTheme}
       />
 
       <div className="markie-workspace flex-1 flex overflow-hidden">
@@ -1914,12 +2002,12 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
           activeView={leftView}
           panelOpen={showLibrary}
           onSelectView={selectView}
-          canFormat={mode === "preview" || mode === "split"}
+          canFormat={!documentsOpen && (mode === "preview" || mode === "split")}
           onNewFile={handleNewFile}
           onAgents={() => setShowAgents(true)}
           onShortcuts={() => setShowHelp((v) => !v)}
           onAccount={() => setShowSettings(true)}
-          onDocuments={onOpenDocuments ? () => void openDocumentsWorkspace() : undefined}
+          onDocuments={onOpenDocuments && !documentsEnabled ? () => void openDocumentsWorkspace() : undefined}
         />
 
         {/* Docked side panel (Library / Browse / Cloud / Skills) */}
@@ -1937,12 +2025,17 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
             activePath={filePath}
             accountId={account?.id ?? null}
             refreshKey={libRefreshKey}
+            documentRecords={documentShell?.records}
+            activeDocumentId={documentsOpen ? documentShell?.selectedId : undefined}
+            onOpenDocument={documentsEnabled ? (record) => void openDocument(record) : undefined}
+            onCreateDocument={documentsEnabled ? (format) => void createDocument(format) : undefined}
+            onOpenVault={documentsEnabled ? () => void openVault() : undefined}
           />
         )}
 
         {/* Document column: the access strip sits above both panes, because it
             explains something about the document, not about one view of it. */}
-        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <div inert={documentsOpen} style={documentsOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 flex flex-col overflow-hidden">
           <ShareBanner
             view={shareBanner}
             error={forkError}
@@ -2134,6 +2227,12 @@ export default function Home({ onOpenDocuments }: { onOpenDocuments?: () => void
             )}
           </div>
         </div>
+        {documentsEnabled ? <div inert={!documentsOpen} style={!documentsOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 min-h-0 overflow-hidden">
+          {forkError ? <div role="alert" className="px-3 py-2 border-b border-border text-sm text-foreground bg-surface">{forkError}<button type="button" className="ml-3 text-muted" onClick={() => setForkError(null)}>Dismiss</button></div> : null}
+          <Suspense fallback={<p role="status" className="p-4 text-sm text-muted">Loading document tools…</p>}>
+            <DocumentEditor embedded active={documentsOpen} onActivate={() => { void openDocumentsWorkspace(); }} onShellChange={updateDocumentShell} onExit={deactivateDocuments} />
+          </Suspense>
+        </div> : null}
       </div>
 
       {/* Mounted on first open and kept mounted: unmounting the panel kills its

@@ -34,6 +34,8 @@ import {
 import type { WorkspaceBootstrapResult } from "@/lib/workspace-default";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 import { PanelNotice, type Notice, type NoticeKind } from "@/components/panel-notice";
+import type { LibraryRecord } from "@/lib/document-library";
+import type { EditableDocumentFormat } from "@/lib/document-session";
 
 interface LibraryProps {
   // which view the left rail selected (library | browse | cloud | skills)
@@ -55,9 +57,16 @@ interface LibraryProps {
   accountId: string | null;
   // bump to force a refresh (file opened/saved/sync changed)
   refreshKey: number;
+  // Ordinary recovery records only; protected document metadata stays in the vault.
+  documentRecords?: readonly LibraryRecord[];
+  activeDocumentId?: string;
+  onOpenDocument?: (record: LibraryRecord) => void;
+  onCreateDocument?: (format: EditableDocumentFormat) => void;
+  onOpenVault?: () => void;
 }
 
 const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
+const NO_DOCUMENT_RECORDS: readonly LibraryRecord[] = [];
 
 // Long enough to read a short sentence, short enough that the panel is not
 // still explaining a copy you made a minute ago.
@@ -135,6 +144,11 @@ export function Library({
   activePath,
   accountId,
   refreshKey,
+  documentRecords = NO_DOCUMENT_RECORDS,
+  activeDocumentId,
+  onOpenDocument,
+  onCreateDocument,
+  onOpenVault,
 }: LibraryProps) {
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [signedIn, setSignedIn] = useState(false);
@@ -400,6 +414,11 @@ export function Library({
 
   const { localFiles } = organizeLibraryItems(visibleItems);
   const overview = summarizeLibrary(items);
+  const visibleDocuments = useMemo(() => {
+    const query = filter.trim().toLocaleLowerCase();
+    return documentRecords.filter((record) => !query ||
+      `${record.name}\n${record.extractedText ?? ""}\n${record.tags.join(" ")}\n${record.collection ?? ""}`.toLocaleLowerCase().includes(query));
+  }, [documentRecords, filter]);
 
   const fileRow = (item: LibraryItem) => {
     const [label, badgeClass]: [string, string] = item.shared
@@ -585,7 +604,16 @@ export function Library({
               </button>
             ))}
           </div>
-          {!loading && libTab === "recent" && items.length > 0 && (
+          {libTab === "recent" && (onCreateDocument || onOpenVault) && (
+            <div className="flex flex-wrap gap-1 px-2 py-1.5 border-b border-border/60" role="group" aria-label="Document actions">
+              {onCreateDocument ? <>
+                <button type="button" onClick={() => onCreateDocument("docx")} className="text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-2 py-1">New Word document</button>
+                <button type="button" onClick={() => onCreateDocument("text")} className="text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-2 py-1">New text document</button>
+              </> : null}
+              {onOpenVault ? <button type="button" onClick={onOpenVault} className="text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-2 py-1">Locked vault</button> : null}
+            </div>
+          )}
+          {!loading && libTab === "recent" && (items.length > 0 || documentRecords.length > 0) && (
               <div className="px-2 pt-1.5 pb-1.5 shrink-0">
                 <input
                   value={filter}
@@ -596,13 +624,13 @@ export function Library({
                       setFilter("");
                     }
                   }}
-                  placeholder="Filter by name or folder"
+                  placeholder={documentRecords.length ? "Search files and document text" : "Filter by name or folder"}
                   aria-label="Filter documents"
                   className="markie-overlay-field w-full text-[11.5px] px-2 py-1"
                 />
               </div>
             )}
-          {!loading && libTab === "recent" && <LibraryOverviewBand overview={overview} />}
+          {!loading && libTab === "recent" && <LibraryOverviewBand overview={overview} recoveredCount={documentRecords.length} />}
         </>
       )}
 
@@ -631,7 +659,8 @@ export function Library({
             activePath={activePath}
             onOpenPath={onOpenPath}
           />
-        ) : localFiles.length === 0 ? (
+        ) : localFiles.length === 0 && visibleDocuments.length === 0 ? (
+          filter.trim() && (items.length > 0 || documentRecords.length > 0) ? <p className="px-2 py-2 text-[12px] text-muted">No documents match this filter.</p> :
           <RecentEmptyState
             onOpenFile={onOpenFile}
             onShowProjects={() => pickTab("projects")}
@@ -639,8 +668,28 @@ export function Library({
           />
         ) : (
           <>
-            <LibrarySectionHeader label="On this device" items={localFiles} />
-            {localFiles.map(fileRow)}
+            {localFiles.length > 0 ? <>
+              <LibrarySectionHeader label="On this device" items={localFiles} />
+              {localFiles.map(fileRow)}
+            </> : null}
+            {visibleDocuments.length > 0 ? <>
+              <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted font-medium">Recovered documents</div>
+              {visibleDocuments.map((record) => <button
+                key={record.id}
+                type="button"
+                onClick={() => onOpenDocument?.(record)}
+                disabled={!onOpenDocument}
+                aria-current={record.id === activeDocumentId ? "true" : undefined}
+                className={`group w-full text-left rounded-md px-2 py-1.5 disabled:opacity-50 ${record.id === activeDocumentId ? "bg-accent" : "hover:bg-accent/40"}`}
+              >
+                <span className="flex items-center gap-1.5">
+                  <FileIcon />
+                  <span className="text-[12.5px] text-foreground truncate flex-1" title={record.name}>{record.name}</span>
+                  <span className="text-[9px] px-1 py-px rounded border shrink-0 text-muted border-border" title="A local recovery copy, not a synced file">Recovered</span>
+                </span>
+                <span className="block pl-5 text-[10px] text-muted">{record.format.toUpperCase()} · Local recovery</span>
+              </button>)}
+            </> : null}
           </>
         )}
       </div>
@@ -743,15 +792,14 @@ function LibrarySectionHeader({
   );
 }
 
-// The Library counts what is on the disk, and nothing else: the synced, shared
-// and cloud-only figures moved to the Cloud page, where the documents they
-// count now live.
-function LibraryOverviewBand({ overview }: { overview: LibraryOverview }) {
+// File counts and recovery copies stay distinct; a local recovery record does
+// not prove that an external file was saved or synced.
+function LibraryOverviewBand({ overview, recoveredCount = 0 }: { overview: LibraryOverview; recoveredCount?: number }) {
   return (
     <div className="shrink-0 border-b border-border/60 px-2.5 py-2">
       <div className="flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-wide text-muted tabular-nums">
-          {overview.onDevice} on this device
+          {recoveredCount ? `${overview.onDevice} files · ${recoveredCount} recovered` : `${overview.onDevice} on this device`}
         </span>
         <span
           className={`text-[10.5px] ${

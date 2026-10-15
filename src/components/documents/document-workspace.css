@@ -16,6 +16,34 @@
   height:calc(100dvh - 38px)
 }
 
+.docs-embedded-host,.docs-embedded-content {
+  height:100%;
+  min-height:0
+}
+
+.docs-workspace.docs-workspace-embedded {
+  height:100%;
+  background:transparent
+}
+
+.docs-document-actions {
+  display:flex;
+  justify-content:flex-end;
+  gap:4px;
+  padding:5px 12px;
+  border-bottom:1px solid var(--border);
+  color:var(--muted);
+  font-size:11px
+}
+
+.docs-empty-editor {
+  display:grid;
+  place-items:center;
+  flex:1;
+  padding:24px;
+  color:var(--muted)
+}
+
 .docs-workspace {
   display:flex;
   height:100dvh;

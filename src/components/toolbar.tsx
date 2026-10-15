@@ -16,6 +16,8 @@ type ViewMode = "edit" | "preview" | "split";
 interface ToolbarProps {
   mode: ViewMode;
   onModeChange: (mode: ViewMode) => void;
+  documentMode?: boolean;
+  onSave?: () => void;
   // The open document is too big for the rich pane (src/lib/doc-tiers.ts):
   // Rich and Split are shown but cannot be chosen, and say why on hover.
   richUnavailable?: boolean;
@@ -49,6 +51,8 @@ interface ToolbarProps {
 export function Toolbar({
   mode,
   onModeChange,
+  documentMode = false,
+  onSave,
   richUnavailable = false,
   richUnavailableReason = RICH_UNAVAILABLE_TITLE,
   onOpenFile,
@@ -101,7 +105,7 @@ export function Toolbar({
   return (
     <div
       data-window-drag-surface
-      className={`markie-toolbar h-10 border-b border-border bg-surface grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 pr-3 sm:pr-4 select-none shrink-0 ${
+      className={`markie-toolbar h-10 border-b border-border bg-surface grid ${documentMode ? "grid-cols-[minmax(0,1fr)_auto]" : "grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"} items-center gap-3 pr-3 sm:pr-4 select-none shrink-0 ${
         trafficLightPad ? "pl-[82px]" : "pl-3 sm:pl-4"
       }`}
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
@@ -172,6 +176,7 @@ export function Toolbar({
               </button>
             ))}
           <div className="w-px h-4 bg-border shrink-0" />
+          {documentMode && onSave ? <button type="button" onClick={onSave} className="shrink-0 text-[12px] text-muted hover:text-foreground transition-colors">Save file</button> : null}
           <div className="relative" ref={menuRef}>
             <button
               onClick={() => setShowPDFMenu(!showPDFMenu)}
@@ -203,7 +208,7 @@ export function Toolbar({
                   </svg>
                   Save a Copy…
                 </button>
-                <button
+                {!documentMode ? <><button
                   onClick={() => { onExportHTML(); setShowPDFMenu(false); }}
                   disabled={exporting}
                   className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2 disabled:opacity-40"
@@ -238,7 +243,7 @@ export function Toolbar({
                     <line x1="12" y1="15" x2="12" y2="3" />
                   </svg>
                   PDF (Light)
-                </button>
+                </button></> : null}
               </div>
             )}
           </div>
@@ -248,7 +253,7 @@ export function Toolbar({
       {/* Center: mode toggle. Three equal labelled segments — the old
           "View / pencil / split" implied one was a mode and the others were
           buttons, and called the WYSIWYG editor "View" when it edits. */}
-      <div
+      {!documentMode ? <div
         data-window-control-region="mode"
         role="group"
         aria-label="Editing mode"
@@ -283,7 +288,7 @@ export function Toolbar({
             </button>
           );
         })}
-      </div>
+      </div> : null}
 
       {/* Right: theme/mode + presence + share */}
       <div

@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { useEffect } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DocumentWorkspace } from "./document-workspace";
 import { useDocumentWorkspace, type DocumentWorkspaceCommand } from "./use-document-workspace";
 import { createMemoryDocumentLibrary, type DocumentLibrary, type LibraryRecord } from "@/lib/document-library";
@@ -7,8 +8,18 @@ import { classifyDocumentFormat, decodeTextDocument, encodeTextDocument } from "
 import { createDocx, exportDocx, openDocx } from "@/lib/office/docx";
 import { readZip, writeZip } from "@/lib/office/zip";
 import type { WebDocumentPayload, WebFileHandle, WebSaveReceipt } from "@/lib/web-files";
+import type { DocumentShellState } from "@/lib/document-shell";
 import * as legacyDoc from "@/lib/office/legacy-doc-worker-client";
 
+const privateScope = vi.hoisted(() => ({ guard: vi.fn<() => boolean>(), cleanup: vi.fn(), registerGuard: true }));
+vi.mock("./vault-panel", () => ({ VaultPanel: ({ onCloseGuard }: { onCloseGuard?: (guard: (() => boolean) | null) => void }) => {
+  const register = privateScope.registerGuard;
+  useEffect(() => { if (register) onCloseGuard?.(privateScope.guard); return () => onCloseGuard?.(null); }, [onCloseGuard, register]);
+  useEffect(() => () => privateScope.cleanup(), []);
+  return <p>Synthetic decrypted private text</p>;
+} }));
+
+beforeEach(() => { privateScope.guard.mockReset().mockReturnValue(true); privateScope.cleanup.mockReset(); privateScope.registerGuard = true; });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const textBytes = (text: string) => new Uint8Array(new TextEncoder().encode(text));
 const decoded = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -31,6 +42,98 @@ async function newText() {
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
 
 describe("actual shared document workspace", () => {
+  it("unmounts private state on a successful leave even though document content is retained", async () => {
+    let shell: DocumentShellState | null = null;
+    const library = createMemoryDocumentLibrary(), onShellChange = (value: DocumentShellState | null) => { shell = value; };
+    const view = render(<DocumentWorkspace embedded library={library} onShellChange={onShellChange} />);
+    await waitFor(() => expect(shell?.ready).toBe(true));
+    await act(async () => { shell!.showVault(); }); await screen.findByText("Synthetic decrypted private text");
+    await act(async () => { expect(await shell!.prepareLeave()).toBe(true); });
+    view.rerender(<DocumentWorkspace embedded active={false} library={library} onShellChange={onShellChange} />);
+    expect(screen.queryByText("Synthetic decrypted private text")).toBeNull();
+    expect(privateScope.cleanup).toHaveBeenCalledOnce();
+    expect(shell).toMatchObject({ private: false });
+  });
+
+  it("keeps private edits mounted when the vault refuses leave", async () => {
+    let shell: DocumentShellState | null = null; privateScope.guard.mockReturnValue(false);
+    render(<DocumentWorkspace embedded library={createMemoryDocumentLibrary()} onShellChange={(value) => { shell = value; }} />);
+    await waitFor(() => expect(shell?.ready).toBe(true));
+    await act(async () => { shell!.showVault(); }); await screen.findByText("Synthetic decrypted private text");
+    await act(async () => { expect(await shell!.prepareLeave()).toBe(false); });
+    expect(screen.getByText("Synthetic decrypted private text")).toBeInTheDocument();
+    expect(privateScope.cleanup).not.toHaveBeenCalled(); expect(shell).toMatchObject({ private: true });
+  });
+
+  it("keeps queued native opens pending until a vault close guard has registered", async () => {
+    let shell: DocumentShellState | null = null; privateScope.registerGuard = false;
+    const library = createMemoryDocumentLibrary(), onShellChange = (value: DocumentShellState | null) => { shell = value; }, handled = vi.fn();
+    const incoming = { requestId: "during-vault-load", payload: payload("queued.txt", textBytes("Queued native document")) };
+    const view = render(<DocumentWorkspace embedded library={library} onShellChange={onShellChange} />);
+    await waitFor(() => expect(shell?.ready).toBe(true));
+    await act(async () => { shell!.showVault(); }); await screen.findByText("Synthetic decrypted private text");
+    view.rerender(<DocumentWorkspace embedded library={library} onShellChange={onShellChange} incomingDocument={incoming} onIncomingDocumentHandled={handled} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open requested file" }));
+    await act(async () => {});
+    expect(handled).not.toHaveBeenCalled(); expect(privateScope.cleanup).not.toHaveBeenCalled();
+    expect(screen.getByText("Synthetic decrypted private text")).toBeInTheDocument();
+    privateScope.registerGuard = true;
+    view.rerender(<DocumentWorkspace embedded library={library} onShellChange={onShellChange} incomingDocument={incoming} onIncomingDocumentHandled={handled} active />);
+    fireEvent.click(screen.getByRole("button", { name: "Open requested file" }));
+    expect(await screen.findByRole("textbox", { name: "Document text" })).toHaveValue("Queued native document");
+    expect(handled).toHaveBeenCalledWith(incoming.requestId); expect(privateScope.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("embeds only format-specific content in Markie and exposes actions to the existing shell", async () => {
+    const library = createMemoryDocumentLibrary(); let shell: DocumentShellState | null = null;
+    const view = render(<DocumentWorkspace embedded library={library} onShellChange={(value) => { shell = value; }} />);
+    await waitFor(() => expect(shell?.ready).toBe(true));
+    expect(view.container.querySelector(".docs-library")).toBeNull();
+    expect(view.container.querySelector(".docs-header")).toBeNull();
+    expect(view.container.querySelector(".docs-welcome")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Make room for your next idea." })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "＋ New" })).not.toBeInTheDocument();
+    await act(async () => { shell!.create("text"); });
+    const field = await screen.findByRole("textbox", { name: "Document text" });
+    expect(shell).toMatchObject({ name: "Untitled.txt", hasSession: true, private: false });
+    fireEvent.change(field, { target: { value: "Existing Markie, new file type" } });
+    fireEvent.click(screen.getByRole("button", { name: "Recover now" }));
+    await waitFor(() => expect(shell?.records).toHaveLength(1));
+    expect(shell).toMatchObject({ dirty: true }); // Local recovery is not an external file save.
+    expect(screen.getByRole("button", { name: "Document details" })).toHaveTextContent("Details & recovery");
+    view.unmount(); expect(shell).toBeNull();
+  });
+
+  it("retains its document while inactive without handling global shortcuts", async () => {
+    const library = createMemoryDocumentLibrary(), saveDocument = vi.fn(); let shell: DocumentShellState | null = null;
+    const onShellChange = (value: DocumentShellState | null) => { shell = value; };
+    const view = render(<DocumentWorkspace embedded library={library} saveDocument={saveDocument} onShellChange={onShellChange} />);
+    await waitFor(() => expect(shell?.ready).toBe(true));
+    await act(async () => { shell!.create("text"); });
+    const field = await screen.findByRole("textbox", { name: "Document text" });
+    fireEvent.change(field, { target: { value: "Retain these edits" } });
+    view.rerender(<DocumentWorkspace embedded active={false} library={library} saveDocument={saveDocument} onShellChange={onShellChange} />);
+    expect(field).toHaveAttribute("readonly");
+    fireEvent.keyDown(window, { key: "n", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    expect(saveDocument).not.toHaveBeenCalled();
+    expect(field).toHaveValue("Retain these edits");
+    expect(screen.queryByRole("textbox", { name: "Paragraph 1" })).not.toBeInTheDocument();
+    view.rerender(<DocumentWorkspace embedded library={library} saveDocument={saveDocument} onShellChange={onShellChange} />);
+    expect(field).not.toHaveAttribute("readonly"); expect(field).toHaveValue("Retain these edits");
+  });
+
+  it("protects ordinary recovery before returning to Markdown", async () => {
+    const library = createMemoryDocumentLibrary(), onExit = vi.fn(); let shell: DocumentShellState | null = null;
+    render(<DocumentWorkspace embedded library={library} onExit={onExit} onShellChange={(value) => { shell = value; }} />);
+    await waitFor(() => expect(shell?.ready).toBe(true));
+    await act(async () => { shell!.create("text"); });
+    await screen.findByRole("textbox", { name: "Document text" });
+    fireEvent.click(screen.getByRole("button", { name: "Return to Markdown" }));
+    expect(await screen.findByText(/Durable local recovery is unavailable/)).toBeInTheDocument();
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
   it("creates, edits, recovers, reopens and searches a literal text document", async () => {
     const library = createMemoryDocumentLibrary();
     const view = render(<DocumentWorkspace library={library} />);

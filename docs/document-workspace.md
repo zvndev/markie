@@ -4,15 +4,15 @@ Markie's document workspace brings imported documents, notes and working copy in
 
 ## Opening the workspace
 
-The browser opens Documents by default. The desktop keeps existing Markdown launches in the classic workspace; its Documents rail button and command open the shared workspace after preserving pending Markdown recovery. Office file-open requests enter Documents through bounded, window-bound byte grants. The development workbench remains separate from the actual editor.
+Markie keeps its established toolbar, activity bar, resizable Library, Projects, Browse, Cloud, Skills, settings and themes. Opening a Word file changes only the editor inside that shell. It does not navigate to a second app or replace the Markdown interface. Word's Home, Insert, Layout, Review and View tools appear below Markie's top bar. Return to Markdown restores the retained editor and buffer, rather than reloading the page.
 
-The isolated **Markie Preview** desktop build opens Documents directly from bundled assets. It does not need a development server or browser tab. It has a separate app identifier, profile, session and logs; it neither replaces installed Markie nor registers its file associations or `markie://` links. Automatic updates and the production browser OAuth callback are disabled in this preview. Email sign-in can still use the configured service, but new document-platform sharing requires the matching server deployment.
+The isolated **Markie Preview** desktop build runs the same Markie shell from bundled assets. It does not need a development server or browser tab. The preview name is for testing isolation, not a separate product: it has a separate app identifier, profile, session and logs, and neither replaces installed Markie nor registers its file associations or `markie://` links. Automatic updates and the production browser OAuth callback are disabled in this preview. Email sign-in can still use the configured service, but new document-platform sharing requires the matching server deployment.
 
 ## Testing the desktop preview
 
 On macOS, open `Markie Preview.app`. Apple Silicon and Intel builds are separate; the local build is ad-hoc signed, not Developer ID signed or notarized. It is a development preview, not an installer or public release. On Windows, extract the entire x64 archive and open `Markie Preview.exe` inside its folder. Keep the accompanying DLLs, locales and resources together. The Windows preview is unsigned.
 
-Use copies of documents first. Import a DOCX, edit a supported paragraph, and choose **Export copy** to make a new Word file without touching the original. Reopen that copy in Markie and Microsoft Word. Test **Save file** on an expendable TXT copy. Local library recovery and external-file saving have distinct status messages.
+Use copies of documents first. Choose **Open** from Markie's current toolbar or File menu and select a DOCX. Edit a supported paragraph, then choose **Export → Save a Copy** to make a new Word file without touching the original. Reopen that copy in Markie and Microsoft Word. The existing Library's Recent section contains recovered document rows plus **New Word document**, **New text document** and **Locked vault** actions. Recovery copies are labeled separately from synced files. Test **Save file** on an expendable TXT copy. Local recovery and external-file saving have distinct status messages.
 
 The vault is experimental. Use a synthetic note and a new long passphrase to test save, lock, quit, relaunch and unlock. Do not put irreplaceable or sensitive originals into this preview. There is no forgotten-passphrase reset or biometric unlock yet.
 
@@ -50,7 +50,7 @@ Browsers with permission-granted filesystem handles can save matching formats to
 
 Desktop access uses opaque leases issued only after an operating-system file choice or file-open request. Leases are scoped to the owning window, bounded and released as sessions end. Saves check source fingerprints, serialize writes to the same target and stage an atomic replacement. Newly appeared destinations and source changes fail rather than silently overwrite. New-file no-clobber commits require filesystem hard-link support. This is practical conflict protection, not a kernel-level cross-process compare-and-swap guarantee.
 
-The Documents close handshake requires confirmed durable recovery or cancellation. A timeout keeps the protected window open. The classic workspace retains its established close behavior. Private and cloud drafts have separate close guards.
+One close handshake covers retained Markdown, document recovery, vault and cloud-draft guards. The current shell is temporarily inert while those guards run; failed or unconfirmed recovery cancels the exact close request. A timeout keeps the window open rather than discarding edits. Leaving the protected editor locks its retained vault scope.
 
 ## Offline web editing
 

@@ -2,7 +2,7 @@
 
 ## Source of truth
 
-- Status: Active for the shared document workspace expansion.
+- Status: Active for document capabilities inside the existing Markie app.
 - Last refreshed: 2026-10-15.
 - Primary product surfaces: native Windows and macOS desktop workspaces, original Word editor, existing Markdown workspace, protected local vault. Web is a new, secondary surface sharing the same document core.
 - Evidence reviewed: src/app/globals.css, src/lib/theme.ts, src/components/toolbar.tsx, library.tsx, doc-toolbar.tsx, docs/design/radius-scale.md and docs/superpowers/plans/2026-10-14-document-platform.md.
@@ -23,7 +23,7 @@ Writers, researchers and people managing working copy across formats. Jobs: find
 
 ## Information architecture
 
-Use a persistent document list beside the editor on wide screens. Keep local documents and locked vault separate, with explicit scope. Search/type filters/sort operate on the current permitted scope. The Word editor groups tools into Home, Insert, Layout, Review and View. The existing Markdown workspace remains reachable, not silently replaced on a desktop file launch.
+Preserve Markie's existing Toolbar, activity bar, resizable Library with Recent/Projects, Browse, Cloud, Skills, settings, themes and account surfaces. Word and other formats change the editor content inside that shell, not the application identity, navigation or page. Add recovered document records to the current Library instead of creating a second branded sidebar or a separate Documents destination. Keep Markdown state while another format is open. The Word editor groups tools into Home, Insert, Layout, Review and View below Markie's current top bar. Vault content remains explicitly scoped and excluded from ordinary search.
 
 ## Design principles
 
@@ -39,7 +39,7 @@ Reuse Markie's semantic background, surface, surface-2, foreground, muted, borde
 
 ## Components
 
-Reuse established buttons, menus, source/rich editor behavior, notices and keyboard vocabulary where applicable. New components are document library, format-aware editor host, Word tools/canvas and isolated vault panel. Split responsibilities into focused files, with storage/editor logic outside rendering. The workspace UI owner owns new documents components; the vault owner owns vault-panel; the leader owns app entry routing and existing app integration.
+Reuse the existing Toolbar, ActivityBar, Library, buttons, menus, source/rich editor behavior, notices and keyboard vocabulary. Format-aware editor content, Word tools/canvas and the isolated vault panel fit into those existing controls. Do not render a replacement app shell, second titlebar, standalone welcome dashboard or new brand. Keep format/storage logic outside rendering and give one active editor ownership of file commands; combine all retained sessions' recovery before a native close.
 
 ## Accessibility
 

@@ -100,7 +100,7 @@ function initializeDesktopIdentity({ app, metadata, argv = process.argv.slice(1)
 }
 
 function desktopStartUrl({ isPreview = false, isDev = false, devUrl = "http://localhost:3000" } = {}) {
-  if (isPreview) return "app://markie/index.html?workspace=1";
+  if (isPreview) return "app://markie/index.html";
   return isDev ? devUrl : "app://markie/index.html";
 }
 

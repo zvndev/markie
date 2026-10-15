@@ -47,6 +47,7 @@ yarn-error.log*
 
 # electron
 /dist/
+/.desktop-preview/
 # Signed Windows artifacts fetched from CI for publishing. Kept out of dist/
 # because the macOS prepare deletes that directory wholesale.
 dist-windows/

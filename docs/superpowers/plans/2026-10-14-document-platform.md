@@ -4,6 +4,8 @@ Product direction agreed with Kirby on October 14, 2026. This is the requested d
 
 ## Product outcome
 
+Priority update from Kirby, October 15, 2026: Windows and macOS desktop apps are the primary surface for these features. Web support is new and secondary. Acceptance must include actual launchable desktop artifacts and packaged native workflows; a browser preview or development-only Electron launch is not delivery of the desktop product. Preserve shared document logic, but schedule native file/menu/window/recovery/security and desktop packaging verification ahead of further web expansion.
+
 One local-first workspace for text, documents, and written copy: open, write, organize, search, sort, share, and collaborate on the same material on desktop and web. Desktop provides deeper filesystem integration; web is a first-class editor, not a read-only companion. Accounts and cloud storage remain optional for local editing. A protected vault encrypts sensitive content and metadata at rest and exposes it only during an authorized unlocked session.
 
 Kirby explicitly selected Markie's existing Electron desktop experience, approved a from-scratch DOC/DOCX engine rather than a third-party document engine, requested ordinary text-file support, and requested a passcode/biometric protected area. The October 14 instruction authorizes this product expansion. Existing VISION.md and CONSTITUTION.md are human-maintained and are not silently rewritten. Markdown remains canonical for Markdown files; Office packages remain canonical for Office files. A later human-owned reconciliation of the older Markdown-only vision is required before a public product/release change.

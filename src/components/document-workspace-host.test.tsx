@@ -20,6 +20,15 @@ import { DocumentWorkspaceHost } from "./document-workspace-host";
 beforeEach(() => { state.props = null; state.prepare.mockReset().mockResolvedValue(true); state.cloudGuard.mockReset().mockReturnValue(true); });
 
 describe("native document workspace host lifecycle", () => {
+  it("reserves a native macOS drag region without placing controls under traffic lights", () => {
+    installBridge({ platform: "darwin" });
+    const view = render(<DocumentWorkspaceHost />);
+    expect(view.container.querySelector(".docs-native-titlebar")).toHaveAttribute("data-window-drag-surface", "true");
+    expect(view.container.querySelector(".docs-desktop-mac")).not.toBeNull();
+    view.unmount(); installBridge({ platform: "win32" });
+    const windows = render(<DocumentWorkspaceHost />);
+    expect(windows.container.querySelector(".docs-native-titlebar")).toBeNull();
+  });
   it("routes native menu undo and redo through the focused editor history", async () => {
     installBridge();
     const view = render(<DocumentWorkspaceHost />);

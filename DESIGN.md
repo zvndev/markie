@@ -4,7 +4,7 @@
 
 - Status: Active for the shared document workspace expansion.
 - Last refreshed: 2026-10-15.
-- Primary product surfaces: shared browser/desktop document workspace, original Word editor, existing Markdown workspace, protected local vault.
+- Primary product surfaces: native Windows and macOS desktop workspaces, original Word editor, existing Markdown workspace, protected local vault. Web is a new, secondary surface sharing the same document core.
 - Evidence reviewed: src/app/globals.css, src/lib/theme.ts, src/components/toolbar.tsx, library.tsx, doc-toolbar.tsx, docs/design/radius-scale.md and docs/superpowers/plans/2026-10-14-document-platform.md.
 
 ## Brand
@@ -14,6 +14,8 @@ Calm, capable, local-first writing software. Trust comes from legible controls, 
 ## Product goals
 
 Keep written material together, searchable and sortable, with direct access to writing, document formatting, export, sharing and protected storage. Preserve existing Markdown behavior. Accounts remain optional for local work. Success means users can create/import, edit, recover/reopen and export without unexplained data loss. Do not imply all Word features, pixel-identical pagination, biometrics or encryption of ordinary files unless those capabilities exist.
+
+Desktop delivery leads: produce and validate actual app bundles/executables with bundled assets, native file dialogs and menu/lifecycle behavior before calling the feature delivered. A localhost browser or Electron development command is not a packaged desktop deliverable. macOS Documents reserves a native drag region and traffic-light clearance; Windows retains its standard system frame.
 
 ## Personas and jobs
 

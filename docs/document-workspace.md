@@ -1,10 +1,30 @@
 # Document workspace
 
-Markie's shared document workspace brings imported documents, notes and working copy into a searchable local library on web and desktop. It uses the original Office engine, not a Markdown conversion or third-party Word editor. Local editing does not require an account.
+Markie's document workspace brings imported documents, notes and working copy into a searchable local library. Windows and macOS desktop apps are the primary product surface; the new web surface is secondary. Both use the original Office engine, not a Markdown conversion or third-party Word editor. Local editing does not require an account.
 
 ## Opening the workspace
 
 The browser opens Documents by default. The desktop keeps existing Markdown launches in the classic workspace; its Documents rail button and command open the shared workspace after preserving pending Markdown recovery. Office file-open requests enter Documents through bounded, window-bound byte grants. The development workbench remains separate from the actual editor.
+
+The isolated **Markie Preview** desktop build opens Documents directly from bundled assets. It does not need a development server or browser tab. It has a separate app identifier, profile, session and logs; it neither replaces installed Markie nor registers its file associations or `markie://` links. Automatic updates and the production browser OAuth callback are disabled in this preview. Email sign-in can still use the configured service, but new document-platform sharing requires the matching server deployment.
+
+## Testing the desktop preview
+
+On macOS, open `Markie Preview.app`. Apple Silicon and Intel builds are separate; the local build is ad-hoc signed, not Developer ID signed or notarized. It is a development preview, not an installer or public release. On Windows, extract the entire x64 archive and open `Markie Preview.exe` inside its folder. Keep the accompanying DLLs, locales and resources together. The Windows preview is unsigned.
+
+Use copies of documents first. Import a DOCX, edit a supported paragraph, and choose **Export copy** to make a new Word file without touching the original. Reopen that copy in Markie and Microsoft Word. Test **Save file** on an expendable TXT copy. Local library recovery and external-file saving have distinct status messages.
+
+The vault is experimental. Use a synthetic note and a new long passphrase to test save, lock, quit, relaunch and unlock. Do not put irreplaceable or sensitive originals into this preview. There is no forgotten-passphrase reset or biometric unlock yet.
+
+For repository development:
+
+```sh
+npm run desktop:preview:mac
+MARKIE_ALLOW_E2E=1 npm run desktop:preview:run
+npm run desktop:preview:windows
+```
+
+The Windows build can be produced on this Mac but must run on Windows. Explicit Intel Mac builds use `node scripts/desktop-preview.mjs build mac-x64`. Each build writes a unique ignored `.desktop-preview/` directory and a target-specific latest receipt. No command installs into Applications or publishes a release. The Codex Run action builds and opens only the preview; it does not force-close existing app windows.
 
 Imported files become local library records. Search covers names, tags, collection and indexed body text, with type filters and name/recent sorting. Body indexing is capped at the first million characters. Tags and collections belong to local records, not automatically to the original file's metadata. The classic desktop index is not silently migrated into this library.
 
@@ -56,4 +76,4 @@ Vault search currently covers decrypted filenames while unlocked. Its encrypted 
 
 ## Remaining compatibility work
 
-The full [document platform plan](superpowers/plans/2026-10-14-document-platform.md) still includes automatic pagination and print/PDF, sections, headers/footers/page fields, merged/complex tables, advanced review, a native DOC writer, live Office co-editing and platform-protected biometric unlock. A broader sanitized Word-generated corpus and packaged desktop checks remain release gates. Unsupported features must not be silently flattened to meet a visual approximation.
+The full [document platform plan](superpowers/plans/2026-10-14-document-platform.md) still includes automatic pagination and print/PDF, sections, headers/footers/page fields, merged/complex tables, advanced review, a native DOC writer, live Office co-editing and platform-protected biometric unlock. A broader sanitized Word-generated corpus, Windows runtime QA, physical Intel Mac QA and release signing/notarization remain release gates. Unsupported features must not be silently flattened to meet a visual approximation.

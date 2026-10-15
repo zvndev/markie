@@ -1,3 +1,21 @@
+.docs-native-titlebar {
+  height:38px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:0 90px;
+  color:var(--muted);
+  background:var(--surface);
+  border-bottom:1px solid var(--border);
+  font:12px var(--font-geist-sans);
+  user-select:none;
+  -webkit-app-region:drag
+}
+
+.docs-desktop-mac .docs-workspace {
+  height:calc(100dvh - 38px)
+}
+
 .docs-workspace {
   display:flex;
   height:100dvh;

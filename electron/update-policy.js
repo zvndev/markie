@@ -16,7 +16,16 @@ function desktopUpdatePolicy({
   platform = process.platform,
   isPackaged = false,
   isDev = false,
+  isPreview = false,
 } = {}) {
+  if (isPreview) {
+    return {
+      supported: false,
+      reason: "preview",
+      message: "Markie Preview does not install automatic updates.",
+      detail: "This local preview is separate from installed Markie and never reads the stable or beta update feeds. Build a new preview to test newer changes.",
+    };
+  }
   if (isDev || !isPackaged) {
     return {
       supported: false,

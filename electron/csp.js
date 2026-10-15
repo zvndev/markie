@@ -61,7 +61,9 @@ function buildAppCsp(outDir) {
     "default-src 'self'",
     scriptSrcDirective(scriptHashes),
     "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data: https: ${ASSET_SCHEME}:`,
+    // Original DOCX image parts are bounded local blobs, never executable
+    // documents. This permission is deliberately limited to image requests.
+    `img-src 'self' data: blob: https: ${ASSET_SCHEME}:`,
     // Video and audio beside the document, played through the same scheme and
     // the same access rule as the pictures.
     `media-src 'self' data: ${ASSET_SCHEME}:`,

@@ -13,7 +13,9 @@ const {
 const path = require("path");
 const fs = require("fs");
 const url = require("url");
-const { autoUpdater } = require("electron-updater");
+const { initializeDesktopIdentity, desktopStartUrl, isStableDesktopAuthUrl } = require("./desktop-preview.cjs");
+const { isPreview: isDesktopPreview } = initializeDesktopIdentity({ app, metadata: require("../package.json") });
+const autoUpdater = isDesktopPreview ? null : require("electron-updater").autoUpdater;
 const { shareBaseFromSrc } = require("./share-origin");
 const { classifyDeepLink, cloudDocId } = require("./deep-links");
 const { dialogStartDir } = require("./dialog-start");
@@ -215,7 +217,7 @@ const {
   supportsMarkdownDefaultHandler,
 } = require("./desktop-intents");
 
-const isDev = process.env.NODE_ENV === "development";
+const isDev = !isDesktopPreview && process.env.NODE_ENV === "development";
 
 // Must run before app ready: gives app:// a real (standard, secure) origin
 // so the renderer gets persistent localStorage/IndexedDB in production.
@@ -277,6 +279,7 @@ function queueNativeDocumentOpen(filePath, options = {}) {
 // isn't ready yet (cold start from the OAuth browser hand-off). Always raises
 // the window so the user lands back in Markie focused.
 function deliverDeepLink(link) {
+  if (isDesktopPreview) return;
   const kind = classifyDeepLink(link);
   if (kind === "ignore") return;
   // A public link: fetch it with the token the link carries and open a copy
@@ -643,7 +646,7 @@ if (argFile) pendingFilePath = argFile;
 else if (!preflightMode) { const nativeFile = findNativeDocumentLaunchFile(process.argv.slice(1)); if (nativeFile) queueNativeDocumentOpen(nativeFile); }
 
 // markie:// deep link passed as a CLI argument (Windows/Linux cold start)
-const argDeepLink = findDeepLinkArg(process.argv.slice(1));
+const argDeepLink = isDesktopPreview ? null : findDeepLinkArg(process.argv.slice(1));
 if (argDeepLink) pendingDeepLink = argDeepLink;
 
 // The renderer's own document: app://markie/... in production, the Next dev
@@ -816,7 +819,7 @@ function createWindow() {
       mainWindow.webContents.openDevTools({ mode: "detach" });
     }
   } else {
-    mainWindow.loadURL("app://markie/index.html");
+    mainWindow.loadURL(desktopStartUrl({ isPreview: isDesktopPreview }));
   }
 }
 
@@ -1804,6 +1807,10 @@ handle("link-preview", async (_event, url) => linkPreviews.get(url), {
 
 // IPC: open an https URL in the system browser (OAuth flows)
 handle("open-external", (_event, target) => {
+  if (isDesktopPreview && isStableDesktopAuthUrl(target)) {
+    void dialog.showMessageBox(mainWindow, { type: "info", message: "Google sign-in is unavailable in Markie Preview.", detail: "This preview does not use installed Markie's browser callback. Use email sign-in instead." });
+    return;
+  }
   if (/^https?:\/\//i.test(target)) {
     shell.openExternal(target).catch((err) => logCrash("open-external-failed", err));
   }
@@ -2255,6 +2262,7 @@ async function showUpdateMessage(options) {
 async function requestUpdateCheck({ manual = false } = {}) {
   const policy = desktopUpdatePolicy({
     isDev,
+    isPreview: isDesktopPreview,
     isPackaged: app.isPackaged,
     platform: process.platform,
   });
@@ -2314,7 +2322,7 @@ async function requestUpdateCheck({ manual = false } = {}) {
 }
 
 function setupAutoUpdate() {
-  if (!shouldSetupAutoUpdate({ isDev, isPackaged: app.isPackaged, platform: process.platform })) {
+  if (isDesktopPreview || !shouldSetupAutoUpdate({ isDev, isPackaged: app.isPackaged, platform: process.platform })) {
     return;
   }
   // Before anything else: electron-updater logs through console, and a console
@@ -2385,6 +2393,7 @@ function setupAutoUpdate() {
 // again whenever the user flips the Settings toggle, so the change takes effect
 // without a relaunch.
 function applyUpdateChannel() {
+  if (isDesktopPreview) return { optedIn: false, channel: null, allowDowngrade: false };
   const optedIn = readBetaOptIn(app.getPath("userData"));
   const { channel, allowDowngrade } = updaterSettingsFor({
     optedIn,
@@ -2403,7 +2412,7 @@ handle("update-status", () => updateState, { onFailure: () => "idle" });
 handle(
   "update-channel-get",
   () => ({
-    optedIn: readBetaOptIn(app.getPath("userData")),
+    optedIn: !isDesktopPreview && readBetaOptIn(app.getPath("userData")),
     currentVersion: app.getVersion(),
   }),
   // Stable is the safe answer to "I can't tell", matching readBetaOptIn.
@@ -2412,6 +2421,7 @@ handle(
 handle(
   "update-channel-set",
   async (_e, optedIn) => {
+    if (isDesktopPreview) return { ok: false, error: "Preview builds do not use the stable or beta update channels." };
     const saved = writeBetaOptIn(app.getPath("userData"), optedIn === true);
     if (!saved) return { ok: false, error: "Couldn't save that preference." };
     const applied = applyUpdateChannel();
@@ -2431,6 +2441,7 @@ handle("check-for-updates", () => requestUpdateCheck({ manual: true }), {
 // invisible from the other side: the button says "Restarting…" and waits for a
 // quit that is never coming. On success this call does not return at all.
 handle("quit-and-install", () => {
+  if (isDesktopPreview) return { ok: false, reason: "preview" };
   if (updateState !== "ready") return { ok: false, reason: "not-ready" };
   try {
     autoUpdater.quitAndInstall();
@@ -2507,6 +2518,7 @@ function runSwift(src) {
 let _defaultMdStatus = null;
 
 handle("default-md-status", async () => {
+  if (isDesktopPreview) return { supported: false, isDefault: false };
   if (!supportsMarkdownDefaultHandler({ platform: process.platform, isPackaged: app.isPackaged })) {
     return { supported: false, isDefault: false };
   }
@@ -2534,6 +2546,7 @@ handle("default-md-status", async () => {
 }, { onFailure: () => ({ supported: false, isDefault: false }) });
 
 handle("set-default-md", async () => {
+  if (isDesktopPreview) return { ok: false, error: "Markie Preview does not change installed file associations." };
   const unsupported = markdownDefaultHandlerUnavailable({
     platform: process.platform,
     isPackaged: app.isPackaged,
@@ -2989,7 +3002,7 @@ const template = [
 
 // Deep links (markie://…) — used by the Google OAuth callback.
 // macOS delivers these via the open-url event below.
-if (process.env.MARKIE_E2E !== "1") {
+if (!isDesktopPreview && process.env.MARKIE_E2E !== "1") {
   app.setAsDefaultProtocolClient("markie");
 }
 app.on("open-url", (event, url) => {

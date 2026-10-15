@@ -110,7 +110,8 @@ export function DocumentWorkspaceHost({ onExit }: { onExit?: () => void }) {
     resolve.current?.(message);
     resolve.current = null;
   };
-  return <div inert={closing}>
+  return <div inert={closing} className={desktop?.platform === "darwin" ? "docs-desktop-host docs-desktop-mac" : "docs-desktop-host"}>
+    {desktop?.platform === "darwin" ? <div className="docs-native-titlebar" data-window-drag-surface="true" aria-hidden="true">Markie</div> : null}
     {hostError ? <div role="alert" className="fixed top-2 left-1/2 -translate-x-1/2 z-[60] rounded-md border border-border bg-surface text-foreground p-3 text-sm">{hostError}<button type="button" className="ml-3" aria-label="Dismiss native file error" onClick={() => setHostError(null)}>×</button></div> : null}
     <div inert={!!pending}><DocumentWorkspace onExit={onExit} shareDocument={requestShare} externalModalOpen={!!pending}
       pickDocument={native?.pickDocument} saveDocument={native?.saveDocument} subscribeCommands={native?.subscribeCommands}

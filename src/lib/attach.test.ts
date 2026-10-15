@@ -107,6 +107,8 @@ describe("what still opens instead of attaching", () => {
     // Attachments are additive, so they must not take that over.
     expect(opensAsDocument("notes.md")).toBe(true);
     expect(opensAsDocument("data.csv")).toBe(true);
+    expect(opensAsDocument("copy.text")).toBe(true);
+    expect(opensAsDocument("server.log")).toBe(true);
     expect(opensAsDocument("README.MARKDOWN")).toBe(true);
   });
 

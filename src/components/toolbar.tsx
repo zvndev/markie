@@ -19,6 +19,7 @@ interface ToolbarProps {
   // The open document is too big for the rich pane (src/lib/doc-tiers.ts):
   // Rich and Split are shown but cannot be chosen, and say why on hover.
   richUnavailable?: boolean;
+  richUnavailableReason?: string;
   onOpenFile: () => void;
   onExportPDF: (theme: PDFTheme) => void;
   // "Save a Copy" writes the markdown itself somewhere else; Export HTML and
@@ -49,6 +50,7 @@ export function Toolbar({
   mode,
   onModeChange,
   richUnavailable = false,
+  richUnavailableReason = RICH_UNAVAILABLE_TITLE,
   onOpenFile,
   onExportPDF,
   onSaveAs,
@@ -266,7 +268,7 @@ export function Toolbar({
               key={value}
               onClick={() => onModeChange(value)}
               disabled={unavailable}
-              title={unavailable ? RICH_UNAVAILABLE_TITLE : `${label} (${shortcut})`}
+              title={unavailable ? richUnavailableReason : `${label} (${shortcut})`}
               aria-label={`${label} mode (${shortcut})`}
               aria-pressed={mode === value}
               className={`px-3 py-1 text-[11px] font-medium rounded transition-all ${

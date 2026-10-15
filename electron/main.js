@@ -301,7 +301,7 @@ function showDeepLinkFailure() {
 // Save a shared doc to ~/Downloads with a collision-safe markdown name.
 function downloadsUniquePath(name) {
   let safe = path.basename(String(name || "")).replace(/[\\/:]/g, "_").trim() || "Shared document";
-  if (!/\.(md|markdown|mdx|txt)$/i.test(safe)) safe += ".md";
+  if (!/\.(md|markdown|mdx|txt|text|log)$/i.test(safe)) safe += ".md";
   const dir = app.getPath("downloads");
   const ext = path.extname(safe);
   const stem = path.basename(safe, ext);
@@ -1015,7 +1015,7 @@ handle("open-file", async (_event, args) => {
     filters: [
       { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
       { name: "CSV", extensions: ["csv"] },
-      { name: "Text", extensions: ["txt"] },
+      { name: "Text", extensions: ["txt", "text", "log"] },
       { name: "All Files", extensions: ["*"] },
     ],
   });
@@ -1153,7 +1153,7 @@ handle("save-file-as", async (_event, { defaultName, content, csvContent }) => {
     filters: [
       { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
       { name: "CSV", extensions: ["csv"] },
-      { name: "Text", extensions: ["txt"] },
+      { name: "Text", extensions: ["txt", "text", "log"] },
     ],
   });
   if (result.canceled || !result.filePath) {
@@ -1636,7 +1636,7 @@ handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
     defaultPath: suggestedName || "document.md",
     filters: [
       { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
-      { name: "Text", extensions: ["txt"] },
+      { name: "Text", extensions: ["txt", "text", "log"] },
     ],
   });
   if (result.canceled || !result.filePath) return { canceled: true };

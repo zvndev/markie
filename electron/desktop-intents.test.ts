@@ -10,6 +10,11 @@ import {
 } from "./desktop-intents.js";
 
 describe("desktop launch intent helpers", () => {
+  it.each(["txt", "text", "log"])("accepts ordinary .%s text files without admitting Office packages", (extension) => {
+    expect(isOpenablePath(`/notes/copy.${extension}`)).toBe(true);
+    expect(isOpenablePath("/notes/copy.docx")).toBe(false);
+    expect(isOpenablePath("/notes/copy.doc")).toBe(false);
+  });
   const existing = new Set([
     "/Users/me/Notes/brief.md",
     "C:\\Users\\me\\Notes\\brief.md",

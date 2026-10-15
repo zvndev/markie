@@ -1321,3 +1321,13 @@
   run with MARKIE_ALLOW_E2E=1; wiring them into CI is a new BACKLOG item. 0.4.1–0.4.3 push +
   rebase from the other Mac and the Windows real-device pass still stand.
 - blockers: Windows signing/publication unchanged.
+
+## 2026-10-14 Original document platform foundation
+
+Kirby authorized a shared web/desktop document platform, an original DOC/DOCX engine, broader plain text and encrypted protected storage. The complete requested plan is saved at docs/superpowers/plans/2026-10-14-document-platform.md; provenance is recorded at docs/decisions/2026-10-14-original-document-engine.md. Circular ENG-6886 through ENG-6889 own the bounded foundation tasks and review evidence.
+
+Implemented dependency-free original ZIP/XML/OOXML package inspection and safe plain-run editing, a bounded original CFB/Word97-2003 text reader, explicit format/browser file utilities, and isolated Web Crypto vault primitives. Plain .txt/.text/.log files now stay literal in the existing app. The development-only ?documents=1 workbench exports copies and never overwrites originals. Independent review findings were fixed with regression tests, including package protection/XML validation, Buffer ownership, directory-name validation, text collaboration gating, drop routing and unsaved-copy replacement.
+
+Verification: 193 test files passed, 2,749 tests passed, one existing skipped test; 72 MCP tests passed; typecheck, lint, build and diff checks passed. A real Chromium workbench flow created/edited/exported DOCX; unzip validation and the independent platform text consumer read the expected Unicode/XML-sensitive text. Desktop/mobile-width browser checks had no framework overlay or console errors. Existing test-environment and large-bundle warnings remain.
+
+This is a verified initial foundation, not completed Word compatibility or a shipped vault. Microsoft Word corpus/fidelity, native/browser trusted unlock, encrypted persistence/search/recovery, Office multiplayer/sharing, full web hosting/offline support and release remain outside this milestone. No dependencies added, no release/deploy performed, and human-maintained VISION.md/CONSTITUTION.md remain unchanged.

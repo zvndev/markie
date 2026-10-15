@@ -87,6 +87,18 @@ describe("Electron file grants", () => {
     });
   });
 
+  it.each(["txt", "text", "log"])("grants .%s only within authorized locations", (extension) => {
+    const { workspace, outside } = fixture();
+    const grants = createFileGrants({ workspaceRoots: rootsAre([workspace]) });
+    const inside = path.join(workspace, `copy.${extension}`);
+    const ungranted = path.join(outside, `copy.${extension}`);
+    fs.writeFileSync(inside, "# literal text");
+    fs.writeFileSync(ungranted, "not granted");
+    expect(grants.canRead(inside)).toMatchObject({ ok: true, path: inside });
+    expect(grants.canWrite(inside)).toMatchObject({ ok: true, path: inside });
+    expect(grants.canRead(ungranted)).toMatchObject({ ok: false });
+  });
+
   it("rejects symlink escapes from a workspace root", () => {
     const { workspace, outside } = fixture();
     const grants = createFileGrants({ workspaceRoots: rootsAre([workspace]) });

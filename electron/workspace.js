@@ -5,7 +5,7 @@ const path = require("path");
 const os = require("os");
 const registry = require("./registry");
 
-const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
+const OPENABLE = /\.(md|markdown|mdx|txt|text|log|csv)$/i;
 
 // Lazily, so this module can be required (and unit tested) outside Electron —
 // the same reason registry.js defers better-sqlite3.

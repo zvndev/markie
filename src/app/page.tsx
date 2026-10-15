@@ -17,6 +17,7 @@ import { StatsPanel } from "@/components/stats-panel";
 import type { Editor as TipTapEditor } from "@tiptap/react";
 import { formatMarkdownTables } from "@/lib/format-tables";
 import { csvToMarkdownTable, csvDropsContent, markdownTableToCSV } from "@/lib/csv";
+import { classifyDocumentFormat } from "@/lib/document-formats";
 import { CommandPalette } from "@/components/command-palette";
 import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { Settings } from "@/components/settings";
@@ -176,6 +177,7 @@ $E = mc^2$
 type ViewMode = "edit" | "preview" | "split";
 
 const isCSVName = (name: string | null) => !!name && /\.csv$/i.test(name);
+const isPlainTextName = (name: string | null) => !!name && classifyDocumentFormat(name).kind === "text";
 
 // What handleSave returns when a write was refused because the file moved
 // underneath it. Not an error to show: the strip is already saying it.
@@ -213,7 +215,9 @@ export default function Home() {
   const { edit: editDoc, applyExternal: applyExternalDoc, load: loadDoc, reset: resetDoc, markSaved, setLocation } = doc;
   const { latest: latestContent } = doc;
   const [booted, setBooted] = useState(false);
-  const [mode, setMode] = useState<ViewMode>("preview");
+  const [preferredMode, setMode] = useState<ViewMode>("preview");
+  const plainText = isPlainTextName(fileName);
+  const mode: ViewMode = plainText ? "edit" : preferredMode;
   const [isDragging, setIsDragging] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
@@ -294,9 +298,9 @@ export default function Home() {
   // Rich and Split cannot be chosen while a large document is open; the mode
   // buttons say why. Source is always allowed.
   const requestMode = useCallback((m: ViewMode) => {
-    if (largeDocRef.current && m !== "edit") return;
+    if ((largeDocRef.current || plainText) && m !== "edit") return;
     setMode(m);
-  }, []);
+  }, [plainText]);
   const [showHistory, setShowHistory] = useState(false);
   const [peers, setPeers] = useState<PeerUser[]>([]);
   const [liveStatus, setLiveStatus] = useState<
@@ -444,7 +448,7 @@ export default function Home() {
         // No live session for a large document (enterTier): Source is
         // read-only under one, and the rich pane that would carry it never
         // mounts, so a session would only lock the owner out of their file.
-        if (largeDocRef.current || liveUnavailableRef.current || !me || !members || members.length === 0) {
+        if (largeDocRef.current || plainText || liveUnavailableRef.current || !me || !members || members.length === 0) {
           setCollabCfg(null);
           return;
         }
@@ -495,7 +499,7 @@ export default function Home() {
         setCollabCfg(null);
         setEnforcedTheme(null);
       });
-  }, [filePath]);
+  }, [filePath, plainText]);
 
   useEffect(() => {
     refreshCollab();
@@ -930,7 +934,7 @@ export default function Home() {
 
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".md,.markdown,.mdx,.txt,.csv";
+    input.accept = ".md,.markdown,.mdx,.txt,.text,.log,.csv";
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
@@ -961,8 +965,10 @@ export default function Home() {
   // "current" has to mean the last write, not the last render: an autosave
   // fires from a timer and can beat React to it.
   const currentMarkdown = useCallback(
-    (): string => flushRichRef.current?.() ?? latestContent(),
-    [latestContent]
+    (): string => plainText
+      ? latestContent()
+      : flushRichRef.current?.() ?? latestContent(),
+    [latestContent, plainText]
   );
 
   // Paper, PDF, and standalone HTML all render through main's one hidden
@@ -1849,7 +1855,8 @@ export default function Home() {
       <Toolbar
         mode={mode}
         onModeChange={requestMode}
-        richUnavailable={largeDocSize !== null}
+        richUnavailable={largeDocSize !== null || plainText}
+        richUnavailableReason={plainText ? "Plain text stays literal in the text editor." : undefined}
         onOpenFile={handleOpenFile}
         onExportPDF={exportPDF}
         onSaveAs={() => handleSaveAs()}
@@ -1980,14 +1987,14 @@ export default function Home() {
 
           {/* The formatting row, above the document and below the app chrome,
               where every editor puts it. */}
-          <DocToolbar
+          {!plainText && <DocToolbar
             editor={richEditor}
             appearance={appearance}
             onAppearance={changeAppearance}
             onPrint={printDocument}
             onHistory={filePath ? () => setShowHistory(true) : undefined}
             canEdit={docEditable}
-          />
+          />}
 
           <div
             data-markie-document-area
@@ -2021,10 +2028,12 @@ export default function Home() {
                 } markie-source-pane h-full min-w-0 w-full flex-1 overflow-hidden flex flex-col`}
               >
                 {collabCfg && <LiveSourceBanner />}
+                {plainText && canShare && <p className="px-3 py-2 text-xs text-muted border-b border-border">Plain text uses file sync, not live collaboration yet.</p>}
                 {liveUnavailable && <LiveUnavailableNote />}
                 <div className="flex-1 min-h-0 overflow-hidden">
                   <SourceEditor
                     value={content}
+                    plainText={plainText}
                     onChange={editContent}
                     onReady={setSourceHandle}
                     // Read-only for two separate reasons: the rich pane owns the

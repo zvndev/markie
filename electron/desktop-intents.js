@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { fileURLToPath } = require("url");
 
-const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
+const OPENABLE = /\.(md|markdown|mdx|txt|text|log|csv)$/i;
 const MARKIE_DEEP_LINK = /^markie:\/\//i;
 
 function argvList(argv) {

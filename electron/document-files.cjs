@@ -22,9 +22,10 @@ const typedArrayName = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uin
 /** @param {{dialog?: {showOpenDialog?: Function, showSaveDialog?: Function}, getWindow?: Function, fileSystem?: typeof fs, platform?: string, maxBytes?: number, maxLeases?: number, maxQueued?: number}} options */
 function createDocumentFileService({ dialog, getWindow = () => undefined, fileSystem = fs, platform = process.platform, maxBytes = MAX_DOCUMENT_BYTES, maxLeases = 128, maxQueued = 32 } = {}) {
   if (!dialog || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > MAX_DOCUMENT_BYTES || !Number.isSafeInteger(maxLeases) || maxLeases < 1 || !Number.isSafeInteger(maxQueued) || maxQueued < 1) throw new Error("Invalid native document service options.");
-  const io = fileSystem, leases = new Map(), queued = [], owners = new Map(), targetQueues = new Map();
+  const io = fileSystem, leases = new Map(), queued = [], owners = new Map(), targetQueues = new Map(), dropped = new Map();
   let dialogQueue = Promise.resolve(), pendingDialogs = 0, pendingOperations = 0, pendingWriteBytes = 0;
   const key = (target) => platform === "win32" ? target.toLowerCase() : target;
+  const dropKey = (owner, selected) => `${owner}:${key(selected)}`;
   const epoch = (owner) => owners.get(owner) ?? 0;
   const ownerValid = (owner) => { if (!Number.isSafeInteger(owner) || owner < 1) fail("access-denied", "This window cannot access native documents."); };
   const protect = async (operation) => { try { return { ok: true, value: await operation() }; } catch (error) { return errorResult(error); } };
@@ -56,12 +57,19 @@ function createDocumentFileService({ dialog, getWindow = () => undefined, fileSy
       return { bytes, fileId: identity(after), revision: sha(`${stamp(after)}:${sha(bytes)}`), size: length, lastModified: Number(after.mtimeNs / 1000000n) };
     } finally { io.closeSync(fd); }
   };
-  const prepare = (selected, allowNew = false) => {
+  const prepare = (selected, allowNew = false, readContents = true) => {
     if (typeof selected !== "string" || !path.isAbsolute(selected) || selected.length > 4096 || !OPENABLE.test(selected)) fail("unsupported", "Choose a supported local document file.");
-    let target, existed = true;
-    try { const stat = io.lstatSync(selected); if (stat.isSymbolicLink() || !stat.isFile()) fail("access-denied", "Choose a regular file, not a symbolic link or special file."); target = io.realpathSync(selected); }
+    let target, selectedStat, existed = true;
+    try { const stat = io.lstatSync(selected, { bigint: true }); if (stat.isSymbolicLink() || !stat.isFile()) fail("access-denied", "Choose a regular file, not a symbolic link or special file."); selectedStat = stat; target = io.realpathSync(selected); }
     catch (error) { if (!allowNew || error.code !== "ENOENT") throw error; existed = false; const parent = io.realpathSync(path.dirname(selected)); target = path.join(parent, path.basename(selected)); }
     const entry = { target, parent: parentState(target), fileId: existed ? undefined : null, revision: null, size: 0, lastModified: 0, writable: WRITABLE.test(target) };
+    // sendSync only stamps the dropped inode; bulk drops must not copy every
+    // document into memory before the renderer has even chosen what to open.
+    if (!readContents && existed) {
+      if (selectedStat.size > BigInt(maxBytes)) fail("too-large", "Native documents are limited to 32 MiB.");
+      entry.fileId = identity(selectedStat);
+      return entry;
+    }
     const snapshot = readSnapshot(entry);
     if (snapshot) Object.assign(entry, snapshot, { bytes: undefined });
     else entry.fileId = null;
@@ -126,9 +134,39 @@ function createDocumentFileService({ dialog, getWindow = () => undefined, fileSy
       }).finally(() => { pendingWriteBytes -= bytes.length; }); } catch (error) { pendingWriteBytes -= bytes.length; throw error; }
     }); },
     release(owner, args) { return protect(() => { const v = validObject(args, ["leaseId"]); lease(owner, v.leaseId); leases.delete(v.leaseId); return null; }); },
-    releaseOwner(owner) { owners.set(owner, epoch(owner) + 1); for (const [id, entry] of leases) if (entry.owner === owner) leases.delete(id); },
+    releaseOwner(owner) {
+      owners.set(owner, epoch(owner) + 1);
+      for (const [id, entry] of leases) if (entry.owner === owner) leases.delete(id);
+      for (const [id, entry] of dropped) if (entry.dropOwner === owner) dropped.delete(id);
+      for (let i = queued.length - 1; i >= 0; i--) if (queued[i].dropOwner === owner) queued.splice(i, 1);
+    },
+    // Internal main-process bridge for the existing trusted File-drop channel.
+    // It never broadens the classic grants used by Markdown, assets or sync.
+    grantDroppedFile(owner, selected) {
+      try {
+        ownerValid(owner);
+        if (typeof selected !== "string" || !EXTRA_LAUNCH.test(selected)) return { ok: true, value: false };
+        const id = dropKey(owner, selected);
+        if (!dropped.has(id) && dropped.size >= maxQueued) fail("limit-exceeded", "Too many native file drops are awaiting open.");
+        dropped.set(id, { ...prepare(selected, false, false), dropOwner: owner });
+        return { ok: true, value: true };
+      } catch (error) { return errorResult(error); }
+    },
+    queueDroppedFile(owner, selected) {
+      try {
+        ownerValid(owner);
+        if (typeof selected !== "string") return { ok: true, value: false };
+        const id = dropKey(owner, selected), entry = dropped.get(id);
+        if (!entry) return { ok: true, value: false };
+        if (queued.length >= maxQueued) fail("limit-exceeded", "Too many OS document opens are queued.");
+        const current = readSnapshot(entry);
+        if (current) Object.assign(entry, current, { bytes: undefined });
+        dropped.delete(id); queued.push(entry);
+        return { ok: true, value: true };
+      } catch (error) { return errorResult(error); }
+    },
     queueOsFile(selected, { includeClassic = false } = {}) { try { if (!(includeClassic === true ? OPENABLE : EXTRA_LAUNCH).test(selected)) return { ok: true, value: false }; if (queued.length >= maxQueued) fail("limit-exceeded", "Too many OS document opens are queued."); queued.push(prepare(selected)); return { ok: true, value: true }; } catch (error) { return errorResult(error); } },
-    takeInitial(owner) { return protect(() => { ownerValid(owner); if (!queued.length) return null; if (leases.size >= maxLeases) fail("limit-exceeded", "Close a native document before accepting another OS open."); const entry = queued.shift(); const current = readSnapshot(entry); if (current) Object.assign(entry, current, { bytes: undefined }); return grant(owner, entry); }); },
+    takeInitial(owner) { return protect(() => { ownerValid(owner); const at = queued.findIndex((entry) => entry.dropOwner === undefined || entry.dropOwner === owner); if (at < 0) return null; if (leases.size >= maxLeases) fail("limit-exceeded", "Close a native document before accepting another OS open."); const [entry] = queued.splice(at, 1); const current = readSnapshot(entry); if (current) Object.assign(entry, current, { bytes: undefined }); return grant(owner, entry); }); },
   };
 }
 

@@ -1,9 +1,15 @@
 import { classifyDocumentFormat } from "./document-formats";
+import type { LibraryFormat } from "./document-library";
 
 export interface CloudIdentity { baseUrl: string; token: string }
 export interface CloudFile { name: string; bytes: Uint8Array; text?: string }
-export interface CloudSnapshot {
-  id: string; name: string; format: string; version: number; encoding: "base64"; data: string; sha256: string;
+export interface CloudDocumentMetadata {
+  schemaVersion: 2; id: string; name: string; format: LibraryFormat; version: number;
+  sha256: string; createdAt: number; updatedAt: number; byteLength: number;
+  role: "owner" | "editor" | "viewer";
+}
+export interface CloudSnapshot extends Pick<CloudDocumentMetadata, "id" | "name" | "format" | "version" | "sha256" | "role"> {
+  encoding: "base64"; data: string;
   [key: string]: unknown;
 }
 export class DocumentCloudError extends Error {
@@ -12,6 +18,25 @@ export class DocumentCloudError extends Error {
 const MAX_FILE = 16 * 1024 * 1024;
 const MAX_RESPONSE = 24 * 1024 * 1024;
 const FORMATS = new Set(["markdown", "text", "csv", "json", "yaml", "xml", "docx", "doc"]);
+const ROLES = new Set(["owner", "editor", "viewer"]);
+const validName = (value: unknown): value is string => typeof value === "string" && !!value.trim() && value.length <= 256
+  && !/[\u0000-\u001f\u007f/\\]/.test(value) && !/\.(?:vault|markievault|markie-vault)$/i.test(value);
+function validSnapshotMetadata(value: unknown): value is Pick<CloudDocumentMetadata, "id" | "name" | "format" | "version" | "sha256" | "role"> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as CloudDocumentMetadata;
+  return typeof row.id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(row.id) && validName(row.name)
+    && FORMATS.has(row.format) && classifyDocumentFormat(row.name).kind === row.format && ROLES.has(row.role)
+    && Number.isSafeInteger(row.version) && row.version >= 1 && typeof row.sha256 === "string" && /^[a-f0-9]{64}$/.test(row.sha256);
+}
+function metadata(value: unknown): CloudDocumentMetadata {
+  const row = value as CloudDocumentMetadata;
+  if (!validSnapshotMetadata(value) || row.schemaVersion !== 2
+    || ![row.createdAt, row.updatedAt, row.byteLength].every((number) => Number.isSafeInteger(number) && number >= 0)
+    || row.byteLength > MAX_FILE) throw new DocumentCloudError(0, "The server returned invalid document metadata.");
+  // Copy only metadata. List responses never become a source of document bytes.
+  return { schemaVersion: 2, id: row.id, name: row.name, format: row.format, role: row.role, version: row.version,
+    sha256: row.sha256, createdAt: row.createdAt, updatedAt: row.updatedAt, byteLength: row.byteLength };
+}
 
 function originUrl(value: string): string {
   const url = new URL(value);
@@ -90,19 +115,32 @@ export class DocumentCloudClient {
 
   async upload(file: CloudFile, target?: { id: string; version: number }, signal?: AbortSignal): Promise<CloudSnapshot> {
     const bytes = new Uint8Array(file.bytes);
-    const format = classifyDocumentFormat(file.name).kind;
-    if (!FORMATS.has(format) || bytes.length > MAX_FILE) throw new DocumentCloudError(0, "This document format or size cannot be shared yet.");
-    const body = { schemaVersion: 2, name: file.name, format, encoding: "base64", data: binaryBase64(bytes), sha256: await sha256(bytes), baseVersion: target?.version ?? 0 };
-    const response = await this.call(target ? `/documents/${encodeURIComponent(target.id)}` : "/documents", target ? "PUT" : "POST", body, signal);
-    return (await this.decode(response.document)).snapshot;
+    const name = file.name, format = classifyDocumentFormat(name).kind;
+    const targetId = target?.id, baseVersion = target?.version ?? 0;
+    if (!validName(name) || !FORMATS.has(format) || bytes.length > MAX_FILE) throw new DocumentCloudError(0, "This document format or size cannot be shared yet.");
+    if (target && (typeof targetId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(targetId) || !Number.isSafeInteger(baseVersion) || baseVersion < 1 || !Number.isSafeInteger(baseVersion + 1))) throw new DocumentCloudError(0, "Invalid cloud save target.");
+    const body = { schemaVersion: 2, name, format, encoding: "base64", data: binaryBase64(bytes), sha256: await sha256(bytes), baseVersion };
+    const response = await this.call(targetId ? `/documents/${targetId}` : "/documents", targetId ? "PUT" : "POST", body, signal);
+    const { snapshot } = await this.decode(response.document);
+    if (snapshot.name !== body.name || snapshot.format !== body.format || snapshot.sha256 !== body.sha256 || snapshot.data !== body.data
+      || snapshot.version !== baseVersion + 1 || (targetId && snapshot.id !== targetId)
+      || (targetId ? snapshot.role !== "owner" && snapshot.role !== "editor" : snapshot.role !== "owner")) {
+      throw new DocumentCloudError(0, "The cloud save acknowledgment did not match the submitted snapshot. Your edits were kept.");
+    }
+    return snapshot;
+  }
+
+  async list(signal?: AbortSignal): Promise<CloudDocumentMetadata[]> {
+    const result = await this.call("/documents", "GET", undefined, signal);
+    if (!Array.isArray(result.documents) || result.documents.length > 1000) throw new DocumentCloudError(0, "The server returned an invalid or oversized document list.");
+    const rows = result.documents.map(metadata);
+    if (new Set(rows.map((row) => row.id)).size !== rows.length) throw new DocumentCloudError(0, "The server returned duplicate document identities.");
+    return rows;
   }
 
   async decode(value: unknown): Promise<{ snapshot: CloudSnapshot; bytes: Uint8Array }> {
     const snapshot = value as CloudSnapshot;
-    if (!snapshot || typeof snapshot.id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(snapshot.id)
-      || typeof snapshot.name !== "string" || !snapshot.name || snapshot.name.length > 256
-      || !FORMATS.has(snapshot.format) || snapshot.encoding !== "base64"
-      || !Number.isSafeInteger(snapshot.version) || snapshot.version < 1 || !/^[a-f0-9]{64}$/.test(snapshot.sha256)) {
+    if (!validSnapshotMetadata(value) || snapshot.encoding !== "base64") {
       throw new DocumentCloudError(0, "The server returned invalid document metadata.");
     }
     const bytes = fromBase64(snapshot.data);

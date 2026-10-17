@@ -209,6 +209,7 @@ const toDisk = (name: string | null, md: string) =>
   isCSVName(name) ? markdownTableToCSV(md) : md;
 
 const DocumentEditor = lazy(() => import("@/components/document-workspace-host").then((module) => ({ default: module.DocumentWorkspaceHost })));
+const DocumentCloudLibrary = lazy(() => import("@/components/document-cloud-library").then((module) => ({ default: module.DocumentCloudLibrary })));
 
 export default function Home({ documentsEnabled = false }: { documentsEnabled?: boolean } = {}) {
   const [documentsOpen, setDocumentsOpen] = useState(false);
@@ -930,28 +931,36 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   );
 
   // Files dropped onto the Library: register each on this device, open the last.
+  const addingPaths = useRef(false);
   const addPaths = useCallback(
-    (paths: string[]) => {
+    async (paths: string[]) => {
       const api = getElectronAPI();
-      if (!api || paths.length === 0) return;
-      Promise.all(paths.map((p) => api.openFilePath(p))).then((files) => {
-        const refused = files.find(isTooLarge);
-        const valid = files.filter(
-          (f): f is FilePayload => f !== null && !isTooLarge(f)
-        );
-        valid.forEach((f, i) => {
-          if (i === valid.length - 1) {
-            loadFile(f); // open + track the last one
-          } else if (!f.large) {
-            // Main registered a large one itself when it read it.
-            api.registryTrack?.({ path: f.path, name: f.name, content: f.content });
+      if (!api || paths.length === 0 || addingPaths.current) return;
+      if (document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]") || documentShellRef.current?.busy) return;
+      addingPaths.current = true;
+      let lastText: FilePayload | null = null;
+      try {
+        if (documentsEnabled && documentShellRef.current && !await documentShellRef.current.prepareLeave()) return;
+        for (const p of paths) {
+          const file = await api.openFilePath(p);
+          if (isTooLarge(file)) { setRefusedDoc({ name: file.name, size: file.size }); continue; }
+          if (lastText && !lastText.large) {
+            await api.registryTrack?.({ path: lastText.path, name: lastText.name, content: lastText.content });
           }
-        });
-        if (refused) setRefusedDoc({ name: refused.name, size: refused.size });
+          if (file) lastText = file;
+          else if (documentsEnabled && documentShellRef.current?.settleIncomingDocuments) {
+            if (!await documentShellRef.current.settleIncomingDocuments()) {
+              setForkError("Finish the pending document operation before opening the remaining dropped files."); return;
+            }
+            lastText = null;
+          }
+        }
+        if (lastText) await loadFile(lastText);
         setLibRefreshKey((k) => k + 1);
-      });
+      } catch { setForkError("The dropped files could not all be opened. Your current document was kept."); }
+      finally { addingPaths.current = false; }
     },
-    [loadFile]
+    [loadFile, documentsEnabled]
   );
 
   const handleOpenFile = useCallback(() => {
@@ -1251,6 +1260,17 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   const openDocument = useCallback(async (record: LibraryRecord) => {
     if (await openDocumentsWorkspace()) documentShellRef.current?.open(record);
   }, [openDocumentsWorkspace]);
+  const openCloudDocument = useCallback(async (id: string) => {
+    if (!documentsEnabled || document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
+    const shell = documentShellRef.current;
+    if (!shell?.ready || shell.busy || !shell.openCloudDocument) return;
+    if (!await shell.prepareLeave()) return;
+    if (await openDocumentsWorkspace()) requestAnimationFrame(() => {
+      if (documentsOpenRef.current && !document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) {
+        documentShellRef.current?.openCloudDocument?.(id);
+      }
+    });
+  }, [documentsEnabled, openDocumentsWorkspace]);
   const openVault = useCallback(async () => {
     if (await openDocumentsWorkspace()) documentShellRef.current?.showVault();
   }, [openDocumentsWorkspace]);
@@ -2089,6 +2109,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
             onOpenDocument={documentsEnabled ? (record) => void openDocument(record) : undefined}
             onCreateDocument={documentsEnabled ? (format) => void createDocument(format) : undefined}
             onOpenVault={documentsEnabled ? () => void openVault() : undefined}
+            renderCloudDocuments={documentsEnabled ? (query) => <Suspense fallback={<p role="status" className="px-2 py-2 text-xs text-muted">Loading cloud documents…</p>}><DocumentCloudLibrary query={query} onOpen={(id) => void openCloudDocument(id)} /></Suspense> : undefined}
             retainedDocument={documentsEnabled ? { name: fileName ?? "Untitled.md", path: filePath, dirty: isDirty, selected: !documentsOpen, onSelect: () => { void leaveDocuments(); } } : undefined}
           />
         )}
@@ -2431,8 +2452,8 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       {isDragging && (
         <div className="drop-overlay">
           <div className="drop-overlay-inner">
-            <div className="text-2xl mb-2">Drop markdown file</div>
-            <div className="text-sm opacity-60">.md, .markdown, .mdx, .txt</div>
+            <div className="text-2xl mb-2">{documentsEnabled ? "Drop a document" : "Drop markdown file"}</div>
+            <div className="text-sm opacity-60">{documentsEnabled ? "Word, Markdown, text and supported document files" : ".md, .markdown, .mdx, .txt"}</div>
           </div>
         </div>
       )}

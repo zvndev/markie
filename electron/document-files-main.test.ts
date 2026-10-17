@@ -1,8 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { runInNewContext } from "node:vm";
-import { DOCUMENT_EXTENSIONS } from "./document-files.cjs";
+import { createDocumentFileService, DOCUMENT_EXTENSIONS } from "./document-files.cjs";
 const source = readFileSync(new URL("./main.js", import.meta.url), "utf8");
+const dropFolders: string[] = [];
+afterEach(() => { for (const folder of dropFolders.splice(0)) rmSync(folder, { recursive: true, force: true }); });
 describe("native document main-process integration", () => {
   it("routes extra-format OS opens without replacing classic launch dispatch", () => {
     expect(source).toContain('require("./document-files.cjs")');
@@ -26,6 +30,76 @@ describe("native document main-process integration", () => {
     const close = source.slice(source.indexOf("const closeFlusher = createCloseFlusher("), source.indexOf('mainWindow.on("close"'));
     expect(close).toContain("forceOnTimeout: () => false");
     expect(close).not.toContain("documentsWorkspaceActive()");
+  });
+});
+
+describe("explicit native document drops through existing channels", () => {
+  function dropBridge(extension = "docx") {
+    const folder = mkdtempSync(path.join(os.tmpdir(), "markie-drop-main-")); dropFolders.push(folder);
+    const target = path.join(folder, `source.${extension}`); writeFileSync(target, new Uint8Array([80, 75, 3, 4, 0, 255]));
+    const files = createDocumentFileService({ dialog: {} });
+    const frame = { url: "app://markie/index.html" }, contents = { id: 17, mainFrame: frame, send: vi.fn() };
+    const event = { sender: contents, senderFrame: frame, returnValue: undefined as boolean | undefined };
+    const readFilePayload = vi.fn(() => ({ content: "legacy", path: target })), grantFile = vi.fn(() => ({ ok: true }));
+    let open: (event: unknown, target: string) => Promise<unknown> = async () => undefined;
+    let grant: (event: unknown, target: string) => void = () => undefined;
+    const snippets = [
+      source.slice(source.indexOf("function currentCloseSender("), source.indexOf('ipcMain.on("app-close-ready"')),
+      source.slice(source.indexOf("function queueNativeDocumentOpen("), source.indexOf("// Deliver a markie:// deep link")),
+      source.slice(source.indexOf('handle("open-file-path",'), source.indexOf("// Synchronous so preload", source.indexOf('handle("open-file-path",'))),
+      source.slice(source.indexOf('ipcMain.on("grant-file-path",'), source.indexOf("// A file dragged onto a document", source.indexOf('ipcMain.on("grant-file-path",'))),
+    ];
+    runInNewContext(snippets.join("\n"), {
+      mainWindow: { webContents: contents, isDestroyed: () => false, isMinimized: () => false, show: vi.fn(), focus: vi.fn() },
+      isAppUrl: (url: string) => url.startsWith("app://markie/"),
+      documentFiles: files, OPENABLE: /\.(md|markdown|mdx|txt|text|log|csv)$/i,
+      rendererReady: true, pendingNativeDocumentError: null, nativeDocumentQueued: false,
+      handle: (_name: string, callback: typeof open) => { open = callback; },
+      ipcMain: { on: (_name: string, callback: typeof grant) => { grant = callback; } },
+      fileGrants: { grantFile }, readFilePayload, isAdvertisedPath: () => false,
+    });
+    return { target, files, event, frame, contents, readFilePayload, grantFile, open, grant };
+  }
+
+  it.each(["docx", "doc", "json", "yaml", "yml", "xml", "rtf", "html", "htm", "odt"])("opens explicitly dropped .%s through null + opaque native notification only", async (extension) => {
+    const f = dropBridge(extension);
+    expect(await f.open(f.event, f.target)).toBeNull(); expect(f.contents.send).not.toHaveBeenCalled();
+    f.grant(f.event, f.target); expect(f.event.returnValue).toBe(true);
+    expect(await f.open(f.event, f.target)).toBeNull(); expect(f.contents.send).toHaveBeenCalledExactlyOnceWith("document-file-opened");
+    expect(f.readFilePayload).not.toHaveBeenCalled(); expect(f.grantFile).not.toHaveBeenCalled();
+    const opened = await f.files.takeInitial(17); expect(opened).toMatchObject({ ok: true, value: { name: `source.${extension}` } });
+    expect(JSON.stringify(opened)).not.toContain(path.dirname(f.target));
+  });
+
+  it("rejects foreign senders, subframes and non-app URLs without native grants or notifications", async () => {
+    const f = dropBridge();
+    for (const event of [
+      { ...f.event, sender: { ...f.contents, id: 18 } },
+      { ...f.event, senderFrame: { ...f.frame } },
+    ]) {
+      f.grant(event, f.target); expect(event.returnValue).toBe(false);
+      expect(await f.open(event, f.target)).toBeNull();
+    }
+    f.frame.url = "https://untrusted.example/";
+    f.grant(f.event, f.target); expect(f.event.returnValue).toBe(false); expect(await f.open(f.event, f.target)).toBeNull();
+    expect(f.contents.send).not.toHaveBeenCalled(); expect(f.readFilePayload).not.toHaveBeenCalled();
+    expect(await f.files.takeInitial(17)).toEqual({ ok: true, value: null });
+  });
+
+  it.each(["md", "markdown", "mdx", "txt", "text", "log", "csv"])("preserves .%s classic drop grants and text payloads", async (extension) => {
+    const f = dropBridge(extension); f.grant(f.event, f.target); expect(f.event.returnValue).toBe(true);
+    expect(f.grantFile).toHaveBeenCalledExactlyOnceWith(f.target);
+    expect(await f.open(f.event, f.target)).toEqual({ content: "legacy", path: f.target });
+    expect(f.readFilePayload).toHaveBeenCalledExactlyOnceWith(f.target, { grant: false });
+    expect(f.contents.send).not.toHaveBeenCalled(); expect(await f.files.takeInitial(17)).toEqual({ ok: true, value: null });
+  });
+
+  it("rejects unsupported drops and revokes native drop authority on owner cleanup", async () => {
+    const unsupported = dropBridge("pdf"); unsupported.grant(unsupported.event, unsupported.target);
+    expect(unsupported.event.returnValue).toBe(false); expect(await unsupported.open(unsupported.event, unsupported.target)).toBeNull();
+    expect(unsupported.contents.send).not.toHaveBeenCalled(); expect(unsupported.readFilePayload).not.toHaveBeenCalled();
+    const f = dropBridge(); f.grant(f.event, f.target); f.files.releaseOwner(17);
+    expect(await f.open(f.event, f.target)).toBeNull(); expect(f.contents.send).not.toHaveBeenCalled();
   });
 });
 

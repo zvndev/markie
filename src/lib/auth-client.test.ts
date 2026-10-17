@@ -58,6 +58,22 @@ afterEach(() => {
 });
 
 describe("who the sync engine is told is signed in", () => {
+  it("exposes only an exact confirmed account/server, never a token", async () => {
+    client.adoptAuthToken("tok-a");
+    expect(client.getConfirmedAuthIdentity()).toBeNull();
+    answerMe(A); await client.authClient.me();
+    expect(client.getConfirmedAuthIdentity()).toEqual({ userId: A.id, serverURL: client.getServerURL() });
+    const server = client.getServerURL();
+    client.setServerURL("https://different.test");
+    expect(client.getConfirmedAuthIdentity()).toBeNull();
+    client.setServerURL(server); answerMe(A); await client.authClient.me();
+    client.adoptAuthToken("tok-b");
+    expect(client.getConfirmedAuthIdentity()).toBeNull();
+    answerMe(B); await client.authClient.me();
+    expect(client.getConfirmedAuthIdentity()).toEqual({ userId: B.id, serverURL: server });
+    localStorage.setItem(TOKEN_KEY, "cross-tab-token");
+    expect(client.getConfirmedAuthIdentity()).toBeNull();
+  });
   it("names the account only after the server confirms it for the token", async () => {
     client.adoptAuthToken("tok-a");
     expect(lastPush()).toEqual({ token: "tok-a", userId: null });

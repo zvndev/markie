@@ -4,6 +4,7 @@ import { sharesClient, type SharedByMeDoc } from "@/lib/auth-client";
 import { organizeLibraryItems } from "@/lib/library-overview";
 import { shortAgo } from "@/lib/relative-time";
 import { PanelNotice } from "@/components/panel-notice";
+import { DEFAULT_LIBRARY_DOCUMENT_QUERY, libraryDocumentFormat, queryLibraryDocuments, type LibraryDocumentQuery } from "@/lib/library-document-query";
 
 // Everything the cloud holds for this account, on one page.
 //
@@ -17,6 +18,10 @@ interface CloudViewProps {
   // Every library item. The page groups them itself, so a caller cannot hand it
   // a list that disagrees with the counts in the band.
   items: LibraryItem[];
+  query?: LibraryDocumentQuery;
+  // The ordinary snapshot section owns its own listing and counts. Scope this
+  // legacy service's copy and omit redundant empty groups when shown beside it.
+  alongsideSnapshots?: boolean;
   // The library snapshot has not arrived yet.
   loading: boolean;
   // Reuse the Library's row renderer so open, pull and download behaviour stays
@@ -55,10 +60,9 @@ const SECTION_LABEL: Record<SectionId, string> = {
   "by-me": "Shared by me",
 };
 
-// Every section is on the page whatever the account holds, so the page has one
-// shape. A heading that disappears when its list is empty leaves someone
-// hunting for a section with no way to know it exists, so an empty one says so
-// in a line instead. The band is the summary and still leaves zeroes out.
+// The legacy-only page retains its familiar four-section shape. Alongside the
+// separate snapshot listing, ready empty groups are condensed into one scoped
+// summary instead; loading, failed and populated groups remain visible.
 const SECTION_EMPTY: Record<SectionId, string> = {
   synced: "Nothing synced from this device yet",
   cloud: "Nothing in your cloud yet",
@@ -155,6 +159,8 @@ function people(d: SharedByMeDoc): string {
 
 export function CloudView({
   items,
+  query = DEFAULT_LIBRARY_DOCUMENT_QUERY,
+  alongsideSnapshots = false,
   loading,
   renderRow,
   signedIn,
@@ -218,10 +224,14 @@ export function CloudView({
     };
   }, [signedIn, accountId, refreshKey, byMeNonce]);
 
-  const { syncedFromDevice, myCloudOnly, sharedItems } = useMemo(
-    () => organizeLibraryItems(items),
-    [items]
-  );
+  const { syncedFromDevice, myCloudOnly, sharedItems } = useMemo(() => {
+    const grouped = organizeLibraryItems(items);
+    const visible = (rows: LibraryItem[]) => queryLibraryDocuments(rows, query, (item) => ({
+      key: `legacy:${item.path ?? item.cloudId ?? item.name}`, name: item.name,
+      format: libraryDocumentFormat(item.name), path: item.path, updatedAt: item.lastOpenedAt,
+    }));
+    return { syncedFromDevice: visible(grouped.syncedFromDevice), myCloudOnly: visible(grouped.myCloudOnly), sharedItems: visible(grouped.sharedItems) };
+  }, [items, query]);
 
   // Which "shared by me" documents this device also has on disk, so a row can
   // open the document instead of only offering to manage its people.
@@ -232,6 +242,10 @@ export function CloudView({
     }
     return map;
   }, [items]);
+  const visibleByMe = useMemo(() => queryLibraryDocuments(byMe ?? [], query, (doc) => ({
+    key: `legacy-share:${doc.id}`, name: doc.name, format: libraryDocumentFormat(doc.name),
+    path: localByCloudId.get(doc.id), updatedAt: doc.updated_at,
+  })), [byMe, query, localByCloudId]);
 
   // Nothing has arrived from the main process yet. The skeleton stands for the
   // whole page rather than one section: four headings each saying they hold
@@ -261,35 +275,43 @@ export function CloudView({
       synced: syncedFromDevice.length,
       cloud: myCloudOnly.length,
       "with-me": sharedItems.length,
-      "by-me": byMe?.length ?? 0,
+      "by-me": visibleByMe.length,
     },
     lists
   );
+  const hasFiles = syncedFromDevice.length + myCloudOnly.length + sharedItems.length + visibleByMe.length > 0;
+  const filtered = !!query.search.trim() || query.format !== "all";
+  const scopedBand = !alongsideSnapshots || hasFiles ? band
+    : lists === "loading" ? "Checking file sync and sharing…"
+      : lists === "incomplete" ? "Some synced or shared files didn't load"
+        : filtered ? "No synced or shared files match these filters." : "No synced or shared files yet.";
+  const showSection = (count: number) => !alongsideSnapshots || count > 0;
 
   const notice = cloudError ? { text: cloudError, kind: "error" as const } : null;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className={alongsideSnapshots ? "mt-2 flex flex-col border-t border-border" : "flex flex-col h-full"}>
+      {alongsideSnapshots ? <h3 className="px-3 pt-2 text-xs font-medium text-muted">File sync &amp; sharing</h3> : null}
       {/* A signed-out account has no counts to summarize, but one we have not
           looked at yet does, so the band stays while the answer is on its way. */}
       {(booting || signedIn) && (
         <div className="shrink-0 border-b border-border/60 px-2.5 py-2 text-[10.5px] text-muted">
-          {band}
+          {scopedBand}
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
+      <div className={alongsideSnapshots ? "" : "flex-1 overflow-y-auto"}>
         {booting ? (
           <CloudSkeleton label="Loading your cloud documents" />
         ) : !signedIn ? (
           <CloudEmptyState
             icon={<CloudIcon />}
-            title="Sign in to see your cloud"
+            title={alongsideSnapshots ? "Sign in to see synced and shared files" : "Sign in to see your cloud"}
             body="Documents you sync, and docs people share with you, show up once you sign in."
           />
         ) : (
           <>
-            <Section
+            {showSection(syncedFromDevice.length) ? <Section
               id="synced"
               count={syncedFromDevice.length}
               open={open.synced}
@@ -302,9 +324,9 @@ export function CloudView({
               ) : (
                 <SectionEmpty id="synced" />
               )}
-            </Section>
+            </Section> : null}
 
-            <Section id="cloud" count={myCloudOnly.length} open={open.cloud} onToggle={toggle}>
+            {showSection(myCloudOnly.length) ? <Section id="cloud" count={myCloudOnly.length} open={open.cloud} onToggle={toggle}>
               {myCloudOnly.length > 0 ? (
                 myCloudOnly.map((i) => (
                   <RowWithMediaNote key={i.cloudId ?? i.path ?? i.name} item={i} renderRow={renderRow} />
@@ -312,9 +334,9 @@ export function CloudView({
               ) : (
                 <SectionEmpty id="cloud" />
               )}
-            </Section>
+            </Section> : null}
 
-            <Section
+            {showSection(sharedItems.length) ? <Section
               id="with-me"
               count={sharedItems.length}
               open={open["with-me"]}
@@ -327,9 +349,9 @@ export function CloudView({
               ) : (
                 <SectionEmpty id="with-me" />
               )}
-            </Section>
+            </Section> : null}
 
-            <Section id="by-me" count={byMe?.length ?? 0} open={open["by-me"]} onToggle={toggle}>
+            {showSection(visibleByMe.length) || byMeError || byMe === null ? <Section id="by-me" count={visibleByMe.length} open={open["by-me"]} onToggle={toggle}>
               {byMeError ? (
                 <CloudEmptyState
                   icon={<PeopleIcon />}
@@ -345,8 +367,8 @@ export function CloudView({
                 />
               ) : byMe === null ? (
                 <CloudSkeleton label="Loading documents you've shared" />
-              ) : byMe.length > 0 ? (
-                byMe.map((d) => (
+              ) : visibleByMe.length > 0 ? (
+                visibleByMe.map((d) => (
                   <SharedByMeRow
                     key={d.id}
                     doc={d}
@@ -358,7 +380,7 @@ export function CloudView({
               ) : (
                 <SectionEmpty id="by-me" />
               )}
-            </Section>
+            </Section> : null}
           </>
         )}
       </div>

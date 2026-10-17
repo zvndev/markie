@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { WordDocumentEditor } from "./word-document-editor";
 import { applyDocxOperations, createDocx, exportDocx, openDocx, type DocxDocument } from "@/lib/office/docx";
 import type { DocumentCommandTarget } from "@/lib/document-commands";
-afterEach(cleanup);
+import { customStyleFixture } from "@/lib/office/docx-styles.fixture";
+import { readZip, writeZip } from "@/lib/office/zip";
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 function editor(initial: DocxDocument, onHistory?: () => void, localControls = false) {
   const state = { document: initial, target: null as DocumentCommandTarget | null };
   const commands = (target: DocumentCommandTarget | null) => { state.target = target; };
@@ -22,6 +24,152 @@ function select(start: number, end: number) {
   return paragraph;
 }
 describe("Word renderer inside Markie", () => {
+  it("retains selected Word ranges when compact overflow opens advanced tools and keeps Escape local", async () => {
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) { this.callback([{ target, contentRect: { width: 760 } } as ResizeObserverEntry], this as unknown as ResizeObserver); }
+      disconnect() {}
+    });
+    const view = editor(await createDocx("Hello Word")); select(6, 10);
+    const before = await exportDocx(view.state.document), more = screen.getByRole("button", { name: "More formatting" });
+    fireEvent.click(more); expect(screen.getByRole("dialog", { name: "More formatting" })).toBeInTheDocument();
+    expect(await exportDocx(view.state.document)).toEqual(before);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" }); expect(screen.queryByRole("dialog")).toBeNull(); expect(more).toHaveFocus();
+    fireEvent.click(more); fireEvent.click(screen.getByRole("button", { name: "Insert link" }));
+    expect(screen.queryByRole("dialog", { name: "More formatting" })).toBeNull();
+    const link = screen.getByRole("dialog", { name: "Link and Page Breaks" });
+    fireEvent.change(within(link).getByLabelText("Link address"), { target: { value: "https://example.com/selected" } });
+    fireEvent.click(within(link).getByRole("button", { name: "Link selected text" }));
+    const reopened = await openDocx(await exportDocx(view.state.document));
+    expect(reopened.hyperlinks).toMatchObject([{ text: "Word", target: "https://example.com/selected" }]);
+    expect(reopened.paragraphs[0].runs[0].text).toBe("Hello ");
+  });
+  it("matches native and dropdown Normal without confusing a custom document default on export/reopen", async () => {
+    const imported = await customStyleFixture("EditorialLead"), parts = await readZip(imported.bytes), encoder = new TextEncoder(), decoder = new TextDecoder();
+    const stylesPart = parts.find((part) => part.name === "word/styles.xml")!;
+    stylesPart.data = encoder.encode(decoder.decode(stylesPart.data).replace('w:default="1" ', "").replace('w:styleId="EditorialBody"', 'w:default="1" w:styleId="EditorialBody"'));
+    const initial = await openDocx(writeZip(parts)), view = editor(initial), style = screen.getByRole("combobox", { name: "Paragraph style" });
+    expect(within(style).getByRole("option", { name: "Default paragraph" })).toHaveValue("");
+    expect(within(style).getByRole("option", { name: /^Normal$/ })).toHaveValue("Normal");
+    view.execute("format-normal");
+    const nativeBytes = await exportDocx(view.state.document), native = await openDocx(nativeBytes);
+    expect(native.paragraphs[0].styleId).toBe("Normal");
+    expect(style).toHaveDisplayValue("Normal");
+    view.execute("undo");
+    fireEvent.change(style, { target: { value: "Normal" } });
+    const dropdownBytes = await exportDocx(view.state.document), dropdown = await openDocx(dropdownBytes);
+    expect(dropdownBytes).toEqual(nativeBytes);
+    expect(dropdown.paragraphs[0].runs.map((run) => run.style)).toEqual(initial.paragraphs[0].runs.map((run) => run.style));
+    fireEvent.change(style, { target: { value: "" } });
+    const defaultParagraph = await openDocx(await exportDocx(view.state.document));
+    expect(defaultParagraph.paragraphs[0].styleId).toBeUndefined();
+    expect(defaultParagraph.paragraphs[0].runs[1].resolvedStyle).toMatchObject({ bold: true, fontFamily: "Aptos", fontSizePoints: 16 });
+    expect(native.paragraphs[0].runs[1].resolvedStyle).toMatchObject({ fontFamily: "Cambria", fontSizePoints: 11 });
+    expect(native.paragraphs[0].runs[1].resolvedStyle?.bold).not.toBe(true);
+  });
+  it("offers imported style names and assigns the real ID without baking guessed run formatting", async () => {
+    const imported = await customStyleFixture(), view = editor(imported.document);
+    const style = screen.getByRole("combobox", { name: "Paragraph style" });
+    expect(style).toHaveDisplayValue("Editorial body");
+    expect(within(style).getByRole("option", { name: "Editorial lead" })).toHaveValue("EditorialLead");
+    expect(within(style).queryByRole("option", { name: "Character accent" })).toBeNull();
+    fireEvent.change(style, { target: { value: "EditorialLead" } });
+    expect(view.state.document.paragraphs[0].styleId).toBe("EditorialLead");
+    expect(view.state.document.paragraphs[0].runs.map((run) => run.style)).toEqual(imported.document.paragraphs[0].runs.map((run) => run.style));
+    expect(screen.getByRole("textbox", { name: "Paragraph 1" })).toHaveStyle({ textAlign: "center", marginBottom: "12pt" });
+    const rendered = screen.getByRole("textbox", { name: "Paragraph 1" }).querySelectorAll("[data-run-id]");
+    expect(rendered[0]).toHaveStyle({ fontWeight: "400", color: "#cc0000", fontSize: "9pt", fontFamily: "Aptos", fontStyle: "italic" });
+    expect(rendered[1]).toHaveStyle({ fontWeight: "700", fontSize: "16pt" });
+    const bytes = await exportDocx(view.state.document), reopened = await openDocx(bytes);
+    expect(reopened.paragraphs[0].styleId).toBe("EditorialLead");
+    const parts = await readZip(bytes); expect(new TextDecoder().decode(parts.find((part) => part.name === "word/styles.xml")!.data)).toBe(imported.styles);
+    view.execute("undo"); expect(view.state.document.paragraphs[0].styleId).toBe("EditorialBody");
+    view.execute("redo"); expect(view.state.document.paragraphs[0].styleId).toBe("EditorialLead");
+  });
+  it("shows mixed fonts, sizes and bold for a real multi-run range and toggles the entire selection coherently", async () => {
+    const { document: imported } = await customStyleFixture();
+    const initial = applyDocxOperations(imported, [{ type: "format-run", runId: imported.paragraphs[0].runs[0].id, style: { fontFamily: "Georgia" } }]);
+    const view = editor(initial), paragraph = screen.getByRole("textbox", { name: "Paragraph 1" });
+    const spans = paragraph.querySelectorAll("[data-run-id]"), range = document.createRange();
+    range.setStart(spans[0].firstChild!, 2); range.setEnd(spans[1].firstChild!, 3); window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range); fireEvent.pointerUp(paragraph);
+    expect(screen.getByRole("button", { name: "Bold" })).toHaveAttribute("aria-pressed", "mixed");
+    expect(screen.getByLabelText("Font")).toHaveDisplayValue("Mixed fonts");
+    expect(screen.getByRole("spinbutton", { name: "Font size" })).toHaveValue(null);
+    expect(screen.getByRole("spinbutton", { name: "Font size" })).toHaveAttribute("placeholder", "Mixed");
+    fireEvent.keyDown(paragraph, { key: "b", ctrlKey: true });
+    expect(screen.getByRole("button", { name: "Bold" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Bold" }));
+    const reopened = await openDocx(await exportDocx(view.state.document));
+    expect(reopened.paragraphs[0].runs.map((run) => [run.text, run.style.bold])).toEqual([["Al", false], ["pha ", false], ["Bet", false], ["a", undefined]]);
+    expect(reopened.paragraphs[0].runs[3].resolvedStyle?.bold).toBe(true);
+  });
+  it("shows unspecified font size honestly, rejects cross-paragraph ranges and ignores background modal mutations", async () => {
+    const view = editor(await createDocx("First\nSecond")), before = await exportDocx(view.state.document);
+    expect(screen.getByRole("spinbutton", { name: "Font size" })).toHaveValue(null);
+    expect(screen.getByLabelText("Font")).toHaveDisplayValue("Inherited font");
+    const first = screen.getByRole("textbox", { name: "Paragraph 1" }), second = screen.getByRole("textbox", { name: "Paragraph 2" });
+    const range = document.createRange(); range.setStart(first.querySelector("span")!.firstChild!, 1); range.setEnd(second.querySelector("span")!.firstChild!, 2); window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range); fireEvent.pointerUp(first);
+    expect(screen.getByRole("button", { name: "Bold" })).toBeDisabled();
+    view.execute("format-bold"); view.execute("format-align-center"); view.execute("format-heading-1"); fireEvent.keyDown(first, { key: "b", ctrlKey: true });
+    expect(await exportDocx(view.state.document)).toEqual(before);
+    select(0, 2); view.execute("format-font");
+    const dialog = screen.getByRole("dialog", { name: "Font" });
+    fireEvent.change(within(screen.getByRole("toolbar")).getByLabelText("Font"), { target: { value: "Arial" } });
+    fireEvent.change(screen.getByLabelText("Paragraph style"), { target: { value: "Heading1" } });
+    expect(first).toHaveAttribute("contenteditable", "false"); fireEvent.input(first);
+    expect(await exportDocx(view.state.document)).toEqual(before);
+    fireEvent.blur(within(dialog).getByLabelText("Font family")); expect(await exportDocx(view.state.document)).toEqual(before);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+  it("keeps mixed font dialogs byte-neutral until an actual value is applied, then clears back to inheritance", async () => {
+    const { document: initial } = await customStyleFixture("EditorialLead"), view = editor(initial), paragraph = screen.getByRole("textbox", { name: "Paragraph 1" });
+    const range = document.createRange(); range.selectNodeContents(paragraph); window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range); fireEvent.pointerUp(paragraph);
+    const before = await exportDocx(view.state.document); view.execute("format-font");
+    const dialog = screen.getByRole("dialog", { name: "Font" }), size = within(dialog).getByRole("spinbutton", { name: "Font size" });
+    expect(size).toHaveValue(null); expect(size).toHaveAttribute("placeholder", "Mixed");
+    expect(within(dialog).getByLabelText("Font family")).toHaveValue("Aptos");
+    fireEvent.blur(size); fireEvent.blur(within(dialog).getByLabelText("Font family")); expect(await exportDocx(view.state.document)).toEqual(before);
+    fireEvent.blur(size, { target: { value: "21.5" } });
+    expect(view.state.document.paragraphs[0].runs.every((run) => run.style.fontSizePoints === 21.5)).toBe(true);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Clear formatting" }));
+    const reopened = await openDocx(await exportDocx(view.state.document));
+    expect(reopened.paragraphs[0].runs.every((run) => run.style.fontSizePoints === undefined && run.resolvedStyle?.fontSizePoints === 16)).toBe(true);
+    expect(reopened.paragraphs[0].styleId).toBe("EditorialLead");
+  });
+  it("uses effective inherited underline for keyboard toggles and restores it with undo", async () => {
+    const imported = await customStyleFixture("EditorialBody", "CharacterAccent");
+    const view = editor(imported.document), paragraph = screen.getByRole("textbox", { name: "Paragraph 1" }), text = paragraph.querySelectorAll("[data-run-id]")[1].firstChild!;
+    const range = globalThis.document.createRange(); range.setStart(text, 1); range.setEnd(text, 3); window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range); fireEvent.pointerUp(text.parentElement!);
+    expect(screen.getByRole("button", { name: "Underline" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.keyDown(paragraph, { key: "u", metaKey: true });
+    const reopened = await openDocx(await exportDocx(view.state.document));
+    expect(reopened.paragraphs[0].runs.map((run) => [run.text, run.resolvedStyle?.underline])).toEqual([["Alpha ", undefined], ["B", "single"], ["et", "none"], ["a", "single"]]);
+    view.execute("undo"); expect(view.state.document.paragraphs[0].runs[1].resolvedStyle?.underline).toBe("single");
+  });
+  it("shows inherited and mixed colors honestly without mutating on Font dialog open", async () => {
+    const imported = await customStyleFixture(), view = editor(imported.document), paragraph = screen.getByRole("textbox", { name: "Paragraph 1" }), before = await exportDocx(view.state.document);
+    const text = paragraph.querySelectorAll("[data-run-id]")[1].firstChild!, range = document.createRange();
+    range.setStart(text, 0); range.setEnd(text, 4); window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range); fireEvent.pointerUp(text.parentElement!);
+    view.execute("format-font");
+    const inherited = screen.getByRole("dialog", { name: "Font" });
+    expect(within(inherited).getByLabelText("Text color")).toHaveValue("#333333");
+    fireEvent.blur(within(inherited).getByLabelText("Font family"));
+    expect(await exportDocx(view.state.document)).toEqual(before);
+    fireEvent.click(within(inherited).getByRole("button", { name: "Close Font" }));
+    const all = document.createRange(); all.selectNodeContents(paragraph); window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(all); fireEvent.pointerUp(paragraph);
+    view.execute("format-font");
+    const mixed = screen.getByRole("dialog", { name: "Font" });
+    expect(within(mixed).getByText("Mixed colors")).toBeInTheDocument();
+    expect(within(mixed).queryByLabelText("Text color")).toBeNull();
+    const applyColor = within(mixed).getByLabelText("Apply text color");
+    expect(applyColor).toHaveAttribute("title", "Choose a color to apply to the selection");
+    fireEvent.blur(applyColor); expect(await exportDocx(view.state.document)).toEqual(before);
+    fireEvent.change(applyColor, { target: { value: "#446688" } });
+    const reopened = await openDocx(await exportDocx(view.state.document));
+    expect(reopened.paragraphs[0].runs.every((run) => run.style.color === "446688")).toBe(true);
+    expect(reopened.paragraphs[1].runs[0].style.color).toBeUndefined();
+  });
   it("uses the shared formatting toolbar with no Office tabs or permanent advanced panel", async () => {
     editor(await createDocx("Markie document"));
     expect(screen.getByRole("toolbar", { name: "Document formatting" })).toHaveAttribute("data-markie-doc-toolbar");

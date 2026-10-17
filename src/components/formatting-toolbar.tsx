@@ -1,4 +1,6 @@
-import { type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 import { controlTitle } from "@/lib/toolbar-shortcuts";
 import { DOC_FONTS, stepWidth, stepZoom, widthLabel, zoomLabel } from "@/lib/doc-appearance";
 import type { FormattingAction, FormattingToolbarProps } from "@/lib/format-controls";
@@ -49,6 +51,12 @@ function Divider() {
   return <span aria-hidden="true" className="w-px h-5 bg-border mx-1 shrink-0" />;
 }
 
+/** Move the real controls, rather than maintaining a second set of commands. */
+function OverflowTools({ compact, target, children }: { compact: boolean; target: HTMLElement | null; children: ReactNode }) {
+  if (!compact) return children;
+  return target ? createPortal(<div className="flex flex-wrap items-center gap-1 border-b border-border p-1 last:border-0 [&_button]:gap-2 [&_button]:text-[11px] [&_button]:after:content-[attr(aria-label)] [&_select]:min-w-[90px]">{children}</div>, target) : null;
+}
+
 function TButton({
   onClick,
   title,
@@ -59,7 +67,7 @@ function TButton({
 }: {
   onClick?: () => void;
   title: string;
-  active?: boolean;
+  active?: boolean | "mixed";
   disabled?: boolean;
   label: string;
   children: ReactNode;
@@ -73,7 +81,7 @@ function TButton({
       aria-label={label}
       aria-pressed={active}
       className={`h-7 min-w-7 px-1.5 rounded flex items-center justify-center shrink-0 transition-colors ${
-        active
+        active === true
           ? "bg-accent text-foreground"
           : "text-muted hover:text-foreground hover:bg-accent/40"
       } disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted`}
@@ -95,22 +103,54 @@ const BLOCK_STYLES = [
 export function FormattingToolbar({
   state, canEdit, appearance, onAppearance, currentStyle, styles = BLOCK_STYLES,
   currentFont, fonts = DOC_FONTS, selecting, currentSize, onFont, onSize, onStyle,
-  onAction, onColor, onHighlight, supportedActions, showWidthControls = true,
+  onAction, onColor, onHighlight, supportedActions, showWidthControls = true, fontPlaceholder = "Font…", sizePlaceholder,
   showStyleControls = true, startControls, serializationHint, onPrint, onHistory,
 }: FormattingToolbarProps) {
+  const root = useRef<HTMLDivElement>(null), more = useRef<HTMLButtonElement>(null);
+  const [width, setWidth] = useState(0), [overflowOpen, setOverflowOpen] = useState(false);
+  const [overflowTarget, setOverflowTarget] = useState<HTMLDivElement | null>(null);
+  const overflowId = useId();
+  const compact = width > 0 && width < 1300, narrow = width > 0 && width < 700, selectorsInOverflow = width > 0 && width < 620;
+  useLayoutEffect(() => {
+    const node = root.current;
+    if (!node) return;
+    const measure = () => setWidth(node.getBoundingClientRect().width);
+    measure();
+    if (typeof ResizeObserver === "undefined") { window.addEventListener("resize", measure); return () => window.removeEventListener("resize", measure); }
+    const observer = new ResizeObserver((entries) => setWidth(entries[0]?.contentRect.width ?? node.getBoundingClientRect().width));
+    observer.observe(node); return () => observer.disconnect();
+  }, []);
+  useDismissibleLayer(overflowOpen, root, () => setOverflowOpen(false));
+  useEffect(() => { if (!compact) setOverflowOpen(false); }, [compact]);
+  useEffect(() => {
+    if (overflowOpen) overflowTarget?.querySelector<HTMLElement>('button:not(:disabled),select:not(:disabled),input:not(:disabled)')?.focus();
+  }, [overflowOpen, overflowTarget]);
+  const closeOverflow = () => { setOverflowOpen(false); more.current?.focus(); };
   const supports = (action: FormattingAction) => supportedActions === undefined || supportedActions.includes(action);
   const withSerializationHint = (label: string) => serializationHint ? `${label} - ${serializationHint}` : label;
   const hasActions = (...actions: FormattingAction[]) => actions.some(supports);
 
   return (
     <div
-      data-markie-doc-toolbar
+      ref={root} data-markie-doc-toolbar data-compact={compact || undefined}
       role="toolbar"
       aria-label="Document formatting"
-      className="markie-doc-toolbar flex items-center gap-0.5 px-2 py-1 border-b border-border overflow-x-auto"
+      className="markie-doc-toolbar relative min-w-0 shrink-0 flex items-center gap-0.5 px-2 py-1 border-b border-border"
       style={{ background: "var(--surface)" }}
+      onKeyDown={(event) => {
+        if (!overflowTarget?.contains(event.target as Node)) return;
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeOverflow(); return; }
+        if (!(event.target instanceof HTMLButtonElement) || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+        const controls = [...overflowTarget.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),input:not(:disabled)')];
+        const index = controls.indexOf(event.target), next = event.key === "Home" ? 0 : event.key === "End" ? controls.length - 1 : (index + (event.key === "ArrowDown" ? 1 : controls.length - 1)) % controls.length;
+        event.preventDefault(); controls[next]?.focus();
+      }}
+      onClick={(event) => { if (overflowTarget?.contains(event.target as Node) && (event.target as HTMLElement).closest("button")) closeOverflow(); }}
+      onChange={(event) => { if (overflowTarget?.contains(event.target as Node) && event.target instanceof HTMLSelectElement) closeOverflow(); }}
+      onBlur={(event) => { if (overflowTarget?.contains(event.target as Node) && event.relatedTarget instanceof Node && !overflowTarget.contains(event.relatedTarget) && event.relatedTarget !== more.current) setOverflowOpen(false); }}
     >
       {startControls}
+      <OverflowTools compact={narrow} target={overflowTarget}>
       {/* The conventional curved arrows: a hook back on itself, not the
           circular refresh glyph they read as before. */}
       {supports("undo") && (<TButton
@@ -129,6 +169,8 @@ export function FormattingToolbar({
       >
         <Icon><path d="m15 14 5-5-5-5" /><path d="M20 9H10a6 6 0 0 0 0 12h3" /></Icon>
       </TButton>)}
+      </OverflowTools>
+      <OverflowTools compact={compact} target={overflowTarget}>
       {onPrint && (<TButton onClick={onPrint} title={controlTitle("print", "Print")} label="Print">
         <Icon><path d="M6 9V2h12v7" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><rect x="6" y="14" width="12" height="8" rx="1" /></Icon>
       </TButton>)}
@@ -137,12 +179,13 @@ export function FormattingToolbar({
           <Icon><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></Icon>
         </TButton>
       )}
+      </OverflowTools>
 
-      {(hasActions("undo", "redo") || onPrint || onHistory) && <Divider />}
+      {!compact && (hasActions("undo", "redo") || onPrint || onHistory) && <Divider />}
 
       {/* Zoom is a viewing preference. The renderer owns whether font and
           size changes affect the selection or the document's appearance. */}
-      <TButton
+      <OverflowTools compact={compact} target={overflowTarget}><TButton
         onClick={() => onAppearance({ ...appearance, zoom: stepZoom(appearance.zoom, -1) })}
         title={controlTitle("zoomOut", "Zoom out")}
         label="Zoom out"
@@ -181,15 +224,17 @@ export function FormattingToolbar({
           <Icon><path d="M7 7 3 12 7 17" /><path d="M17 7 21 12 17 17" /></Icon>
         </TButton>
       </>}
+      </OverflowTools>
 
-      <Divider />
+      {!compact && <Divider />}
 
-      {showStyleControls && <select
+      <OverflowTools compact={selectorsInOverflow} target={overflowTarget}>{showStyleControls && <select
         value={currentStyle}
         onChange={(e) => onStyle(e.target.value)}
         disabled={!canEdit}
         aria-label="Paragraph style"
         title="Paragraph style"
+        style={{ width: compact ? 112 : 140, minWidth: 0 }}
         className="markie-overlay-field text-[11px] h-7 px-1.5 shrink-0 disabled:opacity-35"
       >
         {styles.map((s) => (
@@ -210,26 +255,31 @@ export function FormattingToolbar({
             ? withSerializationHint("Font for the selected text")
             : "Font for the whole document - a viewing preference, not saved into the file"
         }
+        style={{ width: compact ? 104 : 140, minWidth: 0 }}
         className="markie-overlay-field text-[11px] h-7 px-1.5 shrink-0"
       >
-        {selecting && <option value="">Font…</option>}
+        {selecting && <option value="">{fontPlaceholder}</option>}
         {fonts.map((f) => (
           <option key={f.id} value={f.id}>{f.label}</option>
         ))}
       </select>
+      </OverflowTools>
 
-      <TButton
-        onClick={() => onSize(currentSize - 1)}
+      <OverflowTools compact={compact} target={overflowTarget}><TButton
+        onClick={() => { if (currentSize !== null) onSize(currentSize - 1); }}
         title={selecting ? "Smaller selected text" : "Smaller text (whole document)"}
         label="Decrease font size"
-        disabled={selecting && !canEdit}
+        disabled={(selecting && !canEdit) || currentSize === null || currentSize <= 1}
       >
         <Icon><path d="M5 12h14" /></Icon>
       </TButton>
+      </OverflowTools>
       <input
         type="number"
-        value={currentSize}
-        onChange={(e) => onSize(Number(e.target.value))}
+        value={currentSize ?? ""}
+        placeholder={sizePlaceholder}
+        min={1} max={400} step={.5}
+        onChange={(e) => { const value = Number(e.target.value); if (e.target.value && Number.isFinite(value) && value >= 1 && value <= 400 && value * 2 % 1 === 0) onSize(value); }}
         disabled={selecting && !canEdit}
         aria-label="Font size"
         title={
@@ -239,16 +289,17 @@ export function FormattingToolbar({
         }
         className="markie-overlay-field text-[11px] h-7 w-[38px] text-center shrink-0 tabular-nums"
       />
-      <TButton
-        onClick={() => onSize(currentSize + 1)}
+      <OverflowTools compact={compact} target={overflowTarget}><TButton
+        onClick={() => { if (currentSize !== null) onSize(currentSize + 1); }}
         title={selecting ? "Larger selected text" : "Larger text (whole document)"}
         label="Increase font size"
-        disabled={selecting && !canEdit}
+        disabled={(selecting && !canEdit) || currentSize === null || currentSize >= 400}
       >
         <Icon><path d="M12 5v14" /><path d="M5 12h14" /></Icon>
       </TButton>
+      </OverflowTools>
 
-      {(hasActions("bold", "italic", "underline", "strike", "code") || onColor || onHighlight) && <Divider />}
+      {!compact && (hasActions("bold", "italic", "underline", "strike", "code") || onColor || onHighlight) && <Divider />}
 
       {supports("bold") && (<TButton onClick={() => onAction("bold")} title={controlTitle("bold", "Bold")} label="Bold" active={state?.bold} disabled={!canEdit}>
         <span aria-hidden="true" className="text-[13px] font-bold">B</span>
@@ -266,7 +317,7 @@ export function FormattingToolbar({
         <span aria-hidden="true" className="text-[13px] underline">U</span>
       </TButton>)}
 
-      {onColor && <label
+      <OverflowTools compact={compact} target={overflowTarget}>{onColor && <label
         title={controlTitle("textColour", "Text colour", { note: serializationHint })}
         className="h-7 px-1 rounded flex items-center gap-0.5 shrink-0 text-muted hover:text-foreground hover:bg-accent/40 cursor-pointer"
       >
@@ -390,6 +441,13 @@ export function FormattingToolbar({
       >
         <Icon><path d="m16 16 5-5" /><path d="m21 16-5-5" /><path d="m3 19 6.5-6.5" /><path d="m13 3 8 8" /><path d="M3 19h8" /></Icon>
       </TButton>)}
+      </OverflowTools>
+      {compact ? <button ref={more} type="button" aria-label="More formatting" title="More formatting and viewing controls" aria-haspopup="dialog" aria-expanded={overflowOpen} aria-controls={overflowOpen ? overflowId : undefined}
+        className="h-7 min-w-7 px-1.5 rounded flex items-center justify-center shrink-0 text-muted hover:text-foreground hover:bg-accent/40"
+        onClick={() => setOverflowOpen(!overflowOpen)} onKeyDown={(event) => { if (["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); setOverflowOpen(true); } }}>
+        <Icon><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></Icon>
+      </button> : null}
+      {compact && overflowOpen ? <div ref={setOverflowTarget} id={overflowId} role="dialog" aria-label="More formatting" className="markie-format-overflow absolute right-2 top-full z-[60] mt-1 max-h-[60vh] w-[320px] max-w-[calc(100vw-32px)] overflow-auto rounded-lg border border-border bg-surface-2 p-1 shadow-lg" /> : null}
     </div>
   );
 }

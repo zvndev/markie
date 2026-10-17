@@ -18,15 +18,90 @@ vi.mock("./documents/document-workspace", () => ({ DocumentWorkspace: (props: Do
   }, [onShellChange]);
   return <div><p>{props.incomingDocument?.payload.name ?? "No incoming document"}</p><button type="button" onClick={() => void props.shareDocument?.({ name: "synthetic.txt", bytes: new Uint8Array(), text: "" })}>Share fixture</button></div>;
 } }));
-vi.mock("./document-cloud-dialog", () => ({ DocumentCloudDialog: ({ onCloseGuard }: { onCloseGuard?: (guard: (() => boolean) | null) => void }) => {
+vi.mock("./document-cloud-dialog", () => ({ DocumentCloudDialog: ({ onCloseGuard, file, cloudDocumentId }: { file?: unknown; cloudDocumentId?: string; onCloseGuard?: (guard: (() => boolean) | null) => void }) => {
   useEffect(() => { onCloseGuard?.(state.cloudGuard); return () => onCloseGuard?.(null); }, [onCloseGuard]);
-  return <p>Synthetic cloud dialog</p>;
+  return <p>Synthetic cloud dialog{cloudDocumentId ? ` for ${cloudDocumentId}${file ? " with local seed" : " without local seed"}` : ""}</p>;
 } }));
 import { DocumentWorkspaceHost } from "./document-workspace-host";
 
 beforeEach(() => { state.props = null; state.prepare.mockReset().mockResolvedValue(true); state.cloudGuard.mockReset().mockReturnValue(true); state.execute.mockReset(); });
 
 describe("native document workspace host lifecycle", () => {
+  it("waits for the committed nonbusy shell after successful asynchronous cloud recovery", async () => {
+    installBridge(); let shell: DocumentShellState | null = null, finish!: (allowed: boolean) => void;
+    render(<DocumentWorkspaceHost embedded onShellChange={(value) => { shell = value; }} />);
+    const initial = shell!;
+    state.prepare.mockImplementationOnce(() => {
+      state.props!.onShellChange!({ ...initial, busy: true });
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    await act(async () => { initial.openCloudDocument!("cloud-id"); });
+    expect(shell!.busy).toBe(true);
+    await act(async () => { finish(true); });
+    expect(screen.queryByText(/Synthetic cloud dialog/)).toBeNull();
+    await act(async () => { state.props!.onShellChange!({ ...initial, busy: true }); });
+    expect(screen.queryByText(/Synthetic cloud dialog/)).toBeNull();
+    await act(async () => { state.props!.onShellChange!({ ...initial, busy: false }); });
+    await screen.findByText("Synthetic cloud dialog for cloud-id without local seed");
+    await act(async () => { state.props!.onShellChange!({ ...initial, busy: false }); });
+    expect(screen.getAllByText(/Synthetic cloud dialog/)).toHaveLength(1);
+    expect(state.prepare).toHaveBeenCalledOnce();
+  });
+  it("cancels an unfinished Cloud preparation on unmount without applying its late success", async () => {
+    installBridge(); let shell: DocumentShellState | null = null, finish!: (allowed: boolean) => void;
+    const view = render(<DocumentWorkspaceHost embedded onShellChange={(value) => { shell = value; }} />);
+    state.prepare.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await act(async () => { shell!.openCloudDocument!("cloud-id"); });
+    view.unmount(); await act(async () => { finish(true); });
+    expect(screen.queryByText(/Synthetic cloud dialog/)).toBeNull();
+  });
+  it("reports rejected Cloud preparation and permits a later safe retry", async () => {
+    installBridge(); let shell: DocumentShellState | null = null;
+    render(<DocumentWorkspaceHost embedded onShellChange={(value) => { shell = value; }} />);
+    state.prepare.mockRejectedValueOnce(new Error("Synthetic recovery failure"));
+    await act(async () => { shell!.openCloudDocument!("cloud-id"); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Recovery did not finish");
+    expect(screen.queryByText(/Synthetic cloud dialog/)).toBeNull();
+    await act(async () => { shell!.openCloudDocument!("cloud-id"); });
+    await screen.findByText("Synthetic cloud dialog for cloud-id without local seed");
+  });
+  it.each(["session", "private", "inactive", "modal", "unmount"])("cancels prepared cloud opening when %s ownership changes before nonbusy publication", async (change) => {
+    installBridge(); let shell: DocumentShellState | null = null, finish!: (allowed: boolean) => void;
+    const onShellChange = (value: DocumentShellState | null) => { shell = value; };
+    const view = render(<DocumentWorkspaceHost embedded onShellChange={onShellChange} />);
+    const initial = shell!;
+    state.prepare.mockImplementationOnce(() => {
+      state.props!.onShellChange!({ ...initial, busy: true });
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    await act(async () => { initial.openCloudDocument!("cloud-id"); });
+    await act(async () => { finish(true); });
+    if (change === "unmount") view.unmount();
+    else if (change === "inactive") view.rerender(<DocumentWorkspaceHost embedded active={false} onShellChange={onShellChange} />);
+    else {
+      if (change === "modal") {
+        const modal = document.createElement("section"); modal.setAttribute("role", "dialog"); modal.setAttribute("aria-modal", "true"); view.container.append(modal);
+      }
+      await act(async () => { state.props!.onShellChange!({ ...initial, busy: false, ...(change === "session" ? { selectedId: "different-session" } : change === "private" ? { private: true } : {}) }); });
+    }
+    expect(screen.queryByText(/Synthetic cloud dialog/)).toBeNull();
+  });
+  it("opens existing cloud IDs only after local recovery and blocks native fallbacks while the modal is open", async () => {
+    installBridge(); let shell: DocumentShellState | null = null;
+    const view = render(<DocumentWorkspaceHost embedded onShellChange={(value) => { shell = value; }} />);
+    state.prepare.mockResolvedValueOnce(false);
+    await act(async () => { shell!.openCloudDocument!("cloud-id"); });
+    expect(screen.queryByText(/Synthetic cloud dialog/)).toBeNull();
+    await act(async () => { shell!.openCloudDocument!("cloud-id"); });
+    await screen.findByText("Synthetic cloud dialog for cloud-id without local seed");
+    expect(state.props?.externalModalOpen).toBe(true);
+    expect(view.container.querySelector(".docs-embedded-content")).toHaveAttribute("inert");
+    const field = document.createElement("textarea"); view.container.firstElementChild!.append(field); field.focus();
+    const exec = vi.fn(); Object.defineProperty(document, "execCommand", { configurable: true, value: exec });
+    await act(async () => { emit("onMenuUndo"); emit("onMenuRedo"); emit("onMenuFind"); shell!.openCloudDocument!("other-id"); });
+    expect(exec).not.toHaveBeenCalled(); expect(state.execute).not.toHaveBeenCalled();
+    expect(state.prepare).toHaveBeenCalledTimes(2);
+  });
   it("embeds content without owning the native frame, app close, file commands or legacy text events", async () => {
     const bridge = installBridge({ platform: "darwin" });
     const view = render(<DocumentWorkspaceHost embedded active={false} />);
@@ -51,6 +126,46 @@ describe("native document workspace host lifecycle", () => {
     render(<DocumentWorkspaceHost embedded active={false} onActivate={onActivate} />);
     await screen.findByText("incoming.txt");
     expect(onActivate).toHaveBeenCalledOnce();
+  });
+  it("settles a native batch only after every queued request is consumed", async () => {
+    const descriptors = ["a", "b"].map((id) => ({ leaseId: id, name: `${id}.txt`, size: 1, lastModified: 1, revision: "revision", writable: true }));
+    const bridge = installBridge(); let shell: DocumentShellState | null = null;
+    bridge.documentFiles!.takeInitial = vi.fn().mockResolvedValueOnce({ ok: true, value: descriptors[0] }).mockResolvedValueOnce({ ok: true, value: descriptors[1] }).mockResolvedValue({ ok: true, value: null });
+    bridge.documentFiles!.read = vi.fn(async ({ leaseId }) => ({ ok: true as const, value: { descriptor: descriptors.find((item) => item.leaseId === leaseId)!, bytes: new Uint8Array([65]) } }));
+    render(<DocumentWorkspaceHost embedded onShellChange={(value) => { shell = value; }} />);
+    await screen.findByText("a.txt");
+    await waitFor(() => expect(bridge.documentFiles!.takeInitial).toHaveBeenCalledTimes(3));
+    let complete = false, settlement!: Promise<boolean>;
+    await act(async () => { settlement = shell!.settleIncomingDocuments!().then((ok) => { complete = true; return ok; }); });
+    expect(complete).toBe(false);
+    await act(async () => { state.props!.onIncomingDocumentHandled!(state.props!.incomingDocument!.requestId, true); });
+    await screen.findByText("b.txt"); expect(complete).toBe(false);
+    await act(async () => { state.props!.onIncomingDocumentHandled!(state.props!.incomingDocument!.requestId, true); });
+    expect(await settlement).toBe(true);
+  });
+  it("cancels native batch settlement on unmount instead of advancing the next file", async () => {
+    const descriptor = { leaseId: "a", name: "a.txt", size: 1, lastModified: 1, revision: "revision", writable: true };
+    const bridge = installBridge(); let shell: DocumentShellState | null = null;
+    bridge.documentFiles!.takeInitial = vi.fn().mockResolvedValueOnce({ ok: true, value: descriptor }).mockResolvedValue({ ok: true, value: null });
+    bridge.documentFiles!.read = vi.fn().mockResolvedValue({ ok: true, value: { descriptor, bytes: new Uint8Array([65]) } });
+    const view = render(<DocumentWorkspaceHost embedded onShellChange={(value) => { shell = value; }} />);
+    await screen.findByText("a.txt");
+    let settlement!: Promise<boolean>;
+    await act(async () => { settlement = shell!.settleIncomingDocuments!(); });
+    view.unmount(); expect(await settlement).toBe(false);
+  });
+  it("does not treat a consumed failed import as a successfully settled file", async () => {
+    const descriptor = { leaseId: "broken", name: "broken.docx", size: 1, lastModified: 1, revision: "revision", writable: true };
+    const bridge = installBridge(); let shell: DocumentShellState | null = null;
+    bridge.documentFiles!.takeInitial = vi.fn().mockResolvedValueOnce({ ok: true, value: descriptor }).mockResolvedValue({ ok: true, value: null });
+    bridge.documentFiles!.read = vi.fn().mockResolvedValue({ ok: true, value: { descriptor, bytes: new Uint8Array([65]) } });
+    render(<DocumentWorkspaceHost embedded onShellChange={(value) => { shell = value; }} />);
+    await screen.findByText("broken.docx");
+    let settlement!: Promise<boolean>;
+    await act(async () => { settlement = shell!.settleIncomingDocuments!(); });
+    await act(async () => { state.props!.onIncomingDocumentHandled!(state.props!.incomingDocument!.requestId, false); });
+    expect(await settlement).toBe(false);
+    expect(state.prepare).not.toHaveBeenCalled();
   });
   it("adds the cloud draft guard to both embedded close and leave actions", async () => {
     installBridge(); let shell: DocumentShellState | null = null;
@@ -143,7 +258,7 @@ describe("native document workspace host lifecycle", () => {
     render(<DocumentWorkspaceHost />);
     await screen.findByText("a.txt");
     await waitFor(() => expect(bridge.documentFiles!.takeInitial).toHaveBeenCalledTimes(3));
-    await act(async () => { state.props!.onIncomingDocumentHandled!(state.props!.incomingDocument!.requestId); });
+    await act(async () => { state.props!.onIncomingDocumentHandled!(state.props!.incomingDocument!.requestId, true); });
     await screen.findByText("b.txt");
     expect(state.props?.pickDocument).toBeTypeOf("function"); expect(state.props?.subscribeCommands).toBeTypeOf("function");
   });

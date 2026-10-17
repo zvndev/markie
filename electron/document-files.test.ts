@@ -13,6 +13,57 @@ function service(selected: string, overrides: Record<string, unknown> = {}) {
 function value<T>(result: { ok: boolean; value?: T; error?: { code: string; message: string } }): T { expect(result.ok).toBe(true); if (!result.ok) throw new Error(result.error?.message); return result.value as T; }
 
 describe("bounded opaque native document grants", () => {
+  it("requires an exact owner-scoped drop grant before queuing rich bytes", async () => {
+    const directory = fixture(), target = path.join(directory, "source.docx"), other = path.join(directory, "other.docx");
+    const original = Buffer.from([80, 75, 3, 4, 255, 0]); fs.writeFileSync(target, original); fs.writeFileSync(other, "other");
+    const api = service(target);
+    expect(api.queueDroppedFile(1, target)).toEqual({ ok: true, value: false });
+    expect(api.grantDroppedFile(1, target)).toEqual({ ok: true, value: true });
+    expect(api.queueDroppedFile(2, target)).toEqual({ ok: true, value: false });
+    expect(api.queueDroppedFile(1, other)).toEqual({ ok: true, value: false });
+    expect(api.queueDroppedFile(1, target)).toEqual({ ok: true, value: true });
+    expect(api.queueDroppedFile(1, target)).toEqual({ ok: true, value: false });
+    expect(value(await api.takeInitial(2))).toBeNull();
+    const opened = value<{ leaseId: string }>(await api.takeInitial(1));
+    expect(value<{ bytes: Uint8Array }>(await api.read(1, { leaseId: opened.leaseId })).bytes).toEqual(new Uint8Array(original));
+    expect(fs.readFileSync(target)).toEqual(original);
+  });
+  it("revokes pending and queued drop grants with their window owner", async () => {
+    const directory = fixture(), first = path.join(directory, "first.docx"), second = path.join(directory, "second.json");
+    fs.writeFileSync(first, "first"); fs.writeFileSync(second, "second"); const api = service(first);
+    expect(api.grantDroppedFile(1, first).ok).toBe(true); expect(api.queueDroppedFile(1, first).ok).toBe(true);
+    expect(api.grantDroppedFile(1, second).ok).toBe(true); api.releaseOwner(1);
+    expect(api.queueDroppedFile(1, second)).toEqual({ ok: true, value: false });
+    expect(value(await api.takeInitial(1))).toBeNull(); expect(value(await api.takeInitial(2))).toBeNull();
+    expect(api.queueOsFile(first).ok).toBe(true); expect(value<{ name: string }>(await api.takeInitial(2)).name).toBe("first.docx");
+  });
+  it("bounds drop grants, queues and bytes and keeps classic types outside native drops", async () => {
+    const directory = fixture(), first = path.join(directory, "first.docx"), second = path.join(directory, "second.json"), classic = path.join(directory, "classic.md");
+    fs.writeFileSync(first, "first"); fs.writeFileSync(second, "second"); fs.writeFileSync(classic, "markdown"); const api = service(first, { maxQueued: 1 });
+    expect(api.grantDroppedFile(1, classic)).toEqual({ ok: true, value: false });
+    expect(api.grantDroppedFile(1, first).ok).toBe(true); expect(api.grantDroppedFile(1, first).ok).toBe(true);
+    expect(api.grantDroppedFile(1, second)).toMatchObject({ ok: false, error: { code: "limit-exceeded" } });
+    expect(api.queueOsFile(second).ok).toBe(true);
+    expect(api.queueDroppedFile(1, first)).toMatchObject({ ok: false, error: { code: "limit-exceeded" } });
+    expect(api.grantDroppedFile(0, first)).toMatchObject({ ok: false, error: { code: "access-denied" } });
+    expect(service(first, { maxBytes: 0 }).grantDroppedFile(1, first)).toMatchObject({ ok: false, error: { code: "too-large" } });
+  });
+  it("stamps dropped file identity without reading document contents in the synchronous grant", () => {
+    const target = path.join(fixture(), "source.docx"); fs.writeFileSync(target, "source");
+    let reads = 0;
+    const api = service(target, { fileSystem: { ...fs, readSync(...args: Parameters<typeof fs.readSync>) { reads++; return fs.readSync(...args); } } });
+    expect(api.grantDroppedFile(1, target)).toEqual({ ok: true, value: true }); expect(reads).toBe(0);
+    expect(api.queueDroppedFile(1, target)).toEqual({ ok: true, value: true }); expect(reads).toBeGreaterThan(0);
+  });
+  it("rejects rich drop symlinks and inode or parent replacement before queue handoff", () => {
+    const directory = fixture(), folder = path.join(directory, "chosen"); fs.mkdirSync(folder);
+    const target = path.join(folder, "source.docx"), link = path.join(directory, "link.docx"); fs.writeFileSync(target, "original"); fs.symlinkSync(target, link);
+    const api = service(target); expect(api.grantDroppedFile(1, link)).toMatchObject({ ok: false, error: { code: "access-denied" } });
+    expect(api.grantDroppedFile(1, target).ok).toBe(true); fs.renameSync(target, path.join(folder, "old.docx")); fs.writeFileSync(target, "replacement");
+    expect(api.queueDroppedFile(1, target)).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(api.grantDroppedFile(1, target).ok).toBe(true); fs.renameSync(folder, path.join(directory, "old-folder")); fs.mkdirSync(folder); fs.writeFileSync(target, "new parent");
+    expect(api.queueDroppedFile(1, target)).toMatchObject({ ok: false, error: { code: "conflict" } });
+  });
   it("opens and reads exact synthetic binary bytes without renderer filesystem paths", async () => {
     const target = path.join(fixture(), "source.docx"), original = Buffer.from([80, 75, 3, 4, 255, 0]); fs.writeFileSync(target, original);
     const api = service(target), opened = value<{ leaseId: string; revision: string }>(await api.open(1));

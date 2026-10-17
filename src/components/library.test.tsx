@@ -154,6 +154,104 @@ describe("Library rows", () => {
 });
 
 describe("documents in the existing Library", () => {
+  it("filters exact formats across native and recovery rows and clears without opening or writing", async () => {
+    const record = documentRecord();
+    const { api, onOpenPath } = renderLibrary([
+      item({ name: "native.MDX", path: "/notes/native.MDX" }),
+      item({ name: "data.json", path: "/notes/data.json" }),
+      item({ name: "legacy.doc", path: "/notes/legacy.doc" }),
+    ], { props: { documentRecords: [record], onOpenDocument: vi.fn() } });
+    await screen.findByText("native.MDX");
+    await userEvent.click(screen.getByRole("button", { name: "Document type: All types" }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "DOCX" }));
+    expect(screen.getByText("proposal.docx")).toBeInTheDocument();
+    expect(screen.queryByText("legacy.doc")).not.toBeInTheDocument();
+    expect(screen.queryByText("native.MDX")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 4 documents");
+    await userEvent.type(screen.getByRole("textbox", { name: "Filter documents" }), "unmatched");
+    expect(screen.getByText("No documents match this filter.")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("0 of 4 documents");
+    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByText("native.MDX")).toBeInTheDocument();
+    expect(screen.getByText("data.json")).toBeInTheDocument();
+    expect(screen.getByText("legacy.doc")).toBeInTheDocument();
+    expect(api.openFilePath).not.toHaveBeenCalled();
+    expect(api.docPull).not.toHaveBeenCalled();
+    expect(onOpenPath).not.toHaveBeenCalled();
+  });
+
+  it("sorts across source boundaries while keeping same-named native and recovery callbacks distinct", async () => {
+    const record = documentRecord({ id: "same", name: "same.md", format: "markdown", updatedAt: Date.parse("2026-10-17") });
+    const onOpenDocument = vi.fn(), onSelect = vi.fn();
+    const { onOpenPath } = renderLibrary([
+      item({ name: "z-last.txt", path: "/notes/z-last.txt" }),
+      item({ name: "same.md", path: "/notes/same.md" }),
+    ], { props: { documentRecords: [record], onOpenDocument, retainedDocument: { name: "A untitled", path: null, dirty: true, selected: false, onSelect } } });
+    await screen.findByText("z-last.txt");
+    await userEvent.click(screen.getByRole("button", { name: "Sort documents: Default order" }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Name" }));
+    const names = Array.from(document.querySelectorAll(".group .text-foreground.truncate")).map((node) => node.textContent);
+    expect(names).toEqual(["A untitled", "same.md", "same.md", "z-last.txt"]);
+    await userEvent.click(screen.getByRole("button", { name: /same\.md Recovered/ }));
+    expect(onOpenDocument).toHaveBeenCalledExactlyOnceWith(record);
+    await userEvent.click(screen.getAllByText("same.md")[0].closest("div.group")!);
+    expect(onOpenPath).toHaveBeenCalledExactlyOnceWith("/notes/same.md");
+    await userEvent.click(screen.getByRole("button", { name: /A untitled Unsaved/ }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Sort documents: Name" }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Most recent" }));
+    expect(document.querySelector(".group .text-foreground.truncate")).toHaveTextContent("same.md");
+    expect(screen.getByRole("button", { name: /same\.md Recovered/ })).toBe(document.querySelector("button.group"));
+  });
+
+  it("keeps native default order frozen through refresh and restores it after an explicit sort", async () => {
+    const first = item({ name: "z-first.md", path: "/notes/z-first.md", state: "unpushed", lastOpenedAt: "2026-01-01" });
+    const second = item({ name: "a-second.md", path: "/notes/a-second.md", lastOpenedAt: "2026-01-02" });
+    const { api, view, ...handlers } = renderLibrary([second, first]);
+    const names = () => Array.from(document.querySelectorAll("div.group .text-foreground.truncate")).map((node) => node.textContent);
+    await screen.findByText("z-first.md");
+    expect(names()).toEqual(["z-first.md", "a-second.md"]);
+    vi.mocked(api.libraryState).mockResolvedValue({ signedIn: true, items: [{ ...second, lastOpenedAt: "2026-10-17" }, { ...first, state: "synced" }] });
+    view.rerender(<Library view="library" {...handlers} activePath={null} accountId={null} refreshKey={1} />);
+    await waitFor(() => expect(api.libraryState).toHaveBeenCalledTimes(2));
+    expect(names()).toEqual(["z-first.md", "a-second.md"]);
+    await userEvent.click(screen.getByRole("button", { name: "Sort documents: Default order" }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Name" }));
+    expect(names()).toEqual(["a-second.md", "z-first.md"]);
+    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(names()).toEqual(["z-first.md", "a-second.md"]);
+  });
+
+  it.each([["Untitled", null], ["Named.md", "/drafts/Named.md"]])("keeps retained Markdown %s reachable with type/search filters", async (name, path) => {
+    const onSelect = vi.fn();
+    renderLibrary([], { props: { retainedDocument: { name: name!, path, dirty: true, selected: true, onSelect } } });
+    const rowName = `${name} Unsaved`;
+    const row = await screen.findByRole("button", { name: rowName });
+    expect(row).toHaveAttribute("aria-current", "true");
+    await userEvent.type(screen.getByRole("textbox", { name: "Filter documents" }), path ? "drafts" : name!);
+    expect(screen.getByRole("button", { name: rowName })).toBeInTheDocument();
+    await userEvent.clear(screen.getByRole("textbox", { name: "Filter documents" }));
+    await userEvent.click(screen.getByRole("button", { name: "Document type: All types" }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "DOCX" }));
+    expect(screen.queryByRole("button", { name: rowName })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    await userEvent.click(screen.getByRole("button", { name: rowName }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes coherent query state into the Cloud slot without exposing recovery copies", async () => {
+    const renderCloudDocuments = vi.fn((query) => <div data-testid="snapshot-query">{JSON.stringify(query)}</div>);
+    renderLibrary([cloudOnly()], { props: { view: "cloud", documentRecords: [documentRecord()], renderCloudDocuments } });
+    await screen.findByText("cloud-only.md");
+    await userEvent.click(screen.getByRole("button", { name: "Document type: All types" }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "DOCX" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Filter documents" }), "brief");
+    expect(renderCloudDocuments).toHaveBeenLastCalledWith({ search: "brief", format: "docx", sort: "default" });
+    expect(screen.queryByText("cloud-only.md")).not.toBeInTheDocument();
+    expect(screen.queryByText("proposal.docx")).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".markie-side-panel")).toHaveLength(1);
+  });
+
   it("opens a recovered Word document beside native files without claiming it is synced", async () => {
     const record = documentRecord();
     const onOpenDocument = vi.fn();
@@ -202,6 +300,26 @@ describe("documents in the existing Library", () => {
     await userEvent.click(within(screen.getByRole("group", { name: "Library sections" })).getByRole("button", { name: "Projects" }));
     expect(screen.queryByRole("group", { name: "Document actions" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Recent" })).toBeInTheDocument();
+  });
+
+  it("keeps creation in one compact aligned group with vault access separate", async () => {
+    renderLibrary([], { props: { onCreateDocument: vi.fn(), onOpenVault: vi.fn() } });
+    const actions = screen.getByRole("group", { name: "Document actions" });
+    const create = within(actions).getByRole("group", { name: "Create document" });
+    expect(within(create).getAllByRole("button").map((button) => button.textContent)).toEqual(["Markdown", "Word", "Text"]);
+    expect(create.querySelector(".grid-cols-3")).not.toBeNull();
+    expect(within(create).queryByRole("button", { name: "Locked vault" })).not.toBeInTheDocument();
+    expect(within(actions).getByRole("button", { name: "Locked vault" }).parentElement).toHaveClass("border-t");
+    await screen.findByText("Workspace ready");
+  });
+
+  it("scopes legacy Cloud emptiness beside populated document snapshots", async () => {
+    renderLibrary([], { props: { view: "cloud", renderCloudDocuments: () => <section aria-label="Cloud document snapshots"><h3>Document snapshots</h3><button type="button">Snapshot.docx</button></section> } });
+    expect(await screen.findByText("No synced or shared files yet.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Snapshot.docx" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "File sync & sharing" })).toBeInTheDocument();
+    expect(screen.queryByText("Nothing in the cloud yet")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-cloud-section]")).toBeNull();
   });
 
   it("does not add document actions to the unchanged Markdown Library", async () => {

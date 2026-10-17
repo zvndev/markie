@@ -1,7 +1,7 @@
-import { DocxError, type DocxNamedStyle } from "./docx-types";
+import { DocxError, type DocxNamedStyle, type DocxRunStyle, type DocxParagraphFormat } from "./docx-types";
 import { escapeXmlText, parseXml, xmlAttribute, type XmlElement } from "./xml";
 import { type ZipEntry } from "./zip";
-import { isWord, type DocxEditState } from "./docx-edit";
+import { isWord, wordChild, type DocxEditState } from "./docx-edit";
 
 export const DOCX_REL = "http://schemas.openxmlformats.org/package/2006/relationships";
 export const DOCX_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -97,6 +97,86 @@ export function readDocxStyles(state: DocxPartsState): readonly DocxNamedStyle[]
   return Object.freeze(root.children.filter((n) => isWord(n, "style") && xmlAttribute(n, "type", n.namespace) === "paragraph").map((n) => Object.freeze({
     id: xmlAttribute(n, "styleId", n.namespace) || "", name: xmlAttribute(n.children.find((c) => isWord(c, "name")) || n, "val", n.namespace) || "",
   })).filter((style) => style.id));
+}
+
+const wordValue = (node: XmlElement | undefined, attribute = "val") => node && xmlAttribute(node, attribute, node.namespace);
+
+/** Original, bounded resolution of the supported ECMA-376 properties only.
+ * Theme fonts, numbering/table styles and layout are not inferred here. */
+export function readDocxRunStyle(props: XmlElement | undefined): DocxRunStyle {
+  const onOff = (name: string) => {
+    const property = wordChild(props, name);
+    return property ? !["false", "0", "off"].includes(wordValue(property) || "true") : undefined;
+  };
+  const size = wordValue(wordChild(props, "sz"));
+  const font = wordChild(props, "rFonts"), underline = wordChild(props, "u");
+  return Object.fromEntries(Object.entries({
+    bold: onOff("b"), italic: onOff("i"), underline: underline ? wordValue(underline) ?? "single" : undefined,
+    color: wordValue(wordChild(props, "color")), fontFamily: wordValue(font, "ascii") ?? wordValue(font, "hAnsi"),
+    fontSizePoints: size && /^\d+$/.test(size) ? Number(size) / 2 : undefined,
+  }).filter(([, value]) => value !== undefined));
+}
+
+function readParagraphStyle(props: XmlElement | undefined): DocxParagraphFormat {
+  const spacing = wordChild(props, "spacing");
+  const amount = (name: string, divisor: number) => {
+    const text = wordValue(spacing, name);
+    return text && /^\d+$/.test(text) ? Number(text) / divisor : undefined;
+  };
+  return Object.fromEntries(Object.entries({
+    alignment: wordValue(wordChild(props, "jc")), spacingBeforePoints: amount("before", 20), spacingAfterPoints: amount("after", 20),
+    lineSpacingMultiple: [undefined, "auto"].includes(wordValue(spacing, "lineRule")) ? amount("line", 240) : null,
+  }).filter(([, value]) => value !== undefined));
+}
+
+export function docxStyleResolver(state: DocxPartsState) {
+  const name = relatedDocxPart(state, "styles"), source = name && docxPartSource(state, name);
+  const root = source ? parseXml(source) : undefined;
+  const definitions = root?.children.filter((node) => isWord(node, "style")) ?? [];
+  const styles = new Map(definitions.map((node) => [`${wordValue(node, "type")}:${wordValue(node, "styleId")}`, node]));
+  const defaults = wordChild(root, "docDefaults");
+  const defaultRunProps = wordChild(wordChild(defaults, "rPrDefault"), "rPr");
+  const baseRun = readDocxRunStyle(defaultRunProps);
+  const baseParagraph = readParagraphStyle(wordChild(wordChild(defaults, "pPrDefault"), "pPr"));
+  const defaultId = (type: string) => wordValue(definitions.find((node) => wordValue(node, "type") === type && ["1", "true", "on"].includes(wordValue(node, "default") ?? "")), "styleId");
+  const defaultParagraph = defaultId("paragraph"), defaultCharacter = defaultId("character");
+  const cache = new Map<string, readonly XmlElement[]>();
+  const chain = (type: string, id: string | undefined): readonly XmlElement[] => {
+    const key = `${type}:${id ?? ""}`, cached = cache.get(key);
+    if (cached) return cached;
+    const nodes: XmlElement[] = [], visited = new Set<string>();
+    let next = id;
+    // Malformed cycles and very deep chains cannot recurse or hang the renderer.
+    while (next && !visited.has(next) && nodes.length < 128) {
+      visited.add(next); const node = styles.get(`${type}:${next}`); if (!node) break;
+      nodes.unshift(node); next = wordValue(wordChild(node, "basedOn"));
+    }
+    cache.set(key, nodes); return nodes;
+  };
+  const omitUnresolvedTheme = (result: { -readonly [K in keyof DocxRunStyle]: DocxRunStyle[K] }, props?: XmlElement) => {
+    const font = wordChild(props, "rFonts"), color = wordChild(props, "color");
+    if (wordValue(font, "asciiTheme") || wordValue(font, "hAnsiTheme")) delete result.fontFamily;
+    if (wordValue(color, "themeColor")) delete result.color;
+  };
+  return {
+    paragraph(id?: string): DocxParagraphFormat {
+      return Object.assign({}, baseParagraph, ...chain("paragraph", id ?? defaultParagraph).map((node) => readParagraphStyle(wordChild(node, "pPr"))));
+    },
+    run(paragraphId: string | undefined, characterId: string | undefined, direct: DocxRunStyle, directProps?: XmlElement): Readonly<DocxRunStyle> {
+      const result = { ...baseRun };
+      omitUnresolvedTheme(result, defaultRunProps);
+      for (const node of [...chain("paragraph", paragraphId ?? defaultParagraph), ...chain("character", characterId ?? defaultCharacter)]) {
+        const props = wordChild(node, "rPr"), style = readDocxRunStyle(props);
+        // Bold/italic are toggle properties in named styles, absolute in direct formatting.
+        const { bold, italic, ...properties } = style; Object.assign(result, properties);
+        omitUnresolvedTheme(result, props);
+        if (bold) result.bold = !result.bold;
+        if (italic) result.italic = !result.italic;
+      }
+      Object.assign(result, direct); omitUnresolvedTheme(result, directProps);
+      return Object.freeze(result);
+    },
+  };
 }
 
 export function ensureDocxNamedStyle<T extends DocxPartsState & DocxEditState>(state: T, id: string): T {

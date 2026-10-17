@@ -10,9 +10,9 @@
  */
 import { DEFAULT_ZIP_LIMITS, readZip, resolveZipLimits, writeZip, type ZipEntry, type ZipLimits } from "./zip";
 import { escapeXmlText, parseXml, xmlAttribute, xmlDescendants, XML_NAMESPACE, type XmlElement } from "./xml";
-import { DocxError, type DocxDiagnostic, type DocxRunStyle, type DocxRun, type DocxParagraph, type DocxDocument, type DocxTextEdit, type DocxOperation } from "./docx-types";
+import { DocxError, type DocxDiagnostic, type DocxRun, type DocxParagraph, type DocxDocument, type DocxTextEdit, type DocxOperation } from "./docx-types";
 import { applyDocxXmlOperation, docxPageLayout, indexDocxIdentities, patchDocxSource, type DocxPatch } from "./docx-edit";
-import { docxEntries, docxPart, ensureDocxNamedStyle, readDocxStyles } from "./docx-parts";
+import { docxEntries, docxPart, ensureDocxNamedStyle, readDocxStyles, readDocxRunStyle, docxStyleResolver } from "./docx-parts";
 import { applyDocxCommentOperation, inspectDocxComments } from "./docx-comments";
 import { inspectDocxNumbering, setDocxList } from "./docx-numbering";
 import { deleteDocxImage, inspectDocxImages, insertDocxImage, type DocxMediaState } from "./docx-media";
@@ -216,21 +216,6 @@ function unsupportedMarkup(root: XmlElement, safeDrawings: readonly XmlElement[]
   return undefined;
 }
 
-function runStyle(run: XmlElement): DocxRunStyle {
-  const props = child(run, "rPr");
-  const onOff = (name: string) => {
-    const property = child(props, name);
-    return property ? !["false", "0", "off"].includes(value(property) || "true") : undefined;
-  };
-  const size = value(child(props, "sz"));
-  const font = child(props, "rFonts");
-  return Object.freeze({
-    bold: onOff("b"), italic: onOff("i"), underline: value(child(props, "u")),
-    color: value(child(props, "color")), fontFamily: font && xmlAttribute(font, "ascii", font.namespace),
-    fontSizePoints: size && /^\d+$/.test(size) ? Number(size) / 2 : undefined,
-  });
-}
-
 function snapshot(state: State, diagnostics: readonly DocxDiagnostic[], metadata: Readonly<Record<string, string>>, revision: number): DocxDocument {
   const root = parseXml(state.source);
   indexDocxIdentities(state);
@@ -241,8 +226,11 @@ function snapshot(state: State, diagnostics: readonly DocxDiagnostic[], metadata
   const revisionForRun = (r: XmlElement) => revisionInspection.ranges.find((range) => r.start > range.node.start && r.end < range.node.end);
   const paragraphByOffset = new Map<number, DocxParagraph>();
   const numbering = inspectDocxNumbering(state).definitions;
+  const resolvedStyles = docxStyleResolver(state);
   const listCounts = new Map<string, number>();
   const paragraphs = xmlDescendants(root).filter((n) => word(n, "p")).map((p): DocxParagraph => {
+    const styleId = value(child(child(p, "pPr"), "pStyle"));
+    const inheritedParagraph = resolvedStyles.paragraph(styleId);
     const pendingParagraph = revisionInspection.ranges.some((range) => range.paragraph.start === p.start);
     const allRuns = xmlDescendants(p).filter((n) => word(n, "r"));
     const readRun = (r: XmlElement, original = false): DocxRun => {
@@ -254,7 +242,8 @@ function snapshot(state: State, diagnostics: readonly DocxDiagnostic[], metadata
       if (textNode && !tracked && !pendingParagraph) state.runNodes.set(id, textNode);
       const text = xmlDescendants(r).map((n) =>
         word(n, "t") || (original && word(n, "delText")) ? n.text : word(n, "tab") ? "\t" : word(n, "br") ? xmlAttribute(n, "type", n.namespace) === "page" ? "" : "\n" : word(n, "cr") ? "\n" : "").join("");
-      return Object.freeze({ id, text, style: runStyle(r), canEdit: editable && !!textNode && !tracked && !original && !pendingParagraph,
+      const props = child(r, "rPr"), style = Object.freeze(readDocxRunStyle(props));
+      return Object.freeze({ id, text, style, resolvedStyle: resolvedStyles.run(styleId, value(child(props, "rStyle")), style, props), canEdit: editable && !!textNode && !tracked && !original && !pendingParagraph,
         hyperlinkId: hyperlink?.id, target: hyperlink?.target,
         pageBreaks: Object.freeze(pageBreaks.breaks.filter((b) => b.run.start === r.start).map((b) => Object.freeze({ id: b.id, offset: b.localOffset }))),
       });
@@ -272,9 +261,9 @@ function snapshot(state: State, diagnostics: readonly DocxDiagnostic[], metadata
     };
     const paragraph = Object.freeze({
       id: state.identities.get(p.start)!, text: runs.map((r) => r.text).join(""), runs: Object.freeze(runs),
-      styleId: value(child(child(p, "pPr"), "pStyle")), alignment: value(child(child(p, "pPr"), "jc")),
-      spacingBeforePoints: spacingNumber("before", 20), spacingAfterPoints: spacingNumber("after", 20),
-      lineSpacingMultiple: !spacing || [undefined, "auto"].includes(xmlAttribute(spacing, "lineRule", spacing.namespace)) ? spacingNumber("line", 240) : undefined,
+      styleId, alignment: value(child(child(p, "pPr"), "jc")) ?? inheritedParagraph.alignment ?? undefined,
+      spacingBeforePoints: spacingNumber("before", 20) ?? inheritedParagraph.spacingBeforePoints ?? undefined, spacingAfterPoints: spacingNumber("after", 20) ?? inheritedParagraph.spacingAfterPoints ?? undefined,
+      lineSpacingMultiple: !spacing || [undefined, "auto"].includes(xmlAttribute(spacing, "lineRule", spacing.namespace)) ? spacingNumber("line", 240) ?? inheritedParagraph.lineSpacingMultiple ?? undefined : undefined,
       listKind: definition ? definition.kind : undefined, listNumber: definition?.kind === "numbered" ? listNumber : undefined,
       originalText: originalRuns?.map((r) => r.text).join(""), originalRuns,
       revisionIds: Object.freeze(revisionInspection.ranges.filter((range) => range.paragraph.start === p.start).map((range) => range.id)),

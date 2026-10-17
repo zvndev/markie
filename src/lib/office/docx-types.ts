@@ -21,6 +21,8 @@ export interface DocxRun {
   readonly id: string;
   readonly text: string;
   readonly style: Readonly<DocxRunStyle>;
+  /** Supported display properties resolved from defaults/named styles. Never serialized as direct formatting. */
+  readonly resolvedStyle?: Readonly<DocxRunStyle>;
   readonly canEdit: boolean;
   readonly hyperlinkId?: string;
   readonly target?: string;

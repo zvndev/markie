@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 export type FormattingAction = "undo" | "redo" | "bold" | "italic" | "underline" | "strike" | "code" | "link" | "image" | "bullet" | "ordered" | "task" | "align-left" | "align-center" | "align-right" | "clear";
 export interface FormattingState {
-  bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean; code?: boolean;
+  bold?: boolean | "mixed"; italic?: boolean | "mixed"; underline?: boolean | "mixed"; strike?: boolean; code?: boolean;
   bullet?: boolean; ordered?: boolean; task?: boolean;
   alignLeft?: boolean; alignCenter?: boolean; alignRight?: boolean;
   canUndo?: boolean; canRedo?: boolean;
@@ -18,7 +18,9 @@ export interface FormattingToolbarProps {
   currentFont: string;
   fonts?: readonly { id: string; label: string }[];
   selecting: boolean;
-  currentSize: number;
+  currentSize: number | null;
+  fontPlaceholder?: string;
+  sizePlaceholder?: string;
   onFont(font: string): void;
   onSize(size: number): void;
   onStyle(style: string): void;

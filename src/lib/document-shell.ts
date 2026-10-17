@@ -19,6 +19,10 @@ export interface DocumentShellState {
   importFile(): void;
   save(asCopy?: boolean): void;
   share(): void;
+  /** Open an existing ordinary cloud snapshot, without creating a local file. */
+  openCloudDocument?(id: string): void;
+  /** Complete queued native imports before opening the next file in a mixed drop. */
+  settleIncomingDocuments?(): Promise<boolean>;
   showVault(): void;
   prepareClose(): Promise<boolean>;
   prepareLeave(): Promise<boolean>;

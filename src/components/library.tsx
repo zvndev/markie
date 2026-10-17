@@ -5,8 +5,9 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type ReactNode,
 } from "react";
-import { matchesFilter, stableOrder } from "@/lib/stable-order";
+import { stableOrder } from "@/lib/stable-order";
 import { getElectronAPI, isTooLarge, type LibraryItem } from "@/lib/electron";
 import { tooLargeMessage } from "@/lib/doc-tiers";
 import { ProjectsPanelContainer } from "@/components/projects-panel";
@@ -27,7 +28,7 @@ import { LIB_TAB_KEY, initialLibTab, type LibTab } from "@/lib/library-state";
 import {
   cloudCopyOnly,
   libraryItemNeedsAttention,
-  organizeLibraryItems,
+  sortLibraryItems,
   summarizeLibrary,
   type LibraryOverview,
 } from "@/lib/library-overview";
@@ -35,8 +36,11 @@ import type { WorkspaceBootstrapResult } from "@/lib/workspace-default";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 import { PanelNotice, type Notice, type NoticeKind } from "@/components/panel-notice";
 import { sameDocumentPath } from "@/lib/path-utils";
+import { classifyDocumentFormat } from "@/lib/document-formats";
 import type { LibraryRecord } from "@/lib/document-library";
 import type { EditableDocumentFormat } from "@/lib/document-session";
+import { DEFAULT_LIBRARY_DOCUMENT_QUERY, libraryDocumentFormat, matchesLibraryDocument, queryLibraryDocuments, type LibraryDocumentMetadata, type LibraryDocumentQuery } from "@/lib/library-document-query";
+import { LibraryDocumentFilters } from "@/components/library-document-filters";
 
 interface LibraryProps {
   retainedDocument?: { name: string; path: string | null; dirty: boolean; selected: boolean; onSelect: () => void };
@@ -65,9 +69,9 @@ interface LibraryProps {
   onOpenDocument?: (record: LibraryRecord) => void;
   onCreateDocument?: (format: EditableDocumentFormat) => void;
   onOpenVault?: () => void;
+  renderCloudDocuments?: (query: LibraryDocumentQuery) => ReactNode;
 }
 
-const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
 const NO_DOCUMENT_RECORDS: readonly LibraryRecord[] = [];
 
 // Long enough to read a short sentence, short enough that the panel is not
@@ -105,6 +109,14 @@ const VIEW_TITLE: Record<PanelView, string> = {
 
 // Local files are identified by path; cloud-only rows have no path yet.
 const itemKey = (i: LibraryItem) => i.path ?? i.cloudId ?? i.name;
+
+function nativeMetadata(item: LibraryItem): LibraryDocumentMetadata {
+  return { key: `native:${itemKey(item)}`, name: item.name, path: item.path, format: libraryDocumentFormat(item.name), updatedAt: item.lastOpenedAt };
+}
+
+function recoveryMetadata(record: LibraryRecord): LibraryDocumentMetadata {
+  return { key: `recovery:${record.id}`, name: record.name, format: record.format, updatedAt: record.updatedAt, extractedText: record.extractedText, tags: record.tags, collection: record.collection };
+}
 
 const BADGE: Record<LibraryItem["state"], [string, string]> = {
   "local-only": ["Local", "text-muted border-border"],
@@ -152,6 +164,7 @@ export function Library({
   onOpenDocument,
   onCreateDocument,
   onOpenVault,
+  renderCloudDocuments,
 }: LibraryProps) {
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [signedIn, setSignedIn] = useState(false);
@@ -165,7 +178,7 @@ export function Library({
   // over is about the cloud, so it belongs on the Cloud page rather than under
   // whichever panel happened to be open when the request failed.
   const [cloudError, setCloudError] = useState<string | null>(null);
-  const [filter, setFilter] = useState("");
+  const [query, setQuery] = useState<LibraryDocumentQuery>(() => ({ ...DEFAULT_LIBRARY_DOCUMENT_QUERY }));
   // Freeze the row order for as long as the panel stays open, so opening a file
   // does not send it to the top and shuffle everything you were reading.
   const [frozenOrder, setFrozenOrder] = useState<string[]>([]);
@@ -293,9 +306,9 @@ export function Library({
     }
     const paths = Array.from(e.dataTransfer.files)
       .map((f) => api.pathForFile(f))
-      .filter((p): p is string => !!p && OPENABLE.test(p));
+      .filter((p): p is string => !!p && classifyDocumentFormat(p).kind !== "unsupported");
     if (paths.length === 0) {
-      showNotice("Drop Markdown, text, or CSV files here.", "info");
+      showNotice("Drop a supported Word, Markdown, text or document file here.", "info");
       return;
     }
     onAddPaths(paths);
@@ -307,7 +320,7 @@ export function Library({
     return readLibraryStartupSnapshot(api).then((s) => {
       setItems(s.items);
       // First rows to arrive define the order the panel keeps while open.
-      setFrozenOrder((prev) => (prev.length ? prev : s.items.map(itemKey)));
+      setFrozenOrder((prev) => (prev.length ? prev : sortLibraryItems(s.items).map(itemKey)));
       setSignedIn(s.signedIn);
       setWorkspace(s.workspace);
       setLoading(false);
@@ -324,7 +337,7 @@ export function Library({
       if (!alive) return;
       setItems(s.items);
       // First rows to arrive define the order the panel keeps while open.
-      setFrozenOrder((prev) => (prev.length ? prev : s.items.map(itemKey)));
+      setFrozenOrder((prev) => (prev.length ? prev : sortLibraryItems(s.items).map(itemKey)));
       setSignedIn(s.signedIn);
       setWorkspace(s.workspace);
       setLoading(false);
@@ -411,19 +424,18 @@ export function Library({
   );
 
   const visibleItems = useMemo(
-    () => orderedItems.filter((i) => matchesFilter(i, filter)),
-    [orderedItems, filter]
+    () => queryLibraryDocuments(orderedItems, query, nativeMetadata),
+    [orderedItems, query]
   );
 
-  const { localFiles } = organizeLibraryItems(visibleItems);
-  const retainedVisible = !!retainedDocument && (!retainedDocument.path || !items.some((item) => sameDocumentPath(item.path, retainedDocument.path, getElectronAPI()?.platform)))
-    && (!filter.trim() || `${retainedDocument.name}\n${retainedDocument.path ?? ""}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()));
+  const localFiles = visibleItems.filter((item) => item.path);
+  const retainedAvailable = !!retainedDocument && (!retainedDocument.path || !items.some((item) => sameDocumentPath(item.path, retainedDocument.path, getElectronAPI()?.platform)));
+  const retainedVisible = retainedAvailable && matchesLibraryDocument({ key: "retained:markdown", name: retainedDocument!.name, path: retainedDocument!.path, format: "markdown" }, query);
   const overview = summarizeLibrary(items);
-  const visibleDocuments = useMemo(() => {
-    const query = filter.trim().toLocaleLowerCase();
-    return documentRecords.filter((record) => !query ||
-      `${record.name}\n${record.extractedText ?? ""}\n${record.tags.join(" ")}\n${record.collection ?? ""}`.toLocaleLowerCase().includes(query));
-  }, [documentRecords, filter]);
+  const visibleDocuments = useMemo(() => queryLibraryDocuments(documentRecords, query, recoveryMetadata), [documentRecords, query]);
+  const queryActive = !!query.search.trim() || query.format !== "all" || query.sort !== "default";
+  const totalDocuments = items.filter((item) => item.path).length + documentRecords.length + Number(retainedAvailable);
+  const visibleCount = localFiles.length + visibleDocuments.length + Number(retainedVisible);
 
   const fileRow = (item: LibraryItem) => {
     const [label, badgeClass]: [string, string] = item.shared
@@ -450,7 +462,7 @@ export function Library({
     };
     return (
       <div
-        key={itemKey}
+        key={`native:${itemKey}`}
         ref={menuFor === itemKey ? menuRootRef : undefined}
         className={`group rounded-md px-2 py-1.5 cursor-pointer ${
           isActive ? "bg-accent" : "hover:bg-accent/40"
@@ -541,6 +553,28 @@ export function Library({
     );
   };
 
+  const recoveryRow = (record: LibraryRecord) => <button
+    key={`recovery:${record.id}`} type="button" onClick={() => onOpenDocument?.(record)} disabled={!onOpenDocument}
+    aria-current={record.id === activeDocumentId ? "true" : undefined}
+    className={`group w-full text-left rounded-md px-2 py-1.5 disabled:opacity-50 ${record.id === activeDocumentId ? "bg-accent" : "hover:bg-accent/40"}`}
+  >
+    <span className="flex items-center gap-1.5"><FileIcon /><span className="text-[12.5px] text-foreground truncate flex-1" title={record.name}>{record.name}</span>{" "}
+      <span className="text-[9px] px-1 py-px rounded border shrink-0 text-muted border-border" title="A local recovery copy, not a synced file">Recovered</span></span>
+    {" "}<span className="block pl-5 text-[10px] text-muted">{record.format.toUpperCase()} · Local recovery</span>
+  </button>;
+  const retainedRow = retainedVisible && retainedDocument ? <button key="retained:markdown" type="button" onClick={retainedDocument.onSelect}
+    aria-current={retainedDocument.selected ? "true" : undefined}
+    className={`group w-full text-left rounded-md px-2 py-1.5 ${retainedDocument.selected ? "bg-accent" : "hover:bg-accent/40"}`}>
+    <span className="flex items-center gap-1.5"><FileIcon /><span className="text-[12.5px] text-foreground truncate flex-1">{retainedDocument.name}</span>{" "}<span className="text-[9px] px-1 py-px rounded border shrink-0 text-muted border-border">{retainedDocument.dirty ? "Unsaved" : "Open"}</span></span>
+  </button> : null;
+  // Explicit sorts cross source boundaries, but never convert a recovery or
+  // retained document into a native file or change the callback it opens.
+  const sortedRows = query.sort === "default" ? [] : queryLibraryDocuments([
+    ...localFiles.map((item) => ({ metadata: nativeMetadata(item), node: fileRow(item) })),
+    ...visibleDocuments.map((record) => ({ metadata: recoveryMetadata(record), node: recoveryRow(record) })),
+    ...(retainedVisible && retainedDocument ? [{ metadata: { key: "retained:markdown", name: retainedDocument.name, path: retainedDocument.path, format: "markdown" as const }, node: retainedRow }] : []),
+  ], query, ({ metadata }) => metadata);
+
   return (
     <div
       className={`markie-side-panel relative shrink-0 h-full flex flex-col border-r bg-surface ${
@@ -610,35 +644,25 @@ export function Library({
             ))}
           </div>
           {libTab === "recent" && (onCreateDocument || onOpenVault) && (
-            <div className="flex flex-wrap gap-1 px-2 py-1.5 border-b border-border/60" role="group" aria-label="Document actions">
-              {onCreateDocument ? <>
-                <button type="button" onClick={() => onCreateDocument("markdown")} className="text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-2 py-1">New Markdown document</button>
-                <button type="button" onClick={() => onCreateDocument("docx")} className="text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-2 py-1">New Word document</button>
-                <button type="button" onClick={() => onCreateDocument("text")} className="text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-2 py-1">New text document</button>
-              </> : null}
-              {onOpenVault ? <button type="button" onClick={onOpenVault} className="text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-2 py-1">Locked vault</button> : null}
+            <div className="px-2 py-1.5 border-b border-border/60" role="group" aria-label="Document actions">
+              {onCreateDocument ? <div role="group" aria-label="Create document">
+                <div className="px-1 pb-1 text-[10px] text-muted">New document</div>
+                <div className="grid grid-cols-3 gap-1">
+                  <button type="button" aria-label="New Markdown document" onClick={() => onCreateDocument("markdown")} className="min-w-0 rounded-md border border-border/70 px-1 py-1 text-[11px] text-muted hover:text-foreground hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]">Markdown</button>
+                  <button type="button" aria-label="New Word document" onClick={() => onCreateDocument("docx")} className="min-w-0 rounded-md border border-border/70 px-1 py-1 text-[11px] text-muted hover:text-foreground hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]">Word</button>
+                  <button type="button" aria-label="New text document" onClick={() => onCreateDocument("text")} className="min-w-0 rounded-md border border-border/70 px-1 py-1 text-[11px] text-muted hover:text-foreground hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]">Text</button>
+                </div>
+              </div> : null}
+              {onOpenVault ? <div className={onCreateDocument ? "mt-2 border-t border-border/60 pt-1" : ""}><button type="button" onClick={onOpenVault} className="w-full text-left text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-1 py-1 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]">Locked vault</button></div> : null}
             </div>
           )}
-          {!loading && libTab === "recent" && (items.length > 0 || documentRecords.length > 0 || retainedDocument) && (
-              <div className="px-2 pt-1.5 pb-1.5 shrink-0">
-                <input
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape" && filter) {
-                      e.stopPropagation();
-                      setFilter("");
-                    }
-                  }}
-                  placeholder={documentRecords.length ? "Search files and document text" : "Filter by name or folder"}
-                  aria-label="Filter documents"
-                  className="markie-overlay-field w-full text-[11.5px] px-2 py-1"
-                />
-              </div>
-            )}
+          {!loading && libTab === "recent" && totalDocuments > 0 && <LibraryDocumentFilters query={query} onChange={setQuery} searchTextAvailable={documentRecords.length > 0} />}
           {!loading && libTab === "recent" && <LibraryOverviewBand overview={overview} recoveredCount={documentRecords.length} />}
+          {!loading && libTab === "recent" && queryActive && <p role="status" className="px-2.5 py-1 text-[10.5px] text-muted tabular-nums">{visibleCount} of {totalDocuments} documents</p>}
         </>
       )}
+
+      {view === "cloud" ? <LibraryDocumentFilters query={query} onChange={setQuery} /> : null}
 
       <div className="flex-1 overflow-y-auto px-1.5 py-2">
         {view === "browse" ? (
@@ -646,8 +670,12 @@ export function Library({
         ) : view === "skills" ? (
           <SkillsView onOpenPath={onOpenPath} activePath={activePath} />
         ) : view === "cloud" ? (
+          <>
+          {renderCloudDocuments?.(query)}
           <CloudView
-            items={items}
+            items={visibleItems}
+            query={query}
+            alongsideSnapshots={!!renderCloudDocuments}
             loading={loading}
             renderRow={fileRow}
             signedIn={signedIn}
@@ -657,6 +685,7 @@ export function Library({
             cloudError={cloudError}
             refreshKey={refreshKey}
           />
+          </>
         ) : loading ? (
           <LibrarySkeleton />
         ) : libTab === "projects" ? (
@@ -666,7 +695,7 @@ export function Library({
             onOpenPath={onOpenPath}
           />
         ) : localFiles.length === 0 && visibleDocuments.length === 0 && !retainedVisible ? (
-          filter.trim() && (items.length > 0 || documentRecords.length > 0 || retainedDocument) ? <p className="px-2 py-2 text-[12px] text-muted">No documents match this filter.</p> :
+          queryActive && totalDocuments > 0 ? <p className="px-2 py-2 text-[12px] text-muted">No documents match this filter.</p> :
           <RecentEmptyState
             onOpenFile={onOpenFile}
             onShowProjects={() => pickTab("projects")}
@@ -674,33 +703,17 @@ export function Library({
           />
         ) : (
           <>
-            {retainedVisible && retainedDocument ? <button type="button" onClick={retainedDocument.onSelect}
-              aria-current={retainedDocument.selected ? "true" : undefined}
-              className={`group w-full text-left rounded-md px-2 py-1.5 ${retainedDocument.selected ? "bg-accent" : "hover:bg-accent/40"}`}>
-              <span className="flex items-center gap-1.5"><FileIcon /><span className="text-[12.5px] text-foreground truncate flex-1">{retainedDocument.name}</span><span className="text-[9px] px-1 py-px rounded border shrink-0 text-muted border-border">{retainedDocument.dirty ? "Unsaved" : "Open"}</span></span>
-            </button> : null}
+            {query.sort !== "default" ? sortedRows.map(({ node }) => node) : <>
+            {retainedRow}
             {localFiles.length > 0 ? <>
               <LibrarySectionHeader label="On this device" items={localFiles} />
               {localFiles.map(fileRow)}
             </> : null}
             {visibleDocuments.length > 0 ? <>
               <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted font-medium">Recovered documents</div>
-              {visibleDocuments.map((record) => <button
-                key={record.id}
-                type="button"
-                onClick={() => onOpenDocument?.(record)}
-                disabled={!onOpenDocument}
-                aria-current={record.id === activeDocumentId ? "true" : undefined}
-                className={`group w-full text-left rounded-md px-2 py-1.5 disabled:opacity-50 ${record.id === activeDocumentId ? "bg-accent" : "hover:bg-accent/40"}`}
-              >
-                <span className="flex items-center gap-1.5">
-                  <FileIcon />
-                  <span className="text-[12.5px] text-foreground truncate flex-1" title={record.name}>{record.name}</span>
-                  <span className="text-[9px] px-1 py-px rounded border shrink-0 text-muted border-border" title="A local recovery copy, not a synced file">Recovered</span>
-                </span>
-                <span className="block pl-5 text-[10px] text-muted">{record.format.toUpperCase()} · Local recovery</span>
-              </button>)}
+              {visibleDocuments.map(recoveryRow)}
             </> : null}
+            </>}
           </>
         )}
       </div>

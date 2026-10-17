@@ -81,7 +81,7 @@ describe("actual shared document workspace", () => {
     view.rerender(<DocumentWorkspace embedded library={library} onShellChange={onShellChange} incomingDocument={incoming} onIncomingDocumentHandled={handled} active />);
     fireEvent.click(screen.getByRole("button", { name: "Open requested file" }));
     expect(await screen.findByRole("textbox", { name: "Document text" })).toHaveValue("Queued native document");
-    expect(handled).toHaveBeenCalledWith(incoming.requestId); expect(privateScope.cleanup).toHaveBeenCalledOnce();
+    expect(handled).toHaveBeenCalledWith(incoming.requestId, true); expect(privateScope.cleanup).toHaveBeenCalledOnce();
   });
 
   it("embeds only format-specific content in Markie and exposes actions to the existing shell", async () => {
@@ -157,6 +157,21 @@ describe("actual shared document workspace", () => {
     render(<DocumentWorkspace library={library} />);
     fireEvent.click(await screen.findByRole("button", { name: /Untitled.txt.*Searchable needle/ }));
     expect(await screen.findByRole("textbox", { name: "Document text" })).toHaveValue("# literal writing\nSearchable needle");
+  });
+
+  it("keeps successful file-save feedback in the footer without a duplicate notice row", async () => {
+    const handle: WebFileHandle = { name: "Untitled.txt", getFile: async () => ({ name: "Untitled.txt", size: 5, arrayBuffer: async () => textBytes("Words").buffer }) };
+    const saveDocument = vi.fn().mockResolvedValue({ method: "file-system", name: "Untitled.txt", handle });
+    const view = render(<DocumentWorkspace library={createMemoryDocumentLibrary()} saveDocument={saveDocument} />);
+    const editor = await newText();
+    fireEvent.change(editor, { target: { value: "Words" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save file" }));
+    expect(await screen.findByText("Saved to file", { exact: true })).toHaveAttribute("role", "status");
+    expect(view.container.querySelector(".docs-notice")).toBeNull();
+    expect(editor).toHaveValue("Words");
+    fireEvent.change(editor, { target: { value: "Newer words" } });
+    expect(screen.queryByText("Saved to file", { exact: true })).toBeNull();
+    expect(view.container.querySelector(".docs-notice")).toBeNull();
   });
 
   it("imports and exports UTF-16 text without losing BOM or newline style", async () => {
@@ -456,7 +471,7 @@ describe("actual shared document workspace", () => {
     const first = { requestId: "native-first", payload: payload("native.txt", textBytes("native initial")) };
     const view = render(<DocumentWorkspace library={library} incomingDocument={first} onIncomingDocumentHandled={handled} />);
     const field = await screen.findByRole("textbox", { name: "Document text" });
-    await waitFor(() => expect(handled).toHaveBeenCalledWith("native-first"));
+    await waitFor(() => expect(handled).toHaveBeenCalledWith("native-first", true));
     expect(field).toHaveValue("native initial");
     fireEvent.change(field, { target: { value: "native local edits" } });
     view.rerender(<DocumentWorkspace library={library} incomingDocument={{ ...first, payload: payload("native.txt", textBytes("do not reload")) }} onIncomingDocumentHandled={handled} />);
@@ -469,9 +484,25 @@ describe("actual shared document workspace", () => {
     view.rerender(<DocumentWorkspace library={library} incomingDocument={second} onIncomingDocumentHandled={handled} />);
     fireEvent.click(screen.getByRole("button", { name: "Open requested file" }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Document text" })).toHaveValue("second request"));
-    await waitFor(() => expect(handled).toHaveBeenCalledWith("native-second"));
+    await waitFor(() => expect(handled).toHaveBeenCalledWith("native-second", true));
     const records = await library.list();
     expect(records.ok && records.value.find((record) => record.name === "native.txt")?.extractedText).toBe("native local edits");
+  });
+  it.each(["parse", "recovery", "conversion"])("does not acknowledge %s failure or pending conversion as imported", async (kind) => {
+    const library = createMemoryDocumentLibrary(), handled = vi.fn();
+    if (kind === "recovery") vi.spyOn(library, "put").mockResolvedValue({ ok: false, error: { code: "storage-quota", message: "Synthetic recovery full" } });
+    let shell: DocumentShellState | null = null;
+    const onShellChange = (value: DocumentShellState | null) => { shell = value; };
+    const view = render(<DocumentWorkspace embedded library={library} onShellChange={onShellChange} />);
+    await waitFor(() => expect(shell?.ready).toBe(true));
+    const next = kind === "parse" ? payload("broken.docx", new Uint8Array([1, 2, 3]))
+      : kind === "conversion" ? payload("source.html", textBytes("<p>Convert with consent</p>"))
+      : payload("native.txt", textBytes("Keep this imported copy"));
+    view.rerender(<DocumentWorkspace embedded library={library} onShellChange={onShellChange} incomingDocument={{ requestId: kind, payload: next }} onIncomingDocumentHandled={handled} />);
+    await waitFor(() => expect(handled).toHaveBeenCalledWith(kind, false));
+    if (kind === "conversion") expect(screen.getByRole("alertdialog", { name: "Import a text copy?" })).toBeInTheDocument();
+    else expect(screen.getByRole("alert")).toBeInTheDocument();
+    if (kind === "recovery") expect(screen.getByRole("textbox", { name: "Document text" })).toHaveValue("Keep this imported copy");
   });
 });
 

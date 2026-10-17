@@ -271,7 +271,9 @@ let pendingDeepLink = null;
 // OS paths never cross the renderer boundary: it receives only a notification,
 // then claims a bounded opaque file grant through document-files:take-initial.
 function queueNativeDocumentOpen(filePath, options = {}) {
-  const result = documentFiles.queueOsFile(filePath, options);
+  const result = options.dropOwner === undefined
+    ? documentFiles.queueOsFile(filePath, options)
+    : documentFiles.queueDroppedFile(options.dropOwner, filePath);
   if (!result.ok) pendingNativeDocumentError = result;
   else if (!result.value) return false;
   nativeDocumentQueued = true;
@@ -2664,7 +2666,13 @@ function isAdvertisedPath(p) {
   return !!advertisedPathSet()?.has(p);
 }
 
-handle("open-file-path", async (_event, filePath) => {
+handle("open-file-path", async (event, filePath) => {
+  // Explicit rich-file drops use the existing opaque queue, never the classic
+  // UTF-8 reader. A caller without that exact owner/path drop grant gets null.
+  if (!OPENABLE.test(filePath)) {
+    if (currentCloseSender(event)) queueNativeDocumentOpen(filePath, { dropOwner: event.sender.id });
+    return null;
+  }
   return readFilePayload(filePath, { grant: isAdvertisedPath(filePath) });
 }, { onFailure: () => null });
 
@@ -2722,6 +2730,11 @@ handle("crash-log-reveal", () => {
 }, { onFailure: () => ({ ok: false }) });
 
 ipcMain.on("grant-file-path", (event, filePath) => {
+  if (!OPENABLE.test(filePath)) {
+    const result = currentCloseSender(event) ? documentFiles.grantDroppedFile(event.sender.id, filePath) : null;
+    event.returnValue = !!(result?.ok && result.value);
+    return;
+  }
   const grant = fileGrants.grantFile(filePath);
   event.returnValue = grant.ok;
 });

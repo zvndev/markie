@@ -141,6 +141,13 @@ function restorePrincipal(): string | null {
 // whose remembered roles it is reading.
 let principal: string | null = restorePrincipal();
 
+/** Read-only proof that the current token was confirmed by this exact server. */
+export function getConfirmedAuthIdentity(): { userId: string; serverURL: string } | null {
+  const binding = readBinding();
+  return binding && binding.userId === principal && binding.token === getAuthToken() && binding.serverURL === getServerURL()
+    ? { userId: binding.userId, serverURL: binding.serverURL } : null;
+}
+
 // Set from `me()` below and nowhere else, because that is the one call where
 // the server says who is signed in. A probe that failed says nothing about
 // that, and letting it erase the answer would throw away the evidence the

@@ -21,8 +21,8 @@ export interface DocumentWorkspaceProps extends DocumentWorkspaceServices {
   active?: boolean;
   onShellChange?: (state: DocumentShellState | null) => void;
   incomingDocument?: IncomingDocumentRequest | null;
-  /** Consumed includes a displayed safe-import error, not a guarantee of success. */
-  onIncomingDocumentHandled?: (requestId: string) => void;
+  /** Consumed requests explicitly distinguish imported files from safe errors/conversion prompts. */
+  onIncomingDocumentHandled?: (requestId: string, imported: boolean) => void;
   onPrepareClose?: (prepare: (() => Promise<boolean>) | null) => void;
 }
 const NEW_FORMATS: { format: EditableDocumentFormat; label: string; detail: string }[] = [
@@ -79,8 +79,8 @@ export function DocumentWorkspace({ embedded = false, active = true, onShellChan
       setPendingIncoming((items) => items.some((pending) => pending.requestId === item.requestId) ? items : [...items, item]); return;
     }
     setVault(false); setShowLibrary(false); setPendingIncoming((items) => items.filter((pending) => pending.requestId !== item.requestId));
-    await importRequestedPayload(item.payload);
-    incomingHandled.current?.(item.requestId);
+    const imported = await importRequestedPayload(item.payload);
+    incomingHandled.current?.(item.requestId, imported);
   }, [importRequestedPayload, hasPendingConversion]);
   useEffect(() => {
     if (!incomingDocument || incomingSeen.current.has(incomingDocument.requestId)) return;
@@ -143,7 +143,7 @@ export function DocumentWorkspace({ embedded = false, active = true, onShellChan
         </div>
       </header> : null}
       {closeFailure ? <div className="docs-error" role="alert"><span>{closeFailure}</span><button type="button" aria-label="Dismiss close notice" onClick={() => setCloseFailure(null)}>×</button></div> : null}
-      {pendingIncoming.length ? <div className="docs-notice docs-incoming"><span>{pendingIncoming[0].payload.name} is waiting to open{pendingIncoming.length > 1 ? ` (${pendingIncoming.length} files)` : ""}.</span><button type="button" onClick={() => { const item = pendingIncoming[0]; incomingQueue.current = incomingQueue.current.catch(() => {}).then(() => consumeIncoming(item, true)); }}>Open requested file</button><button type="button" onClick={() => { const item = pendingIncoming[0]; workspace.discardPayload(item.payload); setPendingIncoming((items) => items.slice(1)); incomingHandled.current?.(item.requestId); }}>Ignore</button></div> : null}
+      {pendingIncoming.length ? <div className="docs-notice docs-incoming"><span>{pendingIncoming[0].payload.name} is waiting to open{pendingIncoming.length > 1 ? ` (${pendingIncoming.length} files)` : ""}.</span><button type="button" onClick={() => { const item = pendingIncoming[0]; incomingQueue.current = incomingQueue.current.catch(() => {}).then(() => consumeIncoming(item, true)); }}>Open requested file</button><button type="button" onClick={() => { const item = pendingIncoming[0]; workspace.discardPayload(item.payload); setPendingIncoming((items) => items.slice(1)); incomingHandled.current?.(item.requestId, false); }}>Ignore</button></div> : null}
       {vault ? <Suspense fallback={<p className="docs-loading">Opening protected storage…</p>}><VaultPanel onClose={() => setVault(false)} onCloseGuard={setVaultGuard} /></Suspense> : <>
         {workspace.error ? <div className="docs-error" role="alert"><span>{workspace.error}</span><button type="button" aria-label="Dismiss error" onClick={workspace.dismissError}>×</button></div> : null}
         {workspace.notice ? <div className="docs-notice" role="status">{workspace.notice}</div> : null}

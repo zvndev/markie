@@ -17,14 +17,14 @@ function placeCaret(root: HTMLElement, offset: number) {
   else { range.selectNodeContents(root); range.collapse(false); }
   range.collapse(true); const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
 }
-function selectionOffsets(root: HTMLElement): { start: number; end: number } {
+function selectionOffsets(root: HTMLElement): { start: number; end: number; supported: boolean } {
   const selection = window.getSelection();
-  if (!selection?.rangeCount) return { start: root.textContent?.length ?? 0, end: root.textContent?.length ?? 0 };
+  if (!selection?.rangeCount) return { start: root.textContent?.length ?? 0, end: root.textContent?.length ?? 0, supported: true };
   const selected = selection.getRangeAt(0);
-  if (!root.contains(selected.startContainer) || !root.contains(selected.endContainer)) return { start: 0, end: 0 };
+  if (!root.contains(selected.startContainer) || !root.contains(selected.endContainer)) return { start: 0, end: 0, supported: false };
   const before = document.createRange(); before.selectNodeContents(root); before.setEnd(selected.startContainer, selected.startOffset);
   const through = document.createRange(); through.selectNodeContents(root); through.setEnd(selected.endContainer, selected.endOffset);
-  return { start: before.toString().length, end: through.toString().length };
+  return { start: before.toString().length, end: through.toString().length, supported: true };
 }
 interface WordParagraphProps {
   paragraph: DocxParagraph;
@@ -36,7 +36,7 @@ interface WordParagraphProps {
   onRuns: (edits: DocxTextEdit[]) => void;
   onSplit: (paragraphId: string, offset: number) => void;
   onPasteParagraphs: (paragraphId: string, start: number, end: number, text: string) => void;
-  onSelection?: (paragraphId: string, start: number, end: number) => void;
+  onSelection?: (paragraphId: string, start: number, end: number, supported: boolean) => void;
   trackText?: boolean;
   reconcileToken?: number;
   onRemovePageBreaks: (ids: string[]) => void;
@@ -52,6 +52,7 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
     const offset = pendingCaret.current ?? (document.activeElement === node ? caretOffset(node) : null);
     pendingCaret.current = null;
     node.replaceChildren(...paragraph.runs.map((run) => {
+      const style = run.resolvedStyle ?? run.style;
       const span = document.createElement("span");
       span.dataset.runId = run.id;
       if (run.hyperlinkId) { span.dataset.hyperlinkId = run.hyperlinkId; span.title = `Link: ${run.target ?? ""}. Use the Insert menu or command palette to open or update.`; }
@@ -63,10 +64,10 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
       span.append(document.createTextNode(run.text.slice(textOffset)));
       if (!run.canEdit && !(trackText && run.text)) span.contentEditable = "false";
       Object.assign(span.style, {
-        fontWeight: run.style.bold ? "700" : "400", fontStyle: run.style.italic ? "italic" : "normal",
-        textDecoration: run.style.underline === "none" ? "none" : run.style.underline || run.hyperlinkId ? "underline" : "none",
-        color: run.style.color && /^[0-9a-f]{6}$/i.test(run.style.color) ? `#${run.style.color}` : run.hyperlinkId ? "#2563eb" : "",
-        fontFamily: run.style.fontFamily ?? "", fontSize: run.style.fontSizePoints ? `${run.style.fontSizePoints}pt` : "",
+        fontWeight: style.bold ? "700" : "400", fontStyle: style.italic ? "italic" : "normal",
+        textDecoration: style.underline === "none" ? "none" : style.underline || run.hyperlinkId ? "underline" : "none",
+        color: style.color && /^[0-9a-f]{6}$/i.test(style.color) ? `#${style.color}` : run.hyperlinkId ? "#2563eb" : "",
+        fontFamily: style.fontFamily ?? "", fontSize: style.fontSizePoints ? `${style.fontSizePoints}pt` : "",
       });
       span.dataset.expectedStyle = span.getAttribute("style") ?? "";
       return span;
@@ -103,23 +104,23 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
     } else if (node.textContent !== paragraph.text) onReplace(paragraph.id, node.textContent ?? "");
   };
   return <div ref={root} className={`docs-word-paragraph ${selected ? "is-selected" : ""}`} role="textbox" aria-label={`Paragraph ${index + 1}`} aria-readonly={readOnly} data-paragraph-id={paragraph.id}
-    contentEditable={!readOnly} suppressContentEditableWarning spellCheck data-list-kind={paragraph.listKind} data-list-number={paragraph.listNumber}
+    contentEditable={!readOnly} tabIndex={0} suppressContentEditableWarning spellCheck data-list-kind={paragraph.listKind} data-list-number={paragraph.listNumber}
     style={{ textAlign: paragraph.alignment === "both" ? "justify" : paragraph.alignment as "left" | "center" | "right" | undefined,
       marginTop: `${paragraph.spacingBeforePoints ?? 0}pt`, marginBottom: `${paragraph.spacingAfterPoints ?? 8}pt`, lineHeight: paragraph.lineSpacingMultiple ?? 1.4 }}
     onFocus={() => onSelect(paragraph.id, paragraph.runs[0]?.id)}
     onPointerUp={(event) => {
       const run = (event.target as HTMLElement).closest<HTMLElement>("[data-run-id]");
       onSelect(paragraph.id, run?.dataset.runId ?? paragraph.runs[0]?.id);
-      const offsets = selectionOffsets(root.current!); onSelection?.(paragraph.id, offsets.start, offsets.end);
+      const offsets = selectionOffsets(root.current!); onSelection?.(paragraph.id, offsets.start, offsets.end, offsets.supported);
     }}
     onKeyUp={() => {
-      const offsets = selectionOffsets(root.current!); onSelection?.(paragraph.id, offsets.start, offsets.end);
+      const offsets = selectionOffsets(root.current!); onSelection?.(paragraph.id, offsets.start, offsets.end, offsets.supported);
       const anchor = window.getSelection()?.anchorNode;
       const element = anchor?.nodeType === Node.ELEMENT_NODE ? anchor as HTMLElement : anchor?.parentElement;
       const run = element?.closest<HTMLElement>("[data-run-id]");
       if (run) onSelect(paragraph.id, run.dataset.runId);
     }}
-    onInput={() => { if (!composing.current) { const offsets = selectionOffsets(root.current!); onSelection?.(paragraph.id, offsets.start, offsets.end); emit(); } }}
+    onInput={() => { if (!composing.current) { const offsets = selectionOffsets(root.current!); onSelection?.(paragraph.id, offsets.start, offsets.end, offsets.supported); emit(); } }}
     onCompositionStart={() => { composing.current = true; }}
     onCompositionEnd={() => { composing.current = false; emit(); }}
     onDragOver={(event) => event.preventDefault()}
@@ -127,7 +128,8 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
     onPaste={(event) => {
       event.preventDefault(); if (readOnly) return;
       const text = event.clipboardData.getData("text/plain").replace(/\r\n?/g, "\n");
-      const { start, end } = selectionOffsets(root.current!);
+      const { start, end, supported } = selectionOffsets(root.current!);
+      if (!supported) { onRejectStructure("Select text within one paragraph before pasting."); return; }
       if (text.includes("\n")) { onPasteParagraphs(paragraph.id, start, end, text); return; }
       let offset = 0, inserted = false;
       const edits: DocxTextEdit[] = [];

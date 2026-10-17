@@ -1,9 +1,18 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "@/lib/doc-appearance";
 import type { FormattingAction, FormattingToolbarProps } from "@/lib/format-controls";
 import { FormattingToolbar } from "./formatting-toolbar";
+afterEach(() => vi.unstubAllGlobals());
+
+function constrainToolbar(width: number) {
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(private callback: ResizeObserverCallback) {}
+    observe(target: Element) { this.callback([{ target, contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver); }
+    disconnect() {}
+  });
+}
 
 function renderFormattingToolbar(overrides: Partial<FormattingToolbarProps> = {}) {
   const callbacks = {
@@ -19,10 +28,62 @@ function renderFormattingToolbar(overrides: Partial<FormattingToolbarProps> = {}
 }
 
 describe("shared compact formatting controls", () => {
+  it("keeps primary controls visible and moves real secondary actions into an accessible width-aware overflow", async () => {
+    constrainToolbar(760);
+    const { onAction, onAppearance } = renderFormattingToolbar();
+    const toolbar = screen.getByRole("toolbar");
+    expect(toolbar).toHaveAttribute("data-compact", "true");
+    expect(toolbar).not.toHaveClass("overflow-x-auto");
+    for (const label of ["Bold", "Italic", "Underline", "Undo", "Redo"]) expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    expect(screen.getByLabelText("Paragraph style")).toHaveStyle({ width: "112px" });
+    expect(screen.getByLabelText("Font")).toHaveStyle({ width: "104px" });
+    expect(screen.getByLabelText("Font size")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Insert image" })).toBeNull();
+    const more = screen.getByRole("button", { name: "More formatting" });
+    fireEvent.keyDown(more, { key: "ArrowDown" });
+    let popup = screen.getByRole("dialog", { name: "More formatting" });
+    expect(within(popup).getByRole("button", { name: "Zoom out" })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "End" }); expect([...popup.querySelectorAll('button:not(:disabled),select:not(:disabled),input:not(:disabled)')].at(-1)).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull(); expect(more).toHaveFocus(); expect(onAction).not.toHaveBeenCalled();
+    await userEvent.click(more); popup = screen.getByRole("dialog");
+    await userEvent.click(within(popup).getByRole("button", { name: "Insert image" }));
+    expect(onAction).toHaveBeenCalledExactlyOnceWith("image"); expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.click(more); await userEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(onAppearance).toHaveBeenCalledExactlyOnceWith({ ...DEFAULT_APPEARANCE, zoom: 1.1 });
+  });
+  it("retains narrow-width font/style access and readonly viewing controls without duplicate widgets", async () => {
+    constrainToolbar(390);
+    const { onStyle, onFont, view } = renderFormattingToolbar();
+    expect(screen.queryByLabelText("Paragraph style")).toBeNull(); expect(screen.queryByLabelText("Font")).toBeNull();
+    for (const label of ["Bold", "Italic", "Underline"]) expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "More formatting" }));
+    expect(screen.getAllByLabelText("Font")).toHaveLength(1); expect(screen.getAllByLabelText("Paragraph style")).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText("Paragraph style"), { target: { value: "h2" } }); expect(onStyle).toHaveBeenCalledExactlyOnceWith("h2"); expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "More formatting" }));
+    fireEvent.change(screen.getByLabelText("Font"), { target: { value: "serif" } }); expect(onFont).toHaveBeenCalledOnce();
+    view.unmount();
+    renderFormattingToolbar({ selecting: true, canEdit: false });
+    await userEvent.click(screen.getByRole("button", { name: "More formatting" }));
+    expect(screen.getByRole("button", { name: "Insert image" })).toBeDisabled(); expect(screen.getByLabelText("Font")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Zoom in" })).not.toBeDisabled();
+  });
+  it("represents mixed text without claiming a selected font, size or toggle", () => {
+    const { onSize } = renderFormattingToolbar({ state: { bold: "mixed", italic: false, underline: "mixed" }, selecting: true, currentFont: "", fontPlaceholder: "Mixed fonts", currentSize: null, sizePlaceholder: "Mixed" });
+    expect(screen.getByRole("button", { name: "Bold" })).toHaveAttribute("aria-pressed", "mixed");
+    expect(screen.getByRole("button", { name: "Underline" })).toHaveAttribute("aria-pressed", "mixed");
+    expect(screen.getByRole("combobox", { name: "Font" })).toHaveDisplayValue("Mixed fonts");
+    const size = screen.getByRole("spinbutton", { name: "Font size" });
+    expect(size).toHaveValue(null); expect(size).toHaveAttribute("placeholder", "Mixed");
+    expect(screen.getByRole("button", { name: "Increase font size" })).toBeDisabled();
+    fireEvent.change(size, { target: { value: "" } }); fireEvent.change(size, { target: { value: "0" } }); fireEvent.change(size, { target: { value: "12.25" } });
+    expect(onSize).not.toHaveBeenCalled();
+    fireEvent.change(size, { target: { value: "18.5" } }); expect(onSize).toHaveBeenCalledExactlyOnceWith(18.5);
+  });
   it("retains Markie's existing compact row, styles and SVGs without a second toolbar or ribbon", () => {
     renderFormattingToolbar();
     const toolbar = screen.getByRole("toolbar", { name: "Document formatting" });
-    expect(toolbar).toHaveClass("markie-doc-toolbar", "gap-0.5", "px-2", "py-1", "overflow-x-auto");
+    expect(toolbar).toHaveClass("markie-doc-toolbar", "gap-0.5", "px-2", "py-1", "min-w-0");
     expect(document.querySelectorAll("[data-markie-doc-toolbar]")).toHaveLength(1);
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(within(toolbar).getByRole("button", { name: "Bold" })).toHaveAttribute("aria-pressed", "true");

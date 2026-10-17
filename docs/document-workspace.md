@@ -6,6 +6,8 @@ Markie adds imported documents, notes and working copy to its existing app and L
 
 Markie keeps its established toolbar, activity bar, resizable Library, Projects, Browse, Cloud, Skills, settings and themes. Opening a Word file changes only the renderer inside that shell. Markdown and Word reuse the same compact formatting controls where their capabilities overlap; unsupported actions are not presented as working tools. There is no Word ribbon, tab strip, separate document destination or switch-back control.
 
+When space is tight, secondary formatting and viewing controls move into **More formatting**, not another toolbar row. The same controls remain keyboard-accessible; Escape closes the popover and returns focus to its button. Available paragraph styles and formatting follow the open file type.
+
 Use the normal Library and Open flow to select a different document. The retained Markdown document stays selectable in Recent under its filename, or as `Untitled.md` when it has not been named. Selecting it restores its existing editor and unsaved buffer without reloading the app.
 
 On macOS and Windows, advanced actions live in the native **Format**, **Insert**, **Layout** and **Review** application menus, alongside the existing **File**, **Edit** and **View** menus. Menu availability follows the active renderer, permissions and current modal/lock state. File includes document creation, details and History; supported Word View actions include layout, outline and zoom. Parameterized operations open focused tools rather than another toolbar. The browser exposes supported actions through Markie's existing command palette, not a copied desktop menu bar or ribbon.
@@ -34,7 +36,11 @@ npm run desktop:preview:windows
 
 The Windows build can be produced on this Mac but must run on Windows. Explicit Intel Mac builds use `node scripts/desktop-preview.mjs build mac-x64`. Each build writes a unique ignored `.desktop-preview/` directory and a target-specific latest receipt. No command installs into Applications or publishes a release. The Codex Run action builds and opens only the preview; it does not force-close existing app windows.
 
-Imported files become local recovery records displayed in the existing Library. Recent's filter includes their names, tags, collection and indexed body text. Body indexing is capped at the first million characters. Tags and collections belong to local records, not automatically to the original file's metadata. Expanded type filters and sorting remain follow-up work; the integrated Library does not expose every storage-query option. The established desktop index and cloud rows remain distinct from these recovery records.
+Imported files become local recovery records displayed in the existing Library. Recent can filter by document type and sort by name, most recent or type; Clear filters restores the established default order. Search includes recovery names, tags, collection and extracted body text, capped at the first million characters. Native registry rows support available names/paths, not unindexed bodies. Tags and collections belong to local records, not automatically to the original file's metadata. Native files, retained buffers and recovery copies keep distinct identities and save destinations.
+
+Word and other supported files dropped onto the desktop Library use the existing protected native file-opening path, not Markdown's text decoder. Mixed batches wait for each native import and recovery before opening the following file. A failed import or conversion requiring consent stops the batch rather than hiding the problem behind another document; finish that operation and drop the remaining files again. No imported original is overwritten by dropping or recovering it.
+
+The device-wide Browse index remains Markdown-focused. Type filters and recovery-text search are not a claim that every unopened Word file on the machine has been body-indexed. Broad binary indexing still needs its bounded extraction and privacy/performance acceptance work.
 
 ## Supported formats
 
@@ -48,7 +54,7 @@ Imported files become local recovery records displayed in the existing Library. 
 | Legacy DOC | Word 97–2003 main-story extraction in a disposable local worker, producing a text-only copy. No DOC writer. Five-second worker time budget and 32 MiB input limit. |
 | RTF, HTML, ODT | Explicit conversion consent creates a newly named UTF-8 TXT copy with loss warnings. Originals are not overwritten or relabeled; active content and external resources are not loaded. |
 
-The shared formatting controls and native menus operate only on supported document capabilities. Page-shaped rendering and explicit page breaks are not Word-equivalent automatic pagination. Text tracking records actual authored OOXML insertion/deletion ranges inside existing paragraphs. It does not track new paragraph marks, formatting, table/layout or picture changes; unsupported revision forms remain read-only. Comments, undo history, local recovery and tracked changes are separate mechanisms. The supported subset is not a claim of full Microsoft Word fidelity.
+The shared formatting controls and native menus operate only on supported document capabilities. Word style choices show imported names; choosing a named paragraph style preserves unrelated direct run formatting. Supported document defaults, paragraph/character style inheritance and direct overrides are resolved for display separately from saved direct formatting. Mixed font, size and character properties are shown honestly. Theme font/color resolution, exact line heights, table/numbering styles and full Word fidelity remain incomplete. Page-shaped rendering and explicit page breaks are not Word-equivalent automatic pagination. Text tracking records actual authored OOXML insertion/deletion ranges inside existing paragraphs. It does not track new paragraph marks, formatting, table/layout or picture changes; unsupported revision forms remain read-only. Comments, undo history, local recovery and tracked changes are separate mechanisms.
 
 ## Saving and recovery
 
@@ -70,7 +76,9 @@ Only exact public application resources are cached. Document APIs, account respo
 
 Sharing is explicit and optional. The additive `/api/document-platform` service stores versioned byte snapshots, with SHA-256 verification, owner/editor/viewer permissions, conflict detection, bounded history, verified-account access and expiring/revocable read-only download links. Ordinary snapshots are not end-to-end encrypted. Inviting an account does not send an invitation email.
 
-The sharing panel can open, edit and save accessible cloud snapshots. Concurrent saves use a version check; a conflict keeps the losing editor's unsaved copy. Account changes clear account-bound content and cancel stale work. Viewer access excludes historical versions that could contain removed text. Revocation cannot recall downloaded copies.
+The existing left-side Cloud page now includes ordinary document snapshots alongside legacy Markdown sync. Its shared name/type/sort controls filter metadata without downloading document bodies. Open a DOCX, Markdown or text snapshot directly from that list without first opening or uploading a local file. The guarded cloud editor reuses supported Word controls; cloud snapshots remain separate from local files/recovery, not automatic background sync. Missing-service and connection errors are distinct from an empty cloud account.
+
+The sharing panel can open, edit and save accessible cloud snapshots. Concurrent saves use a version check; a conflict keeps the losing editor's unsaved copy. A save acknowledgment must match the submitted document, next version and exact content before dirty state clears. Account/server changes immediately hide prior rows and cancel stale work; only the confirmed identity may fetch or apply data. Viewer access excludes historical versions that could contain removed text. Revocation cannot recall downloaded copies.
 
 This is versioned document collaboration, not live Word co-editing. Existing Markdown multiplayer remains separate. Live Office synchronization, peer cursors and collaborative undo need a further reviewed implementation.
 

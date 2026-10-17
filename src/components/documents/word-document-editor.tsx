@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { applyDocxOperations, replaceDocxText, type DocxDocument, type DocxOperation, type DocxRunFormat } from "@/lib/office/docx";
 import type { DocumentCommandTarget } from "@/lib/document-commands";
 import type { FormattingAction } from "@/lib/format-controls";
@@ -15,8 +15,11 @@ import "./document-workspace.css";
 
 interface WordDocumentEditorProps { document: DocxDocument; readOnly?: boolean; onChange: (document: DocxDocument) => void; onCommandsReady?: (target: DocumentCommandTarget | null) => void; onHistory?: () => void }
 const WORD_ACTIONS: readonly FormattingAction[] = ["undo", "redo", "bold", "italic", "underline", "link", "image", "bullet", "ordered", "align-left", "align-center", "align-right", "clear"];
-const WORD_FONTS = ["Arial", "Calibri", "Georgia", "Times New Roman", "Helvetica"].map((font) => ({ id: font, label: font }));
-const WORD_STYLES = [{ id: "normal", label: "Normal" }, { id: "Heading1", label: "Heading 1" }, { id: "Heading2", label: "Heading 2" }, { id: "Heading3", label: "Heading 3" }];
+const WORD_FONTS = ["Arial", "Calibri", "Georgia", "Times New Roman", "Helvetica"];
+const WORD_STYLES = [{ id: "", label: "Default paragraph" }, { id: "Normal", label: "Normal" }, { id: "Heading1", label: "Heading 1" }, { id: "Heading2", label: "Heading 2" }, { id: "Heading3", label: "Heading 3" }];
+function commonValue<T>(values: readonly T[]): T | "mixed" | undefined {
+  return values.length && values.some((value) => value !== values[0]) ? "mixed" : values[0];
+}
 export function WordDocumentEditor({ document, readOnly = false, onChange, onCommandsReady, onHistory }: WordDocumentEditorProps) {
   const [selected, setSelected] = useState<string | undefined>(document.paragraphs[0]?.id);
   const [runId, setRunId] = useState<string | undefined>(document.paragraphs[0]?.runs[0]?.id);
@@ -30,6 +33,7 @@ export function WordDocumentEditor({ document, readOnly = false, onChange, onCom
   const [paletteOpen, setPaletteOpen] = useState(false);
   const paletteFocus = useRef<HTMLElement | null>(null);
   const [selectionRevision, setSelectionRevision] = useState(0);
+  const [selectionSupported, setSelectionSupported] = useState(true);
   const undoHistory = useRef<DocxDocument[]>([]), redoHistory = useRef<DocxDocument[]>([]);
   const latestDocument = useRef(document);
   const host = useRef<HTMLDivElement>(null);
@@ -57,6 +61,7 @@ export function WordDocumentEditor({ document, readOnly = false, onChange, onCom
   };
   const blocked = readOnly || !document.canEdit;
   const selectMatch = (match: WordTextMatch) => {
+    setSelectionSupported(true);
     textSelection.current = match;
     setSelected(match.paragraphId);
     setSelectionRevision((value) => value + 1);
@@ -80,7 +85,7 @@ export function WordDocumentEditor({ document, readOnly = false, onChange, onCom
     }
   };
   const formatRun = (style: DocxRunFormat, activeRun: string) => {
-    if (!canMutate()) return;
+    if (!canMutate() || !selectionSupported) return;
     const selection = textSelection.current;
     if (!selection || selection.paragraphId !== selected || selection.start === selection.end) { apply([{ type: "format-run", runId: activeRun, style }]); return; }
     try {
@@ -141,8 +146,8 @@ export function WordDocumentEditor({ document, readOnly = false, onChange, onCom
     if (!paragraph) return null;
     const images = document.images.filter((image) => image.paragraphId === id);
     const shown = originalView && paragraph.originalRuns ? { ...paragraph, text: paragraph.originalText ?? paragraph.text, runs: paragraph.originalRuns } : paragraph;
-    const field = <WordParagraph key={id} paragraph={shown} index={document.paragraphs.indexOf(paragraph)} selected={selected === id} readOnly={blocked || originalView || (!tracking && paragraph.revisionIds.length > 0)} trackText={tracking} reconcileToken={reconcileToken}
-      onSelect={(paragraphId, selectedRun) => { setSelected(paragraphId); setRunId(selectedRun); }}
+    const field = <WordParagraph key={id} paragraph={shown} index={document.paragraphs.indexOf(paragraph)} selected={selected === id} readOnly={blocked || originalView || !!tool || paletteOpen || (!tracking && paragraph.revisionIds.length > 0)} trackText={tracking} reconcileToken={reconcileToken}
+      onSelect={(paragraphId, selectedRun) => { if (paragraphId !== selected) { textSelection.current = null; setSelectionSupported(true); } setSelected(paragraphId); setRunId(selectedRun); }}
       onReplace={(paragraphId, text) => apply([tracking ? { type: "track-paragraph-text", paragraphId, text, author: reviewAuthor.trim() } : { type: "replace-paragraph", paragraphId, text }])}
       onRuns={(edits) => {
         if (!edits.length) return;
@@ -152,7 +157,7 @@ export function WordDocumentEditor({ document, readOnly = false, onChange, onCom
         } else try { perform(replaceDocxText(latestDocument.current, edits)); } catch (failure) { rejectChange(failure); }
       }}
       onSplit={(paragraphId, offset) => pasteParagraphs(paragraphId, offset, offset, "\n")}
-      onPasteParagraphs={pasteParagraphs} onSelection={(paragraphId, start, end) => { textSelection.current = { paragraphId, start, end }; setSelectionRevision((value) => value + 1); }}
+      onPasteParagraphs={pasteParagraphs} onSelection={(paragraphId, start, end, supported) => { textSelection.current = { paragraphId, start, end }; setSelectionSupported(supported); setSelectionRevision((value) => value + 1); }}
       onRemovePageBreaks={(ids) => apply(ids.map((pageBreakId) => ({ type: "remove-page-break", pageBreakId })))} onRejectStructure={rejectChange} />;
     // Selection offsets are kept separately from DOM focus so toolbar clicks
     // format the selected substring rather than its entire underlying run.
@@ -171,24 +176,37 @@ export function WordDocumentEditor({ document, readOnly = false, onChange, onCom
     const paragraph = latestDocument.current.paragraphs.find((item) => item.id === selected);
     const run = paragraph?.runs.find((item) => item.id === runId && item.canEdit);
     if (!run) return;
-    formatRun(key === "b" ? { bold: !run.style.bold } : key === "i" ? { italic: !run.style.italic } : { underline: run.style.underline && run.style.underline !== "none" ? null : "single" }, run.id);
+    formatRun(key === "b" ? { bold: selectionFormat.bold !== true } : key === "i" ? { italic: selectionFormat.italic !== true } : { underline: selectionFormat.underline === true ? "none" : "single" }, run.id);
   };
-  const paragraph = document.paragraphs.find((item) => item.id === selected), run = paragraph?.runs.find((item) => item.id === runId && item.canEdit);
-  const fonts = run?.style.fontFamily && !WORD_FONTS.some((font) => font.id === run.style.fontFamily) ? [...WORD_FONTS, { id: run.style.fontFamily, label: run.style.fontFamily }] : WORD_FONTS;
-  const styles = paragraph?.styleId && !WORD_STYLES.some((style) => style.id === paragraph.styleId) ? [...WORD_STYLES, { id: paragraph.styleId, label: paragraph.styleId }] : WORD_STYLES;
-  const editable = !blocked && !originalView, canUndo = editable && undoHistory.current.length > 0, canRedo = editable && redoHistory.current.length > 0;
-  const heading = (styleId: string | null) => {
-    if (!paragraph || !canMutate()) return;
-    const size = styleId === "Heading1" ? 22 : styleId === "Heading2" ? 17 : styleId === "Heading3" ? 14 : 12;
-    apply([{ type: "format-paragraph", paragraphId: paragraph.id, format: { styleId } }, ...paragraph.runs.filter((item) => item.canEdit).map((item): DocxOperation => ({ type: "format-run", runId: item.id, style: { fontSizePoints: size, bold: !!styleId } }))]);
+  const paragraph = document.paragraphs.find((item) => item.id === selected), run = paragraph?.runs.find((item) => item.id === runId);
+  const selection = textSelection.current;
+  let offset = 0;
+  const selectedRuns = selection && selection.paragraphId === selected && selection.start !== selection.end ? paragraph?.runs.filter((item) => {
+    const start = offset; offset += item.text.length; return start < selection.end && offset > selection.start;
+  }) ?? [] : run ? [run] : [];
+  const effectiveStyles = selectedRuns.map((item) => item.resolvedStyle ?? item.style);
+  const selectionFormat = {
+    bold: commonValue(effectiveStyles.map((style) => !!style.bold)), italic: commonValue(effectiveStyles.map((style) => !!style.italic)),
+    underline: commonValue(effectiveStyles.map((style) => !!style.underline && style.underline !== "none")),
+    fontFamily: commonValue(effectiveStyles.map((style) => style.fontFamily)), fontSizePoints: commonValue(effectiveStyles.map((style) => style.fontSizePoints)),
+    color: commonValue(effectiveStyles.map((style) => style.color?.toLowerCase())),
+  };
+  const fonts = useMemo(() => [...new Set([...WORD_FONTS, ...document.paragraphs.flatMap((item) => item.runs.map((item) => (item.resolvedStyle ?? item.style).fontFamily).filter((font): font is string => !!font))])].map((font) => ({ id: font, label: font })), [document.paragraphs]);
+  const styleId = paragraph?.styleId;
+  const styles = useMemo(() => [...new Map([...WORD_STYLES, ...document.styles.map((style) => ({ id: style.id, label: style.name || style.id })), ...(styleId ? [{ id: styleId, label: document.styles.find((style) => style.id === styleId)?.name || styleId }] : [])].map((style) => [style.id, style])).values()], [document.styles, styleId]);
+  const editable = !blocked && !originalView, editableSelection = editable && selectionSupported && !!selectedRuns.length && selectedRuns.every((item) => item.canEdit);
+  const canFormat = editableSelection && !tool && !paletteOpen, canUndo = editable && undoHistory.current.length > 0, canRedo = editable && redoHistory.current.length > 0;
+  const setParagraphStyle = (styleId: string | null) => {
+    if (!paragraph || !canMutate() || !selectionSupported || tool || paletteOpen || paragraph.revisionIds.length) return;
+    apply([{ type: "format-paragraph", paragraphId: paragraph.id, format: { styleId } }]);
   };
   const selectedTable = document.tables.some((table) => table.rows.some((row) => row.cells.some((cell) => cell.paragraphs.some((item) => item.id === selected))));
   const hasLinkSelection = !!paragraph && (!!document.hyperlinks.find((link) => link.paragraphId === selected && !!runId && link.runIds.includes(runId)) || !!textSelection.current && textSelection.current.start !== textSelection.current.end);
   const availableCommands = tool ? [] : ["find", "zoom-in", "zoom-out", "view-page", "view-continuous", "view-outline", "view-zoom-reset", "review-comments", "review-tracking", "review-changes", "review-final", ...(document.originalText === undefined ? [] : ["review-original"]), ...(onHistory ? ["document-history"] : []),
     ...(canUndo ? ["undo"] : []), ...(canRedo ? ["redo"] : []),
     ...(editable ? ["layout-page-setup", "layout-letter", "layout-a4", "layout-legal", "layout-portrait", "layout-landscape"] : []),
-    ...(editable && paragraph ? ["format-normal", "format-heading-1", "format-heading-2", "format-heading-3", "format-bullets", "format-numbering", "format-align-left", "format-align-center", "format-align-right", "format-align-justify", "insert-paragraph", "insert-table", "layout-paragraph-spacing", ...(!selectedTable ? ["insert-picture"] : []), ...(!tracking && !paragraph.revisionIds.length && (!textSelection.current || textSelection.current.start === textSelection.current.end) ? ["insert-page-break"] : []), ...(!tracking && !paragraph.revisionIds.length && hasLinkSelection ? ["insert-link"] : [])] : []),
-    ...(editable && run ? ["format-bold", "format-italic", "format-underline", "format-clear", "format-font"] : [])];
+    ...(editable && paragraph && selectionSupported && !paragraph.revisionIds.length ? ["format-normal", "format-heading-1", "format-heading-2", "format-heading-3", "format-bullets", "format-numbering", "format-align-left", "format-align-center", "format-align-right", "format-align-justify", "insert-paragraph", "insert-table", "layout-paragraph-spacing", ...(!selectedTable ? ["insert-picture"] : []), ...(!tracking && (!textSelection.current || textSelection.current.start === textSelection.current.end) ? ["insert-page-break"] : []), ...(!tracking && hasLinkSelection ? ["insert-link"] : [])] : []),
+    ...(editableSelection && run ? ["format-bold", "format-italic", "format-underline", "format-clear", "format-font"] : [])];
   const enabledCommands = paletteOpen ? [] : availableCommands;
   const command = (id: string) => {
     if (!canView() || !enabledCommands.includes(id)) return;
@@ -202,11 +220,11 @@ export function WordDocumentEditor({ document, readOnly = false, onChange, onCom
     const dialog: Record<string, WordTool> = { "format-font": "font", "insert-picture": "picture", "insert-table": "table", "insert-link": "link", "layout-page-setup": "page", "layout-paragraph-spacing": "spacing", "review-comments": "review", "review-tracking": "review", "review-changes": "review" };
     if (dialog[id]) { setTool(dialog[id]); return; }
     if (!canMutate()) return;
-    if (run && id === "format-bold") formatRun({ bold: !run.style.bold }, run.id);
-    else if (run && id === "format-italic") formatRun({ italic: !run.style.italic }, run.id);
-    else if (run && id === "format-underline") formatRun({ underline: run.style.underline && run.style.underline !== "none" ? null : "single" }, run.id);
+    if (run && id === "format-bold") formatRun({ bold: selectionFormat.bold !== true }, run.id);
+    else if (run && id === "format-italic") formatRun({ italic: selectionFormat.italic !== true }, run.id);
+    else if (run && id === "format-underline") formatRun({ underline: selectionFormat.underline === true ? "none" : "single" }, run.id);
     else if (run && id === "format-clear") formatRun({ bold: null, italic: null, underline: null, color: null, fontFamily: null, fontSizePoints: null }, run.id);
-    else if (id === "format-normal" || id.startsWith("format-heading-")) heading(id === "format-normal" ? null : `Heading${id.at(-1)}`);
+    else if (id === "format-normal" || id.startsWith("format-heading-")) setParagraphStyle(id === "format-normal" ? "Normal" : `Heading${id.at(-1)}`);
     else if (paragraph && (id === "format-bullets" || id === "format-numbering")) { const kind = id === "format-bullets" ? "bullet" : "numbered"; apply([{ type: "set-list", paragraphId: paragraph.id, kind: paragraph.listKind === kind ? null : kind }]); }
     else if (paragraph && id.startsWith("format-align-")) apply([{ type: "format-paragraph", paragraphId: paragraph.id, format: { alignment: id === "format-align-justify" ? "both" : id.slice(13) as "left" | "center" | "right" } }]);
     else if (id === "insert-paragraph") apply([{ type: "insert-paragraph", afterParagraphId: paragraph?.id, text: "" }]);
@@ -227,9 +245,24 @@ export function WordDocumentEditor({ document, readOnly = false, onChange, onCom
     if (commands[value]) execute(commands[value]);
   };
   return <div ref={host} className="docs-word-host" data-selected-run={runId} onKeyDown={handleKey}>
-    <FormattingToolbar startControls={!onCommandsReady ? <button type="button" aria-label="Document commands" title="Document commands (⌘K / Ctrl+K)" onClick={openPalette} disabled={!!tool}>Commands</button> : undefined} state={{ bold: !!run?.style.bold, italic: !!run?.style.italic, underline: !!run?.style.underline && run.style.underline !== "none", bullet: paragraph?.listKind === "bullet", ordered: paragraph?.listKind === "numbered", alignLeft: (paragraph?.alignment ?? "left") === "left", alignCenter: paragraph?.alignment === "center", alignRight: paragraph?.alignment === "right", canUndo, canRedo }} canEdit={editable && !!run} appearance={{ ...DEFAULT_APPEARANCE, zoom: zoom / 100 }} onAppearance={(next) => { if (canView()) setZoom(Math.min(200, Math.max(50, Math.round(next.zoom * 100)))); }} currentStyle={paragraph?.styleId ?? "normal"} styles={styles} currentFont={run?.style.fontFamily ?? ""} fonts={fonts} selecting currentSize={run?.style.fontSizePoints ?? 12} onFont={(fontFamily) => { if (run && canMutate()) formatRun({ fontFamily: fontFamily || null }, run.id); }} onSize={(fontSizePoints) => { if (run && canMutate()) formatRun({ fontSizePoints }, run.id); }} onStyle={(style) => heading(style === "normal" ? null : style)} onAction={action} onColor={(color) => { if (run && canMutate()) formatRun({ color: color?.replace(/^#/, "") ?? null }, run.id); }} supportedActions={WORD_ACTIONS} showWidthControls={false} onHistory={onHistory ? () => execute("document-history") : undefined} />
+    <FormattingToolbar
+      startControls={!onCommandsReady ? <button type="button" aria-label="Document commands" title="Document commands (⌘K / Ctrl+K)" onClick={openPalette} disabled={!!tool}>Commands</button> : undefined}
+      state={{ bold: selectionFormat.bold, italic: selectionFormat.italic, underline: selectionFormat.underline, bullet: paragraph?.listKind === "bullet", ordered: paragraph?.listKind === "numbered", alignLeft: (paragraph?.alignment ?? "left") === "left", alignCenter: paragraph?.alignment === "center", alignRight: paragraph?.alignment === "right", canUndo, canRedo }}
+      canEdit={canFormat} appearance={{ ...DEFAULT_APPEARANCE, zoom: zoom / 100 }}
+      onAppearance={(next) => { if (canView() && !tool && !paletteOpen) setZoom(Math.min(200, Math.max(50, Math.round(next.zoom * 100)))); }}
+      currentStyle={paragraph?.styleId ?? ""} styles={styles}
+      currentFont={selectionFormat.fontFamily === "mixed" ? "" : selectionFormat.fontFamily ?? ""} fonts={fonts} selecting
+      fontPlaceholder={selectionFormat.fontFamily === "mixed" ? "Mixed fonts" : "Inherited font"}
+      currentSize={typeof selectionFormat.fontSizePoints === "number" ? selectionFormat.fontSizePoints : null}
+      sizePlaceholder={selectionFormat.fontSizePoints === "mixed" ? "Mixed" : "Auto"}
+      onFont={(fontFamily) => { if (run && canFormat && canMutate()) formatRun({ fontFamily: fontFamily || null }, run.id); }}
+      onSize={(fontSizePoints) => { if (run && canFormat && canMutate()) formatRun({ fontSizePoints }, run.id); }}
+      onStyle={(style) => setParagraphStyle(style || null)} onAction={action}
+      onColor={(color) => { if (run && canFormat && canMutate()) formatRun({ color: color?.replace(/^#/, "") ?? null }, run.id); }}
+      supportedActions={WORD_ACTIONS} showWidthControls={false} onHistory={onHistory ? () => execute("document-history") : undefined} />
+    {!selectionSupported ? <div className="docs-warning" role="status">Select text within one paragraph to format it.</div> : null}
     {paletteOpen && !onCommandsReady ? <div onKeyDown={(event) => event.stopPropagation()}><CommandPalette commands={paletteCommands} onClose={closePalette} /></div> : null}
-    {tool ? <WordToolsDialog key={tool} tool={tool} onClose={() => setTool(null)} document={document} paragraph={paragraph} runId={runId} readOnly={blocked} onApply={apply} onError={rejectChange} onReplace={perform} onSelectMatch={selectMatch} onFormatRun={formatRun} onAddLink={addLink} onInsertBreak={insertBreak} review={{ tracking, author: reviewAuthor, originalView, onTracking: (value) => { if (canMutate()) { textSelection.current = null; setTracking(value); } }, onAuthor: setReviewAuthor, onOriginalView: (value) => { if (canView()) { textSelection.current = null; setOriginalView(value); } } }} /> : null}
+    {tool ? <WordToolsDialog key={tool} tool={tool} onClose={() => setTool(null)} document={document} paragraph={paragraph} runId={runId} fontSelection={selectionFormat} readOnly={blocked} onApply={apply} onError={rejectChange} onReplace={perform} onSelectMatch={selectMatch} onFormatRun={formatRun} onAddLink={addLink} onInsertBreak={insertBreak} review={{ tracking, author: reviewAuthor, originalView, onTracking: (value) => { if (canMutate()) { textSelection.current = null; setTracking(value); } }, onAuthor: setReviewAuthor, onOriginalView: (value) => { if (canView()) { textSelection.current = null; setOriginalView(value); } } }} /> : null}
     {tracking ? <div className="docs-tracking-banner" role="status">Tracking paragraph text as {reviewAuthor || "an author is required"}. Formatting, layout and inserted content are not tracked.</div> : null}
     {originalView ? <div className="docs-tracking-banner" role="status">Original text view. Switch to Final text to edit.</div> : null}
     {!tracking && document.revisions.length > 0 ? <div className="docs-tracking-banner">Paragraphs with pending revisions are read-only until you accept/reject them or enable same-author paragraph tracking.</div> : null}

@@ -130,6 +130,27 @@ describe("the Cloud page's four sections", () => {
     sharedWithMe(),
   ];
 
+  it("applies the same type and text query to internally fetched shared documents", async () => {
+    sharedByMe.mockResolvedValue([doc({ id: "md", name: "brief.md" }), doc({ id: "txt", name: "summary.txt" })]);
+    const view = render(<CloudView {...props({ items: [synced(), cloudOnly({ name: "summary.txt" })], query: { search: "summary", format: "text", sort: "name" } })} />);
+    await waitFor(() => expect(within(section("by-me")!).getByText("summary.txt")).toBeInTheDocument());
+    expect(within(section("by-me")!).getByText("summary.txt")).toBeInTheDocument();
+    expect(screen.queryByText("brief.md")).not.toBeInTheDocument();
+    expect(screen.queryByText("synced.md")).not.toBeInTheDocument();
+    view.rerender(<CloudView {...props({ items: [synced()], query: { search: "", format: "all", sort: "default" } })} />);
+    await screen.findByText("brief.md");
+    expect(screen.getByText("synced.md")).toBeInTheDocument();
+  });
+
+  it("honors explicit name sorting inside legacy groups and shared-by-me rows", async () => {
+    sharedByMe.mockResolvedValue([doc({ id: "z", name: "zebra.md" }), doc({ id: "a", name: "alpha.md" })]);
+    renderView({ items: [synced({ name: "z.md", path: "/z.md", cloudId: "z" }), synced({ name: "a.md", path: "/a.md", cloudId: "a" })], query: { search: "", format: "all", sort: "name" } });
+    await screen.findByText("alpha.md");
+    expect(sectionNames("synced")).toEqual(["a.md", "z.md"]);
+    const sharedText = section("by-me")!.textContent!;
+    expect(sharedText.indexOf("alpha.md")).toBeLessThan(sharedText.indexOf("zebra.md"));
+  });
+
   it("puts each kind of document under the heading that explains it", async () => {
     sharedByMe.mockResolvedValue([doc()]);
     renderView({ items: MIXED });
@@ -427,6 +448,51 @@ describe("a row's media note", () => {
 });
 
 describe("the Cloud page's header band", () => {
+  it("condenses ready empty legacy groups beside snapshots without claiming the entire cloud is empty", async () => {
+    renderView({ alongsideSnapshots: true });
+    expect(await screen.findByText("No synced or shared files yet.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "File sync & sharing" })).toBeInTheDocument();
+    expect(document.querySelectorAll("[data-cloud-section]")).toHaveLength(0);
+    expect(screen.queryByText("Nothing in the cloud yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing in your cloud yet")).not.toBeInTheDocument();
+  });
+
+  it("keeps meaningful sync/share rows, controls and media notes while condensing zero groups", async () => {
+    sharedByMe.mockResolvedValue([doc()]);
+    const { onManage } = renderView({ alongsideSnapshots: true, items: [synced({ media: { state: "pending", skipped: [] } })] });
+    await screen.findByText("brief.md");
+    expect(sectionNames("synced")).toEqual(["synced.md"]);
+    expect(screen.getByText("media pending")).toBeInTheDocument();
+    expect(section("cloud")).toBeNull();
+    expect(section("with-me")).toBeNull();
+    await userEvent.click(screen.getByTitle("Manage who can access brief.md"));
+    expect(onManage).toHaveBeenCalledExactlyOnceWith("d1", "brief.md");
+    await userEvent.click(screen.getByRole("button", { name: /Synced from this device/ }));
+    expect(sectionNames("synced")).toEqual([]);
+    expect(section("synced")).not.toBeNull();
+  });
+
+  it("preserves pending and failed shared-list recovery beside snapshots", async () => {
+    let settle: (docs: SharedByMeDoc[] | null) => void = () => {};
+    sharedByMe.mockReturnValue(new Promise<SharedByMeDoc[] | null>((resolve) => { settle = resolve; }));
+    renderView({ alongsideSnapshots: true });
+    expect(screen.getByText("Checking file sync and sharing…")).toBeInTheDocument();
+    expect(screen.getByText("Loading documents you've shared")).toBeInTheDocument();
+    settle(null);
+    expect(await screen.findByText("Some synced or shared files didn't load")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    sharedByMe.mockResolvedValue([doc()]);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("brief.md")).toBeInTheDocument();
+  });
+
+  it("distinguishes filtered legacy results from an empty account beside snapshots", async () => {
+    renderView({ alongsideSnapshots: true, items: [synced()], query: { search: "unmatched", format: "all", sort: "default" } });
+    expect(await screen.findByText("No synced or shared files match these filters.")).toBeInTheDocument();
+    expect(screen.queryByText("No synced or shared files yet.")).not.toBeInTheDocument();
+    expect(document.querySelectorAll("[data-cloud-section]")).toHaveLength(0);
+  });
+
   it("does not call the cloud empty while a list is still on its way", async () => {
     let settle: (docs: SharedByMeDoc[]) => void = () => {};
     sharedByMe.mockReturnValue(new Promise<SharedByMeDoc[]>((r) => (settle = r)));

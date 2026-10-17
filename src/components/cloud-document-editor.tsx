@@ -13,7 +13,7 @@ export function CloudDocumentEditor({ value, readOnly, onChange }: {
   readOnly: boolean;
   onChange: (value: CloudEditingState) => void;
 }) {
-  if (value.kind === "docx") return <div className="h-[55vh] min-h-72 border border-border rounded-md overflow-auto"><Suspense fallback={<p>Opening Word document…</p>}><WordEditor document={value.document} readOnly={readOnly} onChange={(document) => onChange({ kind: "docx", document })} /></Suspense></div>;
+  if (value.kind === "docx") return <div className="h-[55vh] min-h-72 border border-border rounded-md overflow-auto"><Suspense fallback={<p>Opening Word document…</p>}><WordEditor document={value.document} readOnly={readOnly} onChange={(document) => { if (!readOnly) onChange({ kind: "docx", document }); }} /></Suspense></div>;
   if (value.kind === "binary") return <p className="text-sm text-muted">This format can be downloaded, but not edited here.</p>;
   return <label className="block text-sm">Cloud document text<textarea
     value={value.text.replace(/\r\n?/g, "\n")}
@@ -22,7 +22,7 @@ export function CloudDocumentEditor({ value, readOnly, onChange }: {
     onChange={(event) => {
       const text = event.target.value;
       const newline = value.metadata.newline;
-      if (newline === "mixed") return;
+      if (readOnly || newline === "mixed") return;
       onChange({ ...value, text: newline === "crlf" ? text.replace(/\n/g, "\r\n") : newline === "cr" ? text.replace(/\n/g, "\r") : text });
     }}
   />{value.metadata.newline === "mixed" ? <span className="text-xs text-muted">Mixed line endings are view-only in this cloud editor; download a copy to edit safely.</span> : null}</label>;

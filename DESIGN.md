@@ -3,7 +3,7 @@
 ## Source of truth
 
 - Status: Active for document capabilities inside the existing Markie app.
-- Last refreshed: 2026-10-15.
+- Last refreshed: 2026-10-17.
 - Primary product surfaces: native Windows and macOS desktop workspaces, original Word editor, existing Markdown workspace, protected local vault. Web is a new, secondary surface sharing the same document core.
 - Evidence reviewed: src/app/globals.css, src/lib/theme.ts, src/components/toolbar.tsx, library.tsx, doc-toolbar.tsx, docs/design/radius-scale.md and docs/superpowers/plans/2026-10-14-document-platform.md.
 
@@ -29,6 +29,8 @@ Keep one simplified Markie formatting toolbar. Reuse its actual controls for ove
 
 Markdown's Rich Text, Markdown Source and Split choices belong in the native View menu, not a mode toggle in the top toolbar. Preserve Cmd/Ctrl+1/2/3 and the existing command-palette alternatives, including browser access, with the same large-file and literal-text safety checks.
 
+The existing Library and Cloud use the same compact search/type/sort vocabulary. Keep native files, ordinary recovery copies and cloud snapshots visibly distinct; never invent file paths or silently merge unrelated copies by name. Search only fields a source actually provides: native names/paths, bounded extracted recovery text/tags/collections, and cloud metadata until explicitly opened. Filters must not scan or download bodies in the background. Preserve default ordering unless a user explicitly selects another sort, with a clear reset and honest empty/error state.
+
 ## Design principles
 
 1. Files and editing lead; chrome stays compact.
@@ -44,6 +46,8 @@ Reuse Markie's semantic background, surface, surface-2, foreground, muted, borde
 ## Components
 
 Reuse the existing Toolbar, ActivityBar, Library, buttons, menus, source/rich editor behavior, notices and keyboard vocabulary. Format-aware editor content, Word tools/canvas and the isolated vault panel fit into those existing controls. Do not render a replacement app shell, second titlebar, standalone welcome dashboard or new brand. Keep format/storage logic outside rendering and give one active editor ownership of file commands; combine all retained sessions' recovery before a native close.
+
+Word style controls use imported style labels and supported effective properties, without rewriting direct formatting when choosing a named paragraph style. Mixed or unresolved formatting must be identified honestly, not replaced with guessed values. Rendering inherited styles and changing viewing preferences must not bake those values into saved run formatting. Cloud rows require the exact confirmed account/server identity; a successful save requires acknowledgment of the exact document, version and submitted content before clearing dirty state.
 
 ## Accessibility
 

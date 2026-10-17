@@ -106,6 +106,8 @@ Web uses the same Markie shell and existing command palette. It does not copy th
 
 Use stable document identities with display name, format, origin, folder/collection, tags, modified time and sync/access state. Offer search over title/body/comments where authorized, sort by name/modified/created/type, and clear scopes for local/cloud/shared/vault results. Preserve existing project organization rather than imposing a second taxonomy.
 
+October 17 continuation: the existing Library/Cloud now share compact type/name/recent sorting and source-aware queries. Native filenames/paths, extracted ordinary-recovery text/tags/collections and cloud metadata are distinct sources; no fake records or filename-only identity merging. Cloud snapshots can be listed/opened through existing services without a seed local file; this is versioned-copy access, not live Office multiplayer or background sync. The device-wide index remains Markdown-focused until safe bounded binary extraction, authorization and privacy/performance checks are implemented. Do not treat sidebar filtering as evidence of completed all-files body search.
+
 Text extraction is a codec capability. DOCX content is indexed from document semantics, not raw XML. Locked vault items contribute no plaintext content or sensitive titles/snippets to the ordinary index, logs, OS search, recent-files lists or thumbnails. Initially build an in-memory vault index only after unlock, clearing it on lock. Server-side search cannot inspect end-to-end-encrypted vault content; do not pretend it can.
 
 ## Multiplayer and sharing

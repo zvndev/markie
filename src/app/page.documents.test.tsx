@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { emit, installBridge } from "@/test/mock-bridge";
@@ -20,6 +20,7 @@ vi.mock("@/components/document-workspace-host", () => ({ DocumentWorkspaceHost: 
     {active ? <p>Word content inside Markie</p> : null}
   </section>;
 } }));
+vi.mock("@/components/document-cloud-library", () => ({ DocumentCloudLibrary: ({ onOpen }: { onOpen: (id: string) => void }) => <section aria-label="Cloud documents"><button type="button" onClick={() => onOpen("cloud-proposal")}>Cloud proposal.docx</button></section> }));
 import Home from "./page";
 
 beforeEach(() => {
@@ -28,7 +29,7 @@ beforeEach(() => {
   state.shell = {
     name: "proposal.docx", dirty: true, hasSession: true, private: false, ready: true, busy: false, records: [], renderer: "word",
     commands: { enabledCommands: ["format-bold", "insert-table", "document-history", "find"], execute: vi.fn() },
-    create: vi.fn(), open: vi.fn(), importFile: vi.fn(), save: vi.fn(), share: vi.fn(), showVault: vi.fn(),
+    create: vi.fn(), open: vi.fn(), openCloudDocument: vi.fn(), settleIncomingDocuments: vi.fn(async () => true), importFile: vi.fn(), save: vi.fn(), share: vi.fn(), showVault: vi.fn(),
     prepareClose: vi.fn(async () => true), prepareLeave: vi.fn(async () => true),
   };
 });
@@ -84,6 +85,74 @@ describe("document capabilities inside the existing Markie app", () => {
     expect(api.saveFileAs).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Save file" }));
     expect(state.shell!.save).toHaveBeenCalledTimes(3);
+  });
+  it("opens a sidebar cloud document through the guarded renderer without creating a local seed", async () => {
+    const api = await boot();
+    const markdown = screen.getByText("Retained Markdown buffer");
+    await userEvent.click(screen.getByRole("button", { name: "Cloud: synced and shared" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Cloud proposal.docx" }));
+    await waitFor(() => expect(state.shell!.openCloudDocument).toHaveBeenCalledExactlyOnceWith("cloud-proposal"));
+    expect(state.shell!.prepareLeave).toHaveBeenCalledTimes(1);
+    expect(state.shell!.create).not.toHaveBeenCalled();
+    expect(api.openFilePath).not.toHaveBeenCalled();
+    expect(markdown).toBeInTheDocument();
+    expect(document.querySelectorAll(".markie-toolbar")).toHaveLength(1);
+  });
+  it("keeps Markdown visible when the retained document refuses a cloud handoff", async () => {
+    await boot();
+    vi.mocked(state.shell!.prepareLeave).mockResolvedValue(false);
+    await userEvent.click(screen.getByRole("button", { name: "Cloud: synced and shared" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Cloud proposal.docx" }));
+    expect(state.shell!.openCloudDocument).not.toHaveBeenCalled();
+    expect(screen.getByText("Retained Markdown buffer")).toBeVisible();
+    expect(document.title).toBe("notes.md — Markie");
+  });
+  it("does not start cloud handoff while the document renderer is busy", async () => {
+    state.shell!.busy = true;
+    await boot();
+    await userEvent.click(screen.getByRole("button", { name: "Cloud: synced and shared" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Cloud proposal.docx" }));
+    expect(state.shell!.prepareLeave).not.toHaveBeenCalled();
+    expect(state.shell!.openCloudDocument).not.toHaveBeenCalled();
+    expect(screen.getByText("Retained Markdown buffer")).toBeVisible();
+  });
+  it("waits for the Word import before opening the final Markdown file in a mixed drop", async () => {
+    let finish!: (settled: boolean) => void;
+    vi.mocked(state.shell!.settleIncomingDocuments!).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const openFilePath = vi.fn(async (path: string) => {
+      if (path.endsWith(".docx")) { state.activate?.(); return null; }
+      return { name: "last.md", path, content: "Final mixed-drop Markdown\n" };
+    });
+    await boot({ pathForFile: (file) => `/drop/${file.name}`, openFilePath });
+    await act(async () => { fireEvent.drop(document.querySelector(".markie-side-panel")!, { dataTransfer: { files: [new File(["word"], "first.docx"), new File(["text"], "last.md")] } }); });
+    await waitFor(() => expect(state.shell!.settleIncomingDocuments).toHaveBeenCalledOnce());
+    expect(openFilePath.mock.calls).toEqual([["/drop/first.docx"]]);
+    await act(async () => { finish(true); });
+    await screen.findByText("Final mixed-drop Markdown");
+    expect(openFilePath.mock.calls).toEqual([["/drop/first.docx"], ["/drop/last.md"]]);
+    expect(document.title).toBe("last.md — Markie");
+  });
+  it("does not let earlier Markdown overtake a final queued Word import", async () => {
+    const openFilePath = vi.fn(async (path: string) => {
+      if (path.endsWith(".docx")) { state.activate?.(); return null; }
+      return { name: "first.md", path, content: "Earlier dropped Markdown\n" };
+    });
+    const api = await boot({ pathForFile: (file) => `/drop/${file.name}`, openFilePath });
+    await act(async () => { fireEvent.drop(document.querySelector(".markie-side-panel")!, { dataTransfer: { files: [new File(["text"], "first.md"), new File(["word"], "last.docx")] } }); });
+    await waitFor(() => expect(state.shell!.settleIncomingDocuments).toHaveBeenCalledOnce());
+    await screen.findByText("Word content inside Markie");
+    expect(screen.queryByText("Earlier dropped Markdown")).not.toBeInTheDocument();
+    expect(api.registryTrack).toHaveBeenCalledWith({ path: "/drop/first.md", name: "first.md", content: "Earlier dropped Markdown\n" });
+    expect(api.registryTrack).not.toHaveBeenCalledWith(expect.objectContaining({ name: "last.docx" }));
+  });
+  it("stops a mixed drop when its native import fails or still needs consent", async () => {
+    vi.mocked(state.shell!.settleIncomingDocuments!).mockResolvedValue(false);
+    const openFilePath = vi.fn(async () => { state.activate?.(); return null; });
+    await boot({ pathForFile: (file) => `/drop/${file.name}`, openFilePath });
+    await act(async () => { fireEvent.drop(document.querySelector(".markie-side-panel")!, { dataTransfer: { files: [new File(["broken"], "broken.docx"), new File(["text"], "last.md")] } }); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Finish the pending document operation before opening the remaining dropped files.");
+    expect(openFilePath).toHaveBeenCalledExactlyOnceWith("/drop/broken.docx");
+    expect(screen.getByText("Retained Markdown buffer")).toBeInTheDocument();
   });
   it("routes native actions to the current renderer and publishes unique known capabilities", async () => {
     const api = await boot(); await openWord();

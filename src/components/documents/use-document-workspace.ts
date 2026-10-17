@@ -256,7 +256,13 @@ export function useDocumentWorkspace(services: DocumentWorkspaceServices, keyboa
 
   const importPayload = useCallback(async (payload: WebDocumentPayload) => {
     const token = ++request.current;
-    await run("Opening requested document", () => acceptPayload(payload, token));
+    const previousEpoch = sessionRef.current?.epoch;
+    let imported = false;
+    await run("Opening requested document", async () => {
+      await acceptPayload(payload, token);
+      imported = token === request.current && !conversionRef.current && sessionRef.current?.epoch !== previousEpoch;
+    });
+    return imported;
   }, [acceptPayload, run]);
 
   const confirmConversion = useCallback(async () => {
@@ -315,7 +321,7 @@ export function useDocumentWorkspace(services: DocumentWorkspaceServices, keyboa
       const active = sessionRef.current;
       setNotice(active?.id !== snapshot.id || active.epoch !== snapshot.epoch
         ? "Saved an earlier document session to file. The current document was not marked saved."
-        : active.generation === snapshot.generation ? "Saved to file." : "Saved that file revision. Newer edits still need saving.");
+        : active.generation === snapshot.generation ? null : "Saved that file revision. Newer edits still need saving.");
     }); } finally {
       if (usedHandle) {
         const remaining = (handleUsers.current.get(usedHandle) ?? 1) - 1;

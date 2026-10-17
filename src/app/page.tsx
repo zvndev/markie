@@ -210,6 +210,14 @@ const toDisk = (name: string | null, md: string) =>
 
 const DocumentEditor = lazy(() => import("@/components/document-workspace-host").then((module) => ({ default: module.DocumentWorkspaceHost })));
 const DocumentCloudLibrary = lazy(() => import("@/components/document-cloud-library").then((module) => ({ default: module.DocumentCloudLibrary })));
+const CLOUD_HANDOFF_ERROR = "Recovery did not finish. The cloud document was not opened.";
+interface CloudHandoff {
+  id: string;
+  source: Pick<DocumentShellState, "selectedId" | "name" | "hasSession">;
+  accountId: string | null;
+  markdown: { path: string | null; name: string | null; content: string };
+  prepared: boolean;
+}
 
 export default function Home({ documentsEnabled = false }: { documentsEnabled?: boolean } = {}) {
   const [documentsOpen, setDocumentsOpen] = useState(false);
@@ -221,6 +229,9 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   const documentsOpenRef = useRef(false);
   const [documentShell, setDocumentShell] = useState<DocumentShellState | null>(null);
   const documentShellRef = useRef<DocumentShellState | null>(null);
+  const [cloudHandoff, setCloudHandoff] = useState<CloudHandoff | null>(null);
+  const cloudHandoffRef = useRef<CloudHandoff | null>(null);
+  useEffect(() => () => { cloudHandoffRef.current = null; }, []);
   const updateDocumentShell = useCallback((state: DocumentShellState | null) => { documentShellRef.current = state; setDocumentShell(state); }, []);
   const leaveDocuments = useCallback(async () => {
     if (!documentsOpenRef.current) return true;
@@ -1202,10 +1213,12 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     saveGuardRef.current = saveGuard;
   }, [saveGuard]);
 
-  const openDocumentsWorkspace = useCallback(async () => {
+  const openDocumentsWorkspace = useCallback(async (canActivate?: () => boolean) => {
+    if (canActivate && !canActivate()) return false;
     if (documentsEnabled && documentsOpenRef.current) return true;
     currentMarkdown();
     await settleDocument();
+    if (canActivate && !canActivate()) return false;
     const md = currentMarkdown();
     const previousPath = docRef.current.filePath;
     if (md !== docRef.current.savedContent) {
@@ -1228,6 +1241,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       setForkError("New Markdown edits arrived while saving recovery. Open Documents again when you are ready.");
       return false;
     }
+    if (canActivate && !canActivate()) return false;
     if (documentsEnabled) { documentsOpenRef.current = true; setDocumentsOpen(true); setShowFind(false); }
     return true;
   }, [currentMarkdown, settleDocument, documentsEnabled]);
@@ -1261,16 +1275,41 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     if (await openDocumentsWorkspace()) documentShellRef.current?.open(record);
   }, [openDocumentsWorkspace]);
   const openCloudDocument = useCallback(async (id: string) => {
-    if (!documentsEnabled || document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
+    if (!documentsEnabled || cloudHandoffRef.current || document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
     const shell = documentShellRef.current;
-    if (!shell?.ready || shell.busy || !shell.openCloudDocument) return;
-    if (!await shell.prepareLeave()) return;
-    if (await openDocumentsWorkspace()) requestAnimationFrame(() => {
-      if (documentsOpenRef.current && !document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) {
-        documentShellRef.current?.openCloudDocument?.(id);
-      }
-    });
-  }, [documentsEnabled, openDocumentsWorkspace]);
+    if (!shell?.ready || shell.busy || shell.private || !shell.openCloudDocument) return;
+    setForkError((error) => error === CLOUD_HANDOFF_ERROR ? null : error);
+    const markdown = currentMarkdown();
+    const intent: CloudHandoff = { id, source: { selectedId: shell.selectedId, name: shell.name, hasSession: shell.hasSession }, accountId: account?.id ?? null,
+      markdown: { path: docRef.current.filePath, name: docRef.current.fileName, content: markdown }, prepared: false };
+    cloudHandoffRef.current = intent;
+    setCloudHandoff(intent);
+    try {
+      if (!await shell.prepareLeave() || cloudHandoffRef.current !== intent) return;
+      if (!await openDocumentsWorkspace(() => cloudHandoffRef.current === intent) || cloudHandoffRef.current !== intent) return;
+      const prepared = { ...intent, prepared: true };
+      cloudHandoffRef.current = prepared;
+      setCloudHandoff(prepared);
+    } catch { if (cloudHandoffRef.current === intent) setForkError(CLOUD_HANDOFF_ERROR); }
+    finally { if (cloudHandoffRef.current === intent) { cloudHandoffRef.current = null; setCloudHandoff(null); } }
+  }, [documentsEnabled, openDocumentsWorkspace, currentMarkdown, account?.id]);
+  useEffect(() => {
+    if (!cloudHandoff || cloudHandoffRef.current !== cloudHandoff) return;
+    const shell = documentShellRef.current;
+    const cancel = () => { cloudHandoffRef.current = null; setCloudHandoff(null); };
+    if (!documentsEnabled || closingWindow || showSettings || showTheme || showPalette || showHelp || showShare || signInReason || showAgents || manageShare
+      || document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]") || !shell || shell.private || shell.commands?.modalOpen
+      || shell.selectedId !== cloudHandoff.source.selectedId || shell.name !== cloudHandoff.source.name || shell.hasSession !== cloudHandoff.source.hasSession
+      || (account?.id ?? null) !== cloudHandoff.accountId || filePath !== cloudHandoff.markdown.path || fileName !== cloudHandoff.markdown.name
+      || currentMarkdown() !== cloudHandoff.markdown.content) { cancel(); return; }
+    if (!cloudHandoff.prepared) return;
+    if (!documentsOpen || !documentsOpenRef.current) { cancel(); return; }
+    // Eager refs and one animation frame do not prove the Host's active/busy
+    // React commit has landed. Retain this intent until its shell publishes it.
+    if (!shell.ready || shell.busy || document.querySelector(".docs-embedded-host")?.closest("[inert]")) return;
+    cancel();
+    shell.openCloudDocument?.(cloudHandoff.id);
+  }, [cloudHandoff, documentsOpen, documentShell, documentsEnabled, closingWindow, showSettings, showTheme, showPalette, showHelp, showShare, signInReason, showAgents, manageShare, account?.id, filePath, fileName, content, currentMarkdown]);
   const openVault = useCallback(async () => {
     if (await openDocumentsWorkspace()) documentShellRef.current?.showVault();
   }, [openDocumentsWorkspace]);

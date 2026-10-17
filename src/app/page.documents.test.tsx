@@ -1,31 +1,34 @@
 import { useEffect } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { emit, installBridge } from "@/test/mock-bridge";
 import type { DocumentShellState } from "@/lib/document-shell";
+import { authStore } from "@/lib/auth-store";
 
-const state = vi.hoisted(() => ({ shell: null as DocumentShellState | null, activate: null as (() => void) | null, nativeOnMount: false }));
+const state = vi.hoisted(() => ({ shell: null as DocumentShellState | null, activate: null as (() => void) | null, publish: null as ((shell: DocumentShellState | null) => void) | null, authUser: null as { id: string; name: string; email: string } | null, hostActive: false, nativeOnMount: false }));
 vi.mock("@/lib/auth-client", () => ({
-  authClient: { me: async () => null },
+  authClient: { me: async () => state.authUser },
   sharesClient: { access: async () => null, list: async () => null, sharedByMe: async () => [] },
   collabWsBase: () => "ws://localhost", getAuthToken: () => null, adoptAuthToken: () => {}, pushSyncConfig: () => {},
 }));
 vi.mock("@/components/document-workspace-host", () => ({ DocumentWorkspaceHost: ({ active, embedded, onShellChange, onActivate }: {
   active: boolean; embedded: boolean; onShellChange: (shell: DocumentShellState | null) => void; onActivate: () => void;
 }) => {
-  useEffect(() => { onShellChange(state.shell); return () => onShellChange(null); }, [onShellChange]);
+  useEffect(() => { state.publish = onShellChange; onShellChange(state.shell); return () => { state.publish = null; onShellChange(null); }; }, [onShellChange]);
+  useEffect(() => { state.hostActive = active; }, [active]);
   useEffect(() => { state.activate = onActivate; if (state.nativeOnMount) onActivate(); }, [onActivate]);
-  return <section data-testid="format-editor" data-embedded={embedded}>
+  return <section className="docs-embedded-host" inert={!active} data-testid="format-editor" data-embedded={embedded}>
     {active ? <p>Word content inside Markie</p> : null}
   </section>;
 } }));
 vi.mock("@/components/document-cloud-library", () => ({ DocumentCloudLibrary: ({ onOpen }: { onOpen: (id: string) => void }) => <section aria-label="Cloud documents"><button type="button" onClick={() => onOpen("cloud-proposal")}>Cloud proposal.docx</button></section> }));
 import Home from "./page";
 
-beforeEach(() => {
+beforeEach(async () => {
   localStorage.clear();
-  state.nativeOnMount = false; state.activate = null;
+  state.authUser = null; await authStore.refresh();
+  state.nativeOnMount = false; state.activate = null; state.publish = null; state.hostActive = false;
   state.shell = {
     name: "proposal.docx", dirty: true, hasSession: true, private: false, ready: true, busy: false, records: [], renderer: "word",
     commands: { enabledCommands: ["format-bold", "insert-table", "document-history", "find"], execute: vi.fn() },
@@ -97,6 +100,97 @@ describe("document capabilities inside the existing Markie app", () => {
     expect(api.openFilePath).not.toHaveBeenCalled();
     expect(markdown).toBeInTheDocument();
     expect(document.querySelectorAll(".markie-toolbar")).toHaveLength(1);
+  });
+  it("retains the Cloud intent until activation and delayed nonbusy shell publication commit", async () => {
+    await boot();
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    const initial = state.shell!, accepted = vi.fn(); let finish!: (allowed: boolean) => void;
+    vi.mocked(initial.openCloudDocument!).mockImplementation(() => { if (state.hostActive && !state.shell!.busy) accepted(); });
+    vi.mocked(initial.prepareLeave).mockImplementationOnce(() => {
+      state.shell = { ...initial, busy: true }; state.publish!(state.shell);
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Cloud: synced and shared" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Cloud proposal.docx" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cloud proposal.docx" }));
+    expect(initial.prepareLeave).toHaveBeenCalledOnce();
+    await act(async () => { finish(true); });
+    await screen.findByText("Word content inside Markie");
+    expect(accepted).not.toHaveBeenCalled();
+    await act(async () => { state.shell = { ...initial, busy: false }; state.publish!(state.shell); });
+    await waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+    expect(initial.openCloudDocument).toHaveBeenCalledExactlyOnceWith("cloud-proposal");
+  });
+  it("dispatches Cloud only after the Host active commit, without depending on an animation frame", async () => {
+    await boot(); const accepted = vi.fn();
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    vi.mocked(state.shell!.openCloudDocument!).mockImplementation(() => { if (state.hostActive && !document.querySelector(".docs-embedded-host[inert]")) accepted(); });
+    await userEvent.click(screen.getByRole("button", { name: "Cloud: synced and shared" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Cloud proposal.docx" }));
+    await waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+    expect(state.shell!.openCloudDocument).toHaveBeenCalledExactlyOnceWith("cloud-proposal");
+  });
+  it.each(["session", "private", "modal", "closing", "navigation", "account"])("cancels a prepared Cloud handoff when %s ownership changes", async (change) => {
+    await boot(); const initial = state.shell!; let finish!: (allowed: boolean) => void, finishClose: ((allowed: boolean) => void) | undefined;
+    vi.mocked(initial.prepareLeave).mockImplementationOnce(() => {
+      state.shell = { ...initial, busy: true }; state.publish!(state.shell);
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Cloud: synced and shared" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Cloud proposal.docx" }));
+    await act(async () => { finish(true); }); await screen.findByText("Word content inside Markie");
+    let modal: HTMLElement | undefined;
+    if (change === "navigation") {
+      await userEvent.click(screen.getByRole("button", { name: "Library: recent and projects (⌘L)" }));
+      await userEvent.click(screen.getByRole("button", { name: /notes\.md/ }));
+    }
+    else if (change === "account") await act(async () => { state.authUser = { id: "new-account", name: "Synthetic B", email: "b@example.test" }; await authStore.refresh(); });
+    else if (change === "closing") {
+      vi.mocked(initial.prepareClose).mockImplementationOnce(() => new Promise((resolve) => { finishClose = resolve; }));
+      await act(async () => { emit("onAppWillClose", 99); });
+      expect(document.querySelector(".markie-shell")).toHaveAttribute("inert");
+    } else {
+      if (change === "modal") { modal = document.createElement("section"); modal.setAttribute("role", "dialog"); modal.setAttribute("aria-modal", "true"); document.body.append(modal); }
+      await act(async () => { state.shell = { ...initial, busy: true, ...(change === "session" ? { selectedId: "other-session" } : change === "private" ? { private: true } : {}) }; state.publish!(state.shell); });
+    }
+    modal?.remove();
+    await act(async () => { state.shell = { ...initial, busy: false }; state.publish!(state.shell); finishClose?.(false); });
+    expect(initial.openCloudDocument).not.toHaveBeenCalled();
+  });
+  it("cancels a pending Cloud handoff on unmount before preparation resolves", async () => {
+    await boot(); const initial = state.shell!; let finish!: (allowed: boolean) => void;
+    vi.mocked(initial.prepareLeave).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await userEvent.click(screen.getByRole("button", { name: "Cloud: synced and shared" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Cloud proposal.docx" }));
+    cleanup(); await act(async () => { finish(true); });
+    expect(initial.openCloudDocument).not.toHaveBeenCalled();
+  });
+  it("does not activate Word after Cloud is cancelled during Markdown recovery", async () => {
+    const api = await boot(); let finish!: (result: { ok: boolean }) => void;
+    await userEvent.click(screen.getByRole("button", { name: "Cloud: synced and shared" }));
+    vi.mocked(api.saveFile).mockRejectedValue(new Error("Synthetic disk failure"));
+    await waitFor(() => expect((window as unknown as { __markieEditor?: { isEditable: boolean } }).__markieEditor?.isEditable).toBe(true));
+    await act(async () => { (window as unknown as { __markieEditor: { commands: { setContent: (html: string) => void } } }).__markieEditor.commands.setContent("<p>Retained delayed Markdown</p>"); });
+    vi.mocked(api.draftSave!).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await userEvent.click(await screen.findByRole("button", { name: "Cloud proposal.docx" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    await userEvent.click(screen.getByRole("button", { name: "Commands (⌘K)" }));
+    await screen.findByRole("dialog", { name: "Command palette" });
+    await act(async () => { finish({ ok: true }); });
+    expect(screen.getByText("Retained delayed Markdown")).toBeVisible();
+    expect(state.hostActive).toBe(false);
+    expect(state.shell!.openCloudDocument).not.toHaveBeenCalled();
+  });
+  it("reports a rejected Cloud preparation and permits one safe retry", async () => {
+    await boot(); const initial = state.shell!;
+    vi.mocked(initial.prepareLeave).mockRejectedValueOnce(new Error("Synthetic recovery failure"));
+    await userEvent.click(screen.getByRole("button", { name: "Cloud: synced and shared" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Cloud proposal.docx" }));
+    expect(await screen.findByText("Recovery did not finish. The cloud document was not opened.")).toBeVisible();
+    expect(initial.openCloudDocument).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Cloud proposal.docx" }));
+    await waitFor(() => expect(initial.openCloudDocument).toHaveBeenCalledExactlyOnceWith("cloud-proposal"));
+    expect(screen.queryByText("Recovery did not finish. The cloud document was not opened.")).toBeNull();
   });
   it("keeps Markdown visible when the retained document refuses a cloud handoff", async () => {
     await boot();

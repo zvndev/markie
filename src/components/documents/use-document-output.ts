@@ -22,7 +22,7 @@ export function useDocumentOutput(inputs: DocumentOutputInputs) {
     if (!mounted.current || inFlight.current || current.current.isBlocked()) return;
     // Synchronous model capture, never scraped DOM or a save/flush.
     const snapshot = current.current.captureSession();
-    if (!snapshot?.office || !canPrintDocx(snapshot.office)) return;
+    if (snapshot?.office?.format !== "docx" || !canPrintDocx(snapshot.office)) return;
     const stillCurrent = () => {
       const next = current.current.captureSession();
       return mounted.current && next?.epoch === snapshot.epoch && next.generation === snapshot.generation;
@@ -59,6 +59,6 @@ export function useDocumentOutput(inputs: DocumentOutputInputs) {
       if (mounted.current) setBusy(false);
     }
   }, []);
-  const eligible = !!inputs.session?.office && canPrintDocx(inputs.session.office);
+  const eligible = inputs.session?.office?.format === "docx" && canPrintDocx(inputs.session.office);
   return { busy, isBusy, eligible, execute, error: message?.epoch === inputs.session?.epoch ? message?.error : undefined, notice: message?.epoch === inputs.session?.epoch ? message?.notice : undefined };
 }

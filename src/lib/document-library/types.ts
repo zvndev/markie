@@ -1,5 +1,5 @@
 /** Ordinary workspace documents only. Vault plaintext must never enter this API. */
-export type LibraryFormat = "markdown" | "text" | "csv" | "json" | "yaml" | "xml" | "docx" | "doc";
+export type LibraryFormat = "markdown" | "text" | "csv" | "json" | "yaml" | "xml" | "docx" | "doc" | "rtf" | "odt";
 export interface LibraryRecord {
   readonly schemaVersion: 1;
   readonly id: string;

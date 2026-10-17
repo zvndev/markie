@@ -19,6 +19,14 @@ async function setup() {
   return { hook, exportPDF, current: () => session, replace: (next: typeof session) => { session = next; }, block: () => { blocked = true; } };
 }
 describe("supported Word output capture", () => {
+  it.each(["rtf", "odt"] as const)("does not advertise or send %s snapshots to DOCX printing", async (format) => {
+    const session = await createDocumentSession(format), exportPDF = vi.fn();
+    vi.mocked(getSafeAPI).mockReturnValue({ exportPDF } as unknown as NonNullable<ReturnType<typeof getSafeAPI>>);
+    const hook = renderHook(() => useDocumentOutput({ session, captureSession: () => session, isBlocked: () => false }));
+    expect(hook.result.current.eligible).toBe(false);
+    await act(async () => { await hook.result.current.execute("document-print"); await hook.result.current.execute("document-export-pdf"); });
+    expect(exportPDF).not.toHaveBeenCalled(); expect(hook.result.current.error).toBeUndefined();
+  });
   it("captures the latest synchronous model, preserves bytes and generations, and omits file paths", async () => {
     const test = await setup(), first = test.current();
     const office = replaceDocxText(first.office!, [{ runId: first.office!.paragraphs[0].runs[0].id, text: "Latest unsaved words" }]);

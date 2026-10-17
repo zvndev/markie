@@ -23,7 +23,7 @@ export const DEFAULT_LIBRARY_DOCUMENT_QUERY: Readonly<LibraryDocumentQuery> = Ob
 
 export function libraryDocumentFormat(name: string): LibraryFormat | "other" {
   const kind = classifyDocumentFormat(name).kind;
-  return kind === "unsupported" || kind === "rtf" || kind === "html" || kind === "odt" ? "other" : kind;
+  return kind === "unsupported" || kind === "html" ? "other" : kind;
 }
 
 export function matchesLibraryDocument(metadata: LibraryDocumentMetadata, query: LibraryDocumentQuery): boolean {

@@ -1,7 +1,9 @@
-import { replaceDocxText, type DocxDocument, type DocxTextEdit } from "@/lib/office/docx";
+import type { DocxTextEdit } from "@/lib/office/docx";
+import type { RichDocument } from "@/lib/office/rich-text-types";
+import { replaceRichText } from "@/lib/office/rich-document";
 
 export interface WordTextMatch { paragraphId: string; start: number; end: number }
-export function findWordText(document: DocxDocument, query: string): WordTextMatch[] {
+export function findWordText(document: RichDocument, query: string): WordTextMatch[] {
   if (!query) return [];
   const matches: WordTextMatch[] = [];
   for (const paragraph of document.paragraphs) {
@@ -17,8 +19,8 @@ export function findWordText(document: DocxDocument, query: string): WordTextMat
 }
 
 /** Replace literal ranges across runs without flattening unaffected formatting. */
-export function replaceWordText(document: DocxDocument, query: string, replacement: string, matchIndex?: number): { document: DocxDocument; count: number } {
-  if (!document.canEdit) throw new Error("This Word document is read-only.");
+export function replaceWordText<T extends RichDocument>(document: T, query: string, replacement: string, matchIndex?: number): { document: T; count: number } {
+  if (!document.canEdit) throw new Error("This document is read-only.");
   if (/[\t\r\n]/.test(replacement)) throw new Error("Find and replace cannot insert tabs or paragraph breaks.");
   const all = findWordText(document, query);
   const matches = matchIndex === undefined ? all : all[matchIndex] ? [all[matchIndex]] : [];
@@ -41,5 +43,5 @@ export function replaceWordText(document: DocxDocument, query: string, replaceme
     }
     paragraph.runs.forEach((run, index) => { if (text[index] !== run.text) edits.push({ runId: run.id, text: text[index] }); });
   }
-  return { document: edits.length ? replaceDocxText(document, edits) : document, count: matches.length };
+  return { document: edits.length ? replaceRichText(document, edits) : document, count: matches.length };
 }

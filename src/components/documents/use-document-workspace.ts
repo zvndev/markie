@@ -4,7 +4,7 @@ import {
   editDocumentDetails, editDocumentText, editOfficeDocument, openDocumentSession, restoreDocumentText,
   serializeDocumentSession, type DocumentSession, type EditableDocumentFormat,
 } from "@/lib/document-session";
-import { openDocx, type DocxDocument } from "@/lib/office/docx";
+import { openRichDocument, type RichDocument } from "@/lib/office/rich-document";
 import { extractLegacyDocTextOffThread } from "@/lib/office/legacy-doc-worker-client";
 import { classifyDocumentFormat, decodeTextDocument, encodeTextDocument } from "@/lib/document-formats";
 import { pickWebDocument, saveWebDocument, type WebDocumentPayload, type WebFileHandle } from "@/lib/web-files";
@@ -35,10 +35,10 @@ async function importSession(payload: WebDocumentPayload, signal?: AbortSignal):
     const session = editDocumentText(await createDocumentSession("text", payload.name.replace(/\.doc$/i, " (converted).txt")), converted);
     return { ...session, warnings: ["Converted a text-only copy. The original DOC was not modified. Formatting and non-text content are not carried into this copy.", ...(converted !== result.text ? ["Legacy cell and line separators were converted to text whitespace. Unsupported field/control markers were omitted."] : []), ...result.warnings] };
   }
-  if (!["markdown", "text", "csv", "json", "yaml", "xml", "docx"].includes(format)) {
+  if (!["markdown", "text", "csv", "json", "yaml", "xml", "docx", "rtf", "odt"].includes(format)) {
     throw new Error("That file format is not editable yet. RTF, HTML and ODT are not opened as Markdown.");
   }
-  const office = format === "docx" ? await openDocx(payload.bytes) : null;
+  const office = format === "docx" || format === "rtf" || format === "odt" ? await openRichDocument(format, payload.bytes) : null;
   const session = await createDocumentSession(format as EditableDocumentFormat, payload.name);
   return {
     ...session, office, text: office?.text ?? payload.text!.text, textMetadata: office ? null : payload.text,
@@ -228,7 +228,7 @@ export function useDocumentWorkspace(services: DocumentWorkspaceServices, keyboa
     activeImport.current?.abort();
     const controller = new AbortController(); activeImport.current = controller;
     try {
-      if (["rtf", "html", "odt"].includes(payload.format.kind)) {
+      if (payload.format.kind === "html") {
         if (token === request.current) setConversion({ ...payload, handle: undefined, bytes: new Uint8Array(payload.bytes) });
         return;
       }
@@ -267,7 +267,7 @@ export function useDocumentWorkspace(services: DocumentWorkspaceServices, keyboa
 
   const confirmConversion = useCallback(async () => {
     const payload = conversionRef.current;
-    if (!payload || !["rtf", "html", "odt"].includes(payload.format.kind)) return;
+    if (!payload || payload.format.kind !== "html") return;
     activeImport.current?.abort();
     setConversion(null);
     const token = ++request.current;
@@ -331,7 +331,7 @@ export function useDocumentWorkspace(services: DocumentWorkspaceServices, keyboa
     }
   }, [capture, persist, refresh, run, setSession, releaseHandle]);
 
-  const changeOffice = useCallback((office: DocxDocument) => {
+  const changeOffice = useCallback((office: RichDocument) => {
     const current = sessionRef.current;
     if (current) setSession(editOfficeDocument(current, office));
   }, [setSession]);
@@ -386,11 +386,12 @@ export function useDocumentWorkspace(services: DocumentWorkspaceServices, keyboa
       if (!current) return;
       const bytes = await serializeDocumentSession(current);
       if (servicesRef.current.shareDocument) {
+        if (current.format === "rtf" || current.format === "odt") throw new Error("Cloud sharing for RTF and ODT is not supported yet. Export a same-format copy instead.");
         const receipt = await servicesRef.current.shareDocument({ name: current.name, bytes, text: current.text });
         if (receipt !== null) setNotice(receipt ?? "Share action completed.");
         return;
       } else {
-        const file = new File([new Uint8Array(bytes)], current.name, { type: current.format === "docx" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : "text/plain" });
+        const file = new File([new Uint8Array(bytes)], current.name, { type: classifyDocumentFormat(current.name).mimeType });
         if (!navigator.share || (navigator.canShare && !navigator.canShare({ files: [file] }))) throw new Error("File sharing is unavailable here. Export a copy or copy the document text.");
         try { await navigator.share({ files: [file], title: current.name }); }
         catch (failure) { if (failure instanceof DOMException && failure.name === "AbortError") return; throw failure; }

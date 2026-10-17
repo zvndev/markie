@@ -1,5 +1,6 @@
 import { classifyDocumentFormat, decodeTextDocument, encodeTextDocument, type DecodedTextDocument } from "./document-formats";
-import { createDocx, exportDocx, openDocx, type DocxDocument } from "./office/docx";
+import { createRichDocument, exportRichDocument, openRichDocument, sameRichSource, type RichDocument } from "./office/rich-document";
+import type { DocxDocument } from "./office/docx-types";
 import type { LibraryFormat, LibraryRecord } from "./document-library";
 import type { WebFileHandle } from "./web-files";
 
@@ -11,7 +12,7 @@ export interface DocumentSession {
   readonly format: EditableDocumentFormat;
   readonly text: string;
   readonly textMetadata: DecodedTextDocument | null;
-  readonly office: DocxDocument | null;
+  readonly office: RichDocument | null;
   readonly record: LibraryRecord | null;
   readonly tags: string[];
   readonly collection: string | null;
@@ -48,7 +49,7 @@ export function preserveDocumentNewlines(previous: string, edited: string): stri
 
 export async function openDocumentSession(record: LibraryRecord, handle?: WebFileHandle): Promise<DocumentSession> {
   if (record.format === "doc") throw new Error("Legacy Word files must be converted to a new document before editing.");
-  const office = record.format === "docx" ? await openDocx(record.bytes) : null;
+  const office = record.format === "docx" || record.format === "rtf" || record.format === "odt" ? await openRichDocument(record.format, record.bytes) : null;
   const textMetadata = office ? null : decodeTextDocument(record.bytes);
   return {
     id: record.id, epoch: crypto.randomUUID(), name: record.name, format: record.format, text: office?.text ?? textMetadata!.text,
@@ -58,9 +59,11 @@ export async function openDocumentSession(record: LibraryRecord, handle?: WebFil
   };
 }
 
+export function createDocumentSession(format: "docx", name?: string): Promise<DocumentSession & { readonly office: DocxDocument }>;
+export function createDocumentSession(format: EditableDocumentFormat, name?: string): Promise<DocumentSession>;
 export async function createDocumentSession(format: EditableDocumentFormat, name?: string): Promise<DocumentSession> {
   const extension = format === "markdown" ? "md" : format === "text" ? "txt" : format;
-  const office = format === "docx" ? await createDocx("") : null;
+  const office = format === "docx" || format === "rtf" || format === "odt" ? await createRichDocument(format) : null;
   return {
     id: crypto.randomUUID(), epoch: crypto.randomUUID(), name: name?.trim() || `Untitled.${extension}`, format, text: "",
     textMetadata: office ? null : { text: "", encoding: "utf-8", bom: false, newline: "none" },
@@ -82,9 +85,13 @@ export function restoreDocumentText(session: DocumentSession, text: string): Doc
   return text === session.text ? session : { ...session, text, generation: session.generation + 1 };
 }
 
-export function editOfficeDocument(session: DocumentSession, office: DocxDocument): DocumentSession {
+export function editOfficeDocument(session: DocumentSession & { readonly office: DocxDocument }, office: DocxDocument): DocumentSession & { readonly office: DocxDocument };
+export function editOfficeDocument(session: DocumentSession, office: RichDocument): DocumentSession;
+export function editOfficeDocument(session: DocumentSession, office: RichDocument): DocumentSession {
   if (!session.office || !session.office.canEdit) throw new Error("This Word document is read-only.");
   if (session.office === office) return session;
+  if (office.format !== session.format) throw new Error("Keep the original document format when editing.");
+  if (!sameRichSource(session.office, office)) throw new Error("Keep edits within the original document session.");
   return { ...session, office, text: office.text, generation: session.generation + 1 };
 }
 
@@ -102,7 +109,7 @@ export function editDocumentDetails(session: DocumentSession, update: { name?: s
 }
 
 export async function serializeDocumentSession(session: DocumentSession): Promise<Uint8Array> {
-  return new Uint8Array(session.office ? await exportDocx(session.office) : encodeTextDocument(session.text, session.textMetadata ?? {}));
+  return new Uint8Array(session.office ? await exportRichDocument(session.office) : encodeTextDocument(session.text, session.textMetadata ?? {}));
 }
 
 /** A slow save can advance the disk revision without replacing newer edits. */

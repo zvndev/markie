@@ -2,13 +2,16 @@ import { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WordDocumentEditor } from "./word-document-editor";
+import { WordToolsDialog } from "./word-toolbar";
 import { applyDocxOperations, createDocx, exportDocx, openDocx, type DocxDocument } from "@/lib/office/docx";
 import type { DocumentCommandTarget } from "@/lib/document-commands";
 import { customStyleFixture } from "@/lib/office/docx-styles.fixture";
 import { SETTINGS_PART, THEME_PART, themedDocxFixture } from "@/lib/office/docx-theme.fixture";
 import { readZip, writeZip } from "@/lib/office/zip";
+import type { RichDocument } from "@/lib/office/rich-text-types";
+import { createRichDocument, exportRichDocument, openRichDocument } from "@/lib/office/rich-document";
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
-function editor(initial: DocxDocument, onHistory?: () => void, localControls = false) {
+function editor<T extends RichDocument>(initial: T, onHistory?: () => void, localControls = false) {
   const state = { document: initial, target: null as DocumentCommandTarget | null };
   const commands = (target: DocumentCommandTarget | null) => { state.target = target; };
   function Host({ readOnly = false, inert = false }: { readOnly?: boolean; inert?: boolean }) {
@@ -25,6 +28,84 @@ function select(start: number, end: number, paragraphNumber = 1) {
   return paragraph;
 }
 describe("Word renderer inside Markie", () => {
+  describe.each(["rtf", "odt"] as const)("native %s in the shared editor", (format) => {
+    it("fails closed if a Word-only dialog is requested directly", async () => {
+      const initial = await createRichDocument(format, "Hello native"), apply = vi.fn();
+      render(<WordToolsDialog tool="table" document={initial} paragraph={initial.paragraphs[0]} readOnly={false} fontSelection={{}} onClose={vi.fn()} onApply={apply} onError={vi.fn()} onReplace={vi.fn()} onSelectMatch={vi.fn()} onFormatRun={vi.fn()} onAddLink={vi.fn()} onInsertBreak={vi.fn()} review={{ tracking: false, author: "You", originalView: false, onTracking: vi.fn(), onAuthor: vi.fn(), onOriginalView: vi.fn() }} />);
+      expect(screen.getByText(`This tool is not supported for ${format.toUpperCase()} documents. The original file format is preserved.`)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Insert table" })).toBeNull();
+      expect(screen.queryByRole("spinbutton")).toBeNull(); expect(apply).not.toHaveBeenCalled();
+    });
+    it("keeps viewing and Font dialog byte-neutral and withholds unsupported tools", async () => {
+      const initial = await createRichDocument(format, "Hello native"), original = await exportRichDocument(initial), view = editor(initial);
+      const toolbar = screen.getByRole("toolbar", { name: "Document formatting" });
+      expect(toolbar).toHaveAttribute("data-markie-doc-toolbar");
+      expect(screen.getByRole("textbox", { name: "Paragraph 1" }).closest(".docs-word-continuous")).not.toBeNull();
+      expect(screen.queryByLabelText("Paragraph style")).toBeNull();
+      for (const label of ["Insert link", "Insert image", "Bullet list", "Numbered list"]) expect(within(toolbar).queryByRole("button", { name: label })).toBeNull();
+      for (const id of ["insert-table", "insert-picture", "insert-link", "insert-page-break", "format-bullets", "format-numbering", "format-heading-1", "layout-page-setup", "layout-a4", "review-comments", "review-tracking", "review-original", "view-page"]) {
+        expect(view.state.target!.enabledCommands).not.toContain(id); view.execute(id);
+      }
+      expect(screen.queryByRole("dialog")).toBeNull();
+      view.execute("format-font");
+      fireEvent.blur(screen.getByLabelText("Font family"));
+      fireEvent.blur(within(screen.getByRole("dialog", { name: "Font" })).getByRole("spinbutton", { name: "Font size" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close Font" }));
+      expect(await exportRichDocument(view.state.document)).toEqual(original);
+      expect(view.state.document.format).toBe(format);
+    });
+    it("formats a range, undoes/redoes and replaces text with same-format export/reopen", async () => {
+      const initial = await createRichDocument(format, "Hello native"), view = editor(initial);
+      select(0, 5); view.execute("format-bold");
+      expect(view.state.document.paragraphs[0].runs[0].style.bold).toBe(true);
+      view.execute("undo"); expect(view.state.document).toBe(initial);
+      view.execute("redo"); expect(view.state.document.paragraphs[0].runs[0].style.bold).toBe(true);
+      view.execute("format-align-center");
+      expect(view.state.document.paragraphs[0].alignment).toBe("center");
+      view.execute("layout-paragraph-spacing");
+      const spacing = screen.getByRole("dialog", { name: "Paragraph Spacing" });
+      fireEvent.change(within(spacing).getByRole("spinbutton", { name: "Space after (pt)" }), { target: { value: "12" } });
+      fireEvent.blur(within(spacing).getByRole("spinbutton", { name: "Space after (pt)" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close Paragraph Spacing" }));
+      view.execute("find"); fireEvent.change(screen.getByLabelText("Find Word text"), { target: { value: "native" } });
+      fireEvent.change(screen.getByLabelText("Replacement text"), { target: { value: "document" } });
+      fireEvent.click(screen.getByRole("button", { name: "Replace all" }));
+      expect(view.state.document.format).toBe(format);
+      const reopened = await openRichDocument(format, await exportRichDocument(view.state.document));
+      expect(reopened.canEdit).toBe(true); expect(reopened.text).toBe("Hello document");
+      expect(reopened.paragraphs[0]).toMatchObject({ alignment: "center", spacingAfterPoints: 12 });
+      expect(reopened.paragraphs[0].runs[0].style.bold).toBe(true);
+    });
+    it("commits IME and multiline paste through the same-format adapter", async () => {
+      const initial = await createRichDocument(format, "Hello native"), original = await exportRichDocument(initial), view = editor(initial);
+      const paragraph = screen.getByRole("textbox", { name: "Paragraph 1" });
+      fireEvent.compositionStart(paragraph);
+      paragraph.querySelector("span")!.textContent = "日本語 native"; fireEvent.input(paragraph);
+      expect(await exportRichDocument(view.state.document)).toEqual(original);
+      fireEvent.compositionEnd(paragraph); expect(view.state.document.text).toBe("日本語 native");
+      select(0, 3); fireEvent.paste(paragraph, { clipboardData: { getData: () => "Alpha\nBeta" } });
+      expect(view.state.document.text).toBe("Alpha\nBeta native");
+      const reopened = await openRichDocument(format, await exportRichDocument(view.state.document));
+      expect(reopened.format).toBe(format); expect(reopened.text).toBe("Alpha\nBeta native");
+      expect(reopened.paragraphs).toHaveLength(2);
+    });
+    it("retains original bytes under modal, readonly and inert command guards", async () => {
+      const initial = await createRichDocument(format, "Protected text"), original = await exportRichDocument(initial), view = editor(initial);
+      view.execute("format-font");
+      const paragraph = screen.getByRole("textbox", { name: "Paragraph 1" });
+      expect(paragraph).toHaveAttribute("contenteditable", "false");
+      view.execute("format-bold"); fireEvent.keyDown(paragraph, { key: "b", ctrlKey: true });
+      fireEvent.change(within(screen.getByRole("toolbar")).getByLabelText("Font"), { target: { value: "Georgia" } });
+      fireEvent.click(screen.getByRole("button", { name: "Close Font" }));
+      view.mode({ readOnly: true });
+      expect(screen.getByRole("button", { name: "Bold" })).toBeDisabled();
+      view.execute("format-bold"); view.execute("format-font");
+      expect(screen.queryByRole("dialog")).toBeNull();
+      view.mode({ inert: true }); view.execute("format-bold"); view.execute("insert-paragraph");
+      fireEvent.keyDown(paragraph, { key: "b", ctrlKey: true });
+      expect(await exportRichDocument(view.state.document)).toEqual(original);
+    });
+  });
   it("renders supported document theme values in the existing canvas and actual shared font picker", async () => {
     const imported = await themedDocxFixture(), view = editor(imported.document);
     const heading = screen.getByRole("textbox", { name: "Paragraph 1" }), body = screen.getByRole("textbox", { name: "Paragraph 2" });

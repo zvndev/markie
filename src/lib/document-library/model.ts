@@ -8,7 +8,7 @@ export const DEFAULT_LIBRARY_LIMITS: Readonly<LibraryLimits> = Object.freeze({
   maxRecoveryPerDocument: 5,
   maxRecoveryRecords: 5000,
 });
-export const LIBRARY_FORMATS = ["markdown", "text", "csv", "json", "yaml", "xml", "docx", "doc"] as const;
+export const LIBRARY_FORMATS = ["markdown", "text", "csv", "json", "yaml", "xml", "docx", "doc", "rtf", "odt"] as const;
 export class LibraryFailure extends Error {
   constructor(readonly code: LibraryErrorCode, message: string, readonly actualRevision?: number | null) { super(message); }
 }

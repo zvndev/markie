@@ -1,0 +1,2 @@
+/** Self-authored, specification-shaped fixture; not output from another document engine. */
+export const basicRtfFixture = () => new TextEncoder().encode(String.raw`{\rtf1\ansi\ansicpg1252\deff0\uc1{\fonttbl{\f0\fnil Georgia;}{\f1\fnil Arial;}}{\colortbl;\red51\green102\blue153;}{\*\generator Markie original RTF fixture;}\pard\qc\sb120\sa240\f0\fs32\b\cf1 Rich text in Markie\par\pard\ql\f1\fs22\b0\cf0 Plain, {\i italic}, {\ul underline}, Unicode \u233? and \u-10179?\u-8704?.}`);

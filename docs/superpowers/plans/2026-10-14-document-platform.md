@@ -37,7 +37,8 @@ Existing Markie shell, Library, shared compact controls and document actions
   CSV -> current table adapter with CSV preservation
   DOCX -> original OOXML package model, editor and writer
   DOC -> original CFB/MS-DOC reader, then explicit conversion/editing support
-  RTF/HTML/ODT -> explicit text-only imports; richer codecs are future work
+  RTF/ODT -> original bounded rich-text codecs and same-format local saving
+  HTML -> explicit text-only import; rich HTML remains future work
 
 Desktop host: authorized filesystem, native menus, binary recovery, local index
 Web host: browser pickers/downloads, browser recovery, offline app cache
@@ -58,7 +59,8 @@ Keep interfaces narrow: classify/open, inspect capabilities, apply supported edi
 | .csv | Existing behavior preserved | Explicit table/text workflow without accidental conversion |
 | .docx | Original bounded ZIP/OOXML opening and safe supported text edits | Rich document model, layout, review and package-preserving export |
 | .doc | Original bounded CFB/Word97-2003 text reader | Honest import capability, original retained; richer interpretation follows |
-| .rtf/.html/.odt | Explicit text-only import copies with loss warnings | Richer codecs implemented separately; originals retained and active content never executed |
+| .rtf/.odt | Original basic rich-text editing and same-format local saving; unsupported content read-only/refused | Broader independent codec fidelity, while preserving originals and format capabilities |
+| .html | Explicit text-only import copies with loss warnings | Sanitized rich-document import/export, not arbitrary website execution |
 | Unknown/binary | Reject or attach read-only | Never reinterpret arbitrary binary bytes as editable text |
 
 Legacy .doc is not OOXML. Text extraction is not a complete DOC editor. Native DOC saving is a separate milestone; conversion to a new DOCX is explicit and never overwrites the original DOC. Reject encrypted/protected/macro-enabled variants until their behavior and security model are implemented.
@@ -93,6 +95,8 @@ October 17 output continuation: supported DOCX views can use the existing Export
 
 ## Full web support
 
+October 17 native-rich continuation: Kirby approved adding local RTF/ODT recovery discriminants and a private rich-editor adapter, keeping record fields/version and existing cloud APIs unchanged. Original codecs now own their source and same-format writer, with immutable views consumed by the existing rich canvas and shared controls. Untouched exports retain exact bytes; modified output is preflight-reopened. Unsupported content, commands and budget overflows fail closed. RTF/ODT cloud upload, vault integration, tables/media/review and print/PDF remain unclaimed. The linked desktop testing guide distinguishes these capabilities from the remaining roadmap.
+
 1. Extract actual desktop-only operations from shared document logic. Use separate desktop/web host implementations rather than null Electron checks scattered throughout UI.
 2. Complete browser open, drag/drop, Save and Save As for text and binary packages. Use permission-granted file handles where supported, explicit downloads elsewhere. Display whether an action saved the original, downloaded a copy, or only stored a recovery draft. A download is not evidence of a durable write to the original file.
 3. Use browser-local durable storage for drafts and document blobs with quota/permission/eviction handling. Never present browser storage as a guaranteed backup. Handle private browsing, revoked file permission and cleared site data without a false saved indicator.
@@ -107,6 +111,8 @@ Web acceptance: open/edit/export supported Markdown/TXT/DOCX without an account;
 Web uses the same Markie shell and existing command palette. It does not copy the desktop menu bar into the renderer or introduce a different document application. Web completion follows desktop integration and packaged native verification, rather than displacing them.
 
 ## Search and organization
+
+Kirby's October 17 additions: cleaner Cloud discovery, searching/filtering by people involved in authorized shares, and Share autocomplete from previous collaborators. Suggestions must be account/server scoped, deduplicated and keyboard accessible; choosing one must not automatically invite or change a role. Portable links between documents should preserve unsaved buffers and existing file/cloud/vault authorization. These additions remain separate implementation milestones rather than being implied by format support or Markdown link syntax.
 
 Use stable document identities with display name, format, origin, folder/collection, tags, modified time and sync/access state. Offer search over title/body/comments where authorized, sort by name/modified/created/type, and clear scopes for local/cloud/shared/vault results. Preserve existing project organization rather than imposing a second taxonomy.
 

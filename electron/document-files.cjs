@@ -6,7 +6,7 @@ const { writeFileAtomic } = require("./atomic-write.js");
 
 const MAX_DOCUMENT_BYTES = 32 * 1024 * 1024;
 const DOCUMENT_EXTENSIONS = ["md", "markdown", "mdx", "txt", "text", "log", "csv", "json", "yaml", "yml", "xml", "docx", "doc", "rtf", "html", "htm", "odt"];
-const WRITABLE = /\.(?:md|markdown|mdx|txt|text|log|csv|json|ya?ml|xml|docx)$/i;
+const WRITABLE = /\.(?:md|markdown|mdx|txt|text|log|csv|json|ya?ml|xml|docx|rtf|odt)$/i;
 const OPENABLE = /\.(?:md|markdown|mdx|txt|text|log|csv|json|ya?ml|xml|docx|doc|rtf|html?|odt)$/i;
 const EXTRA_LAUNCH = /\.(?:json|ya?ml|xml|docx|doc|rtf|html?|odt)$/i;
 class NativeFileError extends Error { constructor(code, message) { super(message); this.code = code; } }

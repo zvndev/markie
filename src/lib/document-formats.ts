@@ -17,9 +17,9 @@ const FORMATS: Record<DocumentFormatKind, DocumentFormatInfo> = {
   xml: { kind: "xml", representation: "text", editing: "text", mimeType: "text/plain" },
   docx: { kind: "docx", representation: "bytes", editing: "engine", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
   doc: { kind: "doc", representation: "bytes", editing: "engine", mimeType: "application/msword" },
-  rtf: { kind: "rtf", representation: "bytes", editing: "unsupported", mimeType: "application/rtf" },
+  rtf: { kind: "rtf", representation: "bytes", editing: "engine", mimeType: "application/rtf" },
   html: { kind: "html", representation: "bytes", editing: "unsupported", mimeType: "text/html" },
-  odt: { kind: "odt", representation: "bytes", editing: "unsupported", mimeType: "application/vnd.oasis.opendocument.text" },
+  odt: { kind: "odt", representation: "bytes", editing: "engine", mimeType: "application/vnd.oasis.opendocument.text" },
   unsupported: { kind: "unsupported", representation: "bytes", editing: "unsupported", mimeType: "application/octet-stream" },
 };
 Object.values(FORMATS).forEach(Object.freeze);

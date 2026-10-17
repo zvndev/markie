@@ -98,7 +98,18 @@ describe("bounded opaque native document grants", () => {
     fs.unlinkSync(target); fs.renameSync(folder, path.join(directory, "old-folder")); fs.mkdirSync(folder); fs.writeFileSync(target, "replacement folder file");
     expect(await api.read(1, { leaseId: opened.leaseId })).toMatchObject({ ok: false, error: { code: "conflict" } });
   });
-  it.each(["doc", "rtf", "html", "odt"])("keeps .%s source leases read-only", async (extension) => {
+  it.each(["rtf", "odt"])("saves native .%s bytes only through its exact owner and source revision", async (extension) => {
+    const target = path.join(fixture(), `source.${extension}`); fs.writeFileSync(target, "original");
+    const api = service(target), opened = value<{ leaseId: string; revision: string; writable: boolean }>(await api.open(1));
+    expect(opened.writable).toBe(true);
+    expect(await api.write(2, { leaseId: opened.leaseId, baseRevision: opened.revision, bytes: new TextEncoder().encode("foreign") })).toMatchObject({ ok: false, error: { code: "access-denied" } });
+    expect(fs.readFileSync(target, "utf8")).toBe("original");
+    const saved = value<{ revision: string }>(await api.write(1, { leaseId: opened.leaseId, baseRevision: opened.revision, bytes: new TextEncoder().encode("same-format bytes") }));
+    expect(fs.readFileSync(target, "utf8")).toBe("same-format bytes");
+    expect(saved.revision).not.toBe(opened.revision);
+    expect(await api.write(1, { leaseId: opened.leaseId, baseRevision: opened.revision, bytes: new Uint8Array([1]) })).toMatchObject({ ok: false, error: { code: "conflict" } });
+  });
+  it.each(["doc", "html"])("keeps .%s source leases read-only", async (extension) => {
     const target = path.join(fixture(), `source.${extension}`); fs.writeFileSync(target, "source"); const api = service(target), opened = value<{ leaseId: string; revision: string; writable: boolean }>(await api.open(1));
     expect(opened.writable).toBe(false); expect(await api.write(1, { leaseId: opened.leaseId, baseRevision: opened.revision, bytes: new Uint8Array([1]) })).toMatchObject({ ok: false, error: { code: "access-denied" } }); expect(fs.readFileSync(target, "utf8")).toBe("source");
   });

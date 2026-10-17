@@ -1,9 +1,9 @@
 import { useState } from "react";
-import type { DocxDocument } from "@/lib/office/docx";
+import type { RichDocument } from "@/lib/office/rich-text-types";
 import { findWordText, replaceWordText, type WordTextMatch } from "./word-find";
 
 export function WordFindTools({ document, readOnly, onChange, onSelect, onError }: {
-  document: DocxDocument; readOnly: boolean; onChange: (document: DocxDocument) => void;
+  document: RichDocument; readOnly: boolean; onChange: (document: RichDocument) => void;
   onSelect: (match: WordTextMatch) => void; onError: (message: string) => void;
 }) {
   const [query, setQuery] = useState(""), [replacement, setReplacement] = useState("");

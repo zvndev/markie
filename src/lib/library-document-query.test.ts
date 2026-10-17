@@ -25,7 +25,7 @@ describe("ordinary Library presentation queries", () => {
   it.each([
     ["NOTE.MDX", "markdown"], ["note.markdown", "markdown"], ["note.LOG", "text"], ["data.YML", "yaml"],
     ["data.JSON", "json"], ["data.csv", "csv"], ["data.xml", "xml"], ["word.DOC", "doc"], ["word.docx", "docx"],
-    ["word.docx.zip", "other"], ["archive.rtf", "other"], ["page.html", "other"], ["open.odt", "other"], ["", "other"],
+    ["word.docx.zip", "other"], ["archive.rtf", "rtf"], ["page.html", "other"], ["open.odt", "odt"], ["", "other"],
   ])("classifies %s with the existing filename classifier", (name, format) => expect(libraryDocumentFormat(name)).toBe(format));
 
   it("preserves default source order, row objects and input arrays", () => {

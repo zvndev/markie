@@ -243,7 +243,7 @@ function snapshot(state: State, diagnostics: readonly DocxDiagnostic[], metadata
       const text = xmlDescendants(r).map((n) =>
         word(n, "t") || (original && word(n, "delText")) ? n.text : word(n, "tab") ? "\t" : word(n, "br") ? xmlAttribute(n, "type", n.namespace) === "page" ? "" : "\n" : word(n, "cr") ? "\n" : "").join("");
       const props = child(r, "rPr"), style = Object.freeze(readDocxRunStyle(props));
-      return Object.freeze({ id, text, style, resolvedStyle: resolvedStyles.run(styleId, value(child(props, "rStyle")), style, props), canEdit: editable && !!textNode && !tracked && !original && !pendingParagraph,
+      return Object.freeze({ id, text, style, resolvedStyle: resolvedStyles.run(styleId, value(child(props, "rStyle")), style, props, text), canEdit: editable && !!textNode && !tracked && !original && !pendingParagraph,
         hyperlinkId: hyperlink?.id, target: hyperlink?.target,
         pageBreaks: Object.freeze(pageBreaks.breaks.filter((b) => b.run.start === r.start).map((b) => Object.freeze({ id: b.id, offset: b.localOffset }))),
       });
@@ -352,7 +352,7 @@ export async function openDocx(input: Uint8Array, options: Partial<ZipLimits> = 
       }
     }
   }
-  const diagnostics: DocxDiagnostic[] = [{ code: "limited-foundation", severity: "info", message: "Supported direct formatting, paragraphs, page properties and basic rectangular tables. No pagination, style inheritance or generic Word compatibility guarantee." }];
+  const diagnostics: DocxDiagnostic[] = [{ code: "limited-foundation", severity: "info", message: "Supported direct formatting, bounded style/theme display resolution, paragraphs, page properties and basic rectangular tables. No pagination or generic Word compatibility guarantee." }];
   const initialMediaState: DocxMediaState = { source, entries, mainPart, identities: new Map(), nextId: 0, partOverrides: new Map(), deletedParts: new Set() };
   indexDocxIdentities(initialMediaState);
   const hyperlinks = inspectDocxHyperlinks(initialMediaState);

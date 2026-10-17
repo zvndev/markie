@@ -2,6 +2,7 @@ import { DocxError, type DocxNamedStyle, type DocxRunStyle, type DocxParagraphFo
 import { escapeXmlText, parseXml, xmlAttribute, type XmlElement } from "./xml";
 import { type ZipEntry } from "./zip";
 import { isWord, wordChild, type DocxEditState } from "./docx-edit";
+import { docxThemeResolver } from "./docx-theme";
 
 export const DOCX_REL = "http://schemas.openxmlformats.org/package/2006/relationships";
 export const DOCX_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -102,7 +103,7 @@ export function readDocxStyles(state: DocxPartsState): readonly DocxNamedStyle[]
 const wordValue = (node: XmlElement | undefined, attribute = "val") => node && xmlAttribute(node, attribute, node.namespace);
 
 /** Original, bounded resolution of the supported ECMA-376 properties only.
- * Theme fonts, numbering/table styles and layout are not inferred here. */
+ * Raw theme authority is preserved; display resolution is separate below. */
 export function readDocxRunStyle(props: XmlElement | undefined): DocxRunStyle {
   const onOff = (name: string) => {
     const property = wordChild(props, name);
@@ -130,6 +131,7 @@ function readParagraphStyle(props: XmlElement | undefined): DocxParagraphFormat 
 }
 
 export function docxStyleResolver(state: DocxPartsState) {
+  const themes = docxThemeResolver(state);
   const name = relatedDocxPart(state, "styles"), source = name && docxPartSource(state, name);
   const root = source ? parseXml(source) : undefined;
   const definitions = root?.children.filter((node) => isWord(node, "style")) ?? [];
@@ -153,27 +155,29 @@ export function docxStyleResolver(state: DocxPartsState) {
     }
     cache.set(key, nodes); return nodes;
   };
-  const omitUnresolvedTheme = (result: { -readonly [K in keyof DocxRunStyle]: DocxRunStyle[K] }, props?: XmlElement) => {
-    const font = wordChild(props, "rFonts"), color = wordChild(props, "color");
-    if (wordValue(font, "asciiTheme") || wordValue(font, "hAnsiTheme")) delete result.fontFamily;
-    if (wordValue(color, "themeColor")) delete result.color;
-  };
   return {
     paragraph(id?: string): DocxParagraphFormat {
       return Object.assign({}, baseParagraph, ...chain("paragraph", id ?? defaultParagraph).map((node) => readParagraphStyle(wordChild(node, "pPr"))));
     },
-    run(paragraphId: string | undefined, characterId: string | undefined, direct: DocxRunStyle, directProps?: XmlElement): Readonly<DocxRunStyle> {
+    run(paragraphId: string | undefined, characterId: string | undefined, direct: DocxRunStyle, directProps?: XmlElement, text = ""): Readonly<DocxRunStyle> {
       const result = { ...baseRun };
-      omitUnresolvedTheme(result, defaultRunProps);
+      const layers = [defaultRunProps];
       for (const node of [...chain("paragraph", paragraphId ?? defaultParagraph), ...chain("character", characterId ?? defaultCharacter)]) {
         const props = wordChild(node, "rPr"), style = readDocxRunStyle(props);
+        layers.push(props);
         // Bold/italic are toggle properties in named styles, absolute in direct formatting.
         const { bold, italic, ...properties } = style; Object.assign(result, properties);
-        omitUnresolvedTheme(result, props);
         if (bold) result.bold = !result.bold;
         if (italic) result.italic = !result.italic;
       }
-      Object.assign(result, direct); omitUnresolvedTheme(result, directProps);
+      Object.assign(result, direct);
+      layers.push(directProps);
+      const themed = themes.run(layers, text);
+      // Undefined selected authority masks inherited values, never falls back
+      // to a cached literal next to an unsupported theme reference.
+      delete result.fontFamily;
+      if (themed.fontFamily !== undefined) result.fontFamily = themed.fontFamily;
+      if (Object.hasOwn(themed, "color")) { delete result.color; if (themed.color !== undefined) result.color = themed.color; }
       return Object.freeze(result);
     },
   };

@@ -5,6 +5,7 @@ import { WordDocumentEditor } from "./word-document-editor";
 import { applyDocxOperations, createDocx, exportDocx, openDocx, type DocxDocument } from "@/lib/office/docx";
 import type { DocumentCommandTarget } from "@/lib/document-commands";
 import { customStyleFixture } from "@/lib/office/docx-styles.fixture";
+import { SETTINGS_PART, THEME_PART, themedDocxFixture } from "@/lib/office/docx-theme.fixture";
 import { readZip, writeZip } from "@/lib/office/zip";
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 function editor(initial: DocxDocument, onHistory?: () => void, localControls = false) {
@@ -17,13 +18,123 @@ function editor(initial: DocxDocument, onHistory?: () => void, localControls = f
   const view = render(<Host />);
   return { ...view, state, execute: (id: string) => act(() => state.target!.execute(id)), mode: (props: { readOnly?: boolean; inert?: boolean }) => view.rerender(<Host {...props} />) };
 }
-function select(start: number, end: number) {
-  const paragraph = screen.getByRole("textbox", { name: "Paragraph 1" }), text = paragraph.querySelector("span")!.firstChild!;
+function select(start: number, end: number, paragraphNumber = 1) {
+  const paragraph = screen.getByRole("textbox", { name: `Paragraph ${paragraphNumber}` }), text = paragraph.querySelector("span")!.firstChild!;
   const range = document.createRange(); range.setStart(text, start); range.setEnd(text, end);
   window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range); fireEvent.pointerUp(paragraph);
   return paragraph;
 }
 describe("Word renderer inside Markie", () => {
+  it("renders supported document theme values in the existing canvas and actual shared font picker", async () => {
+    const imported = await themedDocxFixture(), view = editor(imported.document);
+    const heading = screen.getByRole("textbox", { name: "Paragraph 1" }), body = screen.getByRole("textbox", { name: "Paragraph 2" });
+    expect(heading.querySelector("[data-run-id]")).toHaveStyle({ fontFamily: "Georgia", fontSize: "16pt", fontWeight: "700", color: "#336699" });
+    const bodyRuns = body.querySelectorAll("[data-run-id]");
+    expect(bodyRuns[0]).toHaveStyle({ fontFamily: "Arial", fontSize: "11pt", color: "#222222" });
+    expect(bodyRuns[1]).toHaveStyle({ fontFamily: "Courier New", fontSize: "9pt", color: "#cc0000" });
+    const toolbar = screen.getByRole("toolbar", { name: "Document formatting" });
+    expect(toolbar).toHaveAttribute("data-markie-doc-toolbar");
+    expect(within(toolbar).getByLabelText("Font")).toHaveDisplayValue("Georgia");
+    expect(within(toolbar).getByRole("option", { name: "Georgia" })).toHaveValue("Georgia");
+    expect(within(toolbar).getByRole("option", { name: "Courier New" })).toHaveValue("Courier New");
+    expect(screen.getByRole("combobox", { name: "Paragraph style" })).toHaveDisplayValue("Themed heading");
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(await exportDocx(view.state.document)).toEqual(imported.bytes);
+  });
+  it("keeps themed uniform and mixed Font dialogs byte-neutral until an explicit override", async () => {
+    const imported = await themedDocxFixture(), view = editor(imported.document);
+    view.execute("format-font");
+    let dialog = screen.getByRole("dialog", { name: "Font" });
+    expect(within(dialog).getByLabelText("Font family")).toHaveValue("Georgia");
+    expect(within(dialog).getByRole("spinbutton", { name: "Font size" })).toHaveValue(16);
+    expect(within(dialog).getByLabelText("Text color")).toHaveValue("#336699");
+    fireEvent.blur(within(dialog).getByLabelText("Font family")); fireEvent.blur(within(dialog).getByRole("spinbutton", { name: "Font size" }));
+    fireEvent.blur(within(dialog).getByLabelText("Text color"));
+    expect(await exportDocx(view.state.document)).toEqual(imported.bytes);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close Font" }));
+    const body = screen.getByRole("textbox", { name: "Paragraph 2" }), range = document.createRange();
+    range.selectNodeContents(body); window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range); fireEvent.pointerUp(body);
+    expect(screen.getByLabelText("Font")).toHaveDisplayValue("Mixed fonts");
+    expect(screen.getByRole("spinbutton", { name: "Font size" })).toHaveAttribute("placeholder", "Mixed");
+    view.execute("format-font"); dialog = screen.getByRole("dialog", { name: "Font" });
+    expect(within(dialog).getByLabelText("Font family")).toHaveValue("");
+    expect(within(dialog).getByLabelText("Font family")).toHaveAttribute("placeholder", "Mixed fonts");
+    expect(within(dialog).getByText("Mixed colors")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Text color")).toBeNull();
+    fireEvent.blur(within(dialog).getByLabelText("Font family")); fireEvent.blur(within(dialog).getByRole("spinbutton", { name: "Font size" }));
+    fireEvent.blur(within(dialog).getByLabelText("Apply text color"));
+    expect(await exportDocx(view.state.document)).toEqual(imported.bytes);
+    fireEvent.change(within(dialog).getByLabelText("Apply text color"), { target: { value: "#446688" } });
+    const reopened = await openDocx(await exportDocx(view.state.document));
+    expect(reopened.paragraphs[0].runs[0].style).toEqual(imported.document.paragraphs[0].runs[0].style);
+    expect(reopened.paragraphs[0].runs[0].resolvedStyle?.color).toBe("336699");
+    expect(reopened.paragraphs[1].runs.map((run) => run.style.color)).toEqual(["446688", "446688"]);
+    expect(reopened.paragraphs[1].runs.map((run) => run.resolvedStyle?.fontFamily)).toEqual(["Arial", "Courier New"]);
+  });
+  it("offers a document's actual imported theme family without adding replacement controls", async () => {
+    const imported = await themedDocxFixture(), parts = await readZip(imported.bytes);
+    const theme = imported.theme.replace('typeface="Georgia"', 'typeface="Markie Synthetic Serif"');
+    parts.find((part) => part.name === THEME_PART)!.data = new TextEncoder().encode(theme);
+    const bytes = writeZip(parts), view = editor(await openDocx(bytes));
+    const font = within(screen.getByRole("toolbar", { name: "Document formatting" })).getByLabelText("Font");
+    expect(font).toHaveDisplayValue("Markie Synthetic Serif");
+    expect(within(font).getByRole("option", { name: "Markie Synthetic Serif" })).toHaveValue("Markie Synthetic Serif");
+    expect(screen.getByRole("textbox", { name: "Paragraph 1" }).querySelector("[data-run-id]")).toHaveStyle({ fontFamily: "Markie Synthetic Serif" });
+    expect(await exportDocx(view.state.document)).toEqual(bytes);
+    fireEvent.change(font, { target: { value: "Arial" } });
+    const exported = await exportDocx(view.state.document), reopened = await openDocx(exported);
+    expect(reopened.paragraphs[0].runs[0].style).toEqual({ fontFamily: "Arial" });
+    expect(reopened.paragraphs[0].runs[0].resolvedStyle).toMatchObject({ fontFamily: "Arial", fontSizePoints: 16, color: "336699" });
+    expect(reopened.paragraphs[1].runs.map((run) => run.style)).toEqual(imported.document.paragraphs[1].runs.map((run) => run.style));
+    expect(new TextDecoder().decode((await readZip(exported)).find((part) => part.name === THEME_PART)!.data)).toBe(theme);
+  });
+  it("changes named theme styles and explicit fonts without rewriting unrelated direct formatting", async () => {
+    const imported = await themedDocxFixture(), view = editor(imported.document), body = screen.getByRole("textbox", { name: "Paragraph 2" });
+    select(0, 11, 2);
+    fireEvent.change(screen.getByRole("combobox", { name: "Paragraph style" }), { target: { value: "Heading1" } });
+    expect(view.state.document.paragraphs[1].runs.map((run) => run.style)).toEqual(imported.document.paragraphs[1].runs.map((run) => run.style));
+    expect(view.state.document.paragraphs[1].runs.map((run) => run.resolvedStyle?.fontFamily)).toEqual(["Georgia", "Courier New"]);
+    expect(body.querySelectorAll("[data-run-id]")[1]).toHaveStyle({ fontFamily: "Courier New", fontSize: "9pt", color: "#cc0000" });
+    fireEvent.change(screen.getByLabelText("Font"), { target: { value: "Arial" } });
+    const bytes = await exportDocx(view.state.document), reopened = await openDocx(bytes);
+    expect(reopened.paragraphs[1].runs[0].style).toEqual({ fontFamily: "Arial" });
+    expect(reopened.paragraphs[1].runs[0].resolvedStyle).toMatchObject({ fontFamily: "Arial", color: "336699", fontSizePoints: 16, bold: true });
+    expect(reopened.paragraphs[1].runs[1].style).toEqual(imported.document.paragraphs[1].runs[1].style);
+    const parts = await readZip(bytes);
+    expect(new TextDecoder().decode(parts.find((part) => part.name === "word/styles.xml")!.data)).toBe(imported.styles);
+  });
+  it("shows language-dependent theme fonts as inherited without guessing a family", async () => {
+    const imported = await themedDocxFixture(), parts = await readZip(imported.bytes);
+    parts.find((part) => part.name === SETTINGS_PART)!.data = new TextEncoder().encode(imported.settings.replace("/>", '><w:themeFontLang w:val="en-US"/></w:settings>'));
+    const initial = await openDocx(writeZip(parts)), view = editor(initial);
+    const heading = screen.getByRole("textbox", { name: "Paragraph 1" }).querySelector<HTMLElement>("[data-run-id]")!;
+    expect(heading.style.fontFamily).toBe("");
+    expect(heading).toHaveStyle({ fontSize: "16pt", color: "#336699" });
+    expect(screen.getByLabelText("Font")).toHaveDisplayValue("Inherited font");
+    view.execute("format-font");
+    const dialog = screen.getByRole("dialog", { name: "Font" });
+    expect(within(dialog).getByLabelText("Font family")).toHaveValue("");
+    expect(within(dialog).getByLabelText("Font family")).toHaveAttribute("placeholder", "Inherited font");
+    fireEvent.blur(within(dialog).getByLabelText("Font family"));
+    expect(await exportDocx(view.state.document)).toEqual(await exportDocx(initial));
+  });
+  it("preserves themed formatting and byte authority under modal, readonly and inert guards", async () => {
+    const imported = await themedDocxFixture(), view = editor(imported.document), heading = screen.getByRole("textbox", { name: "Paragraph 1" });
+    view.execute("format-font");
+    expect(heading).toHaveAttribute("contenteditable", "false");
+    fireEvent.change(within(screen.getByRole("toolbar")).getByLabelText("Font"), { target: { value: "Arial" } });
+    fireEvent.change(screen.getByLabelText("Paragraph style"), { target: { value: "Normal" } });
+    fireEvent.keyDown(heading, { key: "b", ctrlKey: true }); fireEvent.input(heading);
+    expect(await exportDocx(view.state.document)).toEqual(imported.bytes);
+    fireEvent.click(screen.getByRole("button", { name: "Close Font" })); view.mode({ readOnly: true });
+    expect(screen.getByRole("button", { name: "Bold" })).toBeDisabled();
+    expect(screen.getByLabelText("Font")).toBeDisabled();
+    view.execute("format-bold"); view.execute("format-normal"); view.execute("format-font");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.keyDown(heading, { key: "b", ctrlKey: true });
+    view.mode({ inert: true }); view.execute("format-bold"); view.execute("format-normal");
+    expect(await exportDocx(view.state.document)).toEqual(imported.bytes);
+  });
   it("retains selected Word ranges when compact overflow opens advanced tools and keeps Escape local", async () => {
     vi.stubGlobal("ResizeObserver", class {
       constructor(private callback: ResizeObserverCallback) {}

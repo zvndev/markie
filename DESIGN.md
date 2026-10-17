@@ -49,6 +49,8 @@ Reuse the existing Toolbar, ActivityBar, Library, buttons, menus, source/rich ed
 
 Word style controls use imported style labels and supported effective properties, without rewriting direct formatting when choosing a named paragraph style. Mixed or unresolved formatting must be identified honestly, not replaced with guessed values. Rendering inherited styles and changing viewing preferences must not bake those values into saved run formatting. Cloud rows require the exact confirmed account/server identity; a successful save requires acknowledgment of the exact document, version and submitted content before clearing dirty state.
 
+Document theme colors and supported default Latin theme fonts are resolved inside the original codec, not by a second renderer/theme system. They style the document, not Markie's chrome. Preserve raw theme/settings/style bytes; unsupported font slots/scripts/languages stay unresolved. Stored system-color fallbacks and deterministic tint/shade rounding must not be presented as full source-Word or operating-system fidelity.
+
 ## Accessibility
 
 Target keyboard-complete operation and WCAG AA text readability without silently overriding existing owner-approved theme boundaries. Give every control a meaningful label, disclose selected tabs/filters, use proper headings/regions and live status/error messages, keep focus visible and manage focus when dialogs close. Do not use color as the only save/lock/permission signal. Do not require hover for an essential action.

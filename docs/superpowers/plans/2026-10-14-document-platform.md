@@ -87,6 +87,8 @@ The following is the full target scope, not a claim that every item is implement
 
 Comments, undo history, durable versions and Track Changes are distinct. An unsupported existing revision must not be silently accepted or deleted. Missing fonts and unsupported layout must be disclosed. Do not imply that page-shaped backgrounds provide Word-equivalent layout.
 
+October 17 theme-fidelity continuation: the original codec resolves supported internal theme palettes, color-scheme mappings and HSL tint/shade, plus the no-language default Latin major/minor font subset, into existing display-only effective properties. The same canvas and shared controls consume them without new UI or persisted fields. Unknown dependencies, missing slots and unsupported script/language contexts stay unresolved; original theme/settings/style parts and direct formatting retain byte authority. Stored system-color fallbacks and deterministic channel rounding are bounded display behavior, not certification of Word's host-font inference or integer color quantization. Broader typography/layout, the DOC writer, all-files indexing, Office multiplayer, biometrics and production delivery remain open.
+
 ## Full web support
 
 1. Extract actual desktop-only operations from shared document logic. Use separate desktop/web host implementations rather than null Electron checks scattered throughout UI.

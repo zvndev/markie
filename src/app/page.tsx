@@ -943,12 +943,17 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
 
   // Files dropped onto the Library: register each on this device, open the last.
   const addingPaths = useRef(false);
+  const [addingFiles, setAddingFiles] = useState(false);
   const addPaths = useCallback(
     async (paths: string[]) => {
       const api = getElectronAPI();
-      if (!api || paths.length === 0 || addingPaths.current) return;
-      if (document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]") || documentShellRef.current?.busy) return;
+      if (!api || paths.length === 0) return;
+      if (document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
+      if (addingPaths.current || documentShellRef.current?.busy) {
+        setForkError("Those files were not opened while another operation was running. Drop them again when the editor is ready."); return;
+      }
       addingPaths.current = true;
+      setAddingFiles(true);
       let lastText: FilePayload | null = null;
       try {
         if (documentsEnabled && documentShellRef.current && !await documentShellRef.current.prepareLeave()) return;
@@ -969,7 +974,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         if (lastText) await loadFile(lastText);
         setLibRefreshKey((k) => k + 1);
       } catch { setForkError("The dropped files could not all be opened. Your current document was kept."); }
-      finally { addingPaths.current = false; }
+      finally { addingPaths.current = false; setAddingFiles(false); }
     },
     [loadFile, documentsEnabled]
   );
@@ -2092,7 +2097,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   };
 
   return (
-    <div inert={closingWindow} className="markie-shell h-screen flex flex-col bg-background relative">
+    <div inert={closingWindow} aria-busy={addingFiles || closingWindow} className="markie-shell h-screen flex flex-col bg-background relative">
       <Toolbar
         onCommands={documentsEnabled ? () => setShowPalette(true) : undefined}
         documentMode={documentsOpen}

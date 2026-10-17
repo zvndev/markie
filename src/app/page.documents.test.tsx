@@ -210,6 +210,31 @@ describe("document capabilities inside the existing Markie app", () => {
     expect(state.shell!.openCloudDocument).not.toHaveBeenCalled();
     expect(screen.getByText("Retained Markdown buffer")).toBeVisible();
   });
+  it("announces an overlapping drop and stays busy until the whole original batch settles", async () => {
+    let finish!: (settled: boolean) => void;
+    vi.mocked(state.shell!.settleIncomingDocuments!).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const openFilePath = vi.fn(async () => { state.activate?.(); return null; });
+    await boot({ pathForFile: (file) => `/drop/${file.name}`, openFilePath });
+    const shell = document.querySelector(".markie-shell")!;
+    const drop = (name: string) => fireEvent.drop(document.querySelector(".markie-side-panel")!, { dataTransfer: { files: [new File(["word"], name)] } });
+    await act(async () => { drop("first.docx"); });
+    await waitFor(() => expect(state.shell!.settleIncomingDocuments).toHaveBeenCalledOnce());
+    expect(shell).toHaveAttribute("aria-busy", "true");
+    await act(async () => { drop("second.docx"); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Drop them again when the editor is ready.");
+    expect(openFilePath).toHaveBeenCalledExactlyOnceWith("/drop/first.docx");
+    await act(async () => { finish(true); });
+    await waitFor(() => expect(shell).toHaveAttribute("aria-busy", "false"));
+  });
+  it("explains a drop rejected by a busy renderer without starting file access", async () => {
+    state.shell!.busy = true;
+    const api = await boot({ pathForFile: (file) => `/drop/${file.name}` });
+    await act(async () => { fireEvent.drop(document.querySelector(".markie-side-panel")!, { dataTransfer: { files: [new File(["word"], "later.docx")] } }); });
+    expect(screen.getByText("Those files were not opened while another operation was running. Drop them again when the editor is ready.")).toBeVisible();
+    expect(api.openFilePath).not.toHaveBeenCalled();
+    expect(document.querySelector(".markie-shell")).toHaveAttribute("aria-busy", "false");
+    expect(screen.getByText("Retained Markdown buffer")).toBeVisible();
+  });
   it("waits for the Word import before opening the final Markdown file in a mixed drop", async () => {
     let finish!: (settled: boolean) => void;
     vi.mocked(state.shell!.settleIncomingDocuments!).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));

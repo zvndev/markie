@@ -16,7 +16,7 @@ function fixture() {
   const menu = { getMenuItemById: (id: string) => items.get(id) };
   const controller = createDocumentMenuController({ getWindow: () => present ? window : null, getMenu: () => menu, sendCommand, canUseLegacy: (id: string) => id !== "revert-to-snapshot" || historyAllowed() });
   const template: Item[] = [
-    { label: "File", submenu: [...MARKDOWN_MENU_IDS.map((id: string) => ({ id, click: legacy })), { id: "revert-to-snapshot", label: "History…", click: legacy }, { type: "separator" }, { label: "Close" }] },
+    { label: "File", submenu: [...MARKDOWN_MENU_IDS.filter((id: string) => id !== "markdown-export-pdf-light").map((id: string) => ({ id, click: legacy, ...(id === "markdown-print" ? { label: "Print…", accelerator: "CmdOrCtrl+P" } : {}) })), { label: "Export", submenu: [{ id: "markdown-export-pdf-light", label: "PDF (Light)…", click: legacy }] }, { id: "revert-to-snapshot", label: "History…", click: legacy }, { type: "separator" }, { label: "Close" }] },
     { label: "Edit", submenu: [{ label: "Find", click: legacy }] },
     { label: "View", submenu: [...ZOOM_MENU_IDS.map((id: string) => ({ id, click: legacy })), { id: "markdown-zoom-reset", label: "Actual Size", accelerator: "CmdOrCtrl+0", click: legacy }] },
     { label: "Window", submenu: [] },
@@ -65,7 +65,7 @@ describe("native document menu capability boundary", () => {
     const f = fixture(), rich = f.items.get("markdown-view-rich")!;
     f.controller.update({ renderer: "markdown", enabledCommands: [] }); rich.click!(); expect(f.legacy).toHaveBeenCalledOnce();
     f.controller.update({ renderer: "word", enabledCommands: ["format-bold"] });
-    for (const id of MARKDOWN_MENU_IDS) expect(f.items.get(id)!.enabled).toBe(false);
+    for (const id of MARKDOWN_MENU_IDS) if (f.items.has(id)) expect(f.items.get(id)!.enabled).toBe(false);
     rich.click!(); expect(f.legacy).toHaveBeenCalledOnce();
   });
 
@@ -102,6 +102,25 @@ describe("native document menu capability boundary", () => {
     f.historyAllowed.mockReturnValue(true); f.controller.refresh(); history.click!(); expect(f.legacy).toHaveBeenCalledOnce();
     f.controller.update({ renderer: "word", enabledCommands: ["document-history"] }); history.click!(); expect(f.sendCommand).toHaveBeenCalledExactlyOnceWith("document-history");
     f.controller.update({ renderer: "word", enabledCommands: [] }); history.click!(); expect(history.enabled).toBe(false); expect(f.sendCommand).toHaveBeenCalledOnce();
+  });
+
+  it("merges actual Print and nested light PDF with guarded Markdown fallbacks", () => {
+    const f = fixture(), print = f.items.get("document-print")!, pdf = f.items.get("document-export-pdf")!;
+    expect(f.items.has("markdown-print")).toBe(false);
+    expect(f.items.has("markdown-export-pdf-light")).toBe(false);
+    expect(print.accelerator).toBe("CmdOrCtrl+P");
+    expect(f.template[0].submenu!.find((item) => item.label === "Export")!.submenu![0]).toBe(pdf);
+    f.controller.update({ renderer: "markdown", enabledCommands: [] });
+    expect(pdf.label).toBe("PDF (Light)…"); print.click!(); pdf.click!();
+    expect(f.legacy).toHaveBeenCalledTimes(2);
+    f.controller.update({ renderer: "word", enabledCommands: ["document-print", "document-export-pdf"] });
+    expect(pdf.label).toBe("Export PDF…"); print.click!(); pdf.click!();
+    expect(f.sendCommand.mock.calls.map((call) => call[0])).toEqual(["document-print", "document-export-pdf"]);
+    expect(f.items.get("markdown-export-pdf-dark")!.enabled).toBe(false);
+    f.controller.update({ renderer: "word", enabledCommands: [] }); print.click!(); pdf.click!();
+    expect(f.sendCommand).toHaveBeenCalledTimes(2); expect(print.enabled).toBe(false); expect(pdf.enabled).toBe(false);
+    f.controller.update({ renderer: "none", enabledCommands: [] }); print.click!(); pdf.click!();
+    expect(f.legacy).toHaveBeenCalledTimes(2);
   });
 
   it("keeps native Zoom In/Out available only for Markdown or zoom-capable Word", () => {

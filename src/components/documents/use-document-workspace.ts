@@ -185,10 +185,10 @@ export function useDocumentWorkspace(services: DocumentWorkspaceServices, keyboa
 
   const run = useCallback(async (label: string, operation: () => Promise<void>) => {
     const token = ++operationRequest.current;
-    setBusy(label); setError(null); setNotice(null);
+    busyRef.current = label; setBusy(label); setError(null); setNotice(null);
     try { await operation(); }
     catch (failure) { if (mounted.current && token === operationRequest.current) setError(messageOf(failure)); }
-    finally { if (mounted.current && token === operationRequest.current) setBusy(null); }
+    finally { if (mounted.current && token === operationRequest.current) { busyRef.current = null; setBusy(null); } }
   }, []);
 
   const open = useCallback(async (record: LibraryRecord) => {
@@ -457,6 +457,8 @@ export function useDocumentWorkspace(services: DocumentWorkspaceServices, keyboa
     closeRecovery: () => setRecovery(null), dismissError: () => setError(null),
     confirmConversion, cancelConversion: () => setConversion(null),
     hasPendingConversion,
+    captureSession: () => sessionRef.current,
+    isBusy: () => !!busyRef.current || closing.current,
     prepareClose,
     discardPayload: (payload: WebDocumentPayload) => { if (payload.handle) releaseHandle(payload.handle); },
     setFlush: (flush: (() => string | null) | null) => { flushRef.current = flush; },

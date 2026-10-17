@@ -89,6 +89,47 @@ describe("document capabilities inside the existing Markie app", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save file" }));
     expect(state.shell!.save).toHaveBeenCalledTimes(3);
   });
+
+  it("routes shared PDF and native output to Word, never the retained Markdown", async () => {
+    state.shell!.commands!.enabledCommands = [...state.shell!.commands!.enabledCommands, "document-print", "document-export-pdf"];
+    const api = await boot(); await openWord();
+    await act(async () => { emit("onMenuPrint"); emit("onMenuExportPDF", "light"); emit("onMenuExportPDF", "dark"); });
+    expect(state.shell!.commands!.execute).toHaveBeenNthCalledWith(1, "document-print");
+    expect(state.shell!.commands!.execute).toHaveBeenNthCalledWith(2, "document-export-pdf");
+    expect(state.shell!.commands!.execute).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole("button", { name: "Export menu" }));
+    await userEvent.click(screen.getByRole("button", { name: "Export PDF…" }));
+    expect(state.shell!.commands!.execute).toHaveBeenLastCalledWith("document-export-pdf");
+    expect(api.exportPDF).not.toHaveBeenCalled();
+    expect(screen.getByText("Retained Markdown buffer")).not.toBeVisible();
+  });
+
+  it.each(["private", "busy", "modal", "inert", "unsupported"])("blocks Word output when %s without falling through to Markdown", async (guard) => {
+    state.shell!.commands!.enabledCommands = [...state.shell!.commands!.enabledCommands, "document-print", "document-export-pdf"];
+    const api = await boot(); await openWord();
+    await act(async () => {
+      if (guard === "private") state.shell!.private = true;
+      if (guard === "busy") state.shell!.busy = true;
+      if (guard === "modal") state.shell!.commands!.modalOpen = true;
+      if (guard === "unsupported") state.shell!.commands!.enabledCommands = [];
+      state.publish!({ ...state.shell! });
+    });
+    if (guard === "inert") document.querySelector(".docs-embedded-host")!.setAttribute("inert", "");
+    await act(async () => { emit("onMenuPrint"); emit("onMenuExportPDF", "light"); emit("onDocumentCommand", "document-export-pdf"); });
+    expect(state.shell!.commands!.execute).not.toHaveBeenCalled();
+    expect(api.exportPDF).not.toHaveBeenCalled();
+  });
+
+  it("offers only the supported Word output commands through the existing palette", async () => {
+    state.shell!.commands!.enabledCommands = [...state.shell!.commands!.enabledCommands, "document-print", "document-export-pdf"];
+    const api = await boot(); await openWord();
+    await userEvent.click(screen.getByRole("button", { name: "Commands (⌘K)" }));
+    await userEvent.type(screen.getByPlaceholderText("Type a command…"), "PDF");
+    expect(screen.queryByRole("option", { name: /PDF \((Dark|Light)\)/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("option", { name: /File: Export PDF…$/ }));
+    await waitFor(() => expect(state.shell!.commands!.execute).toHaveBeenCalledExactlyOnceWith("document-export-pdf"));
+    expect(api.exportPDF).not.toHaveBeenCalled();
+  });
   it("opens a sidebar cloud document through the guarded renderer without creating a local seed", async () => {
     const api = await boot();
     const markdown = screen.getByText("Retained Markdown buffer");

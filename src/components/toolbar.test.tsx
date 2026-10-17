@@ -55,4 +55,18 @@ describe("the existing Markie top bar", () => {
     expect(onExportHTML).not.toHaveBeenCalled();
     expect(onExportPDF).not.toHaveBeenCalled();
   });
+
+  it("uses one format-aware Word PDF action in the existing Export menu", async () => {
+    const onDocumentExportPDF = vi.fn();
+    const { onExportPDF, view } = renderToolbar({ documentMode: true, onDocumentExportPDF });
+    await userEvent.click(screen.getByRole("button", { name: "Export menu" }));
+    expect(screen.queryByRole("button", { name: /PDF \((Dark|Light)\)/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Export PDF…" }));
+    expect(onDocumentExportPDF).toHaveBeenCalledOnce(); expect(onExportPDF).not.toHaveBeenCalled();
+    view.rerender(<Toolbar documentMode exporting onDocumentExportPDF={onDocumentExportPDF} onOpenFile={vi.fn()} onExportPDF={onExportPDF} onSaveAs={vi.fn()} onExportHTML={vi.fn()} onRename={vi.fn()} onShare={vi.fn()} onThemePresets={vi.fn()} fileName="proposal.docx" isDirty canRename={false} />);
+    await userEvent.click(screen.getByRole("button", { name: "Export menu" }));
+    expect(screen.getByRole("button", { name: "Export PDF…" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Export PDF…" }));
+    expect(onDocumentExportPDF).toHaveBeenCalledOnce();
+  });
 });

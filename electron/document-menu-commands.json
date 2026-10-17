@@ -4,6 +4,8 @@
   {"group":"File","id":"new-text","label":"New Text Document"},
   {"group":"File","id":"document-details","label":"Document Details…"},
   {"group":"File","id":"document-history","label":"History…"},
+  {"group":"File","id":"document-print","label":"Print…"},
+  {"group":"File","id":"document-export-pdf","label":"Export PDF…"},
   {"group":"Format","id":"format-bold","label":"Bold","accelerator":"CmdOrCtrl+B"},
   {"group":"Format","id":"format-italic","label":"Italic","accelerator":"CmdOrCtrl+I"},
   {"group":"Format","id":"format-underline","label":"Underline","accelerator":"CmdOrCtrl+U"},

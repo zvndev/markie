@@ -39,7 +39,10 @@ function createDocumentMenuController({ getWindow, getMenu, sendCommand, canUseL
     if (!menu) return;
     for (const command of commands) {
       const item = menu.getMenuItemById(command.id);
-      if (item) item.enabled = canExecute(command.id) || canUseFallback(command.id);
+      if (item) {
+        item.enabled = canExecute(command.id) || canUseFallback(command.id);
+        item.label = isMarkdown() ? legacyFallbacks.get(command.id)?.label || command.label : command.label;
+      }
     }
     for (const id of [...MARKDOWN_MENU_IDS, ...ZOOM_MENU_IDS]) {
       const item = menu.getMenuItemById(id);
@@ -81,12 +84,21 @@ function createDocumentMenuController({ getWindow, getMenu, sendCommand, canUseL
       const file = template.find((item) => item.label === "File");
       const view = template.find((item) => item.label === "View");
       const merged = new Set();
-      for (const [parent, legacyId, commandId] of [[view, "markdown-zoom-reset", "view-zoom-reset"], [file, "revert-to-snapshot", "document-history"]]) {
-        const index = parent.submenu.findIndex((item) => item.id === legacyId);
+      const containingItems = (items, id) => {
+        if (items.some((item) => item.id === id)) return items;
+        for (const item of items) {
+          const found = Array.isArray(item.submenu) && containingItems(item.submenu, id);
+          if (found) return found;
+        }
+        return null;
+      };
+      for (const [parent, legacyId, commandId] of [[view, "markdown-zoom-reset", "view-zoom-reset"], [file, "revert-to-snapshot", "document-history"], [file, "markdown-print", "document-print"], [file, "markdown-export-pdf-light", "document-export-pdf"]]) {
+        const items = containingItems(parent.submenu, legacyId);
+        const index = items ? items.findIndex((item) => item.id === legacyId) : -1;
         const command = commands.find((entry) => entry.id === commandId);
         if (index === -1 || !command) continue;
-        const original = parent.submenu[index]; legacyFallbacks.set(commandId, { id: legacyId, click: original.click });
-        parent.submenu[index] = { ...commandItem(command), ...(original.accelerator ? { accelerator: original.accelerator } : {}) };
+        const original = items[index]; legacyFallbacks.set(commandId, { id: legacyId, label: original.label, click: original.click });
+        items[index] = { ...commandItem(command), ...(original.accelerator ? { accelerator: original.accelerator } : {}) };
         merged.add(commandId);
       }
       const fileCommands = commands.filter((command) => command.group === "File" && !merged.has(command.id)).map(commandItem);

@@ -121,8 +121,8 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
       if (run) onSelect(paragraph.id, run.dataset.runId);
     }}
     onInput={() => { if (!composing.current) { const offsets = selectionOffsets(root.current!); onSelection?.(paragraph.id, offsets.start, offsets.end, offsets.supported); emit(); } }}
-    onCompositionStart={() => { composing.current = true; }}
-    onCompositionEnd={() => { composing.current = false; emit(); }}
+    onCompositionStart={(event) => { composing.current = true; event.currentTarget.dataset.wordComposing = "true"; }}
+    onCompositionEnd={(event) => { composing.current = false; delete event.currentTarget.dataset.wordComposing; emit(); }}
     onDragOver={(event) => event.preventDefault()}
     onDrop={(event) => { event.preventDefault(); onRejectStructure("Use Import, Picture or plain-text Paste. Dropped HTML is not inserted into Word documents."); }}
     onPaste={(event) => {

@@ -1326,7 +1326,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     }
     if (documentsOpenRef.current) {
       const shell = documentShellRef.current;
-      if (shell?.private || shell?.busy) return;
+      if (shell?.private || shell?.busy || shell?.commands?.modalOpen || document.querySelector(".docs-embedded-host")?.closest("[inert]")) return;
       const target = shell?.commands;
       if (target?.enabledCommands.includes(command)) target.execute(command);
       return;
@@ -1772,9 +1772,10 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     const offs = [
       api.onMenuOpenFile?.(() => handlersRef.current.openFile()),
       api.onMenuNewFile?.(() => documentsOpenRef.current ? documentShellRef.current?.create("docx") : handlersRef.current.newFile()),
-      api.onMenuExportPDF?.((theme) =>
-        !documentsOpenRef.current && handlersRef.current.exportPDF(theme ?? "dark")
-      ),
+      api.onMenuExportPDF?.((theme) => {
+        if (documentsOpenRef.current) { if (theme === "light") nativeCommandHandler.current("document-export-pdf"); }
+        else handlersRef.current.exportPDF(theme ?? "dark");
+      }),
       api.onSetMode?.((m) => { if (!documentsOpenRef.current) requestMode(m); }),
       api.onToggleStats?.(() => { if (!documentsOpenRef.current) setShowStats((s) => !s); }),
       api.onMenuCommandPalette?.(() => setShowPalette((v) => !v)),
@@ -1815,7 +1816,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         setFindWithReplace(false);
         setShowFind(true);
       }),
-      api.onMenuPrint?.(() => { if (!documentsOpenRef.current) handlersRef.current.print(); }),
+      api.onMenuPrint?.(() => { if (documentsOpenRef.current) nativeCommandHandler.current("document-print"); else handlersRef.current.print(); }),
       api.onMenuZoom?.((step) => { if (documentsOpenRef.current) documentShellRef.current?.commands?.execute(step > 0 ? "zoom-in" : step < 0 ? "zoom-out" : "view-zoom-reset"); else handlersRef.current.zoom(step); }),
       api.onMenuPageWidth?.((step) => { if (!documentsOpenRef.current) handlersRef.current.pageWidth(step); }),
       api.onMenuUndo?.(() => { if (!documentsOpenRef.current) handlersRef.current.undoRedo("undo"); }),
@@ -2104,6 +2105,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         onSave={documentsOpen && documentShell?.hasSession && !documentShell.private ? () => documentShell.save() : undefined}
         onOpenFile={handleOpenFile}
         onExportPDF={exportPDF}
+        onDocumentExportPDF={documentsOpen && !documentShell?.private && !documentShell?.busy && !documentShell?.commands?.modalOpen && documentShell?.commands?.enabledCommands.includes("document-export-pdf") ? () => runDocumentCommand("document-export-pdf") : undefined}
         onSaveAs={() => documentsOpen ? documentShellRef.current?.save(true) : handleSaveAs()}
         onExportHTML={exportHTML}
         exporting={documentsOpen ? !!documentShell?.busy : exporting}

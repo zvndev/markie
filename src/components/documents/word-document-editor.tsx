@@ -13,14 +13,14 @@ import { WordImage } from "./word-images";
 import type { WordTextMatch } from "./word-find";
 import "./document-workspace.css";
 
-interface WordDocumentEditorProps { document: DocxDocument; readOnly?: boolean; onChange: (document: DocxDocument) => void; onCommandsReady?: (target: DocumentCommandTarget | null) => void; onHistory?: () => void }
+interface WordDocumentEditorProps { document: DocxDocument; readOnly?: boolean; isReadOnly?: () => boolean; onChange: (document: DocxDocument) => void; onCommandsReady?: (target: DocumentCommandTarget | null) => void; onHistory?: () => void }
 const WORD_ACTIONS: readonly FormattingAction[] = ["undo", "redo", "bold", "italic", "underline", "link", "image", "bullet", "ordered", "align-left", "align-center", "align-right", "clear"];
 const WORD_FONTS = ["Arial", "Calibri", "Georgia", "Times New Roman", "Helvetica"];
 const WORD_STYLES = [{ id: "", label: "Default paragraph" }, { id: "Normal", label: "Normal" }, { id: "Heading1", label: "Heading 1" }, { id: "Heading2", label: "Heading 2" }, { id: "Heading3", label: "Heading 3" }];
 function commonValue<T>(values: readonly T[]): T | "mixed" | undefined {
   return values.length && values.some((value) => value !== values[0]) ? "mixed" : values[0];
 }
-export function WordDocumentEditor({ document, readOnly = false, onChange, onCommandsReady, onHistory }: WordDocumentEditorProps) {
+export function WordDocumentEditor({ document, readOnly = false, isReadOnly, onChange, onCommandsReady, onHistory }: WordDocumentEditorProps) {
   const [selected, setSelected] = useState<string | undefined>(document.paragraphs[0]?.id);
   const [runId, setRunId] = useState<string | undefined>(document.paragraphs[0]?.runs[0]?.id);
   const [error, setError] = useState<string | null>(null);
@@ -38,9 +38,9 @@ export function WordDocumentEditor({ document, readOnly = false, onChange, onCom
   const latestDocument = useRef(document);
   const host = useRef<HTMLDivElement>(null);
   const textSelection = useRef<WordTextMatch | null>(null);
-  const access = useRef({ readOnly, canEdit: document.canEdit, originalView }); access.current = { readOnly, canEdit: document.canEdit, originalView };
+  const access = useRef({ readOnly, isReadOnly, canEdit: document.canEdit, originalView }); access.current = { readOnly, isReadOnly, canEdit: document.canEdit, originalView };
   const canView = () => !!host.current && !host.current.closest("[inert]");
-  const canMutate = () => canView() && !access.current.readOnly && access.current.canEdit && !access.current.originalView;
+  const canMutate = () => canView() && !access.current.readOnly && !access.current.isReadOnly?.() && access.current.canEdit && !access.current.originalView;
   const openPalette = () => { if (onCommandsReady || tool || !canView()) return; paletteFocus.current = globalThis.document.activeElement instanceof HTMLElement ? globalThis.document.activeElement : null; setPaletteOpen(true); };
   const closePalette = () => { setPaletteOpen(false); requestAnimationFrame(() => { const prior = paletteFocus.current; if (prior?.isConnected && !prior.closest("[inert]")) prior.focus(); }); };
   latestDocument.current = document;

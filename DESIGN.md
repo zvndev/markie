@@ -51,6 +51,8 @@ Word style controls use imported style labels and supported effective properties
 
 Document theme colors and supported default Latin theme fonts are resolved inside the original codec, not by a second renderer/theme system. They style the document, not Markie's chrome. Preserve raw theme/settings/style bytes; unsupported font slots/scripts/languages stay unresolved. Stored system-color fallbacks and deterministic tint/shade rounding must not be presented as full source-Word or operating-system fidelity.
 
+Word print/PDF is a supported-view projection from the original document model, not a screenshot of the editor or a Word-compatible pagination claim. Reuse the actual Export menu and native File commands. Keep printed paper light and preserve document typography independently of the app theme. Disclose excluded comments and font/printer limitations; unsupported packages, pending revisions and unrepresentable structures must not be silently flattened. Printing never acknowledges an external file save or clears unsaved edits, and protected/private or composing sessions cannot leak into output.
+
 ## Accessibility
 
 Target keyboard-complete operation and WCAG AA text readability without silently overriding existing owner-approved theme boundaries. Give every control a meaningful label, disclose selected tabs/filters, use proper headings/regions and live status/error messages, keep focus visible and manage focus when dialogs close. Do not use color as the only save/lock/permission signal. Do not require hover for an essential action.

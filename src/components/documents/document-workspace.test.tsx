@@ -10,6 +10,8 @@ import { readZip, writeZip } from "@/lib/office/zip";
 import type { WebDocumentPayload, WebFileHandle, WebSaveReceipt } from "@/lib/web-files";
 import type { DocumentShellState } from "@/lib/document-shell";
 import * as legacyDoc from "@/lib/office/legacy-doc-worker-client";
+import { getSafeAPI } from "@/lib/electron";
+vi.mock("@/lib/electron", async (original) => ({ ...await original<typeof import("@/lib/electron")>(), getSafeAPI: vi.fn(() => null) }));
 
 const privateScope = vi.hoisted(() => ({ guard: vi.fn<() => boolean>(), cleanup: vi.fn(), registerGuard: true }));
 vi.mock("./vault-panel", () => ({ VaultPanel: ({ onCloseGuard }: { onCloseGuard?: (guard: (() => boolean) | null) => void }) => {
@@ -42,6 +44,52 @@ async function newText() {
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
 
 describe("actual shared document workspace", () => {
+  it("prints current model input without a render delay and refuses composition, modal and inactive output", async () => {
+    const exportPDF = vi.fn(async () => ({ success: true, path: "/synthetic/letter.pdf" }));
+    vi.mocked(getSafeAPI).mockReturnValue({ exportPDF } as unknown as NonNullable<ReturnType<typeof getSafeAPI>>);
+    const library = createMemoryDocumentLibrary(), bytes = await exportDocx(await createDocx("Original"));
+    let shell: DocumentShellState | null = null;
+    const props = { library, embedded: true, incomingDocument: { requestId: "print-input", payload: payload("letter.docx", bytes) }, onShellChange: (next: DocumentShellState | null) => { shell = next; } };
+    const view = render(<DocumentWorkspace {...props} />);
+    const paragraph = await screen.findByRole("textbox", { name: "Paragraph 1" });
+    await waitFor(() => expect(shell?.commands?.enabledCommands).toContain("document-print"));
+    const command = shell!.commands!;
+    act(() => { paragraph.querySelector("span")!.textContent = "Immediate input"; fireEvent.input(paragraph); command.execute("document-export-pdf"); });
+    await waitFor(() => expect(exportPDF).toHaveBeenCalledOnce());
+    expect((exportPDF.mock.calls[0] as unknown as [{ html: string }])[0].html).toContain("Immediate input");
+    await waitFor(() => expect(shell?.busy).toBe(false));
+    fireEvent.compositionStart(paragraph);
+    act(() => shell!.commands!.execute("document-print")); expect(exportPDF).toHaveBeenCalledOnce();
+    expect(paragraph).toHaveAttribute("data-word-composing", "true"); fireEvent.compositionEnd(paragraph);
+    act(() => shell!.commands!.execute("format-font"));
+    act(() => command.execute("document-print")); expect(exportPDF).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Close Font" }));
+    view.rerender(<DocumentWorkspace {...props} active={false} />);
+    act(() => command.execute("document-print")); expect(exportPDF).toHaveBeenCalledOnce();
+    expect(screen.getByText(/without comments/)).toBeInTheDocument();
+  });
+
+  it("keeps output in flight from closing, changing documents, entering vault or running a duplicate", async () => {
+    const pending = deferred<{ success: boolean }>(), exportPDF = vi.fn(() => pending.promise);
+    vi.mocked(getSafeAPI).mockReturnValue({ exportPDF } as unknown as NonNullable<ReturnType<typeof getSafeAPI>>);
+    let shell: DocumentShellState | null = null;
+    render(<DocumentWorkspace embedded library={createMemoryDocumentLibrary()} onShellChange={(next) => { shell = next; }} />);
+    await waitFor(() => expect(shell?.ready).toBe(true));
+    await act(async () => shell!.create("docx"));
+    await waitFor(() => expect(shell?.commands?.enabledCommands).toContain("document-print"));
+    const command = shell!.commands!;
+    act(() => { command.execute("document-print"); command.execute("document-export-pdf"); shell!.create("text"); shell!.showVault(); });
+    expect(exportPDF).toHaveBeenCalledOnce(); expect(shell!.name).toBe("Untitled.docx");
+    await act(async () => { expect(await shell!.prepareClose()).toBe(false); expect(await shell!.prepareLeave()).toBe(false); });
+    expect(screen.queryByText("Synthetic decrypted private text")).toBeNull();
+    expect(shell!.busy).toBe(true);
+    await act(async () => { pending.resolve({ success: true }); });
+    await waitFor(() => expect(shell?.busy).toBe(false));
+    expect(screen.getByText("Sent the supported document view to the printer.")).toBeInTheDocument();
+    act(() => { shell!.create("text"); shell!.commands!.execute("document-print"); });
+    await screen.findByRole("textbox", { name: "Document text" });
+    expect(exportPDF).toHaveBeenCalledOnce();
+  });
   it("unmounts private state on a successful leave even though document content is retained", async () => {
     let shell: DocumentShellState | null = null;
     const library = createMemoryDocumentLibrary(), onShellChange = (value: DocumentShellState | null) => { shell = value; };

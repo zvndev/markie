@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emit, installBridge, listenerCount } from "@/test/mock-bridge";
 import type { DocumentWorkspaceProps } from "./documents/document-workspace";
 import type { DocumentShellState } from "@/lib/document-shell";
@@ -25,6 +25,7 @@ vi.mock("./document-cloud-dialog", () => ({ DocumentCloudDialog: ({ onCloseGuard
 import { DocumentWorkspaceHost } from "./document-workspace-host";
 
 beforeEach(() => { state.props = null; state.prepare.mockReset().mockResolvedValue(true); state.cloudGuard.mockReset().mockReturnValue(true); state.execute.mockReset(); });
+afterEach(() => vi.useRealTimers());
 
 describe("native document workspace host lifecycle", () => {
   it("waits for the committed nonbusy shell after successful asynchronous cloud recovery", async () => {
@@ -142,6 +143,119 @@ describe("native document workspace host lifecycle", () => {
     await screen.findByText("b.txt"); expect(complete).toBe(false);
     await act(async () => { state.props!.onIncomingDocumentHandled!(state.props!.incomingDocument!.requestId, true); });
     expect(await settlement).toBe(true);
+  });
+  it("waits for committed nonbusy publications both after import acknowledgment and after recovery", async () => {
+    const descriptor = { leaseId: "word", name: "imported.docx", size: 1, lastModified: 1, revision: "revision", writable: true };
+    const bridge = installBridge(); let shell: DocumentShellState | null = null, finish!: (allowed: boolean) => void;
+    bridge.documentFiles!.takeInitial = vi.fn().mockResolvedValueOnce({ ok: true, value: descriptor }).mockResolvedValue({ ok: true, value: null });
+    bridge.documentFiles!.read = vi.fn().mockResolvedValue({ ok: true, value: { descriptor, bytes: new Uint8Array([65]) } });
+    render(<DocumentWorkspaceHost embedded onShellChange={(value) => { shell = value; }} />);
+    await screen.findByText("imported.docx");
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    const imported = { ...shell!, name: descriptor.name, selectedId: "word-session" };
+    state.prepare.mockImplementationOnce(() => {
+      state.props!.onShellChange!({ ...imported, busy: true });
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    let result: boolean | undefined, settlement!: Promise<boolean>;
+    await act(async () => { settlement = shell!.settleIncomingDocuments!().then((ok) => { result = ok; return ok; }); });
+    await act(async () => {
+      state.props!.onShellChange!({ ...imported, busy: true });
+      state.props!.onIncomingDocumentHandled!(state.props!.incomingDocument!.requestId, true);
+    });
+    expect(result).toBeUndefined(); expect(state.prepare).not.toHaveBeenCalled();
+    await act(async () => { state.props!.onShellChange!({ ...imported, busy: true }); });
+    expect(result).toBeUndefined();
+    await act(async () => { state.props!.onShellChange!({ ...imported, busy: false }); });
+    expect(state.prepare).toHaveBeenCalledOnce();
+    await act(async () => { finish(true); });
+    expect(result).toBeUndefined();
+    await act(async () => { state.props!.onShellChange!({ ...imported, busy: true }); });
+    expect(result).toBeUndefined(); expect(state.prepare).toHaveBeenCalledOnce();
+    await act(async () => { state.props!.onShellChange!({ ...imported, busy: false }); });
+    expect(await settlement).toBe(true);
+  });
+  it("waits for initial native activation to commit before preparing settlement", async () => {
+    installBridge(); let shell: DocumentShellState | null = null, result: boolean | undefined;
+    const onShellChange = (value: DocumentShellState | null) => { shell = value; };
+    const view = render(<DocumentWorkspaceHost embedded active={false} onShellChange={onShellChange} />);
+    let settlement!: Promise<boolean>;
+    await act(async () => { settlement = shell!.settleIncomingDocuments!().then((ok) => { result = ok; return ok; }); });
+    expect(result).toBeUndefined(); expect(state.prepare).not.toHaveBeenCalled();
+    view.rerender(<DocumentWorkspaceHost embedded active onShellChange={onShellChange} />);
+    expect(await settlement).toBe(true); expect(state.prepare).toHaveBeenCalledOnce();
+  });
+  it("waits through the real inactive parent wrapper until both activation and inherited inert clear commit", async () => {
+    installBridge(); let shell: DocumentShellState | null = null, result: boolean | undefined;
+    const onShellChange = (value: DocumentShellState | null) => { shell = value; };
+    const view = render(<div inert><DocumentWorkspaceHost embedded active={false} onShellChange={onShellChange} /></div>);
+    let settlement!: Promise<boolean>;
+    await act(async () => { settlement = shell!.settleIncomingDocuments!().then((ok) => { result = ok; return ok; }); });
+    expect(result).toBeUndefined(); expect(state.prepare).not.toHaveBeenCalled();
+    await act(async () => { view.rerender(<div inert={false}><DocumentWorkspaceHost embedded active onShellChange={onShellChange} /></div>); });
+    expect(await settlement).toBe(true); expect(state.prepare).toHaveBeenCalledOnce();
+  });
+  it("cancels lost active ownership even while the native drain is still pending", async () => {
+    const bridge = installBridge(); let shell: DocumentShellState | null = null, finishRead!: (result: { ok: true; value: null }) => void, result: boolean | undefined;
+    bridge.documentFiles!.takeInitial = vi.fn().mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; })).mockResolvedValue({ ok: true, value: null });
+    const onShellChange = (value: DocumentShellState | null) => { shell = value; };
+    const view = render(<DocumentWorkspaceHost embedded onShellChange={onShellChange} />);
+    await act(async () => { void shell!.settleIncomingDocuments!().then((ok) => { result = ok; }); });
+    await act(async () => { view.rerender(<DocumentWorkspaceHost embedded active={false} onShellChange={onShellChange} />); });
+    expect(result).toBe(false); expect(state.prepare).not.toHaveBeenCalled();
+    await act(async () => { finishRead({ ok: true, value: null }); });
+  });
+  it.each(["private", "session", "inactive", "inert", "modal", "conversion", "unmount"])("cancels native settlement after recovery when %s ownership changes", async (change) => {
+    installBridge(); let shell: DocumentShellState | null = null, finish!: (allowed: boolean) => void;
+    const onShellChange = (value: DocumentShellState | null) => { shell = value; };
+    const view = render(<DocumentWorkspaceHost embedded onShellChange={onShellChange} />), initial = shell!;
+    state.prepare.mockImplementationOnce(() => {
+      state.props!.onShellChange!({ ...initial, busy: true });
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    let settlement!: Promise<boolean>;
+    await act(async () => { settlement = shell!.settleIncomingDocuments!(); });
+    await act(async () => { finish(true); });
+    if (change === "unmount") view.unmount();
+    else if (change === "inactive") view.rerender(<DocumentWorkspaceHost embedded active={false} onShellChange={onShellChange} />);
+    else {
+      if (change === "inert") view.container.setAttribute("inert", "");
+      if (change === "modal" || change === "conversion") {
+        const modal = document.createElement("section"); modal.setAttribute("role", change === "conversion" ? "alertdialog" : "dialog"); modal.setAttribute("aria-modal", "true"); view.container.append(modal);
+      }
+      await act(async () => { state.props!.onShellChange!({ ...initial, busy: false, ...(change === "private" ? { private: true } : change === "session" ? { selectedId: "other-session" } : {}) }); });
+    }
+    expect(await settlement).toBe(false); expect(state.prepare).toHaveBeenCalledOnce();
+  });
+  it.each(["refused", "rejected"])("stops native settlement when recovery is %s", async (failure) => {
+    installBridge(); let shell: DocumentShellState | null = null;
+    render(<DocumentWorkspaceHost embedded onShellChange={(value) => { shell = value; }} />);
+    if (failure === "refused") state.prepare.mockResolvedValueOnce(false);
+    else state.prepare.mockRejectedValueOnce(new Error("Synthetic recovery error"));
+    let settlement!: Promise<boolean>;
+    await act(async () => { settlement = shell!.settleIncomingDocuments!(); });
+    expect(await settlement).toBe(false);
+  });
+  it("retains the thirty-second bound while waiting for nonbusy publication and refuses competing settlement", async () => {
+    installBridge(); let shell: DocumentShellState | null = null, result: boolean | undefined;
+    render(<DocumentWorkspaceHost embedded onShellChange={(value) => { shell = value; }} />);
+    await act(async () => { state.props!.onShellChange!({ ...shell!, busy: true }); });
+    vi.useFakeTimers(); let settlement!: Promise<boolean>;
+    await act(async () => { settlement = shell!.settleIncomingDocuments!().then((ok) => { result = ok; return ok; }); });
+    expect(await shell!.settleIncomingDocuments!()).toBe(false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(29_999); }); expect(result).toBeUndefined();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); }); expect(await settlement).toBe(false);
+    expect(state.prepare).not.toHaveBeenCalled();
+  });
+  it("keeps native parse failures distinct from a ready committed shell", async () => {
+    const descriptor = { leaseId: "broken", name: "broken.docx", size: 1, lastModified: 1, revision: "revision", writable: true };
+    const bridge = installBridge(); let shell: DocumentShellState | null = null;
+    bridge.documentFiles!.takeInitial = vi.fn().mockResolvedValueOnce({ ok: true, value: descriptor }).mockResolvedValue({ ok: true, value: null });
+    bridge.documentFiles!.read = vi.fn().mockRejectedValue(new Error("Synthetic native read failure"));
+    render(<DocumentWorkspaceHost embedded onShellChange={(value) => { shell = value; }} />);
+    await screen.findByRole("alert"); let settlement!: Promise<boolean>;
+    await act(async () => { settlement = shell!.settleIncomingDocuments!(); });
+    expect(await settlement).toBe(false); expect(state.prepare).not.toHaveBeenCalled();
   });
   it("cancels native batch settlement on unmount instead of advancing the next file", async () => {
     const descriptor = { leaseId: "a", name: "a.txt", size: 1, lastModified: 1, revision: "revision", writable: true };

@@ -133,7 +133,7 @@ describe("explicit ordinary cloud sharing", () => {
     expect(screen.getByText(/Cloud version 2\./)).toBeVisible();
     expect(screen.getByText("No unsaved cloud edits.")).toBeVisible();
     expect(editor).toHaveValue("Synthetic submitted edits");
-    expect(guard.mock.calls.at(-1)?.[0]()).toBe(true);
+    await waitFor(() => expect(guard.mock.calls.at(-1)?.[0]()).toBe(true));
     fireEvent.click(screen.getByRole("button", { name: "Close" })); expect(close).toHaveBeenCalledWith("Cloud copy saved.");
   });
 

@@ -28,6 +28,21 @@ function renderFormattingToolbar(overrides: Partial<FormattingToolbarProps> = {}
 }
 
 describe("shared compact formatting controls", () => {
+  it("dismisses only More formatting when Escape is pressed from its trigger inside a parent dialog", () => {
+    constrainToolbar(760);
+    const parentKeys = vi.fn();
+    render(<div role="dialog" aria-label="Cloud document" onKeyDown={parentKeys}><FormattingToolbar
+      state={{ canUndo: true }} canEdit appearance={DEFAULT_APPEARANCE} currentStyle="paragraph" currentFont="system"
+      selecting={false} currentSize={16} onAppearance={vi.fn()} onFont={vi.fn()} onSize={vi.fn()} onStyle={vi.fn()} onAction={vi.fn()}
+    /></div>);
+    const more = screen.getByRole("button", { name: "More formatting" });
+    fireEvent.click(more); more.focus();
+    expect(screen.getByRole("dialog", { name: "More formatting" })).toBeInTheDocument();
+    fireEvent.keyDown(more, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "More formatting" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Cloud document" })).toBeInTheDocument();
+    expect(parentKeys).not.toHaveBeenCalled(); expect(more).toHaveFocus();
+  });
   it("keeps primary controls visible and moves real secondary actions into an accessible width-aware overflow", async () => {
     constrainToolbar(760);
     const { onAction, onAppearance } = renderFormattingToolbar();

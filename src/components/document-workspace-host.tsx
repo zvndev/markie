@@ -21,6 +21,13 @@ interface CloudOpenIntent {
   source: Pick<DocumentShellState, "selectedId" | "name" | "hasSession">;
   prepared: boolean;
 }
+interface NativeSettlement {
+  drained: boolean;
+  activated: boolean;
+  phase: "waiting" | "preparing" | "prepared";
+  source: Pick<DocumentShellState, "selectedId" | "name" | "hasSession"> | null;
+  finish(ok: boolean): void;
+}
 export function DocumentWorkspaceHost({ embedded = false, active = true, onActivate, onShellChange }: DocumentWorkspaceHostProps) {
   const [pending, setPending] = useState<{ file?: CloudFile; cloudDocumentId?: string } | null>(null);
   const [desktop] = useState(getElectronAPI);
@@ -38,35 +45,32 @@ export function DocumentWorkspaceHost({ embedded = false, active = true, onActiv
   const closeGeneration = useRef(0);
   const cloudOpening = useRef(false);
   const cloudOpenIntent = useRef<CloudOpenIntent | null>(null);
-  const [cloudReadiness, setCloudReadiness] = useState(0);
+  const [shellReadiness, setShellReadiness] = useState(0);
   const drainNative = useRef<(() => Promise<void>) | null>(null);
   const incomingIds = useRef(new Set<string>());
-  const incomingWaiters = useRef(new Set<(settled: boolean) => void>());
+  const nativeSettlement = useRef<NativeSettlement | null>(null);
   const nativeReadFailures = useRef(0);
   const reportedReadFailures = useRef(0);
-  const settleIncomingDocuments = useCallback(async () => {
-    if (!drainNative.current || pendingRef.current || !host.current) return false;
-    await drainNative.current();
-    if (incomingIds.current.size) {
-      const settled = await new Promise<boolean>((resolve) => {
-        const finish = (ok: boolean) => { clearTimeout(timeout); incomingWaiters.current.delete(finish); resolve(ok); };
-        const timeout = setTimeout(() => finish(false), 30_000);
-        incomingWaiters.current.add(finish);
-      });
-      if (!settled) return false;
-    }
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    if (reportedReadFailures.current !== nativeReadFailures.current) {
-      reportedReadFailures.current = nativeReadFailures.current; return false;
-    }
-    if (!host.current || host.current.closest("[inert]") || pendingRef.current || editorShell.current?.busy || editorShell.current?.private) return false;
-    return editorShell.current?.prepareLeave() ?? false;
+  const settleIncomingDocuments = useCallback((): Promise<boolean> => {
+    const drain = drainNative.current, root = host.current;
+    if (!drain || pendingRef.current || cloudOpening.current || nativeSettlement.current || !root) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const intent: NativeSettlement = { drained: false, activated: !root.hasAttribute("inert"), phase: "waiting", source: null, finish: (ok) => {
+        if (nativeSettlement.current !== intent) return;
+        nativeSettlement.current = null; clearTimeout(timeout); resolve(ok);
+      } };
+      const timeout = setTimeout(() => intent.finish(false), 30_000);
+      nativeSettlement.current = intent;
+      void drain().then(() => {
+        if (nativeSettlement.current !== intent) return;
+        intent.drained = true; setShellReadiness((revision) => revision + 1);
+      }).catch(() => intent.finish(false));
+    });
   }, []);
   const incomingHandled = useCallback((requestId: string, imported = true) => {
     if (!imported) nativeReadFailures.current++;
     incomingIds.current.delete(requestId);
     setIncoming((items) => items.filter((item) => item.requestId !== requestId));
-    if (!incomingIds.current.size) for (const finish of [...incomingWaiters.current]) finish(true);
   }, []);
   const registerPrepareClose = useCallback((prepare: (() => Promise<boolean>) | null) => { prepareClose.current = prepare; }, []);
   const registerCloudGuard = useCallback((guard: (() => boolean) | null) => { cloudCloseGuard.current = guard; }, []);
@@ -85,7 +89,7 @@ export function DocumentWorkspaceHost({ embedded = false, active = true, onActiv
       try {
         if (!await state.prepareLeave() || cloudOpenIntent.current !== intent || !host.current) return;
         intent.prepared = true;
-        setCloudReadiness((revision) => revision + 1);
+        setShellReadiness((revision) => revision + 1);
       } catch { if (cloudOpenIntent.current === intent && host.current) setHostError("Recovery did not finish. The local document was kept open."); }
       finally {
         if (cloudOpenIntent.current === intent && !intent.prepared) { cloudOpenIntent.current = null; cloudOpening.current = false; }
@@ -107,10 +111,42 @@ export function DocumentWorkspaceHost({ embedded = false, active = true, onActiv
     pendingRef.current = request;
     cancel();
     setPending(request);
-  }, [active, cloudReadiness]);
+  }, [active, shellReadiness]);
+  // Evaluate after each committed Host render, including shell publications,
+  // native acknowledgments and parent modal/activation changes.
+  useEffect(() => {
+    const intent = nativeSettlement.current;
+    if (!intent) return;
+    const state = editorShell.current, root = host.current;
+    if (!root || !state || closing || pendingRef.current || cloudOpening.current || state.private || state.commands?.modalOpen
+      || document.querySelector('[aria-modal="true"][role="dialog"], [aria-modal="true"][role="alertdialog"]')) { intent.finish(false); return; }
+    if (reportedReadFailures.current !== nativeReadFailures.current) {
+      reportedReadFailures.current = nativeReadFailures.current; intent.finish(false); return;
+    }
+    if (intent.source && (state.selectedId !== intent.source.selectedId || state.name !== intent.source.name || state.hasSession !== intent.source.hasSession)) { intent.finish(false); return; }
+    if (!active) { if (intent.activated) intent.finish(false); return; }
+    intent.activated = true;
+    // Initial activation also removes Home's inactive parent wrapper.
+    if (root.closest("[inert]")) { intent.finish(false); return; }
+    if (!intent.drained) return;
+    if (incomingIds.current.size) { if (intent.source) intent.finish(false); return; }
+    if (!state.ready || state.busy) return;
+    if (intent.phase === "prepared") { intent.finish(true); return; }
+    if (intent.phase === "preparing") return;
+    intent.source = { selectedId: state.selectedId, name: state.name, hasSession: state.hasSession };
+    intent.phase = "preparing";
+    void (async () => {
+      try {
+        const allowed = await state.prepareLeave();
+        if (nativeSettlement.current !== intent) return;
+        if (!allowed) { intent.finish(false); return; }
+        intent.phase = "prepared"; setShellReadiness((revision) => revision + 1);
+      } catch { intent.finish(false); }
+    })();
+  });
   const receiveShell = useCallback((state: DocumentShellState | null) => {
     editorShell.current = state;
-    if (cloudOpenIntent.current) setCloudReadiness((revision) => revision + 1);
+    if (cloudOpenIntent.current || nativeSettlement.current) setShellReadiness((revision) => revision + 1);
     onShellChange?.(state ? { ...state, openCloudDocument, settleIncomingDocuments, prepareClose: () => guardCloud(state.prepareClose), prepareLeave: () => guardCloud(state.prepareLeave) } : null);
   }, [guardCloud, onShellChange, openCloudDocument, settleIncomingDocuments]);
   useEffect(() => {
@@ -120,12 +156,12 @@ export function DocumentWorkspaceHost({ embedded = false, active = true, onActiv
     applyTheme(findTheme(store, store.activeId).tokens);
     return watchSystemColorMode();
   }, [embedded]);
-  useEffect(() => () => { resolve.current?.(null); cloudOpenIntent.current = null; cloudOpening.current = false; }, []);
+  useEffect(() => () => { resolve.current?.(null); cloudOpenIntent.current = null; cloudOpening.current = false; nativeSettlement.current?.finish(false); }, []);
   useEffect(() => {
     if (!native || !desktop) return;
     let mounted = true;
     let readQueue = Promise.resolve();
-    const trackedIds = incomingIds.current, waiters = incomingWaiters.current;
+    const trackedIds = incomingIds.current;
     const enqueue = (payload: IncomingDocumentRequest["payload"]) => {
       if (mounted) {
         const requestId = crypto.randomUUID(); incomingIds.current.add(requestId);
@@ -155,7 +191,7 @@ export function DocumentWorkspaceHost({ embedded = false, active = true, onActiv
     drain();
     return () => {
       mounted = false; drainNative.current = null;
-      for (const finish of [...waiters]) finish(false);
+      nativeSettlement.current?.finish(false);
       trackedIds.clear(); unsubscribeNative?.(); unsubscribeText?.(); void native.dispose();
     };
   }, [desktop, native, embedded]);

@@ -138,8 +138,8 @@ export function FormattingToolbar({
       className="markie-doc-toolbar relative min-w-0 shrink-0 flex items-center gap-0.5 px-2 py-1 border-b border-border"
       style={{ background: "var(--surface)" }}
       onKeyDown={(event) => {
+        if (overflowOpen && event.key === "Escape" && (event.target === more.current || overflowTarget?.contains(event.target as Node))) { event.preventDefault(); event.stopPropagation(); closeOverflow(); return; }
         if (!overflowTarget?.contains(event.target as Node)) return;
-        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeOverflow(); return; }
         if (!(event.target instanceof HTMLButtonElement) || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
         const controls = [...overflowTarget.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),input:not(:disabled)')];
         const index = controls.indexOf(event.target), next = event.key === "Home" ? 0 : event.key === "End" ? controls.length - 1 : (index + (event.key === "ArrowDown" ? 1 : controls.length - 1)) % controls.length;

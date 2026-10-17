@@ -98,7 +98,7 @@ describe("bounded opaque native document grants", () => {
     fs.unlinkSync(target); fs.renameSync(folder, path.join(directory, "old-folder")); fs.mkdirSync(folder); fs.writeFileSync(target, "replacement folder file");
     expect(await api.read(1, { leaseId: opened.leaseId })).toMatchObject({ ok: false, error: { code: "conflict" } });
   });
-  it.each(["rtf", "odt"])("saves native .%s bytes only through its exact owner and source revision", async (extension) => {
+  it.each(["rtf", "odt", "wd"])("saves native .%s bytes only through its exact owner and source revision", async (extension) => {
     const target = path.join(fixture(), `source.${extension}`); fs.writeFileSync(target, "original");
     const api = service(target), opened = value<{ leaseId: string; revision: string; writable: boolean }>(await api.open(1));
     expect(opened.writable).toBe(true);
@@ -167,6 +167,30 @@ describe("bounded opaque native document grants", () => {
   });
   it("finds only extra-format OS launch paths and keeps classic Markdown/TXT/CSV separate", () => {
     const target = path.join(fixture(), "source.docx"); fs.writeFileSync(target, "source"); expect(findNativeDocumentLaunchFile(["Markie", pathToFileURL(target).href])).toBe(target); expect(findNativeDocumentLaunchFile(["/notes/classic.md", "/notes/classic.txt", "/notes/table.csv"], { existsSync: () => true })).toBeNull();
+  });
+  it("routes Darkmown OS opens and drops through opaque grants while preserving literal source bytes", async () => {
+    const target = path.join(fixture(), "Counter.WD"), source = Buffer.from([255, 254, 58, 0, 115, 0, 13, 0, 10, 0]);
+    fs.writeFileSync(target, source);
+    expect(findNativeDocumentLaunchFile(["Markie", pathToFileURL(target).href])).toBe(target);
+    const api = service(target);
+    expect(api.queueOsFile(target)).toEqual({ ok: true, value: true });
+    const opened = value<{ leaseId: string; writable: boolean }>(await api.takeInitial(1));
+    expect(opened.writable).toBe(true);
+    expect(value<{ bytes: Uint8Array }>(await api.read(1, { leaseId: opened.leaseId })).bytes).toEqual(new Uint8Array(source));
+    expect(api.grantDroppedFile(1, target)).toEqual({ ok: true, value: true });
+    expect(api.queueDroppedFile(2, target)).toEqual({ ok: true, value: false });
+    expect(api.queueDroppedFile(1, target)).toEqual({ ok: true, value: true });
+    expect(value<{ name: string }>(await api.takeInitial(1)).name).toBe("Counter.WD");
+    expect(fs.readFileSync(target)).toEqual(source);
+  });
+  it("allows native Darkmown Save As but refuses unrelated project execution files", async () => {
+    const target = path.join(fixture(), "Counter.wd"), api = service(target);
+    const opened = value<{ leaseId: string; revision: null; writable: boolean }>(await api.saveAs(1, { suggestedName: "Counter.wd" }));
+    expect(opened).toMatchObject({ revision: null, writable: true });
+    const source = new TextEncoder().encode(':state count = 0\r\n:button "Add" -> count++\r\n');
+    value(await api.write(1, { leaseId: opened.leaseId, baseRevision: null, bytes: source }));
+    expect(fs.readFileSync(target)).toEqual(Buffer.from(source));
+    for (const name of ["Counter.skin", "Counter.wd.js", "Counter.js"]) expect(await api.saveAs(1, { suggestedName: name })).toMatchObject({ ok: false, error: { code: "unsupported" } });
   });
   it.each(["txt", "md", "csv"])("preserves exact UTF-16 BOM/CRLF bytes for explicit active-Documents .%s OS handoff", async (extension) => {
     const target = path.join(fixture(), `source.${extension}`), original = Buffer.from([255, 254, 65, 0, 13, 0, 10, 0]); fs.writeFileSync(target, original); const api = service(target);

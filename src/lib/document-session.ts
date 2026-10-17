@@ -62,7 +62,7 @@ export async function openDocumentSession(record: LibraryRecord, handle?: WebFil
 export function createDocumentSession(format: "docx", name?: string): Promise<DocumentSession & { readonly office: DocxDocument }>;
 export function createDocumentSession(format: EditableDocumentFormat, name?: string): Promise<DocumentSession>;
 export async function createDocumentSession(format: EditableDocumentFormat, name?: string): Promise<DocumentSession> {
-  const extension = format === "markdown" ? "md" : format === "text" ? "txt" : format;
+  const extension = format === "markdown" ? "md" : format === "darkmown" ? "wd" : format === "text" ? "txt" : format;
   const office = format === "docx" || format === "rtf" || format === "odt" ? await createRichDocument(format) : null;
   return {
     id: crypto.randomUUID(), epoch: crypto.randomUUID(), name: name?.trim() || `Untitled.${extension}`, format, text: "",

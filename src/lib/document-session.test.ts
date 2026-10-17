@@ -21,6 +21,28 @@ describe("shared document sessions", () => {
     expect(documentNeedsRecoverySave(session)).toBe(true);
   });
 
+  it("creates Darkmown source as .wd without converting its directives", async () => {
+    const source = ':state count = 0\n\n:button "Add one" -> count++\n';
+    const session = editDocumentText(await createDocumentSession("darkmown"), source);
+    expect(session).toMatchObject({ name: "Untitled.wd", format: "darkmown", text: source, office: null });
+    expect(decodeTextDocument(await serializeDocumentSession(session)).text).toBe(source);
+    expect(editDocumentDetails(session, { name: "Counter" }).name).toBe("Counter.wd");
+    expect(() => editDocumentDetails(session, { name: "Counter.md" })).toThrow(/file type/);
+  });
+
+  it.each(["utf-8", "utf-16le", "utf-16be"] as const)("preserves %s Darkmown BOM and mixed source separators through edits and undo", async (encoding) => {
+    const source = '# Counter\r\n\r\n:state count = 0\nCount: { count }.\r';
+    const bytes = encodeTextDocument(source, { encoding, bom: true });
+    const record: LibraryRecord = { schemaVersion: 1, id: "counter", name: "Counter.wd", format: "darkmown", bytes, tags: [], collection: null, revision: 1, exportedRevision: 1, createdAt: 1, updatedAt: 1 };
+    const opened = await openDocumentSession(record);
+    expect(opened.office).toBeNull();
+    expect(await serializeDocumentSession(opened)).toEqual(bytes);
+    const edited = editDocumentText(opened, source.replace(/\r\n?/g, "\n").replace("count = 0", "count = 2"));
+    expect(decodeTextDocument(await serializeDocumentSession(edited))).toMatchObject({ text: source.replace("count = 0", "count = 2"), encoding, bom: true, newline: "mixed" });
+    expect(await serializeDocumentSession(restoreDocumentText(edited, source))).toEqual(bytes);
+    expect(documentNeedsRecoverySave(edited)).toBe(true);
+  });
+
   it("preserves UTF-16 BOM and CRLF on open/edit/export", async () => {
     const record = { schemaVersion: 1, id: "one", name: "notes.txt", format: "text", bytes: encodeTextDocument("one\r\ntwo", { encoding: "utf-16be", bom: true }), tags: [], collection: null, revision: 1, exportedRevision: 1, createdAt: 1, updatedAt: 1 } as LibraryRecord;
     const session = editDocumentText(await openDocumentSession(record), "one\ntwo edited");

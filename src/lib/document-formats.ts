@@ -1,5 +1,5 @@
 /** Routing information, not a claim that an engine can safely edit a file. */
-export type DocumentFormatKind = "markdown" | "text" | "csv" | "json" | "yaml" | "xml" | "docx" | "doc" | "rtf" | "html" | "odt" | "unsupported";
+export type DocumentFormatKind = "markdown" | "darkmown" | "text" | "csv" | "json" | "yaml" | "xml" | "docx" | "doc" | "rtf" | "html" | "odt" | "unsupported";
 
 export type DocumentFormatInfo = Readonly<{
   kind: DocumentFormatKind;
@@ -10,6 +10,7 @@ export type DocumentFormatInfo = Readonly<{
 
 const FORMATS: Record<DocumentFormatKind, DocumentFormatInfo> = {
   markdown: { kind: "markdown", representation: "text", editing: "text", mimeType: "text/markdown" },
+  darkmown: { kind: "darkmown", representation: "text", editing: "text", mimeType: "text/plain" },
   text: { kind: "text", representation: "text", editing: "text", mimeType: "text/plain" },
   csv: { kind: "csv", representation: "text", editing: "text", mimeType: "text/csv" },
   json: { kind: "json", representation: "text", editing: "text", mimeType: "application/json" },
@@ -26,6 +27,7 @@ Object.values(FORMATS).forEach(Object.freeze);
 
 const EXTENSIONS: Record<string, DocumentFormatKind> = {
   md: "markdown", markdown: "markdown", mdx: "markdown",
+  wd: "darkmown",
   txt: "text", text: "text", log: "text", csv: "csv",
   json: "json", yaml: "yaml", yml: "yaml", xml: "xml",
   docx: "docx", doc: "doc", rtf: "rtf", html: "html", htm: "html", odt: "odt",

@@ -24,9 +24,18 @@ describe("ordinary Library presentation queries", () => {
 
   it.each([
     ["NOTE.MDX", "markdown"], ["note.markdown", "markdown"], ["note.LOG", "text"], ["data.YML", "yaml"],
+    ["counter.WD", "darkmown"], ["counter.wd.js", "other"], ["counter.skin", "other"],
     ["data.JSON", "json"], ["data.csv", "csv"], ["data.xml", "xml"], ["word.DOC", "doc"], ["word.docx", "docx"],
     ["word.docx.zip", "other"], ["archive.rtf", "rtf"], ["page.html", "other"], ["open.odt", "odt"], ["", "other"],
   ])("classifies %s with the existing filename classifier", (name, format) => expect(libraryDocumentFormat(name)).toBe(format));
+
+  it("filters Darkmown separately from Markdown using supplied source text only", () => {
+    const rows: LibraryDocumentMetadata[] = [
+      { key: "interactive", name: "Counter.wd", format: "darkmown", extractedText: ":state count = 0" },
+      { key: "markdown", name: "Counter.md", format: "markdown", extractedText: ":state count = 0" },
+    ];
+    expect(queryLibraryDocuments(rows, query({ format: "darkmown", search: "count" }), (row) => row).map((row) => row.key)).toEqual(["interactive"]);
+  });
 
   it("preserves default source order, row objects and input arrays", () => {
     const rows = Object.freeze([Object.freeze({ ...base, key: "native:a" }), Object.freeze({ ...base, key: "recovery:a" })]);

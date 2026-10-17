@@ -504,7 +504,7 @@ describe("actual shared document workspace", () => {
     const view = render(<DocumentWorkspace library={library} saveDocument={saveDocument} />);
     await newText();
     fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
-    fireEvent.click(screen.getByRole("button", { name: /^Dark/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Dark$/ }));
     expect(document.documentElement).toHaveClass("dark");
     view.rerender(<DocumentWorkspace library={library} saveDocument={saveDocument} externalModalOpen />);
     fireEvent.keyDown(window, { key: "s", ctrlKey: true });

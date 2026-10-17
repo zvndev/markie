@@ -51,6 +51,21 @@ function value<T>(result: LibraryResult<T>): T { expect(result.ok).toBe(true); i
 const input = { id: "one", name: "note.txt", format: "text" as const, bytes: new Uint8Array([1, 2, 3]) };
 
 describe("IndexedDB adapter explicit failure and transaction semantics", () => {
+  it("validates Darkmown source and recovery in the existing schema without treating them as Markdown", async () => {
+    const memory = (await import("./index")).createMemoryDocumentLibrary({ now: () => 10 });
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode(":state count = 0\r\n")]);
+    const existing = value(await memory.put({ id: "counter", name: "Counter.wd", format: "darkmown", bytes }, null));
+    const history = value(await memory.listRecovery(existing.id));
+    const script = scriptedFactory(), opening = createIndexedDbDocumentLibrary({ indexedDB: script.factory });
+    script.succeedOpen(); const repo = value(await opening);
+    const reading = repo.list({ formats: ["darkmown"] }), tx = script.transactions.at(-1)!;
+    tx.deliver([existing], history); tx.complete();
+    expect(value(await reading)).toEqual([existing]);
+    const recovering = repo.listRecovery(existing.id), recovery = script.transactions.at(-1)!;
+    recovery.deliver([existing], history); recovery.complete();
+    expect(value(await recovering)[0].record).toMatchObject({ schemaVersion: 1, format: "darkmown", bytes });
+    expect(tx.writes).toEqual([]); expect(recovery.writes).toEqual([]);
+  });
   it("does not acknowledge successful requests before the entire transaction commits", async () => {
     const script = scriptedFactory(), opening = createIndexedDbDocumentLibrary({ indexedDB: script.factory, now: () => 10 });
     script.succeedOpen(); const repo = value(await opening);

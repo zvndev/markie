@@ -3,7 +3,7 @@ import type { LibraryFormat, LibraryRecord } from "@/lib/document-library";
 
 const FILTERS: { label: string; formats?: LibraryFormat[] }[] = [
   { label: "All" }, { label: "Word", formats: ["docx", "doc"] }, { label: "RTF", formats: ["rtf"] }, { label: "ODT", formats: ["odt"] }, { label: "Text", formats: ["text", "json", "yaml", "xml"] },
-  { label: "Markdown", formats: ["markdown"] }, { label: "CSV", formats: ["csv"] },
+  { label: "Markdown", formats: ["markdown"] }, { label: "Darkmown", formats: ["darkmown"] }, { label: "CSV", formats: ["csv"] },
 ];
 export interface DocumentLibraryProps {
   records: readonly LibraryRecord[];

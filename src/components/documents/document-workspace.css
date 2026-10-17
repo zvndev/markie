@@ -813,6 +813,132 @@
   min-height:0
 }
 
+.docs-darkmown-host {
+  height:100%;
+  min-height:0
+}
+
+.docs-darkmown-panes {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  flex:1;
+  min-height:0;
+  overflow:hidden
+}
+
+.docs-darkmown-source,.docs-darkmown-preview {
+  min-width:0;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden
+}
+
+.docs-darkmown-source[hidden] {
+  display:none
+}
+
+.docs-darkmown-preview {
+  border-left:1px solid var(--border);
+  background:var(--background)
+}
+
+.docs-workspace .docs-darkmown-source .docs-textarea {
+  padding:24px;
+  height:100%
+}
+
+.docs-darkmown-preview-header {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  padding:10px 14px 8px;
+  background:var(--surface)
+}
+
+.docs-darkmown-preview-label {
+  flex:1;
+  min-width:0
+}
+
+.docs-darkmown-preview-header strong,.docs-darkmown-preview-header span {
+  display:block;
+  font-size:11px;
+  line-height:1.6
+}
+
+.docs-darkmown-preview-header span {
+  font-size:10px;
+  color:var(--muted)
+}
+
+.docs-darkmown-trust-actions {
+  display:flex;
+  flex-shrink:0;
+  gap:4px
+}
+
+.docs-workspace .docs-darkmown-trust-actions button {
+  border-color:var(--border);
+  background:var(--surface-2);
+  padding:5px 7px;
+  font-size:11px;
+  white-space:nowrap
+}
+
+.docs-workspace .docs-darkmown-trust-actions .docs-primary {
+  background:var(--foreground);
+  color:var(--background)
+}
+
+.docs-workspace .docs-darkmown-trust-actions button:hover:not(:disabled) {
+  background:var(--accent)
+}
+
+.docs-workspace .docs-darkmown-trust-actions .docs-primary:hover:not(:disabled) {
+  background:var(--muted)
+}
+
+.docs-darkmown-security,.docs-darkmown-warnings {
+  margin:0;
+  padding:0 14px 9px;
+  font-size:10px;
+  line-height:1.7;
+  color:var(--muted);
+  background:var(--surface);
+  border-bottom:1px solid var(--border)
+}
+
+.docs-darkmown-warnings {
+  padding-top:10px;
+  color:var(--foreground)
+}
+
+.docs-darkmown-preview iframe {
+  display:block;
+  width:100%;
+  flex:1;
+  min-height:0;
+  border:0;
+  background:var(--background)
+}
+
+.docs-darkmown-mode-source,.docs-darkmown-mode-preview {
+  grid-template-columns:minmax(0,1fr)
+}
+
+@media (max-width:900px) {
+  .docs-darkmown-mode-split {
+    grid-template-columns:minmax(0,1fr);
+    grid-template-rows:minmax(140px,1fr) minmax(180px,1fr)
+  }
+  .docs-darkmown-mode-split>.docs-darkmown-preview {
+    border-left:0;
+    border-top:1px solid var(--border)
+  }
+}
+
 .docs-text-toolbar,.docs-word-view-controls {
   min-height:43px;
   display:flex;

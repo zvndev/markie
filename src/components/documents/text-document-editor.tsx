@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { DocumentCommandTarget } from "@/lib/document-commands";
 import type { Editor } from "@tiptap/react";
 import type { DocumentSession } from "@/lib/document-session";
@@ -19,8 +19,14 @@ interface TextDocumentEditorProps {
   onRestoreText?: (text: string) => void;
   onFlushReady: (flush: (() => string | null) | null) => void;
   onCommandsReady?: (target: DocumentCommandTarget | null) => void;
+  /** Keeps source history and the shared toolbar mounted while a format adds its own preview. */
+  renderSource?: (source: ReactNode) => ReactNode;
+  /** A preview-owning format can reveal the source before its find controls select text. */
+  onFindRequested?: () => void;
+  /** Reveal retained source before a toolbar operation changes it. */
+  onSourceEditRequested?: () => void;
 }
-export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText, onFlushReady, onCommandsReady }: TextDocumentEditorProps) {
+export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText, onFlushReady, onCommandsReady, renderSource, onFindRequested, onSourceEditRequested }: TextDocumentEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<"source" | "rich">("source");
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -38,11 +44,13 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
   const applyText = (text: string) => {
     if (readOnly || host.current?.closest("[inert]")) return;
     if (text.replace(/\r\n?/g, "\n") === session.text.replace(/\r\n?/g, "\n")) return;
+    onSourceEditRequested?.();
     remember(undoHistory.current, session.text); redoHistory.current = []; onChange(text);
   };
-  const undo = () => { const text = undoHistory.current.pop(); if (text !== undefined) { remember(redoHistory.current, session.text); (onRestoreText ?? onChange)(text); } };
-  const redo = () => { const text = redoHistory.current.pop(); if (text !== undefined) { remember(undoHistory.current, session.text); (onRestoreText ?? onChange)(text); } };
+  const undo = () => { const text = undoHistory.current.pop(); if (text !== undefined) { onSourceEditRequested?.(); remember(redoHistory.current, session.text); (onRestoreText ?? onChange)(text); } };
+  const redo = () => { const text = redoHistory.current.pop(); if (text !== undefined) { onSourceEditRequested?.(); remember(undoHistory.current, session.text); (onRestoreText ?? onChange)(text); } };
   const markdown = session.format === "markdown";
+  const markdownSource = markdown || session.format === "darkmown";
   const wrap = (before: string, after = "") => {
     const field = textarea.current;
     if (!field || readOnly) return;
@@ -72,7 +80,7 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
   const rows = session.format === "csv" && showTable ? parseCSV(session.text) : null;
   const source = session.text.replace(/\r\n?/g, "\n");
   const matchCount = query ? source.split(query).length - 1 : 0;
-  const openFind = () => { if (mode === "rich") switchMode("source"); setFindOpen(true); requestAnimationFrame(() => findField.current?.focus()); };
+  const openFind = () => { onFindRequested?.(); if (mode === "rich") switchMode("source"); setFindOpen(true); requestAnimationFrame(() => findField.current?.focus()); };
   const findNext = () => {
     const field = textarea.current;
     if (!field || !query) return;
@@ -103,7 +111,7 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
         if (mode === "rich") editor?.chain().focus().insertTable({ rows: 3, cols: 2, withHeaderRow: true }).run();
         else wrap("\n| Column 1 | Column 2 |\n| --- | --- |\n|  |  |\n");
       }}>Table</button>
-    </> : <span className="text-[11px] text-muted shrink-0">{session.format.toUpperCase()} · Literal text</span>}
+    </> : <span className="text-[11px] text-muted shrink-0">{session.format === "darkmown" ? "Darkmown · Source" : `${session.format.toUpperCase()} · Literal text`}</span>}
     {session.format === "csv" ? <button type="button" className={INLINE_CONTROL} aria-pressed={showTable} onClick={() => setShowTable(!showTable)}>Table preview</button> : null}
     <button type="button" className={INLINE_CONTROL} aria-expanded={findOpen} onClick={() => findOpen ? setFindOpen(false) : openFind()}>Find</button>
     <span className="docs-text-encoding shrink-0" style={{ marginLeft: 0 }}>{session.textMetadata?.encoding.toUpperCase()}{session.textMetadata?.bom ? " BOM" : ""} · {session.textMetadata?.newline.toUpperCase()}</span>
@@ -111,11 +119,12 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
   const formatSource = (action: FormattingAction) => {
     if (host.current?.closest("[inert]") || readOnly) return;
     if (action === "undo" || action === "redo") { execute(action); return; }
-    if (!markdown) return;
+    if (!markdownSource) return;
     if (action === "bold") wrap("**", "**");
     else if (action === "italic") wrap("_", "_");
     else if (action === "bullet") wrap("- ");
   };
+  const sourceField = <textarea ref={textarea} className="docs-textarea" style={{ fontFamily: fontStack(appearance.fontFamily), fontSize: appearance.fontSize * appearance.zoom }} aria-label="Document text" data-document-text-editor spellCheck={session.format === "text" || markdownSource} value={session.text.replace(/\r\n?/g, "\n")} onChange={(event) => applyText(event.target.value)} readOnly={readOnly} placeholder={markdownSource ? "Start writing in Markdown…" : "Start writing…"} />;
   return <div ref={host} className="docs-text-host" style={appearanceVars(appearance)} onKeyDown={(event) => {
     if (host.current?.closest("[inert]")) return;
     if (!(event.ctrlKey || event.metaKey)) return;
@@ -131,11 +140,11 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
       currentStyle="paragraph" currentFont={appearance.fontFamily} selecting={false} currentSize={appearance.fontSize}
       onFont={(fontFamily) => setAppearance((current) => ({ ...current, fontFamily }))}
       onSize={(size) => setAppearance((current) => ({ ...current, fontSize: clampFontSize(size) }))}
-      onStyle={setSourceStyle} onAction={formatSource} supportedActions={markdown ? MARKDOWN_ACTIONS : TEXT_ACTIONS}
-      showStyleControls={markdown} showWidthControls={false} startControls={startControls}
+      onStyle={setSourceStyle} onAction={formatSource} supportedActions={markdownSource ? MARKDOWN_ACTIONS : TEXT_ACTIONS}
+      showStyleControls={markdownSource} showWidthControls={false} startControls={startControls}
     />}
     {findOpen ? <div className="docs-find-tools docs-text-find" role="search" aria-label="Find document text" onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setFindOpen(false); textarea.current?.focus(); } else if (event.key === "Enter") { event.preventDefault(); findNext(); } }}><label>Find in source<input ref={findField} aria-label="Find document text" value={query} placeholder="Case-sensitive text" onChange={(event) => setQuery(event.target.value)} /></label><button type="button" disabled={!matchCount} onClick={findNext}>Find next</button><label>Replace with<input aria-label="Replace document text with" value={replacement} onChange={(event) => setReplacement(event.target.value)} /></label><button type="button" disabled={readOnly || !matchCount} onClick={() => applyText(source.split(query).join(replacement))}>Replace all</button><span role="status">{matchCount} matches</span><button type="button" aria-label="Close find" onClick={() => setFindOpen(false)}>×</button></div> : null}
     {rows ? <div className="docs-csv-preview"><table aria-label="CSV table preview"><tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, col) => <td key={col}>{cell}</td>)}</tr>)}</tbody></table></div> : null}
-    {markdown && mode === "rich" ? <Suspense fallback={<p className="docs-loading">Loading rich editor…</p>}><RichView value={session.text} onChange={onChange} readOnly={readOnly} onEditorReady={setEditor} onFlushReady={(flush) => { localFlush.current = flush; onFlushReady(flush); }} /></Suspense> : <textarea ref={textarea} className="docs-textarea" style={{ fontFamily: fontStack(appearance.fontFamily), fontSize: appearance.fontSize * appearance.zoom }} aria-label="Document text" data-document-text-editor spellCheck={session.format === "text" || markdown} value={session.text.replace(/\r\n?/g, "\n")} onChange={(event) => applyText(event.target.value)} readOnly={readOnly} placeholder={markdown ? "Start writing in Markdown…" : "Start writing…"} />}
+    {markdown && mode === "rich" ? <Suspense fallback={<p className="docs-loading">Loading rich editor…</p>}><RichView value={session.text} onChange={onChange} readOnly={readOnly} onEditorReady={setEditor} onFlushReady={(flush) => { localFlush.current = flush; onFlushReady(flush); }} /></Suspense> : renderSource ? renderSource(sourceField) : sourceField}
   </div>;
 }

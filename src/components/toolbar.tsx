@@ -117,7 +117,7 @@ export function Toolbar({
             <circle cx="2" cy="7" r="1" /><circle cx="7" cy="7" r="1" />
             <circle cx="2" cy="12" r="1" /><circle cx="7" cy="12" r="1" />
           </svg>
-          <span className="text-[13px] font-semibold tracking-tight">Markie</span>
+          <span className="hidden sm:inline text-[13px] font-semibold tracking-tight">Markie</span>
         </div>
         <div className="w-px h-4 bg-border" />
         <div
@@ -127,13 +127,14 @@ export function Toolbar({
         >
           <button
             onClick={onOpenFile}
+            aria-label={fileName ? "Open" : "Open file…"}
             className="shrink-0 text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
               <polyline points="13 2 13 9 20 9" />
             </svg>
-            {fileName ? "Open" : "Open file…"}
+            <span className="hidden sm:inline">{fileName ? "Open" : "Open file…"}</span>
           </button>
           {fileName &&
             (renaming ? (
@@ -150,7 +151,7 @@ export function Toolbar({
                     setRenaming(false);
                   }
                 }}
-                className="text-[12px] bg-background border border-border rounded px-1.5 py-0.5 w-44 text-foreground outline-none"
+                className="text-[12px] bg-background border border-border rounded px-1.5 py-0.5 w-44 min-w-0 max-w-full text-foreground outline-none"
               />
             ) : (
               <button
@@ -167,7 +168,7 @@ export function Toolbar({
               </button>
             ))}
           <div className="w-px h-4 bg-border shrink-0" />
-          {documentMode && onSave ? <button type="button" onClick={onSave} className="shrink-0 text-[12px] text-muted hover:text-foreground transition-colors">Save file</button> : null}
+          {documentMode && onSave ? <button type="button" onClick={onSave} className="hidden sm:block shrink-0 text-[12px] text-muted hover:text-foreground transition-colors">Save file</button> : null}
           <div className="relative" ref={menuRef}>
             <button
               onClick={() => setShowPDFMenu(!showPDFMenu)}
@@ -180,14 +181,15 @@ export function Toolbar({
                 <line x1="12" y1="18" x2="12" y2="12" />
                 <polyline points="9 15 12 18 15 15" />
               </svg>
-              {exporting ? "Exporting…" : "Export"}
+              <span className="hidden sm:inline">{exporting ? "Exporting…" : "Export"}</span><span className="sm:hidden">More</span>
               <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="6 9 12 15 18 9" />
               </svg>
             </button>
 
             {showPDFMenu && (
-              <div className="markie-menu-panel absolute top-full left-0 mt-1.5 rounded-lg py-1.5 min-w-[152px] z-50">
+              <div className="markie-menu-panel absolute top-full right-0 sm:right-auto sm:left-0 mt-1.5 rounded-lg py-1.5 min-w-[152px] z-50">
+                {documentMode && onSave ? <button type="button" onClick={() => { onSave(); setShowPDFMenu(false); }} className="sm:hidden markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted">Save file</button> : null}
                 <button
                   onClick={() => { onSaveAs(); setShowPDFMenu(false); }}
                   className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
@@ -243,6 +245,18 @@ export function Toolbar({
                   </svg>
                   PDF (Light)
                 </button></> : null}
+                <div className="sm:hidden">
+                  <div className="h-px bg-border my-1" />
+                  {themeLocked || live || peers.length ? <div className="px-3 py-2 text-[11px] text-muted flex flex-col gap-1" aria-label="Document session status">
+                    {themeLocked ? <span>Owner theme pinned</span> : null}
+                    {live ? <span role="status">Live: {liveStatus}</span> : null}
+                    {peers.length ? <span aria-label="Live collaborators">{peers.slice(0, 4).map((peer) => peer.name).join(", ")}{peers.length > 4 ? ` +${peers.length - 4} more` : ""}</span> : null}
+                  </div> : null}
+                  <button type="button" onClick={() => { onShare(); setShowPDFMenu(false); }} className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted">Share</button>
+                  <button type="button" onClick={() => { onThemePresets(); setShowPDFMenu(false); }} className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted">Theme presets</button>
+                  <div className="h-px bg-border my-1" />
+                  {(["system", "light", "dark"] as const).map((mode) => <button type="button" key={mode} aria-pressed={colorMode === mode} onClick={() => { pickColorMode(mode); setShowPDFMenu(false); }} className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted">{mode === "system" ? "System theme" : mode === "light" ? "Light theme" : "Dark theme"}</button>)}
+                </div>
               </div>
             )}
           </div>
@@ -258,7 +272,7 @@ export function Toolbar({
         {onCommands ? <button type="button" onClick={onCommands} aria-label="Commands (⌘K)" title="Commands (⌘K)" className="w-7 h-7 rounded flex items-center justify-center text-muted hover:text-foreground hover:bg-accent/40" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m5 7 5 5-5 5M13 17h6" /></svg></button> : null}
         {themeLocked && (
           <div
-            className="flex items-center gap-1 text-muted"
+            className="hidden sm:flex items-center gap-1 text-muted"
             title="The owner pinned their theme to this doc"
           >
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -269,7 +283,7 @@ export function Toolbar({
           </div>
         )}
         {live && (
-          <div className="flex items-center gap-1.5" title={`Live session: ${liveStatus}`}>
+          <div className="hidden sm:flex items-center gap-1.5" title={`Live session: ${liveStatus}`}>
             <span
               className={`w-1.5 h-1.5 rounded-full ${
                 liveStatus === "connected"
@@ -285,7 +299,7 @@ export function Toolbar({
           </div>
         )}
         {peers.length > 0 && (
-          <div className="flex -space-x-1.5">
+          <div className="hidden sm:flex -space-x-1.5">
             {peers.slice(0, 4).map((p, i) => (
               <span
                 key={`${p.name}-${i}`}
@@ -304,7 +318,7 @@ export function Toolbar({
           </div>
         )}
         {/* Color mode: System / Light / Dark */}
-        <div className="flex items-center bg-background rounded-md p-0.5 gap-0.5">
+        <div className="hidden sm:flex items-center bg-background rounded-md p-0.5 gap-0.5">
           <ModeBtn label="System theme" active={colorMode === "system"} onClick={() => pickColorMode("system")}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
               <rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" />
@@ -325,18 +339,18 @@ export function Toolbar({
           onClick={onThemePresets}
           title="Theme presets"
           aria-label="Theme presets"
-          className="p-1 rounded text-muted hover:text-foreground transition-colors"
+          className="hidden sm:block p-1 rounded text-muted hover:text-foreground transition-colors"
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="13.5" cy="6.5" r="1.5" /><circle cx="17.5" cy="10.5" r="1.5" /><circle cx="8.5" cy="7.5" r="1.5" /><circle cx="6.5" cy="12.5" r="1.5" />
             <path d="M12 2a10 10 0 1 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.2 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 22 11c0-4.97-4.48-9-10-9z" />
           </svg>
         </button>
-        <div className="w-px h-4 bg-border" />
+        <div className="hidden sm:block w-px h-4 bg-border" />
         <button
           onClick={onShare}
           title={canShare ? "Share this document" : "Share this document (Markie will walk you through it)"}
-          className={`text-[12px] transition-colors flex items-center gap-1.5 ${
+          className={`hidden sm:flex text-[12px] transition-colors items-center gap-1.5 ${
             canShare ? "text-foreground hover:opacity-80" : "text-muted hover:text-foreground"
           }`}
         >

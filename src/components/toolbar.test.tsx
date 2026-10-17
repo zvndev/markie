@@ -69,4 +69,24 @@ describe("the existing Markie top bar", () => {
     await userEvent.click(screen.getByRole("button", { name: "Export PDF…" }));
     expect(onDocumentExportPDF).toHaveBeenCalledOnce();
   });
+
+  it("keeps narrow-screen file, share and appearance actions reachable in the existing overflow", async () => {
+    const onSave = vi.fn();
+    const { onShare, onThemePresets } = renderToolbar({ documentMode: true, onSave, live: true, liveStatus: "connected", themeLocked: true, peers: [{ name: "Ada", color: "#123456" }] });
+    await userEvent.click(screen.getByRole("button", { name: "Export menu" }));
+    const menu = document.querySelector(".markie-menu-panel")!;
+    expect(menu).toHaveClass("right-0", "sm:left-0");
+    expect(menu).toHaveTextContent("Owner theme pinned");
+    expect(menu).toHaveTextContent("Live: connected");
+    expect(menu.querySelector('[aria-label="Live collaborators"]')).toHaveTextContent("Ada");
+    const findMenuButton = (name: string) => Array.from(document.querySelector(".markie-menu-panel")!.querySelectorAll("button")).find((button) => button.textContent === name)!;
+    await userEvent.click(findMenuButton("Save file"));
+    expect(onSave).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole("button", { name: "Export menu" }));
+    await userEvent.click(findMenuButton("Share"));
+    expect(onShare).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole("button", { name: "Export menu" }));
+    await userEvent.click(findMenuButton("Theme presets"));
+    expect(onThemePresets).toHaveBeenCalledOnce();
+  });
 });

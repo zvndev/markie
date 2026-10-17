@@ -1321,8 +1321,8 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   const runDocumentCommand = useCallback((command: string) => {
     if (!documentMenuCommands.some((item) => item.id === command) && !["find", "undo", "redo", "zoom-in", "zoom-out"].includes(command)) return;
     if (document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
-    if (command === "new-markdown" || command === "new-word" || command === "new-text") {
-      void createDocument(command === "new-markdown" ? "markdown" : command === "new-word" ? "docx" : "text"); return;
+    if (command === "new-markdown" || command === "new-word" || command === "new-text" || command === "new-darkmown") {
+      void createDocument(command === "new-markdown" ? "markdown" : command === "new-word" ? "docx" : command === "new-darkmown" ? "darkmown" : "text"); return;
     }
     if (documentsOpenRef.current) {
       const shell = documentShellRef.current;
@@ -1351,7 +1351,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     const renderer = paused ? "none" : documentsOpen ? documentShell?.renderer ?? "none" : "markdown";
     const capable = documentsOpen ? documentShell?.private || documentShell?.busy ? [] : documentShell?.commands?.enabledCommands ?? []
       : docEditable && mode !== "edit" && richEditor && !richEditor.isDestroyed && richEditor.isEditable ? [...Object.keys(FORMAT_MENU_ACTIONS), ...Object.keys(FORMAT_MENU_STYLES)] : [];
-    const enabledCommands = paused || renderer === "none" ? [] : [...new Set([...(documentsEnabled ? ["new-markdown", ...(documentShell?.ready ? ["new-word", "new-text"] : [])] : []), ...capable])].filter((id) => documentMenuCommands.some((item) => item.id === id));
+    const enabledCommands = paused || renderer === "none" ? [] : [...new Set([...(documentsEnabled ? ["new-markdown", ...(documentShell?.ready ? ["new-word", "new-text", "new-darkmown"] : [])] : []), ...capable])].filter((id) => documentMenuCommands.some((item) => item.id === id));
     const signature = JSON.stringify({ renderer, enabledCommands });
     if (signature === menuSignature.current) return;
     menuSignature.current = signature;
@@ -1901,6 +1901,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         { id: "new-markdown", title: "New Markdown document", group: "File", keywords: "md markdown", run: () => createDocument("markdown") },
         { id: "new-word", title: "New Word document", group: "File", keywords: "docx office", run: () => createDocument("docx") },
         { id: "new-text", title: "New text document", group: "File", keywords: "txt plain", run: () => createDocument("text") },
+        { id: "new-darkmown", title: "New Darkmown document", group: "File", keywords: "wd interactive state", run: () => createDocument("darkmown") },
         { id: "private-vault", title: "Locked vault", group: "File", keywords: "private secure passphrase", run: openVault },
       ] as AppCommand[] : []),
       ...(documentsOpen ? documentMenuCommands.filter((item) => !item.id.startsWith("new-") && item.id !== "document-history" && documentShell?.commands?.enabledCommands.includes(item.id)).map((item): AppCommand => ({ id: item.id, title: `${item.group}: ${item.label}`, group: item.group === "View" ? "View" : item.group === "File" ? "File" : "Format", run: () => scheduleDocumentCommand(item.id) })) : []),

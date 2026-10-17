@@ -2,11 +2,11 @@
 
 [Back to the test guide](README.md) · [Document types](document-types.md)
 
-The following product direction is approved but not implemented in the RTF/ODT milestone. These are future acceptance checks, not working controls hidden elsewhere in this preview.
+The following product direction remains open beyond the delivered local editing milestones. The first offline Darkmown slice is available; the broader capabilities below are future acceptance checks, not working controls hidden elsewhere in this preview.
 
 ## Trusted interactive Darkmown
 
-Darkmown `.wd` documents should support both source plus live preview and an opinionated interactive document experience. `.md` remains ordinary Markdown. `.skin` styles and assets are part of the authored document; optional page code must not gain unrestricted access to Markie.
+Darkmown `.wd` documents now support source plus an explicitly trusted offline interactive preview with local state, buttons, calculations and local forms. Follow the [Darkmown checks](darkmown.md). `.md` remains ordinary Markdown. Portable `.skin` styles/assets and optional page code remain future work and must not gain unrestricted access to Markie.
 
 The target includes images/video, state-bound document toolbar controls, forms, calculations and external API connections. For example, choosing a customer and date range could refresh a report's tables and narrative. Document source/defaults, transient/personal/shared runtime state and connection secrets must remain separate.
 

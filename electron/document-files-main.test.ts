@@ -61,7 +61,7 @@ describe("explicit native document drops through existing channels", () => {
     return { target, files, event, frame, contents, readFilePayload, grantFile, open, grant };
   }
 
-  it.each(["docx", "doc", "json", "yaml", "yml", "xml", "rtf", "html", "htm", "odt"])("opens explicitly dropped .%s through null + opaque native notification only", async (extension) => {
+  it.each(["docx", "doc", "json", "yaml", "yml", "xml", "rtf", "html", "htm", "odt", "wd"])("opens explicitly dropped .%s through null + opaque native notification only", async (extension) => {
     const f = dropBridge(extension);
     expect(await f.open(f.event, f.target)).toBeNull(); expect(f.contents.send).not.toHaveBeenCalled();
     f.grant(f.event, f.target); expect(f.event.returnValue).toBe(true);
@@ -129,7 +129,7 @@ describe("original Markie native Open dialog", () => {
     expect(f.readFilePayload).not.toHaveBeenCalled(); expect(f.queueNativeDocumentOpen).not.toHaveBeenCalled();
   });
 
-  it.each(["doc", "docx", "json", "yaml", "yml", "xml", "rtf", "html", "htm", "odt"])("routes .%s from the original picker through opaque byte grants", async (extension) => {
+  it.each(["doc", "docx", "json", "yaml", "yml", "xml", "rtf", "html", "htm", "odt", "wd"])("routes .%s from the original picker through opaque byte grants", async (extension) => {
     const target = `/synthetic/source.${extension}`, f = openDialog(target);
     expect(await f.open({})).toBeNull();
     expect(f.queueNativeDocumentOpen).toHaveBeenCalledExactlyOnceWith(target);

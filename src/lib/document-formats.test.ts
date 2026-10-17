@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyDocumentFormat,
+  DOCUMENT_FILE_ACCEPT,
   decodeTextDocument,
   encodeTextDocument,
   TextDocumentError,
@@ -11,6 +12,7 @@ describe("document format classification", () => {
     ["notes.md", "markdown", "text", "text"],
     ["notes.MARKDOWN", "markdown", "text", "text"],
     ["component.mdx", "markdown", "text", "text"],
+    ["counter.WD", "darkmown", "text", "text"],
     ["C:\\drafts\\letter.TXT", "text", "text", "text"],
     ["/drafts/letter.text", "text", "text", "text"],
     ["service.log", "text", "text", "text"],
@@ -28,12 +30,20 @@ describe("document format classification", () => {
     ["letter.pdf", "unsupported", "bytes", "unsupported"],
     ["README", "unsupported", "bytes", "unsupported"],
     ["archive.docx.zip", "unsupported", "bytes", "unsupported"],
+    ["counter.wd.js", "unsupported", "bytes", "unsupported"],
+    ["counter.skin", "unsupported", "bytes", "unsupported"],
   ])("classifies %s explicitly", (name, kind, representation, editing) => {
     expect(classifyDocumentFormat(name)).toMatchObject({ kind, representation, editing });
   });
 
   it("does not let callers mutate the shared classification", () => {
     expect(Object.isFrozen(classifyDocumentFormat("notes.txt"))).toBe(true);
+  });
+
+  it("offers Darkmown as literal source without treating Markdown as interactive directives", () => {
+    expect(DOCUMENT_FILE_ACCEPT.split(",")).toContain(".wd");
+    expect(classifyDocumentFormat("counter.wd")).toMatchObject({ kind: "darkmown", mimeType: "text/plain" });
+    expect(classifyDocumentFormat("counter.md").kind).toBe("markdown");
   });
 });
 

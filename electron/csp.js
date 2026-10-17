@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { runtimeSha256, bootstrapSha256 } = require("./darkmown-runtime-policy.json");
 
 // The scheme the viewer serves a document's own pictures over. Named here
 // because the CSP has to allow it and main has to register it, and two string
@@ -9,8 +10,10 @@ const ASSET_SCHEME = "markie-asset";
 
 // Where a video card may load its player from, and nowhere else. Kept in step
 // with the provider list in src/lib/embeds.ts; electron/csp.test.ts holds the
-// two together. Nothing else in the app is ever framed.
+// two together. Darkmown's separate, opaque srcdoc preview is also permitted.
 const EMBED_FRAME_ORIGINS = ["https://www.youtube-nocookie.com", "https://player.vimeo.com"];
+const DARKMOWN_RUNTIME_HASH = `'sha256-${runtimeSha256}'`;
+const DARKMOWN_BOOTSTRAP_HASH = `'sha256-${bootstrapSha256}'`;
 
 const INLINE_SCRIPT_RE = /<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
 
@@ -56,7 +59,9 @@ function scriptSrcDirective(hashes = []) {
 }
 
 function buildAppCsp(outDir) {
-  const scriptHashes = collectInlineScriptHashes(outDir);
+  // srcdoc inherits this policy in addition to its own restrictive policy.
+  // Author JavaScript is never permitted: this hash names the pinned interpreter.
+  const scriptHashes = [...collectInlineScriptHashes(outDir), DARKMOWN_RUNTIME_HASH, DARKMOWN_BOOTSTRAP_HASH];
   return [
     "default-src 'self'",
     scriptSrcDirective(scriptHashes),
@@ -71,7 +76,7 @@ function buildAppCsp(outDir) {
     "connect-src 'self' https://api-production-602f.up.railway.app wss://api-production-602f.up.railway.app",
     // default-src would otherwise refuse every iframe, which is right for
     // everything but the one player a card opens when it is clicked.
-    `frame-src ${EMBED_FRAME_ORIGINS.join(" ")}`,
+    `frame-src about: ${EMBED_FRAME_ORIGINS.join(" ")}`,
     "base-uri 'none'",
     "object-src 'none'",
     "frame-ancestors 'none'",
@@ -80,6 +85,8 @@ function buildAppCsp(outDir) {
 
 module.exports = {
   ASSET_SCHEME,
+  DARKMOWN_RUNTIME_HASH,
+  DARKMOWN_BOOTSTRAP_HASH,
   EMBED_FRAME_ORIGINS,
   buildAppCsp,
   collectInlineScriptHashes,

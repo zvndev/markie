@@ -11,6 +11,14 @@ function ControlledFilters() {
 }
 
 describe("compact Library filters", () => {
+  it("offers a separate Darkmown filter without treating it as Markdown", async () => {
+    const user = userEvent.setup();
+    render(<ControlledFilters />);
+    await user.click(screen.getByRole("button", { name: "Document type: All types" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Darkmown" }));
+    expect(screen.getByRole("button", { name: "Document type: Darkmown" })).toHaveFocus();
+    expect(screen.getByText(/"format":"darkmown"/)).toBeInTheDocument();
+  });
   it("offers keyboard-complete type selection, visible selected state and focus restoration", async () => {
     const user = userEvent.setup();
     render(<ControlledFilters />);

@@ -5,6 +5,8 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   EMBED_FRAME_ORIGINS,
+  DARKMOWN_RUNTIME_HASH,
+  DARKMOWN_BOOTSTRAP_HASH,
   buildAppCsp,
   collectInlineScriptHashes,
   inlineScriptHashesForHtml,
@@ -47,15 +49,15 @@ describe("packaged app CSP", () => {
     expect(csp).toContain("style-src 'self' 'unsafe-inline'");
   });
 
-  it("frames exactly the players a video card can open, and nothing else", () => {
+  it("frames only sandboxed srcdoc previews and the supported video players", () => {
     const csp = buildAppCsp("missing-out-dir");
     const frame = csp.split("; ").find((d) => d.startsWith("frame-src "));
     expect(frame).toBeDefined();
     const allowed = frame!.replace("frame-src ", "").split(" ").sort();
     // The provider list is what decides which players exist; the policy
     // has to say the same thing or a card opens to a blank rectangle.
-    expect(allowed).toEqual([...PROVIDER_FRAME_ORIGINS].sort());
-    expect(allowed).toEqual([...EMBED_FRAME_ORIGINS].sort());
+    expect(allowed).toEqual(["about:", ...PROVIDER_FRAME_ORIGINS].sort());
+    expect(allowed).toEqual(["about:", ...EMBED_FRAME_ORIGINS].sort());
     expect(csp).not.toContain("frame-src *");
     expect(csp).toContain("frame-ancestors 'none'");
   });
@@ -67,7 +69,7 @@ describe("packaged app CSP", () => {
   it("renders local DOCX image blobs without allowing executable blob content", () => {
     const directives = buildAppCsp("missing-out-dir").split("; ");
     expect(directives.find((value) => value.startsWith("img-src "))).toBe("img-src 'self' data: blob: https: markie-asset:");
-    expect(directives.find((value) => value.startsWith("script-src "))).toBe("script-src 'self'");
+    expect(directives.find((value) => value.startsWith("script-src "))).toBe(`script-src 'self' ${DARKMOWN_RUNTIME_HASH} ${DARKMOWN_BOOTSTRAP_HASH}`);
     expect(directives.find((value) => value.startsWith("object-src "))).toBe("object-src 'none'");
     expect(directives.find((value) => value.startsWith("frame-src "))).not.toContain("blob:");
   });

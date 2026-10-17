@@ -14,6 +14,8 @@ On macOS and Windows, advanced actions live in the native **Format**, **Insert**
 
 For Markdown, choose **View → Rich Text**, **Markdown Source** or **Split** instead of a top-bar mode toggle. Cmd/Ctrl+1, 2 and 3 still work, and the command palette offers the same modes on the web. Literal text and oversized documents retain their existing source-only protections.
 
+Darkmown `.wd` files use their own literal-source renderer and the same source controls. Choose **View → Darkmown Source**, **Darkmown Preview** or **Darkmown Source and Preview**, or use those commands in the palette. **File → New Darkmown Document** creates source without turning ordinary `.md` into a program. The initial preview is inactive; explicit trust enables a pinned, isolated offline runtime for the current source only. Editing source, changing documents or entering a blocked/inactive state removes the running frame. Reset restores authored defaults without changing the source. See [interactive Darkmown testing](document-testing/darkmown.md).
+
 The isolated **Markie Preview** desktop build runs the same Markie shell from bundled assets. It does not need a development server or browser tab. The preview name is for testing isolation, not a separate product: it has a separate app identifier, profile, session and logs, and neither replaces installed Markie nor registers its file associations or `markie://` links. Automatic updates and the production browser OAuth callback are disabled in this preview. Email sign-in can still use the configured service, but new document-platform sharing requires the matching server deployment.
 
 ## Testing the desktop preview
@@ -83,6 +85,8 @@ The production build includes a versioned service worker for the application she
 Only exact public application resources are cached. Document APIs, account responses, public download links and private vault files are excluded. Document storage is separate from this shell cache. Browser APIs and storage availability still vary; a build target alone is not a compatibility certification.
 
 ## Sharing and collaboration
+
+Darkmown currently saves and recovers literal `.wd` source locally. Runtime state, trust and credentials are not part of saved source. Its offline subset supports local state controls and calculations, not network/API connections, persistent/shared state, media permissions, adjacent assets/styles or arbitrary page code. Cloud and vault integrations remain unavailable for this new type; unsupported features must be disclosed rather than silently given host privileges.
 
 Sharing is explicit and optional. The additive `/api/document-platform` service stores versioned byte snapshots, with SHA-256 verification, owner/editor/viewer permissions, conflict detection, bounded history, verified-account access and expiring/revocable read-only download links. Ordinary snapshots are not end-to-end encrypted. Inviting an account does not send an invitation email.
 

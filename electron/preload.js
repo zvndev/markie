@@ -11,7 +11,8 @@ function subscribe(channel, callback, map) {
   return () => ipcRenderer.removeListener(channel, handler);
 }
 
-contextBridge.exposeInMainWorld("electronAPI", {
+// No document preview, even a trusted one, receives the desktop capability bridge.
+if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
   documentFiles: {
     open: () => ipcRenderer.invoke("document-files:open"),

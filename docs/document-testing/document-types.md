@@ -24,7 +24,7 @@ In TXT, type `# still literal`, `**not bold**`, Unicode, tabs and multiple lines
 
 For CSV, preserve quoted commas, quotes and line endings; use Table preview without rewriting the source. JSON, YAML and XML should keep their literal content. Do not expect a schema editor or code execution.
 
-`README.md` is Markdown. Extensionless `README`, additional text aliases and Darkmown `.wd` support are tracked separately and are not delivered merely by changing a filename.
+`README.md` is Markdown. Extensionless `README` and additional text aliases are still tracked separately. Darkmown `.wd` has its own source editor and trusted offline runtime; follow the [Darkmown checks](darkmown.md).
 
 ## Legacy and conversion-only formats
 

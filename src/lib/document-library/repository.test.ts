@@ -58,6 +58,17 @@ describe("durable document repository contract with explicit memory adapter", ()
     expect(await repo.restoreRecovery(first.id, 1, 2)).toMatchObject({ ok: false, error: { code: "conflict" } });
     expect(await repo.restoreRecovery(first.id, 999, 3)).toMatchObject({ ok: false, error: { code: "not-found" } });
   });
+  it("keeps Darkmown source bytes in local records and recovery independently from Markdown", async () => {
+    const repo = library(), source = new Uint8Array([0xef, 0xbb, 0xbf, ...encode(":state count = 0\r\n")]);
+    const first = value(await repo.put({ name: "Counter.wd", format: "darkmown", bytes: source }, null));
+    value(await repo.put({ name: "Counter.md", format: "markdown", bytes: source }, null));
+    const edited = value(await repo.put({ id: first.id, name: first.name, format: first.format, bytes: encode(":state count = 1\r\n") }, first.revision));
+    expect(value(await repo.list({ formats: ["darkmown"] })).map((record) => record.name)).toEqual(["Counter.wd"]);
+    const restored = value(await repo.restoreRecovery(first.id, first.revision, edited.revision));
+    expect(restored).toMatchObject({ format: "darkmown", name: "Counter.wd", revision: 3 });
+    expect(restored.bytes).toEqual(source);
+    expect(value(await repo.listRecovery(first.id)).every((entry) => entry.record.format === "darkmown")).toBe(true);
+  });
   it("bounds per-document recovery and restores into a new revision", async () => {
     const repo = createMemoryDocumentLibrary({ createId: () => "one", now: () => 1, limits: { maxRecoveryPerDocument: 2 } });
     let current = value(await repo.put(input(), null));

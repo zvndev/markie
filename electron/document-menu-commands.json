@@ -2,6 +2,7 @@
   {"group":"File","id":"new-markdown","label":"New Markdown Document"},
   {"group":"File","id":"new-word","label":"New Word Document"},
   {"group":"File","id":"new-text","label":"New Text Document"},
+  {"group":"File","id":"new-darkmown","label":"New Darkmown Document"},
   {"group":"File","id":"document-details","label":"Document Details…"},
   {"group":"File","id":"document-history","label":"History…"},
   {"group":"File","id":"document-print","label":"Print…"},
@@ -42,5 +43,8 @@
   {"group":"View","id":"view-page","label":"Page Layout"},
   {"group":"View","id":"view-continuous","label":"Continuous Layout"},
   {"group":"View","id":"view-outline","label":"Document Outline"},
-  {"group":"View","id":"view-zoom-reset","label":"Actual Size"}
+  {"group":"View","id":"view-zoom-reset","label":"Actual Size"},
+  {"group":"View","id":"view-darkmown-source","label":"Darkmown Source"},
+  {"group":"View","id":"view-darkmown-preview","label":"Darkmown Preview"},
+  {"group":"View","id":"view-darkmown-split","label":"Darkmown Source and Preview"}
 ]

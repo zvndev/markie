@@ -35,8 +35,8 @@ async function importSession(payload: WebDocumentPayload, signal?: AbortSignal):
     const session = editDocumentText(await createDocumentSession("text", payload.name.replace(/\.doc$/i, " (converted).txt")), converted);
     return { ...session, warnings: ["Converted a text-only copy. The original DOC was not modified. Formatting and non-text content are not carried into this copy.", ...(converted !== result.text ? ["Legacy cell and line separators were converted to text whitespace. Unsupported field/control markers were omitted."] : []), ...result.warnings] };
   }
-  if (!["markdown", "text", "csv", "json", "yaml", "xml", "docx", "rtf", "odt"].includes(format)) {
-    throw new Error("That file format is not editable yet. RTF, HTML and ODT are not opened as Markdown.");
+  if (!["markdown", "darkmown", "text", "csv", "json", "yaml", "xml", "docx", "rtf", "odt"].includes(format)) {
+    throw new Error("That file format is not editable yet. Unsupported files are not opened as Markdown.");
   }
   const office = format === "docx" || format === "rtf" || format === "odt" ? await openRichDocument(format, payload.bytes) : null;
   const session = await createDocumentSession(format as EditableDocumentFormat, payload.name);
@@ -387,6 +387,7 @@ export function useDocumentWorkspace(services: DocumentWorkspaceServices, keyboa
       const bytes = await serializeDocumentSession(current);
       if (servicesRef.current.shareDocument) {
         if (current.format === "rtf" || current.format === "odt") throw new Error("Cloud sharing for RTF and ODT is not supported yet. Export a same-format copy instead.");
+        if (current.format === "darkmown") throw new Error("Darkmown cloud sharing is not supported yet. Export the .wd source instead. Runtime state and trust are not included.");
         const receipt = await servicesRef.current.shareDocument({ name: current.name, bytes, text: current.text });
         if (receipt !== null) setNotice(receipt ?? "Share action completed.");
         return;

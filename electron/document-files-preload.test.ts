@@ -4,7 +4,7 @@ import { runInNewContext } from "node:vm";
 describe("native document preload IPC mapping", () => {
   it("exposes only lease methods, forwards close tickets, and cleans the OS-event subscription", async () => {
     const calls: unknown[][] = [], listeners = new Map<string, (...args: unknown[]) => void>(); let api: Record<string, unknown> = {};
-    runInNewContext(readFileSync(new URL("./preload.js", import.meta.url), "utf8"), { process: { platform: "linux" }, require(name: string) {
+    runInNewContext(readFileSync(new URL("./preload.js", import.meta.url), "utf8"), { process: { platform: "linux", isMainFrame: true }, require(name: string) {
       if (name !== "electron") throw new Error("unexpected preload dependency");
       return { contextBridge: { exposeInMainWorld(_name: string, exposed: Record<string, unknown>) { api = exposed; } }, webUtils: {}, ipcRenderer: { invoke(channel: string, args?: unknown) { calls.push([channel, args]); return Promise.resolve({ ok: true, value: null }); }, send(channel: string, args?: unknown) { calls.push([channel, args]); }, on(channel: string, callback: (...args: unknown[]) => void) { listeners.set(channel, callback); }, removeListener(channel: string) { listeners.delete(channel); } } };
     } });
@@ -21,5 +21,13 @@ describe("native document preload IPC mapping", () => {
     const menuState = { renderer: "word", enabledCommands: ["format-bold"] };
     await (api.setDocumentMenuState as (state: typeof menuState) => Promise<unknown>)(menuState);
     expect(calls.at(-1)).toEqual(["document-menu-state", menuState]);
+  });
+  it.each([false, undefined])("never exposes the host bridge in a child or unknown frame (%s)", (isMainFrame) => {
+    const exposed: string[] = [];
+    runInNewContext(readFileSync(new URL("./preload.js", import.meta.url), "utf8"), {
+      process: { platform: "linux", isMainFrame },
+      require() { return { contextBridge: { exposeInMainWorld(name: string) { exposed.push(name); } }, ipcRenderer: {}, webUtils: {} }; },
+    });
+    expect(exposed).toEqual([]);
   });
 });

@@ -21,6 +21,14 @@ describe("native WebFileHandle-shaped workspace adapter", () => {
     expect(payload).toMatchObject({ name: "source.txt", bytes: encode("before"), text: { text: "before" } }); expect(payload?.handle).toBeDefined();
     const one = new Uint8Array(await (await payload!.handle!.getFile()).arrayBuffer()); one.fill(0); expect(f.bytes()).toEqual(encode("before"));
   });
+  it("classifies Darkmown as literal source and saves directives without a Markdown or rich conversion", async () => {
+    const source = ':state count = 0\r\nCount: { count }.\r\n';
+    const f = fixture({ name: "Counter.wd", text: source }), adapter = createNativeDocumentFileAdapter(f.api), payload = await adapter.pickDocument();
+    expect(payload).toMatchObject({ name: "Counter.wd", format: { kind: "darkmown", representation: "text" }, text: { text: source, newline: "crlf" } });
+    const changed = source.replace("count = 0", "count = 2");
+    expect(await adapter.saveDocument({ name: "Counter.wd", bytes: encode(changed), handle: payload!.handle })).toMatchObject({ method: "file-system", name: "Counter.wd" });
+    expect(f.bytes()).toEqual(encode(changed));
+  });
   it("buffers writes until close, preserves caller bytes, appends chunks and aborts without IPC", async () => {
     const f = fixture(), adapter = createNativeDocumentFileAdapter(f.api), payload = await adapter.pickDocument(), writer = await payload!.handle!.createWritable!();
     const first = encode("one"); await writer.write(first); first.fill(0); await writer.write(encode("two")); expect(f.write).not.toHaveBeenCalled(); await writer.close(); await writer.close();

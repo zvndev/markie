@@ -83,8 +83,12 @@ describe("guarded private Super-nightly packaging", () => {
   });
 
   it("does not hand owner/publisher/public-upload secrets to renderer or builder processes", () => {
-    const source = { ...env, MARKIE_PRIVATE_OWNER_UID: "fixture-owner-only", MARKIE_PRIVATE_PUBLISH_KEY: "fixture-publish-only-secret-123456", GH_TOKEN: "fixture-github-secret", AWS_SECRET_ACCESS_KEY: "fixture-public-secret", APPLE_APP_SPECIFIC_PASSWORD: "fixture-signing-only" };
+    const source = { ...env, MARKIE_PRIVATE_OWNER_UID: "fixture-owner-only", MARKIE_PRIVATE_PUBLISH_KEY: "fixture-publish-only-secret-123456", GH_TOKEN: "fixture-github-secret", AWS_SECRET_ACCESS_KEY: "fixture-public-secret", APPLE_APP_SPECIFIC_PASSWORD: "fixture-signing-only", ELECTRON_RUN_AS_NODE: "1" };
     const renderer = privateBuildEnvironment(source), builder = privateBuildEnvironment(source, true);
+    // Inherited from an agent shell, this would make the packed app run as
+    // Node during the afterPack launch smoke and fail a good build.
+    expect(renderer).not.toHaveProperty("ELECTRON_RUN_AS_NODE");
+    expect(builder).not.toHaveProperty("ELECTRON_RUN_AS_NODE");
     expect(renderer).not.toHaveProperty("APPLE_APP_SPECIFIC_PASSWORD");
     expect(builder.APPLE_APP_SPECIFIC_PASSWORD).toBe(source.APPLE_APP_SPECIFIC_PASSWORD);
     for (const clean of [renderer, builder]) for (const key of ["MARKIE_PRIVATE_OWNER_UID", "MARKIE_PRIVATE_PUBLISH_KEY", "GH_TOKEN", "AWS_SECRET_ACCESS_KEY"]) expect(clean).not.toHaveProperty(key);

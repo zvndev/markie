@@ -82,6 +82,11 @@ export function privateBuildEnvironment(env, signing = false) {
     const signingKey = /^(?:APPLE_ID|APPLE_APP_SPECIFIC_PASSWORD|APPLE_TEAM_ID|CSC_LINK|CSC_KEY_PASSWORD|CSC_NAME)$/.test(key);
     if ((/OWNER|PUBLISH.*KEY|SECRET|TOKEN|PASSWORD|PRIVATE_KEY|FORBIDDEN/i.test(key) && !(signing && signingKey)) || /^(?:GH_|GITHUB_|AWS_|S3_|B2_)/.test(key)) delete clean[key];
   }
+  // An agent shell may export ELECTRON_RUN_AS_NODE=1 (the harness runs its
+  // own Electron as Node). Inherited by the builder's afterPack launch
+  // smoke, it makes the freshly packed app run as Node, reject Chromium
+  // switches, and fail the gate on a build that is actually fine.
+  delete clean.ELECTRON_RUN_AS_NODE;
   return clean;
 }
 

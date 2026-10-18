@@ -16,6 +16,14 @@ function renderToolbar(props: Partial<React.ComponentProps<typeof Toolbar>> = {}
 beforeEach(() => { installBridge(); });
 
 describe("the existing Markie top bar", () => {
+  it("keeps a cold document Open action disabled until its format tools are ready", async () => {
+    const onOpenFile = vi.fn(), test = renderToolbar({ openFileDisabled: true, onOpenFile });
+    const button = screen.getByRole("button", { name: "Open" });
+    expect(button).toBeDisabled(); expect(button).toHaveAttribute("title", "Preparing document tools…");
+    await userEvent.click(button); expect(onOpenFile).not.toHaveBeenCalled();
+    test.view.rerender(<Toolbar fileName="notes.md" isDirty={false} canRename onOpenFile={onOpenFile} onExportPDF={vi.fn()} onSaveAs={vi.fn()} onExportHTML={vi.fn()} onRename={vi.fn()} onShare={vi.fn()} onThemePresets={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Open" })); expect(onOpenFile).toHaveBeenCalledOnce();
+  });
   it("keeps Markdown modes out of the top bar while preserving rendered export actions", async () => {
     const { onExportHTML } = renderToolbar();
     expect(screen.queryByRole("group", { name: "Editing mode" })).not.toBeInTheDocument();

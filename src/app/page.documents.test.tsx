@@ -51,6 +51,24 @@ async function openWord() {
 }
 
 describe("document capabilities inside the existing Markie app", () => {
+  it("never falls back to a Markdown picker while browser document tools are cold", async () => {
+    installBridge();
+    vi.stubGlobal("electronAPI", undefined);
+    const initial = state.shell!; state.shell = null;
+    render(<Home documentsEnabled />);
+    await screen.findByTestId("format-editor");
+    const open = screen.getByRole("button", { name: /^(Open|Open file…)$/ });
+    expect(open).toBeDisabled();
+    await userEvent.click(open);
+    expect(document.querySelector('input[type="file"]')).toBeNull(); expect(initial.importFile).not.toHaveBeenCalled();
+    await act(async () => { state.shell = { ...initial, ready: false }; state.publish!(state.shell); });
+    expect(open).toBeDisabled();
+    await act(async () => { state.shell = initial; state.publish!(initial); });
+    await waitFor(() => expect(open).not.toBeDisabled());
+    await userEvent.click(open);
+    expect(initial.importFile).toHaveBeenCalledOnce();
+    expect(document.querySelector('input[type="file"]')).toBeNull();
+  });
   it("hands a cold native Word request to the original shell after Markdown initialization", async () => {
     state.nativeOnMount = true;
     installBridge({ getInitialFile: vi.fn(async () => null) });

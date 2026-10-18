@@ -17,6 +17,7 @@ interface ToolbarProps {
   onSave?: () => void;
   onCommands?: () => void;
   onOpenFile: () => void;
+  openFileDisabled?: boolean;
   onExportPDF: (theme: PDFTheme) => void;
   // "Save a Copy" writes the markdown itself somewhere else; Export HTML and
   // PDF render it. All three live in the one visible Export menu.
@@ -48,6 +49,7 @@ export function Toolbar({
   onSave,
   onCommands,
   onOpenFile,
+  openFileDisabled = false,
   onExportPDF,
   onSaveAs,
   onExportHTML,
@@ -128,6 +130,8 @@ export function Toolbar({
         >
           <button
             onClick={onOpenFile}
+            disabled={openFileDisabled}
+            title={openFileDisabled ? "Preparing document tools…" : undefined}
             aria-label={fileName ? "Open" : "Open file…"}
             className="shrink-0 text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
           >

@@ -990,8 +990,10 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       return;
     }
 
-    if (documentsEnabled && documentShellRef.current) {
-      documentShellRef.current.importFile();
+    if (documentsEnabled) {
+      const shell = documentShellRef.current;
+      if (!shell?.ready) { setForkError("Document tools are still loading. Try Open again in a moment."); return; }
+      shell.importFile();
       documentsOpenRef.current = true; setDocumentsOpen(true);
       return;
     }
@@ -2105,6 +2107,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         documentMode={documentsOpen}
         onSave={documentsOpen && documentShell?.hasSession && !documentShell.private ? () => documentShell.save() : undefined}
         onOpenFile={handleOpenFile}
+        openFileDisabled={documentsEnabled && !getElectronAPI() && !documentShell?.ready}
         onExportPDF={exportPDF}
         onDocumentExportPDF={documentsOpen && !documentShell?.private && !documentShell?.busy && !documentShell?.commands?.modalOpen && documentShell?.commands?.enabledCommands.includes("document-export-pdf") ? () => runDocumentCommand("document-export-pdf") : undefined}
         onSaveAs={() => documentsOpen ? documentShellRef.current?.save(true) : handleSaveAs()}

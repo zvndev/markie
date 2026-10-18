@@ -234,7 +234,7 @@ export function createPrivateFeed(settings) {
   for (const arch of settings.archs) assert(files.some((file) => file.url.endsWith(`-${arch}.zip`)), "A signed update ZIP is required for each private architecture.");
   const first = files.find((file) => file.url.endsWith(".zip"));
   const feed = { version: settings.version, files, path: first.url, sha512: first.sha512, releaseDate: new Date().toISOString() };
-  writeFileSync(path.join(settings.output, PRIVATE_FEED), yaml.dump(feed));
+  writeFileSync(path.join(settings.output, PRIVATE_FEED), yaml.dump(feed, { lineWidth: -1, noRefs: true }));
   return feed;
 }
 

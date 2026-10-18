@@ -150,6 +150,9 @@ describe("guarded private Super-nightly packaging", () => {
     const config = settings(temporary()), zip = `Markie-${config.version}-arm64.zip`;
     writeFileSync(path.join(config.output, zip), "fixture signed archive");
     const feed = createPrivateFeed(config);
+    const generated = readFileSync(path.join(config.output, PRIVATE_FEED), "utf8");
+    expect(generated).not.toMatch(/sha512:\s*[>|]/);
+    expect(generated.match(/^\s*sha512: [A-Za-z0-9+/]{86}==$/gm)).toHaveLength(2);
     expect(verifyPrivateFeed(feed, config)).toBe(feed);
     expect(feed.files[0]).toEqual({ url: zip, size: 22, sha512: hash(Buffer.from("fixture signed archive")) });
     expect(privateArtifactName(zip, config)).toBe(true);

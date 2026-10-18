@@ -15,7 +15,9 @@ function validResult(value: unknown): value is CompiledDarkmownDocument {
 /** One disposable local compiler worker. Never falls back to the UI thread. */
 export function compileDarkmownOffThread(source: string, options: DarkmownWorkerOptions = {}): Promise<CompiledDarkmownDocument> {
   try { validateDarkmownPreviewSource(source); } catch (error) { return Promise.reject(error); }
-  const timeoutMs = options.timeoutMs ?? 3_000;
+  // Includes cold module loading/translation, not only compilation. Keep a hard
+  // budget without making the first preview unreliable on slower desktops.
+  const timeoutMs = options.timeoutMs ?? 10_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) return Promise.reject(new Error("Invalid interactive preview time limit."));
   if (options.signal?.aborted) return Promise.reject(new DOMException("Interactive preview canceled.", "AbortError"));
   return new Promise((resolve, reject) => {

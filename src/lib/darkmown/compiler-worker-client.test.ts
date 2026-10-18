@@ -33,6 +33,16 @@ describe("bounded off-thread Darkmown preview compiler", () => {
     expect(f.worker.terminate).toHaveBeenCalledOnce();
   });
 
+  it("allows bounded cold worker startup but terminates at the default ten-second budget", async () => {
+    vi.useFakeTimers(); const f = fixture();
+    const pending = compileDarkmownOffThread("# Counter", f);
+    const rejected = expect(pending).rejects.toThrow("time budget");
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(f.worker.terminate).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1); await rejected;
+    expect(f.worker.terminate).toHaveBeenCalledOnce();
+  });
+
   it("cancels before creation or in flight and disposes exactly once", async () => {
     const controller = new AbortController(), f = fixture();
     const pending = compileDarkmownOffThread("# Counter", { ...f, signal: controller.signal });

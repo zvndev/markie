@@ -37,7 +37,7 @@ computed `+` (including numeric addition, until a typed value budget is availabl
 and interpolation formatter pipelines before compilation. It also limits source
 to 128,000 characters / 5,000 lines, applies a conservative source-length times
 binding/declaration complexity budget of 1,000,000, bounds output and stops the
-worker after three seconds or cancellation. These are preview limits, not edits
+worker after ten seconds (including cold startup) or cancellation. These are preview limits, not edits
 to authored source or claims that Darkmown itself lacks those language features.
 
 Full upstream and bundled dependency licenses are in `THIRD-PARTY-NOTICES.txt`.

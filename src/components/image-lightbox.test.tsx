@@ -1,9 +1,12 @@
 // Plain <img> on purpose: this is the DOM the rich pane produces, not a page.
 import { useState } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ImageLightbox, collectImages } from "./image-lightbox";
+import { installBridge } from "@/test/mock-bridge";
+import { CLOSE_MEDIA_VIEWER_COMMAND } from "@/lib/media-viewer-events";
+import { act } from "react";
 
 // A document with three pictures, one of them a link, plus a video, the way
 // the rich pane lays them out: everything under one `.markdown-body`.
@@ -126,6 +129,100 @@ describe("moving through the pictures", () => {
 });
 
 describe("closing", () => {
+  it("accepts only the native media-dismiss signal and unsubscribes when closed", () => {
+    let command!: (value: string) => void;
+    const unsubscribe = vi.fn();
+    installBridge({ onDocumentCommand: (receive: typeof command) => { command = receive; return unsubscribe; } } as never);
+    render(<Harness openOn="dblclick" />);
+    const doc = screen.getByTestId("doc");
+    doc.focus();
+    fireEvent.dblClick(screen.getByAltText("first"));
+    act(() => command("save"));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    act(() => command(CLOSE_MEDIA_VIEWER_COMMAND));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(doc);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it("renders above the document's clipping and interaction boundaries", () => {
+    const view = render(<Harness openOn="dblclick" />);
+    fireEvent.dblClick(screen.getByAltText("first"));
+    expect(view.container.contains(screen.getByRole("dialog"))).toBe(false);
+    expect(screen.getByRole("dialog").parentElement).toBe(document.body);
+  });
+
+  it("dismisses on pointer interaction outside the image, without passing through to the document", () => {
+    render(<Harness openOn="dblclick" />);
+    const pressed = vi.fn();
+    screen.getByTestId("doc").addEventListener("pointerdown", pressed);
+    fireEvent.dblClick(screen.getByAltText("first"));
+    fireEvent.pointerDown(screen.getByRole("dialog"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(pressed).not.toHaveBeenCalled();
+  });
+
+  it("does not keep a previous document's picture visible after the source canvas is replaced", async () => {
+    render(<Harness openOn="dblclick" />);
+    fireEvent.dblClick(screen.getByAltText("first"));
+    screen.getByTestId("doc").replaceChildren();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("closes when the retained document becomes inactive", async () => {
+    render(<Harness openOn="dblclick" />);
+    fireEvent.dblClick(screen.getByAltText("first"));
+    screen.getByTestId("doc").parentElement!.setAttribute("inert", "");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("keeps Tab inside the viewer", () => {
+    render(<Harness openOn="dblclick" />);
+    fireEvent.dblClick(screen.getByAltText("first"));
+    const close = screen.getByRole("button", { name: "Close picture" });
+    const last = screen.getByRole("button", { name: "Next picture" });
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+    fireEvent.keyDown(window, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+  });
+
+  it("expands a local video on double-click without stealing its single-click controls", async () => {
+    render(<Harness openOn="click" />);
+    const clip = screen.getByTestId("clip");
+    (clip as HTMLVideoElement).currentTime = 12;
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    fireEvent.click(clip);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.dblClick(clip);
+    const dialog = screen.getByRole("dialog", { name: "Video" });
+    const video = dialog.querySelector("video")!;
+    expect(video).toHaveAttribute("src", "clip.mp4");
+    expect(video).toHaveAttribute("controls");
+    fireEvent.loadedMetadata(video);
+    expect(video.currentTime).toBe(12);
+    fireEvent.pointerDown(video);
+    expect(dialog).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(video).not.toHaveAttribute("src");
+    expect(pause).toHaveBeenCalled();
+    pause.mockRestore();
+  });
+
+  it("stops expanded playback when the source video changes", async () => {
+    render(<Harness openOn="dblclick" />);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const clip = screen.getByTestId("clip");
+    fireEvent.dblClick(clip);
+    const video = screen.getByRole("dialog").querySelector("video")!;
+    clip.setAttribute("src", "another.mp4");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(video).not.toHaveAttribute("src");
+    expect(pause).toHaveBeenCalled();
+    pause.mockRestore();
+  });
+
   it("closes on Escape and gives the keyboard back to the document", () => {
     render(<Harness openOn="dblclick" />);
     const doc = screen.getByTestId("doc");

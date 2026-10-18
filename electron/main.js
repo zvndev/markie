@@ -42,6 +42,7 @@ const {
 const { createCrashLog } = require("./crash-log");
 const { createPdfExporter, ensureExtension } = require("./export-pdf");
 const { createLinkPreviews } = require("./link-preview");
+const { externalWebTarget } = require("./external-web.cjs");
 const { createIpcHandler, errorMessage } = require("./ipc-result");
 const { writeFileAtomic } = require("./atomic-write");
 const { createHistory } = require("./history");
@@ -712,6 +713,17 @@ function createWindow() {
   mainWindow.webContents.on("render-process-gone", () => { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); });
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); } });
 
+  // Escape from a focused provider iframe cannot bubble to the host document.
+  // Forward only dismissal over the existing private command channel; leave
+  // the original key and fullscreen/menu behavior untouched.
+  const mediaContents = mainWindow.webContents;
+  mediaContents.on("before-input-event", (_event, input) => {
+    if (input.type === "keyDown" && input.key === "Escape" && !input.isComposing
+      && !mediaContents.isDestroyed() && isAppUrl(mediaContents.getURL())) {
+      mediaContents.send("document-command", "dismiss-media-viewer");
+    }
+  });
+
   mainWindow.once("ready-to-show", () => {
     // E2E drivers keep the window hidden so runs don't steal focus
     if (process.env.MARKIE_E2E === "1") return;
@@ -767,8 +779,9 @@ function createWindow() {
   // rendered markdown should reach the user's browser, not a chrome-less window
   // with no way back.
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
-    if (/^https?:\/\//i.test(target)) {
-      shell.openExternal(target).catch((err) => logCrash("open-external-failed", err));
+    const webTarget = externalWebTarget(target);
+    if (webTarget) {
+      shell.openExternal(webTarget).catch((err) => logCrash("open-external-failed", err));
     }
     return { action: "deny" };
   });
@@ -779,8 +792,9 @@ function createWindow() {
   mainWindow.webContents.on("will-navigate", (event, target) => {
     if (isAppUrl(target)) return;
     event.preventDefault();
-    if (/^https?:\/\//i.test(target)) {
-      shell.openExternal(target).catch((err) => logCrash("open-external-failed", err));
+    const webTarget = externalWebTarget(target);
+    if (webTarget) {
+      shell.openExternal(webTarget).catch((err) => logCrash("open-external-failed", err));
     }
   });
 
@@ -1831,19 +1845,20 @@ const linkPreviews = createLinkPreviews({
   // refuses by design. Nothing else ever sets this.
   allowPrivate: process.env.MARKIE_E2E === "1",
 });
-handle("link-preview", async (_event, url) => linkPreviews.get(url), {
+handle("link-preview", async (event, url) => currentCloseSender(event) ? linkPreviews.get(url) : null, {
   onFailure: () => null,
 });
 
 // IPC: open an https URL in the system browser (OAuth flows)
-handle("open-external", (_event, target) => {
-  if (isDesktopPreview && isStableDesktopAuthUrl(target)) {
+handle("open-external", (event, target) => {
+  if (!currentCloseSender(event)) return;
+  const webTarget = externalWebTarget(target);
+  if (!webTarget) return;
+  if (isDesktopPreview && isStableDesktopAuthUrl(webTarget)) {
     void dialog.showMessageBox(mainWindow, { type: "info", message: "Google sign-in is unavailable in Markie Preview.", detail: "This preview does not use installed Markie's browser callback. Use email sign-in instead." });
     return;
   }
-  if (/^https?:\/\//i.test(target)) {
-    shell.openExternal(target).catch((err) => logCrash("open-external-failed", err));
-  }
+  shell.openExternal(webTarget).catch((err) => logCrash("open-external-failed", err));
 });
 
 // ── Browse: device-wide markdown index ──

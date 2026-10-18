@@ -10,6 +10,7 @@ import { SETTINGS_PART, THEME_PART, themedDocxFixture } from "@/lib/office/docx-
 import { readZip, writeZip } from "@/lib/office/zip";
 import type { RichDocument } from "@/lib/office/rich-text-types";
 import { createRichDocument, exportRichDocument, openRichDocument } from "@/lib/office/rich-document";
+import { installBridge } from "@/test/mock-bridge";
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 function editor<T extends RichDocument>(initial: T, onHistory?: () => void, localControls = false) {
   const state = { document: initial, target: null as DocumentCommandTarget | null };
@@ -28,6 +29,20 @@ function select(start: number, end: number, paragraphNumber = 1) {
   return paragraph;
 }
 describe("Word renderer inside Markie", () => {
+  it("opens and previews read-only document links without changing source or opening an editor browser", async () => {
+    const openExternal = vi.fn(async () => {}), linkPreview = vi.fn(async () => ({ url: "https://example.com/post", title: "A web page", siteName: null, description: null, image: null }));
+    installBridge({ openExternal, linkPreview });
+    const initial = applyDocxOperations(await createDocx("Linked"), [{ type: "set-hyperlink", paragraphId: "p0", start: 0, end: 6, target: "https://example.com/post" }]);
+    const view = editor(initial); expect(screen.queryByRole("link")).toBeNull();
+    view.mode({ readOnly: true });
+    const link = screen.getByRole("link", { name: "Linked" });
+    fireEvent.click(link); expect(openExternal).toHaveBeenCalledWith("https://example.com/post");
+    expect(view.state.document).toBe(initial);
+    fireEvent.focusIn(link); await screen.findByRole("tooltip");
+    expect(linkPreview).toHaveBeenCalledWith("https://example.com/post");
+    view.mode({ readOnly: true, inert: true });
+    fireEvent.click(link); expect(openExternal).toHaveBeenCalledOnce();
+  });
   describe.each(["rtf", "odt"] as const)("native %s in the shared editor", (format) => {
     it("fails closed if a Word-only dialog is requested directly", async () => {
       const initial = await createRichDocument(format, "Hello native"), apply = vi.fn();

@@ -16,14 +16,14 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { TextSelection } from "@tiptap/pm/state";
 import type { MarkdownSerializerState } from "prosemirror-markdown";
 import {
-  embedFrameUrl,
   embedLabel,
-  embedThumbnailUrl,
   parseEmbed,
   type Embed,
 } from "@/lib/embeds";
 import { getElectronAPI, type LinkPreview } from "@/lib/electron";
-import { getLinkPreviewsEnabled } from "@/lib/link-previews";
+import { getLinkPreviewsEnabled, subscribeLinkPreviews } from "@/lib/link-previews";
+import { requestVideoViewer } from "@/lib/media-viewer-events";
+import { isDocumentLinkActive } from "@/lib/external-link";
 
 const TEXT_NODE = 3;
 
@@ -89,6 +89,7 @@ function createEmbedView(node: ProseMirrorNode) {
   const label = embedLabel(embed);
   const card = document.createElement("button");
   card.type = "button";
+  card.setAttribute("contenteditable", "false");
   card.className = "markie-embed-card";
   card.dataset.markieEmbedCard = "";
   card.setAttribute("aria-label", `Play the video on ${label}`);
@@ -117,40 +118,56 @@ function createEmbedView(node: ProseMirrorNode) {
   card.append(thumb, play, strip);
   dom.appendChild(card);
 
-  // The same switch as hover cards: with previews off, nothing about the
-  // video is fetched from anywhere, and the card is the address and a play
-  // button. With them on, the provider's own thumbnail address is used at
-  // once (a picture without a request to main) and the title comes from the
-  // page through main, the way a hover card's does.
-  if (getLinkPreviewsEnabled()) {
-    const still = embedThumbnailUrl(embed);
-    if (still) thumb.src = still;
-    else thumb.hidden = true;
-    void previewFor(url).then((preview) => {
-      if (!preview || !dom.isConnected) return;
-      if (preview.title) title.textContent = preview.title;
-      if (preview.image && thumb.hidden) {
-        thumb.src = preview.image;
-        thumb.hidden = false;
-      }
-    });
-  } else {
-    thumb.hidden = true;
-  }
+  // Reading a document is not consent to contact every provider in it. Only
+  // deliberate hover/focus asks main for its guarded metadata and raster bytes.
+  thumb.hidden = true;
+  let previewTimer: ReturnType<typeof setTimeout> | null = null;
+  let previewGeneration = 0;
+  let destroyed = false;
+  const cancelPreview = () => {
+    if (previewTimer) clearTimeout(previewTimer);
+    previewTimer = null;
+    previewGeneration += 1;
+  };
+  const beginPreview = () => {
+    cancelPreview();
+    if (!getLinkPreviewsEnabled() || !isDocumentLinkActive(card) || destroyed) return;
+    const generation = previewGeneration;
+    previewTimer = setTimeout(() => {
+      previewTimer = null;
+      if (generation !== previewGeneration || destroyed || !getLinkPreviewsEnabled() || !isDocumentLinkActive(card)) return;
+      void previewFor(url).then((preview) => {
+        if (!preview || generation !== previewGeneration || destroyed || !getLinkPreviewsEnabled() || !isDocumentLinkActive(card)) return;
+        if (preview.title) title.textContent = preview.title;
+        // Never hand an unguarded remote URL (or SVG) to the renderer. Main
+        // bounds and inlines raster bytes after checking each network hop.
+        if (preview.image && preview.image.length <= 750_000 && /^data:image\/(?:png|jpeg|gif|webp|avif);base64,[A-Za-z0-9+/=]+$/.test(preview.image)) {
+          thumb.src = preview.image;
+          thumb.hidden = false;
+        }
+      });
+    }, 450);
+  };
+  const unsubscribe = subscribeLinkPreviews(() => {
+    cancelPreview();
+    if (!getLinkPreviewsEnabled()) { thumb.removeAttribute("src"); thumb.hidden = true; title.textContent = url; }
+  });
+  card.addEventListener("mouseenter", beginPreview);
+  card.addEventListener("mouseleave", cancelPreview);
+  card.addEventListener("focus", beginPreview);
+  card.addEventListener("blur", cancelPreview);
 
-  let frame: HTMLIFrameElement | null = null;
   card.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    if (frame) return;
-    frame = document.createElement("iframe");
-    frame.className = "markie-embed-frame";
-    frame.src = embedFrameUrl(embed);
-    frame.title = title.textContent || `Video on ${label}`;
-    frame.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture; fullscreen");
-    frame.setAttribute("allowfullscreen", "true");
-    frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
-    card.replaceWith(frame);
+    cancelPreview();
+    requestVideoViewer(card, url);
+  });
+  card.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    if (!event.repeat) card.click();
   });
 
   return {
@@ -162,13 +179,14 @@ function createEmbedView(node: ProseMirrorNode) {
       const target = event.target as HTMLElement | null;
       if (!target) return false;
       if (target.closest("iframe")) return true;
-      return (event.type === "click" || event.type === "dblclick") && !!target.closest("button");
+      return ["click", "dblclick", "keydown", "keyup"].includes(event.type) && !!target.closest("button");
     },
     // Swapping the card for the player, or filling in a title, is this
     // view's doing and not a change to the document.
     ignoreMutation: () => true,
     update: (updated: ProseMirrorNode) =>
       updated.type === node.type && String(updated.attrs.url ?? "") === url,
+    destroy: () => { destroyed = true; cancelPreview(); unsubscribe(); },
   };
 }
 

@@ -7,6 +7,8 @@ import type { FormattingAction } from "@/lib/format-controls";
 import { DEFAULT_APPEARANCE } from "@/lib/doc-appearance";
 import { FormattingToolbar } from "@/components/formatting-toolbar";
 import { CommandPalette } from "@/components/command-palette";
+import { LinkPreviewCard } from "@/components/link-preview-card";
+import { handleExternalLinkClick } from "@/lib/external-link";
 import type { AppCommand } from "@/lib/commands";
 import documentMenuCommands from "../../../electron/document-menu-commands.json";
 import { WordParagraph } from "./word-paragraph";
@@ -41,6 +43,8 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
   const undoHistory = useRef<T[]>([]), redoHistory = useRef<T[]>([]);
   const latestDocument = useRef(document);
   const host = useRef<HTMLDivElement>(null);
+  const [linkContainer, setLinkContainer] = useState<HTMLDivElement | null>(null);
+  const bindHost = useCallback((node: HTMLDivElement | null) => { host.current = node; setLinkContainer(node); }, []);
   const textSelection = useRef<WordTextMatch | null>(null);
   const access = useRef({ readOnly, isReadOnly, canEdit: document.canEdit, originalView }); access.current = { readOnly, isReadOnly, canEdit: document.canEdit, originalView };
   const canView = () => !!host.current && !host.current.closest("[inert]");
@@ -258,7 +262,7 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
     const commands: Partial<Record<FormattingAction, string>> = { undo: "undo", redo: "redo", bold: "format-bold", italic: "format-italic", underline: "format-underline", clear: "format-clear", link: "insert-link", image: "insert-picture", bullet: "format-bullets", ordered: "format-numbering", "align-left": "format-align-left", "align-center": "format-align-center", "align-right": "format-align-right" };
     if (commands[value]) execute(commands[value]);
   };
-  return <div ref={host} className="docs-word-host" data-selected-run={runId} onKeyDown={handleKey}>
+  return <div ref={bindHost} className="docs-word-host" data-selected-run={runId} onKeyDown={handleKey} onClickCapture={(event) => handleExternalLinkClick(event.nativeEvent)} onAuxClickCapture={(event) => handleExternalLinkClick(event.nativeEvent)}>
     <FormattingToolbar
       startControls={!onCommandsReady ? <button type="button" aria-label="Document commands" title="Document commands (⌘K / Ctrl+K)" onClick={openPalette} disabled={!!tool}>Commands</button> : undefined}
       state={{ bold: selectionFormat.bold, italic: selectionFormat.italic, underline: selectionFormat.underline, bullet: paragraph?.listKind === "bullet", ordered: paragraph?.listKind === "numbered", alignLeft: (paragraph?.alignment ?? "left") === "left", alignCenter: paragraph?.alignment === "center", alignRight: paragraph?.alignment === "right", canUndo, canRedo }}
@@ -288,5 +292,6 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
     }}>
       {document.blocks.map((block) => block.kind === "paragraph" ? paragraphNode(block.paragraphId) : <table key={block.tableId} className="docs-word-table" aria-label="Document table"><tbody>{document.tables.find((table) => table.id === block.tableId)?.rows.map((row, r) => <tr key={r}>{row.cells.map((cell, c) => <td key={c}>{cell.paragraphs.map((paragraph) => paragraphNode(paragraph.id))}</td>)}</tr>)}</tbody></table>)}
     </div></div></div>
+    <LinkPreviewCard container={linkContainer} revision={document} />
   </div>;
 }

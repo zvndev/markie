@@ -14,6 +14,15 @@ function mount(source = paragraph) {
   return { field: screen.getByRole("textbox"), onRuns, onPasteParagraphs, onRemovePageBreaks, onRejectStructure };
 }
 describe("Word paragraph user editing", () => {
+  it("uses ordinary links only in a read-only paragraph and retains editing selection spans", () => {
+    const linked = { ...paragraph, runs: [{ ...paragraph.runs[0], hyperlinkId: "link1", target: "https://example.com/post" }] };
+    const props = { paragraph: linked, index: 0, selected: true, readOnly: true, onSelect: vi.fn(), onReplace: vi.fn(), onRuns: vi.fn(), onSplit: vi.fn(), onPasteParagraphs: vi.fn(), onRemovePageBreaks: vi.fn(), onRejectStructure: vi.fn() };
+    const view = render(<WordParagraph {...props} />);
+    expect(screen.getByRole("link")).toHaveAttribute("href", "https://example.com/post");
+    view.rerender(<WordParagraph {...props} readOnly={false} />);
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByRole("textbox").querySelector("span[data-run-id]")).not.toBeNull();
+  });
   it("replaces a selected run on plain paste without flattening other styles", () => {
     const { field, onRuns } = mount();
     selectText(field.querySelectorAll("span")[1].firstChild!, 0, 4);

@@ -67,6 +67,10 @@ At desktop widths, keep list and editor visible. At narrow widths, allow a docum
 
 ## Interaction states
 
+Document media opens as a temporary viewer, not an edit: clicking the backdrop or pressing Escape closes it, controls inside remain usable, focus returns to the source, and closing/switching documents stops playback and removes embedded frames. Render overlays outside transformed/clipped editor containers. Preserve native inline video controls and offer an explicit expand action.
+
+Ordinary HTTP(S) links use the device's default browser, never another Markie web window. Explicit video play controls may use the isolated media viewer. Hover/focus link cards are metadata only, after deliberate intent, with a visible destination hostname, no eager requests, no account cookies/tokens, no page execution and a working off switch. Main owns bounded, per-hop public-network validation and transport; private, credential-bearing or unsafe destinations must not become preview fetches. Keep local document/file-link authorization separate from web links.
+
 - Loading: name the operation and retain existing content until replacement succeeds.
 - Empty: offer create/import, not placeholder documents that look saved.
 - Error: retain edits, state what failed and provide a safe retry/export path.

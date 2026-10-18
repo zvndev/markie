@@ -53,9 +53,13 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
     pendingCaret.current = null;
     node.replaceChildren(...paragraph.runs.map((run) => {
       const style = run.resolvedStyle ?? run.style;
-      const span = document.createElement("span");
+      const span = document.createElement(readOnly && run.target ? "a" : "span");
       span.dataset.runId = run.id;
-      if (run.hyperlinkId) { span.dataset.hyperlinkId = run.hyperlinkId; span.title = `Link: ${run.target ?? ""}. Use the Insert menu or command palette to open or update.`; }
+      if (run.hyperlinkId) {
+        span.dataset.hyperlinkId = run.hyperlinkId;
+        span.title = readOnly ? `Open ${run.target ?? ""}` : `Link: ${run.target ?? ""}. Use the Insert menu or command palette to open or update.`;
+        if (span instanceof HTMLAnchorElement && run.target) { span.href = run.target; span.target = "_blank"; span.rel = "noopener noreferrer"; }
+      }
       let textOffset = 0;
       for (const pageBreak of run.pageBreaks) {
         span.append(document.createTextNode(run.text.slice(textOffset, pageBreak.offset)));
@@ -73,7 +77,7 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
       return span;
     }));
     if (offset !== null) placeCaret(node, offset);
-  }, [paragraph, trackText, reconcileToken]);
+  }, [paragraph, trackText, reconcileToken, readOnly]);
   const emit = () => {
     const node = root.current!;
     if (readOnly) { onRejectStructure("This document view is read-only."); return; }

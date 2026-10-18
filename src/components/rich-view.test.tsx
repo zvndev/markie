@@ -1,4 +1,4 @@
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { Editor } from "@tiptap/react";
 import { RichView } from "@/components/rich-view";
@@ -108,6 +108,34 @@ describe("RichView serialization", () => {
 });
 
 describe("RichView document links", () => {
+  it.each([{}, { metaKey: true }, { ctrlKey: true }])("hands one real editor link activation to the desktop browser, not two: %o", async (init) => {
+    const openExternal = vi.fn(async () => {}), browserWindow = vi.spyOn(window, "open").mockImplementation(() => null);
+    installBridge({ openExternal });
+    let editor: Editor | null = null;
+    const view = render(<RichView value="[A web page](https://example.com/post)" onChange={vi.fn()} onEditorReady={(value) => { editor = value; }} />);
+    await waitFor(() => expect(editor).not.toBeNull());
+    const ready = editor as unknown as Editor, link = view.container.querySelector("a")!;
+    // ProseMirror calls its actual handleClick plugin chain from mouseup,
+    // before React receives the later DOM click. Pin both stages in order.
+    const mouseup = new MouseEvent("mouseup", { button: 0, cancelable: true, ...init });
+    Object.defineProperty(mouseup, "target", { value: link });
+    ready.view.someProp("handleClick", (handler) => handler(ready.view, 1, mouseup));
+    fireEvent.click(link, init);
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith("https://example.com/post");
+    expect(browserWindow).not.toHaveBeenCalled(); browserWindow.mockRestore();
+  });
+
+  it("retains TipTap's browser-native link behavior without the desktop bridge", async () => {
+    const browserWindow = vi.spyOn(window, "open").mockImplementation(() => null);
+    let editor: Editor | null = null;
+    const view = render(<RichView value="[A web page](https://example.com/post)" onChange={vi.fn()} onEditorReady={(value) => { editor = value; }} />);
+    await waitFor(() => expect(editor).not.toBeNull());
+    const ready = editor as unknown as Editor, link = view.container.querySelector("a")!;
+    const mouseup = new MouseEvent("mouseup", { button: 0 }); Object.defineProperty(mouseup, "target", { value: link });
+    ready.view.someProp("handleClick", (handler) => handler(ready.view, 1, mouseup));
+    expect(browserWindow).toHaveBeenCalledExactlyOnceWith("https://example.com/post", "_blank"); browserWindow.mockRestore();
+  });
+
   it("keeps the doc-link mark on its anchor through an edit, once main has answered", async () => {
     const resolveDocLinks = vi.fn(async () => [{ href: "plan.md", kind: "none" as const }]);
     installBridge({ resolveDocLinks });

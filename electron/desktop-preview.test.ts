@@ -110,6 +110,6 @@ describe("main-process preview isolation wiring", () => {
     expect(updates).toContain("isPreview: isDesktopPreview");
     expect(updates).toContain("if (isDesktopPreview || !shouldSetupAutoUpdate(");
     expect(updates).toContain('if (isDesktopPreview) return { optedIn: false, channel: null, allowDowngrade: false }');
-    expect(source).toContain("isDesktopPreview && isStableDesktopAuthUrl(target)");
+    expect(source).toContain("isDesktopPreview && isStableDesktopAuthUrl(webTarget)");
   });
 });

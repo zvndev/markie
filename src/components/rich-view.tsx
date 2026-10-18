@@ -664,9 +664,10 @@ function RichViewInner({
       <div ref={setScrollEl} className="markie-document-scroll h-full overflow-y-auto relative">
         <article
           data-markie-rich-canvas
-          // Capture phase, so this runs before TipTap's own link handling
-          // hands a relative href to window.open, where it is discarded.
+          // Desktop's single click owner. TipTap's earlier mouseup opener is
+          // disabled there in richBaseExtensions, avoiding duplicate handoffs.
           onClickCapture={(e) => handleDocumentClick(e.nativeEvent, setLinkError)}
+          onAuxClickCapture={(e) => handleDocumentClick(e.nativeEvent, setLinkError)}
           className="markdown-body markie-document-canvas mx-auto"
           style={{
             width: "min(100%, var(--doc-width, 768px))",
@@ -678,7 +679,7 @@ function RichViewInner({
         >
           <EditorContent editor={editor} />
         </article>
-        <LinkPreviewCard container={scrollEl} />
+        <LinkPreviewCard container={scrollEl} documentKey={collab?.docId ?? assetBaseDir ?? getAssetDocPath()} revision={value} />
         {/* A single click on a picture already means "select it" while
             editing, so the viewer waits for a double there. Read-only has no
             selection to protect. */}

@@ -1,3 +1,6 @@
+import { createServer } from "node:http";
+import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import {
   createLinkPreviews,
@@ -32,6 +35,12 @@ describe("addresses a preview will not reach", () => {
     expect(isPrivateAddress("not-an-ip")).toBe(true);
     expect(isPrivateAddress("")).toBe(true);
   });
+
+  it("refuses encoded mapped, multicast, transition and special-purpose addresses", () => {
+    for (const ip of ["::ffff:7f00:1", "0:0:0:0:0:ffff:c0a8:1", "ff02::1", "fec0::1", "fe80::1%lo0", "64:ff9b::7f00:1", "2002:7f00:1::", "2001:db8::1", "192.0.0.1", "198.18.0.1", "203.0.113.1"]) {
+      expect(isPrivateAddress(ip), ip).toBe(true);
+    }
+  });
 });
 
 describe("URLs a preview will not follow", () => {
@@ -53,6 +62,13 @@ describe("URLs a preview will not follow", () => {
 
   it("refuses a URL carrying credentials, which a redirect would hand on", () => {
     expect(parseTarget("https://user:pass@example.com/")).toBe(null);
+  });
+
+  it("refuses likely credential links, oversized inputs and non-web service ports", () => {
+    for (const url of ["https://example.com/?token=secret", "https://example.com/?authToken=secret", "https://example.com/?X-Amz-Signature=secret", "https://example.com/?code=secret", "https://example.com/reset-password/secret", "https://example.com/#access_token=secret", "https://example.com:444/", `https://example.com/${"x".repeat(9000)}`]) {
+      expect(parseTarget(url), url.slice(0, 80)).toBe(null);
+    }
+    expect(parseTarget("https://example.com/?v=video#chapter")?.href).toBe("https://example.com/?v=video");
   });
 });
 
@@ -137,6 +153,53 @@ const PAGE = `<head>${META}</head>`;
 const pageWithImage = (src: string) => `<head>${META}<meta property="og:image" content="${src}"></head>`;
 
 describe("fetching a preview", () => {
+  it("normalizes encoded IP literals before refusing private targets", async () => {
+    const fetchImpl = vi.fn(async () => htmlResponse(PAGE));
+    const previews = createLinkPreviews({ fetchImpl, lookup: publicLookup });
+    for (const url of ["http://2130706433/", "http://0x7f000001/", "http://127.1/", "http://[::ffff:7f00:1]/"]) {
+      expect(await previews.get(url)).toBe(null);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("checks image destinations as strictly as page destinations", async () => {
+    const fetchImpl = vi.fn(async () => htmlResponse(pageWithImage("http://[::ffff:7f00:1]/private.png")));
+    const previews = createLinkPreviews({ fetchImpl, lookup: publicLookup });
+    expect((await previews.get("https://example.com/post"))?.image).toBe(null);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses oversized responses rather than returning truncated cards or images", async () => {
+    const fetchImpl = vi.fn(async () => htmlResponse(PAGE + "x".repeat(512 * 1024)));
+    expect(await createLinkPreviews({ fetchImpl, lookup: publicLookup }).get("https://example.com/")).toBe(null);
+    const images = vi.fn(async (url: string) => url.endsWith(".png")
+      ? new Response(new Uint8Array(512 * 1024 + 1), { headers: { "content-type": "image/png" } })
+      : htmlResponse(pageWithImage("/card.png")));
+    expect((await createLinkPreviews({ fetchImpl: images as never, lookup: publicLookup }).get("https://example.com/"))?.image).toBe(null);
+  });
+
+  it("bounds pending work even if a resolver never answers", async () => {
+    const lookup = vi.fn(() => new Promise<never>(() => {}));
+    const previews = createLinkPreviews({ lookup: lookup as never, timeoutMs: 15, maxInFlight: 2 });
+    const first = previews.get("https://one.example/");
+    const second = previews.get("https://two.example/");
+    expect(await previews.get("https://three.example/")).toBe(null);
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(await Promise.all([first, second])).toEqual([null, null]);
+  });
+
+  it("bounds distinct simultaneous requests without queuing a hover backlog", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const fetchImpl = vi.fn(async () => { await held; return htmlResponse(PAGE); });
+    const previews = createLinkPreviews({ fetchImpl, lookup: publicLookup, maxInFlight: 2 });
+    const first = previews.get("https://one.example/");
+    const second = previews.get("https://two.example/");
+    expect(await previews.get("https://three.example/")).toBe(null);
+    release();
+    expect((await Promise.all([first, second])).every(Boolean)).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
   it("returns the card for an ordinary page", async () => {
     const fetchImpl = vi.fn(async () => htmlResponse(PAGE));
     const previews = createLinkPreviews({ fetchImpl, lookup: publicLookup });
@@ -301,5 +364,153 @@ describe("the door the end-to-end check comes through", () => {
     });
     expect(await previews.get("file:///etc/passwd")).toBe(null);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("the pinned main-process transport", () => {
+  it("contains unusual server statuses and synchronous transport failures", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(700);
+      response.end("not a normal response");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const port = (server.address() as { port: number }).port;
+      expect(await createLinkPreviews({ allowPrivate: true }).get(`http://127.0.0.1:${port}/`)).toBe(null);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    const requestImpl = () => { throw new Error("setup failed"); };
+    expect(await createLinkPreviews({ requestImpl, lookup: publicLookup }).get("https://example.com/")).toBe(null);
+  });
+
+  it("rejects mixed public/private DNS answers without opening a socket", async () => {
+    const requestImpl = vi.fn();
+    const lookup = async () => [{ address: "93.184.216.34", family: 4 }, { address: "::ffff:7f00:1", family: 6 }];
+    expect(await createLinkPreviews({ requestImpl: requestImpl as never, lookup }).get("https://example.com/")).toBe(null);
+    expect(requestImpl).not.toHaveBeenCalled();
+  });
+
+  it("cancels an indefinitely streaming response within the total request deadline", async () => {
+    const sockets = new Set<import("node:net").Socket>();
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.write("<head>");
+    });
+    server.on("connection", (socket) => { sockets.add(socket); socket.once("close", () => sockets.delete(socket)); });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const port = (server.address() as { port: number }).port;
+      expect(await createLinkPreviews({ allowPrivate: true, timeoutMs: 30 }).get(`http://127.0.0.1:${port}/`)).toBe(null);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("uses the validated DNS result without a second lookup, preserving TLS and host identity", async () => {
+    const lookup = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
+    const requests: Array<{ url: URL; options: Record<string, unknown> }> = [];
+    const requestImpl = (url: URL, options: Record<string, unknown>, callback: (response: unknown) => void) => {
+      requests.push({ url, options });
+      const request = new EventEmitter() as EventEmitter & { end: () => void };
+      request.end = () => {
+        const pinned = options.lookup as (host: string, options: { all: boolean }, callback: (...args: unknown[]) => void) => void;
+        pinned(url.hostname, { all: true }, (error, addresses) => {
+          expect(error).toBe(null);
+          expect(addresses).toEqual([{ address: "93.184.216.34", family: 4 }]);
+          const response = Object.assign(Readable.from([Buffer.from(PAGE)]), {
+            statusCode: 200,
+            headers: { "content-type": "text/html", "set-cookie": "private=not-forwarded" },
+          });
+          callback(response);
+        });
+      };
+      return request;
+    };
+    const previews = createLinkPreviews({ lookup: lookup as never, requestImpl: requestImpl as never });
+    expect((await previews.get("https://example.com/post"))?.title).toBe("A page");
+    expect(lookup).toHaveBeenCalledTimes(1);
+    expect(requests[0].url.hostname).toBe("example.com");
+    expect(requests[0].options).not.toHaveProperty("rejectUnauthorized", false);
+    expect(requests[0].options).not.toHaveProperty("checkServerIdentity");
+    expect(requests[0].options.headers).toEqual({ "user-agent": expect.any(String), accept: "text/html,application/xhtml+xml", "accept-encoding": "identity" });
+    expect(requests[0].options.agent).toMatchObject({ options: { proxyEnv: {}, keepAlive: false } });
+  });
+
+  it("uses the real Node request path against the explicit test-only loopback fixture", async () => {
+    const seen: Array<Record<string, string | string[] | undefined>> = [];
+    const server = createServer((request, response) => {
+      seen.push(request.headers);
+      response.setHeader("content-type", "text/html");
+      response.end(PAGE);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const port = (server.address() as { port: number }).port;
+      const target = `http://127.0.0.1:${port}/fixture`;
+      expect(await createLinkPreviews().get(target)).toBe(null);
+      expect(seen).toHaveLength(0);
+      expect((await createLinkPreviews({ allowPrivate: true }).get(target))?.title).toBe("A page");
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).not.toHaveProperty("cookie");
+      expect(seen[0]).not.toHaveProperty("authorization");
+      expect(seen[0]).not.toHaveProperty("referer");
+      const lookup = vi.fn(async () => [{ address: "127.0.0.1", family: 4 }]);
+      expect((await createLinkPreviews({ allowPrivate: true, lookup }).get(`http://fixture.example:${port}/fixture`))?.title).toBe("A page");
+      expect(lookup).toHaveBeenCalledTimes(1);
+      expect(seen[1].host).toBe(`fixture.example:${port}`);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("does not forward Set-Cookie or credentials across a redirect", async () => {
+    const fetchImpl = vi.fn(async (url: string) => url.endsWith("/first")
+      ? new Response(null, { status: 302, headers: { location: "https://other.example/last", "set-cookie": "session=private" } })
+      : htmlResponse(PAGE));
+    expect((await createLinkPreviews({ fetchImpl: fetchImpl as never, lookup: publicLookup }).get("https://example.com/first"))?.title).toBe("A page");
+    for (const [, options] of fetchImpl.mock.calls as unknown as Array<[string, { headers: Record<string, string> }]>) {
+      expect(options.headers).not.toHaveProperty("cookie");
+      expect(options.headers).not.toHaveProperty("authorization");
+      expect(options.headers).not.toHaveProperty("referer");
+    }
+  });
+
+  it("disposes a streaming redirect body before following the next hop", async () => {
+    const sockets = new Set<import("node:net").Socket>();
+    const server = createServer((request, response) => {
+      if (request.url === "/first") {
+        response.writeHead(302, { location: "/last", "set-cookie": "session=private" });
+        response.write("a redirect body that does not end");
+      } else {
+        expect(request.headers.cookie).toBeUndefined();
+        response.writeHead(200, { "content-type": "text/html" });
+        response.end(PAGE);
+      }
+    });
+    server.on("connection", (socket) => { sockets.add(socket); socket.once("close", () => sockets.delete(socket)); });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const port = (server.address() as { port: number }).port;
+      expect((await createLinkPreviews({ allowPrivate: true, timeoutMs: 500 }).get(`http://127.0.0.1:${port}/first`))?.title).toBe("A page");
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("refuses compressed responses instead of unbounded decompression", async () => {
+    const fetchImpl = vi.fn(async () => htmlResponse(PAGE, { headers: { "content-encoding": "gzip" } }));
+    expect(await createLinkPreviews({ fetchImpl, lookup: publicLookup }).get("https://example.com/")).toBe(null);
+  });
+
+  it("keeps the in-memory cache within a byte budget", async () => {
+    const fetchImpl = vi.fn(async () => htmlResponse(PAGE));
+    const previews = createLinkPreviews({ fetchImpl, lookup: publicLookup, maxCacheBytes: 240 });
+    await previews.get("https://one.example/");
+    await previews.get("https://two.example/");
+    await previews.get("https://one.example/");
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 });

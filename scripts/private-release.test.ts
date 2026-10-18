@@ -4,6 +4,8 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { writeZip } from "../src/lib/office/zip";
+import { inspectZipPaths } from "./private-release.mjs";
 import { createPrivateBuilderConfig, createPrivateFeed, forbiddenPrivateValues, PRIVATE_FEED, PRIVATE_GATEWAY_ORIGIN, PRIVATE_PREFIX, privateApiOrigin, privateArtifactName, privateBuildEnvironment, privateBuilderArgs, privateMarker, privateOutputDirectory, privateSettings, privateUpdateConfig, privateUploadUrl, productionPackageNames, publishPrivateFiles, scanPrivateBytes, verifyPrivateBundle, verifyPrivateEntries, verifyPrivateFeed, verifyPrivateSigningAuthority } from "./private-release.mjs";
 
 const require = createRequire(import.meta.url);
@@ -18,6 +20,26 @@ function packageEntry(config = settings()) { return { name: "package.json", data
 afterEach(() => { for (const directory of temporaries.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 describe("guarded private Super-nightly packaging", () => {
+  it("reads actual ZIP central directories with the installed builder reader and checks paths/budgets/symlink targets", async () => {
+    const directory = temporary(), file = path.join(directory, "fixture.zip"), config = settings();
+    const makeZip = (name: string, text: string, symlink = false, oversized = false) => {
+      const bytes = Buffer.from(writeZip([{ name, data: Buffer.from(text) }]));
+      const central = bytes.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+      if (symlink) bytes.writeUInt32LE((0o120777 << 16) >>> 0, central + 38);
+      if (oversized) bytes.writeUInt32LE(0xc0000000, central + 24);
+      writeFileSync(file, bytes);
+    };
+    makeZip("Markie.app/Contents/fixture.txt", "actual archive payload");
+    await expect(inspectZipPaths(file, config)).resolves.toBeUndefined();
+    makeZip("Other.app/fixture.txt", "outside app");
+    await expect(inspectZipPaths(file, config)).rejects.toThrow(/Unsafe/);
+    makeZip("Markie.app/link", "Contents", true);
+    await expect(inspectZipPaths(file, config)).resolves.toBeUndefined();
+    makeZip("Markie.app/link", "../../outside", true);
+    await expect(inspectZipPaths(file, config)).rejects.toThrow(/escapes/);
+    makeZip("Markie.app/oversized", "fixture", false, true);
+    await expect(inspectZipPaths(file, config)).rejects.toThrow(/expands/);
+  });
   it("requires the reviewed HTTPS gateway, never public storage or a credential/path URL", () => {
     expect(privateApiOrigin(PRIVATE_GATEWAY_ORIGIN)).toBe(PRIVATE_GATEWAY_ORIGIN);
     for (const candidate of [undefined, "http://localhost", "https://markiedocs.com", "https://s3.amazonaws.com", "https://github.com", "https://unreviewed.example", PRIVATE_GATEWAY_ORIGIN + "/private-releases/", PRIVATE_GATEWAY_ORIGIN + "?key=no", PRIVATE_GATEWAY_ORIGIN.replace("https://", "https://user:pass@")]) expect(() => privateApiOrigin(candidate)).toThrow();

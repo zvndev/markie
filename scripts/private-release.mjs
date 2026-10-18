@@ -253,38 +253,28 @@ export function verifyPrivateFeed(feed, settings) {
   return feed;
 }
 
-async function inspectZipPaths(file, settings) {
-  const yauzl = require("yauzl");
-  await new Promise((resolve, reject) => {
-    yauzl.open(file, { lazyEntries: true, strictFileNames: true }, (error, zip) => {
-      if (error) return reject(error);
-      let total = 0, count = 0;
-      zip.on("error", reject); zip.on("end", resolve);
-      zip.on("entry", (entry) => {
-        try {
-          const name = entry.fileName;
-          assert(++count < 50000 && !name.split("/").some((part) => part === ".." || part === ".") && name.startsWith("Markie.app/") && !/[\\\x00-\x1f]/.test(name), "Unsafe private ZIP entry.");
-          total += entry.uncompressedSize;
-          assert(total <= 4 * LIMIT, "Private ZIP expands beyond verification limit.");
-          if (((entry.externalFileAttributes >>> 16) & 0o170000) !== 0o120000) return zip.readEntry();
-          assert(entry.uncompressedSize < 4096, "Oversized private ZIP symlink.");
-          zip.openReadStream(entry, (streamError, stream) => {
-            if (streamError) return reject(streamError);
-            const chunks = [];
-            stream.on("data", (chunk) => chunks.push(chunk)); stream.on("error", reject);
-            stream.on("end", () => {
-              try {
-                const target = Buffer.concat(chunks).toString("utf8"), resolved = path.posix.normalize(path.posix.join(path.posix.dirname(name), target));
-                assert(!path.posix.isAbsolute(target) && !/[\\\x00-\x1f]/.test(target) && resolved.startsWith("Markie.app/"), "Private ZIP symlink escapes application.");
-                zip.readEntry();
-              } catch (failure) { zip.close(); reject(failure); }
-            });
-          });
-        } catch (failure) { zip.close(); reject(failure); }
-      });
-      zip.readEntry();
-    });
-  });
+export async function inspectZipPaths(file, settings) {
+  // Resolve through the declared builder dependency, not a removed transitive
+  // reader. Open.file reads the central directory; only symlink bodies buffer.
+  const unzipper = createRequire(require.resolve("app-builder-lib"))("unzipper");
+  const directory = await unzipper.Open.file(file);
+  assert(directory.files.length > 0 && directory.files.length < 50000, "Private ZIP entry count exceeds bounds.");
+  let total = 0;
+  const seen = new Set();
+  for (const entry of directory.files) {
+    const name = entry.path;
+    assert(typeof name === "string" && !seen.has(name) && !name.split("/").some((part) => part === ".." || part === ".") && name.startsWith("Markie.app/") && !/[\\\x00-\x1f]/.test(name), "Unsafe private ZIP entry.");
+    seen.add(name);
+    assert(Number.isSafeInteger(entry.uncompressedSize) && entry.uncompressedSize >= 0 && !(entry.flags & 1), "Invalid or encrypted private ZIP entry.");
+    total += entry.uncompressedSize;
+    assert(total <= 4 * LIMIT, "Private ZIP expands beyond verification limit.");
+    if (((entry.externalFileAttributes >>> 16) & 0o170000) !== 0o120000) continue;
+    assert(entry.uncompressedSize < 4096, "Oversized private ZIP symlink.");
+    const bytes = await entry.buffer();
+    assert(bytes.length === entry.uncompressedSize && bytes.length < 4096, "Private ZIP symlink size mismatch.");
+    const target = bytes.toString("utf8"), resolved = path.posix.normalize(path.posix.join(path.posix.dirname(name), target));
+    assert(!path.posix.isAbsolute(target) && !/[\\\x00-\x1f]/.test(target) && resolved.startsWith("Markie.app/"), "Private ZIP symlink escapes application.");
+  }
   assert(settings.channel === "super-nightly", "Unexpected private ZIP channel.");
 }
 

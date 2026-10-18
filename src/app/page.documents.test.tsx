@@ -43,10 +43,11 @@ async function boot(overrides: Parameters<typeof installBridge>[0] = {}) {
   await screen.findByText("Retained Markdown buffer");
   await screen.findByTestId("format-editor");
   await userEvent.click(screen.getByRole("button", { name: "Library: recent and projects (⌘L)" }));
-  await screen.findByRole("button", { name: "New Word document" });
+  await screen.findByRole("button", { name: "New document…" });
   return api;
 }
 async function openWord() {
+  await userEvent.click(screen.getByRole("button", { name: "New document…" }));
   await userEvent.click(screen.getByRole("button", { name: "New Word document" }));
   await screen.findByText("Word content inside Markie");
 }

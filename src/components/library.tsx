@@ -42,6 +42,7 @@ import type { LibraryRecord } from "@/lib/document-library";
 import type { EditableDocumentFormat } from "@/lib/document-session";
 import { DEFAULT_LIBRARY_DOCUMENT_QUERY, libraryDocumentFormat, matchesLibraryDocument, queryLibraryDocuments, type LibraryDocumentMetadata, type LibraryDocumentQuery } from "@/lib/library-document-query";
 import { LibraryDocumentFilters } from "@/components/library-document-filters";
+import { NewDocumentModal } from "@/components/new-document-modal";
 import { CloudAreaPicker, CloudAreaProvider } from "./cloud-area-picker";
 import { accountScopeKey, confirmedAccountScope, subscribeAccountScope } from "@/lib/account-identities";
 
@@ -179,6 +180,7 @@ export function Library({
     () => !!getElectronAPI()?.libraryState
   );
   const [confirmOff, setConfirmOff] = useState<string | null>(null);
+  const [showNewDocument, setShowNewDocument] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   // Kept apart from the notice line above: a listing the server would not hand
   // over is about the cloud, so it belongs on the Cloud page rather than under
@@ -654,12 +656,7 @@ export function Library({
           {libTab === "recent" && (onCreateDocument || onOpenVault) && (
             <div className="px-2 py-1.5 border-b border-border/60" role="group" aria-label="Document actions">
               {onCreateDocument ? <div role="group" aria-label="Create document">
-                <div className="px-1 pb-1 text-[10px] text-muted">New document</div>
-                <div className="grid grid-cols-3 gap-1">
-                  <button type="button" aria-label="New Markdown document" onClick={() => onCreateDocument("markdown")} className="min-w-0 rounded-md border border-border/70 px-1 py-1 text-[11px] text-muted hover:text-foreground hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]">Markdown</button>
-                  <button type="button" aria-label="New Word document" onClick={() => onCreateDocument("docx")} className="min-w-0 rounded-md border border-border/70 px-1 py-1 text-[11px] text-muted hover:text-foreground hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]">Word</button>
-                  <button type="button" aria-label="New text document" onClick={() => onCreateDocument("text")} className="min-w-0 rounded-md border border-border/70 px-1 py-1 text-[11px] text-muted hover:text-foreground hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]">Text</button>
-                </div>
+                <button type="button" onClick={() => setShowNewDocument(true)} className="w-full rounded-md border border-border/70 px-2 py-1.5 text-left text-[11.5px] text-foreground hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]">New document…</button>
               </div> : null}
               {onOpenVault ? <div className={onCreateDocument ? "mt-2 border-t border-border/60 pt-1" : ""}><button type="button" onClick={onOpenVault} className="w-full text-left text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-1 py-1 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]">Locked vault</button></div> : null}
             </div>
@@ -775,6 +772,12 @@ export function Library({
             </div>
           </div>
         </div>
+      )}
+      {showNewDocument && onCreateDocument && (
+        <NewDocumentModal
+          onClose={() => setShowNewDocument(false)}
+          onCreate={(format) => { setShowNewDocument(false); onCreateDocument(format); }}
+        />
       )}
     </div>
   );

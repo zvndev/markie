@@ -109,7 +109,10 @@ function shouldDescend(full, name, home, allow = allowlist(home)) {
 // pathological tree for as long as it took. Hitting a limit returns what was
 // found rather than failing: a partial answer now beats a perfect one in five
 // minutes, as long as the caller is told it is partial.
-export const DEFAULT_BUDGET = { maxFiles: 200000, maxMs: 30000, maxDepth: 24 };
+// maxSnippets budgets body-snippet reads in the app's index; the MCP walk
+// reads no bodies, but the budget object is copied whole so the drift test
+// keeps the two scans costing the same.
+export const DEFAULT_BUDGET = { maxFiles: 200000, maxMs: 30000, maxDepth: 24, maxSnippets: 4000 };
 
 // Recursively collect markdown files under rootDir, pruning excluded dirs.
 //

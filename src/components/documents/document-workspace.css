@@ -1312,13 +1312,17 @@
   left:-24px
 }
 
+/* On screen the canvas follows the app theme, so dark mode is dark for
+   DOCX/RTF/ODT too. Authored run colors still render as written; only the
+   default (uncolored) text inherits the theme foreground. Print/PDF keeps
+   real white paper through src/lib/office/docx-print.ts, not this rule. */
 .docs-word-paper,.docs-word-continuous {
-  background:#fff;
-  color:#18181b
+  background:var(--background);
+  color:var(--foreground)
 }
 
 .docs-word-paper .docs-word-paragraph,.docs-word-continuous .docs-word-paragraph {
-  caret-color:#18181b
+  caret-color:var(--foreground)
 }
 
 @media(max-width:900px) {

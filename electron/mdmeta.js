@@ -160,6 +160,10 @@ function refreshMeta(
   let remaining = 0;
   let spent = false;
   for (const row of rows) {
+    // Front-matter metadata is a Markdown concept. The device index also
+    // carries office/data documents now; reading their bytes as if they were
+    // Markdown would waste the budget and could invent project metadata.
+    if (row.format ? row.format !== "markdown" : !/\.(md|markdown|mdx)$/i.test(row.name || row.path)) continue;
     if (known.get(row.path) === row.mtimeMs) continue;
     if (spent || now() - startedAt >= budgetMs) {
       spent = true;

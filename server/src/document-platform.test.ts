@@ -38,6 +38,16 @@ test("version-2 snapshots preserve exact bytes, metadata and opaque server IDs",
   const original = await (await f.request(`/documents/${first.id}/history/1`)).json(); assert.equal(original.document.data, first.data);
 });
 
+test("RTF, ODT and Darkmown snapshots round-trip as ordinary byte documents", async (t) => {
+  const f = fixture(); t.after(() => f.db.close());
+  for (const [name, format, body] of [["memo.rtf", "rtf", "{\\rtf1 hello}"], ["report.odt", "odt", "PK fake odt"], ["counter.wd", "darkmown", "# wd"]] as const) {
+    const doc = await created(f, payload(body, 0, { name, format }));
+    assert.equal(Buffer.from(doc.data, "base64").toString(), body);
+  }
+  const list = await (await f.request("/documents")).json();
+  assert.deepEqual(list.documents.map((r: { format: string }) => r.format).sort(), ["darkmown", "odt", "rtf"]);
+});
+
 test("unauthenticated and cross-user requests cannot enumerate or mutate private documents", async (t) => {
   const f = fixture(); t.after(() => f.db.close()); const doc = await created(f);
   assert.equal((await f.request("/documents", null)).status, 401);

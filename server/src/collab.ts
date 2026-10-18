@@ -129,6 +129,18 @@ interface Room {
 
 const rooms = new Map<string, Room>();
 
+// A room holds a document when either shared shape has content: the rich
+// XmlFragment Markdown seeds, or the Y.Text a plain-text file seeds under
+// the same key the renderer uses (TEXT_COLLAB_KEY in src/lib/text-collab.ts).
+// Checking only the fragment would keep a text room's seed lock closed
+// forever, leaving every editor but the seeder read-only. The text type is
+// read through `share` so merely asking never creates it in a Markdown room.
+export function roomHasCollabContent(ydoc: Y.Doc): boolean {
+  if (ydoc.getXmlFragment("default").length > 0) return true;
+  const text = ydoc.share.get("content");
+  return text instanceof Y.Text && text.length > 0;
+}
+
 function liveSession(userId: string, sessionId: string): boolean {
   const session = db.prepare('SELECT userId,expiresAt FROM "session" WHERE id=?').get(sessionId) as { userId: string; expiresAt: string | number } | undefined;
   if (!session || session.userId !== userId) return false;
@@ -163,10 +175,9 @@ function getRoom(docId: string): Room {
     conns: new Map(),
     // Evaluated once, when the room is born: a non-empty snapshot whose room
     // still renders empty is the only situation that needs seeding at all.
-    // The fragment is checked rather than the update count because a stored
+    // Content is checked rather than the update count because a stored
     // update may carry only metadata (a schema stamp) and no document.
-    seedPending:
-      docHasContent(docId) && ydoc.getXmlFragment("default").length === 0,
+    seedPending: docHasContent(docId) && !roomHasCollabContent(ydoc),
     seeder: null,
   };
   rooms.set(docId, room);
@@ -178,7 +189,7 @@ function getRoom(docId: string): Room {
     // then seed alongside the real one, and a seeder who disconnected after
     // the stamp but before the text would leave the room recorded as seeded
     // while it still shows nothing.
-    if (room!.seedPending && room!.ydoc.getXmlFragment("default").length > 0) {
+    if (room!.seedPending && roomHasCollabContent(room!.ydoc)) {
       room!.seedPending = false;
       room!.seeder = null;
     }

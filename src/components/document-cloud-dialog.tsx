@@ -7,6 +7,7 @@ import { SignInForm } from "./sign-in";
 import { CloudDocumentEditor, type CloudEditingState } from "./cloud-document-editor";
 import { classifyDocumentFormat, decodeTextDocument, encodeTextDocument } from "@/lib/document-formats";
 import { exportDocx, openDocx } from "@/lib/office/docx";
+import { exportRichDocument, openRichDocument } from "@/lib/office/rich-document";
 import { CloudAreaPicker } from "./cloud-area-picker";
 import { AccountIdentitiesClient } from "@/lib/account-identities";
 
@@ -105,6 +106,7 @@ export function DocumentCloudDialog({ file, cloudDocumentId, onClose, onCloseGua
     if (privateCloud && !identityMatches()) throw new Error("The account changed. Cloud content cannot be exported.");
     let bytes = cloudSource ?? file?.bytes;
     if (editing?.kind === "docx") bytes = await exportDocx(editing.document);
+    else if (editing?.kind === "rich") bytes = await exportRichDocument(editing.document);
     else if (editing?.kind === "text") bytes = encodeTextDocument(editing.text, editing.metadata);
     if (privateCloud && boundIdentity !== cloudIdentity()) throw new Error("The account changed. Cloud content cannot be exported.");
     if (!bytes || (!cloud && !file)) throw new Error("Open a cloud document before downloading or saving it.");
@@ -126,6 +128,7 @@ export function DocumentCloudDialog({ file, cloudDocumentId, onClose, onCloseGua
       if (decoded.snapshot.id !== id) throw new Error("The server returned a different cloud document.");
       const format = classifyDocumentFormat(decoded.snapshot.name);
       const next: CloudEditingState = format.kind === "docx" ? { kind: "docx", document: await openDocx(decoded.bytes) }
+        : format.kind === "rtf" || format.kind === "odt" ? { kind: "rich", document: await openRichDocument(format.kind, decoded.bytes) }
         : format.representation === "text" ? (() => { const metadata = decodeTextDocument(decoded.bytes); return { kind: "text" as const, text: metadata.text, metadata }; })() : { kind: "binary" };
       if (expectedIdentity !== cloudIdentity() || expectedGeneration !== generation.current) throw new Error("The account changed. The cloud document was not opened.");
       setCloud(decoded.snapshot); setAreaId(""); setCloudSource(new Uint8Array(decoded.bytes)); setEditing(next); setCloudDirty(false); setMembers([]); setLink(null); setLinkId(null);

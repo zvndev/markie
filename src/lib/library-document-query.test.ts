@@ -26,7 +26,7 @@ describe("ordinary Library presentation queries", () => {
     ["NOTE.MDX", "markdown"], ["note.markdown", "markdown"], ["note.LOG", "text"], ["data.YML", "yaml"],
     ["counter.WD", "darkmown"], ["counter.wd.js", "other"], ["counter.skin", "other"],
     ["data.JSON", "json"], ["data.csv", "csv"], ["data.xml", "xml"], ["word.DOC", "doc"], ["word.docx", "docx"],
-    ["word.docx.zip", "other"], ["archive.rtf", "rtf"], ["page.html", "other"], ["open.odt", "odt"], ["", "other"],
+    ["word.docx.zip", "other"], ["archive.rtf", "rtf"], ["page.html", "html"], ["page.htm", "html"], ["open.odt", "odt"], ["", "other"],
   ])("classifies %s with the existing filename classifier", (name, format) => expect(libraryDocumentFormat(name)).toBe(format));
 
   it("filters Darkmown separately from Markdown using supplied source text only", () => {

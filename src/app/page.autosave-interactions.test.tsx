@@ -57,6 +57,7 @@ describe("autosave truce lines", () => {
     await waitFor(() => expect(richEditor()?.isEditable).toBe(true));
     await act(async () => { richEditor().commands.setContent("keep this dirty buffer"); });
     fireEvent.click(screen.getByRole("button", { name: "Library: recent and projects (⌘L)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New document…" }));
     fireEvent.click(await screen.findByRole("button", { name: "New Word document" }));
     await screen.findByText("Active document renderer");
     expect(draftSave).toHaveBeenCalledWith(expect.objectContaining({ path: OPEN.path, name: OPEN.name, content: expect.stringContaining("keep this dirty buffer") }));
@@ -68,6 +69,7 @@ describe("autosave truce lines", () => {
     await waitFor(() => expect(richEditor()?.isEditable).toBe(true));
     await act(async () => { richEditor().commands.setContent("keep this window"); });
     fireEvent.click(screen.getByRole("button", { name: "Library: recent and projects (⌘L)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New document…" }));
     fireEvent.click(await screen.findByRole("button", { name: "New Word document" }));
     await screen.findByText(/Markdown recovery copy could not be saved/);
     expect(screen.queryByText("Active document renderer")).not.toBeInTheDocument();

@@ -13,6 +13,7 @@ import {
   type SortOrder,
 } from "@/lib/folder-tree";
 import { updatedAgo, updatedOn } from "@/lib/relative-time";
+import { libraryDocumentFormat, type LibraryDocumentQuery } from "@/lib/library-document-query";
 
 interface BrowseViewProps {
   onOpenPath: (path: string) => void;
@@ -23,6 +24,25 @@ const STAR_KEY = "markie.browse.starred.v1";
 const FULL_KEY = "markie.browse.fullpath.v1";
 const OPEN_KEY = "markie.browse.open.v1";
 const SORT_KEY = "markie.browse.sort.v1";
+const FORMAT_KEY = "markie.browse.format.v1";
+
+// Every document type the device index can find, in the same order Library
+// and Cloud offer them, so the three explorers filter the same way.
+const FORMAT_OPTIONS: ReadonlyArray<readonly [LibraryDocumentQuery["format"], string]> = [
+  ["all", "All types"], ["markdown", "Markdown"], ["text", "Text"], ["docx", "DOCX"], ["doc", "DOC"],
+  ["rtf", "RTF"], ["odt", "ODT"], ["darkmown", "Darkmown"], ["csv", "CSV"], ["json", "JSON"],
+  ["yaml", "YAML"], ["xml", "XML"], ["html", "HTML"], ["other", "Other"],
+];
+
+function rememberedFormat(): LibraryDocumentQuery["format"] {
+  const stored = localStorage.getItem(FORMAT_KEY);
+  return FORMAT_OPTIONS.some(([key]) => key === stored) ? (stored as LibraryDocumentQuery["format"]) : "all";
+}
+
+function rowFormat(row: MdRow): LibraryDocumentQuery["format"] {
+  const format = row.format ?? libraryDocumentFormat(row.name);
+  return FORMAT_OPTIONS.some(([key]) => key === format) ? (format as LibraryDocumentQuery["format"]) : "other";
+}
 
 const SORTS: Array<{ order: SortOrder; label: string; hint: string }> = [
   { order: "name", label: "Name", hint: "Sort by name" },
@@ -291,6 +311,7 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
     () => localStorage.getItem(FULL_KEY) === "1"
   );
   const [filter, setFilter] = useState("");
+  const [format, setFormat] = useState<LibraryDocumentQuery["format"]>(rememberedFormat);
   const [sort, setSort] = useState<SortOrder>(() =>
     localStorage.getItem(SORT_KEY) === "updated" ? "updated" : "name"
   );
@@ -311,7 +332,7 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   // A failed star is a one-line complaint, not an error page over the list.
   const [starNotice, setStarNotice] = useState<string | null>(null);
   // A scan that stopped early (budget or depth cap) indexed a *subset* of the
-  // device. Without saying so, "No markdown found" and a short list both read
+  // device. Without saying so, "No documents found" and a short list both read
   // as the whole truth.
   const [truncatedReason, setTruncatedReason] = useState<string | null>(null);
 
@@ -349,7 +370,7 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
         // with an empty list and an `error`. Reading `res.files` blindly is
         // what used to crash this panel on a flatMap of undefined.
         if (!Array.isArray(res?.files)) {
-          setError(res?.error ?? "Couldn't read your markdown files.");
+          setError(res?.error ?? "Couldn't read your documents.");
           setLoading(false);
           return;
         }
@@ -358,10 +379,10 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
         setError(null);
         setLoading(false);
       })
-      // Without this the panel sat on "Scanning your markdown…" forever.
+      // Without this the panel sat on "Scanning your documents…" forever.
       .catch(() => {
         if (!alive) return;
-        setError("Couldn't read your markdown files.");
+        setError("Couldn't read your documents.");
         setLoading(false);
       });
     loadStars();
@@ -442,9 +463,21 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   );
 
   const q = filter.trim().toLowerCase();
+  // Search covers the path and, for text formats the walk snippeted, the
+  // document body. Office files match by name/path/format here; their body
+  // text joins search in Library once opened (extractedText).
   const filtered = useMemo(
-    () => (q ? rows.filter((r) => r.path.toLowerCase().includes(q)) : rows),
-    [rows, q]
+    () =>
+      rows.filter((r) => {
+        if (format !== "all" && rowFormat(r) !== format) return false;
+        if (!q) return true;
+        return (
+          r.path.toLowerCase().includes(q) ||
+          (r.snippet ?? "").toLowerCase().includes(q) ||
+          rowFormat(r).includes(q)
+        );
+      }),
+    [rows, q, format]
   );
 
   // What the tree is built from. With the star filter off this is `filtered`
@@ -465,10 +498,10 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   // expand thousands of folders at once.
   const AUTO_OPEN_CAP = 200;
   const forcedOpen = useMemo(() => {
-    if (!q) return null;
+    if (!q && format === "all") return null;
     if (countNodes(tree) > AUTO_OPEN_CAP) return null;
     return new Set(pathsToFiles(tree));
-  }, [q, tree]);
+  }, [q, format, tree]);
 
   const shown = useMemo(() => sortTree(tree, sort), [tree, sort]);
 
@@ -530,9 +563,35 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter by name or path…"
+          placeholder="Search name, path, or text…"
+          aria-label="Search documents"
           className="w-full text-[12px] bg-background border border-border rounded-md px-2 py-1 text-foreground outline-none focus:border-foreground/40"
         />
+        <div className="flex items-center gap-1 text-[11px]">
+          <span className="text-muted pl-0.5">Type</span>
+          <select
+            value={format}
+            aria-label="Document type"
+            onChange={(e) => {
+              const next = e.target.value as LibraryDocumentQuery["format"];
+              setFormat(next);
+              persist(FORMAT_KEY, next);
+            }}
+            className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0.5 text-[11px] text-foreground outline-none focus:border-foreground/40"
+          >
+            {FORMAT_OPTIONS.map(([key, label]) => (
+              <option key={key} value={key}>{label}</option>
+            ))}
+          </select>
+          {(format !== "all" || filter) && (
+            <button
+              onClick={() => { setFormat("all"); persist(FORMAT_KEY, "all"); setFilter(""); }}
+              className="px-1.5 py-0.5 rounded text-muted hover:text-foreground"
+            >
+              Clear
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-1 text-[11px]">
           {/* Two tabs used to sit here, so name what these are: without the
               word they read as another pair of views. */}
@@ -616,10 +675,10 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
             </button>
           </div>
         ) : loading ? (
-          <div className="p-4 text-[12px] text-muted">Scanning your markdown…</div>
+          <div className="p-4 text-[12px] text-muted">Scanning your documents…</div>
         ) : shown.length === 0 ? (
           <div className="p-4 text-[12px] text-muted">
-            No markdown found{q ? " for this filter" : ""}.
+            No documents found{q || format !== "all" ? " for this filter" : ""}.
           </div>
         ) : (
           <div className="pl-1">

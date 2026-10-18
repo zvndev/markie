@@ -7,6 +7,48 @@ const { parseFrontmatter } = require("./skill-frontmatter");
 
 const fsp = fs.promises;
 const MD_RE = /\.(md|markdown|mdx)$/i;
+// The device index is a document index now: Browse must find every file type
+// Markie can open, not only Markdown. This map mirrors
+// src/lib/document-formats.ts EXTENSIONS and electron/document-files.cjs;
+// keep the three in step. SKILL.md handling below stays Markdown-only.
+const FORMAT_BY_EXT = {
+  md: "markdown", markdown: "markdown", mdx: "markdown",
+  wd: "darkmown",
+  txt: "text", text: "text", log: "text", csv: "csv",
+  json: "json", yaml: "yaml", yml: "yaml", xml: "xml",
+  docx: "docx", doc: "doc", rtf: "rtf", html: "html", htm: "html", odt: "odt",
+};
+const DOC_RE = /\.(?:md|markdown|mdx|wd|txt|text|log|csv|json|ya?ml|xml|docx|doc|rtf|html?|odt)$/i;
+// Formats whose bytes are the text itself. Only these get a body snippet in
+// the index; office formats are binary packages and must never contribute
+// fake "text" scraped from their bytes. Their extracted text joins search
+// through the document library once a file has been opened.
+const TEXT_FORMATS = new Set(["markdown", "darkmown", "text", "csv", "json", "yaml", "xml"]);
+const SNIPPET_BYTES = 8192;
+const SNIPPET_MAX_FILE_BYTES = 256 * 1024;
+
+function formatOf(name) {
+  const dot = String(name || "").lastIndexOf(".");
+  if (dot < 0) return null;
+  return FORMAT_BY_EXT[String(name).slice(dot + 1).toLowerCase()] || null;
+}
+
+async function textSnippet(filePath, size) {
+  if (typeof size === "number" && size > SNIPPET_MAX_FILE_BYTES) return undefined;
+  let handle;
+  try {
+    handle = await fsp.open(filePath, "r");
+    const buffer = Buffer.alloc(SNIPPET_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, SNIPPET_BYTES, 0);
+    const text = buffer.toString("utf8", 0, bytesRead);
+    // A NUL in the head means this is not the plain text its name claims.
+    return text.includes("\0") ? undefined : text;
+  } catch {
+    return undefined;
+  } finally {
+    if (handle) await handle.close().catch(() => {});
+  }
+}
 const SKILL_RE = /^skill\.md$/i;
 // How much of a SKILL.md is read for its description. The front matter is at
 // the top and a few hundred bytes long; a skill that pads it past this is
@@ -42,7 +84,7 @@ const BUNDLE_RE =
 // Budget: a device-wide walk must always terminate, even on a machine with a
 // pathological tree. Hitting a limit returns what was found so far rather than
 // running forever or holding a million rows in memory.
-const DEFAULT_BUDGET = { maxFiles: 200000, maxMs: 30000, maxDepth: 24 };
+const DEFAULT_BUDGET = { maxFiles: 200000, maxMs: 30000, maxDepth: 24, maxSnippets: 4000 };
 
 function isBundleDir(name) {
   return BUNDLE_RE.test(String(name || ""));
@@ -266,6 +308,7 @@ async function walk(rootDir, {
   const registered = (roots || []).filter(Boolean).map((r) => path.resolve(r));
   const out = [];
   let dirs = 0;
+  let snippets = 0;
   let stopped = null;   // "files" | "time" — abort the whole walk
   let depthCapped = false;
 
@@ -288,14 +331,23 @@ async function walk(rootDir, {
       if (ent.isDirectory()) {
         if (shouldDescend(full, ent.name, home, { allow, skip, roots: registered }))
           subdirs.push(full);
-      } else if (ent.isFile() && MD_RE.test(ent.name)) {
+      } else if (ent.isFile() && DOC_RE.test(ent.name)) {
         if (out.length >= limits.maxFiles) {
           stopped = "files";
           return;
         }
         let mtimeMs = 0;
-        try { mtimeMs = (await fsp.stat(full)).mtimeMs; } catch { /* keep 0 */ }
-        const row = { path: full, name: ent.name, dir, mtimeMs };
+        let size;
+        try { const st = await fsp.stat(full); mtimeMs = st.mtimeMs; size = st.size; } catch { /* keep 0 */ }
+        const format = formatOf(ent.name);
+        const row = { path: full, name: ent.name, dir, mtimeMs, format };
+        // Bounded body text for search. The cap keeps a device-wide walk
+        // from turning into a device-wide read; files past it are still
+        // indexed by name, path, and format.
+        if (format && TEXT_FORMATS.has(format) && snippets < (limits.maxSnippets ?? 0)) {
+          const snippet = await textSnippet(full, size);
+          if (snippet) { row.snippet = snippet; snippets += 1; }
+        }
         // A SKILL.md says which tool it belongs to and what it is for, so the
         // Skills panel can group and describe it without a second read.
         if (SKILL_RE.test(ent.name)) {
@@ -321,6 +373,7 @@ async function walk(rootDir, {
 
   await visit(rootDir, 0);
   stats.files = out.length;
+  stats.snippets = snippets;
   stats.dirs = dirs;
   stats.ms = now() - startedAt;
   stats.truncated = !!stopped || depthCapped;
@@ -392,6 +445,7 @@ function rescan(options = {}) {
     const now = options.now || Date.now;
     const startedAt = now();
     let usedFiles = 0;
+    let usedSnippets = 0;
     for (const target of targets) {
       const remainingFiles = limits.maxFiles - usedFiles;
       const remainingMs = limits.maxMs - (now() - startedAt);
@@ -405,10 +459,11 @@ function rescan(options = {}) {
         ...options,
         home,
         roots,
-        budget: { ...limits, maxFiles: remainingFiles, maxMs: remainingMs },
+        budget: { ...limits, maxFiles: remainingFiles, maxMs: remainingMs, maxSnippets: Math.max(0, (limits.maxSnippets ?? 0) - usedSnippets) },
         stats: one,
       });
       usedFiles += one.files || 0;
+      usedSnippets += one.snippets || 0;
       for (const row of rows) {
         if (seen.has(row.path)) continue;
         seen.add(row.path);
@@ -444,8 +499,8 @@ function seed(files, scannedAt) {
 
 // A rename or move Markie made itself is one row changing, not a reason to
 // walk the disk again: patch the cache and let the caller broadcast it. A
-// folder carries everything under it. A file renamed to something that is not
-// markdown leaves the index, and one renamed into markdown joins it.
+// folder carries everything under it. A file renamed to an unsupported type
+// leaves the index, and one renamed into a supported type joins it.
 //
 // Returns the patched cache when anything changed, else null.
 function moved(oldPath, newPath, { isDir = false } = {}) {
@@ -472,14 +527,14 @@ function moved(oldPath, newPath, { isDir = false } = {}) {
     }
     found = true;
     changed = true;
-    if (MD_RE.test(newPath)) {
-      files.push({ ...row, path: newPath, name: path.basename(newPath), dir: path.dirname(newPath) });
+    if (DOC_RE.test(newPath)) {
+      files.push({ ...row, path: newPath, name: path.basename(newPath), dir: path.dirname(newPath), format: formatOf(newPath) });
     }
   }
-  if (!isDir && !found && MD_RE.test(newPath)) {
+  if (!isDir && !found && DOC_RE.test(newPath)) {
     let mtimeMs = 0;
     try { mtimeMs = fs.statSync(newPath).mtimeMs; } catch { /* keep 0 */ }
-    files.push({ path: newPath, name: path.basename(newPath), dir: path.dirname(newPath), mtimeMs });
+    files.push({ path: newPath, name: path.basename(newPath), dir: path.dirname(newPath), mtimeMs, format: formatOf(newPath) });
     changed = true;
   }
   if (!changed) return null;
@@ -487,11 +542,11 @@ function moved(oldPath, newPath, { isDir = false } = {}) {
   return _cache;
 }
 
-// A markdown file Markie itself just wrote (a document landing from the cloud)
+// A document file Markie itself just wrote (a document landing from the cloud)
 // joins the index at once rather than at the next walk. Returns the patched
 // cache when a row was added, else null.
 function noteFile(filePath) {
-  if (!_cache || !Array.isArray(_cache.files) || !MD_RE.test(filePath)) return null;
+  if (!_cache || !Array.isArray(_cache.files) || !DOC_RE.test(filePath)) return null;
   if (_cache.files.some((row) => row.path === filePath)) return null;
   let mtimeMs = 0;
   try { mtimeMs = fs.statSync(filePath).mtimeMs; } catch { /* keep 0 */ }
@@ -499,7 +554,7 @@ function noteFile(filePath) {
     ..._cache,
     files: [
       ..._cache.files,
-      { path: filePath, name: path.basename(filePath), dir: path.dirname(filePath), mtimeMs },
+      { path: filePath, name: path.basename(filePath), dir: path.dirname(filePath), mtimeMs, format: formatOf(filePath) },
     ],
   };
   return _cache;
@@ -508,5 +563,5 @@ function noteFile(filePath) {
 module.exports = {
   isExcludedDir, isBundleDir, EXCLUDED_NAMES, BUNDLE_RE, DEFAULT_BUDGET, registeredRoots,
   shouldDescend, allowlist, icloudDesktopDocuments, skippedDirs, scanTargets, nearestRoot,
-  skillToolFor, walk, rescan, getCached, seed, moved, noteFile,
+  skillToolFor, walk, rescan, getCached, seed, moved, noteFile, MD_RE, DOC_RE, formatOf,
 };

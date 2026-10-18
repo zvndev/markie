@@ -78,7 +78,7 @@ describe("plain text is not Markdown", () => {
     await waitFor(() => expect(saveFile).toHaveBeenCalledWith(expect.objectContaining({ content: text, filePath: path })));
   });
 
-  it.each(["owner", "editor", "viewer"] as const)("preserves %s permissions without entering a rich-only live session", async (role) => {
+  it.each(["owner", "editor", "viewer"] as const)("preserves %s permissions in the plain-text live session", async (role) => {
     auth.active = true;
     auth.role = role;
     await authStore.refresh();
@@ -89,11 +89,17 @@ describe("plain text is not Markdown", () => {
         content_hash: null, cloud_version: 1, sync_state: "synced", last_opened_at: null, last_synced_at: null })),
       syncDocRole,
     } as Partial<ElectronAPI>);
-    render(<Home />);
-    const source = await screen.findByRole("textbox", { name: "Source document" });
+    const view = render(<Home />);
+    await screen.findByRole("textbox", { name: "Source document" });
     await waitFor(() => expect(syncDocRole).toHaveBeenCalledWith({ cloudId: "cloud", role }));
+    // A shared text file with another member goes live in its own pane now:
+    // no rich editor, and no "file sync only" note. The pane remounts when
+    // the session starts, so the textbox is re-queried after it lands.
+    await waitFor(() => expect(view.container.querySelector("[data-markie-text-live]")).not.toBeNull());
+    const source = screen.getByRole("textbox", { name: "Source document" });
     if (role === "viewer") expect(source).toHaveAttribute("readonly");
     else expect(source).not.toHaveAttribute("readonly");
-    expect(screen.getByText(/Plain text uses file sync/)).toBeInTheDocument();
+    expect(view.container.querySelector("[data-markie-rich-pane]")).toBeNull();
+    expect(screen.queryByText(/Plain text uses file sync/)).not.toBeInTheDocument();
   });
 });

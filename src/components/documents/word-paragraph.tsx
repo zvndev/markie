@@ -100,7 +100,7 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
       Object.assign(span.style, {
         fontWeight: style.bold ? "700" : "400", fontStyle: style.italic ? "italic" : "normal",
         textDecoration: style.underline === "none" ? "none" : style.underline || run.hyperlinkId ? "underline" : "none",
-        color: style.color && /^[0-9a-f]{6}$/i.test(style.color) ? `#${style.color}` : run.hyperlinkId ? "#2563eb" : "",
+        color: style.color && /^[0-9a-f]{6}$/i.test(style.color) ? `#${style.color}` : run.hyperlinkId ? "var(--status-blue)" : "",
         fontFamily: style.fontFamily ?? "", fontSize: style.fontSizePoints ? `${style.fontSizePoints}pt` : "",
       });
       span.dataset.expectedStyle = span.getAttribute("style") ?? "";

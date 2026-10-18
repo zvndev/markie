@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { CloudAreaError, type CloudAreasStore } from "./cloud-areas.ts";
 
 /** Ordinary byte snapshots only. This is neither vault transport nor live CRDT merging. */
-export type PlatformFormat = "markdown" | "text" | "csv" | "json" | "yaml" | "xml" | "docx" | "doc";
+export type PlatformFormat = "markdown" | "darkmown" | "text" | "csv" | "json" | "yaml" | "xml" | "docx" | "doc" | "rtf" | "odt";
 export type PlatformRole = "owner" | "editor" | "viewer";
 export interface PlatformSnapshotInput { schemaVersion: 2; name: string; format: PlatformFormat; encoding: "base64"; data: string; sha256: string; baseVersion: number; areaId?: string }
 export interface PlatformMetadata { schemaVersion: 2; id: string; name: string; format: PlatformFormat; sha256: string; version: number; createdAt: number; updatedAt: number; byteLength: number; role: PlatformRole; areaId?: string }
@@ -23,7 +23,9 @@ export class DocumentPlatformError extends Error {
   constructor(code: string, status: DocumentPlatformError["status"], message: string, serverVersion?: number) { super(message); this.code = code; this.status = status; this.serverVersion = serverVersion; }
 }
 export function platformFail(code: string, status: DocumentPlatformError["status"], message: string, serverVersion?: number): never { throw new DocumentPlatformError(code, status, message, serverVersion); }
-const FORMATS: readonly string[] = ["markdown", "text", "csv", "json", "yaml", "xml", "docx", "doc"];
+// Byte snapshots are format-agnostic beyond this allowlist; keep in step
+// with src/lib/document-cloud.ts FORMATS.
+const FORMATS: readonly string[] = ["markdown", "darkmown", "text", "csv", "json", "yaml", "xml", "docx", "doc", "rtf", "odt"];
 const hash = (value: Uint8Array | string) => createHash("sha256").update(value).digest("hex");
 const opaqueId = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 export function platformObject(value: unknown, keys: string[]): Record<string, unknown> {

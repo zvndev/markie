@@ -3,7 +3,7 @@ import { classifyDocumentFormat } from "./document-formats";
 
 export interface LibraryDocumentQuery {
   search: string;
-  format: "all" | LibraryFormat | "other";
+  format: "all" | LibraryFormat | "html" | "other";
   sort: "default" | "recent" | "name" | "type";
 }
 
@@ -11,7 +11,7 @@ export interface LibraryDocumentQuery {
 export interface LibraryDocumentMetadata {
   key: string;
   name: string;
-  format: LibraryFormat | "other";
+  format: LibraryFormat | "html" | "other";
   path?: string | null;
   updatedAt?: string | number | null;
   extractedText?: string;
@@ -21,9 +21,11 @@ export interface LibraryDocumentMetadata {
 
 export const DEFAULT_LIBRARY_DOCUMENT_QUERY: Readonly<LibraryDocumentQuery> = Object.freeze({ search: "", format: "all", sort: "default" });
 
-export function libraryDocumentFormat(name: string): LibraryFormat | "other" {
+export function libraryDocumentFormat(name: string): LibraryFormat | "html" | "other" {
   const kind = classifyDocumentFormat(name).kind;
-  return kind === "unsupported" || kind === "html" ? "other" : kind;
+  // HTML keeps its own bucket so it is filterable like every other type the
+  // explorer can find, even though it has no storage record format of its own.
+  return kind === "unsupported" ? "other" : kind;
 }
 
 export function matchesLibraryDocument(metadata: LibraryDocumentMetadata, query: LibraryDocumentQuery): boolean {

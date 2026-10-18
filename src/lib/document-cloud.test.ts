@@ -43,6 +43,16 @@ describe("explicit multi-format cloud client", () => {
     expect(request.mock.calls[0][0]).toBe("https://markie.test/api/document-platform/documents");
     expect(request.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer session" });
   });
+  it.each([["memo.rtf", "rtf"], ["report.odt", "odt"], ["counter.wd", "darkmown"]])("uploads a %s snapshot as %s", async (name, format) => {
+    const request = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      return Response.json({ document: { ...body, id: "document-id", version: 1, role: "owner" } });
+    });
+    const client = new DocumentCloudClient({ baseUrl: "https://markie.test", token: "session" }, request);
+    const document = await client.upload({ name, bytes: new TextEncoder().encode("snapshot bytes") });
+    expect(document.format).toBe(format);
+    expect(JSON.parse(String(request.mock.calls[0][1]?.body)).format).toBe(format);
+  });
   it("requires the selected new-copy area in the acknowledgment and never retries a denied destination", async () => {
     const request = vi.fn<typeof fetch>(async (_url, init) => Response.json({ document: { ...JSON.parse(String(init?.body)), id: "document-id", version: 1, role: "owner" } }));
     const client = new DocumentCloudClient({ baseUrl: "https://markie.test", token: "session" }, request), file = { name: "note.txt", bytes: new TextEncoder().encode("original") };

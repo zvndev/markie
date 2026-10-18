@@ -233,7 +233,7 @@ describe("BrowseView browsing", () => {
     renderBrowse(scan({ files: project() }));
     // The root is closed because the user closed it, even though the rule
     // would have opened it and a remembered folder sits inside it.
-    await waitFor(() => expect(screen.queryByText("Scanning your markdown…")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Scanning your documents…")).not.toBeInTheDocument());
     expect(screen.queryByText("docs")).not.toBeInTheDocument();
   });
 
@@ -283,7 +283,34 @@ describe("BrowseView browsing", () => {
   });
 });
 
-const filterField = () => screen.getByPlaceholderText(/Filter by name or path/);
+const filterField = () => screen.getByPlaceholderText(/Search name, path, or text/);
+
+describe("BrowseView document types", () => {
+  const mixed = (): MdRow[] => [
+    row({ path: "/home/me/work/note.md", name: "note.md", dir: "/home/me/work", format: "markdown" }),
+    row({ path: "/home/me/work/letter.docx", name: "letter.docx", dir: "/home/me/work", format: "docx" }),
+    row({ path: "/home/me/work/plain.txt", name: "plain.txt", dir: "/home/me/work", format: "text", snippet: "the hidden needle" }),
+    row({ path: "/home/me/work/memo.rtf", name: "memo.rtf", dir: "/home/me/work", format: "rtf" }),
+  ];
+
+  it("filters by document type and remembers the choice", async () => {
+    renderBrowse(scan({ files: mixed() }));
+    await screen.findByText("letter.docx");
+    await userEvent.selectOptions(screen.getByLabelText("Document type"), "docx");
+    expect(screen.getByText("letter.docx")).toBeInTheDocument();
+    expect(screen.queryByText("note.md")).not.toBeInTheDocument();
+    expect(screen.queryByText("plain.txt")).not.toBeInTheDocument();
+    expect(localStorage.getItem("markie.browse.format.v1")).toBe("docx");
+  });
+
+  it("searches inside snippeted text files, not just their paths", async () => {
+    renderBrowse(scan({ files: mixed() }));
+    await screen.findByText("plain.txt");
+    await userEvent.type(filterField(), "hidden needle");
+    expect(screen.getByText("plain.txt")).toBeInTheDocument();
+    expect(screen.queryByText("note.md")).not.toBeInTheDocument();
+  });
+});
 const dateCell = () => document.querySelector("[data-markie-browse-updated]");
 
 describe("BrowseView dates that keep themselves honest", () => {

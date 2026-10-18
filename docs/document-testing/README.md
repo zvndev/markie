@@ -35,8 +35,8 @@ Next, open `samples/Counter.wd` and follow the [interactive Darkmown checks](dar
 | Legacy DOC | Explicit text-only copy; original DOC stays untouched. No native DOC writer. |
 | HTML | Explicit text-only import with a loss warning. Rich HTML editing is still planned. |
 | DOCX print/PDF | Supported-view output on light paper with document geometry. Comments are omitted; pending revisions block output. |
-| Library | Search available fields, filter by actual format including RTF/ODT, sort and reset. Recovery, native and cloud copies remain distinct. |
-| Cloud snapshots | Existing supported formats only. RTF/ODT/Darkmown cloud upload, live Office multiplayer and new people features are not enabled. |
+| Library | Search available fields, filter by actual format including RTF/ODT/HTML, sort and reset. Browse (the device explorer) finds every supported document type, filters by type, and searches inside small text files. Recovery, native and cloud copies remain distinct. |
+| Cloud snapshots | Markdown, Darkmown, Text, CSV, JSON, YAML, XML, DOCX, DOC, RTF, and ODT snapshots, filterable by format in Cloud. RTF/ODT open in the rich editor from the cloud dialog. Live Office multiplayer and new people features are not enabled; shared plain text (.txt/.text/.log) does go live in its text pane. |
 | Protected vault | Experimental passphrase-based storage. Do not use irreplaceable sensitive originals; biometric keys are not implemented. |
 
 ## Report a problem

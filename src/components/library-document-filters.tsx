@@ -4,7 +4,7 @@ import { DEFAULT_LIBRARY_DOCUMENT_QUERY, type LibraryDocumentQuery } from "@/lib
 
 const TYPES: ReadonlyArray<readonly [LibraryDocumentQuery["format"], string]> = [
   ["all", "All types"], ["markdown", "Markdown"], ["text", "Text"], ["docx", "DOCX"], ["doc", "DOC"],
-  ["rtf", "RTF"], ["odt", "ODT"], ["darkmown", "Darkmown"], ["csv", "CSV"], ["json", "JSON"], ["yaml", "YAML"], ["xml", "XML"], ["other", "Other"],
+  ["rtf", "RTF"], ["odt", "ODT"], ["darkmown", "Darkmown"], ["csv", "CSV"], ["json", "JSON"], ["yaml", "YAML"], ["xml", "XML"], ["html", "HTML"], ["other", "Other"],
 ];
 const SORTS: ReadonlyArray<readonly [LibraryDocumentQuery["sort"], string]> = [
   ["default", "Default order"], ["recent", "Most recent"], ["name", "Name"], ["type", "Type"],

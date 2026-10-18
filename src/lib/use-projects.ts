@@ -36,9 +36,14 @@ export interface ProjectsHandle {
 }
 
 // The index rows carry the four metadata fields as optionals (they are joined
-// in after the scan). The engine wants them settled.
+// in after the scan). The engine wants them settled. Projects organize a
+// Markdown library by front matter and repo, so only Markdown rows enter the
+// taxonomy even though the device index now also finds every other document
+// type for Browse.
 function toEngineFiles(rows: MdRow[]): EngineFile[] {
-  return rows.map((r) => ({
+  return rows
+    .filter((r) => (r.format ? r.format === "markdown" : /\.(md|markdown|mdx)$/i.test(r.name)))
+    .map((r) => ({
     path: r.path,
     name: r.name,
     dir: r.dir,

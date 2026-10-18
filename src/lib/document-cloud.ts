@@ -18,7 +18,10 @@ export class DocumentCloudError extends Error {
 }
 const MAX_FILE = 16 * 1024 * 1024;
 const MAX_RESPONSE = 24 * 1024 * 1024;
-const FORMATS = new Set(["markdown", "text", "csv", "json", "yaml", "xml", "docx", "doc"]);
+// Every format with a LibraryRecord can travel as a cloud snapshot: the
+// service stores bytes plus a digest, so RTF/ODT/Darkmown need no separate
+// transport. Keep in step with server/src/document-platform-store.ts FORMATS.
+const FORMATS = new Set(["markdown", "darkmown", "text", "csv", "json", "yaml", "xml", "docx", "doc", "rtf", "odt"]);
 const ROLES = new Set(["owner", "editor", "viewer"]);
 const validName = (value: unknown): value is string => typeof value === "string" && !!value.trim() && value.length <= 256
   && !/[\u0000-\u001f\u007f/\\]/.test(value) && !/\.(?:vault|markievault|markie-vault)$/i.test(value);

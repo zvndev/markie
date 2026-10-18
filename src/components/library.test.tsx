@@ -293,7 +293,10 @@ describe("documents in the existing Library", () => {
   it("routes creation and vault actions without adding another navigation tab", async () => {
     const onCreateDocument = vi.fn(), onOpenVault = vi.fn();
     renderLibrary([], { props: { onCreateDocument, onOpenVault } });
+    // Creation now asks for a type in the centered New document dialog.
+    await userEvent.click(screen.getByRole("button", { name: "New document…" }));
     await userEvent.click(screen.getByRole("button", { name: "New Word document" }));
+    await userEvent.click(screen.getByRole("button", { name: "New document…" }));
     await userEvent.click(screen.getByRole("button", { name: "New text document" }));
     await userEvent.click(screen.getByRole("button", { name: "Locked vault" }));
     expect(onCreateDocument.mock.calls).toEqual([["docx"], ["text"]]);
@@ -304,12 +307,14 @@ describe("documents in the existing Library", () => {
     expect(screen.getByRole("button", { name: "Recent" })).toBeInTheDocument();
   });
 
-  it("keeps creation in one compact aligned group with vault access separate", async () => {
+  it("keeps creation behind one New document action with vault access separate", async () => {
     renderLibrary([], { props: { onCreateDocument: vi.fn(), onOpenVault: vi.fn() } });
     const actions = screen.getByRole("group", { name: "Document actions" });
     const create = within(actions).getByRole("group", { name: "Create document" });
-    expect(within(create).getAllByRole("button").map((button) => button.textContent)).toEqual(["Markdown", "Word", "Text"]);
-    expect(create.querySelector(".grid-cols-3")).not.toBeNull();
+    // The three inline type buttons are gone: one action opens the dialog
+    // that offers every creatable type.
+    expect(within(create).getAllByRole("button").map((button) => button.textContent)).toEqual(["New document…"]);
+    expect(screen.queryByRole("button", { name: "New Word document" })).not.toBeInTheDocument();
     expect(within(create).queryByRole("button", { name: "Locked vault" })).not.toBeInTheDocument();
     expect(within(actions).getByRole("button", { name: "Locked vault" }).parentElement).toHaveClass("border-t");
     await screen.findByText("Workspace ready");

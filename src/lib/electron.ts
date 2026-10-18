@@ -560,6 +560,13 @@ export interface MdRow {
   name: string;
   dir: string;
   mtimeMs: number;
+  // Document format from the index walk (mirrors classifyDocumentFormat).
+  // Absent on rows seeded from the persisted cache, where the name still
+  // classifies the same way.
+  format?: string;
+  // Bounded body head for text-representation formats, when the walk's
+  // snippet budget reached this file. Never set for binary office formats.
+  snippet?: string;
   // Joined from the main process's md_meta table for the Projects taxonomy.
   // Optional because the metadata pass runs after the index and lags it on a
   // first run: a row without these still renders everywhere it did before.

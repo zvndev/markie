@@ -27,6 +27,7 @@ import { CommandPalette } from "@/components/command-palette";
 import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { Settings } from "@/components/settings";
 import { Library } from "@/components/library";
+import { NewDocumentModal } from "@/components/new-document-modal";
 import { ActivityBar } from "@/components/activity-bar";
 import { RichPaneError } from "@/components/rich-pane-error";
 import {
@@ -45,6 +46,7 @@ import {
   UpdateStrip,
 } from "@/components/share-banner";
 import { ConflictDialog } from "@/components/conflict-dialog";
+import { TextCollabEditor } from "@/components/text-collab-editor";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
 import { DraftStrip } from "@/components/draft-strip";
 import { LargeDocStrip, TooLargeStrip } from "@/components/large-doc";
@@ -264,6 +266,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   const [showHelp, setShowHelp] = useState(false);
   const [showTheme, setShowTheme] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showNewDocument, setShowNewDocument] = useState(false);
   // Non-null while a gated surface is asking for a session; the value is what
   // it wants the session for, which is what the dialog puts at the top.
   const [signInReason, setSignInReason] = useState<SignInReason | null>(null);
@@ -488,7 +491,9 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         // No live session for a large document (enterTier): Source is
         // read-only under one, and the rich pane that would carry it never
         // mounts, so a session would only lock the owner out of their file.
-        if (largeDocRef.current || plainText || liveUnavailableRef.current || !me || !members || members.length === 0) {
+        // Plain text goes live through its own text pane (Y.Text), so it is
+        // no longer excluded here.
+        if (largeDocRef.current || liveUnavailableRef.current || !me || !members || members.length === 0) {
           setCollabCfg(null);
           return;
         }
@@ -539,7 +544,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         setCollabCfg(null);
         setEnforcedTheme(null);
       });
-  }, [filePath, plainText]);
+  }, [filePath]);
 
   useEffect(() => {
     refreshCollab();
@@ -857,6 +862,15 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     setCanShare(false);
     enterTier("", null, 0);
   }, [dismissDocumentUI, resetDocAccess, enterTier, resetDoc, settleDocument]);
+
+  // "New" asks what kind of document to start when the document workspace is
+  // available, instead of silently assuming Markdown (or Word, from inside
+  // the workspace). Without it, New keeps its original blank-Markdown meaning.
+  const requestNewFile = useCallback(async () => {
+    if (!documentsEnabled) { await handleNewFile(); return; }
+    if (document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
+    setShowNewDocument(true);
+  }, [documentsEnabled, handleNewFile]);
 
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
@@ -1579,7 +1593,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
             break;
           case "n":
             e.preventDefault();
-            handleNewFile();
+            requestNewFile();
             break;
           case "/":
             e.preventDefault();
@@ -1597,6 +1611,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     handleSave,
     handleSaveAs,
     handleNewFile,
+    requestNewFile,
     selectView,
   ]);
 
@@ -1693,12 +1708,12 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     // closures rather than the ones captured on first render.
     handlersRef.current.undoRedo = runUndoRedo;
     handlersRef.current.openFile = handleOpenFile;
-    handlersRef.current.newFile = handleNewFile;
+    handlersRef.current.newFile = requestNewFile;
     handlersRef.current.save = handleSave;
     handlersRef.current.saveAs = handleSaveAs;
     handlersRef.current.fork = handleMakeCopy;
     handlersRef.current.reveal = handleReveal;
-  }, [handleOpenFile, handleNewFile, handleSave, handleSaveAs, handleMakeCopy, handleReveal, runUndoRedo]);
+  }, [handleOpenFile, handleNewFile, requestNewFile, handleSave, handleSaveAs, handleMakeCopy, handleReveal, runUndoRedo]);
 
   // Apply the chosen color mode (system/light/dark) before first paint, and
   // keep "system" tracking the OS preference.
@@ -1773,7 +1788,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     const closeRequests = closeGeneration;
     const offs = [
       api.onMenuOpenFile?.(() => handlersRef.current.openFile()),
-      api.onMenuNewFile?.(() => documentsOpenRef.current ? documentShellRef.current?.create("docx") : handlersRef.current.newFile()),
+      api.onMenuNewFile?.(() => handlersRef.current.newFile()),
       api.onMenuExportPDF?.((theme) => {
         if (documentsOpenRef.current) { if (theme === "light") nativeCommandHandler.current("document-export-pdf"); }
         else handlersRef.current.exportPDF(theme ?? "dark");
@@ -1953,7 +1968,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       { id: "browse", title: "Browse all markdown…", group: "File", keywords: "all files device skills index find", run: () => selectView("browse") },
       { id: "cloud", title: "Cloud…", group: "File", keywords: "synced shared sharing people cloud sync backup invited", run: () => selectView("cloud") },
       { id: "skills", title: "Skills & agent files…", group: "File", keywords: "claude agents codex gemini cursor instructions", run: () => selectView("skills") },
-      { id: "new-file", title: "New file", group: "File", shortcut: "⌘N", keywords: "blank create empty document", run: handleNewFile },
+      { id: "new-file", title: "New file", group: "File", shortcut: "⌘N", keywords: "blank create empty document", run: requestNewFile },
       // Ungated on purpose: this used to vanish from the palette exactly when
       // the user could not work out how to share, which is when they search for
       // it. ShareGate explains whatever is missing.
@@ -1977,7 +1992,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       revealLabel,
       exportPDF,
       exportHTML,
-      handleNewFile,
+      requestNewFile,
       selectView,
       editContent,
       documentsEnabled,
@@ -2133,7 +2148,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           panelOpen={showLibrary}
           onSelectView={selectView}
           canFormat={!documentsOpen && (mode === "preview" || mode === "split")}
-          onNewFile={handleNewFile}
+          onNewFile={requestNewFile}
           onAgents={() => setShowAgents(true)}
           onShortcuts={() => setShowHelp((v) => !v)}
           onAccount={() => setShowSettings(true)}
@@ -2267,10 +2282,12 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
               open={showFind}
               withReplace={findWithReplace}
               target={findTarget}
-              // The source pane is also locked during a live session, because
-              // shared edits have to travel through the rich pane's Yjs doc.
+              // The source pane is also locked during a live Markdown session,
+              // because shared edits have to travel through the rich pane's
+              // Yjs doc. A plain-text live session edits through this pane
+              // itself, so replace stays available there.
               canReplace={
-                docEditable && !(findPane === "source" && !!collabCfg)
+                docEditable && (plainText || !(findPane === "source" && !!collabCfg))
               }
               revision={content}
               onClose={closeFind}
@@ -2285,20 +2302,33 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
                   mode === "split" ? "markie-pane-divider" : ""
                 } markie-source-pane h-full min-w-0 w-full flex-1 overflow-hidden flex flex-col`}
               >
-                {collabCfg && <LiveSourceBanner />}
-                {plainText && canShare && <p className="px-3 py-2 text-xs text-muted border-b border-border">Plain text uses file sync, not live collaboration yet.</p>}
+                {collabCfg && !plainText && <LiveSourceBanner />}
+                {plainText && canShare && !collabCfg && <p className="px-3 py-2 text-xs text-muted border-b border-border">Plain text syncs as a file until a live session starts.</p>}
                 {liveUnavailable && <LiveUnavailableNote />}
                 <div className="flex-1 min-h-0 overflow-hidden">
-                  <SourceEditor
-                    value={content}
-                    plainText={plainText}
-                    onChange={editContent}
-                    onReady={setSourceHandle}
-                    // Read-only for two separate reasons: the rich pane owns the
-                    // shared document while a session is live, and a viewer may
-                    // not edit at all.
-                    readOnly={!!collabCfg || !docEditable}
-                  />
+                  {plainText && collabCfg ? (
+                    <TextCollabEditor
+                      key={`live-text:${collabCfg.docId}:${collabCfg.readonly}:${tokenTag(collabCfg.token)}`}
+                      value={content}
+                      onChange={editContent}
+                      collab={collabCfg}
+                      readOnly={!docEditable}
+                      onReady={setSourceHandle}
+                      onPeersChange={handlePeersChange}
+                      onCollabStatus={handleCollabStatus}
+                    />
+                  ) : (
+                    <SourceEditor
+                      value={content}
+                      plainText={plainText}
+                      onChange={editContent}
+                      onReady={setSourceHandle}
+                      // Read-only for two separate reasons: the rich pane owns the
+                      // shared document while a session is live, and a viewer may
+                      // not edit at all.
+                      readOnly={!!collabCfg || !docEditable}
+                    />
+                  )}
                 </div>
               </div>
             )}
@@ -2388,6 +2418,12 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
 
       {showPalette && (
         <CommandPalette commands={commands} onClose={() => setShowPalette(false)} />
+      )}
+      {showNewDocument && documentsEnabled && (
+        <NewDocumentModal
+          onClose={() => setShowNewDocument(false)}
+          onCreate={(format) => { setShowNewDocument(false); void createDocument(format); }}
+        />
       )}
       {showHelp && (
         <ShortcutsHelp commands={commands} onClose={() => setShowHelp(false)} />

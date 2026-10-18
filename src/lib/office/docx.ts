@@ -21,6 +21,8 @@ import { applyDocxRevisionOperation, inspectDocxRevisions, projectDocxRevisionVi
 import { inspectDocxHyperlinks, removeDocxHyperlink, setDocxHyperlink, updateDocxHyperlink } from "./docx-hyperlinks";
 import { inspectDocxPageBreaks, insertDocxPageBreak, removeDocxPageBreak } from "./docx-page-breaks";
 import { cachedTextRun, invalidateDocxDerived, validDerivedMarker } from "./docx-derived";
+import { normalizeDocxRange, replaceDocxSourceRange } from "./docx-structure";
+import type { RichTextRange, RichRangeResult } from "./rich-range-types";
 export * from "./docx-types";
 
 const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -460,6 +462,29 @@ export function replaceDocxText(document: DocxDocument, edits: readonly DocxText
     throw new DocxError("edit-limit", "Text edits exceed the document-part size limit.");
   }
   return snapshot({ ...state, ...next, runNodes: new Map() }, document.diagnostics, document.metadata, document.revision + 1);
+}
+
+/** Atomic source-preserving split/join/range replacement with mapped selection. */
+export function replaceDocxRange(document: DocxDocument, range: RichTextRange, text: string): RichRangeResult<DocxDocument> {
+  const state = states.get(document);
+  if (!state) throw new DocxError("invalid-session", "DOCX snapshot did not originate from this engine.");
+  if (!document.canEdit) throw new DocxError("read-only", "This package cannot be safely edited by the current engine.");
+  if (typeof text !== "string" || text.length > 200000 || /[\r\t]/.test(text)) throw new DocxError("invalid-edit", "Range replacement requires LF-normalized text without tabs.");
+  escapeXmlText(text);
+  const [start, end] = normalizeDocxRange(document.paragraphs, range);
+  const first = document.paragraphs.findIndex((p) => p.id === start.paragraphId), last = document.paragraphs.findIndex((p) => p.id === end.paragraphId);
+  const selected = document.paragraphs.slice(first, last + 1).map((p, i, items) => p.text.slice(i === 0 ? start.offset : 0, i === items.length - 1 ? end.offset : undefined)).join("\n");
+  if (selected === text) return { document, selection: { anchor: end, focus: end } };
+  // Derived-cache invalidation is immutable; failures never alter the input.
+  const prepared = invalidateDocxDerived({ ...state, identities: new Map(state.identities) }, true);
+  const result = replaceDocxSourceRange(prepared, start, end, text);
+  if (encoder.encode(result.state.source).length > state.limits.maxEntryBytes) throw new DocxError("edit-limit", "Range edit exceeds the document-part size limit.");
+  const candidate = { ...prepared, ...result.state, runNodes: new Map<string, XmlElement>() };
+  const unsupported = unsupportedMarkup(parseXml(candidate.source), inspectDocxImages(candidate).images.map((image) => image.drawing));
+  if (unsupported) throw new DocxError("unsupported-edit", `Range edit produced unsupported markup: ${unsupported}.`);
+  const next = snapshot(candidate, document.diagnostics, document.metadata, document.revision + 1);
+  const position = { paragraphId: result.paragraphId, offset: result.offset };
+  return { document: next, selection: { anchor: position, focus: position } };
 }
 
 /** Atomic, immutable rich operations; input snapshots remain usable as undo history. */

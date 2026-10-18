@@ -1,8 +1,8 @@
-# Everyday writing: first transaction batch
+# Everyday writing: source-safe document transactions
 
 [Back to the guide](README.md) · [Document types](document-types.md)
 
-The full Word-like editor is still being implemented under ENG-7025. These checks cover the first deterministic-input and control-layout batch, not completion of continuous cross-paragraph writing.
+The full Word-like editor is still being implemented under ENG-7025. These checks cover deterministic input, DOCX paragraph transactions and the shared controls, not complete Word compatibility.
 
 ## Mixed formatting and normal input
 
@@ -12,7 +12,15 @@ Try emoji and combining characters. Backspace/Delete must not leave invalid Unic
 
 If a browser input cannot be represented safely, the document and both visible/logical selections must be restored. Applying Bold after that rejection must still format only the selected substring. Confirming an IME candidate with Enter must not accidentally split the paragraph.
 
-Mixed-format structural split/join, cross-paragraph selection, rich clipboard, grouped caret-aware history and richer tracked editing remain part of the next transaction/model phase. The first batch protects unrepresented structural operations instead of flattening formatting. Existing supported plain-paragraph tracking and accept/reject should continue working.
+## DOCX paragraph editing
+
+Use a disposable DOCX with three ordinary paragraphs, including bold and italic text. Place the caret in a formatted word, press Enter, then type. Both sides must retain their original formatting. Press Enter twice at the end and type into the empty paragraph. Save and reopen: the blank paragraph and new text must survive.
+
+At the start of a paragraph, press Backspace to join it to the previous paragraph. At the end, press Delete to join the next paragraph. Select across several paragraphs in both directions and type a replacement; repeat with Enter and multiline plain-text paste. Undo and redo must restore both text and the selection. Select `bc` in `abcd`, press Enter, undo, then apply Bold: only `bc` should become bold. Cmd+A/Ctrl+A inside DOCX selects the document body for replacement.
+
+These transactions currently apply to ordinary DOCX paragraph/run content within one body or table cell. Paragraphs containing comments, revisions, hyperlinks, images or authored breaks remain protected from structural editing. Joining differently styled paragraphs is refused when it would change surviving text's inherited formatting. A selection cannot cross a table or cell boundary. Rejection must leave the source and visible document unchanged. RTF/ODT structural editing, rich clipboard interoperability, grouped typing history and richer tracked editing remain open. Existing supported plain-paragraph tracking and accept/reject should continue working.
+
+Legacy `.doc` is a separate binary format. Its new compound-container writer and plain-story stream serializer are internal building blocks, not a conforming rich DOC exporter. The app's legacy DOC route remains text-only; do not expect native DOC editing in this preview.
 
 ## Existing controls, correctly fitted
 

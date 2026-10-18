@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { DocxOperation, DocxRunFormat } from "@/lib/office/docx";
 import type { RichDocument } from "@/lib/office/rich-text-types";
-import { applyRichOperations, getRichCapabilities, replaceRichText } from "@/lib/office/rich-document";
+import { applyRichOperations, getRichCapabilities, replaceRichText, replaceRichRange } from "@/lib/office/rich-document";
+import type { RichTextRange } from "@/lib/office/rich-range-types";
+import { orderedWordRange, readWordSelection, restoreWordSelection, wordRangeText } from "./word-selection";
 import type { DocumentCommandTarget } from "@/lib/document-commands";
 import type { FormattingAction } from "@/lib/format-controls";
 import { DEFAULT_APPEARANCE } from "@/lib/doc-appearance";
@@ -35,12 +37,17 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
   const [outline, setOutline] = useState(false);
   const [tracking, setTracking] = useState(false), [reviewAuthor, setReviewAuthor] = useState("You"), [originalView, setOriginalView] = useState(false);
   const [reconcileToken, setReconcileToken] = useState(0);
+  const [structureReconcileToken, setStructureReconcileToken] = useState(0);
   const [tool, setTool] = useState<WordTool | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const paletteFocus = useRef<HTMLElement | null>(null);
   const [selectionRevision, setSelectionRevision] = useState(0);
   const [selectionSupported, setSelectionSupported] = useState(true);
-  const undoHistory = useRef<T[]>([]), redoHistory = useRef<T[]>([]);
+  type Snapshot = { document: T; selection: RichTextRange | null };
+  const undoHistory = useRef<Snapshot[]>([]), redoHistory = useRef<Snapshot[]>([]);
+  const logicalSelection = useRef<RichTextRange | null>(null), pendingSelection = useRef<RichTextRange | null>(null);
+  const rejectedDocumentInput = useRef<RichTextRange | null>(null);
+  const crossComposing = useRef(false);
   const latestDocument = useRef(document);
   const host = useRef<HTMLDivElement>(null);
   const [linkContainer, setLinkContainer] = useState<HTMLDivElement | null>(null);
@@ -48,20 +55,48 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
   const textSelection = useRef<WordTextMatch | null>(null);
   const access = useRef({ readOnly, isReadOnly, canEdit: document.canEdit, originalView }); access.current = { readOnly, isReadOnly, canEdit: document.canEdit, originalView };
   const canView = () => !!host.current && !host.current.closest("[inert]");
-  const canMutate = () => canView() && !access.current.readOnly && !access.current.isReadOnly?.() && access.current.canEdit && !access.current.originalView;
+  const canMutate = () => canView() && !access.current.readOnly && !access.current.isReadOnly?.() && access.current.canEdit && !access.current.originalView && !crossComposing.current && !host.current?.querySelector('[data-word-composing="true"]');
   const openPalette = () => { if (onCommandsReady || tool || !canView()) return; paletteFocus.current = globalThis.document.activeElement instanceof HTMLElement ? globalThis.document.activeElement : null; setPaletteOpen(true); };
   const closePalette = () => { setPaletteOpen(false); requestAnimationFrame(() => { const prior = paletteFocus.current; if (prior?.isConnected && !prior.closest("[inert]")) prior.focus(); }); };
   latestDocument.current = document;
+  const currentSelection = () => tool || paletteOpen ? logicalSelection.current : host.current && readWordSelection(host.current) || logicalSelection.current;
+  const syncSelection = (range: RichTextRange) => {
+    logicalSelection.current = range;
+    const same = range.anchor.paragraphId === range.focus.paragraphId;
+    textSelection.current = same ? { paragraphId: range.anchor.paragraphId, start: Math.min(range.anchor.offset, range.focus.offset), end: Math.max(range.anchor.offset, range.focus.offset) } : null;
+    setSelectionSupported(same || isDocx);
+    setSelected(range.focus.paragraphId);
+    const paragraph = latestDocument.current.paragraphs.find((item) => item.id === range.focus.paragraphId);
+    let offset = 0;
+    const run = paragraph?.runs.find((item) => { offset += item.text.length; return offset > range.focus.offset; }) ?? paragraph?.runs.at(-1);
+    setRunId(run?.id);
+    setSelectionRevision((value) => value + 1);
+  };
+  const rememberSelection = () => {
+    const range = host.current && readWordSelection(host.current);
+    if (!range) return;
+    syncSelection(range);
+  };
+  useLayoutEffect(() => {
+    const range = pendingSelection.current;
+    if (!range || !host.current || tool || paletteOpen) return;
+    pendingSelection.current = null;
+    restoreWordSelection(host.current, range);
+    syncSelection(range);
+  });
   const rejectChange = (failure: unknown) => {
+    const range = currentSelection();
+    if (range && range.anchor.paragraphId !== range.focus.paragraphId) pendingSelection.current = range;
     setError(`${typeof failure === "string" ? failure : failure instanceof Error ? failure.message : "That change could not be applied."} The change was not applied.`);
     setReconcileToken((value) => value + 1);
   };
-  const perform = (next: RichDocument) => {
+  const perform = (next: RichDocument, after?: RichTextRange) => {
     if (!canMutate() || next.format !== latestDocument.current.format || next === latestDocument.current) return;
-    undoHistory.current.push(latestDocument.current); redoHistory.current = [];
+    undoHistory.current.push({ document: latestDocument.current, selection: currentSelection() }); redoHistory.current = [];
     if (undoHistory.current.length > 100) undoHistory.current.shift();
     // Operations and Find retain the format; the dialog accepts the shared view.
     const sameFormat = next as T;
+    if (after) { logicalSelection.current = after; pendingSelection.current = after; }
     latestDocument.current = sameFormat; onChange(sameFormat); setError(null);
   };
   const apply = (operations: readonly DocxOperation[]) => {
@@ -71,6 +106,7 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
   };
   const blocked = readOnly || !document.canEdit;
   const selectMatch = (match: WordTextMatch) => {
+    logicalSelection.current = { anchor: { paragraphId: match.paragraphId, offset: match.start }, focus: { paragraphId: match.paragraphId, offset: match.end } };
     setSelectionSupported(true);
     textSelection.current = match;
     setSelected(match.paragraphId);
@@ -96,6 +132,21 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
   };
   const formatRun = (style: DocxRunFormat, activeRun: string) => {
     if (!canMutate() || !selectionSupported) return;
+    const range = logicalSelection.current;
+    if (range && range.anchor.paragraphId !== range.focus.paragraphId) {
+      try {
+        const current = latestDocument.current, [start, end] = orderedWordRange(current, range);
+        const first = current.paragraphs.findIndex((item) => item.id === start.paragraphId), last = current.paragraphs.findIndex((item) => item.id === end.paragraphId);
+        const ids = current.blocks.filter((block) => block.kind === "paragraph").map((block) => block.paragraphId);
+        if (first < 0 || last < first || current.paragraphs.slice(first, last + 1).some((item) => !ids.includes(item.id))) throw new Error("Cross-table formatting is not supported.");
+        const operations: DocxOperation[] = current.paragraphs.slice(first, last + 1).flatMap((item, index, items) => {
+          const from = index === 0 ? start.offset : 0, to = index === items.length - 1 ? end.offset : item.text.length;
+          return from === to ? [] : [{ type: "format-range" as const, paragraphId: item.id, start: from, end: to, style }];
+        });
+        perform(applyRichOperations(current, operations), range);
+      } catch (failure) { rejectChange(failure); }
+      return;
+    }
     const selection = textSelection.current;
     if (!selection || selection.paragraphId !== selected || selection.start === selection.end) { apply([{ type: "format-run", runId: activeRun, style }]); return; }
     try {
@@ -129,10 +180,39 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
       }
     } catch (failure) { rejectChange(failure); }
   };
-  const undo = () => { if (!canMutate()) return; const previous = undoHistory.current.pop(); if (previous) { textSelection.current = null; redoHistory.current.push(latestDocument.current); latestDocument.current = previous; onChange(previous); } };
-  const redo = () => { if (!canMutate()) return; const next = redoHistory.current.pop(); if (next) { textSelection.current = null; undoHistory.current.push(latestDocument.current); latestDocument.current = next; onChange(next); } };
+  const restoreSnapshot = (snapshot: Snapshot, history: Snapshot[]) => {
+    history.push({ document: latestDocument.current, selection: currentSelection() });
+    textSelection.current = null; logicalSelection.current = snapshot.selection; pendingSelection.current = snapshot.selection;
+    latestDocument.current = snapshot.document; onChange(snapshot.document); setError(null);
+    if (snapshot.selection) { setSelected(snapshot.selection.focus.paragraphId); setRunId(snapshot.document.paragraphs.find((item) => item.id === snapshot.selection!.focus.paragraphId)?.runs[0]?.id); }
+  };
+  const undo = () => { if (!canMutate()) return; const previous = undoHistory.current.pop(); if (previous) restoreSnapshot(previous, redoHistory.current); };
+  const redo = () => { if (!canMutate()) return; const next = redoHistory.current.pop(); if (next) restoreSnapshot(next, undoHistory.current); };
+  const replaceSelection = (range: RichTextRange, text: string, beforeCommit?: () => void) => {
+    if (!canMutate() || tool || paletteOpen || host.current?.querySelector('[data-word-composing="true"]')) return;
+    if (tracking) { rejectChange("Turn off paragraph text tracking before structural or cross-paragraph editing."); return; }
+    try {
+      const [start, end] = orderedWordRange(latestDocument.current, range);
+      const paragraphs = latestDocument.current.paragraphs, first = paragraphs.findIndex((item) => item.id === start.paragraphId), last = paragraphs.findIndex((item) => item.id === end.paragraphId);
+      const nodes = [...(host.current?.querySelectorAll<HTMLElement>("[data-paragraph-id]") ?? [])];
+      if (first < 0 || last < first || paragraphs.slice(first, last + 1).some((paragraph) => nodes.find((node) => node.dataset.paragraphId === paragraph.id)?.textContent !== paragraph.text)) throw new Error("The browser selection no longer matches the document source.");
+      const result = replaceRichRange(latestDocument.current, range, text);
+      if (result.document === latestDocument.current) {
+        pendingSelection.current = result.selection;
+        syncSelection(result.selection);
+        setError(null);
+        return;
+      }
+      beforeCommit?.();
+      perform(result.document, result.selection);
+      textSelection.current = null; setSelectionSupported(true);
+      setSelected(result.selection.focus.paragraphId);
+      setRunId(result.document.paragraphs.find((item) => item.id === result.selection.focus.paragraphId)?.runs[0]?.id);
+    } catch (failure) { rejectChange(failure); }
+  };
   const pasteParagraphs = (paragraphId: string, start: number, end: number, text: string) => {
     if (!canMutate()) return;
+    if (latestDocument.current.format === "docx") { replaceSelection({ anchor: { paragraphId, offset: start }, focus: { paragraphId, offset: end } }, text); return; }
     if (tracking) { rejectChange("Turn off paragraph text tracking before inserting new paragraphs."); return; }
     try {
       const current = latestDocument.current;
@@ -157,6 +237,62 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
       requestAnimationFrame(() => [...(host.current?.querySelectorAll<HTMLElement>("[data-paragraph-id]") ?? [])].find((node) => node.dataset.paragraphId === after)?.focus());
     } catch (failure) { rejectChange(failure); }
   };
+  const structuralRange = (range: RichTextRange, deletion?: "backward" | "forward"): RichTextRange | null => {
+    if (range.anchor.paragraphId !== range.focus.paragraphId) return range;
+    if (range.anchor.offset !== range.focus.offset) return null;
+    if (!deletion) return range;
+    const paragraphs = latestDocument.current.paragraphs, index = paragraphs.findIndex((item) => item.id === range.anchor.paragraphId), paragraph = paragraphs[index];
+    if (deletion === "backward" && range.anchor.offset === 0 && index > 0) return { anchor: { paragraphId: paragraphs[index - 1].id, offset: paragraphs[index - 1].text.length }, focus: range.focus };
+    if (deletion === "forward" && range.anchor.offset === paragraph?.text.length && index < paragraphs.length - 1) return { anchor: range.anchor, focus: { paragraphId: paragraphs[index + 1].id, offset: 0 } };
+    return null;
+  };
+  useLayoutEffect(() => {
+    const node = host.current;
+    if (!node) return;
+    const beforeInput = (event: InputEvent) => {
+      if (!(event.target instanceof HTMLElement) || !event.target.closest("[data-paragraph-id]") || event.isComposing || node.querySelector('[data-word-composing="true"]')) return;
+      const range = readWordSelection(node);
+      if (!range) return;
+      const cross = range.anchor.paragraphId !== range.focus.paragraphId;
+      const deletion = event.inputType === "deleteContentBackward" ? "backward" : event.inputType === "deleteContentForward" ? "forward" : undefined;
+      const boundary = deletion && latestDocument.current.format === "docx" ? structuralRange(range, deletion) : null;
+      const paragraphBreak = event.inputType === "insertParagraph" && latestDocument.current.format === "docx";
+      const emptyInput = latestDocument.current.format === "docx" && latestDocument.current.paragraphs.find((paragraph) => paragraph.id === range.anchor.paragraphId)?.runs.length === 0 && ["insertText", "insertReplacementText"].includes(event.inputType);
+      if (!cross && !boundary && !paragraphBreak && !emptyInput) return;
+      event.stopImmediatePropagation();
+      if (!event.cancelable) { rejectedDocumentInput.current = range; pendingSelection.current = range; rejectChange("This noncancelable cross-paragraph input was not applied."); return; }
+      event.preventDefault();
+      logicalSelection.current = range;
+      if (paragraphBreak) replaceSelection(range, "\n");
+      else if (["insertText", "insertReplacementText"].includes(event.inputType) && event.data !== null) replaceSelection(range, event.data);
+      else if (["deleteContentBackward", "deleteContentForward", "deleteByCut"].includes(event.inputType)) replaceSelection(boundary ?? range, "");
+      else rejectChange("This cross-paragraph input requires a supported source-safe command.");
+    };
+    node.addEventListener("beforeinput", beforeInput, true);
+    return () => node.removeEventListener("beforeinput", beforeInput, true);
+  });
+  const handleStructureKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!(event.target instanceof HTMLElement) || !event.target.closest("[data-paragraph-id]") || event.nativeEvent.isComposing || event.keyCode === 229 || host.current?.querySelector('[data-word-composing="true"]')) return;
+    if (isDocx && (event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "a" && canView() && !tool && !paletteOpen) {
+      const paragraphs = latestDocument.current.paragraphs, first = paragraphs[0], last = paragraphs.at(-1);
+      if (!first || !last || !host.current) return;
+      event.preventDefault(); event.stopPropagation();
+      const range = { anchor: { paragraphId: first.id, offset: 0 }, focus: { paragraphId: last.id, offset: last.text.length } };
+      restoreWordSelection(host.current, range); rememberSelection();
+      if (first.id === last.id) textSelection.current = { paragraphId: first.id, start: 0, end: last.text.length };
+      return;
+    }
+    const range = host.current && readWordSelection(host.current);
+    if (!range) return;
+    const cross = range.anchor.paragraphId !== range.focus.paragraphId;
+    const deletion = event.key === "Backspace" ? "backward" : event.key === "Delete" ? "forward" : undefined;
+    const boundary = deletion && isDocx && !event.metaKey && !event.ctrlKey && !event.altKey ? structuralRange(range, deletion) : null;
+    if (event.key !== "Enter" && !boundary && !(cross && deletion)) return;
+    if (!isDocx && !cross) return;
+    event.preventDefault(); event.stopPropagation(); logicalSelection.current = range;
+    if (event.key === "Enter" && event.shiftKey) { rejectChange("Soft line breaks need source-safe inline editing and were not applied."); return; }
+    replaceSelection(boundary ?? range, event.key === "Enter" ? "\n" : "");
+  };
   const paragraphNode = (id: string) => {
     const paragraph = document.paragraphs.find((item) => item.id === id);
     if (!paragraph) return null;
@@ -176,7 +312,13 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
         } else try { perform(replaceRichText(latestDocument.current, edits)); } catch (failure) { rejectChange(failure); }
       }}
       onSplit={(paragraphId, offset) => pasteParagraphs(paragraphId, offset, offset, "\n")}
-      onPasteParagraphs={pasteParagraphs} onSelection={(paragraphId, start, end, supported) => { textSelection.current = { paragraphId, start, end }; setSelectionSupported(supported); setSelectionRevision((value) => value + 1); }}
+      onPasteParagraphs={pasteParagraphs} onSelection={(paragraphId, start, end, supported) => {
+        const dom = host.current && readWordSelection(host.current);
+        if (!supported && dom && dom.anchor.paragraphId !== dom.focus.paragraphId) { rememberSelection(); return; }
+        textSelection.current = { paragraphId, start, end };
+        if (supported) logicalSelection.current = { anchor: { paragraphId, offset: start }, focus: { paragraphId, offset: end } };
+        setSelectionSupported(supported); setSelectionRevision((value) => value + 1);
+      }}
       onRemovePageBreaks={(ids) => apply(ids.map((pageBreakId) => ({ type: "remove-page-break", pageBreakId })))} onRejectStructure={rejectChange} />;
     // Selection offsets are kept separately from DOM focus so toolbar clicks
     // format the selected substring rather than its entire underlying run.
@@ -200,7 +342,16 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
   const paragraph = document.paragraphs.find((item) => item.id === selected), run = paragraph?.runs.find((item) => item.id === runId);
   const selection = textSelection.current;
   let offset = 0;
-  const selectedRuns = selection && selection.paragraphId === selected && selection.start !== selection.end ? paragraph?.runs.filter((item) => {
+  const logical = logicalSelection.current;
+  const crossSelection = !!logical && logical.anchor.paragraphId !== logical.focus.paragraphId;
+  const selectedRuns = crossSelection ? (() => {
+    const [start, end] = orderedWordRange(document, logical!);
+    const first = document.paragraphs.findIndex((item) => item.id === start.paragraphId), last = document.paragraphs.findIndex((item) => item.id === end.paragraphId);
+    return document.paragraphs.slice(first, last + 1).flatMap((item, index, items) => {
+      let offset = 0;
+      return item.runs.filter((run) => { const from = offset; offset += run.text.length; return offset > (index === 0 ? start.offset : 0) && from < (index === items.length - 1 ? end.offset : item.text.length); });
+    });
+  })() : selection && selection.paragraphId === selected && selection.start !== selection.end ? paragraph?.runs.filter((item) => {
     const start = offset; offset += item.text.length; return start < selection.end && offset > selection.start;
   }) ?? [] : run ? [run] : [];
   const effectiveStyles = selectedRuns.map((item) => item.resolvedStyle ?? item.style);
@@ -216,7 +367,7 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
   const editable = !blocked && !originalView, editableSelection = editable && selectionSupported && !!selectedRuns.length && selectedRuns.every((item) => item.canEdit);
   const canFormat = editableSelection && !tool && !paletteOpen, canUndo = editable && undoHistory.current.length > 0, canRedo = editable && redoHistory.current.length > 0;
   const setParagraphStyle = (styleId: string | null) => {
-    if (!capabilities.namedStyles || !paragraph || !canMutate() || !selectionSupported || tool || paletteOpen || paragraph.revisionIds.length) return;
+    if (!capabilities.namedStyles || !paragraph || !canMutate() || !selectionSupported || crossSelection || tool || paletteOpen || paragraph.revisionIds.length) return;
     apply([{ type: "format-paragraph", paragraphId: paragraph.id, format: { styleId } }]);
   };
   const selectedTable = document.tables.some((table) => table.rows.some((row) => row.cells.some((cell) => cell.paragraphs.some((item) => item.id === selected))));
@@ -224,7 +375,7 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
   const availableCommands = tool ? [] : ["find", "zoom-in", "zoom-out", "view-zoom-reset", "view-page", "view-continuous", ...(isDocx ? ["view-outline", "review-comments", "review-tracking", "review-changes", "review-final", ...(document.originalText === undefined ? [] : ["review-original"])] : []), ...(onHistory ? ["document-history"] : []),
     ...(canUndo ? ["undo"] : []), ...(canRedo ? ["redo"] : []),
     ...(editable && capabilities.pageLayout ? ["layout-page-setup", "layout-letter", "layout-a4", "layout-legal", "layout-portrait", "layout-landscape"] : []),
-    ...(editable && paragraph && selectionSupported && !paragraph.revisionIds.length ? [
+    ...(editable && paragraph && selectionSupported && !crossSelection && !paragraph.revisionIds.length ? [
       ...(capabilities.namedStyles ? ["format-normal", "format-heading-1", "format-heading-2", "format-heading-3"] : []),
       ...(capabilities.lists ? ["format-bullets", "format-numbering"] : []),
       ...(capabilities.paragraphFormatting ? ["format-align-left", "format-align-center", "format-align-right", "format-align-justify", "layout-paragraph-spacing"] : []),
@@ -270,7 +421,43 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
     const commands: Partial<Record<FormattingAction, string>> = { undo: "undo", redo: "redo", bold: "format-bold", italic: "format-italic", underline: "format-underline", clear: "format-clear", link: "insert-link", image: "insert-picture", bullet: "format-bullets", ordered: "format-numbering", "align-left": "format-align-left", "align-center": "format-align-center", "align-right": "format-align-right" };
     if (commands[value]) execute(commands[value]);
   };
-  return <div ref={bindHost} className="docs-word-host" data-selected-run={runId} onKeyDown={handleKey} onClickCapture={(event) => handleExternalLinkClick(event.nativeEvent)} onAuxClickCapture={(event) => handleExternalLinkClick(event.nativeEvent)}>
+  return <div key={structureReconcileToken} ref={bindHost} className="docs-word-host" data-selected-run={runId} onKeyDown={handleKey} onKeyDownCapture={handleStructureKey}
+    onInputCapture={(event) => {
+      const range = rejectedDocumentInput.current;
+      if (!range) return;
+      event.stopPropagation(); pendingSelection.current = range;
+      if (!crossComposing.current) { rejectedDocumentInput.current = null; setStructureReconcileToken((value) => value + 1); }
+      setReconcileToken((value) => value + 1);
+    }}
+    onCompositionStartCapture={(event) => {
+      const range = host.current && readWordSelection(host.current);
+      if (range && range.anchor.paragraphId !== range.focus.paragraphId) { event.stopPropagation(); crossComposing.current = true; rejectedDocumentInput.current = range; }
+    }}
+    onCompositionEndCapture={(event) => {
+      const range = rejectedDocumentInput.current;
+      if (!range) return;
+      event.stopPropagation(); crossComposing.current = false; rejectedDocumentInput.current = null; pendingSelection.current = range;
+      setStructureReconcileToken((value) => value + 1);
+      rejectChange("Composition across paragraphs is not supported. The source and selection were preserved.");
+    }}
+    onPointerUp={rememberSelection} onKeyUp={rememberSelection} onPointerDownCapture={(event) => { if (!(event.target as HTMLElement).closest("[data-paragraph-id]")) rememberSelection(); }}
+    onPasteCapture={(event) => {
+      if (!(event.target as HTMLElement).closest("[data-paragraph-id]")) return;
+      const range = host.current && readWordSelection(host.current);
+      if (!range || range.anchor.paragraphId === range.focus.paragraphId) return;
+      event.preventDefault(); event.stopPropagation();
+      const text = event.clipboardData.getData("text/plain").replace(/\r\n?/g, "\n");
+      if (text) replaceSelection(range, text);
+    }}
+    onCutCapture={(event) => {
+      if (!(event.target as HTMLElement).closest("[data-paragraph-id]")) return;
+      const range = host.current && readWordSelection(host.current);
+      if (!range || range.anchor.paragraphId === range.focus.paragraphId) return;
+      event.preventDefault(); event.stopPropagation();
+      const text = wordRangeText(latestDocument.current, range);
+      replaceSelection(range, "", () => event.clipboardData.setData("text/plain", text));
+    }}
+    onClickCapture={(event) => handleExternalLinkClick(event.nativeEvent)} onAuxClickCapture={(event) => handleExternalLinkClick(event.nativeEvent)}>
     <FormattingToolbar
       startControls={!onCommandsReady ? <button type="button" aria-label="Document commands" title="Document commands (⌘K / Ctrl+K)" onClick={openPalette} disabled={!!tool}>Commands</button> : undefined}
       state={{ bold: selectionFormat.bold, italic: selectionFormat.italic, underline: selectionFormat.underline, bullet: paragraph?.listKind === "bullet", ordered: paragraph?.listKind === "numbered", alignLeft: (paragraph?.alignment ?? "left") === "left", alignCenter: paragraph?.alignment === "center", alignRight: paragraph?.alignment === "right", canUndo, canRedo }}

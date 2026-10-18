@@ -2,6 +2,8 @@
 
 Product and implementation contract requested by Kirby on October 18, 2026. This supersedes treating isolated codec milestones as completion of the product described in [the document-platform direction](../plans/2026-10-14-document-platform.md). Circular owns task status, dependencies, owners and execution evidence; this document defines product behavior and architectural boundaries, not a second backlog.
 
+Kirby subsequently approved internal rich-document model extensions while preserving original file formats and keeping database/cloud API schemas unchanged. Full DOC and DOCX rich editing and same-format support are the immediate implementation priority. Text extraction, text-only import, relabeled packages or conversion into Markdown do not complete that requirement. The other requested formats and connected features remain in the product contract but do not displace the Word-file core.
+
 ## Outcome and completion boundary
 
 Build a slightly simplified Word-like document editor inside the existing Markie application, alongside its existing Markdown editor. Simplification applies to interface complexity, not ordinary writing capabilities. macOS and Windows desktop lead; shared core features also work on web. A successful test count, page-shaped canvas, text extractor or safe parser is not this product's definition of done.
@@ -70,6 +72,8 @@ These are target acceptance cells, not claims about today's preview. A feature c
 - Semantic identities used by durable comments/collaboration need a reviewed persistence/migration strategy. Existing opaque session run IDs are not promoted silently.
 - **Human checkpoints:** internal rich model extensions are presented separately for approval; database/recovery schema changes, server/MCP/deep-link/public commands, collaboration wire versions, vault key migration and external-effect permissions each require explicit shape review before implementation. Approval for an internal rich model does not approve cloud schema/protocol changes or public releases.
 - First executable batch below uses existing document/file model and codec operations; no persisted schema, public API, dependency or stack change is required. A checkpoint blocks only its dependent lane, not safe unrelated local work.
+
+The approved next internal contract adds directional logical rich-text positions/ranges and immutable source-owned range edit results, with a collapsed mapped caret. DOCX split/join and multi-paragraph replacement operate on codec-owned XML, not browser DOM or flattened paragraph text. Session-local identities and selection/history remain ephemeral; this approval does not turn them into durable collaborative annotation IDs. Database, cloud/public protocols, native key wrappers and release gates remain separate checkpoints.
 
 ## Full implementation sequence
 

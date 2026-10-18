@@ -11,6 +11,7 @@ import { readZip, writeZip } from "@/lib/office/zip";
 import type { RichDocument } from "@/lib/office/rich-text-types";
 import { applyRichOperations, createRichDocument, exportRichDocument, openRichDocument } from "@/lib/office/rich-document";
 import { installBridge } from "@/test/mock-bridge";
+import { readWordSelection, restoreWordSelection } from "./word-selection";
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 function editor<T extends RichDocument>(initial: T, onHistory?: () => void, localControls = false) {
   const state = { document: initial, target: null as DocumentCommandTarget | null };
@@ -63,15 +64,156 @@ describe("Word renderer inside Markie", () => {
     view.execute("undo"); expect(view.state.document).toBe(initial);
     view.execute("redo"); expect(view.state.document.text).toBe("alpXta");
   });
-  it("rejects rich structural edits with source, history and selection unchanged", async () => {
+  it("splits mixed DOCX source runs and restores exact structural undo/redo caret", async () => {
     const initial = applyDocxOperations(await createDocx("alpha beta"), [{ type: "format-range", paragraphId: "p0", start: 0, end: 6, style: { bold: true } }]);
-    const view = editor(initial), original = await exportDocx(initial), paragraph = select(1, 4);
+    const view = editor(initial), paragraph = select(1, 4);
     fireEvent.paste(paragraph, { clipboardData: { getData: () => "one\ntwo" } });
-    expect(window.getSelection()!.toString()).toBe("lph");
-    expect(view.state.document).toBe(initial); expect(view.state.target!.enabledCommands).not.toContain("undo");
-    select(2, 2); fireEvent.keyDown(paragraph, { key: "Enter" });
-    expect(view.state.document).toBe(initial); expect(await exportDocx(view.state.document)).toEqual(original);
+    expect(view.state.document.text).toBe("aone\ntwoa beta");
+    const host = view.container.querySelector<HTMLElement>(".docs-word-host")!;
+    expect(readWordSelection(host)?.focus).toEqual({ paragraphId: view.state.document.paragraphs[1].id, offset: 3 });
+    expect(view.state.document.paragraphs[1].runs.at(-1)?.style.bold).not.toBe(true);
+    view.execute("undo"); expect(view.state.document).toBe(initial); expect(window.getSelection()!.toString()).toBe("lph");
+    view.execute("redo"); expect(readWordSelection(host)?.focus.offset).toBe(3);
+    const reopened = await openDocx(await exportDocx(view.state.document));
+    expect(reopened.text).toBe("aone\ntwoa beta"); expect(reopened.paragraphs[1].runs.at(-1)?.text).toBe("beta");
+  });
+  it.each([false, true])("replaces a %s directed cross-paragraph selection and restores it on undo", async (backward) => {
+    const initial = await createDocx("alpha\nbeta\ngamma"), view = editor(initial);
+    const host = view.container.querySelector<HTMLElement>(".docs-word-host")!;
+    const range = { anchor: { paragraphId: initial.paragraphs[0].id, offset: 2 }, focus: { paragraphId: initial.paragraphs[2].id, offset: 2 } };
+    act(() => restoreWordSelection(host, backward ? { anchor: range.focus, focus: range.anchor } : range));
+    const field = screen.getByRole("textbox", { name: "Paragraph 1" });
+    fireEvent(field, new InputEvent("beforeinput", { inputType: "insertText", data: "🙂", bubbles: true, cancelable: true }));
+    expect(view.state.document.text).toBe("al🙂mma"); expect(readWordSelection(host)?.focus.offset).toBe(4);
+    view.execute("undo"); expect(view.state.document).toBe(initial);
+    expect(readWordSelection(host)).toEqual(backward ? { anchor: range.focus, focus: range.anchor } : range);
+    view.execute("redo"); expect(view.state.document.text).toBe("al🙂mma"); expect(readWordSelection(host)?.focus.offset).toBe(4);
+  });
+  it("joins mixed paragraphs at both keyboard boundaries and supports selected Enter", async () => {
+    const base = await createDocx("bold\nitalic"), initial = applyDocxOperations(base, [{ type: "format-run", runId: base.paragraphs[0].runs[0].id, style: { bold: true } }, { type: "format-run", runId: base.paragraphs[1].runs[0].id, style: { italic: true } }]);
+    const view = editor(initial), field = select(0, 0, 2);
+    fireEvent.keyDown(field, { key: "Backspace" }); expect(view.state.document.text).toBe("bolditalic");
+    expect(view.state.document.paragraphs[0].runs.map((run) => [run.text, !!run.style.bold, !!run.style.italic])).toEqual([["bold", true, false], ["italic", false, true]]);
+    view.execute("undo");
+    const first = select(4, 4); fireEvent.keyDown(first, { key: "Delete" }); expect(view.state.document.text).toBe("bolditalic");
+    view.execute("undo"); select(1, 3); fireEvent.keyDown(screen.getByRole("textbox", { name: "Paragraph 1" }), { key: "Enter" });
+    expect(view.state.document.text).toBe("b\nd\nitalic");
+  });
+  it("formats precisely the selected cross-paragraph substrings through the shared toolbar", async () => {
+    const initial = await createDocx("alpha\nbeta"), view = editor(initial), host = view.container.querySelector<HTMLElement>(".docs-word-host")!;
+    const range = { anchor: { paragraphId: initial.paragraphs[1].id, offset: 2 }, focus: { paragraphId: initial.paragraphs[0].id, offset: 2 } };
+    act(() => restoreWordSelection(host, range)); fireEvent.pointerUp(screen.getByRole("textbox", { name: "Paragraph 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bold" }));
+    expect(view.state.document.paragraphs.map((paragraph) => paragraph.runs.map((run) => [run.text, !!run.style.bold]))).toEqual([[["al", false], ["pha", true]], [["be", true], ["ta", false]]]);
+    expect(readWordSelection(host)).toEqual(range);
+    view.execute("undo"); expect(view.state.document).toBe(initial); expect(readWordSelection(host)).toEqual(range);
+  });
+  it("pastes and cuts logical cross-paragraph text atomically using a synthetic plain clipboard", async () => {
+    const initial = await createDocx("alpha\nbeta\ngamma"), view = editor(initial), host = view.container.querySelector<HTMLElement>(".docs-word-host")!;
+    const range = { anchor: { paragraphId: initial.paragraphs[0].id, offset: 2 }, focus: { paragraphId: initial.paragraphs[2].id, offset: 2 } };
+    act(() => restoreWordSelection(host, range));
+    const field = screen.getByRole("textbox", { name: "Paragraph 1" });
+    fireEvent.paste(field, { clipboardData: { getData: () => "one\r\ntwo" } });
+    expect(view.state.document.text).toBe("alone\ntwomma"); expect(readWordSelection(host)?.focus.offset).toBe(3);
+    view.execute("undo"); expect(readWordSelection(host)).toEqual(range);
+    const setData = vi.fn(); fireEvent.cut(field, { clipboardData: { setData } });
+    expect(setData).toHaveBeenCalledWith("text/plain", "pha\nbeta\nga"); expect(view.state.document.text).toBe("almma");
+    view.execute("undo"); expect(view.state.document).toBe(initial);
+  });
+  it.each([false, true])("rejects cross-paragraph noncancelable/IME browser mutation atomically (composition %s)", async (composition) => {
+    const initial = await createDocx("alpha\nbeta"), view = editor(initial), host = view.container.querySelector<HTMLElement>(".docs-word-host")!;
+    const range = { anchor: { paragraphId: initial.paragraphs[1].id, offset: 2 }, focus: { paragraphId: initial.paragraphs[0].id, offset: 2 } };
+    act(() => restoreWordSelection(host, range));
+    const field = screen.getByRole("textbox", { name: "Paragraph 1" });
+    if (composition) fireEvent.compositionStart(field);
+    else fireEvent(field, new InputEvent("beforeinput", { inputType: "insertText", data: "X", cancelable: false, bubbles: true }));
+    field.textContent = "damaged"; fireEvent.input(field);
+    if (composition) fireEvent.compositionEnd(field);
+    expect(view.state.document).toBe(initial); expect(screen.getByRole("textbox", { name: "Paragraph 1" }).textContent).toBe("alpha");
+    expect(readWordSelection(view.container.querySelector<HTMLElement>(".docs-word-host")!)).toEqual(range); expect(view.state.target!.enabledCommands).not.toContain("undo");
+  });
+  it.each([false, true])("rebuilds deleted paragraph roots after rejected native cross-block mutation (composition %s)", async (composition) => {
+    const initial = await createDocx("first\nmiddle\nlast"), view = editor(initial), host = view.container.querySelector<HTMLElement>(".docs-word-host")!;
+    const range = { anchor: { paragraphId: initial.paragraphs[0].id, offset: 2 }, focus: { paragraphId: initial.paragraphs[2].id, offset: 2 } };
+    act(() => restoreWordSelection(host, range)); const field = screen.getByRole("textbox", { name: "Paragraph 1" });
+    if (composition) fireEvent.compositionStart(field);
+    else fireEvent(field, new InputEvent("beforeinput", { inputType: "deleteContentBackward", cancelable: false, bubbles: true }));
+    window.getSelection()!.getRangeAt(0).deleteContents();
+    expect(screen.queryByRole("textbox", { name: "Paragraph 2" })).toBeNull(); fireEvent.input(field);
+    if (composition) fireEvent.compositionEnd(field);
+    expect(view.state.document).toBe(initial); expect(screen.getAllByRole("textbox").map((node) => node.textContent)).toEqual(["first", "middle", "last"]);
+    expect(readWordSelection(view.container.querySelector<HTMLElement>(".docs-word-host")!)).toEqual(range);
     expect(view.state.target!.enabledCommands).not.toContain("undo");
+  });
+  it("keeps cross-paragraph no-ops and invalid Unicode boundaries history-neutral", async () => {
+    const initial = await createDocx("a🙂\ne\u0301b"), view = editor(initial), host = view.container.querySelector<HTMLElement>(".docs-word-host")!;
+    const range = { anchor: { paragraphId: initial.paragraphs[0].id, offset: 1 }, focus: { paragraphId: initial.paragraphs[1].id, offset: 2 } };
+    act(() => restoreWordSelection(host, range));
+    const field = screen.getByRole("textbox", { name: "Paragraph 1" });
+    fireEvent.paste(field, { clipboardData: { getData: () => "🙂\ne\u0301" } });
+    expect(view.state.document).toBe(initial); expect(readWordSelection(host)).toEqual({ anchor: range.focus, focus: range.focus });
+    const invalid = { ...range, focus: { ...range.focus, offset: 1 } };
+    act(() => restoreWordSelection(host, invalid));
+    fireEvent(field, new InputEvent("beforeinput", { inputType: "insertText", data: "X", cancelable: true, bubbles: true }));
+    expect(view.state.document).toBe(initial); expect(readWordSelection(host)).toEqual(invalid); expect(view.state.target!.enabledCommands).not.toContain("undo");
+  });
+  it("collapses identical cross-paragraph paste without history and types at the returned caret", async () => {
+    const initial = await createDocx("first\nmiddle\nlast"), view = editor(initial), host = view.container.querySelector<HTMLElement>(".docs-word-host")!;
+    const range = { anchor: { paragraphId: initial.paragraphs[0].id, offset: 2 }, focus: { paragraphId: initial.paragraphs[2].id, offset: 2 } };
+    act(() => restoreWordSelection(host, range));
+    fireEvent.paste(screen.getByRole("textbox", { name: "Paragraph 1" }), { clipboardData: { getData: () => "rst\nmiddle\nla" } });
+    expect(view.state.document).toBe(initial); expect(view.state.target!.enabledCommands).not.toContain("undo");
+    expect(readWordSelection(host)).toEqual({ anchor: range.focus, focus: range.focus });
+    fireEvent(screen.getByRole("textbox", { name: "Paragraph 3" }), new InputEvent("beforeinput", { inputType: "insertText", data: "X", bubbles: true, cancelable: true }));
+    expect(view.state.document.text).toBe("first\nmiddle\nlaXst");
+    view.execute("undo"); expect(view.state.document).toBe(initial); expect(readWordSelection(host)).toEqual({ anchor: range.focus, focus: range.focus });
+    expect(view.state.target!.enabledCommands).not.toContain("undo");
+  });
+  it.each(["rtf", "odt"] as const)("retains explicit %s cross-paragraph capability guards", async (format) => {
+    const initial = await createRichDocument(format, "alpha\nbeta"), view = editor(initial), host = view.container.querySelector<HTMLElement>(".docs-word-host")!;
+    const range = { anchor: { paragraphId: initial.paragraphs[0].id, offset: 2 }, focus: { paragraphId: initial.paragraphs[1].id, offset: 2 } };
+    act(() => restoreWordSelection(host, range)); const field = screen.getByRole("textbox", { name: "Paragraph 1" }); fireEvent.pointerUp(field);
+    expect(screen.getByRole("button", { name: "Bold" })).toBeDisabled();
+    fireEvent(field, new InputEvent("beforeinput", { inputType: "insertText", data: "X", cancelable: true, bubbles: true }));
+    expect(view.state.document).toBe(initial); expect(readWordSelection(host)).toEqual(range); expect(view.state.target!.enabledCommands).not.toContain("undo");
+  });
+  it("types into repeated empty Enter paragraphs and preserves the styled new source run on reopen", async () => {
+    const base = await createDocx("bold"), initial = applyDocxOperations(base, [{ type: "format-run", runId: base.paragraphs[0].runs[0].id, style: { bold: true } }]);
+    const view = editor(initial), field = select(4, 4);
+    fireEvent(field, new InputEvent("beforeinput", { inputType: "insertParagraph", bubbles: true, cancelable: true }));
+    let blank = screen.getByRole("textbox", { name: "Paragraph 2" });
+    fireEvent(blank, new InputEvent("beforeinput", { inputType: "insertParagraph", bubbles: true, cancelable: true }));
+    blank = screen.getByRole("textbox", { name: "Paragraph 3" });
+    fireEvent(blank, new InputEvent("beforeinput", { inputType: "insertText", data: "🙂e\u0301", bubbles: true, cancelable: true }));
+    expect(view.state.document.text).toBe("bold\n\n🙂e\u0301");
+    const reopened = await openDocx(await exportDocx(view.state.document));
+    expect(reopened.text).toBe("bold\n\n🙂e\u0301"); expect(reopened.paragraphs[2].runs[0].style.bold).toBe(true);
+  });
+  it.each(["ctrlKey", "metaKey"])("selects the whole DOCX body with %s+A and replaces through the source transaction", async (modifier) => {
+    const initial = await createDocx("alpha\nbeta\ngamma"), view = editor(initial), field = select(1, 1, 2);
+    fireEvent.keyDown(field, { key: "a", [modifier]: true });
+    expect(window.getSelection()!.toString()).toBe("alphabetagamma");
+    fireEvent(field, new InputEvent("beforeinput", { inputType: "insertText", data: "replacement", bubbles: true, cancelable: true }));
+    expect(view.state.document.text).toBe("replacement");
+    view.execute("undo"); expect(view.state.document).toBe(initial); expect(window.getSelection()!.toString()).toBe("alphabetagamma");
+  });
+  it.each([false, true])("formats the exact same-paragraph range after structural undo (backward %s)", async (backward) => {
+    const initial = await createDocx("abcd"), view = editor(initial), host = view.container.querySelector<HTMLElement>(".docs-word-host")!;
+    const range = { anchor: { paragraphId: initial.paragraphs[0].id, offset: backward ? 3 : 1 }, focus: { paragraphId: initial.paragraphs[0].id, offset: backward ? 1 : 3 } };
+    act(() => restoreWordSelection(host, range));
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Paragraph 1" }), { key: "Enter" });
+    expect(view.state.document.text).toBe("a\nd"); view.execute("undo");
+    expect(readWordSelection(host)).toEqual(range); fireEvent.click(screen.getByRole("button", { name: "Bold" }));
+    expect(view.state.document.paragraphs[0].runs.map((run) => [run.text, !!run.style.bold])).toEqual([["a", false], ["bc", true], ["d", false]]);
+  });
+  it("types into an imported bare empty source paragraph without fabricating DOM runs", async () => {
+    const parts = await readZip(await exportDocx(await createDocx("placeholder")));
+    const bytes = await writeZip(parts.map((part) => part.name === "word/document.xml" ? { ...part, data: new TextEncoder().encode(new TextDecoder().decode(part.data).replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/, "<w:p/>")) } : part));
+    const initial = await openDocx(bytes), view = editor(initial), field = screen.getByRole("textbox", { name: "Paragraph 1" });
+    expect(initial.paragraphs[0].runs).toHaveLength(0);
+    field.focus(); const range = document.createRange(); range.setStart(field, 0); range.collapse(true); window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    fireEvent(field, new InputEvent("beforeinput", { inputType: "insertText", data: "Typed", cancelable: true, bubbles: true }));
+    expect(view.state.document.text).toBe("Typed"); expect((await openDocx(await exportDocx(view.state.document))).text).toBe("Typed");
   });
   it("retains plain same-author tracking through deterministic input and protects mixed tracking", async () => {
     const initial = await createDocx("Original"), view = editor(initial);
@@ -389,14 +531,14 @@ describe("Word renderer inside Markie", () => {
     expect(reopened.paragraphs[0].runs.map((run) => [run.text, run.style.bold])).toEqual([["Al", false], ["pha ", false], ["Bet", false], ["a", undefined]]);
     expect(reopened.paragraphs[0].runs[3].resolvedStyle?.bold).toBe(true);
   });
-  it("shows unspecified font size honestly, rejects cross-paragraph ranges and ignores background modal mutations", async () => {
+  it("shows unspecified font size honestly, guards cross-paragraph structure tools and ignores background modal mutations", async () => {
     const view = editor(await createDocx("First\nSecond")), before = await exportDocx(view.state.document);
     expect(screen.getByRole("spinbutton", { name: "Font size" })).toHaveValue(null);
     expect(screen.getByLabelText("Font")).toHaveDisplayValue("Inherited font");
     const first = screen.getByRole("textbox", { name: "Paragraph 1" }), second = screen.getByRole("textbox", { name: "Paragraph 2" });
     const range = document.createRange(); range.setStart(first.querySelector("span")!.firstChild!, 1); range.setEnd(second.querySelector("span")!.firstChild!, 2); window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range); fireEvent.pointerUp(first);
-    expect(screen.getByRole("button", { name: "Bold" })).toBeDisabled();
-    view.execute("format-bold"); view.execute("format-align-center"); view.execute("format-heading-1"); fireEvent.keyDown(first, { key: "b", ctrlKey: true });
+    expect(screen.getByRole("button", { name: "Bold" })).toBeEnabled();
+    view.execute("format-align-center"); view.execute("format-heading-1");
     expect(await exportDocx(view.state.document)).toEqual(before);
     select(0, 2); view.execute("format-font");
     const dialog = screen.getByRole("dialog", { name: "Font" });

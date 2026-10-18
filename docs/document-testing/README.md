@@ -2,7 +2,7 @@
 
 This local preview extends the existing Markie app. It is not a public release or the completed document-platform roadmap. Use disposable copies while testing. Keep your installed Markie and important originals separate.
 
-The full Word-like product and remaining acceptance journeys are defined in the repository's October 18 product contract and tracked under ENG-7025. This preview adds the first deterministic-input and shared-control improvements; it is not completion of the continuous document editor. The editing surface should no longer show a permanent generic print disclaimer. Open Export or Document details for output information; documents with review comments ask before producing output that excludes them.
+The full Word-like product and remaining acceptance journeys are defined in the repository's October 18 product contract and tracked under ENG-7025. This preview adds deterministic input, DOCX split/join and cross-paragraph transactions, and shared-control improvements; it is not completion of Word compatibility. The editing surface should no longer show a permanent generic print disclaimer. Open Export or Document details for output information; documents with review comments ask before producing output that excludes them.
 
 Follow the [everyday writing checks](everyday-writing.md) for mixed formatting, input, narrow toolbars and contextual output information.
 
@@ -22,7 +22,7 @@ Next, open `samples/Counter.wd` and follow the [interactive Darkmown checks](dar
 
 | Type or feature | Expected behavior |
 | --- | --- |
-| DOCX | Supported rich editing and original package-preserving save. Unsupported Word content stays read-only. |
+| DOCX | Supported rich editing, ordinary-paragraph split/join and cross-paragraph transactions, with original package-preserving save. Structural edits around unrepresented owners remain guarded; unsupported Word content stays read-only. |
 | RTF | Basic rich text and same-format save. Unsupported fields, pictures, tables and other unknown semantics are not flattened into editable content. |
 | ODT | Bounded ODF 1.2/1.3 paragraph/span editing and same-format save. Complex layouts, unsupported styles, objects, protection and encryption are refused. |
 | TXT, TEXT, LOG | Literal text; Unicode, supported encoding/BOM and line endings preserved. Viewing font/zoom does not alter file contents. |

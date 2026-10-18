@@ -1,8 +1,15 @@
-import { applyDocxOperations, createDocx, exportDocx, getDocxImageBytes, openDocx, replaceDocxText, DocxError, type DocxOperation, type DocxTextEdit } from "./docx";
+import { applyDocxOperations, createDocx, exportDocx, getDocxImageBytes, openDocx, replaceDocxText, replaceDocxRange, DocxError, type DocxOperation, type DocxTextEdit } from "./docx";
 import { applyRtfOperations, createRtf, exportRtf, isSameRtfSource, openRtf, replaceRtfText } from "./rtf";
 import { applyOdtOperations, createOdt, exportOdt, isSameOdtSource, openOdt, replaceOdtText } from "./odt";
 import type { RichDocument } from "./rich-text-types";
 export type { RichDocument, NativeRichDocument } from "./rich-text-types";
+import type { RichTextRange, RichRangeResult } from "./rich-range-types";
+export type { RichTextPosition, RichTextRange, RichRangeResult } from "./rich-range-types";
+
+export function replaceRichRange<T extends RichDocument>(document: T, range: RichTextRange, text: string): RichRangeResult<T> {
+  if (document.format !== "docx") throw new DocxError("unsupported-operation", "Source-preserving structural range edits are not yet supported for this format.");
+  return replaceDocxRange(document, range, text) as RichRangeResult<T>;
+}
 
 /** New native formats may only replace snapshots from their own opened source lineage. */
 export function sameRichSource(a: RichDocument, b: RichDocument): boolean {

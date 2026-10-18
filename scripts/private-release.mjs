@@ -270,7 +270,16 @@ export async function inspectZipPaths(file, settings) {
     assert(total <= 4 * LIMIT, "Private ZIP expands beyond verification limit.");
     if (((entry.externalFileAttributes >>> 16) & 0o170000) !== 0o120000) continue;
     assert(entry.uncompressedSize < 4096, "Oversized private ZIP symlink.");
-    const bytes = await entry.buffer();
+    const stream = entry.stream(), chunks = [];
+    let received = 0;
+    try {
+      for await (const chunk of stream) {
+        received += chunk.length;
+        assert(received <= Math.min(entry.uncompressedSize, 4095), "Private ZIP symlink payload exceeds its declared bounded size.");
+        chunks.push(chunk);
+      }
+    } finally { stream.destroy(); }
+    const bytes = Buffer.concat(chunks, received);
     assert(bytes.length === entry.uncompressedSize && bytes.length < 4096, "Private ZIP symlink size mismatch.");
     const target = bytes.toString("utf8"), resolved = path.posix.normalize(path.posix.join(path.posix.dirname(name), target));
     assert(!path.posix.isAbsolute(target) && !/[\\\x00-\x1f]/.test(target) && resolved.startsWith("Markie.app/"), "Private ZIP symlink escapes application.");

@@ -37,6 +37,10 @@ describe("guarded private Super-nightly packaging", () => {
     await expect(inspectZipPaths(file, config)).resolves.toBeUndefined();
     makeZip("Markie.app/link", "../../outside", true);
     await expect(inspectZipPaths(file, config)).rejects.toThrow(/escapes/);
+    makeZip("Markie.app/link", "a".repeat(8192), true);
+    const underreported = readFileSync(file), central = underreported.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+    underreported.writeUInt32LE(8, central + 24); writeFileSync(file, underreported);
+    await expect(inspectZipPaths(file, config)).rejects.toThrow(/payload exceeds its declared bounded size/);
     makeZip("Markie.app/oversized", "fixture", false, true);
     await expect(inspectZipPaths(file, config)).rejects.toThrow(/expands/);
   });

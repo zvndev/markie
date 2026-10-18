@@ -7,7 +7,9 @@ import { installBridge } from "@/test/mock-bridge";
 
 vi.mock("@/lib/auth-client", () => ({
   sharesClient: { sharedByMe: async () => [] },
+  getAuthToken: () => "confirmed-session", getServerURL: () => "https://account.example.test", getConfirmedAuthIdentity: () => ({ userId: "user-a", serverURL: "https://account.example.test" }),
 }));
+vi.mock("@/lib/auth-store", () => ({ authStore: { getSnapshot: () => ({ status: "in", user: { id: "user-a" } }), subscribe: () => () => {} } }));
 
 import { Library } from "./library";
 
@@ -314,7 +316,7 @@ describe("documents in the existing Library", () => {
   });
 
   it("scopes legacy Cloud emptiness beside populated document snapshots", async () => {
-    renderLibrary([], { props: { view: "cloud", renderCloudDocuments: () => <section aria-label="Cloud document snapshots"><h3>Document snapshots</h3><button type="button">Snapshot.docx</button></section> } });
+    renderLibrary([], { props: { view: "cloud", accountId: "user-a", renderCloudDocuments: () => <section aria-label="Cloud document snapshots"><h3>Document snapshots</h3><button type="button">Snapshot.docx</button></section> } });
     expect(await screen.findByText("No synced or shared files yet.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Snapshot.docx" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "File sync & sharing" })).toBeInTheDocument();

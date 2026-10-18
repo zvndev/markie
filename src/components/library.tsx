@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type DragEvent,
   type ReactNode,
 } from "react";
@@ -41,6 +42,8 @@ import type { LibraryRecord } from "@/lib/document-library";
 import type { EditableDocumentFormat } from "@/lib/document-session";
 import { DEFAULT_LIBRARY_DOCUMENT_QUERY, libraryDocumentFormat, matchesLibraryDocument, queryLibraryDocuments, type LibraryDocumentMetadata, type LibraryDocumentQuery } from "@/lib/library-document-query";
 import { LibraryDocumentFilters } from "@/components/library-document-filters";
+import { CloudAreaPicker, CloudAreaProvider } from "./cloud-area-picker";
+import { accountScopeKey, confirmedAccountScope, subscribeAccountScope } from "@/lib/account-identities";
 
 interface LibraryProps {
   retainedDocument?: { name: string; path: string | null; dirty: boolean; selected: boolean; onSelect: () => void };
@@ -168,6 +171,9 @@ export function Library({
 }: LibraryProps) {
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [signedIn, setSignedIn] = useState(false);
+  const scopeKey = useSyncExternalStore(subscribeAccountScope, accountScopeKey, () => "");
+  const [uploadArea, setUploadArea] = useState("");
+  useEffect(() => { setUploadArea(""); }, [scopeKey]);
   // only "loading" when there's actually a main-process library to query
   const [loading, setLoading] = useState(
     () => !!getElectronAPI()?.libraryState
@@ -410,10 +416,12 @@ export function Library({
       const file = await api.openFilePath(item.path!);
       if (!file) return noticeError(`Can't read ${item.name}`);
       if (isTooLarge(file)) return noticeError(tooLargeMessage(file.size));
+      if (uploadArea && item.cloudId) return noticeError("Existing cloud files keep their area. Move the cloud document separately before changing its destination.");
       const res = await api.docSyncOn({
         path: item.path!,
         name: item.name,
         content: file.content,
+        ...(uploadArea ? { areaId: uploadArea } : {}),
       });
       if (res.error) noticeError(res.error);
     });
@@ -657,6 +665,7 @@ export function Library({
             </div>
           )}
           {!loading && libTab === "recent" && totalDocuments > 0 && <LibraryDocumentFilters query={query} onChange={setQuery} searchTextAvailable={documentRecords.length > 0} />}
+          {!loading && libTab === "recent" && signedIn ? <div className="px-2 py-1"><CloudAreaPicker label="Upload destination" defaultLabel="Default cloud" value={uploadArea} onChange={setUploadArea} /></div> : null}
           {!loading && libTab === "recent" && <LibraryOverviewBand overview={overview} recoveredCount={documentRecords.length} />}
           {!loading && libTab === "recent" && queryActive && <p role="status" className="px-2.5 py-1 text-[10.5px] text-muted tabular-nums">{visibleCount} of {totalDocuments} documents</p>}
         </>
@@ -670,7 +679,7 @@ export function Library({
         ) : view === "skills" ? (
           <SkillsView onOpenPath={onOpenPath} activePath={activePath} />
         ) : view === "cloud" ? (
-          <>
+          <CloudAreaProvider>
           {renderCloudDocuments?.(query)}
           <CloudView
             items={visibleItems}
@@ -680,12 +689,13 @@ export function Library({
             renderRow={fileRow}
             signedIn={signedIn}
             accountId={accountId}
+            accountSessionKey={confirmedAccountScope()?.userId === accountId ? scopeKey : ""}
             onManage={onManageShare}
             onOpenPath={onOpenPath}
             cloudError={cloudError}
             refreshKey={refreshKey}
           />
-          </>
+          </CloudAreaProvider>
         ) : loading ? (
           <LibrarySkeleton />
         ) : libTab === "projects" ? (

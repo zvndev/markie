@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { randomUUID } from "node:crypto";
 import { bearer, emailOTP } from "better-auth/plugins";
 import { openDatabase } from "./db.ts";
 import { sendEmail } from "./email.ts";
@@ -6,6 +7,7 @@ import { claimPendingInvites } from "./pending.ts";
 import { resolveAuthSecret } from "./auth-secret.ts";
 import { otpEmail } from "./otp-email.ts";
 import { applicationOrigins } from "./application-origins.ts";
+import { accountContext, accountIdentitiesEnabled, assertNewAccountEmail } from "./account-context.ts";
 
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
@@ -43,6 +45,10 @@ export const auth = betterAuth({
     // same class of flaw upstream.
     requireEmailVerification: true,
   },
+  ...(accountIdentitiesEnabled ? { account: { accountLinking: {
+    enabled: true, disableImplicitLinking: true, requireLocalEmailVerified: true,
+    allowDifferentEmails: true, updateUserInfoOnLink: false, trustedProviders: [],
+  } } } : {}),
   emailVerification: {
     // Proving your own address is not the same event as signing in by code,
     // and the difference is whether the password survives. The email-OTP
@@ -60,15 +66,17 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
+        before: async (user) => { if (user.email) assertNewAccountEmail(user.email); },
         // Claiming moved out of "an account exists" and into "the address is
         // proven". A Google account, or a first email-OTP sign-in, arrives
         // already verified because the provider or the mailbox proved it, so
         // those still sweep at creation. A password signup does not.
         after: async (user: {
           id: string;
-          email: string;
+          email?: string;
           emailVerified?: boolean;
         }) => {
+          accountContext()?.google?.noteCreatedUser(user.id);
           try {
             if (user.emailVerified && user.email) {
               claimPendingInvites(user.email, user.id);
@@ -86,7 +94,7 @@ export const auth = betterAuth({
         // costs one indexed SELECT and changes nothing.
         after: async (user: {
           id: string;
-          email: string;
+          email?: string;
           emailVerified?: boolean;
         }) => {
           try {
@@ -96,6 +104,30 @@ export const auth = betterAuth({
           } catch (err) {
             console.error("claim-on-verify failed:", err);
           }
+        },
+      },
+    },
+    account: {
+      create: {
+        before: async (account) => {
+          const google = accountContext()?.google;
+          if (account.providerId === "google" && google) {
+            // Upstream assigns an ID after its awaited before hook unless we
+            // supply one. Fence this exact future INSERT, not merely the request.
+            const id = randomUUID();
+            google.authorizeGoogleAccountCreation(account.userId, id);
+            return { data: { ...account, id } };
+          }
+        },
+        after: async (account) => {
+          if (account.providerId === "google") accountContext()?.google?.noteGoogleAccountCreated(account.userId, account.id);
+        },
+      },
+      update: {
+        before: async (account) => {
+          // A known link callback must still hold its initiating session at
+          // the provider-write boundary, even when upstream supplies a patch.
+          accountContext()?.google?.assertGoogleAccountMutation(typeof account.userId === "string" ? account.userId : "");
         },
       },
     },

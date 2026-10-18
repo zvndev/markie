@@ -7,6 +7,7 @@ export interface CloudDocumentMetadata {
   schemaVersion: 2; id: string; name: string; format: LibraryFormat; version: number;
   sha256: string; createdAt: number; updatedAt: number; byteLength: number;
   role: "owner" | "editor" | "viewer";
+  areaId?: string;
 }
 export interface CloudSnapshot extends Pick<CloudDocumentMetadata, "id" | "name" | "format" | "version" | "sha256" | "role"> {
   encoding: "base64"; data: string;
@@ -26,7 +27,8 @@ function validSnapshotMetadata(value: unknown): value is Pick<CloudDocumentMetad
   const row = value as CloudDocumentMetadata;
   return typeof row.id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(row.id) && validName(row.name)
     && FORMATS.has(row.format) && classifyDocumentFormat(row.name).kind === row.format && ROLES.has(row.role)
-    && Number.isSafeInteger(row.version) && row.version >= 1 && typeof row.sha256 === "string" && /^[a-f0-9]{64}$/.test(row.sha256);
+    && Number.isSafeInteger(row.version) && row.version >= 1 && typeof row.sha256 === "string" && /^[a-f0-9]{64}$/.test(row.sha256)
+    && (row.areaId === undefined || typeof row.areaId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(row.areaId));
 }
 function metadata(value: unknown): CloudDocumentMetadata {
   const row = value as CloudDocumentMetadata;
@@ -35,7 +37,8 @@ function metadata(value: unknown): CloudDocumentMetadata {
     || row.byteLength > MAX_FILE) throw new DocumentCloudError(0, "The server returned invalid document metadata.");
   // Copy only metadata. List responses never become a source of document bytes.
   return { schemaVersion: 2, id: row.id, name: row.name, format: row.format, role: row.role, version: row.version,
-    sha256: row.sha256, createdAt: row.createdAt, updatedAt: row.updatedAt, byteLength: row.byteLength };
+    sha256: row.sha256, createdAt: row.createdAt, updatedAt: row.updatedAt, byteLength: row.byteLength,
+    ...(typeof row.areaId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(row.areaId) ? { areaId: row.areaId } : {}) };
 }
 
 function originUrl(value: string): string {
@@ -113,17 +116,19 @@ export class DocumentCloudClient {
     return data;
   }
 
-  async upload(file: CloudFile, target?: { id: string; version: number }, signal?: AbortSignal): Promise<CloudSnapshot> {
+  async upload(file: CloudFile, target?: { id: string; version: number }, signal?: AbortSignal, areaId?: string): Promise<CloudSnapshot> {
     const bytes = new Uint8Array(file.bytes);
     const name = file.name, format = classifyDocumentFormat(name).kind;
     const targetId = target?.id, baseVersion = target?.version ?? 0;
     if (!validName(name) || !FORMATS.has(format) || bytes.length > MAX_FILE) throw new DocumentCloudError(0, "This document format or size cannot be shared yet.");
     if (target && (typeof targetId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(targetId) || !Number.isSafeInteger(baseVersion) || baseVersion < 1 || !Number.isSafeInteger(baseVersion + 1))) throw new DocumentCloudError(0, "Invalid cloud save target.");
-    const body = { schemaVersion: 2, name, format, encoding: "base64", data: binaryBase64(bytes), sha256: await sha256(bytes), baseVersion };
+    if (areaId !== undefined && (!/^[A-Za-z0-9_-]{1,128}$/.test(areaId) || target)) throw new DocumentCloudError(0, "Choose a valid cloud area for a new copy. Existing snapshots keep their current area.");
+    const body = { schemaVersion: 2, name, format, encoding: "base64", data: binaryBase64(bytes), sha256: await sha256(bytes), baseVersion, ...(areaId ? { areaId } : {}) };
     const response = await this.call(targetId ? `/documents/${targetId}` : "/documents", targetId ? "PUT" : "POST", body, signal);
     const { snapshot } = await this.decode(response.document);
     if (snapshot.name !== body.name || snapshot.format !== body.format || snapshot.sha256 !== body.sha256 || snapshot.data !== body.data
       || snapshot.version !== baseVersion + 1 || (targetId && snapshot.id !== targetId)
+      || (areaId !== undefined && snapshot.areaId !== areaId)
       || (targetId ? snapshot.role !== "owner" && snapshot.role !== "editor" : snapshot.role !== "owner")) {
       throw new DocumentCloudError(0, "The cloud save acknowledgment did not match the submitted snapshot. Your edits were kept.");
     }

@@ -11,6 +11,7 @@ vi.mock("@/lib/auth-client", () => ({
   authClient: { me: async () => state.authUser },
   sharesClient: { access: async () => null, list: async () => null, sharedByMe: async () => [] },
   collabWsBase: () => "ws://localhost", getAuthToken: () => null, adoptAuthToken: () => {}, pushSyncConfig: () => {},
+  getConfirmedAuthIdentity: () => null, getServerURL: () => "https://account.example.test",
 }));
 vi.mock("@/components/document-workspace-host", () => ({ DocumentWorkspaceHost: ({ active, embedded, onShellChange, onActivate }: {
   active: boolean; embedded: boolean; onShellChange: (shell: DocumentShellState | null) => void; onActivate: () => void;

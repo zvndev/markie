@@ -811,7 +811,8 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     const webTarget = externalWebTarget(target);
     if (webTarget) {
-      shell.openExternal(webTarget).catch((err) => logCrash("open-external-failed", err));
+      try { shell.openExternal(webTarget).catch(() => logCrash("open-external-failed", "Could not open the external browser.")); }
+      catch { logCrash("open-external-failed", "Could not open the external browser."); }
     }
     return { action: "deny" };
   });
@@ -824,7 +825,8 @@ function createWindow() {
     event.preventDefault();
     const webTarget = externalWebTarget(target);
     if (webTarget) {
-      shell.openExternal(webTarget).catch((err) => logCrash("open-external-failed", err));
+      try { shell.openExternal(webTarget).catch(() => logCrash("open-external-failed", "Could not open the external browser.")); }
+      catch { logCrash("open-external-failed", "Could not open the external browser."); }
     }
   });
 
@@ -1440,7 +1442,7 @@ async function reconcileIfDue(force = false) {
   if (reconcileInFlight) return reconcileInFlight;
   if (!force && Date.now() - lastReconcile < 10 * 60 * 1000) return lastReconcileResult;
   lastReconcile = Date.now();
-  reconcileInFlight = reconciler.run();
+  reconcileInFlight = sync.withSessionBinding(() => reconciler.run());
   try {
     lastReconcileResult = await reconcileInFlight;
     // A pass that moved a row from "media pending" to synced changed what the
@@ -1605,8 +1607,8 @@ handle("registry-get", (_event, p) => {
 handle("library-state", () => sync.libraryState(), {
   onFailure: (err) => ({ signedIn: false, items: [], error: errorMessage(err) }),
 });
-handle("doc-sync-on", (_event, { path: p, name, content }) =>
-  sync.syncOn(p, name, content)
+handle("doc-sync-on", (_event, { path: p, name, content, areaId }) =>
+  sync.syncOn(p, name, content, areaId)
 );
 handle("doc-sync-off", (_event, { path: p, deleteRemote }) =>
   sync.syncOff(p, deleteRemote)
@@ -1911,7 +1913,8 @@ handle("open-external", (event, target) => {
     void dialog.showMessageBox(mainWindow, { type: "info", message: "Google sign-in is unavailable in Markie Preview.", detail: "This preview does not use installed Markie's browser callback. Use email sign-in instead." });
     return;
   }
-  shell.openExternal(webTarget).catch((err) => logCrash("open-external-failed", err));
+  try { shell.openExternal(webTarget).catch(() => logCrash("open-external-failed", "Could not open the external browser.")); }
+  catch { logCrash("open-external-failed", "Could not open the external browser."); }
 });
 
 // ── Browse: device-wide markdown index ──

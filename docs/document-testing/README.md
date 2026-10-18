@@ -6,6 +6,8 @@ The full Word-like product and remaining acceptance journeys are defined in the 
 
 Follow the [everyday writing checks](everyday-writing.md) for mixed formatting, input, narrow toolbars and contextual output information.
 
+The source preview also includes opt-in [linked sign-ins and cloud areas](linked-sign-ins.md). These require an enabled test server; they are not yet active on the existing cloud service or installed Super-nightly build.
+
 This preview includes original-engine RTF and ODT editing with same-format saving, supported native page setup and Print/PDF, plus a first offline interactive Darkmown milestone. Passive RTF information metadata and Word proofing/calculated-page markers have broader editing support. RTF/ODT are not secretly converted into Word files. Complex documents may remain read-only or be refused before they replace the current editor.
 
 ## Start here

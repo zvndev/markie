@@ -103,6 +103,7 @@ function docHasContent(docId: string): boolean {
 
 interface Conn {
   userId: string;
+  sessionId: string; // revoke one sign-in factor without removing the person's ACL
   identity: PresenceIdentity; // what this socket is allowed to claim it is
   controlled: Set<number>; // awareness client ids this socket controls
   level: ShareAccessLevel; // last level read for this user on this doc
@@ -128,13 +129,22 @@ interface Room {
 
 const rooms = new Map<string, Room>();
 
+function liveSession(userId: string, sessionId: string): boolean {
+  const session = db.prepare('SELECT userId,expiresAt FROM "session" WHERE id=?').get(sessionId) as { userId: string; expiresAt: string | number } | undefined;
+  if (!session || session.userId !== userId) return false;
+  const expiresAt = typeof session.expiresAt === "number" ? session.expiresAt : /^\d+$/.test(session.expiresAt) ? Number(session.expiresAt) : Date.parse(session.expiresAt);
+  return Number.isFinite(expiresAt) && expiresAt > Date.now();
+}
+
 function readLevel(docId: string, conn: Conn): ShareAccessLevel {
-  conn.level = accessLevel(docId, conn.userId);
+  conn.level = liveSession(conn.userId, conn.sessionId) ? accessLevel(docId, conn.userId) : null;
   conn.checkedAt = Date.now();
   return conn.level;
 }
 
 function cachedLevel(docId: string, conn: Conn): ShareAccessLevel {
+  // Membership may be briefly cached; a deleted/expired session never is.
+  if (!liveSession(conn.userId, conn.sessionId)) return null;
   if (Date.now() - conn.checkedAt >= ACCESS_CACHE_MS) return readLevel(docId, conn);
   return conn.level;
 }
@@ -269,6 +279,15 @@ export function disconnectUser(docId: string, userId: string): void {
   }
 }
 
+/** Call after the identity/session transaction commits, not for an entire UID. */
+export function disconnectSessions(sessionIds: readonly string[]): void {
+  const revoked = new Set(sessionIds);
+  if (!revoked.size) return;
+  for (const room of rooms.values()) for (const [ws, conn] of room.conns) {
+    if (revoked.has(conn.sessionId)) ws.close(CLOSE_ACCESS_REVOKED, "session revoked");
+  }
+}
+
 // A soft-deleted doc revokes access for everyone at once, owner included.
 export function closeRoom(docId: string): void {
   const room = rooms.get(docId);
@@ -346,11 +365,14 @@ function handleConnection(
   conn: WebSocket,
   docId: string,
   user: { id: string; name?: string | null; email?: string | null },
-  level: ShareAccessLevel
+  sessionId: string
 ): void {
+  const level = liveSession(user.id, sessionId) ? accessLevel(docId, user.id) : null;
+  if (!canReadLevel(level)) { conn.close(CLOSE_ACCESS_REVOKED, "access revoked"); return; }
   const room = getRoom(docId);
   const state: Conn = {
     userId: user.id,
+    sessionId,
     identity: presenceIdentity(user),
     controlled: new Set(),
     level,
@@ -470,14 +492,14 @@ export function attachCollab(server: Server): void {
       const token = url.searchParams.get("token") ?? "";
       const session = await sessionFromToken(token);
       const level = session?.user ? accessLevel(docId, session.user.id) : null;
-      if (!session?.user || !canReadLevel(level)) {
+      if (!session?.user || !session.session?.id || !liveSession(session.user.id, session.session.id) || !canReadLevel(level)) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
       }
       const user = session.user;
       wss.handleUpgrade(req, socket, head, (conn) => {
-        handleConnection(conn, docId, user, level);
+        handleConnection(conn, docId, user, session.session.id);
       });
     } catch (err) {
       console.error("collab upgrade error:", err);

@@ -12,6 +12,11 @@ export interface MarkieUser {
 
 const SERVER_KEY = "markie.server.v1";
 const DEFAULT_SERVER = "https://api-production-602f.up.railway.app";
+let sessionEpoch = 0;
+function accountSessionChanged(): void {
+  sessionEpoch++;
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("markie:account-session-change"));
+}
 
 export function getServerURL(): string {
   const privateOrigin = getElectronAPI()?.privateReleaseAuthOrigin;
@@ -33,10 +38,11 @@ export function setServerURL(url: string): void {
   }
   // An account was confirmed by one server; another server has not said
   // whose this token is, so the answer goes with the old address.
-  if (getServerURL() !== before && principal !== null) {
+  if (getServerURL() !== before) {
     principal = null;
     writeBinding(null);
     pushSyncConfig();
+    accountSessionChanged();
   }
 }
 
@@ -93,6 +99,7 @@ function setToken(token: string | null): void {
     writeBinding(null);
   }
   pushSyncConfig();
+  if (!token || token !== before) accountSessionChanged();
 }
 
 // The confirmed account, kept beside the token it was confirmed for, so a
@@ -173,6 +180,7 @@ function confirmPrincipal(token: string, serverURL: string, userId: string): voi
   if (principal === userId) return;
   principal = userId;
   pushSyncConfig();
+  accountSessionChanged();
 }
 
 // The token main was last told about in this session. Main refuses a user
@@ -202,7 +210,8 @@ async function api<T>(
 ): Promise<{ ok: boolean; status: number; data: T | null }> {
   try {
     const token = getToken();
-    const res = await fetch(`${getServerURL()}${path}`, {
+    const serverURL = getServerURL(), epoch = sessionEpoch;
+    const res = await fetch(`${serverURL}${path}`, {
       ...init,
       headers: {
         "Content-Type": "application/json",
@@ -210,9 +219,10 @@ async function api<T>(
         ...(init?.headers ?? {}),
       },
     });
+    if (epoch !== sessionEpoch || token !== getToken() || serverURL !== getServerURL()) return { ok: false, status: 0, data: null };
     // better-auth's bearer plugin returns the session token on auth responses
     const newToken = res.headers.get("set-auth-token");
-    if (newToken) setToken(newToken);
+    if (res.ok && newToken && epoch === sessionEpoch && token === getToken() && serverURL === getServerURL()) setToken(newToken);
     const data = (await res.json().catch(() => null)) as T | null;
     return { ok: res.ok, status: res.status, data };
   } catch {
@@ -230,6 +240,28 @@ export interface AuthResult {
 export function authFailureCode(data: unknown): string {
   const code = (data as { code?: unknown } | null)?.code;
   return typeof code === "string" ? code : "";
+}
+
+interface CodeFlow {
+  kind: "legacy" | "identity"; email: string; serverURL: string; token: string | null; epoch: number;
+  challengeId?: string; flowId?: string;
+}
+let codeFlow: CodeFlow | null = null;
+let codeRequest = 0;
+const currentCodeFlow = (flow: CodeFlow) => flow.serverURL === getServerURL() && flow.token === getToken() && flow.epoch === sessionEpoch;
+const codeFailure = (status = 0) => ({ ok: false, status, data: null });
+async function codeJson(response: Response): Promise<Record<string, unknown> | null> {
+  if (Number(response.headers.get("content-length")) > 8192 || !response.body) return null;
+  const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
+  try {
+    for (;;) { const chunk = await reader.read(); if (chunk.done) break; size += chunk.value.length; if (size > 8192) { await reader.cancel(); return null; } chunks.push(chunk.value); }
+    const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+    const parsed: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch { return null; } finally { reader.releaseLock(); }
+}
+function codeFetch(serverURL: string, path: string, data?: unknown): Promise<Response> {
+  return fetch(`${serverURL}${path}`, { method: data === undefined ? "GET" : "POST", credentials: "omit", redirect: "error", cache: "no-store", headers: { "content-type": "application/json" }, ...(data === undefined ? {} : { body: JSON.stringify(data) }) });
 }
 
 export const authClient = {
@@ -275,17 +307,51 @@ export const authClient = {
   // the session is minted, so registering somebody else's address buys nothing
   // once the real owner asks for a code. Use this when the caller is holding
   // nothing but the address.
-  sendOTP: (email: string) =>
-    api<{ success: boolean }>("/api/auth/email-otp/send-verification-otp", {
-      method: "POST",
-      body: JSON.stringify({ email, type: "sign-in" }),
-    }),
+  sendOTP: async (email: string) => {
+    const request = ++codeRequest;
+    codeFlow = null;
+    const flow: CodeFlow = { kind: "identity", email: email.trim().toLowerCase(), serverURL: getServerURL(), token: getToken(), epoch: sessionEpoch };
+    try {
+      const capability = await codeFetch(flow.serverURL, "/api/account/capabilities");
+      if (!currentCodeFlow(flow) || request !== codeRequest) return codeFailure();
+      if (capability.status === 404) {
+        flow.kind = "legacy";
+        const result = await api<{ success: boolean }>("/api/auth/email-otp/send-verification-otp", { method: "POST", body: JSON.stringify({ email, type: "sign-in" }) });
+        if (!currentCodeFlow(flow) || request !== codeRequest) return codeFailure();
+        if (result.ok) codeFlow = flow;
+        return result;
+      }
+      const advertised = await codeJson(capability);
+      if (!capability.ok || advertised?.verifiedIdentities !== true) return codeFailure(capability.ok ? 503 : capability.status);
+      if (!currentCodeFlow(flow) || request !== codeRequest) return codeFailure();
+      const response = await codeFetch(flow.serverURL, "/api/account/identities/sign-in/start", { email: flow.email });
+      const data = await codeJson(response);
+      if (!currentCodeFlow(flow) || request !== codeRequest) return codeFailure();
+      if (!response.ok) return codeFailure(response.status);
+      if (typeof data?.challengeId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(data.challengeId) || typeof data.flowId !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(data.flowId)) return codeFailure(503);
+      codeFlow = { ...flow, challengeId: data.challengeId, flowId: data.flowId };
+      return { ok: true, status: response.status, data: { success: true } };
+    } catch { return codeFailure(); }
+  },
 
-  verifyOTP: (email: string, otp: string) =>
-    api<{ user: MarkieUser }>("/api/auth/sign-in/email-otp", {
-      method: "POST",
-      body: JSON.stringify({ email, otp }),
-    }),
+  verifyOTP: async (email: string, otp: string) => {
+    const flow = codeFlow;
+    if (!flow || flow.email !== email.trim().toLowerCase() || !currentCodeFlow(flow)) return codeFailure(400);
+    if (flow.kind === "legacy") return api<{ user: MarkieUser }>("/api/auth/sign-in/email-otp", { method: "POST", body: JSON.stringify({ email, otp }) });
+    try {
+      const response = await codeFetch(flow.serverURL, "/api/account/identities/sign-in/verify", { challengeId: flow.challengeId, flowId: flow.flowId, code: otp });
+      const data = await codeJson(response);
+      if (codeFlow !== flow || !currentCodeFlow(flow)) return codeFailure();
+      if (!response.ok) return codeFailure(response.status);
+      const token = data?.token;
+      if (typeof token !== "string" || token.length < 1 || token.length > 4096) return codeFailure(503);
+      codeFlow = null;
+      setToken(token);
+      const user = await authClient.me();
+      if (!user || getToken() !== token || getServerURL() !== flow.serverURL) return codeFailure();
+      return { ok: true, status: response.status, data: { user } };
+    } catch { return codeFailure(); }
+  },
 
   // Confirming an address the caller already holds the password for: a fresh
   // signup, or a sign-in the server refused only because the address was never
@@ -322,13 +388,14 @@ export const authClient = {
     }),
 
   signOut: async () => {
+    const asked = { token: getToken(), serverURL: getServerURL() };
     const request = api<{ success: boolean }>("/api/auth/sign-out", {
       method: "POST",
       body: "{}",
     });
     if (usesPrivateCredential()) setToken(null);
     const res = await request;
-    setToken(null);
+    if (getServerURL() === asked.serverURL && (getToken() === asked.token || usesPrivateCredential() && getToken() === null)) setToken(null);
     return res;
   },
 

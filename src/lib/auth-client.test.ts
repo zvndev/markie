@@ -227,6 +227,15 @@ describe("the account across a relaunch", () => {
     expect(localStorage.getItem(PRINCIPAL_KEY)).toBeNull();
   });
 
+  it("tells native sync about server changes even when the token has no confirmed principal", () => {
+    client.adoptAuthToken("unconfirmed-token");
+    syncConfig.mockClear();
+    client.setServerURL("https://new-server.example");
+    expect(syncConfig).toHaveBeenCalledExactlyOnceWith({ token: "unconfirmed-token", serverURL: "https://new-server.example", userId: null });
+    expect(client.getConfirmedAuthIdentity()).toBeNull();
+    expect(localStorage.getItem(PRINCIPAL_KEY)).toBeNull();
+  });
+
   it("restores the account on launch when the stored token is the one it was confirmed for", async () => {
     localStorage.setItem(TOKEN_KEY, "tok-a");
     localStorage.setItem(
@@ -281,5 +290,83 @@ describe("the account across a relaunch", () => {
     );
     await client.authClient.signOut();
     expect(localStorage.getItem(PRINCIPAL_KEY)).toBeNull();
+  });
+});
+
+describe("verified identity code sign-in", () => {
+  const challengeId = "synthetic-challenge", flowId = "a".repeat(43);
+  function mockCodeServer(capability: number | Record<string, unknown> = { verifiedIdentities: true }) {
+    return vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/capabilities")) return typeof capability === "number" ? new Response("", { status: capability }) : Response.json(capability);
+      if (url.endsWith("/identities/sign-in/start")) return Response.json({ challengeId, flowId, expiresInSeconds: 300 });
+      if (url.endsWith("/identities/sign-in/verify")) return Response.json({ token: "canonical-token" });
+      if (url.endsWith("/api/me")) return Response.json({ user: A });
+      if (url.endsWith("/send-verification-otp")) return Response.json({ success: true });
+      if (url.endsWith("/sign-in/email-otp")) return Response.json({ user: A }, { headers: { "set-auth-token": "legacy-token" } });
+      throw new Error(`Unexpected route: ${url} ${init?.method}`);
+    });
+  }
+  it("uses canonical identity endpoints, confirms the returned token, and never transmits browser cookies or an existing bearer", async () => {
+    const request = mockCodeServer(); vi.stubGlobal("fetch", request);
+    expect((await client.authClient.sendOTP(" Alias@Example.com ")).ok).toBe(true);
+    const result = await client.authClient.verifyOTP("alias@example.com", "123456");
+    expect(result.ok).toBe(true); expect(result.data?.user).toEqual(A);
+    expect(client.getAuthToken()).toBe("canonical-token"); expect(client.getConfirmedAuthIdentity()?.userId).toBe(A.id);
+    const calls = request.mock.calls;
+    expect(JSON.parse(calls[1][1]!.body as string)).toEqual({ email: "alias@example.com" });
+    expect(JSON.parse(calls[2][1]!.body as string)).toEqual({ challengeId, flowId, code: "123456" });
+    for (const [, init] of calls.slice(0, 3)) { expect(init?.credentials).toBe("omit"); expect(init?.redirect).toBe("error"); expect(new Headers(init?.headers).has("authorization")).toBe(false); }
+  });
+  it("falls back to the legacy signup-capable code flow only for capability404", async () => {
+    const request = mockCodeServer(404); vi.stubGlobal("fetch", request);
+    expect((await client.authClient.sendOTP("a@example.com")).ok).toBe(true);
+    expect((await client.authClient.verifyOTP("a@example.com", "123456")).ok).toBe(true);
+    expect(client.getAuthToken()).toBe("legacy-token"); expect(request.mock.calls.some(([url]) => url.includes("/identities/sign-in/"))).toBe(false);
+  });
+  it.each([401, 403, 500, { verifiedIdentities: false }, {}])("does not downgrade when capabilities return %j", async (capability) => {
+    const request = mockCodeServer(capability); vi.stubGlobal("fetch", request);
+    expect((await client.authClient.sendOTP("a@example.com")).ok).toBe(false); expect(request).toHaveBeenCalledOnce();
+  });
+  it("refuses verification for a different email or an absent ephemeral flow", async () => {
+    const request = mockCodeServer(); vi.stubGlobal("fetch", request);
+    expect((await client.authClient.verifyOTP("a@example.com", "123456")).ok).toBe(false); expect(request).not.toHaveBeenCalled();
+    await client.authClient.sendOTP("a@example.com");
+    expect((await client.authClient.verifyOTP("b@example.com", "123456")).ok).toBe(false); expect(request).toHaveBeenCalledTimes(2);
+  });
+  it("discards an in-flight token response when the account or server changes", async () => {
+    const normal = mockCodeServer(); let answer!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => url.endsWith("/identities/sign-in/verify") ? new Promise<Response>((resolve) => { answer = resolve; }) : normal(url, init)));
+    await client.authClient.sendOTP("a@example.com"); const verify = client.authClient.verifyOTP("a@example.com", "123456");
+    client.adoptAuthToken("new-account-token"); answer(Response.json({ token: "stale-token" }));
+    expect((await verify).ok).toBe(false); expect(client.getAuthToken()).toBe("new-account-token");
+    await client.authClient.sendOTP("a@example.com"); const otherServer = client.authClient.verifyOTP("a@example.com", "123456");
+    client.setServerURL("https://other.example"); answer(Response.json({ token: "wrong-server-token" }));
+    expect((await otherServer).ok).toBe(false); expect(client.getAuthToken()).toBe("new-account-token");
+  });
+  it("invalidates earlier sends and verifies when a newer code is requested", async () => {
+    const normal = mockCodeServer(); let answer!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => url.endsWith("/identities/sign-in/verify") ? new Promise<Response>((resolve) => { answer = resolve; }) : normal(url, init)));
+    await client.authClient.sendOTP("a@example.com"); const verify = client.authClient.verifyOTP("a@example.com", "123456");
+    await client.authClient.sendOTP("b@example.com"); answer(Response.json({ token: "obsolete-token" }));
+    expect((await verify).ok).toBe(false); expect(client.getAuthToken()).toBeNull();
+  });
+  it("emits same-window invalidation for token, confirmed principal, server, and sign-out changes without token details", async () => {
+    const listener = vi.fn(); window.addEventListener("markie:account-session-change", listener);
+    try {
+      client.adoptAuthToken("tok-a"); expect(listener).toHaveBeenCalledTimes(1);
+      answerMe(A); await client.authClient.me(); expect(listener).toHaveBeenCalledTimes(2);
+      client.adoptAuthToken("tok-a"); expect(listener).toHaveBeenCalledTimes(2);
+      client.setServerURL("https://other.example"); expect(listener).toHaveBeenCalledTimes(3);
+      await client.authClient.signOut(); expect(listener).toHaveBeenCalledTimes(4);
+      expect(listener.mock.calls.every(([event]) => !(event as CustomEvent).detail)).toBe(true);
+    } finally { window.removeEventListener("markie:account-session-change", listener); }
+  });
+  it("does not let late generic auth headers or sign-out clear a newer session", async () => {
+    client.adoptAuthToken("initial"); let answer!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { answer = resolve; })));
+    const signIn = client.authClient.signInEmail("a@example.com", "secret"); client.adoptAuthToken("newer"); answer(Response.json({ user: A }, { headers: { "set-auth-token": "stale" } }));
+    expect((await signIn).ok).toBe(false); expect(client.getAuthToken()).toBe("newer");
+    const signOut = client.authClient.signOut(); client.adoptAuthToken("newest"); answer(Response.json({ success: true })); await signOut;
+    expect(client.getAuthToken()).toBe("newest");
   });
 });

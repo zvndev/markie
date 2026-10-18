@@ -3,6 +3,8 @@ import { getAuthToken, getConfirmedAuthIdentity, getServerURL } from "@/lib/auth
 import { authStore, useAuth } from "@/lib/auth-store";
 import { DocumentCloudClient, type CloudDocumentMetadata } from "@/lib/document-cloud";
 import { queryLibraryDocuments, type LibraryDocumentQuery } from "@/lib/library-document-query";
+import { CloudAreaPicker, useCloudAreaScope } from "./cloud-area-picker";
+import type { CloudAreas } from "@/lib/account-identities";
 
 function identity() {
   const { user, status } = authStore.getSnapshot();
@@ -19,6 +21,9 @@ export function DocumentCloudLibrary({ query, onOpen }: { query: LibraryDocument
   const [listing, setListing] = useState<Listing | null>(null);
   const [retry, setRetry] = useState(0);
   const [storageEpoch, setStorageEpoch] = useState(0);
+  const sharedArea = useCloudAreaScope();
+  const [localAreaId, setAreaId] = useState(""), [localAreas, setAreas] = useState<CloudAreas | null>(null);
+  const areaId = sharedArea ? sharedArea.areaId : localAreaId, areas = sharedArea ? sharedArea.areas : localAreas;
   const generation = useRef(0);
   useEffect(() => {
     const changed = () => setStorageEpoch((value) => value + 1);
@@ -51,10 +56,12 @@ export function DocumentCloudLibrary({ query, onOpen }: { query: LibraryDocument
 
   // Never render an old account's title while effect cleanup is pending.
   const visible = listing?.identity === currentIdentity && authorized ? listing : null;
-  const rows = queryLibraryDocuments(visible?.rows ?? [], query, (row) => ({ key: `snapshot:${row.id}`, name: row.name, format: row.format, updatedAt: row.updatedAt }));
+  const areaRows = (visible?.rows ?? []).filter((row) => !areaId || (row.areaId ?? areas?.placements.find((item) => item.kind === "snapshot" && item.documentId === row.id)?.areaId) === areaId);
+  const rows = queryLibraryDocuments(areaRows, query, (row) => ({ key: `snapshot:${row.id}`, name: row.name, format: row.format, updatedAt: row.updatedAt }));
   return <section aria-label="Cloud document snapshots" className="border-t border-border py-2">
     <div className="flex items-center justify-between gap-2 px-3"><h3 className="text-xs font-medium text-muted">Document snapshots</h3><button type="button" aria-label="Refresh cloud document snapshots" disabled={!authorized || !!visible?.loading} className="text-xs text-muted hover:text-foreground disabled:opacity-40" onClick={() => setRetry((value) => value + 1)}>Refresh</button></div>
     <p className="px-3 pt-1 text-[11px] text-muted">Search names only; filter by format. Content stays in the cloud until opened.</p>
+    {authorized && !sharedArea ? <div className="px-3 py-1"><CloudAreaPicker label="Snapshot cloud area" value={areaId} onChange={setAreaId} onLoaded={setAreas} /></div> : null}
     {status === "checking" ? <p role="status" className="px-3 py-2 text-xs text-muted">Checking account…</p>
       : status !== "in" || !user ? <p className="px-3 py-2 text-xs text-muted">Sign in to browse document snapshots.</p>
         : !authorized ? <p className="px-3 py-2 text-xs text-muted">Sign in again to confirm your account on this server.</p>

@@ -9,7 +9,7 @@ import remarkRehype from "remark-rehype";
 import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import rehypeSanitize, { defaultSchema, type Options as SanitizeSchema } from "rehype-sanitize";
 import { rehypeMedia } from "./rehype-media.ts";
 import { rehypeCloudAssets } from "./rehype-cloud-assets.ts";
 import { rehypeDocLinks } from "./rehype-doc-links.ts";
@@ -37,7 +37,7 @@ const SVG = ["svg","path","line","g","defs","use","rect","polyline"];
 // clip as a remote or inlined source; a local path was never going to reach
 // the reader anyway.
 const MEDIA = ["video", "audio", "source"];
-const sanitizeSchema = {
+const sanitizeSchema: SanitizeSchema = {
   ...defaultSchema,
   // Kept in step with src/lib/markdown-html.ts. defaultSchema.protocols.src is
   // ["http", "https"], which strips the src off an inlined image and leaves an

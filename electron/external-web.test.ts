@@ -20,6 +20,7 @@ describe("web interaction IPC ownership", () => {
     const get = vi.fn(async () => ({ title: "Preview" }));
     const openExternal = vi.fn(async () => {});
     const showMessageBox = vi.fn();
+    const logCrash = vi.fn();
     const start = source.indexOf("const linkPreviews = createLinkPreviews(");
     const end = source.indexOf("// ── Browse:", start);
     runInNewContext(source.slice(start, end), {
@@ -31,9 +32,9 @@ describe("web interaction IPC ownership", () => {
       externalWebTarget,
       isDesktopPreview: preview,
       isStableDesktopAuthUrl: (target: string) => new URL(target).pathname === "/auth/google-start",
-      dialog: { showMessageBox }, mainWindow: {}, shell: { openExternal }, logCrash: vi.fn(),
+      dialog: { showMessageBox }, mainWindow: {}, shell: { openExternal }, logCrash,
     });
-    return { callbacks, get, openExternal, showMessageBox };
+    return { callbacks, get, openExternal, showMessageBox, logCrash };
   }
   it("allows only the fixed existing auth handoff while the private build is locked", async () => {
     const f = fixture(true, false, true);
@@ -63,6 +64,31 @@ describe("web interaction IPC ownership", () => {
     expect(f.showMessageBox).toHaveBeenCalledOnce(); expect(f.openExternal).not.toHaveBeenCalled();
     await f.callbacks.get("open-external")!({}, "https://example.com/docs");
     expect(f.openExternal).toHaveBeenCalledExactlyOnceWith("https://example.com/docs");
+  });
+  it.each(["async", "sync"])("never logs the %s browser failure URL or secret identity-link fragment", async (mode) => {
+    const f = fixture(), target = "https://example.com/account/link-google#intent=fixture-secret-fragment";
+    if (mode === "async") f.openExternal.mockRejectedValue(new Error(`Cannot launch ${target}`));
+    else f.openExternal.mockImplementation(() => { throw new Error(`Cannot launch ${target}`); });
+    await f.callbacks.get("open-external")!({}, target); await Promise.resolve();
+    expect(f.logCrash).toHaveBeenCalledExactlyOnceWith("open-external-failed", "Could not open the external browser.");
+    expect(JSON.stringify(f.logCrash.mock.calls)).not.toContain("fixture-secret-fragment");
+  });
+});
+
+describe("native navigation failure redaction", () => {
+  it.each(["async", "sync"])("redacts %s browser failure details from window-open and will-navigate handlers", async (mode) => {
+    let windowOpen!: (args: { url: string }) => { action: string };
+    const listeners = new Map<string, (...args: unknown[]) => void>(), logCrash = vi.fn();
+    const target = "https://example.com/account/link-google#intent=fixture-secret-fragment";
+    const mainWindow = { webContents: { setWindowOpenHandler: (handler: typeof windowOpen) => { windowOpen = handler; }, on: (event: string, callback: (...args: unknown[]) => void) => listeners.set(event, callback) } };
+    const start = source.indexOf("  mainWindow.webContents.setWindowOpenHandler(");
+    const end = source.indexOf("  // Closing the window", start);
+    const openExternal = mode === "async" ? async () => { throw new Error(target); } : () => { throw new Error(target); };
+    runInNewContext(source.slice(start, end), { mainWindow, externalWebTarget, shell: { openExternal }, isAppUrl: () => false, logCrash });
+    expect(windowOpen({ url: target })).toEqual({ action: "deny" });
+    listeners.get("will-navigate")!({ preventDefault: vi.fn() }, target); await Promise.resolve();
+    expect(logCrash).toHaveBeenCalledTimes(2);
+    for (const call of logCrash.mock.calls) expect(call).toEqual(["open-external-failed", "Could not open the external browser."]);
   });
 });
 

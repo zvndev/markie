@@ -3,6 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { AsyncLocalStorage } = require("node:async_hooks");
 const registry = require("./registry");
 const { isAllowedServerOrigin } = require("./share-origin");
 // Every write below lands on a file the user owns, so none of them may leave a
@@ -11,6 +12,8 @@ const { writeFileAtomic } = require("./atomic-write");
 const docTiers = require("./doc-tiers");
 
 let config = { token: null, serverURL: null };
+let sessionGeneration = 0;
+const boundUpload = new AsyncLocalStorage();
 
 // What the signed-in user may do with each cloud doc, keyed by cloud doc id.
 // The renderer resolves the role once (src/lib/share-role.ts) and reports it
@@ -75,6 +78,7 @@ function isExposed(cloudId) {
 }
 
 function setConfig(next) {
+  const previousPrincipal = principal;
   const serverURL = next.serverURL ?? null;
   // SECURITY: only forward the bearer token to an allowlisted origin so a future
   // code path can't be tricked into exfiltrating the session token.
@@ -104,6 +108,7 @@ function setConfig(next) {
   // signed in.
   if (sessionChanged || !token) principal = null;
   else if (next.userId) principal = next.userId;
+  if (sessionChanged || principal !== previousPrincipal) sessionGeneration++;
   // `sessionKey` names this session without being it: the asset cache stores
   // it beside its index, so a relaunch of the same account keeps the pictures
   // it fetched and any other account's binding empties the directory. A
@@ -193,19 +198,31 @@ async function fetchAsset(cloudId, ref, ifNoneMatch) {
 // abort the caller before it could record the failure, leaving the registry
 // claiming a push had succeeded. Every caller now sees a status it must handle.
 const NO_RESPONSE = 0;
+const STALE_UPLOAD = "Your sign-in or cloud server changed during the upload. Confirm the account and destination before retrying.";
+function currentUpload(binding) {
+  return !binding || (binding.generation === sessionGeneration && binding.token === config.token && binding.serverURL === config.serverURL && binding.userId === principal);
+}
+function withSessionBinding(operation) {
+  const binding = boundUpload.getStore() ?? { ...config, userId: principal, generation: sessionGeneration };
+  return boundUpload.run(binding, operation);
+}
 
 async function api(method, p, body, opts = {}) {
   // Abort a hung request so the renderer's invoke() can't pend forever
   // (e.g. an unreachable server would otherwise freeze the save indicator).
   try {
+    const binding = boundUpload.getStore();
+    if (!currentUpload(binding)) return { status: NO_RESPONSE, data: null, staleSession: true };
+    const session = binding ?? config;
     const raw = opts.raw ?? null;
-    const res = await fetch(`${config.serverURL}${p}`, {
+    const res = await fetch(`${session.serverURL}${p}`, {
       method,
       headers: raw
-        ? { "Content-Type": raw.mime, "Content-Length": String(raw.size), Authorization: `Bearer ${config.token}` }
-        : { "Content-Type": "application/json", Authorization: `Bearer ${config.token}` },
+        ? { "Content-Type": raw.mime, "Content-Length": String(raw.size), Authorization: `Bearer ${session.token}` }
+        : { "Content-Type": "application/json", Authorization: `Bearer ${session.token}` },
       body: raw ? raw.stream : body ? JSON.stringify(body) : undefined,
       duplex: raw ? "half" : undefined,
+      ...(binding ? { redirect: "error" } : {}),
       signal: AbortSignal.timeout(raw ? 300000 : 15000),
     });
     // A 2xx whose body is not JSON — an HTML error page from a proxy, a
@@ -213,6 +230,7 @@ async function api(method, p, body, opts = {}) {
     // a success: every caller below reads fields out of `data`, and reading
     // them off null is how a shared-doc open used to take the window down.
     const data = await res.json().catch(() => null);
+    if (!currentUpload(binding)) return { status: NO_RESPONSE, data: null, staleSession: true };
     if (res.status >= 200 && res.status < 300 && data === null) {
       return { status: res.status, data: null, unreadable: true };
     }
@@ -331,9 +349,22 @@ function mediaLeftPending(filePath, staged) {
 }
 
 // Turn syncing on for a file: create the cloud doc (or push a new snapshot).
-async function syncOn(filePath, name, content) {
+async function syncOn(filePath, name, content, areaId) {
   if (!isConfigured()) return { error: "not signed in" };
+  const explicitArea = areaId !== undefined;
+  if (explicitArea && (typeof areaId !== "string" || !areaId || areaId.length > 128 || /[\x00-\x20\x7f]/.test(areaId))) return { error: "Choose a valid cloud destination." };
+  if (explicitArea && !principal) return { error: "Confirm your signed-in account before choosing a cloud destination." };
   const row = registry.get(filePath);
+  if (explicitArea && row?.cloud_doc_id) return { error: "This document is already linked. Move it through cloud-area controls; uploading cannot change its destination." };
+  // Even an omitted/default destination belongs to the session that queued it.
+  // A legacy unconfirmed principal may stay null, but its token/server epoch
+  // must still remain unchanged throughout the upload.
+  const binding = boundUpload.getStore() ?? { ...config, userId: principal, generation: sessionGeneration };
+  if (!currentUpload(binding)) return { error: STALE_UPLOAD };
+  return boundUpload.run(binding, () => syncOnSnapshot(filePath, name, content, areaId, row, binding));
+}
+
+async function syncOnSnapshot(filePath, name, content, areaId, row, binding) {
   const refused = viewerRefusal(filePath, row?.cloud_doc_id);
   if (refused) return refused;
   const linked = row?.cloud_doc_id ?? null;
@@ -353,7 +384,9 @@ async function syncOn(filePath, name, content) {
     content,
     hash,
     baseVersion,
+    ...(areaId === undefined ? {} : { areaId }),
   });
+  if (!currentUpload(binding)) return { error: STALE_UPLOAD };
   if (res.status === 200) {
     const version = readVersion(res);
     if (version === null) {
@@ -366,7 +399,10 @@ async function syncOn(filePath, name, content) {
       mediaLeftPending(filePath, staged);
       return { error: UNREADABLE, media };
     }
-    registry.update(filePath, {
+    // Upload jobs acknowledge only after all awaited media work still
+    // belongs to the captured account/server generation. AsyncLocalStorage also
+    // pins any nested media API request and refuses it after a session change.
+    const acknowledge = () => registry.update(filePath, {
       cloud_doc_id: cloudId,
       cloud_version: version,
       content_hash: hash,
@@ -375,9 +411,12 @@ async function syncOn(filePath, name, content) {
     });
     if (!linked) {
       staged = await stageMedia(filePath, cloudId, content);
+      if (!currentUpload(binding)) return { error: STALE_UPLOAD };
       media = staged;
     }
     if (staged && staged.staged) media = await linkMedia(filePath, cloudId, staged.staged, version);
+    if (!currentUpload(binding)) return { error: STALE_UPLOAD };
+    acknowledge();
     return { ok: true, version, media };
   }
   if (res.status === 409) {
@@ -397,6 +436,12 @@ async function syncOn(filePath, name, content) {
 // has to stay retryable or the local edit would never reach the server again.
 async function push(filePath, name, content) {
   if (!isConfigured()) return { skipped: "not signed in" };
+  const binding = boundUpload.getStore() ?? { ...config, userId: principal, generation: sessionGeneration };
+  if (!currentUpload(binding)) return { error: STALE_UPLOAD };
+  return boundUpload.run(binding, () => pushSnapshot(filePath, name, content, binding));
+}
+
+async function pushSnapshot(filePath, name, content, binding) {
   const row = registry.get(filePath);
   const pushable =
     row?.sync_state === "synced" || row?.sync_state === "unpushed";
@@ -405,16 +450,19 @@ async function push(filePath, name, content) {
   }
   const refused = viewerRefusal(filePath, row.cloud_doc_id);
   if (refused) return refused;
+  const cloudId = row.cloud_doc_id;
   const baseVersion = row.cloud_version ?? 0;
-  const staged = await stageMedia(filePath, row.cloud_doc_id, content);
+  const staged = await stageMedia(filePath, cloudId, content);
+  if (!currentUpload(binding)) return { error: STALE_UPLOAD };
   let media = staged;
   const hash = registry.hashContent(content);
-  const res = await api("PUT", `/api/docs/${row.cloud_doc_id}`, {
+  const res = await api("PUT", `/api/docs/${cloudId}`, {
     name,
     content,
     hash,
     baseVersion,
   });
+  if (!currentUpload(binding)) return { error: STALE_UPLOAD };
   if (res.status === 200) {
     const version = readVersion(res);
     if (version === null) {
@@ -422,15 +470,17 @@ async function push(filePath, name, content) {
       mediaLeftPending(filePath, staged);
       return { error: UNREADABLE, media };
     }
+    if (staged && staged.staged) media = await linkMedia(filePath, cloudId, staged.staged, version);
+    if (!currentUpload(binding)) return { error: STALE_UPLOAD };
+    const links = await pushLinksSafe(filePath, cloudId, content, version);
+    if (!currentUpload(binding)) return { error: STALE_UPLOAD };
     registry.update(filePath, {
       cloud_version: version,
       content_hash: hash,
-      // Clears "unpushed" when a retry finally lands.
+      // Clears "unpushed" only when this captured-session job finally lands.
       sync_state: "synced",
       last_synced_at: new Date().toISOString(),
     });
-    if (staged && staged.staged) media = await linkMedia(filePath, row.cloud_doc_id, staged.staged, version);
-    const links = await pushLinksSafe(filePath, row.cloud_doc_id, content, version);
     return { ok: true, version, media, links };
   }
   if (res.status === 409) {
@@ -1038,6 +1088,7 @@ function listFailure(status) {
 }
 
 module.exports = {
+  withSessionBinding,
   isConfigured,
   hasPrincipal,
   setConfig,

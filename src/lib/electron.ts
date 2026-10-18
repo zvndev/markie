@@ -352,6 +352,8 @@ export interface ElectronAPI {
     path: string;
     name: string;
     content: string;
+    /** New uploads only; existing linked documents move via the placement API. */
+    areaId?: string;
   }): Promise<SyncResult>;
   docSyncOff(args: {
     path: string;

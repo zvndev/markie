@@ -5,6 +5,8 @@ import { organizeLibraryItems } from "@/lib/library-overview";
 import { shortAgo } from "@/lib/relative-time";
 import { PanelNotice } from "@/components/panel-notice";
 import { DEFAULT_LIBRARY_DOCUMENT_QUERY, libraryDocumentFormat, queryLibraryDocuments, type LibraryDocumentQuery } from "@/lib/library-document-query";
+import { CloudAreaPicker, useCloudAreaScope } from "./cloud-area-picker";
+import type { CloudAreas } from "@/lib/account-identities";
 
 // Everything the cloud holds for this account, on one page.
 //
@@ -34,6 +36,8 @@ interface CloudViewProps {
   // expired token for one account followed by a sign-in as another never
   // flips it.
   accountId: string | null;
+  /** Exact confirmed server/UID/bearer scope supplied by the integrated Library. */
+  accountSessionKey?: string;
   // Open the share dialog to manage people on a doc I own.
   onManage: (docId: string, name: string) => void;
   // Open a document that is on this device.
@@ -165,12 +169,16 @@ export function CloudView({
   renderRow,
   signedIn,
   accountId,
+  accountSessionKey,
   onManage,
   onOpenPath,
   cloudError,
   refreshKey,
 }: CloudViewProps) {
   const [open, setOpen] = useState<OpenState>(initialCloudOpen);
+  const sharedArea = useCloudAreaScope();
+  const [localAreaId, setAreaId] = useState(""), [localAreas, setAreas] = useState<CloudAreas | null>(null);
+  const areaId = sharedArea ? sharedArea.areaId : localAreaId, areas = sharedArea ? sharedArea.areas : localAreas;
   const toggle = (id: SectionId) =>
     setOpen((prev) => {
       const next = { ...prev, [id]: !prev[id] };
@@ -191,9 +199,10 @@ export function CloudView({
   // and would leave it there for good if B's request never answered. Only on
   // a change of account: doing it on every refresh would blank the list each
   // time somebody's membership changed.
-  const [byMeFor, setByMeFor] = useState(accountId);
-  if (byMeFor !== accountId) {
-    setByMeFor(accountId);
+  const sessionKey = accountSessionKey ?? accountId;
+  const [byMeFor, setByMeFor] = useState(sessionKey);
+  if (byMeFor !== sessionKey) {
+    setByMeFor(sessionKey);
     setByMe(null);
     setByMeError(false);
   }
@@ -203,6 +212,7 @@ export function CloudView({
   // page already learns about everything else through the same bump.
   useEffect(() => {
     if (!signedIn) return;
+    if (accountSessionKey !== undefined && !accountSessionKey) { setByMeError(true); return; }
     let alive = true;
     sharesClient
       .sharedByMe()
@@ -222,16 +232,16 @@ export function CloudView({
     return () => {
       alive = false;
     };
-  }, [signedIn, accountId, refreshKey, byMeNonce]);
+  }, [signedIn, accountId, accountSessionKey, refreshKey, byMeNonce]);
 
   const { syncedFromDevice, myCloudOnly, sharedItems } = useMemo(() => {
-    const grouped = organizeLibraryItems(items);
+    const grouped = organizeLibraryItems(items.filter((item) => !areaId || areas?.placements.some((placement) => placement.kind === "markdown" && placement.documentId === item.cloudId && placement.areaId === areaId)));
     const visible = (rows: LibraryItem[]) => queryLibraryDocuments(rows, query, (item) => ({
       key: `legacy:${item.path ?? item.cloudId ?? item.name}`, name: item.name,
       format: libraryDocumentFormat(item.name), path: item.path, updatedAt: item.lastOpenedAt,
     }));
     return { syncedFromDevice: visible(grouped.syncedFromDevice), myCloudOnly: visible(grouped.myCloudOnly), sharedItems: visible(grouped.sharedItems) };
-  }, [items, query]);
+  }, [items, query, areaId, areas]);
 
   // Which "shared by me" documents this device also has on disk, so a row can
   // open the document instead of only offering to manage its people.
@@ -242,10 +252,10 @@ export function CloudView({
     }
     return map;
   }, [items]);
-  const visibleByMe = useMemo(() => queryLibraryDocuments(byMe ?? [], query, (doc) => ({
+  const visibleByMe = useMemo(() => queryLibraryDocuments((byMe ?? []).filter((doc) => !areaId || areas?.placements.some((placement) => placement.kind === "markdown" && placement.documentId === doc.id && placement.areaId === areaId)), query, (doc) => ({
     key: `legacy-share:${doc.id}`, name: doc.name, format: libraryDocumentFormat(doc.name),
     path: localByCloudId.get(doc.id), updatedAt: doc.updated_at,
-  })), [byMe, query, localByCloudId]);
+  })), [byMe, query, localByCloudId, areaId, areas]);
 
   // Nothing has arrived from the main process yet. The skeleton stands for the
   // whole page rather than one section: four headings each saying they hold
@@ -292,6 +302,7 @@ export function CloudView({
   return (
     <div className={alongsideSnapshots ? "mt-2 flex flex-col border-t border-border" : "flex flex-col h-full"}>
       {alongsideSnapshots ? <h3 className="px-3 pt-2 text-xs font-medium text-muted">File sync &amp; sharing</h3> : null}
+      {signedIn && !sharedArea ? <div className="px-3 py-1"><CloudAreaPicker label="File sync cloud area" value={areaId} onChange={setAreaId} onLoaded={setAreas} /></div> : null}
       {/* A signed-out account has no counts to summarize, but one we have not
           looked at yet does, so the band stays while the answer is on its way. */}
       {(booting || signedIn) && (

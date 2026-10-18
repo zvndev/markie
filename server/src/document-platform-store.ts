@@ -1,10 +1,11 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { CloudAreaError, type CloudAreasStore } from "./cloud-areas.ts";
 
 /** Ordinary byte snapshots only. This is neither vault transport nor live CRDT merging. */
 export type PlatformFormat = "markdown" | "text" | "csv" | "json" | "yaml" | "xml" | "docx" | "doc";
 export type PlatformRole = "owner" | "editor" | "viewer";
-export interface PlatformSnapshotInput { schemaVersion: 2; name: string; format: PlatformFormat; encoding: "base64"; data: string; sha256: string; baseVersion: number }
-export interface PlatformMetadata { schemaVersion: 2; id: string; name: string; format: PlatformFormat; sha256: string; version: number; createdAt: number; updatedAt: number; byteLength: number; role: PlatformRole }
+export interface PlatformSnapshotInput { schemaVersion: 2; name: string; format: PlatformFormat; encoding: "base64"; data: string; sha256: string; baseVersion: number; areaId?: string }
+export interface PlatformMetadata { schemaVersion: 2; id: string; name: string; format: PlatformFormat; sha256: string; version: number; createdAt: number; updatedAt: number; byteLength: number; role: PlatformRole; areaId?: string }
 export interface PlatformSnapshot extends PlatformMetadata { encoding: "base64"; data: string }
 export interface PlatformLimits { maxDocumentBytes: number; maxDocumentsPerOwner: number; maxStoredBytesPerOwner: number; maxHistoryVersions: number; maxMembersPerDocument: number; maxLinksPerDocument: number; maxListedDocuments: number }
 export const DEFAULT_DOCUMENT_PLATFORM_LIMITS: Readonly<PlatformLimits> = Object.freeze({ maxDocumentBytes: 16 * 1024 * 1024, maxDocumentsPerOwner: 500, maxStoredBytesPerOwner: 256 * 1024 * 1024, maxHistoryVersions: 20, maxMembersPerDocument: 100, maxLinksPerDocument: 100, maxListedDocuments: 1000 });
@@ -75,8 +76,9 @@ function topLevelString(text: string, property: string): string | undefined {
     else if (depth === 1 && state === "value" && !/\s/.test(c)) state = "comma";
   }
 }
-function decodeInput(value: unknown, limits: PlatformLimits) {
-  const v = platformObject(value, ["schemaVersion", "name", "format", "encoding", "data", "sha256", "baseVersion"]);
+function decodeInput(value: unknown, limits: PlatformLimits, areasEnabled = false) {
+  const v = platformObject(value, ["schemaVersion", "name", "format", "encoding", "data", "sha256", "baseVersion", ...(areasEnabled ? ["areaId"] : [])]);
+  if (v.areaId !== undefined && (typeof v.areaId !== "string" || !v.areaId || v.areaId.length > 128)) platformFail("invalid-request", 400, "Invalid cloud destination.");
   if (v.schemaVersion !== 2 || typeof v.name !== "string" || !v.name.trim() || v.name.length > 256 || /[\x00-\x1f\x7f/\\]/.test(v.name)) platformFail("invalid-request", 400, "A valid version-2 filename is required.");
   if (!FORMATS.includes(v.format as string)) platformFail("unsupported-format", 415, "This ordinary document format is not supported.");
   platformVersion(v.baseVersion, true);
@@ -88,7 +90,7 @@ function decodeInput(value: unknown, limits: PlatformLimits) {
   if (bytes.toString("base64") !== v.data) platformFail("invalid-request", 400, "Document base64 encoding is not canonical.");
   if (hash(bytes) !== v.sha256) platformFail("digest-mismatch", 400, "Document bytes do not match their SHA-256 digest.");
   rejectVault(bytes, v.name);
-  return { name: v.name, format: v.format as PlatformFormat, bytes, sha256: v.sha256, baseVersion: v.baseVersion };
+  return { name: v.name, format: v.format as PlatformFormat, bytes, sha256: v.sha256, baseVersion: v.baseVersion, areaId: v.areaId as string | undefined };
 }
 interface DocumentRow { id: string; owner_id: string; name: string; format: PlatformFormat; version: number; bytes: Uint8Array; sha256: string; created_at: number; updated_at: number }
 export interface DocumentPlatformStore {
@@ -110,7 +112,10 @@ export interface DocumentPlatformStore {
 }
 
 /** Additive schema on the caller's injected handle only; never opens a database itself. */
-export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, options: { limits?: Partial<PlatformLimits>; now?: () => number } = {}): DocumentPlatformStore {
+export interface DocumentPlatformStoreOptions { limits?: Partial<PlatformLimits>; now?: () => number; cloudAreas?: CloudAreasStore; verifiedUserForEmail?: (email: string) => string | null }
+export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, options: DocumentPlatformStoreOptions = {}): DocumentPlatformStore {
+  const areas = options.cloudAreas;
+  if (areas && areas.database !== db) platformFail("invalid-request", 400, "Cloud placements and document writes require the same database handle.");
   const limits = Object.freeze({ ...DEFAULT_DOCUMENT_PLATFORM_LIMITS, ...options.limits });
   if (Object.values(limits).some((v) => !Number.isSafeInteger(v) || v < 1) || limits.maxHistoryVersions > 20) platformFail("invalid-request", 400, "Invalid document-platform limits; history is capped at 20 revisions.");
   const clock = options.now ?? Date.now;
@@ -139,10 +144,11 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
     if ((required === "owner" && role !== "owner") || (required === "editor" && role === "viewer")) platformFail("forbidden", 403, "This document permission does not allow that operation.");
     return { row, role };
   };
-  const metadata = (row: DocumentRow, role: PlatformRole): PlatformMetadata => ({ schemaVersion: 2, id: row.id, name: row.name, format: row.format, sha256: row.sha256, version: row.version, createdAt: row.created_at, updatedAt: row.updated_at, byteLength: row.bytes.length, role });
-  const snapshot = (row: DocumentRow, role: PlatformRole): PlatformSnapshot => {
+  const placement = (userId: string, id: string) => areas ? { areaId: areas.ensurePlacement(userId, "snapshot", id).areaId } : {};
+  const metadata = (row: DocumentRow, role: PlatformRole, userId?: string): PlatformMetadata => ({ schemaVersion: 2, id: row.id, name: row.name, format: row.format, sha256: row.sha256, version: row.version, createdAt: row.created_at, updatedAt: row.updated_at, byteLength: row.bytes.length, role, ...(userId ? placement(userId, row.id) : {}) });
+  const snapshot = (row: DocumentRow, role: PlatformRole, userId?: string): PlatformSnapshot => {
     if (!(row.bytes instanceof Uint8Array) || row.bytes.length > limits.maxDocumentBytes || hash(row.bytes) !== row.sha256 || !FORMATS.includes(row.format)) platformFail("storage-error", 503, "Stored document integrity could not be verified.");
-    return { ...metadata(row, role), encoding: "base64", data: Buffer.from(row.bytes).toString("base64") };
+    return { ...metadata(row, role, userId), encoding: "base64", data: Buffer.from(row.bytes).toString("base64") };
   };
   const checkVersion = (row: DocumentRow, version: number) => { platformVersion(version); if (row.version !== version) platformFail("conflict", 409, "A newer document snapshot exists. Reopen it before saving.", row.version); };
   const appendHistory = (row: DocumentRow) => {
@@ -156,28 +162,35 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
     list(userId) {
       const rows = db.prepare("SELECT d.id,d.name,d.format,d.version,d.sha256,d.created_at,d.updated_at,length(d.bytes) AS byte_length,CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? WHERE d.owner_id = ? OR m.user_id = ? ORDER BY d.updated_at DESC,d.id ASC LIMIT ?").all(userId, userId, userId, userId, limits.maxListedDocuments + 1) as (Omit<DocumentRow, "bytes"> & { byte_length: number; role: PlatformRole })[];
       if (rows.length > limits.maxListedDocuments) platformFail("limit-exceeded", 413, "Too many accessible cloud documents to list.");
-      return rows.map((row) => ({ schemaVersion: 2, id: row.id, name: row.name, format: row.format, version: row.version, sha256: row.sha256, createdAt: row.created_at, updatedAt: row.updated_at, byteLength: row.byte_length, role: row.role }));
+      return rows.map((row) => ({ schemaVersion: 2, id: row.id, name: row.name, format: row.format, version: row.version, sha256: row.sha256, createdAt: row.created_at, updatedAt: row.updated_at, byteLength: row.byte_length, role: row.role, ...placement(userId, row.id) }));
     },
     create(userId, input) {
-      const decoded = decodeInput(input, limits);
+      const decoded = decodeInput(input, limits, !!areas);
       if (decoded.baseVersion !== 0) platformFail("invalid-request", 400, "New cloud documents require baseVersion 0.");
       return transaction(() => {
+        const destination = areas ? decoded.areaId !== undefined ? areas.ownArea(userId, decoded.areaId) : areas.ensureDefault(userId) : undefined;
         const count = db.prepare("SELECT COUNT(*) AS count FROM dp_documents WHERE owner_id = ?").get(userId) as { count: number };
         if (count.count >= limits.maxDocumentsPerOwner) platformFail("limit-exceeded", 413, "Account document count limit reached.");
         const time = now(), row: DocumentRow = { id: randomUUID(), owner_id: userId, name: decoded.name, format: decoded.format, version: 1, bytes: decoded.bytes, sha256: decoded.sha256, created_at: time, updated_at: time };
         db.prepare("INSERT INTO dp_documents(id,owner_id,name,format,version,bytes,sha256,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").run(row.id, userId, row.name, row.format, 1, row.bytes, row.sha256, time, time);
-        appendHistory(row); return snapshot(row, "owner");
+        appendHistory(row);
+        if (destination) areas!.setPlacement(userId, "snapshot", row.id, destination.id);
+        return snapshot(row, "owner", userId);
       });
     },
-    get(userId, id) { const { row, role } = access(userId, id); return snapshot(row, role); },
+    get(userId, id) { const { row, role } = access(userId, id); return snapshot(row, role, userId); },
     update(userId, id, input) {
       return transaction(() => {
-        const { row, role } = access(userId, id, "editor"), decoded = decodeInput(input, limits); checkVersion(row, decoded.baseVersion);
+        const { row, role } = access(userId, id, "editor"), decoded = decodeInput(input, limits, !!areas); checkVersion(row, decoded.baseVersion);
+        if (areas && decoded.areaId !== undefined) {
+          const destination = areas.ownArea(userId, decoded.areaId), current = areas.ensurePlacement(userId, "snapshot", id);
+          if (destination.id !== current.areaId) throw new CloudAreaError("placement-required", 409, "Move this document through the explicit placement endpoint before saving.");
+        }
         if (row.version === Number.MAX_SAFE_INTEGER) platformFail("limit-exceeded", 413, "Document version counter is exhausted.");
         const next: DocumentRow = { ...row, ...decoded, version: row.version + 1, updated_at: Math.max(now(), row.updated_at) };
         const updated = db.prepare("UPDATE dp_documents SET name = ?,format = ?,version = ?,bytes = ?,sha256 = ?,updated_at = ? WHERE id = ? AND version = ?").run(next.name, next.format, next.version, next.bytes, next.sha256, next.updated_at, id, row.version);
         if (Number(updated.changes) !== 1) platformFail("conflict", 409, "A concurrent document update won.", row.version);
-        appendHistory(next); return snapshot(next, role);
+        appendHistory(next); return snapshot(next, role, userId);
       });
     },
     remove(userId, id, baseVersion) {
@@ -189,13 +202,13 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
     history(userId, id) {
       const { row, role } = access(userId, id, "editor");
       const rows = db.prepare("SELECT version,name,format,sha256,created_at,length(bytes) AS byte_length FROM dp_history WHERE doc_id = ? ORDER BY version DESC LIMIT ?").all(id, limits.maxHistoryVersions) as { version: number; name: string; format: PlatformFormat; sha256: string; created_at: number; byte_length: number }[];
-      return rows.map((r) => ({ schemaVersion: 2, id, name: r.name, format: r.format, version: r.version, sha256: r.sha256, byteLength: r.byte_length, createdAt: row.created_at, updatedAt: r.created_at, role }));
+      return rows.map((r) => ({ schemaVersion: 2, id, name: r.name, format: r.format, version: r.version, sha256: r.sha256, byteLength: r.byte_length, createdAt: row.created_at, updatedAt: r.created_at, role, ...placement(userId, id) }));
     },
     historyVersion(userId, id, version) {
       const { row, role } = access(userId, id, "editor"); platformVersion(version);
       const old = db.prepare("SELECT * FROM dp_history WHERE doc_id = ? AND version = ?").get(id, version) as { name: string; format: PlatformFormat; version: number; bytes: Uint8Array; sha256: string; created_at: number } | undefined;
       if (!old) platformFail("not-found", 404, "Document history version not found.");
-      return snapshot({ ...row, ...old, created_at: row.created_at, updated_at: old.created_at }, role);
+      return snapshot({ ...row, ...old, created_at: row.created_at, updated_at: old.created_at }, role, userId);
     },
     members(userId, id) {
       access(userId, id, "owner");
@@ -209,11 +222,17 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
         if ((v.role !== "editor" && v.role !== "viewer") || byId === byEmail || (byId && typeof v.userId !== "string") || (byEmail && typeof v.email !== "string")) platformFail("invalid-request", 400, "Choose one existing account by userId or email, and an editor/viewer role.");
         const reference = typeof v.userId === "string" ? v.userId : v.email as string;
         if (!reference.trim() || reference.length > (v.userId ? 128 : 320)) platformFail("invalid-request", 400, "Invalid member account reference.");
-        const member = db.prepare(typeof v.userId === "string" ? 'SELECT id FROM "user" WHERE id = ? AND emailVerified = 1' : 'SELECT id FROM "user" WHERE lower(email) = lower(?) AND emailVerified = 1').get(reference) as { id: string } | undefined;
+        const resolvedEmail = typeof v.email === "string" && options.verifiedUserForEmail !== undefined;
+        const aliasId = resolvedEmail ? options.verifiedUserForEmail!(v.email as string) : null;
+        const member = (resolvedEmail
+          ? aliasId ? db.prepare('SELECT id FROM "user" WHERE id = ? AND emailVerified = 1').get(aliasId) : undefined
+          : db.prepare(typeof v.userId === "string" ? 'SELECT id FROM "user" WHERE id = ? AND emailVerified = 1' : 'SELECT id FROM "user" WHERE lower(email) = lower(?) AND emailVerified = 1').get(reference)) as { id: string } | undefined;
         if (!member) platformFail("not-found", 404, "No verified existing account matches that reference.");
         if (member.id === row.owner_id) platformFail("invalid-request", 400, "The document owner's role cannot be changed.");
         const count = db.prepare("SELECT COUNT(*) AS count FROM dp_members WHERE doc_id = ? AND user_id != ?").get(id, member.id) as { count: number };
         if (count.count >= limits.maxMembersPerDocument) platformFail("limit-exceeded", 413, "Document member limit reached.");
+        // This is an explicit document-owner command, not a passive invitation
+        // claim. Resolving an alias must not suppress the requested role edit.
         db.prepare("INSERT INTO dp_members(doc_id,user_id,role,created_at) VALUES(?,?,?,?) ON CONFLICT(doc_id,user_id) DO UPDATE SET role = excluded.role").run(id, member.id, v.role as string, now());
       });
     },

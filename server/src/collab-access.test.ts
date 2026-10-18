@@ -34,7 +34,7 @@ if (toBeCreated.length > 0 || toBeAdded.length > 0) {
 
 const { docs } = await import("./docs.ts");
 const { shares } = await import("./shares.ts");
-const { ACCESS_CACHE_MS, attachCollab, seedLockState } = await import("./collab.ts");
+const { ACCESS_CACHE_MS, attachCollab, seedLockState, disconnectSessions } = await import("./collab.ts");
 const Database = (await import("better-sqlite3")).default;
 
 const db = new Database(process.env.DB_PATH);
@@ -614,4 +614,46 @@ test("a room that already holds updates is never seed locked", async () => {
     ownerPeer.text().includes("second-editor"),
     "a seeded room takes writes from any editor"
   );
+});
+
+async function sessionId(token: string): Promise<string> {
+  const session = await auth.api.getSession({ headers: new Headers({ Authorization: `Bearer ${token}` }) });
+  assert.ok(session?.session.id); return session.session.id;
+}
+
+test("revoking an alias session disconnects only that session, retaining the primary session and document grant", async () => {
+  const user = await signUp("Session member", `session.member.${stamp}@test.local`), docId = `session-specific-${stamp}`;
+  await createDoc(owner.token, docId, ""); await share(owner.token, docId, user.email, "editor");
+  const signedIn = await jsonRequest<{ token: string }>("POST", "/api/auth/sign-in/email", undefined, { email: user.email, password: "password-123" });
+  assert.equal(signedIn.status, 200); const aliasToken = signedIn.headers.get("set-auth-token") ?? signedIn.data!.token;
+  const primaryId = await sessionId(user.token), aliasId = await sessionId(aliasToken); assert.notEqual(primaryId, aliasId);
+  const ownerPeer = await connect(docId, owner.token), primaryPeer = await connect(docId, user.token), aliasPeer = await connect(docId, aliasToken);
+  db.prepare('DELETE FROM "session" WHERE id=?').run(aliasId); disconnectSessions([aliasId]);
+  await waitFor("only the revoked alias session to close", () => aliasPeer.closeCode() === 4403);
+  assert.equal(primaryPeer.closeCode(), null); assert.ok(db.prepare('SELECT 1 FROM "session" WHERE id=?').get(primaryId));
+  assert.equal((db.prepare("SELECT role FROM shares WHERE doc_id=? AND user_id=?").get(docId, user.id) as { role: string }).role, "editor");
+  primaryPeer.write("primary-still-authorized "); await primaryPeer.resync(); await ownerPeer.resync();
+  assert.ok(ownerPeer.text().includes("primary-still-authorized"));
+  await assert.rejects(connect(docId, aliasToken), /401/);
+});
+
+test("a deleted session cannot write through its old socket even while its document ACL remains", async () => {
+  const user = await signUp("Deleted session", `session.deleted.${stamp}@test.local`), docId = `session-deleted-write-${stamp}`;
+  await createDoc(owner.token, docId, ""); await share(owner.token, docId, user.email, "editor");
+  const peer = await connect(docId, user.token), ownerPeer = await connect(docId, owner.token);
+  db.prepare('DELETE FROM "session" WHERE id=?').run(await sessionId(user.token));
+  peer.write("revoked-session-text "); await waitFor("deleted session write to be denied", () => peer.closeCode() === 4403);
+  await ownerPeer.resync(); assert.ok(!ownerPeer.text().includes("revoked-session-text"));
+  assert.ok(db.prepare("SELECT 1 FROM shares WHERE doc_id=? AND user_id=?").get(docId, user.id));
+});
+
+test("session expiry blocks fanout immediately without waiting for the document ACL cache", async () => {
+  const user = await signUp("Expired session", `session.expired.${stamp}@test.local`), docId = `session-expired-read-${stamp}`;
+  await createDoc(owner.token, docId, ""); await share(owner.token, docId, user.email, "viewer");
+  const ownerPeer = await connect(docId, owner.token), peer = await connect(docId, user.token);
+  ownerPeer.write("before-session-expiry "); await waitFor("first update before expiry", () => peer.text().includes("before-session-expiry"));
+  db.prepare('UPDATE "session" SET expiresAt=0 WHERE id=?').run(await sessionId(user.token));
+  ownerPeer.write("after-session-expiry "); await waitFor("expired recipient to close on fanout", () => peer.closeCode() === 4403);
+  assert.ok(!peer.text().includes("after-session-expiry"));
+  assert.ok(db.prepare("SELECT 1 FROM shares WHERE doc_id=? AND user_id=?").get(docId, user.id));
 });

@@ -13,6 +13,7 @@ import { ShareDialog } from "@/components/share-dialog";
 import { SignInForm } from "@/components/sign-in";
 import { getElectronAPI } from "@/lib/electron";
 import { useAuth } from "@/lib/auth-store";
+import { CloudAreaPicker } from "./cloud-area-picker";
 
 type Stage =
   | { kind: "loading" }
@@ -40,9 +41,12 @@ export function ShareGate({
 }: ShareGateProps) {
   // The gate reacts to the session rather than sampling a token once, so
   // signing in below re-resolves it in place instead of leaving a dead dialog.
-  const { status } = useAuth();
+  const { status, user } = useAuth();
   const [stage, setStage] = useState<Stage>({ kind: "loading" });
   const [busy, setBusy] = useState(false);
+  const [areaId, setAreaId] = useState("");
+  useEffect(() => { setAreaId(""); }, [status, user?.id, filePath]);
+  useEffect(() => { const clear = () => setAreaId(""); window.addEventListener("markie:account-session-change", clear); return () => window.removeEventListener("markie:account-session-change", clear); }, []);
   // Guards against a resolve that lands after the dialog closed or the file
   // changed underneath it.
   const run = useRef(0);
@@ -114,6 +118,7 @@ export function ShareGate({
         path: filePath,
         name: fileName ?? "untitled.md",
         content,
+        ...(areaId ? { areaId } : {}),
       });
       if (res.error) {
         setStage({ kind: "error", message: res.error });
@@ -129,7 +134,7 @@ export function ShareGate({
     } finally {
       setBusy(false);
     }
-  }, [filePath, fileName, content, onChanged, resolve]);
+  }, [filePath, fileName, content, onChanged, resolve, areaId]);
 
   // Signing in is a prerequisite the gate can clear itself. Sending the user to
   // Settings instead threw away the thing they actually asked for, and they had
@@ -221,6 +226,7 @@ export function ShareGate({
           </button>
         </div>
         <p className="mt-2 text-[12.5px] leading-relaxed text-muted">{line}</p>
+        {stage.kind === "local" ? <div className="mt-2"><CloudAreaPicker label="Upload destination" defaultLabel="Default cloud" value={areaId} onChange={setAreaId} disabled={busy} /></div> : null}
         {action && (
           <div className="mt-4 flex justify-end">
             <button

@@ -215,7 +215,7 @@ export function SignInForm({ reason, onDone, allowGoogle = true }: SignInFormPro
             {busy ? "Sending…" : "Email me a code"}
           </button>
           <div className="text-[11px] text-muted">
-            No account yet? A code makes one.
+            Use an email verified on your account. New here? Use a password to create an account.
           </div>
           <button className={LINK} onClick={() => setView("password")}>
             Use a password instead

@@ -7,6 +7,8 @@ import { SignInForm } from "./sign-in";
 import { CloudDocumentEditor, type CloudEditingState } from "./cloud-document-editor";
 import { classifyDocumentFormat, decodeTextDocument, encodeTextDocument } from "@/lib/document-formats";
 import { exportDocx, openDocx } from "@/lib/office/docx";
+import { CloudAreaPicker } from "./cloud-area-picker";
+import { AccountIdentitiesClient } from "@/lib/account-identities";
 
 interface CloudDialogProps { file?: CloudFile; cloudDocumentId?: string; onClose: (message: string | null) => void; onCloseGuard?: (guard: (() => boolean) | null) => void }
 const BUTTON = "px-3 py-2 rounded-md border border-border text-sm hover:bg-accent disabled:opacity-40";
@@ -33,6 +35,7 @@ export function DocumentCloudDialog({ file, cloudDocumentId, onClose, onCloseGua
   const [editEpoch, setEditEpoch] = useState(0);
   const [cloudDirty, setCloudDirty] = useState(false);
   const [cloudSource, setCloudSource] = useState<Uint8Array | null>(null);
+  const [areaId, setAreaId] = useState("");
   const generation = useRef(0);
   const activeRequest = useRef<AbortController | null>(null);
   const dialog = useRef<HTMLElement>(null);
@@ -54,7 +57,7 @@ export function DocumentCloudDialog({ file, cloudDocumentId, onClose, onCloseGua
       activeRequest.current?.abort();
       setCloud(null); setCloudSource(null); setEditing(null); setCloudList(null);
       setMembers([]); setLink(null); setLinkId(null); setCloudDirty(false); setCompleted(null);
-      setBusy(false); setNotice(null); setError(hadCloudContent ? "The account changed. Cloud content was cleared; reopen sharing for the new account." : null);
+      setAreaId(""); setBusy(false); setNotice(null); setError(hadCloudContent ? "The account changed. Cloud content was cleared; reopen sharing for the new account." : null);
       initialIdentity.current = cloudIdentity();
     };
     clearChangedAccount();
@@ -108,8 +111,8 @@ export function DocumentCloudDialog({ file, cloudDocumentId, onClose, onCloseGua
     return { name: cloud?.name ?? file!.name, bytes };
   }
   const publish = () => void run(async (client) => {
-    const snapshot = await client.upload(await currentCopy(), cloud ? { id: cloud.id, version: cloud.version } : undefined);
-    setCloud(snapshot); setCloudDirty(false); setNotice("Cloud copy saved. It is separate from your local recovery copy."); setCompleted("Cloud copy saved.");
+    const snapshot = await client.upload(await currentCopy(), cloud ? { id: cloud.id, version: cloud.version } : undefined, undefined, cloud ? undefined : areaId || undefined);
+    setCloud(snapshot); setAreaId(""); setCloudDirty(false); setNotice("Cloud copy saved. It is separate from your local recovery copy."); setCompleted("Cloud copy saved.");
   });
   const loadCloud = (id: string) => {
     if (cloudDirty && !window.confirm("Discard the unsaved cloud edits before opening another version?")) return;
@@ -125,7 +128,7 @@ export function DocumentCloudDialog({ file, cloudDocumentId, onClose, onCloseGua
       const next: CloudEditingState = format.kind === "docx" ? { kind: "docx", document: await openDocx(decoded.bytes) }
         : format.representation === "text" ? (() => { const metadata = decodeTextDocument(decoded.bytes); return { kind: "text" as const, text: metadata.text, metadata }; })() : { kind: "binary" };
       if (expectedIdentity !== cloudIdentity() || expectedGeneration !== generation.current) throw new Error("The account changed. The cloud document was not opened.");
-      setCloud(decoded.snapshot); setCloudSource(new Uint8Array(decoded.bytes)); setEditing(next); setCloudDirty(false); setMembers([]); setLink(null); setLinkId(null);
+      setCloud(decoded.snapshot); setAreaId(""); setCloudSource(new Uint8Array(decoded.bytes)); setEditing(next); setCloudDirty(false); setMembers([]); setLink(null); setLinkId(null);
       setEditEpoch((epoch) => epoch + 1);
       setNotice(`Opened cloud version ${decoded.snapshot.version}. Edits are not saved until you save this version.`);
     });
@@ -182,9 +185,11 @@ export function DocumentCloudDialog({ file, cloudDocumentId, onClose, onCloseGua
       <p className="text-xs text-muted break-all">Server: {getServerURL()}</p>
       {!identityMatches() && (cloud || cloudList || editing || link) ? <p role="alert">The account changed. Close this panel before sharing again.</p> : !user || status !== "in" ? <SignInForm reason="share" allowGoogle={false} /> : <>
         <p className="text-sm">Signed in as {user.email}. Cloud access is independent of your local library.</p>
+        {file && !cloud ? <CloudAreaPicker label="Upload destination" defaultLabel="Default cloud" value={areaId} onChange={setAreaId} disabled={busy} /> : null}
         <div className="flex flex-wrap gap-2">{file || cloud ? <button type="button" className={BUTTON} disabled={busy || (cloud?.role === "viewer")} onClick={publish}>{cloud ? "Save this snapshot to cloud" : "Create a cloud copy"}</button> : null}<button type="button" className={BUTTON} disabled={busy} onClick={() => void run(async (client) => { setCloudList(await client.list()); })}>Browse cloud documents</button>{cloudDocumentId && !cloud ? <button type="button" className={BUTTON} disabled={busy} onClick={() => loadCloud(cloudDocumentId)}>Retry opening cloud document</button> : null}</div>
         {cloudList ? <ul className="space-y-1 max-h-40 overflow-auto" aria-label="Accessible cloud documents">{cloudList.map((entry) => <li key={entry.id}><button type="button" className={`${BUTTON} w-full text-left`} disabled={busy} onClick={() => loadCloud(entry.id)}>{entry.name} · {entry.role} · version {entry.version}</button></li>)}</ul> : null}
         {cloud ? <div className="space-y-4 border-t border-border pt-4">
+          <div className="flex flex-wrap items-start gap-2"><CloudAreaPicker label="Organize snapshot in" defaultLabel="Choose an area" value={areaId} onChange={setAreaId} disabled={busy} /><button type="button" className={BUTTON} disabled={busy || !areaId} onClick={() => void run(async () => { await new AccountIdentitiesClient().place("snapshot", cloud.id, areaId, activeRequest.current?.signal); setAreaId(""); setNotice("Snapshot organized in the selected area. Document permissions and unsaved edits are unchanged."); })}>Move to area</button></div>
           <p className="text-xs text-muted">Cloud version {cloud.version}. Version conflicts preserve your local edits; this is not live Word co-editing.</p>
           <p className="text-sm font-medium">{cloud.name}</p>
           <button type="button" className={BUTTON} disabled={busy} onClick={() => loadCloud(cloud.id)}>Open current cloud version for editing</button>

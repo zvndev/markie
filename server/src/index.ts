@@ -4,7 +4,7 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth.ts";
-import { docs } from "./docs.ts";
+import { docs, configureDocsCloudAreas } from "./docs.ts";
 import { shares } from "./shares.ts";
 import { comments } from "./comments.ts";
 import { themes } from "./themes.ts";
@@ -18,6 +18,11 @@ import { applicationOrigins } from "./application-origins.ts";
 import { openDatabase } from "./db.ts";
 import { createDocumentPlatform } from "./document-platform.ts";
 import { createSqliteDocumentPlatformStore } from "./document-platform-store.ts";
+import type Database from "better-sqlite3";
+import { accountIdentitiesEnabled, guardAccountAuthRequest } from "./account-context.ts";
+import { createAccountPlatform } from "./account-platform.ts";
+import { resolveAuthSecret } from "./auth-secret.ts";
+import { resolveVerifiedUserForEmail } from "./account-identities.ts";
 
 const app = new Hono();
 
@@ -115,7 +120,25 @@ app.get("/health", (c) =>
   c.json({ ok: true, service: "markie-api", version: "0.1.0" })
 );
 
-app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+const cloudAreas = configureDocsCloudAreas(accountIdentitiesEnabled);
+// configureDocsCloudAreas retains the installed better-sqlite3 handle. The
+// structural platform type intentionally exposes only its common SQL subset.
+const accountDatabase = cloudAreas?.database as Database.Database | undefined;
+const accountPlatform = accountDatabase && cloudAreas
+  ? createAccountPlatform(accountDatabase, cloudAreas, resolveAuthSecret(process.env)) : undefined;
+if (accountPlatform) {
+  app.route("/api/account", accountPlatform.app);
+  if (accountPlatform.google) {
+    app.get("/account/link-google", () => accountPlatform.google!.browserPage());
+    app.get("/account/google-link/complete", (c) => accountPlatform.google!.complete(c.req.raw));
+  }
+}
+app.on(["GET", "POST"], "/api/auth/*", async (c) => {
+  const denied = await guardAccountAuthRequest(c.req.raw);
+  if (denied) return denied;
+  const run = () => auth.handler(c.req.raw);
+  return accountPlatform?.google ? accountPlatform.google.runAuthRequest(c.req.raw, run) : run();
+});
 
 // Desktop Google sign-in must run entirely in the browser, or better-auth's
 // OAuth `state` cookie (set when the flow starts) won't be present on the
@@ -191,7 +214,9 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
 
 app.route("/api/docs", docs);
 app.route("/api/document-platform", createDocumentPlatform({
-  store: createSqliteDocumentPlatformStore(openDatabase()),
+  store: createSqliteDocumentPlatformStore(accountDatabase ?? openDatabase(), cloudAreas && accountDatabase ? {
+    cloudAreas, verifiedUserForEmail: (email) => resolveVerifiedUserForEmail(accountDatabase, email),
+  } : {}),
   resolveUser: async (request) => (await auth.api.getSession({ headers: request.headers }))?.user ?? null,
 }));
 app.route("/api/docs", shares);

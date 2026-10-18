@@ -16,8 +16,16 @@ import { purgeDocThreads } from "./comments.ts";
 import { revokePublicLink } from "./public-links.ts";
 import { serveAsset, unlinkDocAssets } from "./assets.ts";
 import { removeDocLinks } from "./doc-links.ts";
+import { CloudAreaError, createCloudAreas, type CloudAreasStore } from "./cloud-areas.ts";
 
 const db = openDatabase();
+let cloudAreas: CloudAreasStore | undefined;
+/** Explicit rollout seam; default legacy behavior/schema remain unchanged. */
+export function configureDocsCloudAreas(enabled: boolean): CloudAreasStore | undefined {
+  cloudAreas = enabled ? cloudAreas ?? createCloudAreas(db) : undefined;
+  return cloudAreas;
+}
+const placement = (userId: string, id: string) => cloudAreas ? { areaId: cloudAreas.ensurePlacement(userId, "markdown", id).areaId } : {};
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS docs (
@@ -85,8 +93,8 @@ docs.get("/", async (c) => {
   // longer certainly the owner's own words, so only files beside the document
   // travel. See sharedOutDocIds.
   const out = sharedOutDocIds(user.id);
-  const owned = rows.map((d) => ({ ...d, sharedOut: out.has(d.id) }));
-  const shared = sharedDocsFor(user.id).map((d) => ({ ...d, shared: true }));
+  const owned = rows.map((d) => ({ ...d, sharedOut: out.has(d.id), ...placement(user.id, d.id) }));
+  const shared = sharedDocsFor(user.id).map((d) => ({ ...d, shared: true, ...placement(user.id, d.id) }));
   return c.json({ docs: [...owned, ...shared] });
 });
 
@@ -101,6 +109,7 @@ docs.get("/shared-by-me", async (c) => {
     updated_at: d.updated_at,
     memberCount: d.member_count,
     pendingCount: d.pending_count,
+    ...placement(user.id, d.id),
   }));
   return c.json({ docs: rows });
 });
@@ -117,7 +126,7 @@ docs.get("/:id", async (c) => {
     )
     .get(docId) as DocRow | undefined;
   if (!row) return c.json({ error: "not found" }, 404);
-  return c.json({ doc: row });
+  return c.json({ doc: { ...row, ...placement(user.id, docId) } });
 });
 
 // One asset from a document the caller can read. Same read gate as the
@@ -142,6 +151,7 @@ docs.put("/:id", async (c) => {
     content: string;
     hash: string;
     baseVersion: number;
+    areaId?: string;
   };
   if (typeof body?.content !== "string" || !body?.name) {
     return c.json({ error: "bad request" }, 400);
@@ -162,19 +172,34 @@ docs.put("/:id", async (c) => {
   }
 
   const version = existing && !existing.deleted_at ? existing.version + 1 : 1;
-  db.prepare(
-    `INSERT INTO docs (id, owner_id, name, version, content, hash, updated_at, deleted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
-     ON CONFLICT(id) DO UPDATE SET
-       name = excluded.name, version = excluded.version,
-       content = excluded.content, hash = excluded.hash,
-       updated_at = excluded.updated_at, deleted_at = NULL`
-  ).run(id, user.id, body.name, version, body.content, body.hash, now);
-  db.prepare(
-    "INSERT OR REPLACE INTO doc_history (doc_id, version, content, hash, created_at) VALUES (?, ?, ?, ?, ?)"
-  ).run(id, version, body.content, body.hash, now);
+  try {
+    db.transaction(() => {
+      let destination: string | undefined;
+      if (cloudAreas) {
+        if (body.areaId !== undefined) {
+          destination = cloudAreas.ownArea(user.id, body.areaId).id;
+          if (existing && cloudAreas.ensurePlacement(user.id, "markdown", id).areaId !== destination) throw new CloudAreaError("placement-required", 409, "Move this document through the explicit placement endpoint before saving.");
+        } else destination = cloudAreas.ensurePlacement(user.id, "markdown", id).areaId;
+      }
+      db.prepare(
+        `INSERT INTO docs (id, owner_id, name, version, content, hash, updated_at, deleted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name, version = excluded.version,
+           content = excluded.content, hash = excluded.hash,
+           updated_at = excluded.updated_at, deleted_at = NULL`
+      ).run(id, user.id, body.name, version, body.content, body.hash, now);
+      db.prepare(
+        "INSERT OR REPLACE INTO doc_history (doc_id, version, content, hash, created_at) VALUES (?, ?, ?, ?, ?)"
+      ).run(id, version, body.content, body.hash, now);
+      if (cloudAreas && destination) cloudAreas.setPlacement(user.id, "markdown", id, destination);
+    })();
+  } catch (error) {
+    if (error instanceof CloudAreaError) return c.json({ error: error.code, message: error.message }, error.status);
+    return c.json({ error: "storage-error" }, 503);
+  }
 
-  return c.json({ id, version, updated_at: now });
+  return c.json({ id, version, updated_at: now, ...placement(user.id, id) });
 });
 
 // Delete the cloud copy. The row stays as a tombstone, so a client that still

@@ -43,6 +43,17 @@ describe("explicit multi-format cloud client", () => {
     expect(request.mock.calls[0][0]).toBe("https://markie.test/api/document-platform/documents");
     expect(request.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer session" });
   });
+  it("requires the selected new-copy area in the acknowledgment and never retries a denied destination", async () => {
+    const request = vi.fn<typeof fetch>(async (_url, init) => Response.json({ document: { ...JSON.parse(String(init?.body)), id: "document-id", version: 1, role: "owner" } }));
+    const client = new DocumentCloudClient({ baseUrl: "https://markie.test", token: "session" }, request), file = { name: "note.txt", bytes: new TextEncoder().encode("original") };
+    expect((await client.upload(file, undefined, undefined, "work")).areaId).toBe("work");
+    expect(JSON.parse(String(request.mock.calls[0][1]?.body)).areaId).toBe("work");
+    request.mockResolvedValueOnce(Response.json({ error: "forbidden-area" }, { status: 403 }));
+    await expect(client.upload(file, undefined, undefined, "foreign")).rejects.toThrow("permission"); expect(request).toHaveBeenCalledTimes(2);
+    request.mockImplementationOnce(async (_url, init) => { const body = JSON.parse(String(init?.body)); delete body.areaId; return Response.json({ document: { ...body, id: "document-id", version: 1, role: "owner" } }); });
+    await expect(client.upload(file, undefined, undefined, "work")).rejects.toThrow("acknowledgment"); expect(request).toHaveBeenCalledTimes(3);
+    await expect(client.upload(file, { id: "document-id", version: 1 }, undefined, "work")).rejects.toThrow("Existing snapshots keep");
+  });
   it.each(["id", "version", "name", "format", "bytes", "digest", "role", "missing-role"])("rejects a PUT acknowledgment with unrelated %s", async (mismatch) => {
     const request = vi.fn<typeof fetch>(async (_url, init) => {
       const body = JSON.parse(String(init?.body));

@@ -24,6 +24,7 @@ import {
   type ThemeTokens,
 } from "@/lib/theme";
 import { pushCloudThemes } from "@/lib/theme-sync";
+import { LinkedIdentities } from "./linked-identities";
 
 type SettingsSection = "account" | "appearance" | "advanced";
 
@@ -127,6 +128,7 @@ export function Settings({ onClose, initialSection = "account" }: SettingsProps)
                     }}
                   />
                 </label>
+                <LinkedIdentities accountId={user.id} />
               </div>
             ) : (
               <SignInForm reason="account" />

@@ -14,6 +14,11 @@ function subscribe(channel, callback, map) {
 // No document preview, even a trusted one, receives the desktop capability bridge.
 if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
+  privateReleaseAuthOrigin: process.argv?.includes("--markie-private-release") ? "https://api-production-602f.up.railway.app" : undefined,
+  privateReleaseStatus: () => ipcRenderer.invoke("private-release-status"),
+  privateReleaseSession: () => ipcRenderer.invoke("private-release-session"),
+  privateReleaseAuthorize: (token) => ipcRenderer.invoke("private-release-authorize", token),
+  privateReleaseLock: () => ipcRenderer.invoke("private-release-lock"),
   documentFiles: {
     open: () => ipcRenderer.invoke("document-files:open"),
     saveAs: (args) => ipcRenderer.invoke("document-files:save-as", args),

@@ -34,7 +34,7 @@ describe("native document main-process integration", () => {
 });
 
 describe("explicit native document drops through existing channels", () => {
-  function dropBridge(extension = "docx") {
+  function dropBridge(extension = "docx", authorized = true) {
     const folder = mkdtempSync(path.join(os.tmpdir(), "markie-drop-main-")); dropFolders.push(folder);
     const target = path.join(folder, `source.${extension}`); writeFileSync(target, new Uint8Array([80, 75, 3, 4, 0, 255]));
     const files = createDocumentFileService({ dialog: {} });
@@ -50,6 +50,7 @@ describe("explicit native document drops through existing channels", () => {
       source.slice(source.indexOf('ipcMain.on("grant-file-path",'), source.indexOf("// A file dragged onto a document", source.indexOf('ipcMain.on("grant-file-path",'))),
     ];
     runInNewContext(snippets.join("\n"), {
+      privateRelease: { authorized: () => authorized }, privateReleaseConfig: authorized ? null : {},
       mainWindow: { webContents: contents, isDestroyed: () => false, isMinimized: () => false, show: vi.fn(), focus: vi.fn() },
       isAppUrl: (url: string) => url.startsWith("app://markie/"),
       documentFiles: files, OPENABLE: /\.(md|markdown|mdx|txt|text|log|csv)$/i,
@@ -60,6 +61,12 @@ describe("explicit native document drops through existing channels", () => {
     });
     return { target, files, event, frame, contents, readFilePayload, grantFile, open, grant };
   }
+
+  it("refuses native drop grants while the private build is locked", async () => {
+    const f = dropBridge("docx", false); f.grant(f.event, f.target);
+    expect(f.event.returnValue).toBe(false); expect(f.grantFile).not.toHaveBeenCalled(); expect(f.readFilePayload).not.toHaveBeenCalled(); expect(f.contents.send).not.toHaveBeenCalled();
+    expect(await f.files.takeInitial(17)).toEqual({ ok: true, value: null });
+  });
 
   it.each(["docx", "doc", "json", "yaml", "yml", "xml", "rtf", "html", "htm", "odt", "wd"])("opens explicitly dropped .%s through null + opaque native notification only", async (extension) => {
     const f = dropBridge(extension);

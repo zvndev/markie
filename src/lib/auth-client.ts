@@ -14,6 +14,8 @@ const SERVER_KEY = "markie.server.v1";
 const DEFAULT_SERVER = "https://api-production-602f.up.railway.app";
 
 export function getServerURL(): string {
+  const privateOrigin = getElectronAPI()?.privateReleaseAuthOrigin;
+  if (privateOrigin === DEFAULT_SERVER) return DEFAULT_SERVER;
   try {
     return localStorage.getItem(SERVER_KEY) ?? DEFAULT_SERVER;
   } catch {
@@ -22,6 +24,7 @@ export function getServerURL(): string {
 }
 
 export function setServerURL(url: string): void {
+  if (getElectronAPI()?.privateReleaseAuthOrigin === DEFAULT_SERVER) return;
   const before = getServerURL();
   try {
     localStorage.setItem(SERVER_KEY, url.replace(/\/$/, ""));
@@ -43,6 +46,9 @@ export function collabWsBase(): string {
 }
 
 const TOKEN_KEY = "markie.token.v1";
+let privateToken: string | null = null;
+let privateBinding: PrincipalBinding | null = null;
+const usesPrivateCredential = () => getElectronAPI()?.privateReleaseAuthOrigin === DEFAULT_SERVER;
 
 export function getAuthToken(): string | null {
   return getToken();
@@ -54,6 +60,7 @@ export function adoptAuthToken(token: string): void {
 }
 
 function getToken(): string | null {
+  if (usesPrivateCredential()) return privateToken;
   try {
     return localStorage.getItem(TOKEN_KEY);
   } catch {
@@ -63,7 +70,13 @@ function getToken(): string | null {
 
 function setToken(token: string | null): void {
   const before = getToken();
-  try {
+  if (usesPrivateCredential()) {
+    privateToken = token;
+    // This bootstrap IPC remains available after expiry, unlike ordinary sync IPC.
+    // Forget native enrollment even when the server's sign-out request is offline.
+    if (!token) void getElectronAPI()?.privateReleaseLock?.().catch(() => {});
+  }
+  else try {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);
   } catch {
@@ -98,6 +111,7 @@ interface PrincipalBinding {
 }
 
 function readBinding(): PrincipalBinding | null {
+  if (usesPrivateCredential()) return privateBinding;
   try {
     const raw = localStorage.getItem(PRINCIPAL_KEY);
     if (!raw) return null;
@@ -114,6 +128,7 @@ function readBinding(): PrincipalBinding | null {
 }
 
 function writeBinding(binding: PrincipalBinding | null): void {
+  if (usesPrivateCredential()) { privateBinding = binding; return; }
   try {
     if (binding) localStorage.setItem(PRINCIPAL_KEY, JSON.stringify(binding));
     else localStorage.removeItem(PRINCIPAL_KEY);
@@ -307,10 +322,12 @@ export const authClient = {
     }),
 
   signOut: async () => {
-    const res = await api<{ success: boolean }>("/api/auth/sign-out", {
+    const request = api<{ success: boolean }>("/api/auth/sign-out", {
       method: "POST",
       body: "{}",
     });
+    if (usesPrivateCredential()) setToken(null);
+    const res = await request;
     setToken(null);
     return res;
   },

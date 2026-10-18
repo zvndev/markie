@@ -177,8 +177,15 @@ export interface InstalledSkill {
   installedByMarkie: boolean;
 }
 
+export interface PrivateReleaseStatus { required: boolean; authorized: boolean; channel: string | null; gitCommit: string | null; authOrigin: string }
+
 export interface ElectronAPI {
   platform: string;
+  privateReleaseAuthOrigin?: string;
+  privateReleaseStatus?(): Promise<PrivateReleaseStatus>;
+  privateReleaseSession?(): Promise<{ token: string | null }>;
+  privateReleaseAuthorize?(token: string): Promise<PrivateReleaseStatus>;
+  privateReleaseLock?(): Promise<PrivateReleaseStatus>;
   documentFiles?: NativeDocumentFileApi;
   onDocumentFileOpened?(callback: () => void): Unsubscribe;
   onDocumentCommand?(callback: (command: string) => void): Unsubscribe;

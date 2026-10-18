@@ -94,7 +94,7 @@ describe("main-process preview isolation wiring", () => {
     const init = source.indexOf("initializeDesktopIdentity({ app, metadata: require(\"../package.json\") })");
     expect(init).toBeGreaterThan(-1);
     for (const consumer of ['require("electron-updater")', 'require("./registry")', "crashReporter.start("]) expect(init).toBeLessThan(source.indexOf(consumer));
-    expect(source).toContain('const isDev = !isDesktopPreview && process.env.NODE_ENV === "development"');
+    expect(source).toContain('const isDev = !privateReleaseConfig && !isDesktopPreview && process.env.NODE_ENV === "development"');
     expect(source).toContain("desktopStartUrl({ isPreview: isDesktopPreview })");
   });
 

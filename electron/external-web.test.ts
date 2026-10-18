@@ -15,7 +15,7 @@ describe("device-browser web targets", () => {
 });
 
 describe("web interaction IPC ownership", () => {
-  function fixture(trusted = true, preview = false) {
+  function fixture(trusted = true, preview = false, privateLocked = false) {
     const callbacks = new Map<string, (...args: unknown[]) => Promise<unknown> | unknown>();
     const get = vi.fn(async () => ({ title: "Preview" }));
     const openExternal = vi.fn(async () => {});
@@ -23,6 +23,7 @@ describe("web interaction IPC ownership", () => {
     const start = source.indexOf("const linkPreviews = createLinkPreviews(");
     const end = source.indexOf("// ── Browse:", start);
     runInNewContext(source.slice(start, end), {
+      privateReleaseConfig: privateLocked ? {} : null, privateRelease: { authorized: () => !privateLocked }, PRIVATE_AUTH_ORIGIN: "https://api-production-602f.up.railway.app", URL,
       createLinkPreviews: () => ({ get }),
       process: { env: {} },
       handle: (channel: string, callback: (...args: unknown[]) => unknown) => callbacks.set(channel, callback),
@@ -34,6 +35,14 @@ describe("web interaction IPC ownership", () => {
     });
     return { callbacks, get, openExternal, showMessageBox };
   }
+  it("allows only the fixed existing auth handoff while the private build is locked", async () => {
+    const f = fixture(true, false, true);
+    await f.callbacks.get("open-external")!({}, "https://example.com/auth/google-start");
+    await f.callbacks.get("open-external")!({}, "https://api-production-602f.up.railway.app/docs");
+    expect(f.openExternal).not.toHaveBeenCalled();
+    await f.callbacks.get("open-external")!({}, "https://api-production-602f.up.railway.app/auth/google-start");
+    expect(f.openExternal).toHaveBeenCalledExactlyOnceWith("https://api-production-602f.up.railway.app/auth/google-start");
+  });
   it("does not fetch metadata or open the browser for a foreign frame", async () => {
     const f = fixture(false);
     expect(await f.callbacks.get("link-preview")!({}, "https://example.com")).toBeNull();

@@ -7,6 +7,7 @@ import Home from "./app/page";
 import { getElectronAPI } from "./lib/electron";
 import { registerOfflineApp } from "./lib/offline-app";
 import { appRoute } from "./lib/app-route";
+import { PrivateReleaseGate } from "./components/private-release-gate";
 
 const DocumentWorkbench = lazy(() => import("./components/document-workbench").then((module) => ({ default: module.DocumentWorkbench })));
 const route = appRoute(window.location.search, !!getElectronAPI(), import.meta.env.DEV);
@@ -26,8 +27,8 @@ if (import.meta.env.PROD) {
 createRoot(document.getElementById("root")!).render(
   <ErrorBoundary global>
     <CrashProbe />
-    {route === "workbench"
+    <PrivateReleaseGate>{route === "workbench"
       ? <Suspense fallback={<p>Loading document workbench…</p>}><DocumentWorkbench /></Suspense>
-      : <Home documentsEnabled />}
+      : <Home documentsEnabled />}</PrivateReleaseGate>
   </ErrorBoundary>
 );

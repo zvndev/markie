@@ -81,6 +81,11 @@ const noopResult = { ok: true } as const;
 export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
   const bridge = {
     platform: "darwin",
+    privateReleaseAuthOrigin: "",
+    privateReleaseStatus: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api-production-602f.up.railway.app" })),
+    privateReleaseSession: vi.fn(async () => ({ token: null })),
+    privateReleaseAuthorize: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api-production-602f.up.railway.app" })),
+    privateReleaseLock: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api-production-602f.up.railway.app" })),
 
     openFile: vi.fn(async () => null),
     openFilePath: vi.fn(async () => null),

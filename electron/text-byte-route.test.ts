@@ -50,7 +50,7 @@ describe("classic UTF-8 reader encoding boundary", () => {
 });
 
 describe("authorized classic entry routes UTF-16 to opaque byte grants", () => {
-  function reader() {
+  function reader(authorized = true) {
     const source = fs.readFileSync(new URL("./main.js", import.meta.url), "utf8");
     const start = source.indexOf("function readFilePayload(");
     const end = source.indexOf("// File passed as a CLI argument", start);
@@ -58,11 +58,17 @@ describe("authorized classic entry routes UTF-16 to opaque byte grants", () => {
     const readDocumentTiered = vi.fn(load("./doc-tiers.js").readDocumentTiered);
     const remember = vi.fn(), setCurrentDoc = vi.fn();
     const read = runInNewContext(`(${source.slice(start, end).trim()})`, {
+      privateRelease: { authorized: () => authorized },
       fileGrants, path, hasUtf16Bom, needsBytePreservingText, queueNativeDocumentOpen,
       docTiers: { readDocumentTiered }, diskMemory: { remember }, setCurrentDoc, registry: { track: vi.fn() },
     }) as (target: string, options?: { grant?: boolean }) => unknown;
     return { read, queueNativeDocumentOpen, readDocumentTiered, remember, setCurrentDoc };
   }
+
+  it("never reads or grants an otherwise authorized file while the private build is locked", () => {
+    const target = fixture("normal.md", Buffer.from("Private source")), f = reader(false);
+    expect(f.read(target, { grant: true })).toBeNull(); expect(f.readDocumentTiered).not.toHaveBeenCalled(); expect(f.queueNativeDocumentOpen).not.toHaveBeenCalled(); expect(f.remember).not.toHaveBeenCalled();
+  });
 
   it.each(["txt", "md", "csv"])("does not decode, track or modify an authorized UTF-16 .%s source", async (extension) => {
     const original = Buffer.concat([Buffer.from([255, 254]), Buffer.from("Café\r\n", "utf16le")]);

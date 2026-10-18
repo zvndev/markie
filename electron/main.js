@@ -9,12 +9,23 @@ const {
   net,
   shell,
   session,
+  safeStorage,
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const url = require("url");
+const { initializePrivateReleaseIdentity, createPrivateReleaseGate, AUTH_ORIGIN: PRIVATE_AUTH_ORIGIN } = require("./private-release");
+const privateReleaseConfig = initializePrivateReleaseIdentity({ app, metadata: require("../package.json") });
+let privateUpdateCancellation = null;
 const { initializeDesktopIdentity, desktopStartUrl, isStableDesktopAuthUrl } = require("./desktop-preview.cjs");
-const { isPreview: isDesktopPreview } = initializeDesktopIdentity({ app, metadata: require("../package.json") });
+const { isPreview: isDesktopPreview } = privateReleaseConfig ? { isPreview: false } : initializeDesktopIdentity({ app, metadata: require("../package.json") });
+const privateRelease = createPrivateReleaseGate({ config: privateReleaseConfig, userData: app.getPath("userData"), safeStorage, onLock: () => {
+  pendingFilePath = null; pendingDeepLink = null; rendererReady = false; currentDocPath = null; stopWatchingOpenFile(); documentMenu.reset();
+  try { privateUpdateCancellation?.cancel(); if (autoUpdater) autoUpdater.requestHeaders = {}; } catch { /* No active private download. */ }
+  try { sync.setConfig({ token: null, serverURL: PRIVATE_AUTH_ORIGIN, userId: null }); } catch { /* Already locked. */ }
+  try { terminal.killAll(); } catch { /* No active terminal. */ }
+  if (mainWindow && !mainWindow.isDestroyed()) { documentFiles.releaseOwner(mainWindow.webContents.id); mainWindow.webContents.reload(); }
+} });
 const autoUpdater = isDesktopPreview ? null : require("electron-updater").autoUpdater;
 const { shareBaseFromSrc } = require("./share-origin");
 const { classifyDeepLink, cloudDocId } = require("./deep-links");
@@ -44,7 +55,19 @@ const { createPdfExporter, ensureExtension } = require("./export-pdf");
 const { createLinkPreviews } = require("./link-preview");
 const { externalWebTarget } = require("./external-web.cjs");
 const { createIpcHandler, errorMessage } = require("./ipc-result");
-const { writeFileAtomic } = require("./atomic-write");
+const { writeFileAtomic: writeAuthorizedFileAtomic } = require("./atomic-write");
+function writeFileAtomic(...args) {
+  if (!privateRelease.authorized()) throw new Error("Private release authorization is required.");
+  return writeAuthorizedFileAtomic(...args);
+}
+if (privateReleaseConfig) for (const method of ["showOpenDialog", "showSaveDialog"]) {
+  const original = dialog[method].bind(dialog);
+  dialog[method] = async (...args) => {
+    if (!privateRelease.authorized()) return { canceled: true, filePaths: [] };
+    const result = await original(...args);
+    return privateRelease.authorized() ? result : { canceled: true, filePaths: [] };
+  };
+}
 const { createHistory } = require("./history");
 const { saveConflictAction } = require("./save-conflict");
 const { createCloseFlusher } = require("./close-flush");
@@ -220,7 +243,7 @@ const {
   supportsMarkdownDefaultHandler,
 } = require("./desktop-intents");
 
-const isDev = !isDesktopPreview && process.env.NODE_ENV === "development";
+const isDev = !privateReleaseConfig && !isDesktopPreview && process.env.NODE_ENV === "development";
 
 // Must run before app ready: gives app:// a real (standard, secure) origin
 // so the renderer gets persistent localStorage/IndexedDB in production.
@@ -272,6 +295,7 @@ let pendingDeepLink = null;
 // OS paths never cross the renderer boundary: it receives only a notification,
 // then claims a bounded opaque file grant through document-files:take-initial.
 function queueNativeDocumentOpen(filePath, options = {}) {
+  if (!privateRelease.authorized()) return false;
   const result = options.dropOwner === undefined
     ? documentFiles.queueOsFile(filePath, options)
     : documentFiles.queueDroppedFile(options.dropOwner, filePath);
@@ -291,6 +315,7 @@ function queueNativeDocumentOpen(filePath, options = {}) {
 // the window so the user lands back in Markie focused.
 function deliverDeepLink(link) {
   if (isDesktopPreview) return;
+  if (!privateRelease.authorized()) return;
   const kind = classifyDeepLink(link);
   if (kind === "ignore") return;
   // A public link: fetch it with the token the link carries and open a copy
@@ -379,6 +404,7 @@ const preflightMode = process.env.MARKIE_PREFLIGHT === "1";
 // Open a markdown file that already exists on disk in the editor window,
 // creating/showing the window and bridging cold start via pendingFilePath.
 function openLocalFile(filePath) {
+  if (!privateRelease.authorized()) return;
   // macOS reopens the last document by sending open-file at launch, which is
   // the path that renamed the window during the packaging gate.
   if (preflightMode) return;
@@ -620,6 +646,7 @@ function refreshRevertMenuItem() {
 // the whole text back over IPC just so the registry could hash it, and for a
 // file this size that copy is worth skipping.
 function readFilePayload(filePath, { grant = false } = {}) {
+  if (!privateRelease.authorized()) return null;
   try {
     const access = grant ? fileGrants.grantFile(filePath) : fileGrants.canRead(filePath);
     if (!access.ok) return null;
@@ -658,9 +685,9 @@ function readFilePayload(filePath, { grant = false } = {}) {
 }
 
 // File passed as a CLI argument (dev runs, Windows/Linux double-click)
-const argFile = preflightMode ? null : findOpenableLaunchFile(process.argv.slice(1));
+const argFile = preflightMode || !privateRelease.authorized() ? null : findOpenableLaunchFile(process.argv.slice(1));
 if (argFile) pendingFilePath = argFile;
-else if (!preflightMode) { const nativeFile = findNativeDocumentLaunchFile(process.argv.slice(1)); if (nativeFile) queueNativeDocumentOpen(nativeFile); }
+else if (!preflightMode && privateRelease.authorized()) { const nativeFile = findNativeDocumentLaunchFile(process.argv.slice(1)); if (nativeFile) queueNativeDocumentOpen(nativeFile); }
 
 // markie:// deep link passed as a CLI argument (Windows/Linux cold start)
 const argDeepLink = isDesktopPreview ? null : findDeepLinkArg(process.argv.slice(1));
@@ -706,6 +733,7 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      additionalArguments: privateReleaseConfig ? ["--markie-private-release"] : [],
     },
   });
   const nativeDocumentOwner = mainWindow.webContents.id;
@@ -738,6 +766,7 @@ function createWindow() {
   // have actually asked for an index this session, and it waits five minutes
   // between walks.
   mainWindow.on("focus", () => {
+    if (!privateRelease.authorized()) return;
     if (!_mdScanRequested) return;
     const now = Date.now();
     if (now - _mdLastScanAt < MD_RESCAN_INTERVAL_MS) return;
@@ -923,6 +952,7 @@ function cloudDocForPath(docPath, requested) {
 // refusal, never instead of it.
 function registerAssetProtocol() {
   protocol.handle(ASSET_SCHEME, async (request) => {
+    if (!privateRelease.authorized()) return new Response("Private release authorization required", { status: 403 });
     let requested;
     try {
       // The path is one percent-encoded segment, so the standard scheme's own
@@ -1077,10 +1107,22 @@ function setupCSP() {
 // almost no call site has a .catch(). The visible result was a spinner that
 // never stopped. Failures now answer `{ error }` (or the `onFailure` shape the
 // channel's callers already understand) and land in the crash log.
-const handle = createIpcHandler({
+const baseHandle = createIpcHandler({
   ipcMain,
   onError: (channel, err) => logCrash(`ipc:${channel}`, err),
 });
+const handle = (channel, fn, options) => baseHandle(channel, async (event, ...args) => {
+  if (privateReleaseConfig && (!currentCloseSender(event) || !privateRelease.allows(channel))) return { ok: false, success: false, error: "Private release authorization is required.", code: "private-release-locked" };
+  return fn(event, ...args);
+}, options);
+handle("private-release-status", () => privateRelease.status());
+handle("private-release-session", () => ({ token: privateRelease.rendererCredential() }));
+handle("private-release-authorize", async (_event, token) => {
+  const status = await privateRelease.authorize(token);
+  if (status.authorized && privateReleaseConfig && autoUpdater) applyUpdateChannel();
+  return status;
+});
+handle("private-release-lock", () => privateRelease.lock({ forget: true }));
 handle("document-menu-state", (event, state) => {
   if (!currentCloseSender(event)) return { ok: false, error: "This frame cannot update document menus." };
   return documentMenu.update(state);
@@ -1489,6 +1531,11 @@ handle("term-external-apps", () => terminal.externalApps(), { onFailure: () => [
 handle("term-open-external", (_e, { app, cwd }) => terminal.openExternal(app, cwd));
 
 handle("sync-config", async (_event, cfg) => {
+  if (privateReleaseConfig && cfg?.serverURL !== PRIVATE_AUTH_ORIGIN) return { error: "Private builds use the trusted Markie authentication server." };
+  if (privateReleaseConfig && !privateRelease.matchesCredential(cfg?.token)) {
+    if (!cfg?.token) { privateRelease.lock({ forget: true }); return { error: "Private release authorization is required." }; }
+    if (!(await privateRelease.authorize(cfg.token)).authorized) return { error: "Private release authorization is required." };
+  }
   const result = sync.setConfig(cfg);
   // Whose cached pictures this machine is holding. The cache keys carry no
   // principal, so the directory has to belong to one session at a time: it
@@ -1854,6 +1901,7 @@ handle("open-external", (event, target) => {
   if (!currentCloseSender(event)) return;
   const webTarget = externalWebTarget(target);
   if (!webTarget) return;
+  if (privateReleaseConfig && !privateRelease.authorized() && (new URL(webTarget).origin !== PRIVATE_AUTH_ORIGIN || !isStableDesktopAuthUrl(webTarget))) return;
   if (isDesktopPreview && isStableDesktopAuthUrl(webTarget)) {
     void dialog.showMessageBox(mainWindow, { type: "info", message: "Google sign-in is unavailable in Markie Preview.", detail: "This preview does not use installed Markie's browser callback. Use email sign-in instead." });
     return;
@@ -1953,6 +2001,7 @@ function mdRefreshMetaSliced(rows) {
 
 // Run a fresh index scan, persist the snapshot, and tell the renderer.
 async function mdRescanAndNotify() {
+  if (!privateRelease.authorized()) return;
   _mdLastScanAt = Date.now();
   try {
     const result = await mdindex.rescan();
@@ -2305,6 +2354,11 @@ async function showUpdateMessage(options) {
 }
 
 async function requestUpdateCheck({ manual = false } = {}) {
+  if (privateReleaseConfig) {
+    const status = await privateRelease.authorize(undefined, { enroll: false });
+    if (!status.authorized) return { ok: false, reason: "private-release-locked" };
+    applyUpdateChannel();
+  }
   const policy = desktopUpdatePolicy({
     isDev,
     isPreview: isDesktopPreview,
@@ -2332,7 +2386,7 @@ async function requestUpdateCheck({ manual = false } = {}) {
         message: "A Markie update is ready to install.",
         detail: "Restart Markie to finish installing the downloaded update.",
       });
-      if (response === 0) autoUpdater.quitAndInstall();
+      if (response === 0 && (!privateReleaseConfig || (await privateRelease.authorize(undefined, { enroll: false })).authorized)) autoUpdater.quitAndInstall();
     }
     return { ok: true, state: updateState };
   }
@@ -2350,7 +2404,8 @@ async function requestUpdateCheck({ manual = false } = {}) {
   manualUpdateCheck = manual;
   updateState = "checking";
   try {
-    await autoUpdater.checkForUpdates();
+    const result = await autoUpdater.checkForUpdates();
+    if (privateReleaseConfig) privateUpdateCancellation = result?.cancellationToken ?? null;
     return { ok: true };
   } catch (err) {
     updateState = "error";
@@ -2359,7 +2414,7 @@ async function requestUpdateCheck({ manual = false } = {}) {
       await showUpdateMessage({
         type: "warning",
         message: "Markie couldn't check for updates.",
-        detail: String(err?.message ?? err ?? "Unknown updater error"),
+        detail: privateReleaseConfig ? "The private update service could not be reached." : String(err?.message ?? err ?? "Unknown updater error"),
       });
     }
     return { ok: false, reason: "error" };
@@ -2375,9 +2430,15 @@ function setupAutoUpdate() {
   // quitAndInstall becomes an uncaught exception, which becomes a modal dialog,
   // which stops the app from quitting — so Squirrel waits forever and the
   // update never installs.
-  autoUpdater.logger = guardedLogger(console);
+  autoUpdater.logger = privateReleaseConfig ? null : guardedLogger(console);
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = !privateReleaseConfig;
+  if (privateReleaseConfig) {
+    autoUpdater.netSession.webRequest.onBeforeRequest((details, callback) => {
+      const permitted = privateRelease.authorized() && details.url.startsWith(`${privateReleaseConfig.apiOrigin}/private-releases/super-nightly/`);
+      callback({ cancel: !permitted });
+    });
+  }
   applyUpdateChannel();
 
   autoUpdater.on("checking-for-update", () => {
@@ -2417,13 +2478,13 @@ function setupAutoUpdate() {
   autoUpdater.on("error", (err) => {
     updateState = "error";
     // Don't surface noisy network errors to the user; just log.
-    console.error("auto-update error:", err == null ? "unknown" : String(err));
+    console.error("auto-update error:", privateReleaseConfig ? "Private update request failed." : err == null ? "unknown" : String(err));
     if (manualUpdateCheck) {
       manualUpdateCheck = false;
       showUpdateMessage({
         type: "warning",
         message: "Markie couldn't check for updates.",
-        detail: String(err?.message ?? err ?? "Unknown updater error"),
+        detail: privateReleaseConfig ? "The private update service could not be reached." : String(err?.message ?? err ?? "Unknown updater error"),
       });
     }
   });
@@ -2439,6 +2500,14 @@ function setupAutoUpdate() {
 // without a relaunch.
 function applyUpdateChannel() {
   if (isDesktopPreview) return { optedIn: false, channel: null, allowDowngrade: false };
+  if (privateReleaseConfig) {
+    if (!privateRelease.authorized()) return { optedIn: false, channel: "super-nightly", allowDowngrade: false };
+    const settings = privateRelease.updaterSettings();
+    autoUpdater.setFeedURL(settings); autoUpdater.requestHeaders = settings.requestHeaders;
+    autoUpdater.disableDifferentialDownload = true;
+    autoUpdater.channel = "super-nightly"; autoUpdater.allowPrerelease = true; autoUpdater.allowDowngrade = false;
+    return { optedIn: false, channel: "super-nightly", allowDowngrade: false };
+  }
   const optedIn = readBetaOptIn(app.getPath("userData"));
   const { channel, allowDowngrade } = updaterSettingsFor({
     optedIn,
@@ -2457,7 +2526,7 @@ handle("update-status", () => updateState, { onFailure: () => "idle" });
 handle(
   "update-channel-get",
   () => ({
-    optedIn: !isDesktopPreview && readBetaOptIn(app.getPath("userData")),
+    optedIn: !privateReleaseConfig && !isDesktopPreview && readBetaOptIn(app.getPath("userData")),
     currentVersion: app.getVersion(),
   }),
   // Stable is the safe answer to "I can't tell", matching readBetaOptIn.
@@ -2466,6 +2535,7 @@ handle(
 handle(
   "update-channel-set",
   async (_e, optedIn) => {
+    if (privateReleaseConfig) return { ok: false, error: "Private builds cannot switch to stable or beta updates." };
     if (isDesktopPreview) return { ok: false, error: "Preview builds do not use the stable or beta update channels." };
     const saved = writeBetaOptIn(app.getPath("userData"), optedIn === true);
     if (!saved) return { ok: false, error: "Couldn't save that preference." };
@@ -2485,8 +2555,9 @@ handle("check-for-updates", () => requestUpdateCheck({ manual: true }), {
 // Answers the renderer instead of returning nothing, because a failure here is
 // invisible from the other side: the button says "Restarting…" and waits for a
 // quit that is never coming. On success this call does not return at all.
-handle("quit-and-install", () => {
+handle("quit-and-install", async () => {
   if (isDesktopPreview) return { ok: false, reason: "preview" };
+  if (privateReleaseConfig && !(await privateRelease.authorize(undefined, { enroll: false })).authorized) return { ok: false, reason: "private-release-locked" };
   if (updateState !== "ready") return { ok: false, reason: "not-ready" };
   try {
     autoUpdater.quitAndInstall();
@@ -2496,7 +2567,7 @@ handle("quit-and-install", () => {
     return {
       ok: false,
       reason: "error",
-      error: String(err?.message ?? err ?? "Unknown updater error"),
+      error: privateReleaseConfig ? "The private update could not be installed." : String(err?.message ?? err ?? "Unknown updater error"),
     };
   }
 }, { onFailure: () => null });
@@ -2745,6 +2816,7 @@ handle("crash-log-reveal", () => {
 }, { onFailure: () => ({ ok: false }) });
 
 ipcMain.on("grant-file-path", (event, filePath) => {
+  if (!privateRelease.authorized() || privateReleaseConfig && !currentCloseSender(event)) { event.returnValue = false; return; }
   if (!OPENABLE.test(filePath)) {
     const result = currentCloseSender(event) ? documentFiles.grantDroppedFile(event.sender.id, filePath) : null;
     event.returnValue = !!(result?.ok && result.value);
@@ -2761,6 +2833,7 @@ ipcMain.on("grant-file-path", (event, filePath) => {
 // Synchronous to match grant-file-path: the drop handler needs an answer before
 // it decides whether it handled the drop, and the work is a stat.
 ipcMain.on("attach-file-path", (event, filePath) => {
+  if (!privateRelease.authorized() || privateReleaseConfig && !currentCloseSender(event)) { event.returnValue = null; return; }
   const grant = fileGrants.grantAttachment(filePath);
   event.returnValue = grant.ok ? grant.path : null;
 });
@@ -2775,6 +2848,7 @@ const isMac = process.platform === "darwin";
 // Show the crash log so a bug report can carry it. Not an IPC channel: the
 // renderer is exactly the thing that may have just died.
 function revealCrashLog() {
+  if (!privateRelease.authorized()) return;
   try {
     const target = crashLog().path;
     // Creating the file to reveal it hands the user an empty log and makes
@@ -3090,6 +3164,7 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on("second-instance", (_event, argv) => {
+    if (!privateRelease.authorized()) { mainWindow?.show(); return; }
     const link = findDeepLinkArg(argv);
     if (link) {
       deliverDeepLink(link);
@@ -3113,7 +3188,11 @@ if (!gotLock) {
     }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    if (privateReleaseConfig) {
+      await privateRelease.authorize(undefined, { enroll: false });
+      setInterval(() => { void privateRelease.authorize(undefined, { enroll: false }); }, 30_000).unref();
+    }
     registerProtocol();
     registerAssetProtocol();
     setupCSP();
@@ -3164,6 +3243,7 @@ app.on("before-quit", () => {
 // the get-initial-file handshake when the renderer mounts.
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
+  if (!privateRelease.authorized()) return;
   if (!preflightMode && documentsWorkspaceActive() && queueNativeDocumentOpen(filePath, { includeClassic: true })) return;
   if (!preflightMode && !OPENABLE.test(filePath) && queueNativeDocumentOpen(filePath)) return;
   if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {

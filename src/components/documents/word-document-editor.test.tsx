@@ -9,7 +9,7 @@ import { customStyleFixture } from "@/lib/office/docx-styles.fixture";
 import { SETTINGS_PART, THEME_PART, themedDocxFixture } from "@/lib/office/docx-theme.fixture";
 import { readZip, writeZip } from "@/lib/office/zip";
 import type { RichDocument } from "@/lib/office/rich-text-types";
-import { createRichDocument, exportRichDocument, openRichDocument } from "@/lib/office/rich-document";
+import { applyRichOperations, createRichDocument, exportRichDocument, openRichDocument } from "@/lib/office/rich-document";
 import { installBridge } from "@/test/mock-bridge";
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 function editor<T extends RichDocument>(initial: T, onHistory?: () => void, localControls = false) {
@@ -29,6 +29,67 @@ function select(start: number, end: number, paragraphNumber = 1) {
   return paragraph;
 }
 describe("Word renderer inside Markie", () => {
+  it.each([false, true])("retains logical formatting range after rejected native deletion (backward %s)", async (backward) => {
+    const initial = await createDocx("abcd"), view = editor(initial), field = select(1, 3);
+    field.focus();
+    const text = field.querySelector("span")!.firstChild!, selection = window.getSelection()!;
+    select(1, 3);
+    if (backward) { selection.collapse(text, 3); selection.extend(text, 1); }
+    fireEvent(field, new InputEvent("beforeinput", { inputType: "deleteContentBackward", bubbles: true, cancelable: false }));
+    text.textContent = "ad";
+    const range = document.createRange(); range.setStart(text, 1); range.collapse(true); selection.removeAllRanges(); selection.addRange(range);
+    fireEvent.input(field);
+    expect(view.state.document).toBe(initial); expect(selection.toString()).toBe("bc");
+    expect(selection.anchorOffset).toBe(backward ? 3 : 1);
+    fireEvent.click(screen.getByRole("button", { name: "Bold" }));
+    expect(view.state.document.paragraphs[0].runs.map((run) => [run.text, !!run.style.bold])).toEqual([["a", false], ["bc", true], ["d", false]]);
+  });
+  it.each(["docx", "rtf", "odt"] as const)("preserves mixed %s source runs, caret, no-op identity and snapshot undo for deterministic input", async (format) => {
+    const base = await createRichDocument(format, "alpha beta");
+    const initial = applyRichOperations(base, [{ type: "format-range", paragraphId: base.paragraphs[0].id, start: 0, end: 6, style: { bold: true } }, { type: "format-range", paragraphId: base.paragraphs[0].id, start: 6, end: 10, style: { italic: true } }]);
+    const view = editor(initial), paragraph = screen.getByRole("textbox", { name: "Paragraph 1" });
+    paragraph.focus(); select(0, 5);
+    fireEvent(paragraph, new InputEvent("beforeinput", { inputType: "insertText", data: "alpha", bubbles: true, cancelable: true }));
+    expect(view.state.document).toBe(initial); expect(view.state.target!.enabledCommands).not.toContain("undo");
+    const spans = paragraph.querySelectorAll("[data-run-id]"), range = document.createRange();
+    range.setStart(spans[0].firstChild!, 3); range.setEnd(spans[1].firstChild!, 2);
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    fireEvent(paragraph, new InputEvent("beforeinput", { inputType: "insertText", data: "X", bubbles: true, cancelable: true }));
+    expect(view.state.document.text).toBe("alpXta");
+    const caret = document.createRange(); caret.selectNodeContents(paragraph); caret.setEnd(window.getSelection()!.anchorNode!, window.getSelection()!.anchorOffset);
+    expect(caret.toString().length).toBe(4);
+    const reopened = await openRichDocument(format, await exportRichDocument(view.state.document));
+    expect(reopened.paragraphs[0].runs.map((run) => [run.text, !!run.style.bold, !!run.style.italic])).toEqual([["alpX", true, false], ["ta", false, true]]);
+    view.execute("undo"); expect(view.state.document).toBe(initial);
+    view.execute("redo"); expect(view.state.document.text).toBe("alpXta");
+  });
+  it("rejects rich structural edits with source, history and selection unchanged", async () => {
+    const initial = applyDocxOperations(await createDocx("alpha beta"), [{ type: "format-range", paragraphId: "p0", start: 0, end: 6, style: { bold: true } }]);
+    const view = editor(initial), original = await exportDocx(initial), paragraph = select(1, 4);
+    fireEvent.paste(paragraph, { clipboardData: { getData: () => "one\ntwo" } });
+    expect(window.getSelection()!.toString()).toBe("lph");
+    expect(view.state.document).toBe(initial); expect(view.state.target!.enabledCommands).not.toContain("undo");
+    select(2, 2); fireEvent.keyDown(paragraph, { key: "Enter" });
+    expect(view.state.document).toBe(initial); expect(await exportDocx(view.state.document)).toEqual(original);
+    expect(view.state.target!.enabledCommands).not.toContain("undo");
+  });
+  it("retains plain same-author tracking through deterministic input and protects mixed tracking", async () => {
+    const initial = await createDocx("Original"), view = editor(initial);
+    view.execute("review-tracking"); fireEvent.click(screen.getByRole("button", { name: "Track paragraph text only" })); fireEvent.click(screen.getByRole("button", { name: "Close Document Review" }));
+    const field = select(0, 8);
+    fireEvent(field, new InputEvent("beforeinput", { inputType: "insertText", data: "Updated", bubbles: true, cancelable: true }));
+    expect(view.state.document.text).toBe("Updated"); expect(view.state.document.originalText).toBe("Original");
+    select(0, 7); fireEvent(field, new InputEvent("beforeinput", { inputType: "insertText", data: "Again", bubbles: true, cancelable: true }));
+    const reopened = await openDocx(await exportDocx(view.state.document));
+    expect(reopened.text).toBe("Again"); expect(reopened.originalText).toBe("Original"); expect(reopened.revisions).toHaveLength(2);
+    view.unmount();
+    const mixed = applyDocxOperations(initial, [{ type: "format-range", paragraphId: "p0", start: 0, end: 3, style: { bold: true } }]), protectedView = editor(mixed);
+    protectedView.execute("review-tracking"); fireEvent.click(screen.getByRole("button", { name: "Track paragraph text only" })); fireEvent.click(screen.getByRole("button", { name: "Close Document Review" }));
+    const protectedField = select(0, 2);
+    fireEvent(protectedField, new InputEvent("beforeinput", { inputType: "insertText", data: "X", bubbles: true, cancelable: true }));
+    expect(protectedView.state.document).toBe(mixed); expect(protectedView.state.target!.enabledCommands).not.toContain("undo");
+    expect(await exportDocx(protectedView.state.document)).toEqual(await exportDocx(mixed));
+  });
   it("opens and previews read-only document links without changing source or opening an editor browser", async () => {
     const openExternal = vi.fn(async () => {}), linkPreview = vi.fn(async () => ({ url: "https://example.com/post", title: "A web page", siteName: null, description: null, image: null }));
     installBridge({ openExternal, linkPreview });

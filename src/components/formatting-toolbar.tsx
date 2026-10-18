@@ -106,29 +106,68 @@ export function FormattingToolbar({
   onAction, onColor, onHighlight, supportedActions, showWidthControls = true, fontPlaceholder = "Font…", sizePlaceholder,
   showStyleControls = true, startControls, serializationHint, onPrint, onHistory,
 }: FormattingToolbarProps) {
-  const root = useRef<HTMLDivElement>(null), more = useRef<HTMLButtonElement>(null);
+  const root = useRef<HTMLDivElement>(null), more = useRef<HTMLButtonElement>(null), leading = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0), [overflowOpen, setOverflowOpen] = useState(false);
+  const [leadingWidth, setLeadingWidth] = useState(0);
+  const hasStartControls = Boolean(startControls);
   const [overflowTarget, setOverflowTarget] = useState<HTMLDivElement | null>(null);
   const overflowId = useId();
-  const compact = width > 0 && width < 1300, narrow = width > 0 && width < 700, selectorsInOverflow = width > 0 && width < 620;
+  const supports = (action: FormattingAction) => supportedActions === undefined || supportedActions.includes(action);
+  const hasActions = (...actions: FormattingAction[]) => actions.some(supports);
+  const actionWidth = (...actions: FormattingAction[]) => actions.filter(supports).length * 30;
+  // Bounds include each fixed-width control and its 2px row gap. Reserve the
+  // real More button before fitting groups, rather than hiding everything at
+  // a viewport breakpoint. Unsupported renderer actions consume no space.
+  const groups = [
+    ["selectors", (showStyleControls ? 114 : 0) + 106],
+    ["colour", (onColor ? 40 : 0) + (onHighlight ? 42 : 0)],
+    ["lists", actionWidth("bullet", "ordered")],
+    ["alignment", actionWidth("align-left", "align-center", "align-right")],
+    ["history", actionWidth("undo", "redo")],
+    ["marks", actionWidth("strike", "code")],
+    ["insert", actionWidth("link", "image")],
+    ["task", actionWidth("task")],
+    ["clear", actionWidth("clear")],
+    ["size", 60],
+    ["output", (onPrint ? 30 : 0) + (onHistory ? 30 : 0)],
+    ["view", 100 + (showWidthControls ? 114 : 0)],
+  ] as const;
+  const primaryWidth = 40 + actionWidth("bold", "italic", "underline");
+  // The expanded row also has 140px selectors and six visual dividers.
+  const reservedStart = hasStartControls ? leadingWidth + 2 : 0;
+  const fullWidth = 16 + reservedStart + primaryWidth + groups.reduce((sum, [, size]) => sum + size, 0) + (showStyleControls ? 64 : 36) + 60;
+  const compact = width > 0 && width < fullWidth;
+  const primaryInOverflow = compact && width - 16 - reservedStart - 30 < primaryWidth;
+  let available = width - 16 - reservedStart - (primaryInOverflow ? 0 : primaryWidth) - 30;
+  const overflow = new Set<string>();
+  if (compact) for (const [group, size] of groups) {
+    if (size <= available) available -= size;
+    else overflow.add(group);
+  }
+  const overflows = (group: string) => overflow.has(group);
   useLayoutEffect(() => {
     const node = root.current;
     if (!node) return;
-    const measure = () => setWidth(node.getBoundingClientRect().width);
+    const start = leading.current;
+    const measure = () => { setWidth(node.getBoundingClientRect().width); setLeadingWidth(start?.getBoundingClientRect().width ?? 0); };
     measure();
     if (typeof ResizeObserver === "undefined") { window.addEventListener("resize", measure); return () => window.removeEventListener("resize", measure); }
-    const observer = new ResizeObserver((entries) => setWidth(entries[0]?.contentRect.width ?? node.getBoundingClientRect().width));
-    observer.observe(node); return () => observer.disconnect();
-  }, []);
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.target === node) setWidth(entry.contentRect.width);
+        if (entry.target === start) setLeadingWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(node); if (start) observer.observe(start);
+    return () => observer.disconnect();
+  }, [hasStartControls]);
   useDismissibleLayer(overflowOpen, root, () => setOverflowOpen(false));
   useEffect(() => { if (!compact) setOverflowOpen(false); }, [compact]);
   useEffect(() => {
     if (overflowOpen) overflowTarget?.querySelector<HTMLElement>('button:not(:disabled),select:not(:disabled),input:not(:disabled)')?.focus();
   }, [overflowOpen, overflowTarget]);
   const closeOverflow = () => { setOverflowOpen(false); more.current?.focus(); };
-  const supports = (action: FormattingAction) => supportedActions === undefined || supportedActions.includes(action);
   const withSerializationHint = (label: string) => serializationHint ? `${label} - ${serializationHint}` : label;
-  const hasActions = (...actions: FormattingAction[]) => actions.some(supports);
 
   return (
     <div
@@ -149,8 +188,8 @@ export function FormattingToolbar({
       onChange={(event) => { if (overflowTarget?.contains(event.target as Node) && event.target instanceof HTMLSelectElement) closeOverflow(); }}
       onBlur={(event) => { if (overflowTarget?.contains(event.target as Node) && event.relatedTarget instanceof Node && !overflowTarget.contains(event.relatedTarget) && event.relatedTarget !== more.current) setOverflowOpen(false); }}
     >
-      {startControls}
-      <OverflowTools compact={narrow} target={overflowTarget}>
+      {startControls ? <div ref={leading} data-markie-toolbar-start className="flex flex-wrap items-center gap-0.5 min-w-0" style={{ maxWidth: width > 0 ? Math.max(0, width - 46) : undefined }}>{startControls}</div> : null}
+      <OverflowTools compact={overflows("history")} target={overflowTarget}>
       {/* The conventional curved arrows: a hook back on itself, not the
           circular refresh glyph they read as before. */}
       {supports("undo") && (<TButton
@@ -170,7 +209,7 @@ export function FormattingToolbar({
         <Icon><path d="m15 14 5-5-5-5" /><path d="M20 9H10a6 6 0 0 0 0 12h3" /></Icon>
       </TButton>)}
       </OverflowTools>
-      <OverflowTools compact={compact} target={overflowTarget}>
+      <OverflowTools compact={overflows("output")} target={overflowTarget}>
       {onPrint && (<TButton onClick={onPrint} title={controlTitle("print", "Print")} label="Print">
         <Icon><path d="M6 9V2h12v7" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><rect x="6" y="14" width="12" height="8" rx="1" /></Icon>
       </TButton>)}
@@ -185,7 +224,7 @@ export function FormattingToolbar({
 
       {/* Zoom is a viewing preference. The renderer owns whether font and
           size changes affect the selection or the document's appearance. */}
-      <OverflowTools compact={compact} target={overflowTarget}><TButton
+      <OverflowTools compact={overflows("view")} target={overflowTarget}><TButton
         onClick={() => onAppearance({ ...appearance, zoom: stepZoom(appearance.zoom, -1) })}
         title={controlTitle("zoomOut", "Zoom out")}
         label="Zoom out"
@@ -228,7 +267,7 @@ export function FormattingToolbar({
 
       {!compact && <Divider />}
 
-      <OverflowTools compact={selectorsInOverflow} target={overflowTarget}>{showStyleControls && <select
+      <OverflowTools compact={overflows("selectors")} target={overflowTarget}>{showStyleControls && <select
         value={currentStyle}
         onChange={(e) => onStyle(e.target.value)}
         disabled={!canEdit}
@@ -265,7 +304,7 @@ export function FormattingToolbar({
       </select>
       </OverflowTools>
 
-      <OverflowTools compact={compact} target={overflowTarget}><TButton
+      <OverflowTools compact={overflows("size")} target={overflowTarget}><TButton
         onClick={() => { if (currentSize !== null) onSize(currentSize - 1); }}
         title={selecting ? "Smaller selected text" : "Smaller text (whole document)"}
         label="Decrease font size"
@@ -274,7 +313,7 @@ export function FormattingToolbar({
         <Icon><path d="M5 12h14" /></Icon>
       </TButton>
       </OverflowTools>
-      <input
+      <OverflowTools compact={primaryInOverflow} target={overflowTarget}><input
         type="number"
         value={currentSize ?? ""}
         placeholder={sizePlaceholder}
@@ -288,8 +327,8 @@ export function FormattingToolbar({
             : "Font size for the whole document"
         }
         className="markie-overlay-field text-[11px] h-7 w-[38px] text-center shrink-0 tabular-nums"
-      />
-      <OverflowTools compact={compact} target={overflowTarget}><TButton
+      /></OverflowTools>
+      <OverflowTools compact={overflows("size")} target={overflowTarget}><TButton
         onClick={() => { if (currentSize !== null) onSize(currentSize + 1); }}
         title={selecting ? "Larger selected text" : "Larger text (whole document)"}
         label="Increase font size"
@@ -301,6 +340,7 @@ export function FormattingToolbar({
 
       {!compact && (hasActions("bold", "italic", "underline", "strike", "code") || onColor || onHighlight) && <Divider />}
 
+      <OverflowTools compact={primaryInOverflow} target={overflowTarget}>
       {supports("bold") && (<TButton onClick={() => onAction("bold")} title={controlTitle("bold", "Bold")} label="Bold" active={state?.bold} disabled={!canEdit}>
         <span aria-hidden="true" className="text-[13px] font-bold">B</span>
       </TButton>)}
@@ -316,8 +356,9 @@ export function FormattingToolbar({
       >
         <span aria-hidden="true" className="text-[13px] underline">U</span>
       </TButton>)}
+      </OverflowTools>
 
-      <OverflowTools compact={compact} target={overflowTarget}>{onColor && <label
+      <OverflowTools compact={overflows("colour")} target={overflowTarget}>{onColor && <label
         title={controlTitle("textColour", "Text colour", { note: serializationHint })}
         className="h-7 px-1 rounded flex items-center gap-0.5 shrink-0 text-muted hover:text-foreground hover:bg-accent/40 cursor-pointer"
       >
@@ -366,14 +407,18 @@ export function FormattingToolbar({
           </select>
         </label>
       )}
+      </OverflowTools>
+      <OverflowTools compact={overflows("marks")} target={overflowTarget}>
       {supports("strike") && (<TButton onClick={() => onAction("strike")} title={controlTitle("strike", "Strikethrough")} label="Strikethrough" active={state?.strike} disabled={!canEdit}>
         <Icon><path d="M5 12h14" /><path d="M9.5 9.2c0-2 1.6-3.7 4.1-3.7 1.2 0 2.3.3 3 .8" /><path d="M15.5 14.4c.8.4 1.2 1 1.2 1.8 0 1.5-1.5 2.5-3.8 2.5-1.5 0-2.8-.4-3.8-1.1" /></Icon>
       </TButton>)}
       {supports("code") && (<TButton onClick={() => onAction("code")} title={controlTitle("code", "Inline code")} label="Inline code" active={state?.code} disabled={!canEdit}>
         <Icon><path d="m9 18-6-6 6-6" /><path d="m15 6 6 6-6 6" /></Icon>
       </TButton>)}
+      </OverflowTools>
 
-      {(hasActions("link", "image")) && <Divider />}
+      <OverflowTools compact={overflows("insert")} target={overflowTarget}>
+      {!compact && hasActions("link", "image") && <Divider />}
 
       {supports("link") && (<TButton
         onClick={() => onAction("link")}
@@ -391,18 +436,24 @@ export function FormattingToolbar({
       >
         <Icon><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></Icon>
       </TButton>)}
+      </OverflowTools>
 
-      {(hasActions("bullet", "ordered", "task", "align-left", "align-center", "align-right")) && <Divider />}
+      {!compact && hasActions("bullet", "ordered", "task", "align-left", "align-center", "align-right") && <Divider />}
 
+      <OverflowTools compact={overflows("lists")} target={overflowTarget}>
       {supports("bullet") && (<TButton onClick={() => onAction("bullet")} title={controlTitle("bullet", "Bullet list")} label="Bullet list" active={state?.bullet} disabled={!canEdit}>
         <Icon><path d="M8 6h13" /><path d="M8 12h13" /><path d="M8 18h13" /><path d="M3.5 6h.01" /><path d="M3.5 12h.01" /><path d="M3.5 18h.01" /></Icon>
       </TButton>)}
       {supports("ordered") && (<TButton onClick={() => onAction("ordered")} title={controlTitle("ordered", "Numbered list")} label="Numbered list" active={state?.ordered} disabled={!canEdit}>
         <Icon><path d="M10 6h11" /><path d="M10 12h11" /><path d="M10 18h11" /><path d="M4 6h1v4" /><path d="M4 10h2" /></Icon>
       </TButton>)}
+      </OverflowTools>
+      <OverflowTools compact={overflows("task")} target={overflowTarget}>
       {supports("task") && (<TButton onClick={() => onAction("task")} title={controlTitle("task", "Task list")} label="Task list" active={state?.task} disabled={!canEdit}>
         <Icon><rect x="3" y="5" width="5" height="5" rx="1" /><path d="m4.2 7.5 1.2 1.2 2-2.3" /><path d="M11 7.5h10" /><rect x="3" y="14" width="5" height="5" rx="1" /><path d="M11 16.5h10" /></Icon>
       </TButton>)}
+      </OverflowTools>
+      <OverflowTools compact={overflows("alignment")} target={overflowTarget}>
       {supports("align-left") && (<TButton
         onClick={() => onAction("align-left")}
         title={controlTitle("alignLeft", "Align left", { note: serializationHint })}
@@ -430,8 +481,10 @@ export function FormattingToolbar({
       >
         <Icon><path d="M3 6h18" /><path d="M9 12h12" /><path d="M6 18h15" /></Icon>
       </TButton>)}
+      </OverflowTools>
 
-      {(supports("clear")) && <Divider />}
+      <OverflowTools compact={overflows("clear")} target={overflowTarget}>
+      {!compact && supports("clear") && <Divider />}
 
       {supports("clear") && (<TButton
         onClick={() => onAction("clear")}

@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WordParagraph } from "./word-paragraph";
 import type { DocxParagraph } from "@/lib/office/docx";
@@ -9,11 +10,77 @@ const paragraph: DocxParagraph = { id: "p1", text: "alpha beta", revisionIds: []
 ] };
 function selectText(node: Node, start: number, end: number) { const range = document.createRange(); range.setStart(node, start); range.setEnd(node, end); const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range); }
 function mount(source = paragraph) {
-  const onRuns = vi.fn(), onPasteParagraphs = vi.fn(), onRemovePageBreaks = vi.fn(), onRejectStructure = vi.fn();
-  render(<WordParagraph paragraph={source} index={0} selected readOnly={false} onSelect={vi.fn()} onReplace={vi.fn()} onRuns={onRuns} onSplit={vi.fn()} onPasteParagraphs={onPasteParagraphs} onRemovePageBreaks={onRemovePageBreaks} onRejectStructure={onRejectStructure} />);
-  return { field: screen.getByRole("textbox"), onRuns, onPasteParagraphs, onRemovePageBreaks, onRejectStructure };
+  const onRuns = vi.fn(), onPasteParagraphs = vi.fn(), onRemovePageBreaks = vi.fn(), onRejectStructure = vi.fn(), onReplace = vi.fn(), onSplit = vi.fn();
+  render(<WordParagraph paragraph={source} index={0} selected readOnly={false} onSelect={vi.fn()} onReplace={onReplace} onRuns={onRuns} onSplit={onSplit} onPasteParagraphs={onPasteParagraphs} onRemovePageBreaks={onRemovePageBreaks} onRejectStructure={onRejectStructure} />);
+  return { field: screen.getByRole("textbox"), onRuns, onPasteParagraphs, onRemovePageBreaks, onRejectStructure, onReplace, onSplit };
 }
 describe("Word paragraph user editing", () => {
+  it("restores the pre-input caret after rejected noncancelable browser mutation", async () => {
+    const source = { ...paragraph, text: "abc", runs: [{ ...paragraph.runs[0], text: "abc" }] };
+    function Host() {
+      const [token, setToken] = useState(0);
+      return <WordParagraph paragraph={source} index={0} selected readOnly={false} onSelect={vi.fn()} onReplace={vi.fn()} onRuns={vi.fn()} onSplit={vi.fn()} onPasteParagraphs={vi.fn()} onRemovePageBreaks={vi.fn()} onRejectStructure={() => setToken((value) => value + 1)} reconcileToken={token} />;
+    }
+    render(<Host />); const field = screen.getByRole("textbox"); field.focus();
+    selectText(field.querySelector("span")!.firstChild!, 1, 1);
+    fireEvent(field, new InputEvent("beforeinput", { inputType: "insertText", data: "X", bubbles: true, cancelable: false }));
+    field.querySelector("span")!.firstChild!.textContent = "aXbc"; selectText(field.querySelector("span")!.firstChild!, 2, 2); fireEvent.input(field);
+    await waitFor(() => expect(field.textContent).toBe("abc"));
+    expect(window.getSelection()!.anchorOffset).toBe(1);
+  });
+  it.each([false, true])("restores a backward selection after rejected %s composition/native DOM input, then types at the original range", async (composition) => {
+    const source = { ...paragraph, text: "abcde", runs: [{ ...paragraph.runs[0], text: "abcde" }] }, onRuns = vi.fn();
+    function Host() {
+      const [token, setToken] = useState(0);
+      return <WordParagraph paragraph={source} index={0} selected readOnly={false} onSelect={vi.fn()} onReplace={vi.fn()} onRuns={onRuns} onSplit={vi.fn()} onPasteParagraphs={vi.fn()} onRemovePageBreaks={vi.fn()} onRejectStructure={() => setToken((value) => value + 1)} reconcileToken={token} />;
+    }
+    render(<Host />); const field = screen.getByRole("textbox"); field.focus();
+    const text = field.querySelector("span")!.firstChild!, selection = window.getSelection()!;
+    selectText(text, 1, 4); selection.collapse(text, 4); selection.extend(text, 1);
+    if (composition) fireEvent.compositionStart(field);
+    else fireEvent(field, new InputEvent("beforeinput", { inputType: "insertText", data: "X", bubbles: true, cancelable: false }));
+    field.textContent = "aXe"; selectText(field.firstChild!, 2, 2);
+    if (composition) fireEvent.compositionEnd(field); else fireEvent.input(field);
+    await waitFor(() => expect(field.textContent).toBe("abcde"));
+    expect(selection.toString()).toBe("bcd"); expect(selection.anchorOffset).toBe(4); expect(selection.focusOffset).toBe(1);
+    fireEvent(field, new InputEvent("beforeinput", { inputType: "insertText", data: "Y", bubbles: true, cancelable: true }));
+    expect(onRuns).toHaveBeenCalledWith([{ runId: "r1", text: "aYe" }]);
+  });
+  it("handles native beforeinput replacement spanning styled runs without browser DOM mutation", () => {
+    const { field, onRuns, onReplace } = mount();
+    const spans = field.querySelectorAll("[data-run-id]"), range = document.createRange();
+    range.setStart(spans[0].firstChild!, 3); range.setEnd(spans[1].firstChild!, 2);
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    const event = new InputEvent("beforeinput", { inputType: "insertText", data: "X", bubbles: true, cancelable: true });
+    fireEvent(field, event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(onRuns).toHaveBeenCalledWith([{ runId: "r1", text: "alpX" }, { runId: "r2", text: "ta" }]);
+    expect(field.textContent).toBe("alpha beta"); expect(onReplace).not.toHaveBeenCalled();
+  });
+  it("does not split while IME confirms a candidate and does not flatten unknown DOM structure", () => {
+    const { field, onSplit, onReplace, onRejectStructure } = mount();
+    fireEvent.compositionStart(field); fireEvent.keyDown(field, { key: "Enter", isComposing: true });
+    expect(onSplit).not.toHaveBeenCalled();
+    fireEvent.compositionEnd(field);
+    field.textContent = "flattened"; fireEvent.input(field);
+    expect(onRejectStructure).toHaveBeenCalled(); expect(onReplace).not.toHaveBeenCalled();
+  });
+  it("keeps HTML-only paste and cancelled/unsupported input byte-neutral", () => {
+    const { field, onRuns, onReplace, onRejectStructure } = mount();
+    selectText(field.querySelector("span")!.firstChild!, 0, 3);
+    fireEvent.paste(field, { clipboardData: { getData: () => "" } });
+    fireEvent(field, new InputEvent("beforeinput", { inputType: "formatBold", bubbles: true, cancelable: true }));
+    expect(onRuns).not.toHaveBeenCalled(); expect(onReplace).not.toHaveBeenCalled(); expect(onRejectStructure).toHaveBeenCalled();
+  });
+  it("cuts a mixed-run selection through the source adapter and plain clipboard", () => {
+    const { field, onRuns } = mount(), setData = vi.fn();
+    const spans = field.querySelectorAll("span"), range = document.createRange();
+    range.setStart(spans[0].firstChild!, 3); range.setEnd(spans[1].firstChild!, 2);
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    fireEvent.cut(field, { clipboardData: { setData } });
+    expect(setData).toHaveBeenCalledWith("text/plain", "ha be");
+    expect(onRuns).toHaveBeenCalledWith([{ runId: "r1", text: "alp" }, { runId: "r2", text: "ta" }]);
+  });
   it("uses ordinary links only in a read-only paragraph and retains editing selection spans", () => {
     const linked = { ...paragraph, runs: [{ ...paragraph.runs[0], hyperlinkId: "link1", target: "https://example.com/post" }] };
     const props = { paragraph: linked, index: 0, selected: true, readOnly: true, onSelect: vi.fn(), onReplace: vi.fn(), onRuns: vi.fn(), onSplit: vi.fn(), onPasteParagraphs: vi.fn(), onRemovePageBreaks: vi.fn(), onRejectStructure: vi.fn() };

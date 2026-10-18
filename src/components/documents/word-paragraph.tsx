@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import type { DocxParagraph, DocxTextEdit } from "@/lib/office/docx";
+import { paragraphInput } from "./word-input";
 
 function caretOffset(root: HTMLElement): number | null {
   const selection = window.getSelection();
@@ -17,6 +18,17 @@ function placeCaret(root: HTMLElement, offset: number) {
   else { range.selectNodeContents(root); range.collapse(false); }
   range.collapse(true); const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
 }
+function placeSelection(root: HTMLElement, start: number, end: number, backward: boolean) {
+  placeCaret(root, start);
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || start === end) return;
+  const range = selection.getRangeAt(0).cloneRange();
+  placeCaret(root, end);
+  const finish = selection.getRangeAt(0);
+  range.setEnd(finish.startContainer, finish.startOffset);
+  selection.removeAllRanges(); selection.addRange(range);
+  if (backward && selection.extend) { selection.collapse(range.endContainer, range.endOffset); selection.extend(range.startContainer, range.startOffset); }
+}
 function selectionOffsets(root: HTMLElement): { start: number; end: number; supported: boolean } {
   const selection = window.getSelection();
   if (!selection?.rangeCount) return { start: root.textContent?.length ?? 0, end: root.textContent?.length ?? 0, supported: true };
@@ -25,6 +37,11 @@ function selectionOffsets(root: HTMLElement): { start: number; end: number; supp
   const before = document.createRange(); before.selectNodeContents(root); before.setEnd(selected.startContainer, selected.startOffset);
   const through = document.createRange(); through.selectNodeContents(root); through.setEnd(selected.endContainer, selected.endOffset);
   return { start: before.toString().length, end: through.toString().length, supported: true };
+}
+function selectionBookmark(root: HTMLElement) {
+  const offsets = selectionOffsets(root), selection = window.getSelection();
+  const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+  return { ...offsets, backward: !!range && selection?.anchorNode === range.endContainer && selection?.anchorOffset === range.endOffset };
 }
 interface WordParagraphProps {
   paragraph: DocxParagraph;
@@ -42,14 +59,27 @@ interface WordParagraphProps {
   onRemovePageBreaks: (ids: string[]) => void;
   onRejectStructure: (message: string) => void;
 }
-export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, onReplace, onRuns, onSplit, onPasteParagraphs, onSelection, trackText = false, reconcileToken = 0, onRemovePageBreaks, onRejectStructure }: WordParagraphProps) {
+export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, onRuns, onSplit, onPasteParagraphs, onSelection, trackText = false, reconcileToken = 0, onRemovePageBreaks, onRejectStructure }: WordParagraphProps) {
   const root = useRef<HTMLDivElement>(null);
   const pendingCaret = useRef<number | null>(null);
   const composing = useRef(false);
+  const rejectedNativeInput = useRef(false);
+  const nativeSelection = useRef<ReturnType<typeof selectionBookmark> | null>(null);
+  const compositionSelection = useRef<ReturnType<typeof selectionBookmark> | null>(null);
+  const rejectedSelection = useRef<ReturnType<typeof selectionBookmark> | null>(null);
+  const selectionCallbacks = useRef({ onSelect, onSelection });
+  selectionCallbacks.current = { onSelect, onSelection };
+  const safeTracking = paragraph.runs.length === 1 && (paragraph.originalRuns?.length ?? 0) <= 1 && paragraph.runs.every((run) => !run.hyperlinkId && !run.pageBreaks.length);
+  const inputParagraph = trackText && safeTracking ? { ...paragraph, revisionIds: [], runs: paragraph.runs.map((run) => ({ ...run, canEdit: true })) } : paragraph;
   useLayoutEffect(() => {
     const node = root.current;
     if (!node) return;
+    const restore = rejectedSelection.current;
+    rejectedSelection.current = null;
+    const priorSelection = restore ?? selectionBookmark(node);
+    const backward = priorSelection.backward;
     const offset = pendingCaret.current ?? (document.activeElement === node ? caretOffset(node) : null);
+    const restoreRange = priorSelection.supported && (!!restore || pendingCaret.current === null && priorSelection.start !== priorSelection.end);
     pendingCaret.current = null;
     node.replaceChildren(...paragraph.runs.map((run) => {
       const style = run.resolvedStyle ?? run.style;
@@ -76,11 +106,27 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
       span.dataset.expectedStyle = span.getAttribute("style") ?? "";
       return span;
     }));
-    if (offset !== null) placeCaret(node, offset);
+    if (restoreRange) {
+      placeSelection(node, priorSelection.start, priorSelection.end, backward);
+      if (restore) {
+        let offset = 0;
+        const run = paragraph.runs.find((item) => { offset += item.text.length; return offset > priorSelection.start; }) ?? paragraph.runs.at(-1);
+        selectionCallbacks.current.onSelect(paragraph.id, run?.id);
+        selectionCallbacks.current.onSelection?.(paragraph.id, priorSelection.start, priorSelection.end, true);
+      }
+    }
+    else if (offset !== null) placeCaret(node, offset);
   }, [paragraph, trackText, reconcileToken, readOnly]);
   const emit = () => {
     const node = root.current!;
-    if (readOnly) { onRejectStructure("This document view is read-only."); return; }
+    const reject = (message: string) => {
+      rejectedSelection.current = compositionSelection.current ?? nativeSelection.current;
+      nativeSelection.current = null;
+      onRejectStructure(message);
+    };
+    if (readOnly || node.closest("[inert]")) { reject("This document view is read-only."); return; }
+    if (trackText && !safeTracking) { reject("Text tracking cannot safely replace mixed formatting or inline-owned content. Resolve changes or turn off tracking first."); return; }
+    if (rejectedNativeInput.current) { rejectedNativeInput.current = false; reject("This browser input could not be applied safely."); return; }
     const expected = paragraph.runs.flatMap((run) => run.pageBreaks.map((pageBreak) => ({ id: pageBreak.id, runId: run.id, offset: pageBreak.offset, trailing: pageBreak.offset === run.text.length })));
     const markers = [...node.querySelectorAll<HTMLElement>("[data-page-break-id]")];
     const removed = expected.filter((pageBreak) => !markers.some((marker) => marker.dataset.pageBreakId === pageBreak.id));
@@ -93,20 +139,59 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
     });
     if (removed.length || misplaced || markers.length !== expected.length) {
       if (removed.length && !misplaced && node.textContent === paragraph.text && markers.length + removed.length === expected.length) onRemovePageBreaks(removed.map((pageBreak) => pageBreak.id));
-      else onRejectStructure("Move or remove page breaks with Insert tools before changing their surrounding structure.");
+      else reject("Move or remove page breaks with Insert tools before changing their surrounding structure.");
       return;
     }
     const spans = [...node.querySelectorAll<HTMLElement>(":scope > span[data-run-id]")];
     if (spans.some((span) => (span.getAttribute("style") ?? "") !== span.dataset.expectedStyle
       || [...span.querySelectorAll<HTMLElement>("*")].some((child) => !child.hasAttribute("data-page-break-id")))) {
-      onRejectStructure("Use the formatting toolbar. Browser-inserted styling was not applied to the document."); return;
+      reject("Use the formatting toolbar. Browser-inserted styling was not applied to the document."); return;
     }
     if (spans.length === paragraph.runs.length && spans.every((span, i) => span.dataset.runId === paragraph.runs[i].id)
       && spans.map((span) => span.textContent ?? "").join("") === node.textContent) {
       const edits = spans.flatMap((span, i) => span.textContent !== paragraph.runs[i].text ? [{ runId: paragraph.runs[i].id, text: span.textContent ?? "" }] : []);
       if (edits.length) onRuns(edits);
-    } else if (node.textContent !== paragraph.text) onReplace(paragraph.id, node.textContent ?? "");
+      nativeSelection.current = null;
+    } else reject("This browser input changed document structure and was not applied. Select editable text within one paragraph.");
   };
+  const input = (start: number, end: number, text: string, deletion?: "backward" | "forward") => {
+    const node = root.current!;
+    if (readOnly || node.closest("[inert]")) return;
+    if (trackText && !safeTracking) { onRejectStructure("Text tracking cannot safely replace mixed formatting or inline-owned content. Resolve changes or turn off tracking first."); return; }
+    try {
+      const next = paragraphInput(inputParagraph, start, end, text, deletion);
+      if (!next.edits.length) { placeCaret(node, next.caret); onSelection?.(paragraph.id, next.caret, next.caret, true); return; }
+      pendingCaret.current = next.caret;
+      onSelection?.(paragraph.id, next.caret, next.caret, true);
+      onRuns(next.edits);
+    } catch (failure) { onRejectStructure(failure instanceof Error ? failure.message : "This input could not be applied safely."); }
+  };
+  useLayoutEffect(() => {
+    const node = root.current!;
+    const beforeInput = (event: InputEvent) => {
+      if (composing.current || event.isComposing) return;
+      nativeSelection.current = selectionBookmark(node);
+      if (!event.cancelable) { rejectedNativeInput.current = true; return; }
+      event.preventDefault();
+      if (readOnly || node.closest("[inert]")) return;
+      let offsets = selectionOffsets(node);
+      const target = event.getTargetRanges?.()[0];
+      if (target) {
+        if (!node.contains(target.startContainer) || !node.contains(target.endContainer)) offsets = { start: 0, end: 0, supported: false };
+        else {
+          const before = document.createRange(); before.selectNodeContents(node); before.setEnd(target.startContainer, target.startOffset);
+          const through = document.createRange(); through.selectNodeContents(node); through.setEnd(target.endContainer, target.endOffset);
+          offsets = { start: before.toString().length, end: through.toString().length, supported: true };
+        }
+      }
+      if (!offsets.supported || node.textContent !== paragraph.text) { onRejectStructure("Select editable text within one paragraph before changing it."); return; }
+      if (["insertText", "insertReplacementText"].includes(event.inputType) && event.data !== null) input(offsets.start, offsets.end, event.data);
+      else if (["deleteContentBackward", "deleteContentForward", "deleteByCut"].includes(event.inputType)) input(offsets.start, offsets.end, "", event.inputType === "deleteContentBackward" ? "backward" : event.inputType === "deleteContentForward" ? "forward" : undefined);
+      else onRejectStructure("This input needs a source-safe document command and was not applied.");
+    };
+    node.addEventListener("beforeinput", beforeInput);
+    return () => node.removeEventListener("beforeinput", beforeInput);
+  });
   return <div ref={root} className={`docs-word-paragraph ${selected ? "is-selected" : ""}`} role="textbox" aria-label={`Paragraph ${index + 1}`} aria-readonly={readOnly} data-paragraph-id={paragraph.id}
     contentEditable={!readOnly} tabIndex={0} suppressContentEditableWarning spellCheck data-list-kind={paragraph.listKind} data-list-number={paragraph.listNumber}
     style={{ textAlign: paragraph.alignment === "both" ? "justify" : paragraph.alignment as "left" | "center" | "right" | undefined,
@@ -125,34 +210,35 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
       if (run) onSelect(paragraph.id, run.dataset.runId);
     }}
     onInput={() => { if (!composing.current) { const offsets = selectionOffsets(root.current!); onSelection?.(paragraph.id, offsets.start, offsets.end, offsets.supported); emit(); } }}
-    onCompositionStart={(event) => { composing.current = true; event.currentTarget.dataset.wordComposing = "true"; }}
-    onCompositionEnd={(event) => { composing.current = false; delete event.currentTarget.dataset.wordComposing; emit(); }}
+    onCompositionStart={(event) => { compositionSelection.current = selectionBookmark(event.currentTarget); composing.current = true; event.currentTarget.dataset.wordComposing = "true"; }}
+    onCompositionEnd={(event) => { composing.current = false; delete event.currentTarget.dataset.wordComposing; emit(); compositionSelection.current = null; }}
     onDragOver={(event) => event.preventDefault()}
     onDrop={(event) => { event.preventDefault(); onRejectStructure("Use Import, Picture or plain-text Paste. Dropped HTML is not inserted into Word documents."); }}
     onPaste={(event) => {
       event.preventDefault(); if (readOnly) return;
       const text = event.clipboardData.getData("text/plain").replace(/\r\n?/g, "\n");
+      if (!text) return;
       const { start, end, supported } = selectionOffsets(root.current!);
       if (!supported) { onRejectStructure("Select text within one paragraph before pasting."); return; }
       if (text.includes("\n")) { onPasteParagraphs(paragraph.id, start, end, text); return; }
-      let offset = 0, inserted = false;
-      const edits: DocxTextEdit[] = [];
-      for (const run of paragraph.runs) {
-        const runStart = offset, runEnd = offset + run.text.length; offset = runEnd;
-        if (!run.canEdit && !(trackText && run.text)) continue;
-        if (runEnd < start || runStart > end || (runEnd <= start && runEnd < paragraph.text.length)
-          || (end > start && runStart >= end)) continue;
-        const before = run.text.slice(0, Math.max(0, start - runStart));
-        const after = run.text.slice(Math.min(run.text.length, Math.max(0, end - runStart)));
-        const next = before + (!inserted ? text : "") + after;
-        inserted = true;
-        if (next !== run.text) edits.push({ runId: run.id, text: next });
-      }
-      pendingCaret.current = start + text.length;
-      if (inserted) onRuns(edits);
-      else onReplace(paragraph.id, paragraph.text.slice(0, start) + text + paragraph.text.slice(end));
+      input(start, end, text);
+    }}
+    onCut={(event) => {
+      event.preventDefault();
+      const { start, end, supported } = selectionOffsets(root.current!);
+      if (!supported) { onRejectStructure("Select text within one paragraph before cutting."); return; }
+      if (readOnly || root.current?.closest("[inert]") || start === end) return;
+      if (trackText && !safeTracking) { onRejectStructure("Text tracking cannot safely cut mixed formatting or inline-owned content."); return; }
+      try { paragraphInput(inputParagraph, start, end, ""); } catch { onRejectStructure("This selection contains protected content and cannot be cut."); return; }
+      event.clipboardData.setData("text/plain", paragraph.text.slice(start, end));
+      input(start, end, "");
     }}
     onKeyDown={(event) => {
-      if (event.key === "Enter" && !readOnly) { event.preventDefault(); onSplit(paragraph.id, caretOffset(root.current!) ?? paragraph.text.length); }
+      if (event.key === "Enter" && !readOnly && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+        event.preventDefault();
+        const offsets = selectionOffsets(root.current!);
+        if (event.shiftKey || !offsets.supported || offsets.start !== offsets.end) { onRejectStructure("This paragraph break needs source-safe structural editing and was not applied."); return; }
+        onSplit(paragraph.id, offsets.start);
+      }
     }} />;
 }

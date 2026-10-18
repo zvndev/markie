@@ -12,7 +12,8 @@ import { useDocumentWorkspace, type DocumentWorkspaceServices } from "./use-docu
 import { AppearanceMenu } from "./appearance-menu";
 import { ConfirmDocumentRemoval } from "./confirm-document-removal";
 import { ConfirmDocumentConversion } from "./confirm-document-conversion";
-import { DOCUMENT_OUTPUT_LIMITS, useDocumentOutput } from "./use-document-output";
+import { useDocumentOutput } from "./use-document-output";
+import { RICH_DOCUMENT_OUTPUT_HELP } from "@/lib/document-output-policy";
 import "./document-workspace.css";
 
 const VaultPanel = lazy(() => import("./vault-panel").then((module) => ({ default: module.VaultPanel })));
@@ -161,9 +162,9 @@ export function DocumentWorkspace({ embedded = false, active = true, onShellChan
         {output.busy ? <div className="docs-progress" role="status">Preparing document output…</div> : null}
         {workspace.busy ? <div className="docs-progress" role="status">{workspace.busy}…</div> : null}
         {session ? <>
-          {session.office ? <div className="docs-notice">{output.eligible ? DOCUMENT_OUTPUT_LIMITS : "Print and PDF are unavailable for unsupported document features or pending revisions. You can still export the source document."}</div> : null}
           {session.warnings.length ? <div className="docs-warning">{session.warnings.join(" ")}</div> : null}
           {showDetails ? <section className="docs-details" aria-label="Document organization" key={session.id} inert={output.busy}>
+            {session.office ? <div className="text-xs text-muted" role="note" aria-label="Document output details"><p>{output.eligible ? RICH_DOCUMENT_OUTPUT_HELP : "Print and PDF are unavailable for this document's unsupported features or pending revisions. You can still export the source document."}</p>{session.office.diagnostics.filter((diagnostic) => diagnostic.severity === "warning").map((diagnostic, index) => <p key={`${diagnostic.code}-${index}`}>{diagnostic.message}</p>)}</div> : null}
             <label>Name<input key={`${session.id}-name`} defaultValue={session.name} onBlur={(event) => { const next = workspace.changeDetails({ name: event.target.value }); event.currentTarget.value = next?.name ?? session.name; }} /></label>
             <label>Tags, comma separated<input key={`${session.id}-tags`} defaultValue={session.tags.join(", ")} onBlur={(event) => workspace.changeDetails({ tags: event.target.value.split(",") })} /></label>
             <label>Collection<input key={`${session.id}-collection`} defaultValue={session.collection ?? ""} onBlur={(event) => workspace.changeDetails({ collection: event.target.value })} placeholder="Uncollected" /></label>

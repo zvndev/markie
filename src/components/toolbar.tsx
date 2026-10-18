@@ -9,6 +9,7 @@ import {
   type ColorMode,
 } from "@/lib/color-mode";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
+import { RICH_DOCUMENT_OUTPUT_HELP } from "@/lib/document-output-policy";
 
 interface ToolbarProps {
   documentMode?: boolean;
@@ -209,6 +210,7 @@ export function Toolbar({
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
                   Export PDF…
                 </button> : null}
+                {documentMode && onDocumentExportPDF ? <p role="note" aria-label="Document PDF information" className="max-w-[240px] border-t border-border px-3 pt-2 mt-1 text-[11px] leading-relaxed text-muted">{RICH_DOCUMENT_OUTPUT_HELP}</p> : null}
                 {!documentMode ? <><button
                   onClick={() => { onExportHTML(); setShowPDFMenu(false); }}
                   disabled={exporting}

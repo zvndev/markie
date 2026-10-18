@@ -5,6 +5,7 @@ import { applyDocxOperations, replaceDocxText, exportDocx } from "@/lib/office/d
 import { useDocumentOutput } from "./use-document-output";
 import { getSafeAPI } from "@/lib/electron";
 import { exportRichDocument, openRichDocument, replaceRichText } from "@/lib/office/rich-document";
+import { COMMENT_OUTPUT_CONFIRMATION } from "@/lib/document-output-policy";
 
 vi.mock("@/lib/electron", () => ({ getSafeAPI: vi.fn() }));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -20,6 +21,27 @@ async function setup() {
   return { hook, exportPDF, current: () => session, replace: (next: typeof session) => { session = next; }, block: () => { blocked = true; } };
 }
 describe("supported Word output capture", () => {
+  it("discloses actual comment omission before native output and leaves cancellation source-neutral", async () => {
+    const test = await setup(), original = test.current();
+    test.replace(editOfficeDocument(original, applyDocxOperations(original.office!, [{ type: "add-comment", paragraphId: original.office!.paragraphs[0].id, text: "Review note", author: "Reader" }])));
+    const snapshot = test.current(), bytes = await exportDocx(snapshot.office!);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await act(async () => { await test.hook.result.current.execute("document-print"); });
+    expect(confirm).toHaveBeenCalledWith(COMMENT_OUTPUT_CONFIRMATION); expect(test.exportPDF).not.toHaveBeenCalled();
+    expect(test.current()).toBe(snapshot); expect(await exportDocx(snapshot.office!)).toEqual(bytes);
+    expect(test.hook.result.current.busy).toBe(false); expect(test.hook.result.current.notice).toBeUndefined();
+    confirm.mockReturnValue(true);
+    await act(async () => { await test.hook.result.current.execute("document-export-pdf"); });
+    expect(test.exportPDF).toHaveBeenCalledOnce();
+    expect((test.exportPDF.mock.calls[0][0] as { html: string }).html).not.toContain("Review note");
+  });
+  it("rechecks access after the comment-output confirmation", async () => {
+    const test = await setup(), original = test.current();
+    test.replace(editOfficeDocument(original, applyDocxOperations(original.office!, [{ type: "add-comment", paragraphId: original.office!.paragraphs[0].id, text: "Review note", author: "Reader" }])));
+    vi.spyOn(window, "confirm").mockImplementation(() => { test.block(); return true; });
+    await act(async () => { await test.hook.result.current.execute("document-print"); });
+    expect(test.exportPDF).not.toHaveBeenCalled(); expect(test.hook.result.current.busy).toBe(false);
+  });
   it.each(["rtf", "odt"] as const)("prints the supported %s model without converting or saving the source", async (format) => {
     const initial = await createDocumentSession(format);
     const rich = replaceRichText(initial.office!, [{ runId: initial.office!.paragraphs[0].runs[0].id, text: `Unsaved ${format.toUpperCase()} words` }]);

@@ -137,6 +137,11 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
     try {
       const current = latestDocument.current;
       const paragraph = current.paragraphs.find((item) => item.id === paragraphId)!;
+      if (paragraph.runs.length !== 1 || paragraph.runs.some((run) => !run.canEdit || run.hyperlinkId || run.pageBreaks.length || JSON.stringify(run.resolvedStyle ?? run.style) !== JSON.stringify(run.style))
+        || paragraph.revisionIds.length || paragraph.styleId || paragraph.listKind || paragraph.alignment && paragraph.alignment !== "left" || paragraph.spacingBeforePoints || paragraph.spacingAfterPoints || paragraph.lineSpacingMultiple && paragraph.lineSpacingMultiple !== 1
+        || current.images.some((image) => image.paragraphId === paragraphId) || current.comments.some((comment) => comment.paragraphId === paragraphId)) {
+        rejectChange("Rich paragraph breaks and multiline paste need source-safe structural editing. The existing formatting and content were preserved."); return;
+      }
       const lines = text.split("\n");
       let next = applyRichOperations(current, [{ type: "replace-paragraph", paragraphId, text: paragraph.text.slice(0, start) + lines[0] }]);
       let after = paragraphId;
@@ -163,6 +168,9 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
       onRuns={(edits) => {
         if (!edits.length) return;
         if (tracking) {
+          if (paragraph.runs.length !== 1 || (paragraph.originalRuns?.length ?? 0) > 1 || paragraph.runs.some((run) => run.hyperlinkId || run.pageBreaks.length) || document.images.some((image) => image.paragraphId === id)) {
+            rejectChange("Text tracking cannot safely replace mixed formatting or inline-owned content."); return;
+          }
           const replacements = new Map(edits.map((edit) => [edit.runId, edit.text]));
           apply([{ type: "track-paragraph-text", paragraphId: id, text: paragraph.runs.map((run) => replacements.get(run.id) ?? run.text).join(""), author: reviewAuthor.trim() }]);
         } else try { perform(replaceRichText(latestDocument.current, edits)); } catch (failure) { rejectChange(failure); }

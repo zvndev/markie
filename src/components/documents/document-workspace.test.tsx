@@ -66,7 +66,12 @@ describe("actual shared document workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close Font" }));
     view.rerender(<DocumentWorkspace {...props} active={false} />);
     act(() => command.execute("document-print")); expect(exportPDF).toHaveBeenCalledOnce();
-    expect(screen.getByText(/without comments/)).toBeInTheDocument();
+    expect(screen.queryByText(/not Word-identical pagination/)).toBeNull();
+    expect(screen.queryByRole("note", { name: "Document output details" })).toBeNull();
+    view.rerender(<DocumentWorkspace {...props} />);
+    await waitFor(() => expect(shell?.commands?.enabledCommands).toContain("document-details"));
+    act(() => shell!.commands!.execute("document-details"));
+    expect(await screen.findByRole("note", { name: "Document output details" })).toHaveTextContent("Review comments are not included");
   });
 
   it("keeps output in flight from closing, changing documents, entering vault or running a duplicate", async () => {

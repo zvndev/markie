@@ -3,7 +3,7 @@
 ## Source of truth
 
 - Status: Active for document capabilities inside the existing Markie app.
-- Last refreshed: 2026-10-17.
+- Last refreshed: 2026-10-18.
 - Primary product surfaces: native Windows and macOS desktop workspaces, original Word editor, existing Markdown workspace, protected local vault. Web is a new, secondary surface sharing the same document core.
 - Evidence reviewed: src/app/globals.css, src/lib/theme.ts, src/components/toolbar.tsx, library.tsx, doc-toolbar.tsx, docs/design/radius-scale.md and docs/superpowers/plans/2026-10-14-document-platform.md.
 
@@ -14,6 +14,8 @@ Calm, capable, local-first writing software. Trust comes from legible controls, 
 ## Product goals
 
 Keep written material together, searchable and sortable, with direct access to writing, document formatting, export, sharing and protected storage. Preserve existing Markdown behavior. Accounts remain optional for local work. Success means users can create/import, edit, recover/reopen and export without unexplained data loss. Do not imply all Word features, pixel-identical pagination, biometrics or encryption of ordinary files unless those capabilities exist.
+
+The Word-like product target is the complete everyday writing workflow in [the October 18 product contract](docs/superpowers/specs/2026-10-18-word-processor-product.md), not a limited importer or collection of codec milestones. Simplification means compact presentation, not missing ordinary editing, document structure, review or layout. Partial implementation batches never close that full product requirement.
 
 Desktop delivery leads: produce and validate actual app bundles/executables with bundled assets, native file dialogs and menu/lifecycle behavior before calling the feature delivered. A localhost browser or Electron development command is not a packaged desktop deliverable. macOS Documents reserves a native drag region and traffic-light clearance; Windows retains its standard system frame.
 
@@ -52,6 +54,8 @@ Word style controls use imported style labels and supported effective properties
 Document theme colors and supported default Latin theme fonts are resolved inside the original codec, not by a second renderer/theme system. They style the document, not Markie's chrome. Preserve raw theme/settings/style bytes; unsupported font slots/scripts/languages stay unresolved. Stored system-color fallbacks and deterministic tint/shade rounding must not be presented as full source-Word or operating-system fidelity.
 
 Word print/PDF is a supported-view projection from the original document model, not a screenshot of the editor or a Word-compatible pagination claim. Reuse the actual Export menu and native File commands. Keep printed paper light and preserve document typography independently of the app theme. Disclose excluded comments and font/printer limitations; unsupported packages, pending revisions and unrepresentable structures must not be silently flattened. Printing never acknowledges an external file save or clears unsaved edits, and protected/private or composing sessions cannot leak into output.
+
+Do not put a permanent generic Print/PDF disclaimer above every document, especially a new blank file. Keep routine output information in the existing Export context and document details. If the actual document contains review comments that output would omit, ask at the output action before proceeding; cancellation must be source-neutral. Real document-specific protection and unsupported-feature reasons remain accessible and enforced. Normal desktop formatting groups should use measured available space/capability-aware fit, rather than hiding most actions below a wide fixed breakpoint; narrow layouts overflow the actual shared controls with keyboard/focus continuity.
 
 RTF and ODT reuse the same rich-text canvas, Page Setup dialog, native Layout/View commands and Print/PDF projection through private format-aware adapters. Each codec owns its source, immutable snapshots and original-format writer; neither impersonates a DOCX package. Local recovery records retain the original format and bytes. Supported static page geometry must round-trip in the source format, and output never marks the document saved. Unsupported commands are withheld at every entry point, and unsupported semantics must not be flattened into editable content. This does not imply cloud upload, vault integration, tables, media or Word-only review support for these formats. Show compatibility warnings only for a real document-specific limit, not a blanket claim that an editable format cannot be edited.
 

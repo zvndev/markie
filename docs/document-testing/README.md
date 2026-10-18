@@ -2,6 +2,10 @@
 
 This local preview extends the existing Markie app. It is not a public release or the completed document-platform roadmap. Use disposable copies while testing. Keep your installed Markie and important originals separate.
 
+The full Word-like product and remaining acceptance journeys are defined in the repository's October 18 product contract and tracked under ENG-7025. This preview adds the first deterministic-input and shared-control improvements; it is not completion of the continuous document editor. The editing surface should no longer show a permanent generic print disclaimer. Open Export or Document details for output information; documents with review comments ask before producing output that excludes them.
+
+Follow the [everyday writing checks](everyday-writing.md) for mixed formatting, input, narrow toolbars and contextual output information.
+
 This preview includes original-engine RTF and ODT editing with same-format saving, supported native page setup and Print/PDF, plus a first offline interactive Darkmown milestone. Passive RTF information metadata and Word proofing/calculated-page markers have broader editing support. RTF/ODT are not secretly converted into Word files. Complex documents may remain read-only or be refused before they replace the current editor.
 
 ## Start here

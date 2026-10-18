@@ -59,7 +59,9 @@ describe("the existing Markie top bar", () => {
   it("uses one format-aware Word PDF action in the existing Export menu", async () => {
     const onDocumentExportPDF = vi.fn();
     const { onExportPDF, view } = renderToolbar({ documentMode: true, onDocumentExportPDF });
+    expect(screen.queryByRole("note", { name: "Document PDF information" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Export menu" }));
+    expect(screen.getByRole("note", { name: "Document PDF information" })).toHaveTextContent("Review comments are not included");
     expect(screen.queryByRole("button", { name: /PDF \((Dark|Light)\)/ })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Export PDF…" }));
     expect(onDocumentExportPDF).toHaveBeenCalledOnce(); expect(onExportPDF).not.toHaveBeenCalled();

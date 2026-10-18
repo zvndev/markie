@@ -1,16 +1,24 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "@/lib/doc-appearance";
 import type { FormattingAction, FormattingToolbarProps } from "@/lib/format-controls";
 import { FormattingToolbar } from "./formatting-toolbar";
+import { createDocumentSession } from "@/lib/document-session";
+import { createDocx } from "@/lib/office/docx";
+import { TextDocumentEditor } from "./documents/text-document-editor";
+import { WordDocumentEditor } from "./documents/word-document-editor";
 afterEach(() => vi.unstubAllGlobals());
 
-function constrainToolbar(width: number) {
+function constrainToolbar(width: number, leadingWidth = 0) {
+  const observed = new Map<Element, ResizeObserverCallback>();
   vi.stubGlobal("ResizeObserver", class {
     constructor(private callback: ResizeObserverCallback) {}
-    observe(target: Element) { this.callback([{ target, contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver); }
+    observe(target: Element) { observed.set(target, this.callback); this.callback([{ target, contentRect: { width: target.hasAttribute("data-markie-toolbar-start") ? leadingWidth : width } } as ResizeObserverEntry], this as unknown as ResizeObserver); }
     disconnect() {}
+  });
+  return (nextWidth: number, nextLeadingWidth: number) => act(() => {
+    for (const [target, callback] of observed) callback([{ target, contentRect: { width: target.hasAttribute("data-markie-toolbar-start") ? nextLeadingWidth : nextWidth } } as ResizeObserverEntry], {} as ResizeObserver);
   });
 }
 
@@ -28,6 +36,80 @@ function renderFormattingToolbar(overrides: Partial<FormattingToolbarProps> = {}
 }
 
 describe("shared compact formatting controls", () => {
+  it.each(["text", "csv", "markdown"] as const)("reserves measured %s caller chrome and refits when its badge or toolbar changes size", async (format) => {
+    const resize = constrainToolbar(390, 220);
+    const session = await createDocumentSession(format);
+    render(<TextDocumentEditor session={session} onChange={vi.fn()} onFlushReady={vi.fn()} />);
+    const leading = document.querySelector("[data-markie-toolbar-start]")!;
+    expect(within(leading as HTMLElement).getByRole("button", { name: "Find" })).toBeInTheDocument();
+    if (format === "csv") expect(within(leading as HTMLElement).getByRole("button", { name: "Table preview" })).toBeInTheDocument();
+    if (format === "markdown") expect(within(leading as HTMLElement).getByRole("button", { name: "Source" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Font")).toBeNull();
+    resize(700, 220);
+    expect(screen.getByLabelText("Font")).toBeInTheDocument();
+    resize(390, 330);
+    expect(screen.queryByLabelText("Font size")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "More formatting" }));
+    expect(screen.getAllByLabelText("Font size")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Find" })).toHaveLength(1);
+  });
+  it("reserves actual standalone Word Commands width rather than assuming a chrome-free row", async () => {
+    const resize = constrainToolbar(390, 84);
+    render(<WordDocumentEditor document={await createDocx("Hello")} onChange={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Document commands" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Font")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Align left" })).toBeNull();
+    resize(900, 84);
+    expect(screen.getByLabelText("Font")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Align left" })).toBeInTheDocument();
+    resize(390, 240);
+    expect(screen.queryByLabelText("Font size")).toBeNull();
+  });
+  const wordActions: FormattingAction[] = ["undo", "redo", "bold", "italic", "underline", "link", "image", "bullet", "ordered", "align-left", "align-center", "align-right", "clear"];
+  it.each([900, 700, 650])("fits everyday Word controls into a %ipx row before overflowing secondary groups", async (width) => {
+    constrainToolbar(width);
+    const { onAction, onColor } = renderFormattingToolbar({ supportedActions: wordActions, showWidthControls: false, onPrint: vi.fn(), onHistory: vi.fn() });
+    for (const label of ["Paragraph style", "Font", "Font size", "Text colour"]) expect(screen.getByLabelText(label)).toBeInTheDocument();
+    for (const label of ["Bold", "Italic", "Underline", "Bullet list", "Numbered list", "Align left", "Align centre", "Align right"]) expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Highlight colour")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Inline code" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Insert image" }) !== null).toBe(width === 900);
+    expect(screen.queryByRole("button", { name: "Clear formatting" }) !== null).toBe(width >= 700);
+    await userEvent.click(screen.getByRole("button", { name: "Bullet list" }));
+    expect(onAction).toHaveBeenCalledExactlyOnceWith("bullet");
+    fireEvent.change(screen.getByLabelText("Text colour"), { target: { value: "#dc2626" } });
+    expect(onColor).toHaveBeenCalledExactlyOnceWith("#dc2626");
+    await userEvent.click(screen.getByRole("button", { name: "More formatting" }));
+    const popup = screen.getByRole("dialog", { name: "More formatting" });
+    expect(within(popup).getByRole("button", { name: "Zoom out" })).toBeInTheDocument();
+    if (width < 900) expect(within(popup).getByRole("button", { name: "Insert image" })).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Text colour")).toHaveLength(1);
+  });
+  it("keeps Word colour and lists at 390px while moving its real selectors and disabled secondary actions into More", async () => {
+    constrainToolbar(390);
+    const { onFont } = renderFormattingToolbar({ supportedActions: wordActions, showWidthControls: false, currentFont: "Arial", fonts: [{ id: "Arial", label: "Arial" }, { id: "Cambria", label: "Cambria" }] });
+    expect(screen.queryByLabelText("Font")).toBeNull();
+    expect(screen.getByLabelText("Text colour")).toBeInTheDocument();
+    expect(screen.getByLabelText("Font size")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bullet list" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "More formatting" }));
+    expect(screen.getAllByLabelText("Font")).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText("Font"), { target: { value: "Cambria" } });
+    expect(onFont).toHaveBeenCalledExactlyOnceWith("Cambria");
+    expect(screen.queryByRole("dialog", { name: "More formatting" })).toBeNull();
+    expect(screen.getByRole("button", { name: "More formatting" })).toHaveFocus();
+  });
+  it("retains Markdown highlight and supported actions without Word-only filtering at 900px", async () => {
+    constrainToolbar(900);
+    const onHighlight = vi.fn();
+    renderFormattingToolbar({ onHighlight });
+    expect(screen.getByLabelText("Highlight colour")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Strikethrough" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Highlight colour"), { target: { value: "#fef08a" } });
+    expect(onHighlight).toHaveBeenCalledExactlyOnceWith("#fef08a");
+    await userEvent.click(screen.getByRole("button", { name: "More formatting" }));
+    expect(screen.getAllByLabelText("Highlight colour")).toHaveLength(1);
+  });
   it("dismisses only More formatting when Escape is pressed from its trigger inside a parent dialog", () => {
     constrainToolbar(760);
     const parentKeys = vi.fn();
@@ -134,7 +216,7 @@ describe("shared compact formatting controls", () => {
       startControls: <><button type="button" onClick={onFind}>Find</button><span>UTF-8</span></>,
     });
     const toolbar = screen.getByRole("toolbar", { name: "Document formatting" });
-    expect(toolbar.firstElementChild).toBe(screen.getByRole("button", { name: "Find" }));
+    expect(toolbar.firstElementChild).toContainElement(screen.getByRole("button", { name: "Find" }));
     expect(within(toolbar).getByText("UTF-8")).toBeInTheDocument();
     expect(document.querySelectorAll("[data-markie-doc-toolbar]")).toHaveLength(1);
     expect(screen.queryByRole("combobox", { name: "Paragraph style" })).not.toBeInTheDocument();

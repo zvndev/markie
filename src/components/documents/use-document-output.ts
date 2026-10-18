@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DocumentSession } from "@/lib/document-session";
 import { getSafeAPI } from "@/lib/electron";
 import { buildDocxPrintHTML, canPrintDocx } from "@/lib/office/docx-print";
+import { COMMENT_OUTPUT_CONFIRMATION } from "@/lib/document-output-policy";
 
-export const DOCUMENT_OUTPUT_LIMITS = "Print and PDF include the supported document view, without comments. Fonts and printer settings can change page breaks; this is not Word-identical pagination.";
 interface DocumentOutputInputs {
   session: DocumentSession | null;
   captureSession: () => DocumentSession | null;
@@ -30,6 +30,8 @@ export function useDocumentOutput(inputs: DocumentOutputInputs) {
     inFlight.current = true; setBusy(true); setMessage(null);
     let popup: Window | null = null;
     try {
+      if (snapshot.office.comments.length && !window.confirm(COMMENT_OUTPUT_CONFIRMATION)) return;
+      if (current.current.isBlocked() || !stillCurrent()) return;
       const html = buildDocxPrintHTML(snapshot.office, snapshot.name);
       if (current.current.isBlocked() || !stillCurrent()) return;
       const api = getSafeAPI();

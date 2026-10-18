@@ -14,7 +14,7 @@ const {
 const path = require("path");
 const fs = require("fs");
 const url = require("url");
-const { initializePrivateReleaseIdentity, createPrivateReleaseGate, AUTH_ORIGIN: PRIVATE_AUTH_ORIGIN } = require("./private-release");
+const { initializePrivateReleaseIdentity, createPrivateReleaseGate, writePrivatePreflightReady, AUTH_ORIGIN: PRIVATE_AUTH_ORIGIN } = require("./private-release");
 const privateReleaseConfig = initializePrivateReleaseIdentity({ app, metadata: require("../package.json") });
 let privateUpdateCancellation = null;
 const { initializeDesktopIdentity, desktopStartUrl, isStableDesktopAuthUrl } = require("./desktop-preview.cjs");
@@ -755,7 +755,8 @@ function createWindow() {
   mainWindow.once("ready-to-show", () => {
     // E2E drivers keep the window hidden so runs don't steal focus
     if (process.env.MARKIE_E2E === "1") return;
-    mainWindow?.show();
+    if (preflightMode) mainWindow?.showInactive();
+    else mainWindow?.show();
   });
 
   // Browse: re-scan the markdown index on window focus.
@@ -1115,7 +1116,11 @@ const handle = (channel, fn, options) => baseHandle(channel, async (event, ...ar
   if (privateReleaseConfig && (!currentCloseSender(event) || !privateRelease.allows(channel))) return { ok: false, success: false, error: "Private release authorization is required.", code: "private-release-locked" };
   return fn(event, ...args);
 }, options);
-handle("private-release-status", () => privateRelease.status());
+handle("private-release-status", () => {
+  // The private React gate has mounted; readiness is not document authorization.
+  writePrivatePreflightReady({ config: privateReleaseConfig, preflight: preflightMode, userData: app.getPath("userData") });
+  return privateRelease.status();
+});
 handle("private-release-session", () => ({ token: privateRelease.rendererCredential() }));
 handle("private-release-authorize", async (_event, token) => {
   const status = await privateRelease.authorize(token);

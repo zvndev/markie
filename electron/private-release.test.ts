@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import vm from "node:vm";
-import { createPrivateReleaseGate, privateReleaseConfig, initializePrivateReleaseIdentity, FRESH_MS } from "./private-release.js";
+import { createPrivateReleaseGate, privateReleaseConfig, initializePrivateReleaseIdentity, FRESH_MS, isPrivatePreflightProfile, writePrivatePreflightReady } from "./private-release.js";
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
@@ -124,5 +124,72 @@ describe("private runtime integration wiring", () => {
     expect(source).toContain('autoUpdater.netSession.webRequest.onBeforeRequest');
     expect(source).toContain('Private builds cannot switch to stable or beta updates.');
     expect(source).toContain('autoUpdater.logger = privateReleaseConfig ? null');
+  });
+  it.each([false, true])("shows native preflight windows without activating them (preflight %s)", (preflightMode) => {
+    let ready!: () => void;
+    const mainWindow = { once: (_name: string, callback: () => void) => { ready = callback; }, show: vi.fn(), showInactive: vi.fn() };
+    const start = source.indexOf('  mainWindow.once("ready-to-show"'), end = source.indexOf("  // Browse: re-scan", start);
+    vm.runInNewContext(source.slice(start, end), { mainWindow, process: { env: {} }, preflightMode }); ready();
+    expect(mainWindow.show).toHaveBeenCalledTimes(preflightMode ? 0 : 1); expect(mainWindow.showInactive).toHaveBeenCalledTimes(preflightMode ? 1 : 0);
+  });
+});
+
+describe("locked private packaging preflight", () => {
+  function preflightFixture() {
+    const { userData: root } = fixture();
+    const temporaryDirectory = path.join(root, "tmp"), appData = path.join(root, "appData"), home = path.join(root, "home");
+    const stable = path.join(appData, "Markie");
+    for (const directory of [temporaryDirectory, stable, home]) fs.mkdirSync(directory, { recursive: true });
+    const profile = fs.mkdtempSync(path.join(temporaryDirectory, "markie-preflight-"));
+    const paths: Record<string, string> = { appData, home, userData: stable };
+    const app = { getPath: (name: string) => paths[name], setPath: (name: string, value: string) => { paths[name] = value; } };
+    return { root, temporaryDirectory, appData, stable, profile, paths, app };
+  }
+  it("preserves only the real isolated preflight profile and leaves owner/stable profiles untouched", () => {
+    const f = preflightFixture(); fs.writeFileSync(path.join(f.stable, "keep"), "stable");
+    const config = initializePrivateReleaseIdentity({ app: f.app, metadata, argv: [`--user-data-dir=${f.profile}`], env: { MARKIE_PREFLIGHT: "1" }, temporaryDirectory: f.temporaryDirectory });
+    expect(f.paths.userData).toBe(f.profile); expect(f.paths.sessionData).toBe(path.join(f.profile, "session"));
+    expect(fs.existsSync(path.join(f.appData, "Markie Super-nightly"))).toBe(false); expect(fs.readFileSync(path.join(f.stable, "keep"), "utf8")).toBe("stable");
+    expect(fs.existsSync(path.join(f.profile, "preflight-ready"))).toBe(false);
+    const gate = createPrivateReleaseGate({ config, userData: f.profile, safeStorage: null }); expect(gate.authorized()).toBe(false); expect(gate.allows("get-initial-file")).toBe(false);
+  });
+  it("rejects missing, arbitrary, nested and symlinked overrides without falling back to the owner profile", () => {
+    const f = preflightFixture(), nested = path.join(f.profile, "markie-preflight-ABC123"), alias = path.join(f.temporaryDirectory, "markie-preflight-DEF456");
+    fs.mkdirSync(nested); fs.symlinkSync(f.stable, alias, "dir");
+    for (const candidate of [null, f.stable, nested, alias]) {
+      expect(() => initializePrivateReleaseIdentity({ app: f.app, metadata, argv: candidate ? [`--user-data-dir=${candidate}`] : [], env: { MARKIE_PREFLIGHT: "1" }, temporaryDirectory: f.temporaryDirectory })).toThrow("isolated");
+    }
+    expect(f.paths.userData).toBe(f.stable); expect(fs.existsSync(path.join(f.appData, "Markie Super-nightly"))).toBe(false);
+  });
+  it("ignores user-data overrides for an ordinary private launch", () => {
+    const f = preflightFixture(); initializePrivateReleaseIdentity({ app: f.app, metadata, argv: [`--user-data-dir=${f.profile}`], env: {}, temporaryDirectory: f.temporaryDirectory });
+    expect(f.paths.userData).toBe(path.join(f.appData, "Markie Super-nightly")); expect(fs.readdirSync(f.profile)).toEqual([]);
+  });
+  it("writes readiness only from the trusted rendered private status handshake, without unlocking", async () => {
+    const f = preflightFixture(), config = privateReleaseConfig(metadata), gate = createPrivateReleaseGate({ config, userData: f.profile, safeStorage: null });
+    const handlers = new Map<string, () => unknown>();
+    const source = fs.readFileSync(new URL("./main.js", import.meta.url), "utf8");
+    const status = source.slice(source.indexOf('handle("private-release-status"'), source.indexOf('handle("private-release-session"'));
+    vm.runInNewContext(status, { handle: (channel: string, fn: () => unknown) => handlers.set(channel, fn), writePrivatePreflightReady: (options: object) => writePrivatePreflightReady({ ...options, temporaryDirectory: f.temporaryDirectory } as Parameters<typeof writePrivatePreflightReady>[0]), privateReleaseConfig: config, preflightMode: true, app: { getPath: () => f.profile }, privateRelease: gate });
+    expect(fs.existsSync(path.join(f.profile, "preflight-ready"))).toBe(false);
+    expect(await handlers.get("private-release-status")!()).toMatchObject({ required: true, authorized: false });
+    expect(fs.readFileSync(path.join(f.profile, "preflight-ready"), "utf8")).toBe("1"); expect(gate.allows("document-files:read")).toBe(false);
+    expect(writePrivatePreflightReady({ config, preflight: false, userData: f.profile, temporaryDirectory: f.temporaryDirectory })).toBe(false);
+    expect(writePrivatePreflightReady({ config: null, preflight: true, userData: f.profile, temporaryDirectory: f.temporaryDirectory })).toBe(false);
+    expect(writePrivatePreflightReady({ config, preflight: true, userData: f.stable, temporaryDirectory: f.temporaryDirectory })).toBe(false);
+    expect(isPrivatePreflightProfile(f.profile, { temporaryDirectory: f.temporaryDirectory })).toBe(true);
+  });
+  it("never follows an existing readiness symlink or rewrites a hardlinked/oversized leaf", () => {
+    const f = preflightFixture(), target = path.join(f.root, "outside-marker"), marker = path.join(f.profile, "preflight-ready");
+    const options = { config: privateReleaseConfig(metadata), preflight: true, userData: f.profile, temporaryDirectory: f.temporaryDirectory };
+    fs.writeFileSync(target, "outside-original"); fs.symlinkSync(target, marker);
+    expect(writePrivatePreflightReady(options)).toBe(false); expect(fs.readFileSync(target, "utf8")).toBe("outside-original"); fs.unlinkSync(marker);
+    fs.writeFileSync(target, "1"); fs.linkSync(target, marker);
+    expect(writePrivatePreflightReady(options)).toBe(false); expect(fs.readFileSync(target, "utf8")).toBe("1"); fs.unlinkSync(marker);
+    fs.writeFileSync(marker, "11"); expect(writePrivatePreflightReady(options)).toBe(false); expect(fs.readFileSync(marker, "utf8")).toBe("11"); fs.unlinkSync(marker);
+    fs.writeFileSync(marker, "0"); expect(writePrivatePreflightReady(options)).toBe(false); expect(fs.readFileSync(marker, "utf8")).toBe("0"); fs.unlinkSync(marker);
+    expect(writePrivatePreflightReady(options)).toBe(true);
+    const before = fs.statSync(marker); expect(writePrivatePreflightReady(options)).toBe(true); const after = fs.statSync(marker);
+    expect(after.ino).toBe(before.ino); expect(after.mtimeMs).toBe(before.mtimeMs); expect(fs.readFileSync(marker, "utf8")).toBe("1");
   });
 });

@@ -58,7 +58,7 @@ describe("Word renderer inside Markie", () => {
       expect(screen.getByRole("textbox", { name: "Paragraph 1" }).closest(".docs-word-continuous")).not.toBeNull();
       expect(screen.queryByLabelText("Paragraph style")).toBeNull();
       for (const label of ["Insert link", "Insert image", "Bullet list", "Numbered list"]) expect(within(toolbar).queryByRole("button", { name: label })).toBeNull();
-      for (const id of ["insert-table", "insert-picture", "insert-link", "insert-page-break", "format-bullets", "format-numbering", "format-heading-1", "layout-page-setup", "layout-a4", "review-comments", "review-tracking", "review-original", "view-page"]) {
+      for (const id of ["insert-table", "insert-picture", "insert-link", "insert-page-break", "format-bullets", "format-numbering", "format-heading-1", "review-comments", "review-tracking", "review-original"]) {
         expect(view.state.target!.enabledCommands).not.toContain(id); view.execute(id);
       }
       expect(screen.queryByRole("dialog")).toBeNull();
@@ -68,6 +68,24 @@ describe("Word renderer inside Markie", () => {
       fireEvent.click(screen.getByRole("button", { name: "Close Font" }));
       expect(await exportRichDocument(view.state.document)).toEqual(original);
       expect(view.state.document.format).toBe(format);
+    });
+    it("uses the shared Page Setup controls and same-format export for paper and margins", async () => {
+      const initial = await createRichDocument(format, "A native page"), view = editor(initial);
+      view.execute("layout-page-setup");
+      const dialog = screen.getByRole("dialog", { name: "Page Setup" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Letter" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Portrait" }));
+      expect(view.state.document).toBe(initial);
+      fireEvent.click(within(dialog).getByRole("button", { name: "A4" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Landscape" }));
+      const margin = within(dialog).getByRole("spinbutton", { name: "Top margin (in)" });
+      fireEvent.change(margin, { target: { value: "0.5" } }); fireEvent.blur(margin);
+      fireEvent.click(screen.getByRole("button", { name: "Close Page Setup" }));
+      const reopened = await openRichDocument(format, await exportRichDocument(view.state.document));
+      expect(reopened.pageLayout).toMatchObject({ orientation: "landscape", widthPoints: 841.9, heightPoints: 595.3, marginTopPoints: 36 });
+      expect(reopened.text).toBe("A native page");
+      view.execute("view-page"); expect(screen.getByRole("textbox", { name: "Paragraph 1" }).closest(".docs-word-paper")).not.toBeNull();
+      view.execute("undo"); expect(view.state.document.pageLayout.marginTopPoints).toBe(initial.pageLayout.marginTopPoints);
     });
     it("formats a range, undoes/redoes and replaces text with same-format export/reopen", async () => {
       const initial = await createRichDocument(format, "Hello native"), view = editor(initial);

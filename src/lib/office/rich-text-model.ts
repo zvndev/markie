@@ -1,4 +1,4 @@
-import { DocxError, type DocxOperation, type DocxParagraph, type DocxRun, type DocxRunFormat, type DocxRunStyle, type DocxTextEdit } from "./docx-types";
+import { DocxError, type DocxOperation, type DocxPageLayout, type DocxParagraph, type DocxRun, type DocxRunFormat, type DocxRunStyle, type DocxTextEdit } from "./docx-types";
 import { encodeTextDocument } from "../document-formats";
 import type { NativeRichDocument, RichParagraphInput, RichSnapshotOptions } from "./rich-text-types";
 
@@ -80,7 +80,8 @@ export function applySimpleRichOperations(document: NativeRichDocument, operatio
       const candidate = { ...layout, widthPoints: width, heightPoints: height, orientation };
       for (const field of ["marginTopPoints", "marginRightPoints", "marginBottomPoints", "marginLeftPoints"] as const) if (change[field] !== undefined) candidate[field] = number(change[field], 0, 1440);
       if (candidate.marginLeftPoints + candidate.marginRightPoints >= width || candidate.marginTopPoints + candidate.marginBottomPoints >= height) invalid("Margins leave no document area.");
-      layout = Object.freeze(candidate); continue;
+      if ((Object.keys(candidate) as (keyof DocxPageLayout)[]).some((key) => candidate[key] !== layout[key])) layout = Object.freeze(candidate);
+      continue;
     }
     if (op.type === "insert-paragraph") {
       const index = op.afterParagraphId == null ? -1 : paragraphs.findIndex((p) => p.id === op.afterParagraphId);

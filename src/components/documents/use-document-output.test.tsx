@@ -4,6 +4,7 @@ import { createDocumentSession, editOfficeDocument } from "@/lib/document-sessio
 import { applyDocxOperations, replaceDocxText, exportDocx } from "@/lib/office/docx";
 import { useDocumentOutput } from "./use-document-output";
 import { getSafeAPI } from "@/lib/electron";
+import { exportRichDocument, openRichDocument, replaceRichText } from "@/lib/office/rich-document";
 
 vi.mock("@/lib/electron", () => ({ getSafeAPI: vi.fn() }));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -19,13 +20,31 @@ async function setup() {
   return { hook, exportPDF, current: () => session, replace: (next: typeof session) => { session = next; }, block: () => { blocked = true; } };
 }
 describe("supported Word output capture", () => {
-  it.each(["rtf", "odt"] as const)("does not advertise or send %s snapshots to DOCX printing", async (format) => {
-    const session = await createDocumentSession(format), exportPDF = vi.fn();
+  it.each(["rtf", "odt"] as const)("prints the supported %s model without converting or saving the source", async (format) => {
+    const initial = await createDocumentSession(format);
+    const rich = replaceRichText(initial.office!, [{ runId: initial.office!.paragraphs[0].runs[0].id, text: `Unsaved ${format.toUpperCase()} words` }]);
+    const session = editOfficeDocument(initial, rich), before = await exportRichDocument(rich);
+    const exportPDF = vi.fn<(args: unknown) => Promise<{ success: boolean; path: string }>>(async () => ({ success: true, path: "/synthetic/out.pdf" }));
+    vi.mocked(getSafeAPI).mockReturnValue({ exportPDF } as unknown as NonNullable<ReturnType<typeof getSafeAPI>>);
+    const hook = renderHook(() => useDocumentOutput({ session, captureSession: () => session, isBlocked: () => false }));
+    expect(hook.result.current.eligible).toBe(true);
+    await act(async () => { await hook.result.current.execute("document-print"); await hook.result.current.execute("document-export-pdf"); });
+    expect(exportPDF).toHaveBeenCalledTimes(2);
+    expect(exportPDF.mock.calls[0][0]).toMatchObject({ html: expect.stringContaining(`Unsaved ${format.toUpperCase()} words`), mode: "print" });
+    expect(await exportRichDocument(rich)).toEqual(before);
+    expect((await openRichDocument(format, before)).format).toBe(format);
+    expect(session.generation).toBe(1); expect(session.persistedGeneration).toBe(-1);
+    expect(hook.result.current.error).toBeUndefined();
+    expect(hook.result.current.notice).toContain("source file was not changed");
+  });
+  it.each(["rtf", "odt"] as const)("does not print unsupported or blocked %s content", async (format) => {
+    const original = await createDocumentSession(format);
+    const session = { ...original, office: { ...original.office!, canEdit: false } }, exportPDF = vi.fn();
     vi.mocked(getSafeAPI).mockReturnValue({ exportPDF } as unknown as NonNullable<ReturnType<typeof getSafeAPI>>);
     const hook = renderHook(() => useDocumentOutput({ session, captureSession: () => session, isBlocked: () => false }));
     expect(hook.result.current.eligible).toBe(false);
-    await act(async () => { await hook.result.current.execute("document-print"); await hook.result.current.execute("document-export-pdf"); });
-    expect(exportPDF).not.toHaveBeenCalled(); expect(hook.result.current.error).toBeUndefined();
+    await act(async () => { await hook.result.current.execute("document-print"); });
+    expect(exportPDF).not.toHaveBeenCalled();
   });
   it("captures the latest synchronous model, preserves bytes and generations, and omits file paths", async () => {
     const test = await setup(), first = test.current();

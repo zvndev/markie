@@ -8,13 +8,19 @@ Open a supplied sample. Before editing, save a copy; its bytes should be unchang
 
 Edit text including accented letters and an emoji. Change a selected run's font, size, color, bold, italic and underline. Change paragraph alignment/spacing, insert a paragraph with Enter, and paste several plain-text lines. Save a copy with the original extension and reopen it. Try Undo/Redo and Find/Replace.
 
-Unsupported Word-only controls must not appear enabled: tables, pictures, lists, links, named Word styles, page setup, review and print/PDF are outside the current RTF/ODT subset. A complex RTF should stay read-only with original-byte export; an unsupported ODT should fail safely instead of replacing the current document with a flattened copy. Cloud sharing should explain its current limit without uploading the file.
+Open Page Setup from Layout (or Commands in the browser). Change paper, portrait/landscape and margins, save a copy and reopen it. RTF and supported single-static-layout ODT must retain the same geometry in their original format. Merely opening the dialog or choosing unchanged values must not rewrite the original. An ODT body edit must retain the original styles part; a layout-only edit must retain the original body part.
+
+Use Print and Export PDF from Markie's existing File/Export controls. Output should use document typography and page setup, contain the latest text without app chrome, and leave unsaved source edits unsaved. In the browser, the print dialog offers Save as PDF. Test light/dark modes and verify the printed page remains light.
+
+Passive RTF author/title/date metadata must survive edits rather than forcing a plain letter read-only. Unknown fields, objects or unrepresented content still require protection. Unsupported Word-only controls must not appear enabled: tables, pictures, lists, links, named Word styles and review remain outside the RTF/ODT subset. A complex RTF should stay read-only with original-byte export; an unsupported ODT should fail safely instead of replacing the current document with a flattened copy. ODT master-page references that imply extra page breaks, headers/footers and multiple layouts are not part of static geometry support. Cloud sharing should explain its current limit without uploading the file.
 
 ODT paragraph spacing is supported from 0 to 1000 points and line height from 50% to 500%. Other formatting and byte/text/node budgets also apply. Oversized edits or exports must report an error, never silently truncate content or mark it saved.
 
 ## DOCX
 
 Open the supplied Word sample. Test selection formatting, imported style labels, theme typography, alignment, lists, basic rectangular tables, PNG/JPEG pictures, safe web links, explicit page breaks, comments and supported text revisions. Unsupported content is not a compatibility guarantee.
+
+Ordinary Word spelling/grammar markers and cached page boundaries should no longer force read-only. Text split by a cached boundary must remain complete when edited or formatted. Edits invalidate calculated pagination; text edits invalidate proofing caches. Explicit authored page breaks must remain intact, and a view-only export must preserve the original bytes.
 
 Test native Print and Export PDF with portrait/landscape and margins. Output must contain the document, not app chrome, and should not clear unsaved Word edits. Print/PDF currently omits comments and refuses pending revisions and unsupported structures. It uses Chromium fragmentation, not Word-identical pagination.
 

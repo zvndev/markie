@@ -11,6 +11,7 @@ import { createRichSnapshot, applySimpleRichOperations, rebaseSimpleRichDefaults
 import type { NativeRichDocument, RichParagraphInput, RichRunInput } from "./rich-text-types";
 import { escapeXmlText, parseXml, xmlAttribute, type XmlElement } from "./xml";
 import { readZip, writeZip, validateZipPath, type ZipEntry } from "./zip";
+import { appendOdtXml, odtPageProperties, odtPageStyles, readOdtPageGeometry, type OdtPageGeometry } from "./odt-page-layout";
 
 const OFFICE = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 const TEXT = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
@@ -22,7 +23,7 @@ const MIME = "application/vnd.oasis.opendocument.text";
 const XMLNS = "http://www.w3.org/2000/xmlns/";
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 const encoder = new TextEncoder();
-interface State { original: Uint8Array; entries: ZipEntry[]; content: string; root: XmlElement; text: XmlElement; defaults: Resolved }
+interface State { original: Uint8Array; entries: ZipEntry[]; content: string; root: XmlElement; text: XmlElement; defaults: Resolved; geometry?: OdtPageGeometry; stylesRoot?: XmlElement; initial: NativeRichDocument }
 const owned = new WeakMap<NativeRichDocument, State>();
 function fail(message: string): never { throw new DocxError("unsupported-odt", message); }
 function attrs(node: XmlElement, allowed: readonly string[]): void {
@@ -73,10 +74,16 @@ function styleResolver(roots: readonly XmlElement[]) {
         attrs(container, []);
         if (container.text.trim()) fail("Invalid ODT style container.");
         for (const node of container.children) {
+          if (is(container, OFFICE, "automatic-styles") && is(node, STYLE, "page-layout")) continue; // Validated separately, including unused layouts.
           if (!is(node, STYLE, "style") && !is(node, STYLE, "default-style")) fail("Unsupported ODT style kind.");
           const family = xmlAttribute(node, "family", STYLE);
           if (family !== "paragraph" && family !== "text") fail("Unsupported ODT style family.");
-          attrs(node, [key(STYLE, "family"), key(STYLE, "name"), key(STYLE, "display-name"), key(STYLE, "parent-style-name"), key(STYLE, "next-style-name")]);
+          attrs(node, [key(STYLE, "family"), key(STYLE, "name"), key(STYLE, "display-name"), key(STYLE, "parent-style-name"), key(STYLE, "next-style-name"), key(STYLE, "master-page-name")]);
+          const master = xmlAttribute(node, "master-page-name", STYLE);
+          // Even the same master forces a page break when applied to a
+          // paragraph. Until those boundaries are represented, reject every
+          // reference, including inherited, unused and first-paragraph styles.
+          if (master !== undefined) fail("Unsupported ODT master-page switch or forced page break.");
           const name = xmlAttribute(node, "name", STYLE);
           const map = is(node, STYLE, "default-style") ? defaults : styles;
           const id = is(node, STYLE, "default-style") ? family : `${family}|${name}`;
@@ -265,16 +272,19 @@ export async function openOdt(input: Uint8Array): Promise<NativeRichDocument> {
   const text = only(body, OFFICE, "text")!; attrs(text, []);
   if (text.text.trim()) fail("ODT body text must be inside paragraphs.");
   const roots = [root];
+  let stylesRoot: XmlElement | undefined;
   if (parts.has("styles.xml")) {
     if (declarations.get("styles.xml") !== "text/xml") fail("Invalid ODT styles media type.");
     const styles = parseXml(utf8.decode(parts.get("styles.xml")));
     if (!is(styles, OFFICE, "document-styles")) fail("Invalid ODT styles root.");
     version(styles); attrs(styles, [key(OFFICE, "version")]);
     if (styles.text.trim()) fail("Invalid ODT styles document content.");
-    only(styles, OFFICE, "font-face-decls", false); only(styles, OFFICE, "styles", false); only(styles, OFFICE, "automatic-styles", false);
-    for (const child of styles.children) if (!["font-face-decls", "styles", "automatic-styles"].some(name => is(child, OFFICE, name))) fail("Unsupported ODT page, master or style structure.");
+    only(styles, OFFICE, "font-face-decls", false); only(styles, OFFICE, "styles", false); only(styles, OFFICE, "automatic-styles", false); only(styles, OFFICE, "master-styles", false);
+    for (const child of styles.children) if (!["font-face-decls", "styles", "automatic-styles", "master-styles"].some(name => is(child, OFFICE, name))) fail("Unsupported ODT page, master or style structure.");
+    stylesRoot = styles;
     roots.unshift(styles);
   }
+  const geometry = readOdtPageGeometry(roots);
   const resolve = styleResolver(roots);
   const budget = { characters: 0 };
   if (text.children.length > 10000) fail("ODT paragraph count exceeds the supported limit.");
@@ -283,9 +293,9 @@ export async function openOdt(input: Uint8Array): Promise<NativeRichDocument> {
     if (!is(node, TEXT, "p")) fail(`Unsupported ODT block ${node.localName}; original file was not converted.`);
     return readParagraph(node, content, resolve, budget);
   });
-  const document = createRichSnapshot("odt", paragraphs.length ? paragraphs : [{ runs: [{ text: "" }] }], { diagnostics: [{ code: "odt-bounded-rich-text", severity: "info", message: "ODT rich text supports paragraphs, fonts, colors, basic emphasis and spacing. Complex layouts and interactive content are not converted." }] });
+  const document = createRichSnapshot("odt", paragraphs.length ? paragraphs : [{ runs: [{ text: "" }] }], { pageLayout: geometry?.layout, diagnostics: [{ code: "odt-bounded-rich-text", severity: "info", message: "ODT rich text supports paragraphs, fonts, colors, basic emphasis, spacing and a single static page layout. Complex layouts and interactive content are not converted." }] });
   const defaults = resolve("text", undefined, resolve("paragraph", undefined, { run: {}, paragraph: {} }));
-  owned.set(document, { original, entries, content, root, text, defaults });
+  owned.set(document, { original, entries, content, root, text, defaults, geometry, stylesRoot, initial: document });
   return document;
 }
 
@@ -307,7 +317,6 @@ function resolveDefaults(document: NativeRichDocument, state: State): NativeRich
 }
 export function applyOdtOperations(document: NativeRichDocument, operations: readonly DocxOperation[]): NativeRichDocument {
   const state = stateFor(document);
-  if (operations.some(op => op.type === "set-page-layout")) fail("ODT page layout editing is not supported yet.");
   for (const operation of operations) {
     if ((operation.type === "insert-paragraph" || operation.type === "replace-paragraph") && operation.text.includes("\r")) fail("ODT uses line-feed characters for line breaks; literal carriage returns are unsupported.");
     if (operation.type === "format-run" || operation.type === "format-range") {
@@ -317,7 +326,8 @@ export function applyOdtOperations(document: NativeRichDocument, operations: rea
     }
   }
   const edited = applySimpleRichOperations(document, operations);
-  const next = edited === document ? document : resolveDefaults(edited, state); owned.set(next, state); return next;
+  const next = edited === document ? document : operations.every(op => op.type === "set-page-layout") ? edited : resolveDefaults(edited, state);
+  owned.set(next, state); return next;
 }
 export function replaceOdtText(document: NativeRichDocument, edits: readonly DocxTextEdit[]): NativeRichDocument {
   const state = stateFor(document);
@@ -341,9 +351,7 @@ function serializeText(text: string): string {
   }
   return pieces.join("");
 }
-export async function exportOdt(document: NativeRichDocument): Promise<Uint8Array> {
-  const state = stateFor(document);
-  if (!document.modified) return new Uint8Array(state.original);
+function editedOdtContent(document: NativeRichDocument, state: State): string {
   const namespaces = `xmlns:office="${OFFICE}" xmlns:text="${TEXT}" xmlns:style="${STYLE}" xmlns:fo="${FO}"`;
   // Generated names avoid every original style name, including unused styles.
   let prefix = "Markie";
@@ -380,12 +388,64 @@ export async function exportOdt(document: NativeRichDocument): Promise<Uint8Arra
     const body = only(state.root, OFFICE, "body")!;
     content = content.slice(0, body.start) + `<office:automatic-styles ${namespaces}>${styles.join("")}</office:automatic-styles>` + content.slice(body.start);
   }
-  const entries = state.entries.map(entry => entry.name === "content.xml" ? { name: entry.name, data: encoder.encode(content) } : entry);
+  return content;
+}
+export async function exportOdt(document: NativeRichDocument): Promise<Uint8Array> {
+  const state = stateFor(document);
+  if (!document.modified) return new Uint8Array(state.original);
+  const namespaces = `xmlns:office="${OFFICE}" xmlns:text="${TEXT}" xmlns:style="${STYLE}" xmlns:fo="${FO}"`;
+  const bodyChanged = document.paragraphs.length !== state.initial.paragraphs.length || document.paragraphs.some((p, i) => p !== state.initial.paragraphs[i]);
+  const layoutChanged = JSON.stringify(document.pageLayout) !== JSON.stringify(state.initial.pageLayout);
+  if (!bodyChanged && !layoutChanged) return new Uint8Array(state.original);
+  const content = bodyChanged ? editedOdtContent(document, state) : state.content;
+  let entries = state.entries.map(entry => entry.name === "content.xml" ? { name: entry.name, data: encoder.encode(content) } : entry);
+  if (layoutChanged) {
+    const oldStyles = state.entries.find(e => e.name === "styles.xml");
+    let styles = oldStyles ? utf8.decode(oldStyles.data) : `<office:document-styles ${namespaces} office:version="${xmlAttribute(state.root, "version", OFFICE)}"/>`;
+    if (state.geometry) {
+      const node = state.geometry.properties;
+      styles = styles.slice(0, node.start) + odtPageProperties(document.pageLayout) + styles.slice(node.end);
+    } else {
+      let name = "MarkiePage";
+      while (styles.includes(name) || state.content.includes(name)) name += "_";
+      const generated = odtPageStyles(document.pageLayout, name);
+      const root = state.stylesRoot ?? parseXml(styles);
+      const automatic = only(root, OFFICE, "automatic-styles", false);
+      const masters = only(root, OFFICE, "master-styles", false);
+      // Empty existing containers are expanded rather than duplicated.
+      if (!automatic && !masters) styles = appendOdtXml(styles, root, `<office:automatic-styles ${namespaces}>${generated.automatic}</office:automatic-styles>${generated.master}`);
+      else {
+        if (!masters) styles = appendOdtXml(styles, root, generated.master);
+        else styles = appendOdtXml(styles, masters, parseXml(generated.master).children.map(n => generated.master.slice(n.start, n.end)).join(""));
+        // Reparse after insertion: the root/container may have been self-closing.
+        const updatedRoot = parseXml(styles);
+        const updatedAutomatic = only(updatedRoot, OFFICE, "automatic-styles", false);
+        if (updatedAutomatic) styles = appendOdtXml(styles, updatedAutomatic, generated.automatic);
+        else {
+          const updatedMaster = only(updatedRoot, OFFICE, "master-styles")!;
+          styles = styles.slice(0, updatedMaster.start) + `<office:automatic-styles ${namespaces}>${generated.automatic}</office:automatic-styles>` + styles.slice(updatedMaster.start);
+        }
+      }
+    }
+    if (oldStyles) entries = entries.map(e => e.name === "styles.xml" ? { name: e.name, data: encoder.encode(styles) } : e);
+    else {
+      entries.push({ name: "styles.xml", data: encoder.encode(styles) });
+      entries = entries.map(e => {
+        if (e.name !== "META-INF/manifest.xml") return e;
+        const source = utf8.decode(e.data), root = parseXml(source);
+        return { name: e.name, data: encoder.encode(appendOdtXml(source, root, `<manifest:file-entry xmlns:manifest="${MANIFEST}" manifest:full-path="styles.xml" manifest:media-type="text/xml"/>`)) };
+      });
+    }
+  }
   const output = writeZip([entries.find(entry => entry.name === "mimetype")!, ...entries.filter(entry => entry.name !== "mimetype")]);
   // Never hand an unreopenable or text-lossy edited candidate to persistence.
   // This applies the same XML/node/decoded-text limits used for user imports.
   const verification = await openOdt(output);
   if (verification.text !== document.text) fail("Edited ODT failed same-format text verification; the source was not overwritten.");
+  for (const field of Object.keys(document.pageLayout) as (keyof typeof document.pageLayout)[]) {
+    const actual = verification.pageLayout[field], expected = document.pageLayout[field];
+    if (typeof actual === "number" && typeof expected === "number" ? Math.abs(actual - expected) > 0.000001 : actual !== expected) fail("Edited ODT failed same-format page-layout verification; the source was not overwritten.");
+  }
   return output;
 }
 
@@ -393,6 +453,8 @@ export async function createOdt(text = ""): Promise<NativeRichDocument> {
   if (text.includes("\r")) fail("ODT uses line-feed characters for line breaks; literal carriage returns are unsupported.");
   const namespaces = `xmlns:office="${OFFICE}" xmlns:text="${TEXT}" xmlns:style="${STYLE}" xmlns:fo="${FO}"`;
   const content = `<?xml version="1.0" encoding="UTF-8"?><office:document-content ${namespaces} office:version="1.3"><office:body><office:text>${text.split("\n").map(p => `<text:p>${serializeText(p)}</text:p>`).join("")}</office:text></office:body></office:document-content>`;
-  const manifest = `<manifest:manifest xmlns:manifest="${MANIFEST}" manifest:version="1.3"><manifest:file-entry manifest:full-path="/" manifest:media-type="${MIME}"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/></manifest:manifest>`;
-  return openOdt(writeZip([{ name: "mimetype", data: encoder.encode(MIME) }, { name: "content.xml", data: encoder.encode(content) }, { name: "META-INF/manifest.xml", data: encoder.encode(manifest) }]));
+  const layout = odtPageStyles({ widthPoints: 612, heightPoints: 792, orientation: "portrait", marginTopPoints: 72, marginRightPoints: 72, marginBottomPoints: 72, marginLeftPoints: 72 });
+  const styles = `<office:document-styles ${namespaces} office:version="1.3"><office:automatic-styles>${layout.automatic}</office:automatic-styles>${layout.master}</office:document-styles>`;
+  const manifest = `<manifest:manifest xmlns:manifest="${MANIFEST}" manifest:version="1.3"><manifest:file-entry manifest:full-path="/" manifest:media-type="${MIME}"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/></manifest:manifest>`;
+  return openOdt(writeZip([{ name: "mimetype", data: encoder.encode(MIME) }, { name: "content.xml", data: encoder.encode(content) }, { name: "styles.xml", data: encoder.encode(styles) }, { name: "META-INF/manifest.xml", data: encoder.encode(manifest) }]));
 }

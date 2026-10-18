@@ -120,7 +120,7 @@ describe("original bounded ODT codec", () => {
     await expect(exportOdt(foreign)).rejects.toThrow("original ODT session");
     expect(() => applyOdtOperations(foreign, [])).toThrow("original ODT session");
     const doc = await openOdt(odtFixture());
-    expect(() => applyOdtOperations(doc, [{ type: "set-page-layout", layout: { paper: "a4" } }])).toThrow("page layout");
+    expect(() => applyOdtOperations(doc, [{ type: "set-page-layout", layout: { marginLeftPoints: 1000 } }])).toThrow("Margins");
     expect(() => applyOdtOperations(doc, [{ type: "insert-table", rows: 1, columns: 1 }])).toThrow();
   });
   it("recognizes only owned snapshots from the same opened source", async () => {

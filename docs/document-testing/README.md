@@ -2,7 +2,7 @@
 
 This local preview extends the existing Markie app. It is not a public release or the completed document-platform roadmap. Use disposable copies while testing. Keep your installed Markie and important originals separate.
 
-This preview includes basic, original-engine RTF and ODT editing with same-format saving, plus a first offline interactive Darkmown milestone. RTF/ODT are not secretly converted into Word files. Complex documents may remain read-only or be refused before they replace the current editor.
+This preview includes original-engine RTF and ODT editing with same-format saving, supported native page setup and Print/PDF, plus a first offline interactive Darkmown milestone. Passive RTF information metadata and Word proofing/calculated-page markers have broader editing support. RTF/ODT are not secretly converted into Word files. Complex documents may remain read-only or be refused before they replace the current editor.
 
 ## Start here
 

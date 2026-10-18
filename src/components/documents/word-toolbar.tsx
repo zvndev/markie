@@ -25,7 +25,7 @@ function NumberTool({ label, value, placeholder = "Auto", min = 0, max = 500, st
 export function WordToolsDialog({ tool, onClose, document, paragraph, runId, fontSelection, readOnly: permissionReadOnly, onApply, onError, onReplace, onSelectMatch, onFormatRun, review, onAddLink, onInsertBreak }: WordToolsDialogProps) {
   const titleId = useId(), dialog = useRef<HTMLDivElement>(null), close = useRef(onClose); close.current = onClose;
   const [rows, setRows] = useState(2), [columns, setColumns] = useState(2);
-  const supported = document.format === "docx" || ["font", "spacing", "find"].includes(tool);
+  const supported = document.format === "docx" || ["font", "spacing", "find", "page"].includes(tool);
   const readOnly = permissionReadOnly || !document.canEdit || review.originalView || !supported;
   const selectionColor = fontSelection.color && /^[0-9a-f]{6}$/i.test(fontSelection.color) ? `#${fontSelection.color}` : undefined;
   const run = paragraph?.runs.find((item) => item.id === runId && item.canEdit) ?? paragraph?.runs.find((item) => item.canEdit);

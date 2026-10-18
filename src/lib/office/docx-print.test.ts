@@ -5,6 +5,29 @@ import { canPrintDocx, buildDocxPrintHTML } from "./docx-print";
 import { themedDocxFixture } from "./docx-theme.fixture";
 import { readZip, writeZip } from "./zip";
 import type { DocxDocument } from "./docx-types";
+import { applyRichOperations, createRichDocument, exportRichDocument, openRichDocument } from "./rich-document";
+
+describe("shared native rich print projection", () => {
+  it.each(["rtf", "odt"] as const)("prints %s text, style and page geometry without a format conversion", async (format) => {
+    const seed = await createRichDocument(format, 'A <script>literal</script> & Unicode café\nSecond paragraph');
+    const rich = applyRichOperations(seed, [
+      { type: "set-page-layout", layout: { paper: "legal", orientation: "landscape", marginTopPoints: 36, marginLeftPoints: 54 } },
+      { type: "format-run", runId: seed.paragraphs[0].runs[0].id, style: { fontFamily: "Georgia", fontSizePoints: 16, color: "336699", italic: true } },
+    ]);
+    const before = await exportRichDocument(rich), dom = new DOMParser().parseFromString(buildDocxPrintHTML(rich, `letter.${format}`), "text/html");
+    expect(dom.body.textContent).toBe('A <script>literal</script> & Unicode caféSecond paragraph');
+    expect(dom.querySelector("script,img,iframe,object,link,base,form")).toBeNull();
+    expect(dom.querySelector("style")!.textContent).toContain("size:1008pt 612pt;margin:36pt 72pt 72pt 54pt");
+    expect(dom.querySelector("span")!.style.fontSize).toBe("16pt");
+    expect(dom.querySelector("span")!.style.color).toBe("rgb(51, 102, 153)");
+    expect(dom.querySelector("span")!.style.fontStyle).toBe("italic");
+    expect(await exportRichDocument(rich)).toEqual(before);
+    expect((await openRichDocument(format, before)).format).toBe(format);
+    expect(canPrintDocx({ ...rich, canEdit: false })).toBe(false);
+    expect(canPrintDocx({ ...rich, diagnostics: [{ code: "unsupported", severity: "warning", message: "Unsupported source" }] })).toBe(false);
+    expect(() => buildDocxPrintHTML({ ...rich, canEdit: false })).toThrow(/supported print/);
+  });
+});
 
 describe("original supported DOCX print view", () => {
   it("uses the existing Word canvas serif, size and empty paragraph height as its fallback", async () => {

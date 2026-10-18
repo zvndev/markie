@@ -20,6 +20,7 @@ import { formatDocxTextRange } from "./docx-revisions-range";
 import { applyDocxRevisionOperation, inspectDocxRevisions, projectDocxRevisionView, type DocxRevisionState } from "./docx-revisions";
 import { inspectDocxHyperlinks, removeDocxHyperlink, setDocxHyperlink, updateDocxHyperlink } from "./docx-hyperlinks";
 import { inspectDocxPageBreaks, insertDocxPageBreak, removeDocxPageBreak } from "./docx-page-breaks";
+import { cachedTextRun, invalidateDocxDerived, validDerivedMarker } from "./docx-derived";
 export * from "./docx-types";
 
 const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -156,10 +157,10 @@ function contentTypes(root: XmlElement, parts: Map<string, ZipEntry>): Map<strin
 }
 
 const allowedChildren: Record<string, readonly string[]> = {
-  document: ["body"], body: ["p", "tbl", "sectPr"], p: ["pPr", "commentRangeStart", "r", "hyperlink", "ins", "del", "commentRangeEnd"],
+  document: ["body"], body: ["p", "tbl", "sectPr"], p: ["pPr", "commentRangeStart", "r", "hyperlink", "ins", "del", "commentRangeEnd", "proofErr"],
   pPr: ["pStyle", "numPr", "jc", "spacing", "ind", "keepNext", "keepLines", "pageBreakBefore", "widowControl"],
   numPr: ["ilvl", "numId"],
-  r: ["rPr", "t", "delText", "br", "commentReference", "drawing"], rPr: ["b", "i", "u", "color", "sz", "szCs", "rFonts", "rStyle", "lang", "bCs", "iCs"],
+  r: ["rPr", "t", "delText", "br", "commentReference", "drawing", "lastRenderedPageBreak"], rPr: ["b", "i", "u", "color", "sz", "szCs", "rFonts", "rStyle", "lang", "bCs", "iCs"],
   hyperlink: ["r"],
   ins: ["r"], del: ["r"],
   sectPr: ["pgSz", "pgMar", "cols", "docGrid", "type"],
@@ -182,12 +183,14 @@ const allowedAttributes: Record<string, readonly string[]> = {
   numPr: [], ilvl: ["val"], numId: ["val"],
   ins: ["id", "author", "date"], del: ["id", "author", "date"], delText: [],
   hyperlink: ["history", "tooltip"], br: ["type"],
+  proofErr: ["type"], lastRenderedPageBreak: [],
 };
 
 function unsupportedMarkup(root: XmlElement, safeDrawings: readonly XmlElement[] = []): string | undefined {
   for (const node of xmlDescendants(root)) {
     if (safeDrawings.some((drawing) => node.start >= drawing.start && node.end <= drawing.end)) continue;
     if (!word(node) || !Object.hasOwn(allowedAttributes, node.localName)) return node.name;
+    if (["proofErr", "lastRenderedPageBreak"].includes(node.localName) && !validDerivedMarker(node)) return node.name;
     const allowed = allowedChildren[node.localName] || [];
     if (node.children.some((c) => !word(c) || c.namespace !== node.namespace || !allowed.includes(c.localName))) return node.name;
     if (!["t", "delText"].includes(node.localName) && hasNonWhitespace(node.text)) return node.name;
@@ -202,7 +205,7 @@ function unsupportedMarkup(root: XmlElement, safeDrawings: readonly XmlElement[]
       || (node.localName === "body" && (names.filter((n) => n === "sectPr").length > 1 || (names.includes("sectPr") && names.at(-1) !== "sectPr")))
       || (["p", "r"].includes(node.localName) && (names.filter((n) => n === `${node.localName}Pr`).length > 1
         || (names.includes(`${node.localName}Pr`) && names[0] !== `${node.localName}Pr`)))
-      || (node.localName === "r" && names.filter((n) => n === "t").length > 1)) return node.name;
+      || (node.localName === "r" && names.filter((n) => n === "t").length > 1 && !cachedTextRun(node))) return node.name;
     if (node.localName === "r" && names.includes("commentReference") && (names.includes("t") || names.filter((n) => n === "commentReference").length !== 1)) return node.name;
     if (["pPr", "rPr", "sectPr", "tblPr", "tcPr"].includes(node.localName) && new Set(names).size !== names.length) return node.name;
     if (node.localName === "tbl") {
@@ -420,9 +423,18 @@ export async function openDocx(input: Uint8Array, options: Partial<ZipLimits> = 
 
 /** Edits are atomic, snapshot-local and only target supported run IDs. */
 export function replaceDocxText(document: DocxDocument, edits: readonly DocxTextEdit[]): DocxDocument {
-  const state = states.get(document);
+  let state = states.get(document);
   if (!state) throw new DocxError("invalid-session", "DOCX snapshot did not originate from this engine.");
   if (!document.canEdit) throw new DocxError("read-only", "This package cannot be safely edited by the current engine.");
+  // Validate identities before treating an identical-text edit as a no-op.
+  const currentRuns = new Map(document.paragraphs.flatMap((paragraph) => paragraph.runs.map((run) => [run.id, run] as const)));
+  if (new Set(edits.map((edit) => edit.runId)).size !== edits.length || edits.some((edit) => !state!.runNodes.has(edit.runId))) throw new DocxError("invalid-edit", "Unknown or duplicate run ID.");
+  if (edits.every((edit) => edit.text === currentRuns.get(edit.runId)?.text)) return document;
+  state = invalidateDocxDerived(state, true);
+  // Derived page markers may have split one logical run into several t nodes.
+  // Re-index text targets after coalescing, retaining the original run IDs.
+  const refreshed = snapshot({ ...state, runNodes: new Map() }, document.diagnostics, document.metadata, document.revision);
+  state = states.get(refreshed)!;
   const seen = new Set<string>();
   const patches: DocxPatch[] = [];
   for (const edit of edits) {
@@ -458,6 +470,10 @@ export function applyDocxOperations(document: DocxDocument, operations: readonly
   if (!Array.isArray(operations) || operations.length > 1000) throw new DocxError("invalid-edit", "Invalid operation batch.");
   let next: State = { ...state, identities: new Map(state.identities), partOverrides: new Map(state.partOverrides) };
   for (const operation of operations) {
+    const before = next;
+    const textChange = ["replace-paragraph", "delete-paragraph", "insert-paragraph", "insert-table", "delete-table", "track-paragraph-text", "accept-revision", "reject-revision", "accept-all-revisions", "reject-all-revisions"].includes(operation.type);
+    next = invalidateDocxDerived(next, textChange);
+    const preparedSource = next.source;
     if (["replace-paragraph", "delete-paragraph", "track-paragraph-text"].includes(operation.type) && "paragraphId" in operation) {
       const paragraph = xmlDescendants(parseXml(next.source)).find((n) => word(n, "p") && next.identities.get(n.start) === operation.paragraphId);
       if (paragraph && xmlDescendants(paragraph).some((n) => word(n, "hyperlink") || word(n, "br"))) throw new DocxError("unsupported-inline-content", "Remove hyperlinks and explicit page breaks before replacing, deleting or tracking all paragraph text.");
@@ -493,6 +509,8 @@ export function applyDocxOperations(document: DocxDocument, operations: readonly
     else if (operation.type === "insert-page-break") next = insertDocxPageBreak(next, operation.paragraphId, operation.offset);
     else if (operation.type === "remove-page-break") next = removeDocxPageBreak(next, operation.pageBreakId);
     else next = { ...next, ...applyDocxXmlOperation(next, operation) };
+    // No mutation means no invalidation of the original analysis caches.
+    if (next.source === preparedSource && next.partOverrides === before.partOverrides && next.deletedParts === before.deletedParts) next = before;
     if (encoder.encode(next.source).length > state.limits.maxEntryBytes) throw new DocxError("edit-limit", "Document edits exceed the part size limit.");
     for (const part of next.partOverrides.values()) if (part.length > state.limits.maxEntryBytes) throw new DocxError("edit-limit", "Document part edits exceed the size limit.");
     const media = inspectDocxImages(next);

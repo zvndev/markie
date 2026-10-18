@@ -4,7 +4,8 @@
 import { getDocxImageBytes } from "./docx";
 import { safeDocxHyperlinkTarget } from "./docx-hyperlinks";
 import { inspectDocxBitmap } from "./docx-media";
-import { DocxError, type DocxDocument, type DocxParagraph, type DocxRun, type DocxRunStyle } from "./docx-types";
+import { DocxError, type DocxParagraph, type DocxRun, type DocxRunStyle } from "./docx-types";
+import type { RichDocument } from "./rich-text-types";
 
 const MAX_HTML_BYTES = 24 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
@@ -41,8 +42,11 @@ function validParagraph(paragraph: DocxParagraph): boolean {
 }
 
 /** Cheap capability gate; byte/decoder budgets are checked again on capture. */
-export function canPrintDocx(document: DocxDocument): boolean {
+export function canPrintDocx(document: RichDocument): boolean {
   if (!document.canEdit || document.revisions.length || document.diagnostics.some((item) => item.severity === "warning")) return false;
+  // Native rich codecs currently expose only paragraphs and page geometry.
+  // Do not mistake a forged cross-format image/table projection for support.
+  if (document.format !== "docx" && (document.images.length || document.tables.length || document.hyperlinks.length || document.pageBreaks.length)) return false;
   const layout = document.pageLayout;
   if (![layout.widthPoints, layout.heightPoints].every((value) => bounded(value, 72, 2000))
     || ![layout.marginTopPoints, layout.marginRightPoints, layout.marginBottomPoints, layout.marginLeftPoints].every((value) => bounded(value, 0, 1000))
@@ -134,13 +138,13 @@ function paragraphHTML(paragraph: DocxParagraph, image: string | undefined): str
   }).join("");
 }
 
-/** Capture a self-contained, network-free print view without touching DOCX bytes. */
-export function buildDocxPrintHTML(document: DocxDocument, title = "Document"): string {
+/** Capture the shared supported rich view without converting or changing source bytes. */
+export function buildDocxPrintHTML(document: RichDocument, title = "Document"): string {
   if (!canPrintDocx(document)) fail();
   const images = new Map<string, string>();
   let imageBytes = 0, pixels = 0;
   for (const image of document.images) {
-    const bytes = getDocxImageBytes(document, image.id);
+    const bytes = document.format === "docx" ? getDocxImageBytes(document, image.id) : fail();
     imageBytes += bytes.length;
     if (imageBytes > MAX_IMAGE_BYTES) fail();
     const bitmap = inspectDocxBitmap(bytes, image.contentType);

@@ -121,7 +121,71 @@ describe("original bounded RTF codec", () => {
     expect(document.paragraphs[0].runs.map(r => [r.text, r.style.bold])).toEqual([["A", true], ["B", undefined], ["C", true]]);
     expect(document.paragraphs[1].alignment).toBe("left");
   });
-  it.each([String.raw`{\*\unknown hidden}`, String.raw`{\object secret}`, String.raw`{\field secret}`, String.raw`\intbl`, String.raw`\revised text`, String.raw`{\info{\author Person}}`, String.raw`\unknown text`, String.raw`\ansicpg9999 text`, String.raw`\sl300 text`, String.raw`{\pict image}`, String.raw`{\*\generator \u233?;}`, String.raw`\qc1 text`, String.raw`{\fonttbl{\f0\fnil Font;}{\f1\froman Font;}}text`])("keeps unsupported semantics read-only and exact: %s", async body => {
+  it("preserves common passive information without blocking body editing", async () => {
+    const info = String.raw`{\info{\title Editorial \{notes\}}{\subject Draft}{\author Person}{\manager Manager}{\*\company Company}{\operator Editor}{\category Notes}{\keywords research, writing}{\comment Comment}{\doccomm Document comment}{\creatim\yr2026\mo10\dy17\hr21\min30\sec45}{\revtim\yr2026}{\printim}{\buptim\yr2025}\version2{\vern8247}\edmins4\nofpages1\nofwords2\nofchars12\nofcharsws13\id123}`;
+    const source = bytes(`{\\rtf1\\ansi ${info}Hello world}`), document = await openRtf(source);
+    expect(document.canEdit).toBe(true); expect(document.diagnostics).toEqual([]);
+    expect(document.text).toBe("Hello world"); expect(await exportRtf(document)).toEqual(source);
+    const changed = replaceRtfText(document, [{ runId: "p0:r0", text: "Changed body" }]);
+    const output = await exportRtf(changed), written = new TextDecoder().decode(output), reopened = await openRtf(output);
+    expect(reopened.canEdit).toBe(true); expect(reopened.text).toBe("Changed body");
+    expect(written).toContain(String.raw`{\author\uc1 Person}`);
+    expect(written).toContain(String.raw`{\title\uc1 Editorial \{notes\}}`);
+    expect(written).toContain(String.raw`{\creatim\yr2026\mo10\dy17\hr21\min30\sec45}`);
+    expect(written).toContain(String.raw`\nofcharsws13\id123`);
+    expect(await exportRtf(document)).toEqual(source);
+  });
+  it.each([
+    [String.raw`\ansicpg1251`, String.raw`{\author \'cf\'f0}`, String.raw`{\author\uc1 \u1055?\u1088?}`],
+    [String.raw`\uc2`, String.raw`{\author \u233?? and \uc0\u26085}`, String.raw`{\author\uc1 \u233? and \u26085?}`],
+    [String.raw`{\fonttbl{\f0\fnil\fcharset128 Japanese;}}\f0`, String.raw`{\author \'82\'a0}`, String.raw`{\author\uc1 \u12354?}`],
+    [String.raw`\uc0`, String.raw`{\title \u-10179\u-8704}`, String.raw`{\title\uc1 \u-10179?\u-8704?}`],
+  ])("canonicalizes metadata with captured charset and Unicode fallback context: %s", async (context, field, expected) => {
+    const source = bytes(`{\\rtf1\\ansi ${context}{\\info${field}}Body}`), document = await openRtf(source);
+    expect(document.canEdit).toBe(true); expect(document.text).toBe("Body");
+    expect(await exportRtf(document)).toEqual(source);
+    const changed = replaceRtfText(document, [{ runId: "p0:r0", text: "Edited" }]);
+    const output = await exportRtf(changed);
+    expect(new TextDecoder().decode(output)).toContain(expected);
+    const reopened = await openRtf(output);
+    expect(reopened.canEdit).toBe(true); expect(reopened.text).toBe("Edited");
+    const second = await exportRtf(replaceRtfText(reopened, [{ runId: "p0:r0", text: "Edited again" }]));
+    expect(new TextDecoder().decode(second)).toContain(expected);
+  });
+  it("keeps original source bytes isolated when metadata uses raw regional bytes", async () => {
+    const source = new Uint8Array([...bytes(String.raw`{\rtf1\ansi\ansicpg1252{\info{\author Caf`), 0xe9, ...bytes("}}Body}")]);
+    const document = await openRtf(source), original = source.slice(); source.fill(0);
+    const output = await exportRtf(replaceRtfText(document, [{ runId: "p0:r0", text: "Changed" }]));
+    expect(new TextDecoder().decode(output)).toContain(String.raw`{\author\uc1 Caf\u233?}`);
+    expect(await exportRtf(document)).toEqual(original);
+  });
+  it.each([
+    String.raw`{\info{\hlinkbase https://example.com}}`, String.raw`{\info{\author A}{\author B}}`,
+    String.raw`{\info{\unknown value}}`, String.raw`{\info{\author {\field active}}}`,
+    String.raw`{\info{\author \bin1 x}}`, String.raw`{\info{\author \u233\unknown}}`,
+    String.raw`{\info{\author \uc2\u233?}}`, String.raw`{\info{\author \uc-1 text}}`,
+    String.raw`{\info{\creatim\mo13}}`, String.raw`{\info{\creatim\yr2026\yr2025}}`,
+    String.raw`{\info\version-1}`, String.raw`{\info\nofwords}`, String.raw`{\info{\version1 text}}`,
+    String.raw`{\info{\author \ansicpg1251 text}}`, String.raw`{\info{\author \u65535?}}`,
+  ])("protects unsupported or ambiguous information without discarding it: %s", async info => {
+    const source = bytes(`{\\rtf1\\ansi ${info}Body}`), document = await openRtf(source);
+    expect(document.canEdit).toBe(false); expect(await exportRtf(document)).toEqual(source);
+    expect(() => replaceRtfText(document, [{ runId: "p0:r0", text: "Changed" }])).toThrow("read-only");
+  });
+  it("exports and reopens paper, orientation and exact-twip page margins", async () => {
+    const document = await createRtf("Page layout");
+    const changed = applyRtfOperations(document, [{ type: "set-page-layout", layout: { paper: "a4", orientation: "landscape", marginTopPoints: 36, marginRightPoints: 14.45, marginBottomPoints: 72.05, marginLeftPoints: 54 } }]);
+    const reopened = await openRtf(await exportRtf(changed));
+    expect(reopened.canEdit).toBe(true);
+    expect(reopened.pageLayout).toEqual(changed.pageLayout);
+    expect(reopened.pageLayout).toMatchObject({ widthPoints: 841.9, heightPoints: 595.3, orientation: "landscape", marginTopPoints: 36, marginRightPoints: 14.45, marginBottomPoints: 72.05, marginLeftPoints: 54 });
+    const portrait = applyRtfOperations(reopened, [{ type: "set-page-layout", layout: { paper: "legal", orientation: "portrait" } }]);
+    expect((await openRtf(await exportRtf(portrait))).pageLayout).toMatchObject({ widthPoints: 612, heightPoints: 1008, orientation: "portrait", marginLeftPoints: 54 });
+    const original = await exportRtf(document);
+    expect(() => applyRtfOperations(document, [{ type: "set-page-layout", layout: { marginTopPoints: 72.03 } }])).toThrow("exactly");
+    expect(await exportRtf(document)).toEqual(original);
+  });
+  it.each([String.raw`{\*\unknown hidden}`, String.raw`{\object secret}`, String.raw`{\field secret}`, String.raw`\intbl`, String.raw`\revised text`, String.raw`\unknown text`, String.raw`\ansicpg9999 text`, String.raw`\sl300 text`, String.raw`{\pict image}`, String.raw`{\*\generator \u233?;}`, String.raw`\qc1 text`, String.raw`{\fonttbl{\f0\fnil Font;}{\f1\froman Font;}}text`])("keeps unsupported semantics read-only and exact: %s", async body => {
     const source = bytes(`{\\rtf1\\ansi ${body}}`), document = await openRtf(source);
     expect(document.canEdit).toBe(false); expect(document.diagnostics[0].code).toBe("rtf-unsupported");
     expect(await exportRtf(document)).toEqual(source);

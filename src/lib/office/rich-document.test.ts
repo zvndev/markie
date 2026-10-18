@@ -5,6 +5,13 @@ import { createDocumentSession, editOfficeDocument, openDocumentSession, seriali
 
 function value<T>(result: LibraryResult<T>): T { if (!result.ok) throw new Error(result.error.message); return result.value; }
 describe("same-format native rich adapter and recovery", () => {
+  it.each(["rtf", "odt"] as const)("keeps %s unchanged when selecting its current page setup", async (format) => {
+    const original = await createRichDocument(format, "No-op geometry"), bytes = await exportRichDocument(original);
+    const opened = await openRichDocument(format, bytes);
+    const same = applyRichOperations(opened, [{ type: "set-page-layout", layout: { paper: "letter", orientation: "portrait", marginTopPoints: 72, marginLeftPoints: 72 } }]);
+    expect(same).toBe(opened); expect(same.modified).toBe(false); expect(same.revision).toBe(0);
+    expect(await exportRichDocument(same)).toEqual(bytes);
+  });
   it.each(["rtf", "odt"] as const)("opens, edits and exports %s without a disguised DOCX intermediate", async (format) => {
     const document = await createRichDocument(format, "First\nSecond");
     const bytes = await exportRichDocument(document);
@@ -37,8 +44,11 @@ describe("same-format native rich adapter and recovery", () => {
   });
   it.each(["rtf", "odt"] as const)("gates %s unsupported commands in the adapter, not only the UI", async (format) => {
     const doc = await createRichDocument(format, "text");
-    expect(getRichCapabilities(doc)).toMatchObject({ runFormatting: true, paragraphFormatting: true, pageLayout: false, review: false, hyperlinks: false, namedStyles: false, tables: false });
-    expect(() => applyRichOperations(doc, [{ type: "set-page-layout", layout: { paper: "a4" } }])).toThrow(/does not support/);
+    expect(getRichCapabilities(doc)).toMatchObject({ runFormatting: true, paragraphFormatting: true, pageLayout: true, review: false, hyperlinks: false, namedStyles: false, tables: false });
+    const laidOut = applyRichOperations(doc, [{ type: "set-page-layout", layout: { paper: "a4", orientation: "landscape", marginTopPoints: 36, marginLeftPoints: 54 } }]);
+    const reopened = await openRichDocument(format, await exportRichDocument(laidOut));
+    expect(reopened.pageLayout).toMatchObject({ orientation: "landscape", widthPoints: 841.9, heightPoints: 595.3, marginTopPoints: 36, marginLeftPoints: 54 });
+    expect(await exportRichDocument(doc)).toEqual(await exportRichDocument(doc));
     expect(() => applyRichOperations(doc, [{ type: "insert-table", rows: 1, columns: 1 }])).toThrow();
     expect(() => getRichImageBytes(doc, "anything")).toThrow();
     expect(await exportRichDocument(doc)).toEqual(await exportRichDocument(doc));

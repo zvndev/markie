@@ -15,7 +15,7 @@ export function sameRichSource(a: RichDocument, b: RichDocument): boolean {
 export function getRichCapabilities(document: RichDocument) {
   const editable = document.canEdit;
   const word = editable && document.format === "docx";
-  return { runFormatting: editable, paragraphFormatting: editable, pageLayout: word, tables: word, images: word, lists: word, hyperlinks: word, pageBreaks: word, review: word, namedStyles: word } as const;
+  return { runFormatting: editable, paragraphFormatting: editable, pageLayout: editable, tables: word, images: word, lists: word, hyperlinks: word, pageBreaks: word, review: word, namedStyles: word } as const;
 }
 export async function openRichDocument(format: RichDocument["format"], bytes: Uint8Array): Promise<RichDocument> {
   if (format === "docx") return openDocx(bytes);
@@ -31,7 +31,7 @@ export async function createRichDocument(format: RichDocument["format"], text = 
 }
 export function applyRichOperations<T extends RichDocument>(document: T, operations: readonly DocxOperation[]): T {
   if (document.format === "docx") return applyDocxOperations(document, operations) as T;
-  if (operations.some((op) => !["format-run", "format-range", "replace-paragraph", "insert-paragraph", "delete-paragraph", "format-paragraph"].includes(op.type))) throw new DocxError("unsupported-operation", "This format does not support that editing command.");
+  if (operations.some((op) => !["format-run", "format-range", "replace-paragraph", "insert-paragraph", "delete-paragraph", "format-paragraph", "set-page-layout"].includes(op.type))) throw new DocxError("unsupported-operation", "This format does not support that editing command.");
   return (document.format === "rtf" ? applyRtfOperations(document, operations) : applyOdtOperations(document, operations)) as T;
 }
 export function replaceRichText<T extends RichDocument>(document: T, edits: readonly DocxTextEdit[]): T {

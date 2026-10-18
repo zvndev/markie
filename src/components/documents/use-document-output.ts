@@ -22,7 +22,7 @@ export function useDocumentOutput(inputs: DocumentOutputInputs) {
     if (!mounted.current || inFlight.current || current.current.isBlocked()) return;
     // Synchronous model capture, never scraped DOM or a save/flush.
     const snapshot = current.current.captureSession();
-    if (snapshot?.office?.format !== "docx" || !canPrintDocx(snapshot.office)) return;
+    if (!snapshot?.office || !canPrintDocx(snapshot.office)) return;
     const stillCurrent = () => {
       const next = current.current.captureSession();
       return mounted.current && next?.epoch === snapshot.epoch && next.generation === snapshot.generation;
@@ -37,7 +37,8 @@ export function useDocumentOutput(inputs: DocumentOutputInputs) {
         const result = await api.exportPDF({ html, ...(command === "document-print" ? { mode: "print" as const } : {}) });
         if (!stillCurrent() || current.current.isBlocked() || result.canceled) return;
         if (!result.success || result.error) throw new Error(result.error || "The document output could not be completed.");
-        setMessage({ epoch: snapshot.epoch, notice: command === "document-print" ? "Sent the supported document view to the printer." : result.path ? `Exported PDF to ${result.path}. The Word file was not changed.` : "PDF exported. The Word file was not changed." });
+        const unchanged = snapshot.office.format === "docx" ? "The Word file was not changed." : "The source file was not changed.";
+        setMessage({ epoch: snapshot.epoch, notice: command === "document-print" ? "Sent the supported document view to the printer." : result.path ? `Exported PDF to ${result.path}. ${unchanged}` : `PDF exported. ${unchanged}` });
       } else {
         // Open during the user gesture, before fonts or a print sheet await.
         popup = window.open("", "_blank");
@@ -49,7 +50,7 @@ export function useDocumentOutput(inputs: DocumentOutputInputs) {
         await popup.document.fonts?.ready;
         if (!stillCurrent() || current.current.isBlocked()) return;
         popup.focus(); popup.print();
-        if (stillCurrent()) setMessage({ epoch: snapshot.epoch, notice: "Print dialog opened. Choose Save as PDF there to export. The Word file was not changed." });
+        if (stillCurrent()) setMessage({ epoch: snapshot.epoch, notice: `Print dialog opened. Choose Save as PDF there to export. ${snapshot.office.format === "docx" ? "The Word" : "The source"} file was not changed.` });
       }
     } catch (failure) {
       if (stillCurrent() && !current.current.isBlocked()) setMessage({ epoch: snapshot.epoch, error: failure instanceof Error ? failure.message : "Could not print or export the supported document view." });
@@ -59,6 +60,6 @@ export function useDocumentOutput(inputs: DocumentOutputInputs) {
       if (mounted.current) setBusy(false);
     }
   }, []);
-  const eligible = inputs.session?.office?.format === "docx" && canPrintDocx(inputs.session.office);
+  const eligible = !!inputs.session?.office && canPrintDocx(inputs.session.office);
   return { busy, isBusy, eligible, execute, error: message?.epoch === inputs.session?.epoch ? message?.error : undefined, notice: message?.epoch === inputs.session?.epoch ? message?.notice : undefined };
 }

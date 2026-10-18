@@ -174,6 +174,77 @@ export async function openRtf(input: Uint8Array): Promise<NativeRichDocument> {
     }
     if (Object.keys(rgb).length) warn("unterminated-color-entry");
   };
+  // RTF 1.9.1, Information Group (Microsoft's normative prose, not its sample reader):
+  // https://officeprotocoldoc.z19.web.core.windows.net/files/Archive_References/[MSFT-RTF].pdf
+  // Only passive properties are retained here.
+  // Canonical Unicode text is essential: the body writer changes the source
+  // code page and Unicode fallback count, so retaining raw metadata can corrupt it.
+  const infoGroup = (group: Group, state: State): Uint8Array | undefined => {
+    const textFields = new Set(["title", "subject", "author", "manager", "company", "operator", "category", "keywords", "comment", "doccomm"]);
+    const timeFields = new Set(["creatim", "revtim", "printim", "buptim"]);
+    const numbers = new Set(["version", "vern", "edmins", "nofpages", "nofwords", "nofchars", "nofcharsws", "id"]);
+    const timeBounds: Record<string, readonly [number, number]> = { yr: [0, 9999], mo: [1, 12], dy: [1, 31], hr: [0, 23], min: [0, 59], sec: [0, 59] };
+    const fields = new Set<string>();
+    const pieces: string[] = [];
+    const start = (value: Group) => value.tokens[0]?.kind === "symbol" && value.tokens[0].name === "*" ? 1 : 0;
+    const whitespace = (token: Token) => token.kind === "byte" && [9, 32].includes(token.value);
+    function propertyText(tokens: readonly Token[]): string | undefined {
+      let uc = state.uc, fallback = 0, result = "", pending: number[] = [];
+      const flush = () => { result += decode(pending, fontCodepage(state.font ?? defaultFont)); pending = []; };
+      for (const token of tokens) {
+        if (token.kind === "group" || token.kind === "binary") return;
+        if (token.kind === "byte") { if (fallback) fallback--; else pending.push(token.value); continue; }
+        flush();
+        if (token.kind === "word" && !["uc", "u", "line", "tab"].includes(token.name)) return;
+        if (token.kind === "symbol" && !["\\", "{", "}", "~", "-", "_"].includes(token.name)) return;
+        if (token.kind === "word" && (token.name === "uc" ? token.value === undefined || token.value < 0 || token.value > 32
+          : token.name === "u" ? token.value === undefined || token.value < -32768 || token.value > 32767 : token.value !== undefined)) return;
+        if (fallback) { fallback--; continue; }
+        if (token.kind === "symbol") {
+          const symbols: Record<string, string> = { "\\": "\\", "{": "{", "}": "}", "~": "\u00a0", "-": "\u00ad", "_": "\u2011" };
+          if (!Object.hasOwn(symbols, token.name)) return;
+          result += symbols[token.name]; continue;
+        }
+        if (token.name === "uc" && token.value !== undefined && token.value >= 0 && token.value <= 32) uc = token.value;
+        else if (token.name === "u" && token.value !== undefined && token.value >= -32768 && token.value <= 32767) { result += String.fromCharCode(token.value & 65535); fallback = uc; }
+        else if (["line", "tab"].includes(token.name) && token.value === undefined) result += token.name === "line" ? "\n" : "\t";
+        else return;
+      }
+      flush();
+      if (fallback) return;
+      return result;
+    }
+    const header = group.tokens[start(group)];
+    if (header?.kind !== "word" || header.name !== "info" || header.value !== undefined) return;
+    for (const token of group.tokens.slice(start(group) + 1)) {
+      if (whitespace(token)) continue;
+      const nested = token.kind === "group" ? token : undefined;
+      const first = nested ? nested.tokens[start(nested)] : token;
+      if (first?.kind !== "word" || fields.has(first.name)) return;
+      const name = first.name;
+      fields.add(name);
+      const tail = nested?.tokens.slice(start(nested) + 1) ?? [];
+      if (numbers.has(name)) {
+        if (first.value === undefined || first.value < 0 || tail.some(t => !whitespace(t))) return;
+        pieces.push(`\\${name}${first.value}`);
+      } else if (nested && first.value === undefined && textFields.has(name)) {
+        const value = propertyText(tail);
+        if (value === undefined) return;
+        pieces.push(`{\\${name}\\uc1 ${escapeText(value)}}`);
+      } else if (nested && first.value === undefined && timeFields.has(name)) {
+        const seen = new Set<string>(), time: string[] = [];
+        for (const part of tail) {
+          if (whitespace(part)) continue;
+          if (part.kind !== "word" || seen.has(part.name) || !Object.hasOwn(timeBounds, part.name) || part.value === undefined) return;
+          const [min, max] = timeBounds[part.name];
+          if (part.value < min || part.value > max) return;
+          seen.add(part.name); time.push(`\\${part.name}${part.value}`);
+        }
+        pieces.push(`{\\${name}${time.join("")}}`);
+      } else return;
+    }
+    return new TextEncoder().encode(`{\\info${pieces.join("")}}`);
+  };
   const suppressedDestinations = new Set(["info", "stylesheet", "pict", "object", "field", "footnote", "annotation", "header", "footer", "headerl", "headerr", "footerl", "footerr", "listtable", "listoverridetable", "revtbl", "filetbl", "xmlnstbl", "datastore", "themedata", "colorschememapping", "upr", "ud"]);
   function visit(group: Group, inherited: State, isRoot = false) {
     const state: State = { ...inherited, style: { ...inherited.style }, paragraph: { ...inherited.paragraph } };
@@ -181,6 +252,11 @@ export async function openRtf(input: Uint8Array): Promise<NativeRichDocument> {
       const dest = destination(group);
       if (dest === "fonttbl") { fontTable(group, state.uc); return; }
       if (dest === "colortbl") { colorTable(group); return; }
+      if (dest === "info") {
+        const info = infoGroup(group, state);
+        if (info) retained.push(info); else warn("info");
+        return;
+      }
       if (dest === "generator") {
         // Only plain ASCII generator metadata is byte-stable under the canonical Unicode writer.
         // Other metadata remains exactly exportable but read-only, rather than changing its charset.

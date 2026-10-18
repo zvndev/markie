@@ -161,7 +161,7 @@ export function DocumentWorkspace({ embedded = false, active = true, onShellChan
         {output.busy ? <div className="docs-progress" role="status">Preparing document output…</div> : null}
         {workspace.busy ? <div className="docs-progress" role="status">{workspace.busy}…</div> : null}
         {session ? <>
-          {session.office ? <div className="docs-notice">{session.office.format !== "docx" ? `${session.office.format.toUpperCase()} supports basic rich-text editing and same-format saves. Complex content, cloud sharing and print/PDF are not available in this subset.` : output.eligible ? DOCUMENT_OUTPUT_LIMITS : "Print and PDF are unavailable for unsupported document features or pending revisions. Resolve revisions before printing; you can still export the original Word file."}</div> : null}
+          {session.office ? <div className="docs-notice">{output.eligible ? DOCUMENT_OUTPUT_LIMITS : "Print and PDF are unavailable for unsupported document features or pending revisions. You can still export the source document."}</div> : null}
           {session.warnings.length ? <div className="docs-warning">{session.warnings.join(" ")}</div> : null}
           {showDetails ? <section className="docs-details" aria-label="Document organization" key={session.id} inert={output.busy}>
             <label>Name<input key={`${session.id}-name`} defaultValue={session.name} onBlur={(event) => { const next = workspace.changeDetails({ name: event.target.value }); event.currentTarget.value = next?.name ?? session.name; }} /></label>

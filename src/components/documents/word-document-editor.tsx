@@ -57,7 +57,7 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
     setReconcileToken((value) => value + 1);
   };
   const perform = (next: RichDocument) => {
-    if (!canMutate() || next.format !== latestDocument.current.format) return;
+    if (!canMutate() || next.format !== latestDocument.current.format || next === latestDocument.current) return;
     undoHistory.current.push(latestDocument.current); redoHistory.current = [];
     if (undoHistory.current.length > 100) undoHistory.current.shift();
     // Operations and Find retain the format; the dialog accepts the shared view.
@@ -213,7 +213,7 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
   };
   const selectedTable = document.tables.some((table) => table.rows.some((row) => row.cells.some((cell) => cell.paragraphs.some((item) => item.id === selected))));
   const hasLinkSelection = !!paragraph && (!!document.hyperlinks.find((link) => link.paragraphId === selected && !!runId && link.runIds.includes(runId)) || !!textSelection.current && textSelection.current.start !== textSelection.current.end);
-  const availableCommands = tool ? [] : ["find", "zoom-in", "zoom-out", "view-zoom-reset", ...(isDocx ? ["view-page", "view-continuous", "view-outline", "review-comments", "review-tracking", "review-changes", "review-final", ...(document.originalText === undefined ? [] : ["review-original"])] : []), ...(onHistory ? ["document-history"] : []),
+  const availableCommands = tool ? [] : ["find", "zoom-in", "zoom-out", "view-zoom-reset", "view-page", "view-continuous", ...(isDocx ? ["view-outline", "review-comments", "review-tracking", "review-changes", "review-final", ...(document.originalText === undefined ? [] : ["review-original"])] : []), ...(onHistory ? ["document-history"] : []),
     ...(canUndo ? ["undo"] : []), ...(canRedo ? ["redo"] : []),
     ...(editable && capabilities.pageLayout ? ["layout-page-setup", "layout-letter", "layout-a4", "layout-legal", "layout-portrait", "layout-landscape"] : []),
     ...(editable && paragraph && selectionSupported && !paragraph.revisionIds.length ? [

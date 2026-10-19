@@ -16,6 +16,23 @@ describe("original bounded RTF codec", () => {
     expect(document.paragraphs[1].runs.find(r => r.text === "italic")?.style.italic).toBe(true);
     expect(document.paragraphs[1].runs.at(-1)?.style.italic).toBeUndefined();
   });
+  it("opens TextEdit-flavored RTF as editable, ignoring producer and view metadata", async () => {
+    const source = bytes(String.raw`{\rtf1\ansi\ansicpg1252\cocoartf2867
+\cocoatextscaling0\cocoaplatform0{\fonttbl{\f0\fswiss\fcharset0 Helvetica;}}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0\viewscale100\deftab720
+\pard\tx720\tx1440\pardirnatural\partightenfactor0
+\f0\fs24 \cf0 First paragraph\par Second {\b bold} tail\par}`);
+    const document = await openRtf(source);
+    expect(document.canEdit).toBe(true);
+    expect(document.diagnostics).toEqual([]);
+    expect(document.text).toBe("First paragraph\nSecond bold tail");
+    const changed = replaceRtfText(document, [{ runId: document.paragraphs[0].runs[0].id, text: "Edited first" }]);
+    const reopened = await openRtf(await exportRtf(changed));
+    expect(reopened.canEdit).toBe(true);
+    expect(reopened.text).toBe("Edited first\nSecond bold tail");
+  });
   it("retains exact original bytes and owns defensive copies", async () => {
     const source = basicRtfFixture(), original = source.slice();
     const document = await openRtf(source); source.fill(0);

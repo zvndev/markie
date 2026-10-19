@@ -89,6 +89,36 @@ describe("Word renderer inside Markie", () => {
     expect(readWordSelection(host)).toEqual(backward ? { anchor: range.focus, focus: range.anchor } : range);
     view.execute("redo"); expect(view.state.document.text).toBe("al🙂mma"); expect(readWordSelection(host)?.focus.offset).toBe(4);
   });
+  it.each(["rtf", "odt"] as const)("selects all and copies plain text across %s paragraphs", async (format) => {
+    const initial = await createRichDocument(format, "alpha\nbeta"), view = editor(initial);
+    const host = view.container.querySelector<HTMLElement>(".docs-word-host")!;
+    const field = screen.getByRole("textbox", { name: "Paragraph 1" });
+    field.focus(); select(1, 4);
+    const setData = vi.fn();
+    fireEvent.copy(field, { clipboardData: { setData } });
+    expect(setData).toHaveBeenCalledWith("text/plain", "lph");
+    fireEvent.keyDown(field, { key: "a", metaKey: true });
+    expect(readWordSelection(host)).toEqual({ anchor: { paragraphId: initial.paragraphs[0].id, offset: 0 }, focus: { paragraphId: initial.paragraphs[1].id, offset: 4 } });
+    const setAll = vi.fn();
+    fireEvent.copy(field, { clipboardData: { setData: setAll } });
+    expect(setAll).toHaveBeenCalledWith("text/plain", "alpha\nbeta");
+  });
+  it("extends a mouse drag across RTF paragraphs with the caret point", async () => {
+    const initial = await createRichDocument("rtf", "alpha\nbeta"), view = editor(initial);
+    const host = view.container.querySelector<HTMLElement>(".docs-word-host")!;
+    const firstText = screen.getByRole("textbox", { name: "Paragraph 1" }).querySelector("span")!.firstChild!;
+    const secondText = screen.getByRole("textbox", { name: "Paragraph 2" }).querySelector("span")!.firstChild!;
+    const point = (node: ChildNode, offset: number) => { const range = document.createRange(); range.setStart(node, offset); range.collapse(true); return range; };
+    const caret = vi.fn((x: number) => x < 50 ? point(firstText, 1) : point(secondText, 3));
+    Object.assign(document, { caretRangeFromPoint: caret });
+    try {
+      const field = screen.getByRole("textbox", { name: "Paragraph 1" });
+      fireEvent.pointerDown(field, { button: 0, clientX: 10, clientY: 5 });
+      fireEvent.pointerMove(window, { clientX: 90, clientY: 30, buttons: 1 });
+      expect(readWordSelection(host)).toEqual({ anchor: { paragraphId: initial.paragraphs[0].id, offset: 1 }, focus: { paragraphId: initial.paragraphs[1].id, offset: 3 } });
+      fireEvent.pointerUp(window);
+    } finally { delete (document as unknown as Record<string, unknown>).caretRangeFromPoint; }
+  });
   it("joins mixed paragraphs at both keyboard boundaries and supports selected Enter", async () => {
     const base = await createDocx("bold\nitalic"), initial = applyDocxOperations(base, [{ type: "format-run", runId: base.paragraphs[0].runs[0].id, style: { bold: true } }, { type: "format-run", runId: base.paragraphs[1].runs[0].id, style: { italic: true } }]);
     const view = editor(initial), field = select(0, 0, 2);

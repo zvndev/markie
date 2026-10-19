@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { DocxOperation, DocxRunFormat } from "@/lib/office/docx";
 import type { RichDocument } from "@/lib/office/rich-text-types";
 import { applyRichOperations, getRichCapabilities, replaceRichText, replaceRichRange } from "@/lib/office/rich-document";
@@ -76,6 +76,76 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
     const range = host.current && readWordSelection(host.current);
     if (!range) return;
     syncSelection(range);
+  };
+  // Each paragraph is its own editing host, and browsers will not extend a
+  // native drag selection across editing hosts. Once a drag crosses into a
+  // neighbouring paragraph, extend the selection from the caret point so
+  // mouse selection behaves like one continuous document.
+  const dragAnchor = useRef<{ node: Node; offset: number; paragraphId: string; crossed: boolean } | null>(null);
+  const caretPoint = (x: number, y: number): { node: Node; offset: number } | null => {
+    const doc = globalThis.document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    };
+    const range = doc.caretRangeFromPoint?.(x, y);
+    if (range) return { node: range.startContainer, offset: range.startOffset };
+    const position = doc.caretPositionFromPoint?.(x, y);
+    return position ? { node: position.offsetNode, offset: position.offset } : null;
+  };
+  const paragraphOf = (node: Node): HTMLElement | null => {
+    const element = node.nodeType === Node.ELEMENT_NODE ? node as HTMLElement : node.parentElement;
+    const paragraph = element?.closest<HTMLElement>("[data-paragraph-id]") ?? null;
+    return paragraph && host.current?.contains(paragraph) ? paragraph : null;
+  };
+  // Between lines or past the last glyph the caret API reports the page
+  // container instead of a text node. Resolve the paragraph under the point
+  // and retry at its line centre, falling back to its nearest text edge.
+  const dragFocusAt = (x: number, y: number, anchorParagraphId: string): { node: Node; offset: number; paragraph: HTMLElement } | null => {
+    const point = caretPoint(x, y);
+    const paragraph = point && paragraphOf(point.node);
+    if (point && paragraph) return { node: point.node, offset: point.offset, paragraph };
+    // Paragraphs are not always the hit target (the page surface is), so
+    // resolve by geometry: the paragraph containing the point, else the
+    // nearest one vertically.
+    let hit: HTMLElement | null = null, nearest = Number.POSITIVE_INFINITY;
+    for (const candidate of host.current?.querySelectorAll<HTMLElement>("[data-paragraph-id]") ?? []) {
+      const rect = candidate.getBoundingClientRect();
+      const distance = y < rect.top ? rect.top - y : y > rect.bottom ? y - rect.bottom : 0;
+      if (distance < nearest) { nearest = distance; hit = candidate; }
+    }
+    if (!hit) return null;
+    const rect = hit.getBoundingClientRect();
+    const retry = caretPoint(x, rect.top + rect.height / 2);
+    if (retry && paragraphOf(retry.node) === hit) return { node: retry.node, offset: retry.offset, paragraph: hit };
+    const walker = globalThis.document.createTreeWalker(hit, NodeFilter.SHOW_TEXT);
+    let first: Node | null = null, last: Node | null = null, node = walker.nextNode();
+    while (node) { first ??= node; last = node; node = walker.nextNode(); }
+    if (!first || !last) return null;
+    const paragraphs = latestDocument.current.paragraphs;
+    const forward = paragraphs.findIndex((item) => item.id === hit.dataset.paragraphId) >= paragraphs.findIndex((item) => item.id === anchorParagraphId);
+    return forward ? { node: last, offset: last.textContent?.length ?? 0, paragraph: hit } : { node: first, offset: 0, paragraph: hit };
+  };
+  const beginDragSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !(event.target instanceof HTMLElement) || !event.target.closest("[data-paragraph-id]")) return;
+    const point = caretPoint(event.clientX, event.clientY);
+    const paragraph = point && paragraphOf(point.node);
+    if (!point || !paragraph?.dataset.paragraphId) return;
+    const anchor = { node: point.node, offset: point.offset, paragraphId: paragraph.dataset.paragraphId, crossed: false };
+    dragAnchor.current = anchor;
+    const move = (moveEvent: PointerEvent) => {
+      if (!moveEvent.buttons || dragAnchor.current !== anchor) return;
+      const focus = dragFocusAt(moveEvent.clientX, moveEvent.clientY, anchor.paragraphId);
+      if (!focus) return;
+      if (focus.paragraph.dataset.paragraphId !== anchor.paragraphId) anchor.crossed = true;
+      if (!anchor.crossed) return;
+      window.getSelection()?.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset);
+    };
+    const up = () => {
+      if (dragAnchor.current === anchor) dragAnchor.current = null;
+      window.removeEventListener("pointermove", move);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up, { once: true });
   };
   useLayoutEffect(() => {
     const range = pendingSelection.current;
@@ -273,7 +343,7 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
   });
   const handleStructureKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (!(event.target instanceof HTMLElement) || !event.target.closest("[data-paragraph-id]") || event.nativeEvent.isComposing || event.keyCode === 229 || host.current?.querySelector('[data-word-composing="true"]')) return;
-    if (isDocx && (event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "a" && canView() && !tool && !paletteOpen) {
+    if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "a" && canView() && !tool && !paletteOpen) {
       const paragraphs = latestDocument.current.paragraphs, first = paragraphs[0], last = paragraphs.at(-1);
       if (!first || !last || !host.current) return;
       event.preventDefault(); event.stopPropagation();
@@ -440,7 +510,17 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
       setStructureReconcileToken((value) => value + 1);
       rejectChange("Composition across paragraphs is not supported. The source and selection were preserved.");
     }}
-    onPointerUp={rememberSelection} onKeyUp={rememberSelection} onPointerDownCapture={(event) => { if (!(event.target as HTMLElement).closest("[data-paragraph-id]")) rememberSelection(); }}
+    onPointerUp={rememberSelection} onKeyUp={rememberSelection} onPointerDownCapture={(event) => { if (!(event.target as HTMLElement).closest("[data-paragraph-id]")) rememberSelection(); else beginDragSelection(event); }}
+    onCopyCapture={(event) => {
+      if (!(event.target as HTMLElement).closest("[data-paragraph-id]")) return;
+      const range = host.current && readWordSelection(host.current);
+      if (!range || range.anchor.paragraphId === range.focus.paragraphId && range.anchor.offset === range.focus.offset) return;
+      // Native copy only sees one editing host and skips protected runs.
+      // The logical range is the document truth in every format, read-only included.
+      event.preventDefault(); event.stopPropagation();
+      logicalSelection.current = range;
+      event.clipboardData.setData("text/plain", wordRangeText(latestDocument.current, range));
+    }}
     onPasteCapture={(event) => {
       if (!(event.target as HTMLElement).closest("[data-paragraph-id]")) return;
       const range = host.current && readWordSelection(host.current);

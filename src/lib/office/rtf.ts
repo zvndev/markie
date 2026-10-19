@@ -170,7 +170,7 @@ export async function openRtf(input: Uint8Array): Promise<NativeRichDocument> {
       } else if (t.kind === "word" && ["red", "green", "blue"].includes(t.name)) {
         if (t.value === undefined || t.value < 0 || t.value > 255) { warn("invalid-color-table"); continue; }
         rgb[t.name as keyof typeof rgb] = t.value;
-      } else if (!(t.kind === "word" && t.name === "colortbl") && !(t.kind === "byte" && t.value === 32)) warn("color-table-extension");
+      } else if (!(t.kind === "word" && (t.name === "colortbl" || t.name === "expandedcolortbl")) && !(t.kind === "symbol" && t.name === "*") && !(t.kind === "byte" && t.value === 32)) warn("color-table-extension");
     }
     if (Object.keys(rgb).length) warn("unterminated-color-entry");
   };
@@ -251,7 +251,9 @@ export async function openRtf(input: Uint8Array): Promise<NativeRichDocument> {
     if (!isRoot) {
       const dest = destination(group);
       if (dest === "fonttbl") { fontTable(group, state.uc); return; }
-      if (dest === "colortbl") { colorTable(group); return; }
+      // TextEdit writes the same table twice (plain plus expanded form).
+      // The first complete table wins; the duplicate carries no new content.
+      if (dest === "colortbl" || dest === "expandedcolortbl") { if (!colors.length) colorTable(group); return; }
       if (dest === "info") {
         const info = infoGroup(group, state);
         if (info) retained.push(info); else warn("info");
@@ -305,6 +307,10 @@ export async function openRtf(input: Uint8Array): Promise<NativeRichDocument> {
       const page: Record<string, keyof DocxPageLayout> = { paperw: "widthPoints", paperh: "heightPoints", margt: "marginTopPoints", margb: "marginBottomPoints", margl: "marginLeftPoints", margr: "marginRightPoints" };
       if (page[name]) { if (bodyStarted || !required(0, 31680)) warn("unsupported-page-layout"); else Object.assign(layout, { [page[name]]: value! / 20 }); continue; }
       if (name === "landscape") { if (bodyStarted) warn("late-landscape"); else layout.orientation = "landscape"; continue; }
+      // Producer identity, viewer window state and Cocoa layout hints carry
+      // no document content. Real TextEdit files always include them, so
+      // treating them as features would lock every TextEdit RTF read-only.
+      if (["cocoartf", "cocoatextscaling", "cocoaplatform", "vieww", "viewh", "viewkind", "viewscale", "viewzk", "viewnobound", "deftab", "tx", "pardirnatural", "partightenfactor"].includes(name)) continue;
       warn(name);
     }
     flush();

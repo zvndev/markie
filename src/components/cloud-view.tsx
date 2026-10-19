@@ -21,6 +21,7 @@ interface CloudViewProps {
   // a list that disagrees with the counts in the band.
   items: LibraryItem[];
   query?: LibraryDocumentQuery;
+  presentation?: "panel" | "workspace";
   // The ordinary snapshot section owns its own listing and counts. Scope this
   // legacy service's copy and omit redundant empty groups when shown beside it.
   alongsideSnapshots?: boolean;
@@ -164,6 +165,7 @@ function people(d: SharedByMeDoc): string {
 export function CloudView({
   items,
   query = DEFAULT_LIBRARY_DOCUMENT_QUERY,
+  presentation = "panel",
   alongsideSnapshots = false,
   loading,
   renderRow,
@@ -298,15 +300,16 @@ export function CloudView({
   const showSection = (count: number) => !alongsideSnapshots || count > 0;
 
   const notice = cloudError ? { text: cloudError, kind: "error" as const } : null;
+  const workspace = presentation === "workspace";
 
   return (
-    <div className={alongsideSnapshots ? "mt-2 flex flex-col border-t border-border" : "flex flex-col h-full"}>
-      {alongsideSnapshots ? <h3 className="px-3 pt-2 text-xs font-medium text-muted">File sync &amp; sharing</h3> : null}
-      {signedIn && !sharedArea ? <div className="px-3 py-1"><CloudAreaPicker label="File sync cloud area" value={areaId} onChange={setAreaId} onLoaded={setAreas} /></div> : null}
+    <div className={workspace ? "flex min-h-0 flex-col" : alongsideSnapshots ? "mt-2 flex flex-col border-t border-border" : "flex flex-col h-full"}>
+      {alongsideSnapshots ? <h3 className={workspace ? "sr-only" : "px-3 pt-2 text-xs font-medium text-muted"}>File sync &amp; sharing</h3> : null}
+      {signedIn && !sharedArea ? <div className={workspace ? "mb-3 max-w-[300px]" : "px-3 py-1"}><CloudAreaPicker label="File sync cloud area" value={areaId} onChange={setAreaId} onLoaded={setAreas} fullWidth /></div> : null}
       {/* A signed-out account has no counts to summarize, but one we have not
           looked at yet does, so the band stays while the answer is on its way. */}
       {(booting || signedIn) && (
-        <div className="shrink-0 border-b border-border/60 px-2.5 py-2 text-[10.5px] text-muted">
+        <div className={workspace ? "mb-3 shrink-0 rounded-[10px] border border-border/70 bg-background/35 px-3 py-2 text-[11px] tabular-nums text-muted shadow-[inset_0_1px_rgba(255,255,255,0.04)]" : "shrink-0 border-b border-border/60 px-2.5 py-2 text-[10.5px] text-muted"}>
           {scopedBand}
         </div>
       )}
@@ -318,15 +321,16 @@ export function CloudView({
           <CloudEmptyState
             icon={<CloudIcon />}
             title={alongsideSnapshots ? "Sign in to see synced and shared files" : "Sign in to see your cloud"}
-            body="Documents you sync, and docs people share with you, show up once you sign in."
+            body={workspace ? "" : "Documents you sync, and docs people share with you, show up once you sign in."}
           />
         ) : (
-          <>
+          <div className={workspace ? "grid items-start gap-3 2xl:grid-cols-2" : undefined}>
             {showSection(syncedFromDevice.length) ? <Section
               id="synced"
               count={syncedFromDevice.length}
               open={open.synced}
               onToggle={toggle}
+              workspace={workspace}
             >
               {syncedFromDevice.length > 0 ? (
                 syncedFromDevice.map((i) => (
@@ -337,7 +341,7 @@ export function CloudView({
               )}
             </Section> : null}
 
-            {showSection(myCloudOnly.length) ? <Section id="cloud" count={myCloudOnly.length} open={open.cloud} onToggle={toggle}>
+            {showSection(myCloudOnly.length) ? <Section id="cloud" count={myCloudOnly.length} open={open.cloud} onToggle={toggle} workspace={workspace}>
               {myCloudOnly.length > 0 ? (
                 myCloudOnly.map((i) => (
                   <RowWithMediaNote key={i.cloudId ?? i.path ?? i.name} item={i} renderRow={renderRow} />
@@ -352,6 +356,7 @@ export function CloudView({
               count={sharedItems.length}
               open={open["with-me"]}
               onToggle={toggle}
+              workspace={workspace}
             >
               {sharedItems.length > 0 ? (
                 sharedItems.map((i) => (
@@ -362,7 +367,7 @@ export function CloudView({
               )}
             </Section> : null}
 
-            {showSection(visibleByMe.length) || byMeError || byMe === null ? <Section id="by-me" count={visibleByMe.length} open={open["by-me"]} onToggle={toggle}>
+            {showSection(visibleByMe.length) || byMeError || byMe === null ? <Section id="by-me" count={visibleByMe.length} open={open["by-me"]} onToggle={toggle} workspace={workspace}>
               {byMeError ? (
                 <CloudEmptyState
                   icon={<PeopleIcon />}
@@ -392,7 +397,7 @@ export function CloudView({
                 <SectionEmpty id="by-me" />
               )}
             </Section> : null}
-          </>
+          </div>
         )}
       </div>
 
@@ -472,26 +477,28 @@ function Section({
   count,
   open,
   onToggle,
+  workspace = false,
   children,
 }: {
   id: SectionId;
   count: number;
   open: boolean;
   onToggle: (id: SectionId) => void;
+  workspace?: boolean;
   children: ReactNode;
 }) {
   return (
-    <div data-cloud-section={id}>
+    <div data-cloud-section={id} className={workspace ? "min-w-0 rounded-xl border border-border/75 bg-surface-2/55 px-2 pb-2 shadow-[inset_0_1px_rgba(255,255,255,0.04),0_2px_8px_rgba(0,0,0,0.07)]" : undefined}>
       <button
         onClick={() => onToggle(id)}
         aria-expanded={open}
-        className="flex w-full items-center justify-between gap-2 px-2 pt-3 pb-1 text-left"
+        className={`flex w-full items-center justify-between gap-2 text-left ${workspace ? "px-2 pb-2 pt-3" : "px-2 pt-3 pb-1"}`}
       >
-        <span className="flex items-center gap-1 text-[9px] uppercase tracking-wide text-muted">
+        <span className={`flex items-center gap-1.5 uppercase tracking-wide text-muted ${workspace ? "text-[10px] font-semibold" : "text-[9px]"}`}>
           <Chevron open={open} />
           {SECTION_LABEL[id]}
         </span>
-        <span className="rounded border border-border/70 px-1 py-px text-[9px] tabular-nums text-muted">
+        <span className="rounded-full border border-border/70 bg-background/35 px-1.5 py-px text-[9px] tabular-nums text-muted">
           {count}
         </span>
       </button>

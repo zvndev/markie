@@ -26,7 +26,7 @@ describe("ordinary Cloud sidebar snapshots", () => {
     expect(screen.getByText("1 of 3 snapshots")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /Zebra.docx/ })); expect(onOpen).toHaveBeenCalledWith("word");
     view.rerender(<DocumentCloudLibrary query={{ ...query, search: "unfetched body" }} onOpen={onOpen} />);
-    expect(screen.getByText("No snapshots match these filters.")).toBeVisible();
+    expect(screen.getByText("No snapshots match these filters")).toBeVisible();
     expect(request).toHaveBeenCalledTimes(1);
     expect(request.mock.calls[0]).toEqual(["https://markie.test/api/document-platform/documents", expect.objectContaining({ method: "GET" })]);
   });
@@ -52,19 +52,20 @@ describe("ordinary Cloud sidebar snapshots", () => {
     const view = render(<DocumentCloudLibrary query={query} onOpen={vi.fn()} />);
     expect(screen.getByText("Checking account…")).toBeVisible(); expect(request).not.toHaveBeenCalled();
     state.auth = { user: null, status: "out" }; view.rerender(<DocumentCloudLibrary query={query} onOpen={vi.fn()} />);
-    expect(screen.getByText("Sign in to browse document snapshots.")).toBeVisible(); expect(request).not.toHaveBeenCalled();
+    expect(screen.getByText("Sign in to view snapshots")).toBeVisible(); expect(request).not.toHaveBeenCalled();
     request.mockResolvedValueOnce(Response.json({ documents: [] })).mockResolvedValueOnce(new Response("missing", { status: 404 })).mockRejectedValueOnce(new TypeError("fetch failed"));
     state.auth = { user: { id: "a", email: "a@example.test" }, status: "in" }; view.rerender(<DocumentCloudLibrary query={query} onOpen={vi.fn()} />);
     await screen.findByText(/No document snapshots yet/);
     fireEvent.click(screen.getByRole("button", { name: "Refresh cloud document snapshots" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("does not provide"); expect(screen.queryByText(/No document snapshots yet/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Refresh cloud document snapshots" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("could not be reached");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Snapshots unavailable on this server"); expect(screen.queryByText(/No document snapshots yet/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry loading cloud document snapshots" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Snapshots could not be reached");
   });
   it("does not trust an old signed-in store after the server or token loses confirmation", async () => {
     const request = vi.fn(); vi.stubGlobal("fetch", request); state.confirmed = false;
     render(<DocumentCloudLibrary query={query} onOpen={vi.fn()} />);
-    expect(screen.getByText("Sign in again to confirm your account on this server.")).toBeVisible();
+    expect(screen.getByText("Confirm your account")).toBeVisible();
+    expect(screen.getByText("Sign in again on this server.")).toBeVisible();
     expect(request).not.toHaveBeenCalled();
   });
 });

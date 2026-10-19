@@ -80,22 +80,19 @@ describe("ActivityBar", () => {
     render(<ActivityBar {...props({ activeView: "cloud", panelOpen: true })} />);
     const cloud = screen.getByRole("button", { name: "Cloud: synced and shared" });
     const library = screen.getByRole("button", { name: "Library: recent and projects (⌘L)" });
-    expect(cloud.classList.contains("bg-accent")).toBe(true);
-    expect(library.classList.contains("bg-accent")).toBe(false);
+    expect(cloud).toHaveAttribute("aria-current", "page");
+    expect(cloud.classList.contains("markie-rail-button--active")).toBe(true);
+    expect(library).not.toHaveAttribute("aria-current");
   });
 
   it("shows no panel view as active while the panel is closed", () => {
     render(<ActivityBar {...props({ activeView: "cloud", panelOpen: false })} />);
-    expect(
-      screen.getByRole("button", { name: "Cloud: synced and shared" }).classList.contains("bg-accent")
-    ).toBe(false);
+    expect(screen.getByRole("button", { name: "Cloud: synced and shared" })).not.toHaveAttribute("aria-current");
   });
 
   it("keeps the formatting view active even with the panel closed", () => {
     render(<ActivityBar {...props({ activeView: "edit", panelOpen: false })} />);
-    expect(
-      screen.getByRole("button", { name: "Formatting tools" }).classList.contains("bg-accent")
-    ).toBe(true);
+    expect(screen.getByRole("button", { name: "Formatting tools" })).toHaveAttribute("aria-current", "page");
   });
 
   it("disables formatting when there is no rich editor to act on", async () => {

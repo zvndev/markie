@@ -13,6 +13,7 @@ import {
   type SortOrder,
 } from "@/lib/folder-tree";
 import { updatedAgo, updatedOn } from "@/lib/relative-time";
+import { SelectChevron } from "./select-chevron";
 import { libraryDocumentFormat, type LibraryDocumentQuery } from "@/lib/library-document-query";
 
 interface BrowseViewProps {
@@ -559,34 +560,40 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
   return (
     <div className="flex flex-col h-full">
       {/* controls */}
-      <div className="px-2 py-1.5 flex flex-col gap-1.5 border-b border-border">
-        <input
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="Search name, path, or text…"
-          aria-label="Search documents"
-          className="w-full text-[12px] bg-background border border-border rounded-md px-2 py-1 text-foreground outline-none focus:border-foreground/40"
-        />
-        <div className="flex items-center gap-1 text-[11px]">
-          <span className="text-muted pl-0.5">Type</span>
-          <select
-            value={format}
-            aria-label="Document type"
-            onChange={(e) => {
-              const next = e.target.value as LibraryDocumentQuery["format"];
-              setFormat(next);
-              persist(FORMAT_KEY, next);
-            }}
-            className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0.5 text-[11px] text-foreground outline-none focus:border-foreground/40"
-          >
-            {FORMAT_OPTIONS.map(([key, label]) => (
-              <option key={key} value={key}>{label}</option>
-            ))}
-          </select>
+      <div className="flex flex-col gap-2 border-b border-border px-2 py-2">
+        <div className="relative">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted"><circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" /></svg>
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Search name, path, or text…"
+            aria-label="Search documents"
+            className="markie-overlay-field h-8 w-full py-1 pl-8 pr-2 text-[12px]"
+          />
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px]">
+          <span className="pl-0.5 text-muted">Type</span>
+          <div className="relative min-w-0 flex-1">
+            <select
+              value={format}
+              aria-label="Document type"
+              onChange={(e) => {
+                const next = e.target.value as LibraryDocumentQuery["format"];
+                setFormat(next);
+                persist(FORMAT_KEY, next);
+              }}
+              className="markie-native-select"
+            >
+              {FORMAT_OPTIONS.map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
+            <span className="pointer-events-none absolute right-2 top-1/2 flex -translate-y-1/2 items-center"><SelectChevron /></span>
+          </div>
           {(format !== "all" || filter) && (
             <button
               onClick={() => { setFormat("all"); persist(FORMAT_KEY, "all"); setFilter(""); }}
-              className="px-1.5 py-0.5 rounded text-muted hover:text-foreground"
+              className="inline-flex h-8 shrink-0 items-center rounded-md px-2 text-muted transition-colors hover:bg-accent/40 hover:text-foreground"
             >
               Clear
             </button>
@@ -596,22 +603,22 @@ export function BrowseView({ onOpenPath, activePath }: BrowseViewProps) {
           {/* Two tabs used to sit here, so name what these are: without the
               word they read as another pair of views. */}
           <span className="text-muted pl-0.5">Sort</span>
-          {SORTS.map(({ order, label, hint }) => (
-            <button
-              key={order}
-              onClick={() => {
-                setSort(order);
-                persist(SORT_KEY, order);
-              }}
-              aria-pressed={sort === order}
-              title={hint}
-              className={`px-2 py-0.5 rounded ${
-                sort === order ? "bg-accent text-foreground" : "text-muted hover:text-foreground"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+          <div className="markie-segmented-control" role="group" aria-label="Sort documents">
+            {SORTS.map(({ order, label, hint }) => (
+              <button
+                key={order}
+                onClick={() => {
+                  setSort(order);
+                  persist(SORT_KEY, order);
+                }}
+                aria-pressed={sort === order}
+                title={hint}
+                className="markie-segmented-option"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="flex-1" />
           <button
             onClick={() => {

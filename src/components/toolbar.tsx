@@ -133,7 +133,7 @@ export function Toolbar({
             disabled={openFileDisabled}
             title={openFileDisabled ? "Preparing document tools…" : undefined}
             aria-label={fileName ? "Open" : "Open file…"}
-            className="shrink-0 text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
+            className="markie-toolbar-action flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-muted hover:text-foreground"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
@@ -173,12 +173,12 @@ export function Toolbar({
               </button>
             ))}
           <div className="w-px h-4 bg-border shrink-0" />
-          {documentMode && onSave ? <button type="button" onClick={onSave} className="hidden sm:block shrink-0 text-[12px] text-muted hover:text-foreground transition-colors">Save file</button> : null}
+          {documentMode && onSave ? <button type="button" onClick={onSave} className="markie-toolbar-action hidden h-7 shrink-0 rounded-md px-2 text-[12px] text-muted hover:text-foreground sm:block">Save file</button> : null}
           <div className="relative" ref={menuRef}>
             <button
               onClick={() => setShowPDFMenu(!showPDFMenu)}
               aria-label="Export menu"
-              className="text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
+              className="markie-toolbar-action flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] text-muted hover:text-foreground"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -275,7 +275,7 @@ export function Toolbar({
         className="min-w-0 w-fit max-w-full justify-self-end flex items-center justify-end gap-2"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
-        {onCommands ? <button type="button" onClick={onCommands} aria-label="Commands (⌘K)" title="Commands (⌘K)" className="w-7 h-7 rounded flex items-center justify-center text-muted hover:text-foreground hover:bg-accent/40" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m5 7 5 5-5 5M13 17h6" /></svg></button> : null}
+        {onCommands ? <button type="button" onClick={onCommands} aria-label="Commands (⌘K)" title="Commands (⌘K)" className="markie-toolbar-icon flex h-7 w-7 items-center justify-center rounded-md text-muted hover:text-foreground" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m5 7 5 5-5 5M13 17h6" /></svg></button> : null}
         {themeLocked && (
           <div
             className="hidden sm:flex items-center gap-1 text-muted"
@@ -324,7 +324,7 @@ export function Toolbar({
           </div>
         )}
         {/* Color mode: System / Light / Dark */}
-        <div className="hidden sm:flex items-center bg-background rounded-md p-0.5 gap-0.5">
+        <div className="markie-segmented-control hidden sm:inline-flex items-center">
           <ModeBtn label="System theme" active={colorMode === "system"} onClick={() => pickColorMode("system")}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
               <rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" />
@@ -345,7 +345,7 @@ export function Toolbar({
           onClick={onThemePresets}
           title="Theme presets"
           aria-label="Theme presets"
-          className="hidden sm:block p-1 rounded text-muted hover:text-foreground transition-colors"
+          className="markie-toolbar-icon hidden h-7 w-7 items-center justify-center rounded-md text-muted hover:text-foreground sm:flex"
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="13.5" cy="6.5" r="1.5" /><circle cx="17.5" cy="10.5" r="1.5" /><circle cx="8.5" cy="7.5" r="1.5" /><circle cx="6.5" cy="12.5" r="1.5" />
@@ -356,8 +356,8 @@ export function Toolbar({
         <button
           onClick={onShare}
           title={canShare ? "Share this document" : "Share this document (Markie will walk you through it)"}
-          className={`hidden sm:flex text-[12px] transition-colors items-center gap-1.5 ${
-            canShare ? "text-foreground hover:opacity-80" : "text-muted hover:text-foreground"
+          className={`markie-toolbar-action hidden h-7 items-center gap-1.5 rounded-md px-2 text-[12px] sm:flex ${
+            canShare ? "text-foreground" : "text-muted hover:text-foreground"
           }`}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -390,9 +390,8 @@ function ModeBtn({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`px-1.5 py-1 rounded transition-all ${
-        active ? "bg-accent text-foreground" : "text-muted hover:text-foreground"
-      }`}
+      aria-pressed={active}
+      className="markie-segmented-option flex min-h-6 items-center justify-center px-1.5 py-1"
     >
       {children}
     </button>

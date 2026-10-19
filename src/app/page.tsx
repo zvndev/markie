@@ -1305,15 +1305,26 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       markdown: { path: docRef.current.filePath, name: docRef.current.fileName, content: markdown }, prepared: false };
     cloudHandoffRef.current = intent;
     setCloudHandoff(intent);
+    let preparedIntent = false;
     try {
       if (!await shell.prepareLeave() || cloudHandoffRef.current !== intent) return;
       if (!await openDocumentsWorkspace(() => cloudHandoffRef.current === intent) || cloudHandoffRef.current !== intent) return;
       const prepared = { ...intent, prepared: true };
+      preparedIntent = true;
       cloudHandoffRef.current = prepared;
       setCloudHandoff(prepared);
     } catch { if (cloudHandoffRef.current === intent) setForkError(CLOUD_HANDOFF_ERROR); }
-    finally { if (cloudHandoffRef.current === intent) { cloudHandoffRef.current = null; setCloudHandoff(null); } }
-  }, [documentsEnabled, openDocumentsWorkspace, currentMarkdown, account?.id]);
+    finally {
+      if (cloudHandoffRef.current === intent) {
+        cloudHandoffRef.current = null;
+        setCloudHandoff(null);
+        // The error and any refusal UI live with the retained document. A
+        // full-page Cloud must step aside when preparation abandons the
+        // handoff, or both would sit hidden behind it.
+        if (!preparedIntent && showLibrary && leftView === "cloud") setShowLibrary(false);
+      }
+    }
+  }, [documentsEnabled, openDocumentsWorkspace, currentMarkdown, account?.id, showLibrary, leftView]);
   useEffect(() => {
     if (!cloudHandoff || cloudHandoffRef.current !== cloudHandoff) return;
     const shell = documentShellRef.current;
@@ -1325,12 +1336,16 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       || currentMarkdown() !== cloudHandoff.markdown.content) { cancel(); return; }
     if (!cloudHandoff.prepared) return;
     if (!documentsOpen || !documentsOpenRef.current) { cancel(); return; }
+    // A full-page Cloud stays in place while preparation can still refuse,
+    // so a failed handoff leaves the row available for a safe retry. Only a
+    // prepared intent earns the workspace switch.
+    if (showLibrary && leftView === "cloud") { setShowLibrary(false); return; }
     // Eager refs and one animation frame do not prove the Host's active/busy
     // React commit has landed. Retain this intent until its shell publishes it.
     if (!shell.ready || shell.busy || document.querySelector(".docs-embedded-host")?.closest("[inert]")) return;
     cancel();
     shell.openCloudDocument?.(cloudHandoff.id);
-  }, [cloudHandoff, documentsOpen, documentShell, documentsEnabled, closingWindow, showSettings, showTheme, showPalette, showHelp, showShare, signInReason, showAgents, manageShare, account?.id, filePath, fileName, content, currentMarkdown]);
+  }, [cloudHandoff, documentsOpen, documentShell, documentsEnabled, closingWindow, showSettings, showTheme, showPalette, showHelp, showShare, signInReason, showAgents, manageShare, account?.id, filePath, fileName, content, currentMarkdown, showLibrary, leftView]);
   const openVault = useCallback(async () => {
     if (await openDocumentsWorkspace()) documentShellRef.current?.showVault();
   }, [openDocumentsWorkspace]);
@@ -2114,6 +2129,32 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     richVisible: mode === "preview" || mode === "split",
     canEdit: docEditable,
   };
+  const cloudOpen = showSidePanel(leftState) && leftView === "cloud";
+  const sidePanelOpen = showSidePanel(leftState) && isPanelView(leftView) && !cloudOpen;
+  const renderLibraryPanel = (presentation: "panel" | "workspace") => (
+    <Library
+      key={leftView}
+      view={leftView as typeof leftView & ("library" | "browse" | "cloud" | "skills")}
+      presentation={presentation}
+      onClose={() => setShowLibrary(false)}
+      onOpenPath={presentation === "workspace" ? (path) => { setShowLibrary(false); openPath(path); } : openPath}
+      onOpenFile={presentation === "workspace" ? () => { setShowLibrary(false); handleOpenFile(); } : handleOpenFile}
+      onAddPaths={addPaths}
+      onSignIn={() => setSignInReason("sync")}
+      onManageShare={handleManageShare}
+      onSyncChanged={refreshCollab}
+      activePath={documentsOpen ? null : filePath}
+      accountId={account?.id ?? null}
+      refreshKey={libRefreshKey}
+      documentRecords={documentShell?.records}
+      activeDocumentId={documentsOpen ? documentShell?.selectedId : undefined}
+      onOpenDocument={documentsEnabled ? (record) => { if (presentation === "workspace") setShowLibrary(false); void openDocument(record); } : undefined}
+      onCreateDocument={documentsEnabled ? (format) => { if (presentation === "workspace") setShowLibrary(false); void createDocument(format); } : undefined}
+      onOpenVault={documentsEnabled ? () => void openVault() : undefined}
+      renderCloudDocuments={documentsEnabled ? (query, cloudPresentation) => <Suspense fallback={<p role="status" className="px-2 py-2 text-xs text-muted">Loading cloud documents…</p>}><DocumentCloudLibrary query={query} presentation={cloudPresentation} onOpen={(id) => void openCloudDocument(id)} /></Suspense> : undefined}
+      retainedDocument={documentsEnabled ? { name: fileName ?? "Untitled.md", path: filePath, dirty: isDirty, selected: !documentsOpen, onSelect: () => { void leaveDocuments(); } } : undefined}
+    />
+  );
 
   return (
     <div inert={closingWindow} aria-busy={addingFiles || closingWindow} className="markie-shell h-screen flex flex-col bg-background relative">
@@ -2154,34 +2195,15 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           onAccount={() => setShowSettings(true)}
         />
 
-        {/* Docked side panel (Library / Browse / Cloud / Skills) */}
-        {showSidePanel(leftState) && isPanelView(leftView) && (
-          <Library
-            key={leftView}
-            view={leftView}
-            onClose={() => setShowLibrary(false)}
-            onOpenPath={openPath}
-            onOpenFile={handleOpenFile}
-            onAddPaths={addPaths}
-            onSignIn={() => setSignInReason("sync")}
-            onManageShare={handleManageShare}
-            onSyncChanged={refreshCollab}
-            activePath={documentsOpen ? null : filePath}
-            accountId={account?.id ?? null}
-            refreshKey={libRefreshKey}
-            documentRecords={documentShell?.records}
-            activeDocumentId={documentsOpen ? documentShell?.selectedId : undefined}
-            onOpenDocument={documentsEnabled ? (record) => void openDocument(record) : undefined}
-            onCreateDocument={documentsEnabled ? (format) => void createDocument(format) : undefined}
-            onOpenVault={documentsEnabled ? () => void openVault() : undefined}
-            renderCloudDocuments={documentsEnabled ? (query) => <Suspense fallback={<p role="status" className="px-2 py-2 text-xs text-muted">Loading cloud documents…</p>}><DocumentCloudLibrary query={query} onOpen={(id) => void openCloudDocument(id)} /></Suspense> : undefined}
-            retainedDocument={documentsEnabled ? { name: fileName ?? "Untitled.md", path: filePath, dirty: isDirty, selected: !documentsOpen, onSelect: () => { void leaveDocuments(); } } : undefined}
-          />
-        )}
+        {/* Docked side panel (Library / Browse / Skills). Cloud now owns the
+            main workspace so snapshots and sync are not squeezed into a
+            file-picker column. */}
+        {sidePanelOpen && renderLibraryPanel("panel")}
+        {cloudOpen && renderLibraryPanel("workspace")}
 
         {/* Document column: the access strip sits above both panes, because it
             explains something about the document, not about one view of it. */}
-        <div inert={documentsOpen} style={documentsOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <div inert={documentsOpen || cloudOpen} style={documentsOpen || cloudOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 flex flex-col overflow-hidden">
           <ShareBanner
             view={shareBanner}
             error={forkError}
@@ -2388,10 +2410,10 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
             )}
           </div>
         </div>
-        {documentsEnabled ? <div inert={!documentsOpen} style={!documentsOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 min-h-0 overflow-hidden">
+        {documentsEnabled ? <div inert={!documentsOpen || cloudOpen} style={!documentsOpen || cloudOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 min-h-0 overflow-hidden">
           {documentsOpen && forkError ? <div role="alert" className="px-3 py-2 border-b border-border text-sm text-foreground bg-surface">{forkError}<button type="button" className="ml-3 text-muted" onClick={() => setForkError(null)}>Dismiss</button></div> : null}
           <Suspense fallback={<p role="status" className="p-4 text-sm text-muted">Loading document tools…</p>}>
-            <DocumentEditor embedded active={documentsOpen} onActivate={requestNativeDocument} onShellChange={updateDocumentShell} />
+            <DocumentEditor embedded active={documentsOpen && !cloudOpen} onActivate={requestNativeDocument} onShellChange={updateDocumentShell} />
           </Suspense>
         </div> : null}
       </div>

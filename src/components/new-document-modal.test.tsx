@@ -17,6 +17,22 @@ describe("NewDocumentModal", () => {
     expect(onCreate).toHaveBeenCalledWith("rtf");
   });
 
+  it("groups writing and data formats with a miniature sheet for every choice", async () => {
+    const { container } = render(<NewDocumentModal onCreate={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: "Writing" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Data and source" })).toBeInTheDocument();
+    expect(container.querySelectorAll("[data-document-format-mark]")).toHaveLength(NEW_DOCUMENT_TYPES.length);
+    for (const type of NEW_DOCUMENT_TYPES) {
+      expect(container.querySelector(`[data-document-format-mark="${type.format}"]`)).not.toBeNull();
+    }
+    const markdown = screen.getByRole("button", { name: "New Markdown document" });
+    expect(markdown).toHaveFocus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("button", { name: "New Word document" })).toHaveFocus();
+    await userEvent.keyboard("{End}");
+    expect(screen.getByRole("button", { name: "New XML document" })).toHaveFocus();
+  });
+
   it("closes on Escape and on Cancel without creating", async () => {
     const onCreate = vi.fn(), onClose = vi.fn();
     render(<NewDocumentModal onCreate={onCreate} onClose={onClose} />);

@@ -11,6 +11,14 @@ function ControlledFilters() {
 }
 
 describe("compact Library filters", () => {
+  it("keeps the disclosure chevron in a fixed centered slot at the control edge", () => {
+    render(<ControlledFilters />);
+    const trigger = screen.getByRole("button", { name: "Document type: All types" });
+    expect(trigger).toHaveClass("markie-select-button");
+    expect(trigger.querySelector(".markie-select-label")).toHaveTextContent("All types");
+    expect(trigger.querySelector(".markie-select-chevron")).not.toBeNull();
+    expect(trigger.textContent).not.toContain("⌄");
+  });
   it("offers a separate Darkmown filter without treating it as Markdown", async () => {
     const user = userEvent.setup();
     render(<ControlledFilters />);

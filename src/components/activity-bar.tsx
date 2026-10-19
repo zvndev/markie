@@ -38,7 +38,7 @@ export function ActivityBar({
     v === "edit" ? activeView === v : panelOpen && activeView === v;
 
   return (
-    <div className="markie-activity-bar w-[48px] shrink-0 h-full flex flex-col items-center py-1.5 gap-0.5 border-r border-border bg-surface">
+    <div className="markie-activity-bar w-[52px] shrink-0 h-full flex flex-col items-center py-2 gap-1 border-r border-border bg-surface">
       {/* New file — primary action, set apart by a divider */}
       <NavButton label="New file (⌘N)" onClick={onNewFile}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -149,13 +149,14 @@ function NavButton({
         onClick={onClick}
         disabled={disabled}
         aria-label={label}
-        className={`relative w-8 h-8 rounded-md flex items-center justify-center transition-colors ${
+        aria-current={active ? "page" : undefined}
+        className={`markie-rail-button relative flex h-9 w-9 items-center justify-center rounded-[9px] ${
           active
-            ? "bg-accent text-foreground"
+            ? "markie-rail-button--active text-foreground"
             : "text-muted hover:text-foreground hover:bg-accent/40"
         } disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted`}
       >
-        {active && <span className="absolute left-[-6px] top-1.5 bottom-1.5 w-0.5 rounded-full bg-foreground" />}
+        {active && <span className="absolute -left-[7px] bottom-2 top-2 w-[3px] rounded-full bg-[var(--status-blue)] shadow-[0_0_8px_color-mix(in_srgb,var(--status-blue)_55%,transparent)]" />}
         {children}
       </button>
     </RailTip>
@@ -177,7 +178,7 @@ function IconButton({
       <button
         onClick={onClick}
         aria-label={label}
-        className="w-8 h-8 rounded-md flex items-center justify-center transition-colors text-muted hover:text-foreground hover:bg-accent/40"
+        className="markie-rail-button flex h-9 w-9 items-center justify-center rounded-[9px] text-muted hover:text-foreground hover:bg-accent/40"
       >
         {children}
       </button>

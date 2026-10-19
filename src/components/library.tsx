@@ -43,13 +43,14 @@ import type { EditableDocumentFormat } from "@/lib/document-session";
 import { DEFAULT_LIBRARY_DOCUMENT_QUERY, libraryDocumentFormat, matchesLibraryDocument, queryLibraryDocuments, type LibraryDocumentMetadata, type LibraryDocumentQuery } from "@/lib/library-document-query";
 import { LibraryDocumentFilters } from "@/components/library-document-filters";
 import { NewDocumentModal } from "@/components/new-document-modal";
-import { CloudAreaPicker, CloudAreaProvider } from "./cloud-area-picker";
+import { CloudAreaPicker, CloudAreaProvider, CloudAreaScopePicker } from "./cloud-area-picker";
 import { accountScopeKey, confirmedAccountScope, subscribeAccountScope } from "@/lib/account-identities";
 
 interface LibraryProps {
   retainedDocument?: { name: string; path: string | null; dirty: boolean; selected: boolean; onSelect: () => void };
   // which view the left rail selected (library | browse | cloud | skills)
   view: PanelView;
+  presentation?: "panel" | "workspace";
   onClose: () => void;
   onOpenPath: (path: string) => void;
   onOpenFile: () => void;
@@ -73,8 +74,11 @@ interface LibraryProps {
   onOpenDocument?: (record: LibraryRecord) => void;
   onCreateDocument?: (format: EditableDocumentFormat) => void;
   onOpenVault?: () => void;
-  renderCloudDocuments?: (query: LibraryDocumentQuery) => ReactNode;
+  renderCloudDocuments?: (query: LibraryDocumentQuery, presentation: "panel" | "workspace") => ReactNode;
 }
+
+type CloudTab = "snapshots" | "sync";
+const CLOUD_TAB_KEY = "markie.cloud.workspace-tab.v1";
 
 const NO_DOCUMENT_RECORDS: readonly LibraryRecord[] = [];
 
@@ -153,6 +157,7 @@ const BADGE: Record<LibraryItem["state"], [string, string]> = {
 export function Library({
   retainedDocument,
   view,
+  presentation = "panel",
   onClose,
   onOpenPath,
   onOpenFile,
@@ -187,6 +192,14 @@ export function Library({
   // whichever panel happened to be open when the request failed.
   const [cloudError, setCloudError] = useState<string | null>(null);
   const [query, setQuery] = useState<LibraryDocumentQuery>(() => ({ ...DEFAULT_LIBRARY_DOCUMENT_QUERY }));
+  const [cloudTab, setCloudTab] = useState<CloudTab>(() => {
+    if (!renderCloudDocuments) return "sync";
+    try { return localStorage.getItem(CLOUD_TAB_KEY) === "sync" ? "sync" : "snapshots"; } catch { return "snapshots"; }
+  });
+  const pickCloudTab = useCallback((tab: CloudTab) => {
+    setCloudTab(tab);
+    try { localStorage.setItem(CLOUD_TAB_KEY, tab); } catch { /* session-only preference */ }
+  }, []);
   // Freeze the row order for as long as the panel stays open, so opening a file
   // does not send it to the top and shuffle everything you were reading.
   const [frozenOrder, setFrozenOrder] = useState<string[]>([]);
@@ -584,15 +597,18 @@ export function Library({
     ...visibleDocuments.map((record) => ({ metadata: recoveryMetadata(record), node: recoveryRow(record) })),
     ...(retainedVisible && retainedDocument ? [{ metadata: { key: "retained:markdown", name: retainedDocument.name, path: retainedDocument.path, format: "markdown" as const }, node: retainedRow }] : []),
   ], query, ({ metadata }) => metadata);
+  const cloudWorkspace = presentation === "workspace" && view === "cloud";
+  const effectiveCloudTab: CloudTab = renderCloudDocuments ? cloudTab : "sync";
 
   return (
     <div
-      className={`markie-side-panel relative shrink-0 h-full flex flex-col border-r bg-surface ${
-        dropping ? "border-foreground/40" : "border-border"
-      }`}
-      style={{ width }}
+      data-markie-cloud-workspace={cloudWorkspace ? "true" : undefined}
+      className={cloudWorkspace
+        ? "markie-cloud-workspace relative flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-background"
+        : `markie-side-panel relative shrink-0 h-full flex flex-col border-r bg-surface ${dropping ? "border-foreground/40" : "border-border"}`}
+      style={cloudWorkspace ? undefined : { width }}
       onDragOver={(e) => {
-        if (!getElectronAPI()?.pathForFile) return;
+        if (cloudWorkspace || !getElectronAPI()?.pathForFile) return;
         e.preventDefault();
         e.stopPropagation();
         setDropping(true);
@@ -601,25 +617,43 @@ export function Library({
         e.stopPropagation();
         if (e.relatedTarget === null) setDropping(false);
       }}
-      onDrop={onDrop}
+      onDrop={cloudWorkspace ? undefined : onDrop}
     >
-      {dropping && (
+      {!cloudWorkspace && dropping && (
         <div className="absolute inset-0 z-10 m-1.5 rounded-lg border-2 border-dashed border-foreground/40 bg-surface/80 flex items-center justify-center pointer-events-none">
           <span className="text-[12px] text-foreground/80">Drop to add to your library</span>
         </div>
       )}
-      <PanelResizer width={width} onWidth={setUserWidth} onCommit={commitWidth} />
-      <div className="flex items-center justify-between px-3 h-10 shrink-0 border-b border-border">
-        <span className="text-[11px] uppercase tracking-wide text-muted font-medium">{VIEW_TITLE[view]}</span>
-        <div className="flex items-center gap-1">
-          <button onClick={onOpenFile} title="Open a file from disk (⌘O)" aria-label="Open a file from disk" className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-          </button>
-          <button onClick={onClose} title={`Collapse the ${VIEW_TITLE[view]} panel (⌘L)`} aria-label={`Collapse the ${VIEW_TITLE[view]} panel`} className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
-          </button>
+      {!cloudWorkspace && <PanelResizer width={width} onWidth={setUserWidth} onCommit={commitWidth} />}
+      {cloudWorkspace ? (
+        <div className="flex min-h-16 shrink-0 items-center justify-between gap-4 border-b border-border/70 px-5 py-3 sm:px-7">
+          <div className="flex min-w-0 items-center gap-3">
+            <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] border border-border/80 bg-surface-2/80 text-[var(--status-blue)] shadow-[inset_0_1px_rgba(255,255,255,0.07),0_6px_16px_rgba(0,0,0,0.12)]">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M7 19a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 19z" /></svg>
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-[17px] font-semibold leading-tight tracking-tight text-foreground">Cloud</h2>
+              {signedIn ? <p className="mt-0.5 flex items-center gap-1.5 text-[11px] leading-none text-muted"><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--status-green)]" />Connected</p> : <button type="button" onClick={onSignIn} className="mt-0.5 flex items-center gap-1.5 rounded text-left text-[11px] leading-none text-muted transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]"><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--status-yellow)]" />Sign in</button>}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={onOpenFile} className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[11.5px] text-muted transition hover:bg-accent/40 hover:text-foreground focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]" aria-label="Open a file from disk"><span aria-hidden="true" className="text-sm leading-none">+</span><span className="hidden sm:inline">Open file</span></button>
+            <button type="button" onClick={onClose} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border/80 bg-surface-2/70 px-2.5 text-[11.5px] text-foreground shadow-[inset_0_1px_rgba(255,255,255,0.05)] transition hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]" aria-label="Back to document"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>Document</button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex items-center justify-between px-3 h-10 shrink-0 border-b border-border">
+          <span className="text-[11px] uppercase tracking-wide text-muted font-medium">{VIEW_TITLE[view]}</span>
+          <div className="flex items-center gap-1">
+            <button onClick={onOpenFile} title="Open a file from disk (⌘O)" aria-label="Open a file from disk" className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+            </button>
+            <button onClick={onClose} title={`Collapse the ${VIEW_TITLE[view]} panel (⌘L)`} aria-label={`Collapse the ${VIEW_TITLE[view]} panel`} className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* One row of tabs, and only in the Library view. There is no second row
           under it any more: Projects moved to its own rail destination, and a
@@ -627,31 +661,29 @@ export function Library({
           thing the nesting cost. */}
       {view === "library" && (
         <>
-          <div
-            className="flex items-center gap-0.5 px-2 py-1.5 shrink-0 border-b border-border/60"
-            role="group"
-            aria-label="Library sections"
-          >
-            {(
-              [
-                ["recent", "Recent"],
-                ["projects", "Projects"],
-              ] as Array<[LibTab, string]>
-            ).map(([t, label]) => (
-              <button
-                key={t}
-                data-library-tab={t}
-                aria-pressed={libTab === t}
-                onClick={() => pickTab(t)}
-                className={`flex-1 text-[11px] py-1 rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[color:var(--status-blue)] ${
-                  libTab === t
-                    ? "bg-accent text-foreground"
-                    : "text-muted hover:text-foreground hover:bg-accent/40"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="shrink-0 border-b border-border/60 px-2 py-2">
+            <div
+              className="markie-segmented-control flex w-full"
+              role="group"
+              aria-label="Library sections"
+            >
+              {(
+                [
+                  ["recent", "Recent"],
+                  ["projects", "Projects"],
+                ] as Array<[LibTab, string]>
+              ).map(([t, label]) => (
+                <button
+                  key={t}
+                  data-library-tab={t}
+                  aria-pressed={libTab === t}
+                  onClick={() => pickTab(t)}
+                  className="markie-segmented-option flex-1"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
           {libTab === "recent" && (onCreateDocument || onOpenVault) && (
             <div className="px-2 py-1.5 border-b border-border/60" role="group" aria-label="Document actions">
@@ -662,22 +694,64 @@ export function Library({
             </div>
           )}
           {!loading && libTab === "recent" && totalDocuments > 0 && <LibraryDocumentFilters query={query} onChange={setQuery} searchTextAvailable={documentRecords.length > 0} />}
-          {!loading && libTab === "recent" && signedIn ? <div className="px-2 py-1"><CloudAreaPicker label="Upload destination" defaultLabel="Default cloud" value={uploadArea} onChange={setUploadArea} /></div> : null}
+          {!loading && libTab === "recent" && signedIn ? <div className="px-2 py-1"><CloudAreaPicker label="Upload destination" defaultLabel="Default cloud" value={uploadArea} onChange={setUploadArea} fullWidth /></div> : null}
           {!loading && libTab === "recent" && <LibraryOverviewBand overview={overview} recoveredCount={documentRecords.length} />}
           {!loading && libTab === "recent" && queryActive && <p role="status" className="px-2.5 py-1 text-[10.5px] text-muted tabular-nums">{visibleCount} of {totalDocuments} documents</p>}
         </>
       )}
 
-      {view === "cloud" ? <LibraryDocumentFilters query={query} onChange={setQuery} /> : null}
+      {cloudWorkspace ? (
+        <CloudAreaProvider presentation="workspace" showPicker={false}>
+          <div className="shrink-0 border-b border-border/60 px-5 py-4 sm:px-7">
+            <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                {renderCloudDocuments ? (
+                  <div className="markie-segmented-control" role="tablist" aria-label="Cloud sections">
+                    {([["snapshots", "Snapshots"], ["sync", "Sync & sharing"]] as Array<[CloudTab, string]>).map(([tab, label]) => (
+                      <button key={tab} type="button" role="tab" aria-selected={effectiveCloudTab === tab} onClick={() => pickCloudTab(tab)} className="markie-segmented-option">{label}</button>
+                    ))}
+                  </div>
+                ) : <span />}
+                {signedIn ? <div className="w-full min-w-[220px] sm:w-[300px]"><CloudAreaScopePicker /></div> : null}
+              </div>
+              <LibraryDocumentFilters query={query} onChange={setQuery} layout="workspace" />
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7">
+            <div role="tabpanel" aria-label={effectiveCloudTab === "snapshots" ? "Snapshots" : "Sync and sharing"} className="mx-auto w-full max-w-[1180px]">
+              {effectiveCloudTab === "snapshots" ? renderCloudDocuments?.(query, "workspace") : null}
+              {effectiveCloudTab === "sync" ? (
+                <CloudView
+                  items={visibleItems}
+                  query={query}
+                  presentation="workspace"
+                  alongsideSnapshots={!!renderCloudDocuments}
+                  loading={loading}
+                  renderRow={fileRow}
+                  signedIn={signedIn}
+                  accountId={accountId}
+                  accountSessionKey={confirmedAccountScope()?.userId === accountId ? scopeKey : ""}
+                  onManage={onManageShare}
+                  onOpenPath={onOpenPath}
+                  cloudError={cloudError}
+                  refreshKey={refreshKey}
+                />
+              ) : null}
+            </div>
+          </div>
+        </CloudAreaProvider>
+      ) : null}
 
-      <div className="flex-1 overflow-y-auto px-1.5 py-2">
+      {view === "cloud" && !cloudWorkspace ? <LibraryDocumentFilters query={query} onChange={setQuery} /> : null}
+
+      {!cloudWorkspace && <div className="flex-1 overflow-y-auto px-1.5 py-2">
         {view === "browse" ? (
           <BrowseView onOpenPath={onOpenPath} activePath={activePath} />
         ) : view === "skills" ? (
           <SkillsView onOpenPath={onOpenPath} activePath={activePath} />
         ) : view === "cloud" ? (
           <CloudAreaProvider>
-          {renderCloudDocuments?.(query)}
+          {renderCloudDocuments?.(query, "panel")}
           <CloudView
             items={visibleItems}
             query={query}
@@ -723,9 +797,9 @@ export function Library({
             </>}
           </>
         )}
-      </div>
+      </div>}
 
-      {!signedIn && (
+      {!cloudWorkspace && !signedIn && (
         <button
           onClick={onSignIn}
           className="m-2 text-[11px] text-muted hover:text-foreground border border-border rounded-md py-1.5 px-2 text-left leading-snug"
@@ -736,7 +810,7 @@ export function Library({
       )}
       <PanelNotice notice={notice} />
 
-      {needsDefault && (
+      {!cloudWorkspace && needsDefault && (
         <div className="border-t border-border px-2 py-2">
           <button
             onClick={makeDefault}

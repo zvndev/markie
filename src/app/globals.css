@@ -50,12 +50,42 @@ body {
 
 .markie-shell {
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface) 42%, transparent), transparent 88px),
+    radial-gradient(900px 260px at 72% -120px, color-mix(in srgb, var(--blue) 7%, transparent), transparent 70%),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 52%, transparent), transparent 112px),
     var(--background);
 }
 
 .markie-toolbar {
-  box-shadow: inset 0 -1px color-mix(in srgb, var(--foreground) 6%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--foreground) 4%, transparent), transparent 72%),
+    linear-gradient(90deg, var(--surface), color-mix(in srgb, var(--surface-2) 72%, var(--surface)));
+  box-shadow:
+    inset 0 1px color-mix(in srgb, var(--foreground) 5%, transparent),
+    inset 0 -1px color-mix(in srgb, var(--foreground) 6%, transparent),
+    0 8px 24px color-mix(in srgb, #000 10%, transparent);
+}
+
+.markie-toolbar-action,
+.markie-toolbar-icon {
+  border: 1px solid transparent;
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, color 150ms ease;
+}
+
+.markie-toolbar-action:hover:not(:disabled),
+.markie-toolbar-icon:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--foreground) 7%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--foreground) 5%, transparent), transparent 76%),
+    color-mix(in srgb, var(--accent) 52%, transparent);
+  box-shadow:
+    inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent),
+    0 3px 9px color-mix(in srgb, #000 8%, transparent);
+}
+
+.markie-toolbar-action:focus-visible,
+.markie-toolbar-icon:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 60%, transparent);
+  outline: none;
 }
 
 .markie-scrim {
@@ -69,12 +99,47 @@ body {
 }
 
 .markie-workspace {
-  background: color-mix(in srgb, var(--background) 92%, var(--surface) 8%);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--surface) 26%, transparent), transparent 340px),
+    color-mix(in srgb, var(--background) 92%, var(--surface) 8%);
 }
 
 .markie-activity-bar,
 .markie-side-panel {
-  box-shadow: inset -1px 0 color-mix(in srgb, var(--foreground) 4%, transparent);
+  background-color: var(--surface);
+  background-image:
+    radial-gradient(circle at 18% 0%, color-mix(in srgb, var(--foreground) 5%, transparent), transparent 210px),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 58%, transparent), transparent 180px),
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--foreground) 0.65%, transparent) 0 1px, transparent 1px 4px);
+  box-shadow:
+    inset -1px 0 color-mix(in srgb, var(--foreground) 5%, transparent),
+    inset 0 1px color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+
+.markie-rail-button {
+  border: 1px solid transparent;
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, color 150ms ease, transform 150ms ease;
+}
+
+.markie-rail-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--foreground) 7%, transparent);
+  box-shadow:
+    inset 0 1px color-mix(in srgb, var(--foreground) 7%, transparent),
+    0 4px 12px color-mix(in srgb, #000 10%, transparent);
+}
+
+.markie-rail-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.markie-rail-button--active {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--foreground) 7%, transparent), transparent 72%),
+    var(--accent);
+  border-color: color-mix(in srgb, var(--foreground) 9%, transparent);
+  box-shadow:
+    inset 0 1px color-mix(in srgb, var(--foreground) 9%, transparent),
+    0 5px 14px color-mix(in srgb, #000 13%, transparent);
 }
 
 .markie-source-pane,
@@ -245,9 +310,12 @@ body {
 }
 
 .markie-overlay-field {
-  background: var(--background);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #000 5%, transparent), transparent 72%),
+    color-mix(in srgb, var(--background) 82%, var(--surface));
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 7px;
+  box-shadow: inset 0 1px 2px color-mix(in srgb, #000 8%, transparent);
   color: var(--foreground);
   transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
 }
@@ -255,6 +323,9 @@ body {
 .markie-overlay-field:focus,
 .markie-overlay-field:focus-visible {
   border-color: color-mix(in srgb, var(--blue) 72%, var(--border));
+  box-shadow:
+    inset 0 1px 2px color-mix(in srgb, #000 8%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--blue) 52%, transparent);
 }
 
 .markie-command-input {
@@ -267,6 +338,151 @@ body {
 .markie-menu-item,
 .markie-command-row {
   transition: background-color 0.15s, color 0.15s, opacity 0.15s, border-color 0.15s;
+}
+
+/* One geometry for every disclosure that behaves like a select. The chevron
+   lives in its own flex slot, so it stays on the control edge and on the text
+   baseline in narrow panels and full-width toolbars alike. */
+.markie-select-button {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  height: 2rem;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0 0.55rem 0 0.65rem;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--foreground) 4.5%, transparent), transparent 74%),
+    color-mix(in srgb, var(--background) 72%, var(--surface-2));
+  box-shadow:
+    inset 0 1px color-mix(in srgb, var(--foreground) 5%, transparent),
+    0 1px 2px color-mix(in srgb, #000 8%, transparent);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1;
+  text-align: left;
+  transition: border-color 150ms ease, box-shadow 150ms ease, color 150ms ease, background-color 150ms ease;
+  outline: none;
+}
+
+.markie-select-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--foreground) 18%, var(--border));
+  color: var(--foreground);
+  box-shadow:
+    inset 0 1px color-mix(in srgb, var(--foreground) 7%, transparent),
+    0 4px 12px color-mix(in srgb, #000 10%, transparent);
+}
+
+.markie-select-button:focus-visible,
+.markie-select-button[data-open="true"] {
+  border-color: color-mix(in srgb, var(--blue) 66%, var(--border));
+  box-shadow:
+    inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--blue) 58%, transparent);
+  color: var(--foreground);
+}
+
+.markie-select-button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+/* Native selects keep platform keyboard and option behavior, but borrow the
+   same shell and reserve the same chevron slot as custom menus. */
+.markie-native-select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 2rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0 1.75rem 0 0.65rem;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--foreground) 4.5%, transparent), transparent 74%),
+    color-mix(in srgb, var(--background) 72%, var(--surface-2));
+  box-shadow:
+    inset 0 1px color-mix(in srgb, var(--foreground) 5%, transparent),
+    0 1px 2px color-mix(in srgb, #000 8%, transparent);
+  color: var(--foreground);
+  font-size: 11.5px;
+  line-height: 1;
+  outline: none;
+}
+
+.markie-native-select:focus-visible {
+  border-color: color-mix(in srgb, var(--blue) 66%, var(--border));
+  box-shadow:
+    inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--blue) 58%, transparent);
+}
+
+.markie-select-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markie-select-kicker {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--muted) 82%, transparent);
+}
+
+.markie-select-chevron {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--muted) 88%, var(--foreground));
+  transition: transform 150ms ease, color 150ms ease;
+}
+
+.markie-select-button[data-open="true"] .markie-select-chevron {
+  transform: rotate(180deg);
+  color: var(--foreground);
+}
+
+.markie-segmented-control {
+  display: inline-flex;
+  max-width: 100%;
+  gap: 2px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 9px;
+  padding: 2px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #000 10%, transparent), transparent 70%),
+    color-mix(in srgb, var(--background) 78%, var(--surface));
+  box-shadow: inset 0 1px 3px color-mix(in srgb, #000 12%, transparent);
+}
+
+.markie-segmented-option {
+  min-height: 1.75rem;
+  border-radius: 7px;
+  padding: 0.3rem 0.65rem;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1;
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+
+.markie-segmented-option:hover {
+  color: var(--foreground);
+}
+
+.markie-segmented-option[aria-selected="true"],
+.markie-segmented-option[aria-pressed="true"] {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--foreground) 7%, transparent), transparent 74%),
+    var(--accent);
+  box-shadow:
+    inset 0 1px color-mix(in srgb, var(--foreground) 9%, transparent),
+    0 2px 7px color-mix(in srgb, #000 13%, transparent);
+  color: var(--foreground);
+}
+
+.markie-segmented-option:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 62%, transparent);
+  outline: none;
 }
 
 .markie-menu-item:hover,

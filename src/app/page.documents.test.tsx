@@ -238,7 +238,11 @@ describe("document capabilities inside the existing Markie app", () => {
     await userEvent.click(screen.getByRole("button", { name: "Commands (⌘K)" }));
     await screen.findByRole("dialog", { name: "Command palette" });
     await act(async () => { finish({ ok: true }); });
-    expect(screen.getByText("Retained delayed Markdown")).toBeVisible();
+    // The modal cancels the handoff and full-page Cloud stays in place.
+    // Return through its own Document action to prove the buffer survived.
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Back to document" }));
+    expect(await screen.findByText("Retained delayed Markdown")).toBeVisible();
     expect(state.hostActive).toBe(false);
     expect(state.shell!.openCloudDocument).not.toHaveBeenCalled();
   });
@@ -249,6 +253,9 @@ describe("document capabilities inside the existing Markie app", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Cloud proposal.docx" }));
     expect(await screen.findByText("Recovery did not finish. The cloud document was not opened.")).toBeVisible();
     expect(initial.openCloudDocument).not.toHaveBeenCalled();
+    // The abandoned handoff steps back to the retained document so its error
+    // is visible; the retry starts by returning to Cloud.
+    await userEvent.click(screen.getByRole("button", { name: "Cloud: synced and shared" }));
     await userEvent.click(screen.getByRole("button", { name: "Cloud proposal.docx" }));
     await waitFor(() => expect(initial.openCloudDocument).toHaveBeenCalledExactlyOnceWith("cloud-proposal"));
     expect(screen.queryByText("Recovery did not finish. The cloud document was not opened.")).toBeNull();
@@ -269,7 +276,11 @@ describe("document capabilities inside the existing Markie app", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Cloud proposal.docx" }));
     expect(state.shell!.prepareLeave).not.toHaveBeenCalled();
     expect(state.shell!.openCloudDocument).not.toHaveBeenCalled();
-    expect(screen.getByText("Retained Markdown buffer")).toBeVisible();
+    // No handoff started, so the full-page Cloud stays put for a later retry
+    // and the retained buffer remains mounted underneath it.
+    expect(screen.getByRole("heading", { name: "Cloud" })).toBeVisible();
+    expect(screen.getByText("Retained Markdown buffer")).not.toBeVisible();
+    expect(document.title).toBe("notes.md — Markie");
   });
   it("announces an overlapping drop and stays busy until the whole original batch settles", async () => {
     let finish!: (settled: boolean) => void;

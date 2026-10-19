@@ -248,7 +248,7 @@ describe("documents in the existing Library", () => {
     await userEvent.click(screen.getByRole("button", { name: "Document type: All types" }));
     await userEvent.click(screen.getByRole("menuitemradio", { name: "DOCX" }));
     await userEvent.type(screen.getByRole("textbox", { name: "Filter documents" }), "brief");
-    expect(renderCloudDocuments).toHaveBeenLastCalledWith({ search: "brief", format: "docx", sort: "default" });
+    expect(renderCloudDocuments).toHaveBeenLastCalledWith({ search: "brief", format: "docx", sort: "default" }, "panel");
     expect(screen.queryByText("cloud-only.md")).not.toBeInTheDocument();
     expect(screen.queryByText("proposal.docx")).not.toBeInTheDocument();
     expect(document.querySelectorAll(".markie-side-panel")).toHaveLength(1);
@@ -327,6 +327,26 @@ describe("documents in the existing Library", () => {
     expect(screen.getByRole("heading", { name: "File sync & sharing" })).toBeInTheDocument();
     expect(screen.queryByText("Nothing in the cloud yet")).not.toBeInTheDocument();
     expect(document.querySelector("[data-cloud-section]")).toBeNull();
+  });
+
+  it("presents Cloud as a workspace with snapshots and sync in separate tabs", async () => {
+    const renderCloudDocuments = vi.fn((_query, presentation) => <section aria-label="Cloud document snapshots"><h3>Document snapshots</h3><span>{presentation}</span><button type="button">Snapshot.docx</button></section>);
+    const { view, onClose } = renderLibrary([], { props: { view: "cloud", presentation: "workspace", accountId: "user-a", renderCloudDocuments } });
+    expect(view.container.querySelector('[data-markie-cloud-workspace="true"]')).not.toBeNull();
+    expect(view.container.querySelector(".markie-side-panel")).toBeNull();
+    expect(await screen.findByRole("button", { name: "Snapshot.docx" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Snapshots" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("heading", { name: "File sync & sharing" })).not.toBeInTheDocument();
+    expect(renderCloudDocuments).toHaveBeenLastCalledWith(expect.objectContaining({ format: "all" }), "workspace");
+
+    await userEvent.click(screen.getByRole("tab", { name: "Sync & sharing" }));
+    expect(screen.getByRole("tab", { name: "Sync & sharing" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "File sync & sharing" })).toBeInTheDocument();
+    expect(await screen.findByText("No synced or shared files yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Snapshot.docx" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Back to document" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("does not add document actions to the unchanged Markdown Library", async () => {
@@ -448,7 +468,7 @@ describe("which tab opens", () => {
   it("opens on Recent, which is what the Library is for", async () => {
     renderLibrary([item()], { tab: "default" });
     const recent = await screen.findByRole("button", { name: "Recent" });
-    expect(recent.className).toContain("bg-accent");
+    expect(recent).toHaveAttribute("aria-pressed", "true");
   });
 
   it("moves someone who was on Folders onto Projects, the same slot renamed", async () => {
@@ -458,7 +478,7 @@ describe("which tab opens", () => {
     localStorage.setItem("markie.libtab.v3", "folders");
     renderLibrary([item()], { tab: "default" });
     const projects = await screen.findByRole("button", { name: "Projects" });
-    expect(projects.className).toContain("bg-accent");
+    expect(projects).toHaveAttribute("aria-pressed", "true");
   });
 
   it("moves either half of the old Files tab onto Projects", async () => {
@@ -466,7 +486,7 @@ describe("which tab opens", () => {
     localStorage.setItem("markie.filesview.v1", "projects");
     renderLibrary([item()], { tab: "default" });
     const projects = await screen.findByRole("button", { name: "Projects" });
-    expect(projects.className).toContain("bg-accent");
+    expect(projects).toHaveAttribute("aria-pressed", "true");
   });
 
   it("remembers the tab under the new key once the user picks one", async () => {

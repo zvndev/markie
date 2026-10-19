@@ -19,6 +19,7 @@ const events: CustomEvent[] = [];
 
 (globalThis as Record<string, unknown>).document = {
   documentElement: {
+    dataset: {} as Record<string, string>,
     classList: {
       toggle: (name: string, force?: boolean) => {
         const next = force ?? !classes.has(name);

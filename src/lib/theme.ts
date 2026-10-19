@@ -178,6 +178,10 @@ export function editorThemeForTokens(
 
 export function applyTheme(tokens: ThemeTokens): void {
   if (typeof document === "undefined") return;
+  // Tone-scoped chrome (the flat light treatment in globals.css) keys off
+  // this. It derives from the tokens themselves, so custom themes get the
+  // treatment that matches their own background, not the preset they came from.
+  document.documentElement.dataset.themeTone = editorThemeForTokens(tokens);
   const r = document.documentElement.style;
   r.setProperty("--background", tokens.background);
   r.setProperty("--surface", tokens.surface);

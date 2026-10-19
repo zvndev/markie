@@ -12,6 +12,7 @@ import {
 
 const storage = new Map<string, string>();
 const styles = new Map<string, string>();
+const rootDataset: Record<string, string> = {};
 (globalThis as Record<string, unknown>).localStorage = {
   getItem: (k: string) => storage.get(k) ?? null,
   setItem: (k: string, v: string) => void storage.set(k, v),
@@ -19,6 +20,7 @@ const styles = new Map<string, string>();
 };
 (globalThis as Record<string, unknown>).document = {
   documentElement: {
+    dataset: rootDataset,
     style: {
       setProperty: (name: string, value: string) => void styles.set(name, value),
     },
@@ -143,6 +145,9 @@ describe("theme store", () => {
     expect(styles.get("--status-purple")).toBe(MARKIE_LIGHT.tokens.statusPurple);
     expect(styles.get("--doc-font-size")).toBe("16px");
     expect(styles.get("--doc-width")).toBe("768px");
+    expect(rootDataset.themeTone).toBe("light");
+    applyTheme(MARKIE_DARK.tokens);
+    expect(rootDataset.themeTone).toBe("dark");
   });
 
   it("chooses a readable source-editor theme from theme background tone", () => {
@@ -223,7 +228,7 @@ describe("theme store", () => {
       // them the exact problem this split exists to fix, so applyTheme derives
       // one from the theme's own palette instead.
       const styles = new Map<string, string>();
-      const root = { style: { setProperty: (k: string, v: string) => styles.set(k, v) } };
+      const root = { dataset: {} as Record<string, string>, style: { setProperty: (k: string, v: string) => styles.set(k, v) } };
       const doc = globalThis.document;
       Object.defineProperty(globalThis, "document", {
         value: { documentElement: root },

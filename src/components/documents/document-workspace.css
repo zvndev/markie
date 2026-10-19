@@ -1300,6 +1300,15 @@
   margin-left:24px
 }
 
+.docs-word-paragraph[data-list-kind][data-list-level="1"] { margin-left:48px }
+.docs-word-paragraph[data-list-kind][data-list-level="2"] { margin-left:72px }
+.docs-word-paragraph[data-list-kind][data-list-level="3"] { margin-left:96px }
+.docs-word-paragraph[data-list-kind][data-list-level="4"] { margin-left:120px }
+.docs-word-paragraph[data-list-kind][data-list-level="5"] { margin-left:144px }
+.docs-word-paragraph[data-list-kind][data-list-level="6"] { margin-left:168px }
+.docs-word-paragraph[data-list-kind][data-list-level="7"] { margin-left:192px }
+.docs-word-paragraph[data-list-kind][data-list-level="8"] { margin-left:216px }
+
 .docs-word-paragraph[data-list-kind=bullet]:before {
   content:"•";
   position:absolute;

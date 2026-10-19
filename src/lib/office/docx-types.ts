@@ -38,6 +38,7 @@ export interface DocxParagraph {
   readonly spacingAfterPoints?: number;
   readonly lineSpacingMultiple?: number;
   readonly listKind?: "bullet" | "numbered";
+  readonly listLevel?: number;
   readonly listNumber?: number;
   readonly runs: readonly DocxRun[];
   readonly originalText?: string;

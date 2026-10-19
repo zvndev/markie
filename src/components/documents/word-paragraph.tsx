@@ -193,7 +193,7 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
     return () => node.removeEventListener("beforeinput", beforeInput);
   });
   return <div ref={root} className={`docs-word-paragraph ${selected ? "is-selected" : ""}`} role="textbox" aria-label={`Paragraph ${index + 1}`} aria-readonly={readOnly} data-paragraph-id={paragraph.id}
-    contentEditable={!readOnly} tabIndex={0} suppressContentEditableWarning spellCheck data-list-kind={paragraph.listKind} data-list-number={paragraph.listNumber}
+    contentEditable={!readOnly} tabIndex={0} suppressContentEditableWarning spellCheck data-list-kind={paragraph.listKind} data-list-number={paragraph.listNumber} data-list-level={paragraph.listLevel}
     style={{ textAlign: paragraph.alignment === "both" ? "justify" : paragraph.alignment as "left" | "center" | "right" | undefined,
       marginTop: `${paragraph.spacingBeforePoints ?? 0}pt`, marginBottom: `${paragraph.spacingAfterPoints ?? 8}pt`, lineHeight: paragraph.lineSpacingMultiple ?? 1.4 }}
     onFocus={() => onSelect(paragraph.id, paragraph.runs[0]?.id)}

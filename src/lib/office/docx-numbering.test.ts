@@ -38,11 +38,15 @@ describe("original DOCX styles and single-level lists", () => {
     expect(cleared.paragraphs[1].spacingAfterPoints).toBe(6);
   });
 
-  it("fails closed for unresolved and unsupported multi-level numbering", async () => {
+  it("accepts a multilevel declaration whose levels are valid, and fails closed for a corrupted level start", async () => {
     const original = applyDocxOperations(await createDocx("A"), [{ type: "set-list", paragraphId: "p0", kind: "numbered" }]);
     const parts = await readZip(await exportDocx(original));
     const numbering = parts.find((p) => p.name === "word/numbering.xml")!;
     numbering.data = encoder.encode(decoder.decode(numbering.data).replace('w:val="singleLevel"', 'w:val="multilevel"'));
+    const accepted = await openDocx(writeZip(parts));
+    expect(accepted.canEdit).toBe(true);
+    expect(accepted.paragraphs[0]).toMatchObject({ listKind: "numbered", listLevel: 0, listNumber: 1 });
+    numbering.data = encoder.encode(decoder.decode(numbering.data).replace('<w:start w:val="1"/>', '<w:start w:val="many"/>'));
     const bytes = writeZip(parts);
     const readonly = await openDocx(bytes);
     expect(readonly.canEdit).toBe(false);

@@ -1,5 +1,7 @@
-/** Original ECMA-376 §17.9 single-level bullet/decimal numbering. The package
- * carries real abstract/instance definitions, not literal bullet text or CSS.
+/** Original ECMA-376 §17.9 multi-level numbering. The package carries real
+ * abstract/instance definitions, not literal bullet text or CSS. Formatting
+ * subtrees inside a level (pPr/rPr) are preserved untouched; only the counter
+ * semantics needed for display and safe list assignment are modeled.
  */
 import { DocxError } from "./docx-types";
 import { isWord, patchDocxSource, wordChild, type DocxEditState } from "./docx-edit";
@@ -7,8 +9,28 @@ import { appendDocxXml, docxPartSource, ensureDocxPart, relatedDocxPart, type Do
 import { parseXml, xmlAttribute, xmlDescendants, type XmlElement } from "./xml";
 const encoder = new TextEncoder();
 const attribute = (node: XmlElement | undefined, name: string) => node && xmlAttribute(node, name, node.namespace);
-interface Numbering { id: string; kind: "bullet" | "numbered"; start: number }
-interface Inspection { definitions: ReadonlyMap<string, Numbering>; problem?: string }
+export interface DocxNumberingLevel { kind: "bullet" | "numbered"; start: number; restart?: number }
+export interface DocxNumbering { id: string; levels: ReadonlyMap<number, DocxNumberingLevel> }
+interface Inspection { definitions: ReadonlyMap<string, DocxNumbering>; problem?: string }
+const NUMBERED_FORMATS = new Set(["decimal", "decimalZero", "lowerLetter", "upperLetter", "lowerRoman", "upperRoman", "ordinal", "hex"]);
+const ABSTRACT_CHILDREN = new Set(["nsid", "multiLevelType", "name", "styleLink", "numStyleLink", "tmpl", "lvl"]);
+
+function boundedInt(raw: string | undefined, min: number, max: number): number | undefined {
+  return raw !== undefined && /^\d+$/.test(raw) && Number(raw) >= min && Number(raw) <= max ? Number(raw) : undefined;
+}
+
+function parseLevel(node: XmlElement): { level: number; definition: DocxNumberingLevel } | undefined {
+  const level = boundedInt(attribute(node, "ilvl"), 0, 8);
+  const format = attribute(wordChild(node, "numFmt"), "val");
+  const startRaw = attribute(wordChild(node, "start"), "val");
+  const restartRaw = attribute(wordChild(node, "lvlRestart"), "val");
+  const start = startRaw === undefined ? 1 : boundedInt(startRaw, 0, 999999);
+  const restart = restartRaw === undefined ? undefined : boundedInt(restartRaw, 0, 9);
+  if (level === undefined || start === undefined || (restartRaw !== undefined && restart === undefined) || wordChild(node, "lvlPicBulletId")) return undefined;
+  if (format === "bullet") return { level, definition: { kind: "bullet", start, restart } };
+  if (format && NUMBERED_FORMATS.has(format)) return { level, definition: { kind: "numbered", start, restart } };
+  return undefined;
+}
 
 export function inspectDocxNumbering(state: DocxPartsState): Inspection {
   const name = relatedDocxPart(state, "numbering");
@@ -16,37 +38,54 @@ export function inspectDocxNumbering(state: DocxPartsState): Inspection {
   if (!source) return { definitions: new Map() };
   const root = parseXml(source);
   if (!isWord(root, "numbering") || root.children.length > 2000) return { definitions: new Map(), problem: "Unsupported numbering root or too many lists." };
-  const abstracts = new Map<string, Omit<Numbering, "id">>();
-  const definitions = new Map<string, Numbering>();
-  const allowedChildren: Record<string, string[]> = { numbering: ["abstractNum", "num"], abstractNum: ["multiLevelType", "lvl"], multiLevelType: [], lvl: ["start", "numFmt", "lvlText", "suff"], start: [], numFmt: [], lvlText: [], suff: [], num: ["abstractNumId"], abstractNumId: [] };
-  const attrs: Record<string, string[]> = { numbering: [], abstractNum: ["abstractNumId"], multiLevelType: ["val"], lvl: ["ilvl"], start: ["val"], numFmt: ["val"], lvlText: ["val"], suff: ["val"], num: ["numId"], abstractNumId: ["val"] };
-  for (const node of xmlDescendants(root)) {
-    if (!isWord(node) || node.namespace !== root.namespace || !Object.hasOwn(allowedChildren, node.localName) || !/^[\x20\t\r\n]*$/.test(node.text)
-      || node.children.some((c) => !allowedChildren[node.localName].includes(c.localName))
-      || node.attributes.some((a) => a.namespace !== "http://www.w3.org/2000/xmlns/" && !(a.namespace === node.namespace && attrs[node.localName].includes(a.localName)))
-      || new Set(node.children.map((c) => c.localName)).size !== node.children.length) {
-      // Several abstract/num siblings are normal, unlike duplicate properties.
-      if (node === root && node.children.every((c) => isWord(c) && ["abstractNum", "num"].includes(c.localName)) && !node.text.trim() && node.attributes.every((a) => a.namespace === "http://www.w3.org/2000/xmlns/")) continue;
-      return { definitions, problem: "Only plain single-level bullet/decimal lists are editable." };
-    }
+  const abstracts = new Map<string, ReadonlyMap<number, DocxNumberingLevel>>();
+  const definitions = new Map<string, DocxNumbering>();
+  if (root.children.some((n) => !isWord(n) || !["abstractNum", "num", "numPicBullet"].includes(n.localName))) {
+    return { definitions, problem: "Numbering part contains unsupported top-level content." };
   }
   for (const node of root.children.filter((n) => isWord(n, "abstractNum"))) {
     const id = attribute(node, "abstractNumId");
-    const level = wordChild(node, "lvl");
-    const format = attribute(wordChild(level, "numFmt"), "val");
-    const text = attribute(wordChild(level, "lvlText"), "val");
-    const start = attribute(wordChild(level, "start"), "val");
-    if (!id || !/^(?:0|[1-9]\d{0,8})$/.test(id) || abstracts.has(id) || !level || attribute(level, "ilvl") !== "0"
-      || attribute(wordChild(node, "multiLevelType"), "val") !== "singleLevel" || !["decimal", "bullet"].includes(format || "")
-      || text !== (format === "decimal" ? "%1." : "•") || !start || !/^[1-9]\d{0,5}$/.test(start)
-      || attribute(wordChild(level, "suff"), "val") !== "space") return { definitions, problem: "List definition is outside the editable single-level subset." };
-    abstracts.set(id, { kind: format === "decimal" ? "numbered" : "bullet", start: Number(start) });
+    const multiLevelType = attribute(wordChild(node, "multiLevelType"), "val");
+    if (!id || !/^(?:0|[1-9]\d{0,8})$/.test(id) || abstracts.has(id)
+      || node.children.some((c) => !isWord(c) || !ABSTRACT_CHILDREN.has(c.localName))
+      || (multiLevelType !== undefined && !["singleLevel", "multilevel", "hybridMultilevel"].includes(multiLevelType))) {
+      return { definitions, problem: "List definition is outside the editable numbering subset." };
+    }
+    const levels = new Map<number, DocxNumberingLevel>();
+    for (const levelNode of node.children.filter((n) => isWord(n, "lvl"))) {
+      const parsed = parseLevel(levelNode);
+      if (!parsed || levels.has(parsed.level)) return { definitions, problem: "List level is missing, duplicated or unsupported." };
+      levels.set(parsed.level, parsed.definition);
+    }
+    if (!levels.size || levels.size > 9) return { definitions, problem: "List definition has no usable levels." };
+    abstracts.set(id, levels);
   }
   for (const node of root.children.filter((n) => isWord(n, "num"))) {
     const id = attribute(node, "numId");
     const abstract = abstracts.get(attribute(wordChild(node, "abstractNumId"), "val") || "");
-    if (!id || !/^[1-9]\d{0,8}$/.test(id) || definitions.has(id) || !abstract || node.children.length !== 1) return { definitions, problem: "Numbering instance is missing or unsupported." };
-    definitions.set(id, { id, ...abstract });
+    if (!id || !/^[1-9]\d{0,8}$/.test(id) || definitions.has(id) || !abstract
+      || node.children.some((c) => !isWord(c) || !["abstractNumId", "lvlOverride"].includes(c.localName))
+      || node.children.filter((c) => isWord(c, "abstractNumId")).length !== 1) {
+      return { definitions, problem: "Numbering instance is missing or unsupported." };
+    }
+    const levels = new Map(abstract);
+    for (const override of node.children.filter((n) => isWord(n, "lvlOverride"))) {
+      const level = boundedInt(attribute(override, "ilvl"), 0, 8);
+      const replacement = wordChild(override, "lvl");
+      const startRaw = attribute(wordChild(override, "startOverride"), "val");
+      if (level === undefined) return { definitions, problem: "Numbering level override is unsupported." };
+      if (replacement) {
+        const parsed = parseLevel(replacement);
+        if (!parsed || parsed.level !== level) return { definitions, problem: "Numbering level override is unsupported." };
+        levels.set(level, parsed.definition);
+      } else if (startRaw !== undefined) {
+        const start = boundedInt(startRaw, 0, 999999);
+        const base = levels.get(level);
+        if (start === undefined || !base) return { definitions, problem: "Numbering level override is unsupported." };
+        levels.set(level, { ...base, start });
+      }
+    }
+    definitions.set(id, { id, levels });
   }
   return { definitions };
 }
@@ -54,7 +93,7 @@ export function inspectDocxNumbering(state: DocxPartsState): Inspection {
 export function ensureDocxList<T extends DocxPartsState & DocxEditState>(state: T, kind: "bullet" | "numbered"): { state: T; id: string } {
   const inspected = inspectDocxNumbering(state);
   if (inspected.problem) throw new DocxError("unsupported-numbering", inspected.problem);
-  const existing = [...inspected.definitions.values()].find((d) => d.kind === kind);
+  const existing = [...inspected.definitions.values()].find((d) => d.levels.get(0)?.kind === kind);
   if (existing) return { state, id: existing.id };
   const namespace = parseXml(state.source).namespace;
   const ensured = ensureDocxPart(state, "numbering", "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml", `<w:numbering xmlns:w="${namespace}"/>`, namespace);

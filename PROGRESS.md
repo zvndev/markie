@@ -1441,3 +1441,14 @@ Approved by Kirby: encrypt the backup, redeploy the api, delete the detached vol
 - The api was redeployed from a clean `git archive` of the server directory at d659415, after a snapshot (`/data/pre-deploy-2026-10-20.db`, integrity ok). Before deploying, the migration was rehearsed: the Sep 14 image ran on seeded data, then the new image booted on that same data, carrying over the session, access control, public links, shares and history pruning. Live checks after the deploy passed. There were no errors in the logs.
 - The detached volume `api-volume-a5Kl` was deleted. Railway still listed it right after the delete, which looks like deferred removal.
 - Private packaging allowed only `electron/`, `out/` and production `node_modules/`, so the shared `mcp/doc-text.cjs` failed the nightly build. It is now a named exception, and a test pins it.
+
+## 2026-10-20 Vault: Touch ID, real backups, calm copy
+
+Kirby asked to drop the vault's warning paragraphs and make the vault tight with biometrics. He dropped CI/CD secret delivery.
+- **Touch ID as a second key slot.** The passphrase stays the master key. Turning Touch ID on stores the vault key encrypted under a random 32-byte device secret in IndexedDB (AES-GCM, bound to the vault id). The device secret lives in the main process under safeStorage (Keychain) in `userData/vault-touch-id/<vaultId>.bin` (0600). It is released only after `systemPreferences.promptTouchID`. Turning Touch ID off deletes both halves. Vaults without a slot open unchanged.
+- **No Keychain access on open.** Opening the vault no longer touches the Keychain. A live check found that a status query reaching safeStorage could raise a macOS keychain password sheet that froze the main process. Only enroll and unlock use the Keychain now.
+- **Backup and restore.** "Back up vault…" writes one encrypted `.markievault` file holding the header and records, without the device slot. "Restore from backup…" validates the file strictly and writes only after the backup's passphrase unlocks it. `navigator.storage.persist()` runs on every create and unlock.
+- **Passphrase help and copy.** "Suggest a passphrase" picks 6 EFF words through crypto.getRandomValues, and an entropy meter rates it. The warning paragraphs are gone; one line remains on the create screen.
+
+Verification: the full suite passed (4586) along with lint and typecheck. In a live isolated Electron run, the create screen, passphrase suggestion, unlock and settings all render with no main-process stall.
+Not verified: the real Touch ID sheet and Keychain storage in the signed build.

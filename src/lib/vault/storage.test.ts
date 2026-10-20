@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Vault, createVaultDocumentId } from "./index";
-import { IndexedDbVaultStorage, VAULT_DATABASE_NAME, VaultStorageError, type StoredVault } from "./storage";
+import { IndexedDbVaultStorage, VAULT_DATABASE_NAME, VaultStorageError, requestPersistentStorage, type StoredVault } from "./storage";
 
 /** Transactional event harness: native browser IndexedDB is covered by the browser smoke. */
 function databaseHarness() {
@@ -150,5 +150,47 @@ describe("real IndexedDB vault adapter transaction contract", () => {
     controller.abort();
     await expect(new IndexedDbVaultStorage(harness.factory).load(controller.signal)).rejects.toBeInstanceOf(VaultStorageError);
     expect(harness.requests).toEqual([]);
+  });
+
+  it("loads a snapshot written before device slots and adds or drops a slot without touching the header", async () => {
+    const harness = databaseHarness();
+    const storage = new IndexedDbVaultStorage(harness.factory);
+    const legacy = await snapshot();
+    harness.inject(structuredClone(legacy));
+    expect(await storage.load()).toEqual(legacy);
+    const vault = new Vault();
+    await vault.unlock(legacy.header, "quartz maple harbor lantern orbit");
+    const { slot, secret } = await vault.enrollDevice(legacy.header, "quartz maple harbor lantern orbit");
+    secret.fill(0);
+    await storage.commit(1, { ...legacy, revision: 2, deviceSlot: slot });
+    expect(await storage.load()).toEqual({ ...legacy, revision: 2, deviceSlot: slot });
+    await storage.commit(2, { ...legacy, revision: 3 });
+    expect(Object.keys(harness.read() as object)).toEqual(["version", "revision", "header", "records"]);
+  });
+
+  it("replaces the header only for an explicit restore", async () => {
+    const harness = databaseHarness();
+    const storage = new IndexedDbVaultStorage(harness.factory);
+    const original = await snapshot();
+    await storage.commit(null, original);
+    const other = await snapshot();
+    await expect(storage.commit(1, { ...other, revision: 2 })).rejects.toMatchObject({ code: "conflict" });
+    await expect(storage.commit(null, other, undefined, { replaceHeader: true })).rejects.toMatchObject({ code: "conflict" });
+    await storage.commit(1, { ...other, revision: 2 }, undefined, { replaceHeader: true });
+    expect(await storage.load()).toEqual({ ...other, revision: 2 });
+  });
+});
+
+describe("persistent storage request", () => {
+  it("asks once, reports the answer, and survives browsers without the API", async () => {
+    const persist = vi.fn(async () => true);
+    expect(await requestPersistentStorage({ persist, persisted: async () => false })).toBe(true);
+    expect(persist).toHaveBeenCalledOnce();
+    const again = vi.fn(async () => true);
+    expect(await requestPersistentStorage({ persist: again, persisted: async () => true })).toBe(true);
+    expect(again).not.toHaveBeenCalled();
+    expect(await requestPersistentStorage({ persist: async () => false, persisted: async () => false })).toBe(false);
+    expect(await requestPersistentStorage({} as unknown as StorageManager)).toBeNull();
+    expect(await requestPersistentStorage({ persist: async () => { throw new Error("denied"); }, persisted: async () => false })).toBeNull();
   });
 });

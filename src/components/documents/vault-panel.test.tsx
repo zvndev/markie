@@ -4,9 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VaultPanel } from "./vault-panel";
 import { validateStoredVault, VaultStorageError, type StoredVault, type VaultStorage } from "@/lib/vault/storage";
 import { VaultRepository } from "@/lib/vault/repository";
+import { installBridge } from "@/test/mock-bridge";
 
-const picker = vi.hoisted(() => ({ pick: vi.fn() }));
-vi.mock("@/lib/web-files", async () => ({ ...await vi.importActual("@/lib/web-files"), pickWebDocument: picker.pick }));
+const picker = vi.hoisted(() => ({ pick: vi.fn(), download: vi.fn() }));
+vi.mock("@/lib/web-files", async () => ({ ...await vi.importActual("@/lib/web-files"), pickWebDocument: picker.pick, downloadWebDocument: picker.download }));
 const secret = "quartz maple orbit lantern harbor";
 
 class TestStorage implements VaultStorage {
@@ -26,9 +27,15 @@ class TestStorage implements VaultStorage {
 beforeEach(() => {
   vi.stubGlobal("crypto", webcrypto);
   picker.pick.mockReset();
+  picker.download.mockReset();
   vi.spyOn(window, "confirm").mockReturnValue(false);
 });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  delete (window as unknown as { electronAPI?: unknown }).electronAPI;
+  delete (navigator as unknown as { storage?: unknown }).storage;
+});
 
 async function create(storage: TestStorage) {
   const view = render(<VaultPanel storage={storage} />);
@@ -53,7 +60,7 @@ describe("usable isolated encrypted vault panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "New private note" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Private text" }), { target: { value: "Secret letter **literal**" } });
     fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
-    await screen.findByText("Encrypted saved copy · Sharing and multiplayer are off in the vault.");
+    await screen.findByText("Encrypted saved copy");
     expect(JSON.stringify(storage.value)).not.toContain("Secret letter");
     expect(JSON.stringify(storage.value)).not.toContain("Untitled.txt");
     fireEvent.click(screen.getByRole("button", { name: "Lock vault" }));
@@ -409,5 +416,242 @@ describe("vault page with environment keys", () => {
     fireEvent.change(screen.getByLabelText("Private filename"), { target: { value: "prod.env" } });
     fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
     expect(await screen.findByRole("button", { name: /prod.env/ })).toBeInTheDocument();
+  });
+});
+
+/** The main process, as the renderer sees it: a keychain behind Touch ID. */
+function touchIdBridge() {
+  const keychain = new Map<string, Uint8Array>();
+  const released: Uint8Array[] = [];
+  const state = { unlock: "ok" as "ok" | "cancelled" | "missing" };
+  const bridge = installBridge({
+    vaultTouchIdAvailable: vi.fn(async (vaultId?: string) => ({ available: true, enrolled: !!vaultId && keychain.has(vaultId) })),
+    vaultTouchIdEnroll: vi.fn(async (vaultId: string, secret: Uint8Array) => { keychain.set(vaultId, new Uint8Array(secret)); return { ok: true as const }; }),
+    vaultTouchIdUnlock: vi.fn(async (vaultId: string) => {
+      if (state.unlock !== "ok") return { ok: false as const, reason: state.unlock };
+      const secret = keychain.get(vaultId);
+      if (!secret) return { ok: false as const, reason: "missing" as const };
+      const copy = new Uint8Array(secret);
+      released.push(copy);
+      return { ok: true as const, secret: copy };
+    }),
+    vaultTouchIdRemove: vi.fn(async (vaultId: string) => { keychain.delete(vaultId); return { ok: true }; }),
+  });
+  return { bridge, keychain, released, state };
+}
+
+async function turnOnTouchId() {
+  fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: "Settings" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Turn on Touch ID…" }));
+  fireEvent.change(screen.getByLabelText("Confirm with your passphrase"), { target: { value: secret } });
+  fireEvent.click(screen.getByRole("button", { name: "Turn on Touch ID" }));
+  await screen.findByRole("button", { name: "Turn off Touch ID" });
+}
+
+describe("a calmer locked screen", () => {
+  it("drops the old warnings and shows one quiet line only while creating", async () => {
+    const storage = new TestStorage();
+    render(<VaultPanel storage={storage} />);
+    await screen.findByRole("button", { name: "Create encrypted vault" });
+    expect(screen.queryByText(/biometric/i)).toBeNull();
+    expect(screen.queryByText(/evicted/i)).toBeNull();
+    expect(screen.queryByText(/not a cloud backup/i)).toBeNull();
+    expect(screen.getByText("Only you can unlock this vault. Save the passphrase in your password manager; there is no reset.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Vault passphrase"), { target: { value: secret } });
+    fireEvent.change(screen.getByLabelText("Confirm passphrase"), { target: { value: secret } });
+    fireEvent.click(screen.getByRole("button", { name: "Create encrypted vault" }));
+    await screen.findByRole("button", { name: "New private note" });
+    expect(screen.getByRole("status")).toHaveTextContent(/^Unlocked\.$/);
+    expect(screen.queryByText(/Auto-lock after/)).toBeNull();
+    expect(screen.queryByText(/Only you can unlock/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Lock vault" }));
+    await screen.findByRole("button", { name: "Unlock vault" });
+    expect(screen.queryByText(/Only you can unlock/)).toBeNull();
+    expect(document.body.textContent).not.toContain("\u2014");
+  });
+
+  it("suggests six random words, fills both fields, rates them and copies them", async () => {
+    const bridge = installBridge();
+    const storage = new TestStorage();
+    render(<VaultPanel storage={storage} />);
+    await screen.findByRole("button", { name: "Create encrypted vault" });
+    fireEvent.change(screen.getByLabelText("Vault passphrase"), { target: { value: "aaaaaaaaaaaaaaaaaaaa" } });
+    expect(screen.getByRole("meter", { name: "Passphrase strength" })).toHaveAttribute("aria-valuetext", expect.stringMatching(/^Weak/));
+    fireEvent.click(screen.getByRole("button", { name: "Suggest a passphrase" }));
+    const suggestion = (screen.getByLabelText("Vault passphrase") as HTMLInputElement).value;
+    expect(suggestion.split("-")).toHaveLength(6);
+    expect(screen.getByLabelText("Confirm passphrase")).toHaveValue(suggestion);
+    expect(screen.getByLabelText("Suggested passphrase")).toHaveTextContent(suggestion);
+    expect(screen.getByRole("meter", { name: "Passphrase strength" })).toHaveAttribute("aria-valuetext", expect.stringMatching(/^Strong/));
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(bridge.copySecret).toHaveBeenCalledWith(suggestion));
+    fireEvent.click(screen.getByRole("button", { name: "Create encrypted vault" }));
+    await screen.findByRole("button", { name: "New private note" });
+    expect(screen.queryByLabelText("Suggested passphrase")).toBeNull();
+    const repository = new VaultRepository(storage);
+    await repository.unlock(suggestion);
+    expect(repository.unlocked).toBe(true);
+  });
+
+  it("asks the browser to keep vault storage and says so in Settings when it will not", async () => {
+    const persist = vi.fn(async () => false);
+    Object.defineProperty(navigator, "storage", { configurable: true, value: { persist, persisted: async () => false } });
+    await create(new TestStorage());
+    expect(persist).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByText(/may clear vault storage/)).toBeInTheDocument();
+    expect(screen.getByText("Locks after 5 minutes idle.")).toBeInTheDocument();
+    // No bridge in a browser: no Touch ID controls at all.
+    expect(screen.queryByText("Touch ID")).toBeNull();
+  });
+});
+
+describe("Touch ID unlock", () => {
+  it("turns on with the passphrase, then unlocks with Touch ID and zeroes the released secret", async () => {
+    const touch = touchIdBridge();
+    const storage = new TestStorage();
+    await create(storage);
+    fireEvent.click(screen.getByRole("button", { name: "New private note" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Private text" }), { target: { value: "Touch ID body" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
+    await screen.findByText("Encrypted saved copy");
+    await turnOnTouchId();
+    expect(storage.value?.deviceSlot).toBeTypeOf("string");
+    expect(touch.keychain.size).toBe(1);
+    const enrolled = vi.mocked(touch.bridge.vaultTouchIdEnroll!).mock.calls[0][1];
+    expect(enrolled.every((byte) => byte === 0)).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Lock vault" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Unlock with Touch ID" }));
+    await screen.findByRole("button", { name: "New private note" });
+    expect(touch.released[0].every((byte) => byte === 0)).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /Untitled.txt/ }));
+    expect(await screen.findByRole("textbox", { name: "Private text" })).toHaveValue("Touch ID body");
+  });
+
+  it("falls back to the passphrase when Touch ID is cancelled or its keychain item is gone", async () => {
+    const touch = touchIdBridge();
+    const storage = new TestStorage();
+    await create(storage);
+    await turnOnTouchId();
+    fireEvent.click(screen.getByRole("button", { name: "Lock vault" }));
+    touch.state.unlock = "cancelled";
+    fireEvent.click(await screen.findByRole("button", { name: "Unlock with Touch ID" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Touch ID was cancelled"));
+    expect(screen.queryByRole("alert")).toBeNull();
+    touch.state.unlock = "missing";
+    fireEvent.click(screen.getByRole("button", { name: "Unlock with Touch ID" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("no longer set up");
+    expect(screen.queryByRole("button", { name: "Unlock with Touch ID" })).toBeNull();
+    await unlock();
+  });
+
+  it("does not turn on with a wrong passphrase", async () => {
+    const touch = touchIdBridge();
+    const storage = new TestStorage();
+    await create(storage);
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Turn on Touch ID…" }));
+    fireEvent.change(screen.getByLabelText("Confirm with your passphrase"), { target: { value: "not the vault passphrase at all" } });
+    fireEvent.click(screen.getByRole("button", { name: "Turn on Touch ID" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Touch ID was not turned on");
+    expect(touch.keychain.size).toBe(0);
+    expect(storage.value?.deviceSlot).toBeUndefined();
+  });
+
+  it("turning it off deletes the keychain secret and the stored slot", async () => {
+    const touch = touchIdBridge();
+    const storage = new TestStorage();
+    await create(storage);
+    await turnOnTouchId();
+    fireEvent.click(screen.getByRole("button", { name: "Turn off Touch ID" }));
+    await screen.findByRole("button", { name: "Turn on Touch ID…" });
+    expect(touch.keychain.size).toBe(0);
+    expect(storage.value && "deviceSlot" in storage.value).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Lock vault" }));
+    await screen.findByRole("button", { name: "Unlock vault" });
+    expect(screen.queryByRole("button", { name: "Unlock with Touch ID" })).toBeNull();
+  });
+});
+
+describe("vault backup and restore", () => {
+  async function backupBytes(storage: TestStorage) {
+    if (!screen.queryByRole("region", { name: "Vault settings" })) fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Back up vault…" }));
+    await waitFor(() => expect(picker.download).toHaveBeenCalled());
+    const saved = picker.download.mock.calls[0][0] as { name: string; bytes: Uint8Array };
+    expect(saved.name).toBe("Markie Vault.markievault");
+    expect(new TextDecoder().decode(saved.bytes)).not.toContain("Backed up body");
+    expect(new TextDecoder().decode(saved.bytes)).toContain(storage.value!.header.slice(0, 40).replaceAll('"', '\\"'));
+    return saved.bytes;
+  }
+
+  it("backs up, restores into empty storage, and the same passphrase opens it", async () => {
+    touchIdBridge();
+    const storage = new TestStorage();
+    const view = await create(storage);
+    fireEvent.click(screen.getByRole("button", { name: "New private note" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Private text" }), { target: { value: "Backed up body" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
+    await screen.findByText("Encrypted saved copy");
+    await turnOnTouchId();
+    const bytes = await backupBytes(storage);
+    expect(new TextDecoder().decode(bytes)).not.toContain("device-slot");
+    view.unmount();
+
+    const wiped = new TestStorage();
+    render(<VaultPanel storage={wiped} />);
+    picker.pick.mockResolvedValue({ name: "Markie Vault.markievault", bytes: new Uint8Array(bytes), format: { mimeType: "application/octet-stream" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Restore from backup…" }));
+    fireEvent.change(await screen.findByLabelText("Backup passphrase"), { target: { value: "the wrong backup passphrase" } });
+    fireEvent.click(screen.getByRole("button", { name: "Restore vault" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("incorrect");
+    expect(wiped.value).toBeNull();
+    fireEvent.change(screen.getByLabelText("Backup passphrase"), { target: { value: secret } });
+    fireEvent.click(screen.getByRole("button", { name: "Restore vault" }));
+    await screen.findByRole("button", { name: "New private note" });
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(wiped.value?.deviceSlot).toBeUndefined();
+    fireEvent.click(screen.getByRole("button", { name: "Lock vault" }));
+    await unlock();
+    fireEvent.click(screen.getByRole("button", { name: /Untitled.txt/ }));
+    expect(await screen.findByRole("textbox", { name: "Private text" })).toHaveValue("Backed up body");
+  });
+
+  it("rejects a file that is not a backup", async () => {
+    render(<VaultPanel storage={new TestStorage()} />);
+    picker.pick.mockResolvedValue({ name: "notes.txt", bytes: new TextEncoder().encode("hello"), format: { mimeType: "text/plain" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Restore from backup…" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("not a Markie vault backup");
+    expect(screen.queryByLabelText("Backup passphrase")).toBeNull();
+  });
+
+  it("replaces an existing vault from Settings only after confirmation and a working passphrase", async () => {
+    const source = new TestStorage();
+    const first = await create(source);
+    fireEvent.click(screen.getByRole("button", { name: "New private note" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Private text" }), { target: { value: "Backed up body" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
+    await screen.findByText("Encrypted saved copy");
+    const bytes = await backupBytes(source);
+    first.unmount();
+
+    const touch = touchIdBridge();
+    const target = new TestStorage();
+    await create(target);
+    await turnOnTouchId();
+    const before = JSON.stringify(target.value);
+    picker.pick.mockResolvedValue({ name: "Markie Vault.markievault", bytes: new Uint8Array(bytes), format: { mimeType: "application/octet-stream" } });
+    fireEvent.click(screen.getByRole("button", { name: "Restore from backup…" }));
+    fireEvent.change(await screen.findByLabelText("Backup passphrase"), { target: { value: secret } });
+    fireEvent.click(screen.getByRole("button", { name: "Restore vault" }));
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("Replace the vault on this device"));
+    expect(JSON.stringify(target.value)).toBe(before);
+    vi.mocked(window.confirm).mockReturnValue(true);
+    fireEvent.change(screen.getByLabelText("Backup passphrase"), { target: { value: secret } });
+    fireEvent.click(screen.getByRole("button", { name: "Restore vault" }));
+    await screen.findByRole("button", { name: /Untitled.txt/ });
+    expect(target.value?.header).toBe(source.value?.header);
+    expect(target.value?.deviceSlot).toBeUndefined();
+    expect(touch.keychain.size).toBe(0);
   });
 });

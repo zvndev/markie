@@ -101,6 +101,10 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     setDefaultApps: vi.fn(async () => ({ ok: true })),
     copySecret: vi.fn(async () => ({ ok: true, clearsAfterMs: 30_000 })),
     clearSecretClipboard: vi.fn(async () => ({ ok: true, cleared: false })),
+    vaultTouchIdAvailable: vi.fn(async () => ({ available: false, enrolled: false })),
+    vaultTouchIdEnroll: vi.fn(async () => ({ ok: false as const, reason: "unavailable" as const })),
+    vaultTouchIdUnlock: vi.fn(async () => ({ ok: false as const, reason: "unavailable" as const })),
+    vaultTouchIdRemove: vi.fn(async () => ({ ok: true })),
     searchDocuments: vi.fn(async () => ({ results: [], scanned: 0, total: 0, partial: false })),
 
     // Workspace / Files view

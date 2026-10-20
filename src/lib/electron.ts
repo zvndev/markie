@@ -179,6 +179,9 @@ export interface InstalledSkill {
 
 export interface PrivateReleaseStatus { required: boolean; authorized: boolean; channel: string | null; gitCommit: string | null; authOrigin: string }
 
+export type VaultTouchIdFailure = "missing" | "cancelled" | "unavailable" | "busy";
+export type VaultTouchIdResult = { ok: true } | { ok: false; reason: VaultTouchIdFailure };
+
 export interface ElectronAPI {
   platform: string;
   privateReleaseAuthOrigin?: string;
@@ -208,6 +211,14 @@ export interface ElectronAPI {
   copySecret?(text: string): Promise<{ ok: boolean; error?: string; clearsAfterMs?: number }>;
   /** Clear a vault secret from the clipboard now, if it is still there. */
   clearSecretClipboard?(): Promise<{ ok: boolean; cleared?: boolean }>;
+  /** Whether Touch ID can unlock the vault here, and whether this vault's keychain secret exists. */
+  vaultTouchIdAvailable?(vaultId?: string): Promise<{ available: boolean; enrolled: boolean }>;
+  /** Prompts Touch ID, then keeps the vault's device secret in the keychain. */
+  vaultTouchIdEnroll?(vaultId: string, secret: Uint8Array): Promise<VaultTouchIdResult>;
+  /** Prompts Touch ID, then returns the vault's device secret. The caller zeroes it. */
+  vaultTouchIdUnlock?(vaultId: string): Promise<VaultTouchIdResult & { secret?: Uint8Array }>;
+  /** Deletes the vault's keychain secret. */
+  vaultTouchIdRemove?(vaultId: string): Promise<{ ok: boolean }>;
   // search every indexed and recent document by name, path and body text
   searchDocuments?(args: { query: string; formats?: string[]; limit?: number }): Promise<DocumentSearchResponse>;
   // Workspace / Files view

@@ -1,12 +1,18 @@
 import {
-  VAULT_LIMITS, VaultError, decodeBase64, documentContext, encodeBase64, headerContext,
-  metadataBytes, parseMetadata, parseVaultDocument, parseVaultHeader,
-  serializeVaultDocument, serializeVaultHeader, validateVaultId,
-  type VaultDocumentEnvelope, type VaultDocumentMetadata, type VaultHeader,
+  VAULT_LIMITS, VaultError, decodeBase64, deviceSlotContext, documentContext, encodeBase64, headerContext,
+  metadataBytes, parseMetadata, parseVaultDeviceSlot, parseVaultDocument, parseVaultHeader,
+  serializeVaultDeviceSlot, serializeVaultDocument, serializeVaultHeader, validateVaultId,
+  type VaultDeviceSlot, type VaultDocumentEnvelope, type VaultDocumentMetadata, type VaultHeader,
 } from "./envelope";
 
-export { VAULT_LIMITS, VaultError, parseVaultDocument, parseVaultHeader, serializeVaultDocument, serializeVaultHeader } from "./envelope";
-export type { VaultDocumentEnvelope, VaultDocumentMetadata, VaultErrorCode, VaultHeader } from "./envelope";
+export {
+  VAULT_DEVICE_SLOT_VERSION, VAULT_LIMITS, VaultError, parseVaultDeviceSlot, parseVaultDocument, parseVaultHeader,
+  serializeVaultDeviceSlot, serializeVaultDocument, serializeVaultHeader,
+} from "./envelope";
+export type { VaultDeviceSlot, VaultDocumentEnvelope, VaultDocumentMetadata, VaultErrorCode, VaultHeader } from "./envelope";
+
+/** Length of the device secret the OS keychain holds for a device slot. */
+export const VAULT_DEVICE_SECRET_BYTES = 32;
 
 function provider(): Crypto {
   const crypto = globalThis.crypto;
@@ -47,6 +53,12 @@ async function wrappingKey(passphrase: string, header: VaultHeader): Promise<Cry
   } finally { bytes.fill(0); }
 }
 
+/** The caller owns `secret`: hand it to the keychain, then zero it. */
+export interface VaultDeviceEnrollment {
+  readonly slot: string;
+  readonly secret: Uint8Array<ArrayBuffer>;
+}
+
 export interface DecryptedVaultDocument {
   readonly bytes: Uint8Array<ArrayBuffer>;
   readonly metadata: VaultDocumentMetadata;
@@ -61,6 +73,7 @@ export class Vault {
   #vaultId: string | undefined;
   #epoch = 0;
   #pendingUnlock = false;
+  #pendingEnrollment = false;
   #documentOperations = 0;
   #state: "locked" | "unlocking" | "unlocked" = "locked";
 
@@ -121,26 +134,110 @@ export class Vault {
     }
   }
 
+  /** Decrypts the raw vault key with the passphrase. The caller must zero the result. */
+  async #passphraseKey(header: VaultHeader, passphrase: string, epoch: number): Promise<Uint8Array<ArrayBuffer>> {
+    const wrapper = await wrappingKey(passphrase, header);
+    this.#assertEpoch(epoch);
+    let rawKey: Uint8Array<ArrayBuffer>;
+    try {
+      rawKey = new Uint8Array(await provider().subtle.decrypt({ name: "AES-GCM", iv: decodeBase64(header.wrap.iv),
+        additionalData: headerContext(header), tagLength: 128 }, wrapper, decodeBase64(header.wrap.ciphertext)));
+    } catch { throw new VaultError("authentication-failed"); }
+    try { this.#assertEpoch(epoch); }
+    catch (error) { rawKey.fill(0); throw error; }
+    return rawKey;
+  }
+
+  async #adoptRawKey(rawKey: Uint8Array<ArrayBuffer>, vaultId: string, epoch: number): Promise<void> {
+    const key = await provider().subtle.importKey("raw", rawKey, "AES-KW", false, ["wrapKey", "unwrapKey"]);
+    this.#assertEpoch(epoch);
+    this.#key = key;
+    this.#vaultId = vaultId;
+    this.#state = "unlocked";
+  }
+
   async unlock(serializedHeader: string, passphrase: string): Promise<void> {
     const header = parseVaultHeader(serializedHeader);
     const epoch = this.#beginUnlock();
     let rawKey: Uint8Array<ArrayBuffer> | undefined;
     try {
-      const wrapper = await wrappingKey(passphrase, header);
-      this.#assertEpoch(epoch);
-      try {
-        rawKey = new Uint8Array(await provider().subtle.decrypt({ name: "AES-GCM", iv: decodeBase64(header.wrap.iv),
-          additionalData: headerContext(header), tagLength: 128 }, wrapper, decodeBase64(header.wrap.ciphertext)));
-      } catch { throw new VaultError("authentication-failed"); }
-      this.#assertEpoch(epoch);
-      const key = await provider().subtle.importKey("raw", rawKey, "AES-KW", false, ["wrapKey", "unwrapKey"]);
-      this.#assertEpoch(epoch);
-      this.#key = key;
-      this.#vaultId = header.vaultId;
-      this.#state = "unlocked";
+      rawKey = await this.#passphraseKey(header, passphrase, epoch);
+      await this.#adoptRawKey(rawKey, header.vaultId, epoch);
     } finally {
       rawKey?.fill(0);
       this.#finishUnlock();
+    }
+  }
+
+  /**
+   * Unlocks through the device slot. Takes ownership of `secret`: it is copied and the
+   * caller's buffer is zeroed before any asynchronous work, whatever the outcome.
+   */
+  async unlockWithDeviceSecret(serializedHeader: string, serializedSlot: string, secret: Uint8Array): Promise<void> {
+    let ownSecret: Uint8Array<ArrayBuffer> | undefined;
+    let header: VaultHeader;
+    let slot: VaultDeviceSlot;
+    try {
+      if (!(secret instanceof Uint8Array)) throw new VaultError("authentication-failed");
+      ownSecret = new Uint8Array(secret);
+      header = parseVaultHeader(serializedHeader);
+      slot = parseVaultDeviceSlot(serializedSlot);
+      if (slot.vaultId !== header.vaultId || ownSecret.length !== VAULT_DEVICE_SECRET_BYTES) throw new VaultError("authentication-failed");
+    } catch (error) {
+      ownSecret?.fill(0);
+      throw error;
+    } finally {
+      if (secret instanceof Uint8Array) secret.fill(0);
+    }
+    let epoch: number;
+    try { epoch = this.#beginUnlock(); }
+    catch (error) { ownSecret.fill(0); throw error; }
+    let rawKey: Uint8Array<ArrayBuffer> | undefined;
+    try {
+      let deviceKey: CryptoKey;
+      try { deviceKey = await provider().subtle.importKey("raw", ownSecret, "AES-GCM", false, ["decrypt"]); }
+      finally { ownSecret.fill(0); }
+      this.#assertEpoch(epoch);
+      try {
+        rawKey = new Uint8Array(await provider().subtle.decrypt({ name: "AES-GCM", iv: decodeBase64(slot.iv),
+          additionalData: deviceSlotContext(slot), tagLength: 128 }, deviceKey, decodeBase64(slot.ciphertext)));
+      } catch { throw new VaultError("authentication-failed"); }
+      this.#assertEpoch(epoch);
+      await this.#adoptRawKey(rawKey, header.vaultId, epoch);
+    } finally {
+      rawKey?.fill(0);
+      this.#finishUnlock();
+    }
+  }
+
+  /**
+   * Creates a device slot for the vault that is unlocked now. It needs the passphrase again,
+   * so the raw key only exists for the length of this call and no extractable key is kept.
+   */
+  async enrollDevice(serializedHeader: string, passphrase: string): Promise<VaultDeviceEnrollment> {
+    const header = parseVaultHeader(serializedHeader);
+    const { vaultId, epoch } = this.#unlocked();
+    if (header.vaultId !== vaultId) throw new VaultError("authentication-failed");
+    if (this.#pendingEnrollment) throw new VaultError("busy");
+    this.#pendingEnrollment = true;
+    let rawKey: Uint8Array<ArrayBuffer> | undefined;
+    let secret: Uint8Array<ArrayBuffer> | undefined;
+    try {
+      rawKey = await this.#passphraseKey(header, passphrase, epoch);
+      secret = random(VAULT_DEVICE_SECRET_BYTES);
+      const deviceKey = await provider().subtle.importKey("raw", secret, "AES-GCM", false, ["encrypt"]);
+      this.#assertEpoch(epoch);
+      const slot: VaultDeviceSlot = { kind: "markie-vault-device-slot", version: 1, vaultId, iv: encodeBase64(random(12)), ciphertext: "" };
+      const ciphertext = await provider().subtle.encrypt({ name: "AES-GCM", iv: decodeBase64(slot.iv),
+        additionalData: deviceSlotContext(slot), tagLength: 128 }, deviceKey, rawKey);
+      this.#assertEpoch(epoch);
+      const enrollment = { slot: serializeVaultDeviceSlot({ ...slot, ciphertext: encodeBase64(new Uint8Array(ciphertext)) }), secret };
+      secret = undefined;
+      return enrollment;
+    } finally {
+      rawKey?.fill(0);
+      secret?.fill(0);
+      this.#pendingEnrollment = false;
     }
   }
 

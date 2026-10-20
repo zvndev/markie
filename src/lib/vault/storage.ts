@@ -1,14 +1,24 @@
-import { parseVaultDocument, parseVaultHeader } from "./index";
+import { parseVaultDeviceSlot, parseVaultDocument, parseVaultHeader } from "./index";
 
 export const VAULT_DATABASE_NAME = "markie-encrypted-vault";
 export const VAULT_STORAGE_LIMITS = Object.freeze({ records: 128, encryptedCharacters: 32 * 1024 * 1024 });
 
-/** Only ciphertext and non-secret, opaque IDs/revisions cross this boundary. */
+/**
+ * Only ciphertext and non-secret, opaque IDs/revisions cross this boundary.
+ * `deviceSlot` is optional and absent from vaults written before Touch ID, so those still load;
+ * the key is written only while a slot exists.
+ */
 export interface StoredVault {
   readonly version: 1;
   readonly revision: number;
   readonly header: string;
   readonly records: ReadonlyArray<Readonly<{ id: string; envelope: string }>>;
+  readonly deviceSlot?: string;
+}
+
+export interface VaultCommitOptions {
+  /** Restoring a backup is the only write allowed to swap the header (and so the vault). */
+  readonly replaceHeader?: boolean;
 }
 
 export type VaultStorageErrorCode = "unavailable" | "corrupt" | "conflict" | "quota" | "aborted" | "storage-failed";
@@ -22,7 +32,7 @@ export class VaultStorageError extends Error {
 export interface VaultStorage {
   load(signal?: AbortSignal): Promise<StoredVault | null>;
   /** Resolve only after atomic commit. A mismatch or abort must change nothing. */
-  commit(expectedRevision: number | null, next: StoredVault, signal?: AbortSignal): Promise<void>;
+  commit(expectedRevision: number | null, next: StoredVault, signal?: AbortSignal, options?: VaultCommitOptions): Promise<void>;
 }
 
 function exactObject(value: unknown, keys: string[]): value is Record<string, unknown> {
@@ -33,7 +43,8 @@ function exactObject(value: unknown, keys: string[]): value is Record<string, un
 /** Strict validation rejects accidental plaintext fields before any persistence. */
 export function validateStoredVault(value: unknown): StoredVault {
   try {
-    if (!exactObject(value, ["version", "revision", "header", "records"]) || value.version !== 1 ||
+    const withSlot = !!value && typeof value === "object" && Object.hasOwn(value, "deviceSlot");
+    if (!exactObject(value, withSlot ? ["version", "revision", "header", "records", "deviceSlot"] : ["version", "revision", "header", "records"]) || value.version !== 1 ||
         !Number.isSafeInteger(value.revision) || (value.revision as number) < 1 || !Array.isArray(value.records) ||
         value.records.length > VAULT_STORAGE_LIMITS.records || typeof value.header !== "string") throw new Error();
     const header = parseVaultHeader(value.header);
@@ -48,7 +59,10 @@ export function validateStoredVault(value: unknown): StoredVault {
       ids.add(record.id);
       return Object.freeze({ id: record.id, envelope: record.envelope });
     });
-    return Object.freeze({ version: 1, revision: value.revision as number, header: value.header, records: Object.freeze(records) });
+    const stored = { version: 1 as const, revision: value.revision as number, header: value.header, records: Object.freeze(records) };
+    if (!withSlot) return Object.freeze(stored);
+    if (typeof value.deviceSlot !== "string" || parseVaultDeviceSlot(value.deviceSlot).vaultId !== header.vaultId) throw new Error();
+    return Object.freeze({ ...stored, deviceSlot: value.deviceSlot });
   } catch { throw new VaultStorageError("corrupt"); }
 }
 
@@ -116,7 +130,7 @@ export class IndexedDbVaultStorage implements VaultStorage {
     });
   }
 
-  async commit(expectedRevision: number | null, next: StoredVault, signal?: AbortSignal): Promise<void> {
+  async commit(expectedRevision: number | null, next: StoredVault, signal?: AbortSignal, options: VaultCommitOptions = {}): Promise<void> {
     const snapshot = validateStoredVault(next);
     if ((expectedRevision !== null && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) ||
         snapshot.revision !== (expectedRevision ?? 0) + 1) throw new VaultStorageError("conflict");
@@ -136,7 +150,7 @@ export class IndexedDbVaultStorage implements VaultStorage {
       current.onsuccess = () => {
         try {
           const previous = current.result === undefined ? null : validateStoredVault(current.result);
-          if ((previous?.revision ?? null) !== expectedRevision || (previous && previous.header !== snapshot.header)) {
+          if ((previous?.revision ?? null) !== expectedRevision || (previous && previous.header !== snapshot.header && !options.replaceHeader)) {
             throw new VaultStorageError("conflict");
           }
           // The header and every encrypted record are one transactionally replaced value.
@@ -145,4 +159,16 @@ export class IndexedDbVaultStorage implements VaultStorage {
       };
     });
   }
+}
+
+/**
+ * Asks the browser not to evict the vault database under storage pressure. Resolves to whether
+ * storage is persistent, or null when the browser cannot say.
+ */
+export async function requestPersistentStorage(manager: Pick<StorageManager, "persist" | "persisted"> | undefined = globalThis.navigator?.storage): Promise<boolean | null> {
+  if (!manager?.persist) return null;
+  try {
+    if (await manager.persisted?.()) return true;
+    return await manager.persist();
+  } catch { return null; }
 }

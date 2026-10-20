@@ -13,6 +13,9 @@ export const VAULT_LIMITS = Object.freeze({
 
 export type VaultErrorCode = "invalid-envelope" | "limit-exceeded" | "invalid-passphrase" | "authentication-failed" | "locked" | "busy" | "unavailable";
 
+/** Bumped only if the device slot's cryptographic binding changes. */
+export const VAULT_DEVICE_SLOT_VERSION = 1;
+
 export class VaultError extends Error {
   constructor(public readonly code: VaultErrorCode) {
     super(`Vault operation failed: ${code}`);
@@ -45,6 +48,18 @@ export interface VaultDocumentEnvelope {
   readonly cipher: "AES-GCM";
   readonly keyWrap: "AES-KW";
   readonly wrappedKey: string;
+  readonly iv: string;
+  readonly ciphertext: string;
+}
+
+/**
+ * A second key slot: the vault key encrypted under a random 32-byte device secret that the
+ * main process keeps in the OS keychain. The passphrase slot in the header stays the master key.
+ */
+export interface VaultDeviceSlot {
+  readonly kind: "markie-vault-device-slot";
+  readonly version: 1;
+  readonly vaultId: string;
   readonly iv: string;
   readonly ciphertext: string;
 }
@@ -122,6 +137,19 @@ export function parseVaultHeader(serialized: string): VaultHeader {
   return header;
 }
 
+export function serializeVaultDeviceSlot(slot: VaultDeviceSlot): string {
+  return JSON.stringify({ kind: slot.kind, version: slot.version, vaultId: slot.vaultId, iv: slot.iv, ciphertext: slot.ciphertext });
+}
+
+export function parseVaultDeviceSlot(serialized: string): VaultDeviceSlot {
+  const value = object(json(serialized, VAULT_LIMITS.headerCharacters), ["kind", "version", "vaultId", "iv", "ciphertext"]);
+  if (value.kind !== "markie-vault-device-slot" || value.version !== VAULT_DEVICE_SLOT_VERSION) throw new VaultError("invalid-envelope");
+  const slot: VaultDeviceSlot = Object.freeze({ kind: "markie-vault-device-slot", version: 1, vaultId: validateVaultId(value.vaultId),
+    iv: base64(value.iv, 12, 12), ciphertext: base64(value.ciphertext, 48, 48) });
+  if (serializeVaultDeviceSlot(slot) !== serialized) throw new VaultError("invalid-envelope");
+  return slot;
+}
+
 export function serializeVaultDocument(envelope: VaultDocumentEnvelope): string {
   return JSON.stringify({ kind: envelope.kind, version: envelope.version, vaultId: envelope.vaultId,
     documentId: envelope.documentId, cipher: envelope.cipher, keyWrap: envelope.keyWrap,
@@ -168,6 +196,11 @@ export function parseMetadata(bytes: Uint8Array): VaultDocumentMetadata {
 export function headerContext(header: VaultHeader): Uint8Array<ArrayBuffer> {
   return new TextEncoder().encode(JSON.stringify([header.kind, header.version, header.vaultId,
     header.kdf.name, header.kdf.hash, header.kdf.iterations, header.kdf.salt, header.wrap.name, header.wrap.iv]));
+}
+
+/** Binds the slot to its vault and slot version, so it cannot be moved to another vault. */
+export function deviceSlotContext(slot: Pick<VaultDeviceSlot, "kind" | "version" | "vaultId" | "iv">): Uint8Array<ArrayBuffer> {
+  return new TextEncoder().encode(JSON.stringify([slot.kind, slot.version, slot.vaultId, slot.iv]));
 }
 
 export function documentContext(envelope: VaultDocumentEnvelope): Uint8Array<ArrayBuffer> {

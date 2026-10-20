@@ -11,6 +11,7 @@ const {
   shell,
   session,
   safeStorage,
+  systemPreferences,
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -2796,6 +2797,28 @@ handle("secret-clipboard-copy", (event, text) => {
   return secretClipboard.copy(text);
 }, { onFailure: () => ({ ok: false, error: "Couldn't copy." }) });
 handle("secret-clipboard-clear", () => ({ ok: true, cleared: secretClipboard.clearNow() }), { onFailure: () => ({ ok: false }) });
+
+// Touch ID unlock for the vault. The device secret is released only to the
+// main window's own app frame, and only after promptTouchID succeeds.
+const vaultTouchId = require("./vault-touch-id").createVaultTouchId({ safeStorage, systemPreferences, userData: app.getPath("userData") });
+// Same sender rule as secret-clipboard-copy, plus the main frame and app URL.
+const fromVaultWindow = (event) => currentCloseSender(event);
+handle("vault-touch-id-available", (event, vaultId) => {
+  if (!fromVaultWindow(event)) return { available: false, enrolled: false };
+  return vaultTouchId.status(vaultId);
+}, { onFailure: () => ({ available: false, enrolled: false }) });
+handle("vault-touch-id-enroll", (event, vaultId, secret) => {
+  if (!fromVaultWindow(event)) return { ok: false, reason: "unavailable" };
+  return vaultTouchId.enroll(vaultId, secret);
+}, { onFailure: () => ({ ok: false, reason: "unavailable" }) });
+handle("vault-touch-id-unlock", (event, vaultId) => {
+  if (!fromVaultWindow(event)) return { ok: false, reason: "unavailable" };
+  return vaultTouchId.unlock(vaultId);
+}, { onFailure: () => ({ ok: false, reason: "unavailable" }) });
+handle("vault-touch-id-remove", (event, vaultId) => {
+  if (!fromVaultWindow(event)) return { ok: false };
+  return vaultTouchId.remove(vaultId);
+}, { onFailure: () => ({ ok: false }) });
 
 handle("default-apps-status", async () => {
   if (isDesktopPreview) return unsupportedDefaultApps("Markie Preview does not change installed file associations.");

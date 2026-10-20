@@ -239,10 +239,14 @@ async function main() {
     await cdp.ev(bodyHas("email you a code to set a new password"))
   );
 
-  // ── Beta channel ───────────────────────────────────────────────────────
+  // ── Early access (beta channel) ────────────────────────────────────────
   check("Advanced settings open", await cdp.ev(clickText("Advanced")));
-  await waitFor("advanced", () => cdp.ev(bodyHas("Receive beta updates")), 10000);
-  check("the beta channel is offered inside the app", await cdp.ev(bodyHas("Receive beta updates")));
+  await waitFor("advanced", () => cdp.ev(bodyHas("Get new versions early")), 10000);
+  check("early access is offered inside the app", await cdp.ev(bodyHas("Get new versions early")));
+  check(
+    "early access says everyone else gets the build a few days later",
+    await cdp.ev(bodyHas("everyone else a few days later"))
+  );
   await shoot(cdp, "03-beta-channel");
   check(
     "leaving beta is described before joining it",

@@ -6,6 +6,8 @@ import {
   feedFor,
   isPrerelease,
   readBetaOptIn,
+  readChannelPrefs,
+  settleLeftEarly,
   updaterSettingsFor,
   writeBetaOptIn,
 } from "./update-channel.js";
@@ -116,6 +118,76 @@ describe("updaterSettingsFor", () => {
   it("does not downgrade someone still opted in to beta", () => {
     const s = updaterSettingsFor({ optedIn: true, currentVersion: "0.5.0-beta.1" });
     expect(s.allowDowngrade).toBe(false);
+  });
+});
+
+describe("stable-numbered early builds", () => {
+  // The three-stage pipeline publishes 0.9.0 (not 0.9.0-beta.1) to the early
+  // feed, so the version string alone can no longer say "this came from early".
+
+  it("keeps an early user on the early feed for a stable-style version", () => {
+    const s = updaterSettingsFor({ optedIn: true, currentVersion: "0.9.0" });
+    expect(s.channel).toBe(BETA_CHANNEL);
+    expect(s.allowDowngrade).toBe(false);
+  });
+
+  it("walks the exact build a user left early access on back down to stable", () => {
+    const s = updaterSettingsFor({
+      optedIn: false,
+      currentVersion: "0.9.0",
+      leftEarlyFrom: "0.9.0",
+    });
+    expect(s.channel).toBe(STABLE_CHANNEL);
+    expect(s.allowDowngrade).toBe(true);
+  });
+
+  it("stops allowing a downgrade once the user is on any other build", () => {
+    const s = updaterSettingsFor({
+      optedIn: false,
+      currentVersion: "0.8.0",
+      leftEarlyFrom: "0.9.0",
+    });
+    expect(s.allowDowngrade).toBe(false);
+  });
+
+  it("records the version a user left from, and only when they were opted in", () => {
+    const fs = memoryFs();
+    // Never opted in: turning it "off" records nothing.
+    writeBetaOptIn("/data", false, { fs, currentVersion: "0.8.0" });
+    expect(readChannelPrefs("/data", { fs })).toEqual({ optedIn: false, leftEarlyFrom: null });
+
+    writeBetaOptIn("/data", true, { fs, currentVersion: "0.8.0" });
+    expect(readChannelPrefs("/data", { fs })).toEqual({ optedIn: true, leftEarlyFrom: null });
+
+    writeBetaOptIn("/data", false, { fs, currentVersion: "0.9.0" });
+    expect(readChannelPrefs("/data", { fs })).toEqual({ optedIn: false, leftEarlyFrom: "0.9.0" });
+    // The original key is still there, so older builds read the file the same.
+    expect(JSON.parse(fs.files.get("/data/update-channel.json") ?? "{}")).toMatchObject({
+      beta: false,
+    });
+  });
+
+  it("clears the marker when the user opts back in", () => {
+    const fs = memoryFs({
+      "/data/update-channel.json": '{"beta":false,"leftEarlyFrom":"0.9.0"}',
+    });
+    writeBetaOptIn("/data", true, { fs, currentVersion: "0.9.0" });
+    expect(readChannelPrefs("/data", { fs }).leftEarlyFrom).toBeNull();
+  });
+
+  it("settles a stale marker once the install has moved off that build", () => {
+    const fs = memoryFs({
+      "/data/update-channel.json": '{"beta":false,"leftEarlyFrom":"0.9.0"}',
+    });
+    expect(settleLeftEarly("/data", "0.9.0", { fs })).toBe(false);
+    expect(readChannelPrefs("/data", { fs }).leftEarlyFrom).toBe("0.9.0");
+    expect(settleLeftEarly("/data", "0.8.0", { fs })).toBe(true);
+    expect(readChannelPrefs("/data", { fs })).toEqual({ optedIn: false, leftEarlyFrom: null });
+  });
+
+  it("ignores a marker of the wrong shape", () => {
+    const fs = memoryFs({ "/data/update-channel.json": '{"beta":false,"leftEarlyFrom":7}' });
+    expect(readChannelPrefs("/data", { fs }).leftEarlyFrom).toBeNull();
   });
 });
 

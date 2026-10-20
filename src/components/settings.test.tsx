@@ -131,6 +131,22 @@ describe("Settings — sections", () => {
     expect(screen.getByDisplayValue("https://api.test")).toBeInTheDocument();
   });
 
+  it("offers early access under its early-access name and keeps the stored opt-in", async () => {
+    const user = userEvent.setup();
+    const bridge = installBridge();
+    renderSettings({ initialSection: "advanced" });
+    const toggle = await screen.findByRole("checkbox", { name: /Get new versions early/ });
+    expect(
+      screen.getByText(/New versions reach you first, and everyone else a few days later\./)
+    ).toBeInTheDocument();
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    // Same IPC and the same boolean as the old "Receive beta updates" switch,
+    // so the setting already on disk keeps meaning what it meant.
+    expect(bridge.updateChannelSet).toHaveBeenCalledWith(true);
+    expect(toggle).toBeChecked();
+  });
+
   it("opens straight into the section it was asked for", () => {
     renderSettings({ initialSection: "appearance" });
     expect(screen.getByRole("radiogroup", { name: "Style templates" })).toBeInTheDocument();

@@ -43,6 +43,8 @@ const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy"
 const { guardedLogger } = require("./updater-logging");
 const {
   readBetaOptIn,
+  readChannelPrefs,
+  settleLeftEarly,
   updaterSettingsFor,
   writeBetaOptIn,
 } = require("./update-channel");
@@ -2594,13 +2596,19 @@ function applyUpdateChannel() {
     autoUpdater.channel = "super-nightly"; autoUpdater.allowPrerelease = true; autoUpdater.allowDowngrade = false;
     return { optedIn: false, channel: "super-nightly", allowDowngrade: false };
   }
-  const optedIn = readBetaOptIn(app.getPath("userData"));
+  const userData = app.getPath("userData");
+  const currentVersion = app.getVersion();
+  settleLeftEarly(userData, currentVersion);
+  const { optedIn, leftEarlyFrom } = readChannelPrefs(userData);
   const { channel, allowDowngrade } = updaterSettingsFor({
     optedIn,
-    currentVersion: app.getVersion(),
+    currentVersion,
+    leftEarlyFrom,
   });
+  // The channel setter turns allowDowngrade on inside electron-updater, so the
+  // explicit value has to be assigned after it.
   autoUpdater.channel = channel;
-  // Leaving beta means walking back down to stable; see update-channel.js.
+  // Leaving early access means walking back down to stable; see update-channel.js.
   autoUpdater.allowDowngrade = allowDowngrade;
   return { optedIn, channel, allowDowngrade };
 }
@@ -2623,7 +2631,9 @@ handle(
   async (_e, optedIn) => {
     if (privateReleaseConfig) return { ok: false, error: "Private builds cannot switch to stable or beta updates." };
     if (isDesktopPreview) return { ok: false, error: "Preview builds do not use the stable or beta update channels." };
-    const saved = writeBetaOptIn(app.getPath("userData"), optedIn === true);
+    const saved = writeBetaOptIn(app.getPath("userData"), optedIn === true, {
+      currentVersion: app.getVersion(),
+    });
     if (!saved) return { ok: false, error: "Couldn't save that preference." };
     const applied = applyUpdateChannel();
     // Check straight away: opting in should find the beta now, and opting out

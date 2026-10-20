@@ -200,9 +200,11 @@ export function Settings({ onClose, initialSection = "account" }: SettingsProps)
   );
 }
 
-// The only way into the beta channel. Deliberately lives here and nowhere else:
-// an unlisted channel you can only join from inside the app is what makes a
-// beta release withdrawable without anything public to retract.
+// The only way into the early-access (beta) channel. Deliberately lives here and
+// nowhere else: an unlisted channel you can only join from inside the app is
+// what makes an early release withdrawable without anything public to retract.
+// The stored setting is still `beta` in update-channel.json; only the words
+// changed when early access became the first stage of every release.
 function BetaChannelSetting() {
   const [optedIn, setOptedIn] = useState<boolean | null>(null);
   const [version, setVersion] = useState<string>("");
@@ -246,9 +248,9 @@ function BetaChannelSetting() {
       <div className="markie-overlay-section mb-2">Updates</div>
       <label className="flex items-start justify-between gap-3 text-[12px] text-muted py-1">
         <span>
-          Receive beta updates
+          Get new versions early
           <span className="block text-[11px] text-muted/80 mt-0.5 leading-relaxed">
-            Early builds, before they are released to everyone. Expect rough edges.
+            New versions reach you first, and everyone else a few days later.
             Turning this off moves you back to the current stable build.
           </span>
         </span>

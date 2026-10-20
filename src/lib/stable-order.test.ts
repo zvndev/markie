@@ -33,6 +33,24 @@ describe("stableOrder", () => {
     ]);
   });
 
+  it("places late arrivals by the panel's order when given one, instead of on top", () => {
+    type Row = { path: string; at: number };
+    const byNewest = (a: Row, b: Row) => b.at - a.at;
+    const remembered = ["/opened-today.md", "/opened-monday.md"];
+    const rows: Row[] = [
+      { path: "/shared-last-month.md", at: 1 },
+      { path: "/just-written.md", at: 100 },
+      { path: "/opened-monday.md", at: 10 },
+      { path: "/opened-today.md", at: 50 },
+    ];
+    expect(stableOrder(rows, key, remembered, byNewest).map(key)).toEqual([
+      "/just-written.md",
+      "/opened-today.md",
+      "/opened-monday.md",
+      "/shared-last-month.md",
+    ]);
+  });
+
   it("keeps several new files in the order they arrived", () => {
     const remembered = ["/a.md"];
     const withNew = files("/n1.md", "/n2.md", "/a.md");

@@ -29,7 +29,8 @@ import { LIB_TAB_KEY, initialLibTab, type LibTab } from "@/lib/library-state";
 import {
   cloudCopyOnly,
   libraryItemNeedsAttention,
-  sortLibraryItems,
+  compareRecent,
+  sortRecentItems,
   summarizeLibrary,
   type LibraryOverview,
 } from "@/lib/library-overview";
@@ -43,6 +44,7 @@ import type { EditableDocumentFormat } from "@/lib/document-session";
 import { DEFAULT_LIBRARY_DOCUMENT_QUERY, libraryDocumentFormat, matchesLibraryDocument, queryLibraryDocuments, type LibraryDocumentMetadata, type LibraryDocumentQuery } from "@/lib/library-document-query";
 import { LibraryDocumentFilters } from "@/components/library-document-filters";
 import { NewDocumentModal } from "@/components/new-document-modal";
+import { FormatBadge, FormatFileIcon } from "@/components/format-badge";
 import { DEFAULT_APPS_CHANGED } from "@/components/default-apps-section";
 import { CloudAreaPicker, CloudAreaProvider, CloudAreaScopePicker } from "./cloud-area-picker";
 import { accountScopeKey, confirmedAccountScope, subscribeAccountScope } from "@/lib/account-identities";
@@ -74,14 +76,11 @@ interface LibraryProps {
   activeDocumentId?: string;
   onOpenDocument?: (record: LibraryRecord) => void;
   onCreateDocument?: (format: EditableDocumentFormat) => void;
-  onOpenVault?: () => void;
   // Settings > Files, where every fully supported type can be made Markie's.
   onOpenDefaultApps?: () => void;
   renderCloudDocuments?: (query: LibraryDocumentQuery, presentation: "panel" | "workspace") => ReactNode;
 }
 
-type CloudTab = "snapshots" | "sync";
-const CLOUD_TAB_KEY = "markie.cloud.workspace-tab.v1";
 
 const NO_DOCUMENT_RECORDS: readonly LibraryRecord[] = [];
 
@@ -136,33 +135,61 @@ function recoveryMetadata(record: LibraryRecord): LibraryDocumentMetadata {
   return { key: `recovery:${record.id}`, name: record.name, format: record.format, updatedAt: record.updatedAt, extractedText: record.extractedText, tags: record.tags, collection: record.collection };
 }
 
-const BADGE: Record<LibraryItem["state"], [string, string]> = {
-  "local-only": ["Local", "text-muted border-border"],
-  synced: [
-    "Synced",
-    "text-[var(--status-green)] border-[color:var(--status-green)]",
-  ],
-  unpushed: [
-    "Not backed up",
-    "text-[var(--status-yellow)] border-[color:var(--status-yellow)]",
-  ],
-  paused: [
-    "Paused",
-    "text-[var(--status-yellow)] border-[color:var(--status-yellow)]",
-  ],
-  conflict: [
-    "Conflict",
-    "text-[var(--status-red)] border-[color:var(--status-red)]",
-  ],
-  behind: [
-    "Update",
-    "text-[var(--status-blue)] border-[color:var(--status-blue)]",
-  ],
-  "cloud-only": [
-    "Cloud",
-    "text-[var(--status-blue)] border-[color:var(--status-blue)]",
-  ],
+// Sync state as a small icon, not a word: the row's eye goes to the name and
+// the type, and the state is there for the moments it matters. Each icon still
+// says what it means on hover and to assistive tech.
+type SyncStatus = LibraryItem["state"] | "shared";
+const SYNC_STATUS: Record<SyncStatus, { label: string; color: string; icon: ReactNode }> = {
+  "local-only": {
+    label: "On this device only",
+    color: "text-muted/70",
+    icon: <><rect x="4" y="5" width="16" height="11" rx="1.5" /><path d="M2.5 19h19" /></>,
+  },
+  synced: {
+    label: "Synced",
+    color: "text-[var(--status-green)]",
+    icon: <><path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z" /><path d="m9.5 13 2 2 3.5-3.5" /></>,
+  },
+  unpushed: {
+    label: "Not backed up",
+    color: "text-[var(--status-yellow)]",
+    icon: <><path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z" /><path d="M12 15.5v-5M9.8 12.6 12 10.4l2.2 2.2" /></>,
+  },
+  paused: {
+    label: "Sync paused",
+    color: "text-[var(--status-yellow)]",
+    icon: <><path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z" /><path d="M10.5 11v4M13.5 11v4" /></>,
+  },
+  conflict: {
+    label: "Conflict: review changes",
+    color: "text-[var(--status-red)]",
+    icon: <><path d="M12 4 2.8 19.5h18.4z" /><path d="M12 10v4M12 16.8v.2" /></>,
+  },
+  behind: {
+    label: "Update available",
+    color: "text-[var(--status-blue)]",
+    icon: <><path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z" /><path d="M12 10v5M9.8 12.8 12 15l2.2-2.2" /></>,
+  },
+  "cloud-only": {
+    label: "In the cloud only",
+    color: "text-[var(--status-blue)]",
+    icon: <path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z" />,
+  },
+  shared: {
+    label: "Shared",
+    color: "text-[var(--status-purple)]",
+    icon: <><circle cx="9" cy="9" r="3" /><path d="M3.5 19a5.5 5.5 0 0 1 11 0" /><circle cx="17" cy="10" r="2.3" /><path d="M16 14.6a4.5 4.5 0 0 1 5 4.4" /></>,
+  },
 };
+
+function SyncStatusIcon({ status }: { status: SyncStatus }) {
+  const { label, color, icon } = SYNC_STATUS[status];
+  return (
+    <span role="img" aria-label={label} title={label} className={`inline-flex w-4 h-4 items-center justify-center shrink-0 ${color}`}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{icon}</svg>
+    </span>
+  );
+}
 
 export function Library({
   retainedDocument,
@@ -182,7 +209,6 @@ export function Library({
   activeDocumentId,
   onOpenDocument,
   onCreateDocument,
-  onOpenVault,
   onOpenDefaultApps,
   renderCloudDocuments,
 }: LibraryProps) {
@@ -203,14 +229,6 @@ export function Library({
   // whichever panel happened to be open when the request failed.
   const [cloudError, setCloudError] = useState<string | null>(null);
   const [query, setQuery] = useState<LibraryDocumentQuery>(() => ({ ...DEFAULT_LIBRARY_DOCUMENT_QUERY }));
-  const [cloudTab, setCloudTab] = useState<CloudTab>(() => {
-    if (!renderCloudDocuments) return "sync";
-    try { return localStorage.getItem(CLOUD_TAB_KEY) === "sync" ? "sync" : "snapshots"; } catch { return "snapshots"; }
-  });
-  const pickCloudTab = useCallback((tab: CloudTab) => {
-    setCloudTab(tab);
-    try { localStorage.setItem(CLOUD_TAB_KEY, tab); } catch { /* session-only preference */ }
-  }, []);
   // Freeze the row order for as long as the panel stays open, so opening a file
   // does not send it to the top and shuffle everything you were reading.
   const [frozenOrder, setFrozenOrder] = useState<string[]>([]);
@@ -374,7 +392,7 @@ export function Library({
     return readLibraryStartupSnapshot(api).then((s) => {
       setItems(s.items);
       // First rows to arrive define the order the panel keeps while open.
-      setFrozenOrder((prev) => (prev.length ? prev : sortLibraryItems(s.items).map(itemKey)));
+      setFrozenOrder((prev) => (prev.length ? prev : sortRecentItems(s.items).map(itemKey)));
       setSignedIn(s.signedIn);
       setWorkspace(s.workspace);
       setLoading(false);
@@ -391,7 +409,7 @@ export function Library({
       if (!alive) return;
       setItems(s.items);
       // First rows to arrive define the order the panel keeps while open.
-      setFrozenOrder((prev) => (prev.length ? prev : sortLibraryItems(s.items).map(itemKey)));
+      setFrozenOrder((prev) => (prev.length ? prev : sortRecentItems(s.items).map(itemKey)));
       setSignedIn(s.signedIn);
       setWorkspace(s.workspace);
       setLoading(false);
@@ -475,7 +493,7 @@ export function Library({
     });
 
   const orderedItems = useMemo(
-    () => stableOrder(items, itemKey, frozenOrder),
+    () => stableOrder(items, itemKey, frozenOrder, compareRecent),
     [items, frozenOrder]
   );
 
@@ -489,18 +507,17 @@ export function Library({
   const retainedFormat = retainedDocument ? libraryDocumentFormat(retainedDocument.name) : "markdown";
   const retainedVisible = retainedAvailable && matchesLibraryDocument({ key: "retained:markdown", name: retainedDocument!.name, path: retainedDocument!.path, format: retainedFormat }, query);
   const overview = summarizeLibrary(items);
-  const visibleDocuments = useMemo(() => queryLibraryDocuments(documentRecords, query, recoveryMetadata), [documentRecords, query]);
+  // Only copies that hold something the file does not: drafts never saved to
+  // a file, and edits not yet written back. A copy that matches its file is
+  // the file, and the file is already listed above.
+  const pendingRecords = useMemo(() => documentRecords.filter((record) => record.exportedRevision !== record.revision), [documentRecords]);
+  const visibleDocuments = useMemo(() => queryLibraryDocuments(pendingRecords, query, recoveryMetadata), [pendingRecords, query]);
   const queryActive = !!query.search.trim() || query.format !== "all" || query.sort !== "default";
-  const totalDocuments = items.filter((item) => item.path).length + documentRecords.length + Number(retainedAvailable);
+  const totalDocuments = items.filter((item) => item.path).length + pendingRecords.length + Number(retainedAvailable);
   const visibleCount = localFiles.length + visibleDocuments.length + Number(retainedVisible);
 
   const fileRow = (item: LibraryItem) => {
-    const [label, badgeClass]: [string, string] = item.shared
-      ? [
-          "Shared",
-          "text-[var(--status-purple)] border-[color:var(--status-purple)]",
-        ]
-      : BADGE[item.state];
+    const status: SyncStatus = item.shared ? "shared" : item.state;
     const api = getElectronAPI()!;
     const isActive = activePath && item.path === activePath;
     const itemKey = item.path ?? item.cloudId;
@@ -529,16 +546,12 @@ export function Library({
         onClick={open}
       >
         <div className="flex items-center gap-1.5">
-          <FileIcon />
+          <FormatFileIcon format={format} />
           <span className="text-[12.5px] text-foreground truncate flex-1" title={item.path ?? item.name}>
             {item.name}
           </span>
-          {format !== "markdown" && (
-            <span className="font-mono text-[9px] uppercase tracking-wide text-muted/80 shrink-0">{format === "other" ? "file" : format}</span>
-          )}
-          <span className={`text-[9px] px-1 py-px rounded border shrink-0 ${badgeClass}`}>
-            {label}
-          </span>
+          <FormatBadge format={format} />
+          <SyncStatusIcon status={status} />
           {(item.path || item.cloudId) && (
             <button
               onClick={(e) => {
@@ -620,14 +633,15 @@ export function Library({
     aria-current={record.id === activeDocumentId ? "true" : undefined}
     className={`group w-full text-left rounded-md px-2 py-1.5 disabled:opacity-50 ${record.id === activeDocumentId ? "bg-accent" : "hover:bg-accent/40"}`}
   >
-    <span className="flex items-center gap-1.5"><FileIcon /><span className="text-[12.5px] text-foreground truncate flex-1" title={record.name}>{record.name}</span>{" "}
-      <span className="text-[9px] px-1 py-px rounded border shrink-0 text-muted border-border" title="A local recovery copy, not a synced file">Recovered</span></span>
-    {" "}<span className="block pl-5 text-[10px] text-muted">{record.format.toUpperCase()} · Local recovery</span>
+    <span className="flex items-center gap-1.5"><FormatFileIcon format={record.format} /><span className="text-[12.5px] text-foreground truncate flex-1" title={record.name}>{record.name}</span>{" "}
+      <FormatBadge format={record.format} />
+      <span className="text-[9px] px-1 py-px rounded border shrink-0 text-muted border-border" title={record.exportedRevision === null ? "Kept on this Mac as you type. Open it and use Save file to choose where it goes." : "These edits are kept on this Mac. Open it and use Save file to write them to the file."}>{record.exportedRevision === null ? "Draft" : "Unsaved"}</span></span>
+    {" "}<span className="block pl-5 text-[10px] text-muted">{record.exportedRevision === null ? "Never saved to a file" : "Edits not saved to the file"}</span>
   </button>;
   const retainedRow = retainedVisible && retainedDocument ? <button key="retained:markdown" type="button" onClick={retainedDocument.onSelect}
     aria-current={retainedDocument.selected ? "true" : undefined}
     className={`group w-full text-left rounded-md px-2 py-1.5 ${retainedDocument.selected ? "bg-accent" : "hover:bg-accent/40"}`}>
-    <span className="flex items-center gap-1.5"><FileIcon /><span className="text-[12.5px] text-foreground truncate flex-1">{retainedDocument.name}</span>{" "}<span className="text-[9px] px-1 py-px rounded border shrink-0 text-muted border-border">{retainedDocument.dirty ? "Unsaved" : "Open"}</span></span>
+    <span className="flex items-center gap-1.5"><FormatFileIcon format={retainedFormat} /><span className="text-[12.5px] text-foreground truncate flex-1">{retainedDocument.name}</span>{" "}<FormatBadge format={retainedFormat} /><span className="text-[9px] px-1 py-px rounded border shrink-0 text-muted border-border">{retainedDocument.dirty ? "Unsaved" : "Open"}</span></span>
   </button> : null;
   // Explicit sorts cross source boundaries, but never convert a recovery or
   // retained document into a native file or change the callback it opens.
@@ -637,7 +651,6 @@ export function Library({
     ...(retainedVisible && retainedDocument ? [{ metadata: { key: "retained:markdown", name: retainedDocument.name, path: retainedDocument.path, format: retainedFormat }, node: retainedRow }] : []),
   ], query, ({ metadata }) => metadata);
   const cloudWorkspace = presentation === "workspace" && view === "cloud";
-  const effectiveCloudTab: CloudTab = renderCloudDocuments ? cloudTab : "sync";
 
   return (
     <div
@@ -677,7 +690,6 @@ export function Library({
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <button type="button" onClick={onOpenFile} className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[11.5px] text-muted transition hover:bg-accent/40 hover:text-foreground focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]" aria-label="Open a file from disk"><span aria-hidden="true" className="text-sm leading-none">+</span><span className="hidden sm:inline">Open file</span></button>
-            <button type="button" onClick={onClose} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border/80 bg-surface-2/70 px-2.5 text-[11.5px] text-foreground shadow-[inset_0_1px_rgba(255,255,255,0.05)] transition hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]" aria-label="Back to document"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>Document</button>
           </div>
         </div>
       ) : (
@@ -724,17 +736,16 @@ export function Library({
               ))}
             </div>
           </div>
-          {libTab === "recent" && (onCreateDocument || onOpenVault) && (
+          {libTab === "recent" && onCreateDocument && (
             <div className="px-2 py-1.5 border-b border-border/60" role="group" aria-label="Document actions">
-              {onCreateDocument ? <div role="group" aria-label="Create document">
+              <div role="group" aria-label="Create document">
                 <button type="button" onClick={() => setShowNewDocument(true)} className="w-full rounded-md border border-border/70 px-2 py-1.5 text-left text-[11.5px] text-foreground hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]">New document…</button>
-              </div> : null}
-              {onOpenVault ? <div className={onCreateDocument ? "mt-2 border-t border-border/60 pt-1" : ""}><button type="button" onClick={onOpenVault} className="w-full text-left text-[11px] text-muted hover:text-foreground hover:bg-accent/40 rounded-md px-1 py-1 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]">Locked vault</button></div> : null}
+              </div>
             </div>
           )}
-          {!loading && libTab === "recent" && totalDocuments > 0 && <LibraryDocumentFilters query={query} onChange={setQuery} searchTextAvailable={documentRecords.length > 0} />}
+          {!loading && libTab === "recent" && totalDocuments > 0 && <LibraryDocumentFilters query={query} onChange={setQuery} searchTextAvailable={pendingRecords.length > 0} />}
           {!loading && libTab === "recent" && signedIn ? <div className="px-2 py-1"><CloudAreaPicker label="Upload destination" defaultLabel="Default cloud" value={uploadArea} onChange={setUploadArea} fullWidth /></div> : null}
-          {!loading && libTab === "recent" && <LibraryOverviewBand overview={overview} recoveredCount={documentRecords.length} />}
+          {!loading && libTab === "recent" && <LibraryOverviewBand overview={overview} recoveredCount={pendingRecords.length} />}
           {!loading && libTab === "recent" && queryActive && <p role="status" className="px-2.5 py-1 text-[10.5px] text-muted tabular-nums">{visibleCount} of {totalDocuments} documents</p>}
         </>
       )}
@@ -743,39 +754,33 @@ export function Library({
         <CloudAreaProvider presentation="workspace" showPicker={false}>
           <div className="shrink-0 border-b border-border/60 px-5 py-4 sm:px-7">
             <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                {renderCloudDocuments ? (
-                  <div className="markie-segmented-control" role="tablist" aria-label="Cloud sections">
-                    {([["snapshots", "Snapshots"], ["sync", "Sync & sharing"]] as Array<[CloudTab, string]>).map(([tab, label]) => (
-                      <button key={tab} type="button" role="tab" aria-selected={effectiveCloudTab === tab} onClick={() => pickCloudTab(tab)} className="markie-segmented-option">{label}</button>
-                    ))}
-                  </div>
-                ) : <span />}
+              <div className="flex flex-wrap items-center justify-end gap-3">
                 {signedIn ? <div className="w-full min-w-[220px] sm:w-[300px]"><CloudAreaScopePicker /></div> : null}
               </div>
               <LibraryDocumentFilters query={query} onChange={setQuery} layout="workspace" />
             </div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7">
-            <div role="tabpanel" aria-label={effectiveCloudTab === "snapshots" ? "Snapshots" : "Sync and sharing"} className="mx-auto w-full max-w-[1180px]">
-              {effectiveCloudTab === "snapshots" ? renderCloudDocuments?.(query, "workspace") : null}
-              {effectiveCloudTab === "sync" ? (
-                <CloudView
-                  items={visibleItems}
-                  query={query}
-                  presentation="workspace"
-                  alongsideSnapshots={!!renderCloudDocuments}
-                  loading={loading}
-                  renderRow={fileRow}
-                  signedIn={signedIn}
-                  accountId={accountId}
-                  accountSessionKey={confirmedAccountScope()?.userId === accountId ? scopeKey : ""}
-                  onManage={onManageShare}
-                  onOpenPath={onOpenPath}
-                  cloudError={cloudError}
-                  refreshKey={refreshKey}
-                />
-              ) : null}
+            {/* One page, no tabs: synced and shared files first, filtered by
+                the toggles above the list, then Word and other document
+                snapshots under their own heading. */}
+            <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-8">
+              <CloudView
+                items={visibleItems}
+                query={query}
+                presentation="workspace"
+                alongsideSnapshots={!!renderCloudDocuments}
+                loading={loading}
+                renderRow={fileRow}
+                signedIn={signedIn}
+                accountId={accountId}
+                accountSessionKey={confirmedAccountScope()?.userId === accountId ? scopeKey : ""}
+                onManage={onManageShare}
+                onOpenPath={onOpenPath}
+                cloudError={cloudError}
+                refreshKey={refreshKey}
+              />
+              {renderCloudDocuments?.(query, "workspace")}
             </div>
           </div>
         </CloudAreaProvider>
@@ -790,7 +795,6 @@ export function Library({
           <SkillsView onOpenPath={onOpenPath} activePath={activePath} />
         ) : view === "cloud" ? (
           <CloudAreaProvider>
-          {renderCloudDocuments?.(query, "panel")}
           <CloudView
             items={visibleItems}
             query={query}
@@ -805,6 +809,7 @@ export function Library({
             cloudError={cloudError}
             refreshKey={refreshKey}
           />
+          {renderCloudDocuments?.(query, "panel")}
           </CloudAreaProvider>
         ) : loading ? (
           <LibrarySkeleton />
@@ -830,7 +835,7 @@ export function Library({
               {localFiles.map(fileRow)}
             </> : null}
             {visibleDocuments.length > 0 ? <>
-              <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted font-medium">Recovered documents</div>
+              <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted font-medium">Not saved to a file</div>
               {visibleDocuments.map(recoveryRow)}
             </> : null}
             </>}
@@ -976,7 +981,7 @@ function LibraryOverviewBand({ overview, recoveredCount = 0 }: { overview: Libra
     <div className="shrink-0 border-b border-border/60 px-2.5 py-2">
       <div className="flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-wide text-muted tabular-nums">
-          {recoveredCount ? `${overview.onDevice} files · ${recoveredCount} recovered` : `${overview.onDevice} on this device`}
+          {recoveredCount ? `${overview.onDevice} files · ${recoveredCount} unsaved` : `${overview.onDevice} on this device`}
         </span>
         <span
           className={`text-[10.5px] ${
@@ -1051,11 +1056,3 @@ function compactWorkspacePath(path: string) {
   return path;
 }
 
-function FileIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="text-muted shrink-0">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-    </svg>
-  );
-}

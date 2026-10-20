@@ -19,6 +19,9 @@ interface ActivityBarProps {
   onDocuments?: () => void;
   // Search every document on this Mac, by name and by what it says.
   onSearch?: () => void;
+  // The encrypted vault is a page of its own, reached from here like the rest.
+  onVault?: () => void;
+  vaultActive?: boolean;
 }
 
 export function ActivityBar({
@@ -32,6 +35,8 @@ export function ActivityBar({
   onAccount,
   onDocuments,
   onSearch,
+  onVault,
+  vaultActive = false,
 }: ActivityBarProps) {
   const { user } = useAuth();
 
@@ -82,6 +87,12 @@ export function ActivityBar({
           <path d="M19 15l.7 1.8L21.5 17.5l-1.8.7L19 20l-.7-1.8L16.5 17.5l1.8-.7z" />
         </svg>
       </NavButton>
+      {onVault ? <NavButton label="Vault: locked files and keys" active={vaultActive} onClick={onVault}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="4.5" y="10.5" width="15" height="10" rx="2" />
+          <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3M12 14.5v2" />
+        </svg>
+      </NavButton> : null}
       <div className="w-6 h-px bg-border my-1" />
       <NavButton
         label="Formatting tools"

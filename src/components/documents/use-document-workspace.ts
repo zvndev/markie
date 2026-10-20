@@ -162,12 +162,19 @@ export function useDocumentWorkspace(services: DocumentWorkspaceServices, keyboa
         id: snapshot.id, name: snapshot.name, format: snapshot.format, bytes,
         tags: snapshot.tags, collection: snapshot.collection, extractedText: snapshot.text.slice(0, 1024 * 1024),
       }, previous?.revision ?? null));
-      revisions.current.set(record.id, record);
-      persistedGenerations.current.set(record.id, snapshot.generation);
+      // A copy that still matches its file on disk is a mirror, not a draft:
+      // mark it saved so the Library does not list every opened file twice.
+      let stored = record;
+      if (snapshot.handle && snapshot.externalGeneration === snapshot.generation) {
+        const marked = await repository.markExported(record.id, record.revision);
+        if (marked.ok) stored = marked.value;
+      }
+      revisions.current.set(stored.id, stored);
+      persistedGenerations.current.set(stored.id, snapshot.generation);
       const current = sessionRef.current;
-      if (current?.id === snapshot.id) setSession(acceptDocumentPersistence(current, snapshot, record));
+      if (current?.id === snapshot.id) setSession(acceptDocumentPersistence(current, snapshot, stored));
       await refresh();
-      return record;
+      return stored;
     });
     queue.current = operation;
     try { return await operation; }

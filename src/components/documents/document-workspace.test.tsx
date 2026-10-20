@@ -29,6 +29,10 @@ function payload(name: string, bytes: Uint8Array): WebDocumentPayload {
   const format = classifyDocumentFormat(name);
   return { name, bytes, format, text: format.representation === "text" ? decodeTextDocument(bytes) : null };
 }
+function unwrapList<T>(result: { ok: true; value: readonly T[] } | { ok: false; error: { message: string } }): readonly T[] {
+  if (!result.ok) throw new Error(result.error.message);
+  return result.value;
+}
 async function seed(library: DocumentLibrary, name: string, text: string): Promise<LibraryRecord> {
   const result = await library.put({ name, format: "text", bytes: textBytes(text), extractedText: text }, null);
   if (!result.ok) throw new Error(result.error.message);
@@ -150,7 +154,7 @@ describe("actual shared document workspace", () => {
     const field = await screen.findByRole("textbox", { name: "Document text" });
     expect(shell).toMatchObject({ name: "Untitled.txt", hasSession: true, private: false });
     fireEvent.change(field, { target: { value: "Existing Markie, new file type" } });
-    fireEvent.click(screen.getByRole("button", { name: "Recover now" }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); }); // automatic recovery
     await waitFor(() => expect(shell?.records).toHaveLength(1));
     expect(shell).toMatchObject({ dirty: true }); // Local recovery is not an external file save.
     await waitFor(() => expect((shell as DocumentShellState | null)?.commands?.enabledCommands).toContain("document-details"));
@@ -194,13 +198,12 @@ describe("actual shared document workspace", () => {
     const view = render(<DocumentWorkspace library={library} />);
     const editor = await newText();
     fireEvent.change(editor, { target: { value: "# literal writing\nSearchable needle" } });
-    fireEvent.click(screen.getByRole("button", { name: "Recover now" }));
-    await waitFor(() => expect(screen.getByText("Recovered in the local library. No external file was changed.")).toBeInTheDocument());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); }); // automatic recovery
     expect(screen.queryByRole("heading", { name: "literal writing" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Document details" }));
     fireEvent.blur(screen.getByLabelText("Tags, comma separated"), { target: { value: "project, draft" } });
     fireEvent.blur(screen.getByLabelText("Collection"), { target: { value: "Writing" } });
-    fireEvent.click(screen.getByRole("button", { name: "Recover now" }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); }); // automatic recovery
     await waitFor(() => expect(screen.getByRole("button", { name: "#project" })).toBeInTheDocument());
     fireEvent.change(screen.getByRole("textbox", { name: "Filter documents" }), { target: { value: "needle" } });
     expect(await screen.findByRole("button", { name: /Untitled.txt.*Searchable needle/ })).toBeInTheDocument();
@@ -228,11 +231,11 @@ describe("actual shared document workspace", () => {
     const editor = await newText();
     fireEvent.change(editor, { target: { value: "Words" } });
     fireEvent.click(screen.getByRole("button", { name: "Save file" }));
-    expect(await screen.findByText("Saved to file", { exact: true })).toHaveAttribute("role", "status");
+    expect(await screen.findByText("Saved", { exact: true })).toHaveAttribute("role", "status");
     expect(view.container.querySelector(".docs-notice")).toBeNull();
     expect(editor).toHaveValue("Words");
     fireEvent.change(editor, { target: { value: "Newer words" } });
-    expect(screen.queryByText("Saved to file", { exact: true })).toBeNull();
+    expect(screen.queryByText("Saved", { exact: true })).toBeNull();
     expect(view.container.querySelector(".docs-notice")).toBeNull();
   });
 
@@ -249,7 +252,7 @@ describe("actual shared document workspace", () => {
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
     expect(decodeTextDocument(save.mock.calls[0][0].bytes)).toMatchObject({ text: "first\r\nsecond edited", encoding: "utf-16le", bom: true });
     expect(await screen.findByText(/Download started.*original file was not marked saved/)).toBeInTheDocument();
-    expect(screen.queryByText("Saved to file")).not.toBeInTheDocument();
+    expect(screen.queryByText("Saved", { exact: true })).not.toBeInTheDocument();
   });
 
   it("discloses legacy control conversion and exports only a new safe text copy", async () => {
@@ -278,12 +281,32 @@ describe("actual shared document workspace", () => {
     render(<DocumentWorkspace library={library} saveDocument={save} />);
     const editor = await newText();
     fireEvent.change(editor, { target: { value: "keep this unsaved writing" } });
-    fireEvent.click(screen.getByRole("button", { name: "Recover now" }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); }); // automatic recovery
     expect(await screen.findByRole("alert")).toHaveTextContent("Storage quota exceeded");
     expect(editor).toHaveValue("keep this unsaved writing");
     fireEvent.click(screen.getByRole("button", { name: "Export copy" }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
     expect(decoded(save.mock.calls[0][0].bytes)).toBe("keep this unsaved writing");
+  });
+
+  it("treats an opened file's untouched copy as saved, and only its edits as unsaved", async () => {
+    const library = createMemoryDocumentLibrary();
+    const disk = textBytes("from disk");
+    const handle: WebFileHandle = { name: "notes.txt", getFile: async () => ({ name: "notes.txt", size: disk.length, arrayBuffer: async () => disk.slice().buffer }) };
+    render(<DocumentWorkspace library={library} pickDocument={async () => ({ ...payload("notes.txt", disk), handle })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Import a file" }));
+    const editor = await screen.findByRole("textbox", { name: "Document text" });
+    await waitFor(async () => {
+      const [record] = unwrapList(await library.list());
+      expect(record?.exportedRevision).toBe(record?.revision);
+    });
+    expect(screen.getByText("Saved", { exact: true })).toHaveAttribute("role", "status");
+    fireEvent.change(editor, { target: { value: "from disk, edited" } });
+    expect(screen.getByText("Edited", { exact: true })).toBeInTheDocument();
+    await waitFor(async () => {
+      const [record] = unwrapList(await library.list());
+      expect(record.revision).toBeGreaterThan(record.exportedRevision ?? 0);
+    });
   });
 
   it("blocks overwriting externally changed files and keeps current edits", async () => {

@@ -239,9 +239,9 @@ describe("document capabilities inside the existing Markie app", () => {
     await screen.findByRole("dialog", { name: "Command palette" });
     await act(async () => { finish({ ok: true }); });
     // The modal cancels the handoff and full-page Cloud stays in place.
-    // Return through its own Document action to prove the buffer survived.
+    // Return through the left rail (clicking Cloud again) to prove the buffer survived.
     await userEvent.keyboard("{Escape}");
-    await userEvent.click(screen.getByRole("button", { name: "Back to document" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cloud: synced and shared" }));
     expect(await screen.findByText("Retained delayed Markdown")).toBeVisible();
     expect(state.hostActive).toBe(false);
     expect(state.shell!.openCloudDocument).not.toHaveBeenCalled();

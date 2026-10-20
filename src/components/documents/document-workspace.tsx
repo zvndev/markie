@@ -105,7 +105,14 @@ export function DocumentWorkspace({ embedded = false, active = true, onShellChan
   const officeRenderer = !!session?.office, hasHistory = !!session?.record;
   const dirty = session ? documentNeedsRecoverySave(session) : false;
   const fileDirty = !vault && !!session && session.externalGeneration !== session.generation;
-  const status = workspace.saving ? "Saving recovery…" : dirty ? "Not recovered yet" : session?.externalGeneration === session?.generation && session ? "Saved to file" : "Recovered locally";
+  // Markie keeps a private copy of every edit on this Mac a moment after you
+  // type, automatically. That is a safety net, not news, so the footer only
+  // says what matters: whether the file itself has your latest words.
+  const hasFile = session?.externalGeneration !== undefined;
+  const status = !session ? "" : !hasFile ? "Not saved to a file yet" : fileDirty ? "Edited" : "Saved";
+  const statusDetail = !session ? "" : !hasFile
+    ? "Kept safe on this Mac as you type. Save file to choose where it goes."
+    : fileDirty ? "Your changes are kept safe on this Mac. Save file to write them to the file." : dirty || workspace.saving ? "Saved. Keeping your latest edits safe on this Mac." : "Saved";
   const blocked = !!workspace.busy || externalModalOpen || !!pendingDelete || !!workspace.conversion || !!editorCommands?.modalOpen;
   const output = useDocumentOutput({ session, captureSession: workspace.captureSession, isBlocked: () => vault || blocked || workspace.isBusy() || !active || !outputHost.current || !!outputHost.current.closest("[inert]") || !!outputHost.current.querySelector('[data-word-composing="true"], [role="dialog"], [aria-modal="true"]') });
   outputInFlight.current = output.isBusy;
@@ -154,7 +161,7 @@ export function DocumentWorkspace({ embedded = false, active = true, onShellChan
       </header> : null}
       {closeFailure ? <div className="docs-error" role="alert"><span>{closeFailure}</span><button type="button" aria-label="Dismiss close notice" onClick={() => setCloseFailure(null)}>×</button></div> : null}
       {pendingIncoming.length ? <div className="docs-notice docs-incoming"><span>{pendingIncoming[0].payload.name} is waiting to open{pendingIncoming.length > 1 ? ` (${pendingIncoming.length} files)` : ""}.</span><button type="button" onClick={() => { const item = pendingIncoming[0]; incomingQueue.current = incomingQueue.current.catch(() => {}).then(() => consumeIncoming(item, true)); }}>Open requested file</button><button type="button" onClick={() => { const item = pendingIncoming[0]; workspace.discardPayload(item.payload); setPendingIncoming((items) => items.slice(1)); incomingHandled.current?.(item.requestId, false); }}>Ignore</button></div> : null}
-      {vault ? <Suspense fallback={<p className="docs-loading">Opening protected storage…</p>}><VaultPanel onClose={() => setVault(false)} onCloseGuard={setVaultGuard} /></Suspense> : <>
+      {vault ? <Suspense fallback={<p className="docs-loading">Opening protected storage…</p>}><VaultPanel onCloseGuard={setVaultGuard} /></Suspense> : <>
         {workspace.error ? <div className="docs-error" role="alert"><span>{workspace.error}</span><button type="button" aria-label="Dismiss error" onClick={workspace.dismissError}>×</button></div> : null}
         {workspace.notice ? <div className="docs-notice" role="status">{workspace.notice}</div> : null}
         {output.error ? <div className="docs-error" role="alert">{output.error}</div> : null}
@@ -172,7 +179,7 @@ export function DocumentWorkspace({ embedded = false, active = true, onShellChan
           </section> : null}
           {workspace.recovery ? <section className="docs-recovery" aria-label="Recovery history" inert={output.busy}><div><strong>Recovery history</strong><button type="button" onClick={workspace.closeRecovery}>Close</button></div><p>Restoring makes a new local revision. Your external file stays unchanged.</p>{workspace.recovery.length ? workspace.recovery.map((entry) => <button type="button" key={entry.revision} disabled={!!workspace.busy} onClick={() => void workspace.restore(entry.revision)}>Restore revision {entry.revision} <span>{new Date(entry.savedAt).toLocaleString()}</span></button>) : <p>No earlier recovery revisions yet.</p>}</section> : null}
           <div className="docs-editor-area">{session.office ? <WordDocumentEditor key={session.epoch} document={session.office} readOnly={!!workspace.busy || output.busy || externalModalOpen || !active} isReadOnly={output.isBusy} onChange={workspace.changeOffice} onCommandsReady={registerEditorCommands} onHistory={hasHistory ? showDocumentHistory : undefined} /> : session.format === "darkmown" ? <DarkmownDocumentEditor key={session.epoch} session={session} active={active} readOnly={actionsBlocked} onChange={workspace.changeText} onRestoreText={workspace.restoreText} onFlushReady={workspace.setFlush} onCommandsReady={registerEditorCommands} /> : <TextDocumentEditor key={session.epoch} session={session} readOnly={!!workspace.busy || output.busy || externalModalOpen || !active} onChange={workspace.changeText} onRestoreText={workspace.restoreText} onFlushReady={workspace.setFlush} onCommandsReady={registerEditorCommands} />}</div>
-          <footer className="docs-status"><span role="status">{status}</span><span>{session.text.trim() ? session.text.trim().split(/\s+/).length : 0} words · {session.format.toUpperCase()}{session.text.length > 1024 * 1024 ? " · First 1M characters searchable" : ""}</span><button type="button" disabled={!!workspace.busy} onClick={() => void workspace.recoverNow()}>Recover now</button></footer>
+          <footer className="docs-status"><span role="status" title={statusDetail}>{status}</span><span>{session.text.trim() ? session.text.trim().split(/\s+/).length : 0} words · {session.format.toUpperCase()}{session.text.length > 1024 * 1024 ? " · First 1M characters searchable" : ""}</span></footer>
         </> : embedded ? <section className="docs-empty-editor" aria-label="Document editor"><p>Open a document or create one from Markie’s toolbar.</p></section> : <section className="docs-welcome"><span className="docs-welcome-glyph" aria-hidden="true">M</span><p className="docs-eyebrow">YOUR WORDS, IN ONE PLACE</p><h1>Make room for your next idea.</h1><p>Documents, notes and working copy.<br />Local first. Ready when you are.</p><div><button type="button" className="docs-primary" onClick={() => create("docx")}>New Word document</button><button type="button" onClick={importFile}>Import a file</button></div><small>DOCX · RTF · ODT · Markdown · Text · CSV · JSON · YAML · XML<br />Legacy DOC and HTML import as text-only copies.</small></section>}
       </>}
     </Content>

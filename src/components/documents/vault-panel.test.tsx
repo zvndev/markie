@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { webcrypto } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VaultPanel } from "./vault-panel";
 import { validateStoredVault, VaultStorageError, type StoredVault, type VaultStorage } from "@/lib/vault/storage";
+import { VaultRepository } from "@/lib/vault/repository";
 
 const picker = vi.hoisted(() => ({ pick: vi.fn() }));
 vi.mock("@/lib/web-files", async () => ({ ...await vi.importActual("@/lib/web-files"), pickWebDocument: picker.pick }));
@@ -296,5 +297,117 @@ describe("usable isolated encrypted vault panel", () => {
     await screen.findByText(/Encrypted saved copy/);
     expect(storage.value?.records.length).toBe(1);
     expect(JSON.stringify(storage.value)).not.toContain("Keyboard encrypted save");
+  });
+});
+
+describe("vault page with environment keys", () => {
+  async function decryptedFiles(storage: TestStorage) {
+    const repository = new VaultRepository(storage);
+    await repository.unlock(secret);
+    try {
+      const files = new Map<string, Uint8Array>();
+      for (const entry of await repository.list()) files.set(entry.name, (await repository.read(entry.id)).bytes);
+      return files;
+    } finally { repository.lock(); }
+  }
+
+  it("is a page with a Vault header, a lock button and no close button", async () => {
+    const storage = new TestStorage();
+    render(<VaultPanel storage={storage} onClose={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "Vault" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close vault" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Lock vault" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Vault passphrase"), { target: { value: secret } });
+    fireEvent.change(screen.getByLabelText("Confirm passphrase"), { target: { value: secret } });
+    fireEvent.click(screen.getByRole("button", { name: "Create encrypted vault" }));
+    await screen.findByRole("button", { name: "New environment keys" });
+    expect(within(screen.getByRole("banner")).getByRole("button", { name: "Lock vault" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close vault" })).toBeNull();
+  });
+
+  it("creates environment keys, saves them encrypted and reopens them masked under Environment keys", async () => {
+    const storage = new TestStorage();
+    await create(storage);
+    fireEvent.click(screen.getByRole("button", { name: "New environment keys" }));
+    expect(screen.getByLabelText("Private filename")).toHaveValue("Untitled.env");
+    fireEvent.click(screen.getByRole("button", { name: "Add key" }));
+    fireEvent.change(screen.getByLabelText("Key name, row 1"), { target: { value: "API_TOKEN" } });
+    fireEvent.change(screen.getByLabelText("Value of API_TOKEN"), { target: { value: "tok_secret_value" } });
+    expect(screen.getByText(/Unsaved private edits/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
+    await screen.findByText(/Encrypted saved copy/);
+    expect(JSON.stringify(storage.value)).not.toContain("API_TOKEN");
+    expect(JSON.stringify(storage.value)).not.toContain("tok_secret_value");
+    expect(JSON.stringify(storage.value)).not.toContain("Untitled.env");
+    expect(new TextDecoder().decode((await decryptedFiles(storage)).get("Untitled.env"))).toBe("API_TOKEN=tok_secret_value\n");
+
+    fireEvent.click(screen.getByRole("button", { name: "New private note" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
+    await screen.findByRole("button", { name: /Untitled.txt/ });
+    fireEvent.click(screen.getByRole("button", { name: "Lock vault" }));
+    expect(screen.queryByLabelText("Value of API_TOKEN")).toBeNull();
+    await unlock();
+    const items = screen.getByRole("navigation", { name: "Encrypted items" });
+    const envGroup = within(items).getByRole("heading", { name: "Environment keys" }).parentElement!;
+    const fileGroup = within(items).getByRole("heading", { name: "Files" }).parentElement!;
+    expect(within(envGroup).getByRole("button", { name: /Untitled.env/ })).toBeInTheDocument();
+    expect(within(fileGroup).getByRole("button", { name: /Untitled.txt/ })).toBeInTheDocument();
+    expect(within(fileGroup).queryByRole("button", { name: /Untitled.env/ })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Search private filenames"), { target: { value: ".txt" } });
+    expect(within(items).queryByRole("heading", { name: "Environment keys" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Search private filenames"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: /Untitled.env/ }));
+    const value = await screen.findByLabelText("Value of API_TOKEN");
+    expect(value).toHaveAttribute("type", "password");
+    expect(value).toHaveValue("tok_secret_value");
+  });
+
+  it("imports a .env file as text and saves edits with its original encoding, newlines and untouched lines", async () => {
+    const storage = new TestStorage();
+    await create(storage);
+    const source = "# shared\r\nexport DB_URL=postgres://a\r\nSECRET='old' # rotate\r\nnot valid\r\n";
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode(source)]);
+    // The shared format table does not know dotenv names, so the picker reports them as opaque bytes.
+    picker.pick.mockResolvedValue({ name: ".env.local", bytes, format: { mimeType: "application/octet-stream" } });
+    fireEvent.click(screen.getByRole("button", { name: "Import encrypted copy" }));
+    const secretValue = await screen.findByLabelText("Value of SECRET");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import encrypted copy" })).not.toBeDisabled());
+    expect(secretValue).toHaveValue("old");
+    expect(screen.getByLabelText(/Unreadable line/)).toBeInTheDocument();
+    fireEvent.change(secretValue, { target: { value: "new value" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
+    await screen.findByText(/Encrypted saved copy/);
+    const saved = (await decryptedFiles(storage)).get(".env.local")!;
+    expect([...saved.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    expect(new TextDecoder("utf-8", { ignoreBOM: true }).decode(saved.subarray(3))).toBe(source.replace("SECRET='old'", "SECRET='new value'"));
+    expect(JSON.stringify(storage.value)).not.toContain("SECRET");
+  });
+
+  it("checkpoints dirty environment keys before an automatic lock", async () => {
+    const storage = new TestStorage();
+    await create(storage);
+    fireEvent.click(screen.getByRole("button", { name: "New environment keys" }));
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Environment file text" }), { target: { value: "KEEP=through-lock\n" } });
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    fireEvent(document, new Event("visibilitychange"));
+    expect(screen.queryByRole("textbox", { name: "Environment file text" })).toBeNull();
+    await screen.findByRole("button", { name: "Unlock vault" });
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    await unlock();
+    fireEvent.click(screen.getByRole("button", { name: /Untitled.env/ }));
+    expect(await screen.findByLabelText("Value of KEEP")).toHaveValue("through-lock");
+  });
+
+  it("keeps an environment file's type when renaming", async () => {
+    const storage = new TestStorage();
+    await create(storage);
+    fireEvent.click(screen.getByRole("button", { name: "New environment keys" }));
+    fireEvent.change(screen.getByLabelText("Private filename"), { target: { value: "Untitled.docx" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("original file type");
+    fireEvent.change(screen.getByLabelText("Private filename"), { target: { value: "prod.env" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
+    expect(await screen.findByRole("button", { name: /prod.env/ })).toBeInTheDocument();
   });
 });

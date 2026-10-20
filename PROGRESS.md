@@ -1405,3 +1405,21 @@ Verification: targeted suites, full suite (one known load-flake in scripts/priva
 The faint blue frame around the paragraph holding the caret (.docs-word-paragraph.is-selected, plus a 2px focus-visible ring that contenteditable always matches) is gone; the caret is the focus indicator, as in every word processor. Page Setup and Paragraph Spacing, previously only in the Layout menu and ⌘K, now have toolbar buttons for DOCX, RTF and ODT. Page Setup is laid out as Paper (current size highlighted, dimensions shown), Orientation and Margins rows.
 
 Verification: full suite 4434 passed, lint, typecheck, build; isolated live Electron DOCX check: focused paragraph computes outline none, the toolbar button opens Page Setup, screenshot reviewed.
+
+## 2026-10-20 Vault in the rail with env keys, one Cloud list, scannable rows, honest save status
+
+Vault: a lock button in the left rail opens the vault page (the Library row, the in-vault "Close vault" button and the Cloud page's "Back to document" button are gone; the rail navigates). The vault page groups Environment keys and Files; .env files open in a structured editor (masked values, per-row reveal and copy with a 30s fingerprint-checked clipboard clear, add/remove, duplicate and key validation, comments, Raw view) over a dotenv parser whose unedited round-trip is byte-identical (33 named cases plus 300 generated files). The vault's import picker accepts any file so .env/.env.local can be imported; .env is still not a document type elsewhere in Markie, on purpose.
+
+Cloud: one list of every cloud file with toggle chips (Only me, Shared by me, Shared with me; counts, multi-select, persisted), no Snapshots/Sync tabs; snapshots follow the list on the same page.
+
+Library rows: a per-type colored page icon and type badge (light and dark tone values) replace the text type tag, and small status icons replace the Local/Synced/... text badges (each labelled for hover and assistive tech). Recent is ordered purely by when files were opened; sync state no longer lifts rows (shared files someone edited were pinned to the top), and rows that arrive after the first snapshot are placed by recency instead of on top.
+
+Save status: the documents footer says "Not saved to a file yet", "Edited" or "Saved" instead of recovery jargon, and the redundant "Recover now" button is gone (recovery already runs 600ms after typing). A recovery copy that matches its file on disk is now marked saved, so the Library lists only real drafts and unsaved edits ("Not saved to a file" section with Draft/Unsaved badges) instead of every opened file as "Recovered". Copies made before this change still show until their file is next edited and saved.
+
+Examples: Markie seeds "Welcome to Darkmown.wd" (counter, slider estimate, form) into ~/Documents/Markie once per install, never overwriting and never re-creating after deletion; the pinned compiler accepts it with no warnings.
+
+Also: palette "Connect an Agent (MCP)…".
+
+Verification: full suite (4528 passed), lint, typecheck, build; live isolated Electron: Library row with CSV icon, badge and status icon; vault created, unlocked, and New environment keys opens the env editor; Darkmown example seeded into the temp workspace.
+
+Held for owner sign-off (CONSTITUTION: MCP tool shape is a human checkpoint): MCP support for every document type (markie_find_documents, markie_search_documents, markie_read_document, markie_write_document; shared search core in mcp/doc-text.cjs) and the matching Connect an agent dialog copy. Uncommitted in the working tree.

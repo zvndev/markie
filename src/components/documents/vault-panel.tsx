@@ -5,9 +5,12 @@ import { VAULT_LIMITS, VaultError } from "@/lib/vault";
 import { classifyDocumentFormat, decodeTextDocument, encodeTextDocument, type DecodedTextDocument } from "@/lib/document-formats";
 import { pickWebDocument, safeWebFileName } from "@/lib/web-files";
 import { exportDocx, openDocx, replaceDocxText, type DocxDocument } from "@/lib/office/docx";
+import { isEnvFileName } from "@/lib/vault/dotenv";
+import { KeyIcon, normalizeTypedNewlines, VaultEnvEditor } from "./vault-env-editor";
 
 export interface VaultPanelProps {
   storage?: VaultStorage;
+  /** Unused: the vault is a page left through the navigation rail, guarded by onCloseGuard. Kept so callers compile. */
   onClose?: () => void;
   /** Parent navigation must call this guard before unmounting the private editor. */
   onCloseGuard?: (guard: (() => boolean) | null) => void;
@@ -43,9 +46,16 @@ function failureCopy(failure: unknown): string {
   return "The operation could not complete. Your current edits were not cleared. No plaintext fallback was saved.";
 }
 
+/** Dotenv names are text here even though the shared document formats do not classify them yet. */
+function formatOf(name: string): { representation: "text" | "bytes"; kind: string } {
+  return isEnvFileName(name) ? { representation: "text", kind: "env" } : classifyDocumentFormat(name);
+}
+
+const ENV_MEDIA_TYPE = "text/plain";
+
 async function editableDocument(id: string | null, value: VaultReadResult): Promise<SecureDocument> {
   const base = { id, name: value.metadata.name, originalName: value.metadata.name, mediaType: value.metadata.mediaType, bytes: value.bytes, dirty: value.recovery };
-  const format = classifyDocumentFormat(base.name);
+  const format = formatOf(base.name);
   try {
     if (format.representation === "text") {
       const source = decodeTextDocument(base.bytes);
@@ -63,14 +73,14 @@ async function documentBytes(document: SecureDocument): Promise<Uint8Array> {
 }
 
 function validFilename(document: SecureDocument): boolean {
-  const original = classifyDocumentFormat(document.originalName);
-  const next = classifyDocumentFormat(document.name);
+  const original = formatOf(document.originalName);
+  const next = formatOf(document.name);
   return document.name.length > 0 && safeWebFileName(document.name) === document.name && original.representation === next.representation &&
     (original.representation !== "bytes" || original.kind === next.kind);
 }
 
 /** An isolated local vault. Never returns plaintext to the ordinary workspace. */
-export function VaultPanel({ storage, onClose, onCloseGuard }: VaultPanelProps) {
+export function VaultPanel({ storage, onCloseGuard }: VaultPanelProps) {
   const repository = useMemo(() => new VaultRepository(storage ?? new IndexedDbVaultStorage()), [storage]);
   const [hasVault, setHasVault] = useState<boolean | null>(null);
   const [locked, setLocked] = useState(true);
@@ -213,14 +223,16 @@ export function VaultPanel({ storage, onClose, onCloseGuard }: VaultPanelProps) 
 
   function importFile() {
     if (!mayDiscard()) return;
-    const picking = pickWebDocument({ maxBytes: VAULT_LIMITS.contentBytes });
+    // Any file: env files (.env, .env.local) are not document types elsewhere
+    // in Markie, on purpose, but the vault is exactly where they belong.
+    const picking = pickWebDocument({ maxBytes: VAULT_LIMITS.contentBytes, anyFile: true });
     const epoch = operation.current + 1;
     void run(async () => {
       const file = await picking;
       if (!file) return;
       try {
         if (epoch !== operation.current || shieldRef.current) return;
-        const id = await repository.save(null, file.bytes, { name: file.name, mediaType: file.format.mimeType });
+        const id = await repository.save(null, file.bytes, { name: file.name, mediaType: isEnvFileName(file.name) ? ENV_MEDIA_TYPE : file.format.mimeType });
         const next = await editableDocument(id, await repository.read(id));
         if (epoch !== operation.current || !mounted.current || shieldRef.current) { next.bytes.fill(0); return; }
         replaceOpened(next);
@@ -339,61 +351,69 @@ export function VaultPanel({ storage, onClose, onCloseGuard }: VaultPanelProps) 
     };
   }, [locked, lockNow, repository, revokeDownloads]);
 
-  const visibleEntries = entries.filter((entry) => entry.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  function createUntitled(name: string) {
+    if (!mayDiscard()) return;
+    replaceOpened({ id: null, name, originalName: name, mediaType: isEnvFileName(name) ? ENV_MEDIA_TYPE : "text/plain", bytes: new Uint8Array(), dirty: true,
+      kind: "text", text: "", source: { text: "", encoding: "utf-8", bom: false, newline: "none" } });
+  }
 
-  return <section aria-label="Encrypted local vault" className="h-full min-h-0 overflow-auto bg-background text-foreground p-5 sm:p-7">
-    <header className="mb-5 flex items-start justify-between gap-3">
-      <div><p className="text-xs tracking-widest uppercase text-muted">Private on this device</p><h2 className="text-2xl font-semibold mt-1">Your locked drawer</h2></div>
-      {onClose && <button type="button" className={button} onClick={() => { if (requestClose()) onClose(); }}>Close vault</button>}
-    </header>
-    <p role="status" className="text-sm text-muted mb-4">{shielded ? "Securing last edits and locking…" : notice}</p>
-    {error && <p role="alert" className="border border-border rounded-md p-3 text-sm mb-4">{error}</p>}
-    {locked || shielded ? <div className="max-w-lg space-y-4">
-      {!shielded && hasVault !== null && <form onSubmit={(event) => { event.preventDefault(); authenticate(); }} className="space-y-4">
-        <label className="block text-sm">Vault passphrase<input type="password" autoComplete="off" value={passphrase} maxLength={1024} disabled={busy} onChange={(event) => setPassphrase(event.target.value)} className={`${field} mt-2`} /></label>
-        {!hasVault && <label className="block text-sm">Confirm passphrase<input type="password" autoComplete="off" value={confirmation} maxLength={1024} disabled={busy} onChange={(event) => setConfirmation(event.target.value)} className={`${field} mt-2`} /></label>}
-        <button type="submit" disabled={busy || !passphrase || (!hasVault && !confirmation)} className={button}>{busy ? "Working locally…" : hasVault ? "Unlock vault" : "Create encrypted vault"}</button>
-      </form>}
-      <p className="text-sm text-muted">Use a long, randomly generated passphrase of at least 16 characters. A short PIN is not sufficient. There is no password reset or biometric unlock yet.</p>
-      <p className="text-sm text-muted">Local browser storage can be cleared or evicted. This is not a cloud backup. Private names and file contents are not searchable while locked.</p>
-    </div> : <>
-      <div className="flex flex-wrap gap-2 mb-4">
-        <button className={button} type="button" disabled={busy} onClick={importFile}>Import encrypted copy</button>
-        <button className={button} type="button" disabled={busy} onClick={() => {
-          if (!mayDiscard()) return;
-          replaceOpened({ id: null, name: "Untitled.txt", originalName: "Untitled.txt", mediaType: "text/plain", bytes: new Uint8Array(), dirty: true,
-            kind: "text", text: "", source: { text: "", encoding: "utf-8", bom: false, newline: "none" } });
-        }}>New private note</button>
-        <button className={button} type="button" onClick={() => { if (mayDiscard()) lockNow("Vault locked. Plaintext has been removed from this panel."); }}>Lock vault</button>
+  const visibleEntries = entries.filter((entry) => entry.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  const groups = [
+    { label: "Environment keys", icon: <KeyIcon />, items: visibleEntries.filter((entry) => isEnvFileName(entry.name)) },
+    { label: "Files", icon: <FileIcon />, items: visibleEntries.filter((entry) => !isEnvFileName(entry.name)) },
+  ];
+  const envOpened = opened?.kind === "text" && isEnvFileName(opened.originalName) ? opened : null;
+
+  return <section aria-label="Encrypted local vault" className="flex h-full min-h-0 flex-col bg-background text-foreground">
+    <header className="flex items-start gap-3 border-b border-border px-5 py-4 sm:px-7">
+      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted"><LockIcon /></span>
+      <div className="min-w-0 flex-1">
+        <h2 className="text-lg font-semibold leading-tight">Vault</h2>
+        <p role="status" className="mt-0.5 text-sm text-muted">{shielded ? "Securing last edits and locking…" : notice}</p>
       </div>
-      <p className="text-xs text-muted mb-5">Auto-lock after 5 minutes of inactivity or when hidden. Edits are checkpointed before locking (2-second limit). Save before closing. Private files never enter the normal library, index, sync or multiplayer.</p>
-      <div className="grid gap-6 lg:grid-cols-[minmax(12rem,0.7fr)_minmax(0,2fr)]">
-        <aside className="min-w-0 space-y-3">
-          <label className="block text-sm">Search private filenames<input className={`${field} mt-2`} value={query} disabled={busy} onChange={(event) => setQuery(event.target.value)} /></label>
-          {visibleEntries.length === 0 && <p className="text-sm text-muted">{entries.length ? "No matching files." : "No encrypted files yet."}</p>}
-          <ul className="space-y-1">{visibleEntries.map((entry) => <li key={entry.id}><button type="button" disabled={busy} className={`w-full text-left rounded-md px-3 py-2 text-sm border ${opened?.id === entry.id ? "border-foreground bg-accent" : "border-transparent hover:bg-accent"}`} onClick={() => choose(entry)}>
-            <span className="block break-all">{entry.name}</span><span className="block text-xs text-muted">{entry.bytes.toLocaleString()} bytes{entry.recovery ? " · unsaved encrypted recovery" : ""}</span>
-          </button></li>)}</ul>
-        </aside>
-        <div className="min-w-0">{opened ? <div className="space-y-4">
-          <label className="block text-sm">Private filename<input className={`${field} mt-2`} value={opened.name} disabled={busy} maxLength={1024} onChange={(event) => {
+      {!locked && !shielded && <button className={button} type="button" onClick={() => { if (mayDiscard()) lockNow("Vault locked. Plaintext has been removed from this panel."); }}>Lock vault</button>}
+    </header>
+    {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-border p-3 text-sm sm:mx-7">{error}</p>}
+    {locked || shielded ? <div className="min-h-0 flex-1 overflow-auto p-5 sm:p-7">
+      <div className="mx-auto mt-[6vh] max-w-md space-y-4 rounded-lg border border-border bg-surface p-6">
+        <p className="text-xs tracking-widest uppercase text-muted">Private on this device</p>
+        {!shielded && hasVault !== null && <form onSubmit={(event) => { event.preventDefault(); authenticate(); }} className="space-y-4">
+          <label className="block text-sm">Vault passphrase<input type="password" autoComplete="off" value={passphrase} maxLength={1024} disabled={busy} onChange={(event) => setPassphrase(event.target.value)} className={`${field} mt-2`} /></label>
+          {!hasVault && <label className="block text-sm">Confirm passphrase<input type="password" autoComplete="off" value={confirmation} maxLength={1024} disabled={busy} onChange={(event) => setConfirmation(event.target.value)} className={`${field} mt-2`} /></label>}
+          <button type="submit" disabled={busy || !passphrase || (!hasVault && !confirmation)} className={button}>{busy ? "Working locally…" : hasVault ? "Unlock vault" : "Create encrypted vault"}</button>
+        </form>}
+        <p className="text-sm text-muted">Use a long, randomly generated passphrase of at least 16 characters. A short PIN is not sufficient. There is no password reset or biometric unlock yet.</p>
+        <p className="text-sm text-muted">Local browser storage can be cleared or evicted. This is not a cloud backup. Private names and file contents are not searchable while locked.</p>
+      </div>
+    </div> : <div className="flex min-h-0 flex-1">
+      <aside aria-label="Locked items" className="flex w-64 shrink-0 flex-col border-r border-border bg-surface min-h-0">
+        <div className="space-y-2 border-b border-border p-3">
+          <div className="grid gap-1.5">
+            <button className={button} type="button" disabled={busy} onClick={() => createUntitled("Untitled.env")}>New environment keys</button>
+            <button className={button} type="button" disabled={busy} onClick={() => createUntitled("Untitled.txt")}>New private note</button>
+            <button className={button} type="button" disabled={busy} onClick={importFile}>Import encrypted copy</button>
+          </div>
+          <input aria-label="Search private filenames" placeholder="Filter by name" className={`${field} py-1.5 text-sm`} value={query} disabled={busy} onChange={(event) => setQuery(event.target.value)} />
+        </div>
+        <nav aria-label="Encrypted items" className="min-h-0 flex-1 overflow-auto p-2">
+          {visibleEntries.length === 0 && <p className="px-2 py-3 text-sm text-muted">{entries.length ? "No matching files." : "No encrypted files yet."}</p>}
+          {groups.map((group) => group.items.length > 0 && <div key={group.label} className="mb-3">
+            <h3 className="px-2 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wider text-muted">{group.label}</h3>
+            <ul className="space-y-0.5">{group.items.map((entry) => <li key={entry.id}><button type="button" disabled={busy} className={`flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm ${opened?.id === entry.id ? "bg-accent" : "hover:bg-accent"}`} onClick={() => choose(entry)}>
+              <span className="mt-0.5 shrink-0 text-muted">{group.icon}</span>
+              <span className="min-w-0"><span className="block break-all">{entry.name}</span><span className="block text-xs text-muted">{entry.bytes.toLocaleString()} bytes{entry.recovery ? " · unsaved encrypted recovery" : ""}</span></span>
+            </button></li>)}</ul>
+          </div>)}
+        </nav>
+        <p className="border-t border-border p-3 text-[11px] leading-relaxed text-muted">Auto-lock after 5 minutes of inactivity or when hidden. Edits are checkpointed before locking (2-second limit). Save before closing. Private files never enter the normal library, index, sync or multiplayer.</p>
+      </aside>
+      <div className="min-w-0 flex-1 overflow-auto p-5 sm:p-7">{opened ? <div className="mx-auto max-w-4xl space-y-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="block min-w-[14rem] flex-1 text-sm">Private filename<input className={`${field} mt-2`} value={opened.name} disabled={busy} maxLength={1024} onChange={(event) => {
             const name = event.target.value;
             setOpened({ ...opened, name, dirty: true });
             setError(null);
           }} /></label>
-          <p className="text-xs text-muted">Keep the original file type. Automatic checkpoints preserve the previous filename while a rename is incomplete.</p>
-          {opened.kind === "text" ? <label className="block text-sm">Private text<textarea aria-label="Private text" className={`${field} mt-2 min-h-80 font-mono text-sm`} value={opened.text} disabled={busy} readOnly={opened.source.newline === "mixed"} onChange={(event) => {
-            const value = event.target.value;
-            const text = opened.source.newline === "crlf" ? value.replace(/\r\n|\r|\n/g, "\r\n") : opened.source.newline === "cr" ? value.replace(/\r\n|\r|\n/g, "\r") : value;
-            setOpened({ ...opened, text, dirty: true });
-          }} /></label> : opened.kind === "docx" ? <div className="space-y-3">
-            <p className="text-sm text-muted">{opened.document.canEdit ? "Original-engine text editing. Page layout is not reproduced here." : "This DOCX is preserved read-only because it contains unsupported features."}</p>
-            {opened.document.paragraphs.map((paragraph, paragraphIndex) => paragraph.runs.map((run, runIndex) => <label key={run.id} className="block text-sm">Private paragraph {paragraphIndex + 1}, run {runIndex + 1}<input className={`${field} mt-2`} value={run.text} readOnly={busy || !opened.document.canEdit || !run.canEdit} onChange={(event) => {
-              try { setOpened({ ...opened, document: replaceDocxText(opened.document, [{ runId: run.id, text: event.target.value }]), dirty: true }); }
-              catch { setError("This document edit is unsupported. The original encrypted copy was not changed."); }
-            }} /></label>))}
-          </div> : <p className="text-sm text-muted">This file is stored encrypted. Editing/preview is unavailable; an explicitly decrypted download preserves its original bytes.</p>}
-          {opened.kind === "text" && opened.source.newline === "mixed" && <p className="text-sm text-muted">Mixed line endings are preserved read-only.</p>}
           <div className="flex flex-wrap gap-2">
             <button type="button" className={button} disabled={busy || !opened.dirty} onClick={save}>Save encrypted changes</button>
             <button type="button" className={button} disabled={busy} onClick={() => void exportDecrypted()}>Download unencrypted copy…</button>
@@ -410,9 +430,32 @@ export function VaultPanel({ storage, onClose, onCloseGuard }: VaultPanelProps) 
               });
             }}>Delete encrypted copy</button>}
           </div>
-          <p className="text-xs text-muted">{opened.dirty ? "Unsaved private edits" : "Encrypted saved copy"} · Sharing and multiplayer are off in the vault.</p>
-        </div> : <p className="text-sm text-muted py-12">Choose an encrypted file or create a private note. Nothing here is sent to the normal library.</p>}</div>
-      </div>
-    </>}
+        </div>
+        <p className="text-xs text-muted">Keep the original file type. Automatic checkpoints preserve the previous filename while a rename is incomplete.</p>
+        {envOpened ? <VaultEnvEditor key={envOpened.id ?? "unsaved"} text={envOpened.text} newline={envOpened.source.newline} disabled={busy}
+          onChange={(text) => setOpened((current) => current?.kind === "text" ? { ...current, text, dirty: true } : current)}
+          onNotice={setNotice} onError={setError} />
+        : opened.kind === "text" ? <label className="block text-sm">Private text<textarea aria-label="Private text" className={`${field} mt-2 min-h-80 font-mono text-sm`} value={opened.text} disabled={busy} readOnly={opened.source.newline === "mixed"} onChange={(event) => {
+          const text = normalizeTypedNewlines(event.target.value, opened.source.newline);
+          setOpened({ ...opened, text, dirty: true });
+        }} /></label> : opened.kind === "docx" ? <div className="space-y-3">
+          <p className="text-sm text-muted">{opened.document.canEdit ? "Original-engine text editing. Page layout is not reproduced here." : "This DOCX is preserved read-only because it contains unsupported features."}</p>
+          {opened.document.paragraphs.map((paragraph, paragraphIndex) => paragraph.runs.map((run, runIndex) => <label key={run.id} className="block text-sm">Private paragraph {paragraphIndex + 1}, run {runIndex + 1}<input className={`${field} mt-2`} value={run.text} readOnly={busy || !opened.document.canEdit || !run.canEdit} onChange={(event) => {
+            try { setOpened({ ...opened, document: replaceDocxText(opened.document, [{ runId: run.id, text: event.target.value }]), dirty: true }); }
+            catch { setError("This document edit is unsupported. The original encrypted copy was not changed."); }
+          }} /></label>))}
+        </div> : <p className="text-sm text-muted">This file is stored encrypted. Editing/preview is unavailable; an explicitly decrypted download preserves its original bytes.</p>}
+        {opened.kind === "text" && !envOpened && opened.source.newline === "mixed" && <p className="text-sm text-muted">Mixed line endings are preserved read-only.</p>}
+        <p className="text-xs text-muted">{opened.dirty ? "Unsaved private edits" : "Encrypted saved copy"} · Sharing and multiplayer are off in the vault.</p>
+      </div> : <p className="mx-auto max-w-md py-16 text-center text-sm text-muted">Choose an encrypted item, or create environment keys or a private note. Nothing here is sent to the normal library.</p>}</div>
+    </div>}
   </section>;
+}
+
+function LockIcon() {
+  return <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>;
+}
+
+function FileIcon() {
+  return <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3H6v18h12V7zM14 3v4h4" /></svg>;
 }

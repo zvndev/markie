@@ -1421,6 +1421,7 @@ const registry = require("./registry");
 const mdindex = require("./mdindex");
 const sync = require("./sync");
 const workspace = require("./workspace");
+const examples = require("./examples");
 const fileGrants = createFileGrants({ workspaceRoots: () => workspace.roots() });
 // Module-level so a later handler can reuse the same instance rather than
 // building a second one with its own hash cache.
@@ -1502,7 +1503,17 @@ const wsTry = (fn) => {
 };
 handle("ws-roots", () => workspace.roots(), { onFailure: () => [] });
 handle("ws-default-path", () => workspace.defaultRootPath(), { onFailure: () => "" });
-handle("ws-create-default", () => wsTry(() => ({ ok: true, path: workspace.createDefaultRoot() })));
+// The example lands in Markie's own folder the first time that folder exists,
+// whether this launch found it or the renderer just created it.
+function seedWorkspaceExamples() {
+  try { examples.seedExamples(workspace.defaultRootPath(), path.join(app.getPath("userData"), "seeded-examples.json")); }
+  catch { /* an example is never worth a failed launch */ }
+}
+handle("ws-create-default", () => wsTry(() => {
+  const created = workspace.createDefaultRoot();
+  seedWorkspaceExamples();
+  return { ok: true, path: created };
+}));
 handle("ws-add-root", async () => {
   const r = await dialog.showOpenDialog(mainWindow, {
     properties: ["openDirectory", "createDirectory"],
@@ -3314,6 +3325,7 @@ if (!gotLock) {
     refreshRevertMenuItem();
     createWindow();
     setupAutoUpdate();
+    seedWorkspaceExamples();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {

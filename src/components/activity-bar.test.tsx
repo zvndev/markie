@@ -32,6 +32,16 @@ beforeEach(() => {
 });
 
 describe("ActivityBar", () => {
+  it("opens the vault from its own lock button and marks it while it is on screen", async () => {
+    const onVault = vi.fn();
+    const { rerender } = render(<ActivityBar {...props({ onVault })} />);
+    const lock = screen.getByRole("button", { name: "Vault: locked files and keys" });
+    await userEvent.click(lock);
+    expect(onVault).toHaveBeenCalledOnce();
+    rerender(<ActivityBar {...props({ onVault, vaultActive: true })} />);
+    expect(screen.getByRole("button", { name: "Vault: locked files and keys" })).toHaveAttribute("aria-current", "page");
+  });
+
   it("offers a distinct entry to Word, text and private documents when provided", async () => {
     const onDocuments = vi.fn();
     render(<ActivityBar {...props({ onDocuments })} />);

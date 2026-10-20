@@ -1,0 +1,57 @@
+/* Cloud page: the source toggles and the badge under each row. The chip is
+   Global Search's markie-search-chip at side-panel size. Colors come from
+   theme tokens only, so every template and tone reads the same. */
+.markie-cloud-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 999px;
+  padding: 0.16rem 0.5rem;
+  font-size: 10.5px;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: var(--muted);
+  background: transparent;
+  outline: none;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.markie-cloud-chip:hover {
+  color: var(--foreground);
+  border-color: color-mix(in srgb, var(--foreground) 22%, transparent);
+}
+
+.markie-cloud-chip:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 70%, transparent);
+}
+
+.markie-cloud-chip[aria-pressed="true"] {
+  color: var(--foreground);
+  border-color: color-mix(in srgb, var(--blue) 55%, transparent);
+  background: color-mix(in srgb, var(--blue) 16%, transparent);
+}
+
+.markie-cloud-chip-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.markie-cloud-source {
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 999px;
+  padding: 0 0.35rem;
+  font-size: 9.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.markie-cloud-source[data-cloud-badge="by-me"] {
+  color: var(--status-blue);
+  border-color: color-mix(in srgb, var(--status-blue) 45%, transparent);
+}
+
+.markie-cloud-source[data-cloud-badge="with-me"] {
+  color: var(--status-purple);
+  border-color: color-mix(in srgb, var(--status-purple) 45%, transparent);
+}

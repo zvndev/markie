@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LibraryItem } from "./electron";
-import {
+import { sortRecentItems,
   cloudCopyOnly,
   libraryItemNeedsAttention,
   organizeLibraryItems,
@@ -369,6 +369,15 @@ describe("library overview", () => {
     expect(cloudCopyOnly({ ...gone, owned: null })).toBe(false);
     // Gone, and never in the cloud at all.
     expect(cloudCopyOnly(item({ exists: false }))).toBe(false);
+  });
+
+  it("orders Recent by when each file was opened, whatever its sync or sharing state", () => {
+    const sorted = sortRecentItems([
+      item({ path: "/docs/shared.md", name: "shared.md", shared: true, state: "behind", lastOpenedAt: "2026-07-01T08:00:00.000Z" }),
+      item({ path: "/docs/today.md", name: "today.md", lastOpenedAt: "2026-07-05T08:00:00.000Z" }),
+      item({ path: "/docs/gone.md", name: "gone.md", exists: false, lastOpenedAt: "2026-07-02T08:00:00.000Z" }),
+    ]);
+    expect(sorted.map((entry) => entry.name)).toEqual(["today.md", "gone.md", "shared.md"]);
   });
 
   it("sorts an unpushed doc above every other attention state", () => {

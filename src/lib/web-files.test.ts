@@ -77,6 +77,16 @@ describe("browser open picker", () => {
     expect(picker).toHaveBeenCalledWith(expect.objectContaining({ multiple: false }));
   });
 
+  it("lifts the type filter only for callers that ask for any file", async () => {
+    const { result } = handle();
+    const picker = vi.fn().mockResolvedValue([result]);
+    vi.stubGlobal("showOpenFilePicker", picker);
+    await pickWebDocument({ anyFile: true });
+    expect(picker).toHaveBeenLastCalledWith({ multiple: false });
+    await pickWebDocument();
+    expect(picker.mock.lastCall![0].types).toHaveLength(1);
+  });
+
   it("returns null on native cancellation, but surfaces permissions errors", async () => {
     vi.stubGlobal("showOpenFilePicker", vi.fn().mockRejectedValue(new DOMException("Cancelled", "AbortError")));
     await expect(pickWebDocument()).resolves.toBeNull();

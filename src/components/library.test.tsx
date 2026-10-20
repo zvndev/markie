@@ -97,12 +97,12 @@ beforeEach(() => {
 // Every state a row can be in gets its own badge. A state that borrows
 // another's badge is a state the user cannot tell apart.
 const CASES: Array<[LibraryItem["state"], string, Partial<LibraryItem>]> = [
-  ["local-only", "Local", {}],
+  ["local-only", "On this device only", {}],
   ["synced", "Synced", { cloudId: "c1" }],
   ["unpushed", "Not backed up", { cloudId: "c2" }],
-  ["paused", "Paused", { cloudId: "c3" }],
-  ["conflict", "Conflict", { cloudId: "c4" }],
-  ["behind", "Update", { cloudId: "c5", remoteVersion: 3 }],
+  ["paused", "Sync paused", { cloudId: "c3" }],
+  ["conflict", "Conflict: review changes", { cloudId: "c4" }],
+  ["behind", "Update available", { cloudId: "c5", remoteVersion: 3 }],
 ];
 
 const cloudOnly = (o: Partial<LibraryItem> = {}) =>
@@ -121,7 +121,7 @@ describe("Library rows", () => {
   it.each(CASES)("renders %s as a %s row", async (state, badge, extra) => {
     renderLibrary([item({ state, name: `${state}.md`, ...extra })]);
     const row = await rowFor(`${state}.md`);
-    expect(within(row).getByText(badge)).toBeInTheDocument();
+    expect(within(row).getByRole("img", { name: badge })).toBeInTheDocument();
   });
 
   it("keeps the six on-device row kinds visually distinct", async () => {
@@ -133,7 +133,7 @@ describe("Library rows", () => {
     // rather than against the list this test declared.
     for (const [state, badge] of CASES) {
       const row = await rowFor(`${state}.md`);
-      expect(within(row).getByText(badge)).toBeInTheDocument();
+      expect(within(row).getByRole("img", { name: badge })).toBeInTheDocument();
     }
   });
 
@@ -194,7 +194,7 @@ describe("documents in the existing Library", () => {
     await userEvent.click(screen.getByRole("menuitemradio", { name: "Name" }));
     const names = Array.from(document.querySelectorAll(".group .text-foreground.truncate")).map((node) => node.textContent);
     expect(names).toEqual(["A untitled", "same.md", "same.md", "z-last.txt"]);
-    await userEvent.click(screen.getByRole("button", { name: /same\.md Recovered/ }));
+    await userEvent.click(screen.getByRole("button", { name: /same\.md Draft/ }));
     expect(onOpenDocument).toHaveBeenCalledExactlyOnceWith(record);
     await userEvent.click(screen.getAllByText("same.md")[0].closest("div.group")!);
     expect(onOpenPath).toHaveBeenCalledExactlyOnceWith("/notes/same.md");
@@ -203,11 +203,11 @@ describe("documents in the existing Library", () => {
     await userEvent.click(screen.getByRole("button", { name: "Sort documents: Name" }));
     await userEvent.click(screen.getByRole("menuitemradio", { name: "Most recent" }));
     expect(document.querySelector(".group .text-foreground.truncate")).toHaveTextContent("same.md");
-    expect(screen.getByRole("button", { name: /same\.md Recovered/ })).toBe(document.querySelector("button.group"));
+    expect(screen.getByRole("button", { name: /same\.md Draft/ })).toBe(document.querySelector("button.group"));
   });
 
   it("keeps native default order frozen through refresh and restores it after an explicit sort", async () => {
-    const first = item({ name: "z-first.md", path: "/notes/z-first.md", state: "unpushed", lastOpenedAt: "2026-01-01" });
+    const first = item({ name: "z-first.md", path: "/notes/z-first.md", state: "unpushed", lastOpenedAt: "2026-01-03" });
     const second = item({ name: "a-second.md", path: "/notes/a-second.md", lastOpenedAt: "2026-01-02" });
     const { api, view, ...handlers } = renderLibrary([second, first]);
     const names = () => Array.from(document.querySelectorAll("div.group .text-foreground.truncate")).map((node) => node.textContent);
@@ -260,8 +260,8 @@ describe("documents in the existing Library", () => {
     const { onOpenPath } = renderLibrary([item()], { props: { documentRecords: [record], activeDocumentId: record.id, onOpenDocument } });
     const row = await screen.findByRole("button", { name: /proposal\.docx/ });
     expect(row).toHaveAttribute("aria-current", "true");
-    expect(within(row).getByText("Recovered")).toBeInTheDocument();
-    expect(within(row).queryByText("Synced")).not.toBeInTheDocument();
+    expect(within(row).getByText("Draft")).toBeInTheDocument();
+    expect(within(row).queryByRole("img", { name: "Synced" })).not.toBeInTheDocument();
     expect(screen.getByText("one.md")).toBeInTheDocument();
     expect(document.querySelectorAll(".markie-side-panel")).toHaveLength(1);
     expect(screen.queryByRole("complementary", { name: "Document library" })).not.toBeInTheDocument();
@@ -286,37 +286,34 @@ describe("documents in the existing Library", () => {
     renderLibrary([], { props: { documentRecords: [documentRecord()], onOpenDocument: vi.fn() } });
     expect(await screen.findByRole("button", { name: /proposal\.docx/ })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Filter documents" })).toBeInTheDocument();
-    expect(screen.getByText("0 files · 1 recovered")).toBeInTheDocument();
+    expect(screen.getByText("0 files · 1 unsaved")).toBeInTheDocument();
     expect(screen.queryByText("Workspace ready")).not.toBeInTheDocument();
   });
 
-  it("routes creation and vault actions without adding another navigation tab", async () => {
-    const onCreateDocument = vi.fn(), onOpenVault = vi.fn();
-    renderLibrary([], { props: { onCreateDocument, onOpenVault } });
+  it("routes creation without adding another navigation tab, and leaves the vault to the left rail", async () => {
+    const onCreateDocument = vi.fn();
+    renderLibrary([], { props: { onCreateDocument } });
     // Creation now asks for a type in the centered New document dialog.
     await userEvent.click(screen.getByRole("button", { name: "New document…" }));
     await userEvent.click(screen.getByRole("button", { name: "New Word document" }));
     await userEvent.click(screen.getByRole("button", { name: "New document…" }));
     await userEvent.click(screen.getByRole("button", { name: "New text document" }));
-    await userEvent.click(screen.getByRole("button", { name: "Locked vault" }));
     expect(onCreateDocument.mock.calls).toEqual([["docx"], ["text"]]);
-    expect(onOpenVault).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Locked vault" })).not.toBeInTheDocument();
     expect(within(screen.getByRole("group", { name: "Library sections" })).getAllByRole("button")).toHaveLength(2);
     await userEvent.click(within(screen.getByRole("group", { name: "Library sections" })).getByRole("button", { name: "Projects" }));
     expect(screen.queryByRole("group", { name: "Document actions" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Recent" })).toBeInTheDocument();
   });
 
-  it("keeps creation behind one New document action with vault access separate", async () => {
-    renderLibrary([], { props: { onCreateDocument: vi.fn(), onOpenVault: vi.fn() } });
+  it("keeps creation behind one New document action", async () => {
+    renderLibrary([], { props: { onCreateDocument: vi.fn() } });
     const actions = screen.getByRole("group", { name: "Document actions" });
     const create = within(actions).getByRole("group", { name: "Create document" });
     // The three inline type buttons are gone: one action opens the dialog
     // that offers every creatable type.
     expect(within(create).getAllByRole("button").map((button) => button.textContent)).toEqual(["New document…"]);
     expect(screen.queryByRole("button", { name: "New Word document" })).not.toBeInTheDocument();
-    expect(within(create).queryByRole("button", { name: "Locked vault" })).not.toBeInTheDocument();
-    expect(within(actions).getByRole("button", { name: "Locked vault" }).parentElement).toHaveClass("border-t");
     await screen.findByText("Workspace ready");
   });
 
@@ -329,36 +326,31 @@ describe("documents in the existing Library", () => {
     expect(document.querySelector("[data-cloud-section]")).toBeNull();
   });
 
-  it("presents Cloud as a workspace with snapshots and sync in separate tabs", async () => {
+  it("presents Cloud as one page: the file list, then document snapshots, with no tabs or back button", async () => {
     const renderCloudDocuments = vi.fn((_query, presentation) => <section aria-label="Cloud document snapshots"><h3>Document snapshots</h3><span>{presentation}</span><button type="button">Snapshot.docx</button></section>);
-    const { view, onClose } = renderLibrary([], { props: { view: "cloud", presentation: "workspace", accountId: "user-a", renderCloudDocuments } });
+    const { view } = renderLibrary([], { props: { view: "cloud", presentation: "workspace", accountId: "user-a", renderCloudDocuments } });
     expect(view.container.querySelector('[data-markie-cloud-workspace="true"]')).not.toBeNull();
     expect(view.container.querySelector(".markie-side-panel")).toBeNull();
     expect(await screen.findByRole("button", { name: "Snapshot.docx" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Snapshots" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.queryByRole("heading", { name: "File sync & sharing" })).not.toBeInTheDocument();
-    expect(renderCloudDocuments).toHaveBeenLastCalledWith(expect.objectContaining({ format: "all" }), "workspace");
-
-    await userEvent.click(screen.getByRole("tab", { name: "Sync & sharing" }));
-    expect(screen.getByRole("tab", { name: "Sync & sharing" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("heading", { name: "File sync & sharing" })).toBeInTheDocument();
-    expect(await screen.findByText("No synced or shared files yet.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Snapshot.docx" })).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: "Back to document" }));
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back to document" })).not.toBeInTheDocument();
+    expect(renderCloudDocuments).toHaveBeenLastCalledWith(expect.objectContaining({ format: "all" }), "workspace");
+    const list = screen.getByRole("heading", { name: "File sync & sharing" });
+    const snapshots = screen.getByRole("region", { name: "Cloud document snapshots" });
+    expect(list.compareDocumentPosition(snapshots) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("does not add document actions to the unchanged Markdown Library", async () => {
     renderLibrary([item()]);
     await screen.findByText("one.md");
     expect(screen.queryByRole("group", { name: "Document actions" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Recovered documents")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not saved to a file")).not.toBeInTheDocument();
   });
 
   it("keeps ordinary recovery records out of the existing Cloud view", async () => {
-    renderLibrary([], { props: { view: "cloud", documentRecords: [documentRecord()], onOpenDocument: vi.fn(), onCreateDocument: vi.fn(), onOpenVault: vi.fn() } });
-    await screen.findByText("Nothing synced from this device yet");
+    renderLibrary([], { props: { view: "cloud", documentRecords: [documentRecord()], onOpenDocument: vi.fn(), onCreateDocument: vi.fn() } });
+    await screen.findByRole("group", { name: "Show documents" });
     expect(screen.queryByRole("button", { name: /proposal\.docx/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Document actions" })).not.toBeInTheDocument();
   });
@@ -585,7 +577,7 @@ describe("the Cloud page inside the panel", () => {
   it("renders a cloud-only row with its badge and the Download action", async () => {
     renderLibrary([cloudOnly()], cloudProps);
     const row = await rowFor("cloud-only.md");
-    expect(within(row).getByText("Cloud")).toBeInTheDocument();
+    expect(within(row).getByRole("img", { name: "In the cloud only" })).toBeInTheDocument();
     await userEvent.click(within(row).getByRole("button", { name: "Actions" }));
     expect(within(row).getByRole("button", { name: /Download/ })).toBeInTheDocument();
   });
@@ -624,8 +616,8 @@ describe("the Cloud page inside the panel", () => {
       [item({ name: "gone.md", path: "/notes/gone.md", state: "synced", cloudId: "c8", exists: false, owned: null })],
       cloudProps
     );
-    // Not in any Cloud section, so it is found through the Library instead.
-    expect(await screen.findByText("Nothing synced from this device yet")).toBeInTheDocument();
+    // Not in the Cloud list, so it is found through the Library instead.
+    expect(await screen.findByRole("group", { name: "Show documents" })).toBeInTheDocument();
     expect(screen.queryByText("gone.md")).not.toBeInTheDocument();
     expect(api.docPull).not.toHaveBeenCalled();
   });
@@ -649,7 +641,7 @@ describe("the Cloud page inside the panel", () => {
       cloudProps
     );
     const row = await rowFor("theirs.md");
-    expect(within(row).getByText("Shared")).toBeInTheDocument();
+    expect(within(row).getByRole("img", { name: "Shared" })).toBeInTheDocument();
     expect(within(row).getByText("Shared with you · Viewer")).toBeInTheDocument();
   });
 
@@ -673,9 +665,24 @@ describe("the Cloud page inside the panel", () => {
     );
     const row = await rowFor("shared.md");
     // Shared outranks the sync badge: "Cloud" would say nothing about access.
-    expect(within(row).getByText("Shared")).toBeInTheDocument();
-    expect(within(row).queryByText("Cloud")).not.toBeInTheDocument();
+    expect(within(row).getByRole("img", { name: "Shared" })).toBeInTheDocument();
+    expect(within(row).queryByRole("img", { name: "In the cloud only" })).not.toBeInTheDocument();
     expect(within(row).getByText("Shared by Grace · Editor")).toBeInTheDocument();
+  });
+});
+
+describe("drafts and unsaved edits", () => {
+  it("lists only copies that hold something the file does not", async () => {
+    renderLibrary([item()], { props: { documentRecords: [
+      documentRecord({ id: "draft", name: "draft.json", format: "json", exportedRevision: null }),
+      documentRecord({ id: "edited", name: "edited.docx", revision: 4, exportedRevision: 3 }),
+      documentRecord({ id: "mirror", name: "mirror.docx", revision: 3, exportedRevision: 3 }),
+    ], onOpenDocument: vi.fn() } });
+    expect(await screen.findByText("Not saved to a file")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /draft\.json Draft/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /edited\.docx Unsaved/ })).toBeInTheDocument();
+    expect(screen.queryByText("mirror.docx")).not.toBeInTheDocument();
+    expect(screen.queryByText(/recover/i)).not.toBeInTheDocument();
   });
 });
 

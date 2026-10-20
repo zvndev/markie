@@ -1949,7 +1949,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         { id: "new-word", title: "New Word document", group: "File", keywords: "docx office", run: () => createDocument("docx") },
         { id: "new-text", title: "New text document", group: "File", keywords: "txt plain", run: () => createDocument("text") },
         { id: "new-darkmown", title: "New Darkmown document", group: "File", keywords: "wd interactive state", run: () => createDocument("darkmown") },
-        { id: "private-vault", title: "Locked vault", group: "File", keywords: "private secure passphrase", run: openVault },
+        { id: "private-vault", title: "Open Vault", group: "File", keywords: "locked private secure passphrase env keys secrets environment", run: openVault },
       ] as AppCommand[] : []),
       ...(documentsOpen ? documentMenuCommands.filter((item) => !item.id.startsWith("new-") && item.id !== "document-history" && documentShell?.commands?.enabledCommands.includes(item.id)).map((item): AppCommand => ({ id: item.id, title: `${item.group}: ${item.label}`, group: item.group === "View" ? "View" : item.group === "File" ? "File" : "Format", run: () => scheduleDocumentCommand(item.id) })) : []),
       { id: "save", title: "Save", group: "File", shortcut: "⌘S", run: () => documentsOpenRef.current ? documentShellRef.current?.save() : handleSave() },
@@ -1989,6 +1989,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       })),
       { id: "theme-settings", title: "Theme Settings…", group: "Theme", keywords: "color font preset style", run: () => setShowTheme(true) },
       { id: "settings", title: "Settings…", group: "File", shortcut: "⌘,", keywords: "account sign in sync login", run: () => setShowSettings(true) },
+      { id: "agents", title: "Connect an Agent (MCP)…", group: "File", keywords: "mcp claude codex ai agent tools search documents", run: () => setShowAgents(true) },
       { id: "default-apps", title: "Default Apps for File Types…", group: "File", keywords: "open with finder double click default handler txt json yaml csv xml markdown associate", run: () => { setSettingsSection("files"); setShowSettings(true); } },
       { id: "global-search", title: "Search All Documents…", group: "File", shortcut: "⇧⌘F", keywords: "find files everywhere full text docx rtf word grep content global", run: () => setShowSearch(true) },
       { id: "library", title: "Library…", group: "File", shortcut: "⌘L", keywords: "documents cloud sync files recent projects organize workspace group", run: () => selectView("library") },
@@ -2179,7 +2180,6 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       activeDocumentId={documentsOpen ? documentShell?.selectedId : undefined}
       onOpenDocument={documentsEnabled ? (record) => { if (presentation === "workspace") setShowLibrary(false); void openDocument(record); } : undefined}
       onCreateDocument={documentsEnabled ? (format) => { if (presentation === "workspace") setShowLibrary(false); void createDocument(format); } : undefined}
-      onOpenVault={documentsEnabled ? () => void openVault() : undefined}
       onOpenDefaultApps={() => { setSettingsSection("files"); setShowSettings(true); }}
       renderCloudDocuments={documentsEnabled ? (query, cloudPresentation) => <Suspense fallback={<p role="status" className="px-2 py-2 text-xs text-muted">Loading cloud documents…</p>}><DocumentCloudLibrary query={query} presentation={cloudPresentation} onOpen={(id) => void openCloudDocument(id)} /></Suspense> : undefined}
       retainedDocument={documentsEnabled ? { name: fileName ?? "Untitled.md", path: filePath, dirty: isDirty, selected: !documentsOpen, onSelect: () => { void leaveDocuments(); } } : undefined}
@@ -2224,6 +2224,8 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           onShortcuts={() => setShowHelp((v) => !v)}
           onAccount={() => setShowSettings(true)}
           onSearch={() => setShowSearch(true)}
+          onVault={documentsEnabled ? () => void openVault() : undefined}
+          vaultActive={documentsOpen && !!documentShell?.private}
         />
 
         {/* Docked side panel (Library / Browse / Skills). Cloud now owns the

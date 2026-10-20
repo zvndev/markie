@@ -19,7 +19,7 @@ export type WebFileHandle = {
   createWritable?(): Promise<WebWritableFile>;
 };
 type PickerWindow = Window & {
-  showOpenFilePicker?: (options: { multiple: boolean; types: PickerType[] }) => Promise<WebFileHandle[]>;
+  showOpenFilePicker?: (options: { multiple: boolean; types?: PickerType[] }) => Promise<WebFileHandle[]>;
   showSaveFilePicker?: (options: { suggestedName: string; types?: PickerType[] }) => Promise<WebFileHandle>;
 };
 type PickerType = { description: string; accept: Record<string, string[]> };
@@ -70,13 +70,17 @@ function isPickerCancellation(error: unknown): boolean {
 }
 
 /** Call from a user gesture. Cancellation is null; permission/read errors throw. */
-export async function pickWebDocument(options: WebReadOptions & { signal?: AbortSignal } = {}): Promise<WebDocumentPayload | null> {
+/**
+ * `anyFile` lifts the document-type filter for callers that keep arbitrary
+ * files safely, like the vault, which stores env files and opaque originals.
+ */
+export async function pickWebDocument(options: WebReadOptions & { signal?: AbortSignal; anyFile?: boolean } = {}): Promise<WebDocumentPayload | null> {
   const browser = browserWindow();
   if (options.signal?.aborted) return null;
   if (supportsWebFileSystemAccess().open) {
     let handles: WebFileHandle[];
     try {
-      handles = await browser.showOpenFilePicker!({
+      handles = await browser.showOpenFilePicker!(options.anyFile ? { multiple: false } : {
         multiple: false,
         types: [{ description: "Documents", accept: { "application/octet-stream": DOCUMENT_FILE_ACCEPT.split(",") } }],
       });
@@ -92,7 +96,7 @@ export async function pickWebDocument(options: WebReadOptions & { signal?: Abort
   return new Promise((resolve, reject) => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = DOCUMENT_FILE_ACCEPT;
+    if (!options.anyFile) input.accept = DOCUMENT_FILE_ACCEPT;
     input.hidden = true;
     let settled = false;
     let focusTimer: ReturnType<typeof setTimeout> | undefined;

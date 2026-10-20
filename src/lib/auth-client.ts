@@ -11,7 +11,7 @@ export interface MarkieUser {
 }
 
 const SERVER_KEY = "markie.server.v1";
-const DEFAULT_SERVER = "https://api-production-602f.up.railway.app";
+export const DEFAULT_SERVER = "https://api-production-602f.up.railway.app";
 let sessionEpoch = 0;
 function accountSessionChanged(): void {
   sessionEpoch++;
@@ -161,6 +161,67 @@ function restorePrincipal(): string | null {
 // because pushSyncConfig is called from places that do not have the user in
 // hand, and main needs the two together: a token with no principal cannot say
 // whose remembered roles it is reading.
+/**
+ * The free-text "Markie server URL" field is gone. What it left behind is
+ * sorted out once, at launch:
+ *  - nothing stored, or Markie Cloud: the token already sits in Markie
+ *    Cloud's entry, the primary slot, so nothing moves and nobody notices.
+ *  - localhost in a dev build: left alone, it is a developer's override.
+ *  - any other address: the token was that server's, never Markie Cloud's,
+ *    so it moves under that server's own key, and the primary slot goes back
+ *    to Markie Cloud. It is used again only once the user adds that server in
+ *    Settings > Servers: an address typed into a text field years ago is not
+ *    something this app now trusts on its own.
+ */
+export function migrateLegacyServer(opts: { allowDev?: boolean } = {}): boolean {
+  if (getElectronAPI()?.privateReleaseAuthOrigin) return false;
+  const read = (key: string) => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  };
+  const write = (key: string, value: string | null) => {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  };
+  const raw = read(SERVER_KEY);
+  if (raw === null) return false;
+  let origin: string | null = null;
+  try {
+    origin = new URL(raw).origin;
+  } catch {
+    origin = null;
+  }
+  if (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) && opts.allowDev) return false;
+  try {
+  if (origin && origin !== "null" && origin !== DEFAULT_SERVER) {
+    const token = read(TOKEN_KEY);
+    if (token) write(`${TOKEN_KEY}@${origin}`, token);
+    try {
+      const parsed = JSON.parse(read(PRINCIPAL_KEY) ?? "null") as Partial<PrincipalBinding> | null;
+      if (parsed && typeof parsed.token === "string" && typeof parsed.userId === "string") {
+        write(`${PRINCIPAL_KEY}@${origin}`, JSON.stringify({ token: parsed.token, serverURL: origin, userId: parsed.userId }));
+      }
+    } catch {
+      // an unreadable binding is simply not carried over
+    }
+    write(TOKEN_KEY, null);
+    write(PRINCIPAL_KEY, null);
+  }
+  write(SERVER_KEY, null);
+  } catch {
+    // storage unavailable; try again next launch
+    return false;
+  }
+  return true;
+}
+
+// Before anything reads the session: a launch after the server field went
+// away must not read the old server's token as Markie Cloud's.
+migrateLegacyServer({ allowDev: import.meta.env?.DEV === true });
+
 let principal: string | null = restorePrincipal();
 
 /** Read-only proof that the current token was confirmed by this exact server. */
@@ -407,10 +468,14 @@ export const authClient = {
   // The `state` nonce rides along so the deep link that comes back can prove it
   // belongs to this sign-in. Returns null when we can't mint one, which the
   // caller must surface rather than starting an unverifiable flow.
+  //
+  // The nonce names the server it was minted for, so the token the deep link
+  // brings back is stored for, and sent to, that server only.
   googleSignInURL: (): string | null => {
-    const state = createAuthState();
+    const origin = getServerURL();
+    const state = createAuthState({ origin });
     if (!state) return null;
-    return `${getServerURL()}/auth/google-start?state=${encodeURIComponent(state)}`;
+    return `${origin}/auth/google-start?state=${encodeURIComponent(state)}`;
   },
 };
 
@@ -441,75 +506,86 @@ export interface SharedByMeDoc {
   pendingCount: number;
 }
 
-export const sharesClient = {
-  access: async (docId: string): Promise<ShareAccess | null> => {
-    const res = await api<{ access: ShareAccess }>(
-      `/api/docs/${encodeURIComponent(docId)}/access`
-    );
-    return res.ok ? res.data?.access ?? null : null;
-  },
+// The calls a share dialog makes, against whichever server `request` talks
+// to. Sharing a document goes to the server the document lives on: the
+// primary server here, any other through src/lib/server-sessions.ts.
+export type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<{ ok: boolean; status: number; data: T | null }>;
 
-  // Owned docs that have at least one collaborator or pending invite.
-  // null means the request failed. An empty array would read as "you have
-  // shared nothing", which is a different and much more alarming statement to
-  // make to someone whose network just blipped.
-  sharedByMe: async (): Promise<SharedByMeDoc[] | null> => {
-    const res = await api<{ docs: SharedByMeDoc[] }>("/api/docs/shared-by-me");
-    return res.ok ? res.data?.docs ?? [] : null;
-  },
+export function makeSharesClient(request: ApiRequest) {
+  return {
+    access: async (docId: string): Promise<ShareAccess | null> => {
+      const res = await request<{ access: ShareAccess }>(
+        `/api/docs/${encodeURIComponent(docId)}/access`
+      );
+      return res.ok ? res.data?.access ?? null : null;
+    },
 
-  list: async (docId: string): Promise<ShareMember[] | null> => {
-    const res = await api<{ shares: ShareMember[] }>(
-      `/api/docs/${encodeURIComponent(docId)}/shares`
-    );
-    return res.ok ? res.data?.shares ?? [] : null;
-  },
+    // Owned docs that have at least one collaborator or pending invite.
+    // null means the request failed. An empty array would read as "you have
+    // shared nothing", which is a different and much more alarming statement to
+    // make to someone whose network just blipped.
+    sharedByMe: async (): Promise<SharedByMeDoc[] | null> => {
+      const res = await request<{ docs: SharedByMeDoc[] }>("/api/docs/shared-by-me");
+      return res.ok ? res.data?.docs ?? [] : null;
+    },
 
-  add: async (
-    docId: string,
-    email: string,
-    role: "viewer" | "editor"
-  ): Promise<{ ok: boolean; status?: "member" | "invited"; error?: string }> => {
-    const res = await api<{ ok?: boolean; status?: "member" | "invited"; error?: string }>(
-      `/api/docs/${encodeURIComponent(docId)}/shares`,
-      { method: "POST", body: JSON.stringify({ email, role }) }
-    );
-    if (res.ok) return { ok: true, status: res.data?.status };
-    return { ok: false, error: res.data?.error ?? "Couldn't share the doc" };
-  },
+    list: async (docId: string): Promise<ShareMember[] | null> => {
+      const res = await request<{ shares: ShareMember[] }>(
+        `/api/docs/${encodeURIComponent(docId)}/shares`
+      );
+      return res.ok ? res.data?.shares ?? [] : null;
+    },
 
-  // idOrEmail: a user id (member) or an email (pending invite)
-  remove: async (docId: string, idOrEmail: string): Promise<boolean> => {
-    const res = await api<{ ok?: boolean }>(
-      `/api/docs/${encodeURIComponent(docId)}/shares/${encodeURIComponent(idOrEmail)}`,
-      { method: "DELETE" }
-    );
-    return res.ok;
-  },
+    add: async (
+      docId: string,
+      email: string,
+      role: "viewer" | "editor"
+    ): Promise<{ ok: boolean; status?: "member" | "invited"; error?: string }> => {
+      const res = await request<{ ok?: boolean; status?: "member" | "invited"; error?: string }>(
+        `/api/docs/${encodeURIComponent(docId)}/shares`,
+        { method: "POST", body: JSON.stringify({ email, role }) }
+      );
+      if (res.ok) return { ok: true, status: res.data?.status };
+      return { ok: false, error: res.data?.error ?? "Couldn't share the doc" };
+    },
 
-  getPublicLink: async (docId: string): Promise<string | null> => {
-    const res = await api<{ url: string | null }>(
-      `/api/docs/${encodeURIComponent(docId)}/public-link`
-    );
-    return res.ok ? res.data?.url ?? null : null;
-  },
+    // idOrEmail: a user id (member) or an email (pending invite)
+    remove: async (docId: string, idOrEmail: string): Promise<boolean> => {
+      const res = await request<{ ok?: boolean }>(
+        `/api/docs/${encodeURIComponent(docId)}/shares/${encodeURIComponent(idOrEmail)}`,
+        { method: "DELETE" }
+      );
+      return res.ok;
+    },
 
-  createPublicLink: async (docId: string): Promise<string | null> => {
-    const res = await api<{ url?: string }>(
-      `/api/docs/${encodeURIComponent(docId)}/public-link`,
-      { method: "POST", body: "{}" }
-    );
-    return res.ok ? res.data?.url ?? null : null;
-  },
+    getPublicLink: async (docId: string): Promise<string | null> => {
+      const res = await request<{ url: string | null }>(
+        `/api/docs/${encodeURIComponent(docId)}/public-link`
+      );
+      return res.ok ? res.data?.url ?? null : null;
+    },
 
-  revokePublicLink: async (docId: string): Promise<boolean> => {
-    const res = await api<{ ok?: boolean }>(
-      `/api/docs/${encodeURIComponent(docId)}/public-link`,
-      { method: "DELETE" }
-    );
-    return res.ok;
-  },
-};
+    createPublicLink: async (docId: string): Promise<string | null> => {
+      const res = await request<{ url?: string }>(
+        `/api/docs/${encodeURIComponent(docId)}/public-link`,
+        { method: "POST", body: "{}" }
+      );
+      return res.ok ? res.data?.url ?? null : null;
+    },
+
+    revokePublicLink: async (docId: string): Promise<boolean> => {
+      const res = await request<{ ok?: boolean }>(
+        `/api/docs/${encodeURIComponent(docId)}/public-link`,
+        { method: "DELETE" }
+      );
+      return res.ok;
+    },
+  };
+}
+
+export type SharesClient = ReturnType<typeof makeSharesClient>;
+
+export const sharesClient: SharesClient = makeSharesClient(api);
 
 const SYNC_KEY = "markie.sync.v1";
 

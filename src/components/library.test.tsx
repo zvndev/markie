@@ -737,3 +737,33 @@ describe("the cloud half failing to load", () => {
     expect(localStorage.getItem("markie.defaultApps.hintDismissed.v1")).toBe("1");
   });
 });
+
+describe("documents on other servers", () => {
+  const SELF = "https://docs.example.com";
+  const cloudProps = { props: { view: "cloud" as const } };
+  const servers = vi.fn(async () => [
+    { origin: "https://api-production-602f.up.railway.app", name: "Markie Cloud", isDefault: true, signIn: { email: true, google: true }, version: null },
+    { origin: SELF, name: "Team docs", isDefault: false, signIn: { email: true, google: false }, version: null },
+  ]);
+
+  it("badges a document that lives off Markie Cloud with its server, and no other", async () => {
+    renderLibrary(
+      [
+        item({ name: "mine.md", path: "/notes/mine.md", state: "synced", cloudId: "c1" }),
+        item({ name: "theirs.md", path: "/notes/theirs.md", state: "synced", cloudId: "s1", server: SELF }),
+      ],
+      { ...cloudProps, overrides: { serversList: servers } as Partial<ElectronAPI> }
+    );
+    const theirs = await rowFor("theirs.md");
+    expect(await within(theirs).findByLabelText("On Team docs")).toHaveAttribute("data-server-badge", SELF);
+    const mine = await rowFor("mine.md");
+    expect(mine.querySelector("[data-server-badge]")).toBeNull();
+  });
+
+  it("gets a missing copy back from the server it lives on", async () => {
+    const gone = item({ name: "gone.md", path: "/notes/gone.md", state: "synced", cloudId: "s8", exists: false, server: SELF });
+    const { api } = renderLibrary([gone], { ...cloudProps, overrides: { serversList: servers } as Partial<ElectronAPI> });
+    await userEvent.click(await rowFor("gone.md"));
+    expect(api.docPull).toHaveBeenCalledExactlyOnceWith({ cloudId: "s8", suggestedName: "gone.md", server: SELF });
+  });
+});

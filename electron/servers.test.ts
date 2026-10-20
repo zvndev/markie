@@ -21,10 +21,11 @@ const INFO = {
 };
 
 function answer(status: number, body: unknown) {
-  return vi.fn(async () => ({
+  const fn = vi.fn(async (..._args: unknown[]) => ({
     status,
     text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
   }));
+  return fn as typeof fn & typeof fetch;
 }
 
 describe("parseServerOrigin", () => {
@@ -140,7 +141,7 @@ describe("probeServerInfo", () => {
   it("fails cleanly when the server cannot be reached or answers junk", async () => {
     const down = vi.fn(async () => {
       throw new Error("ENOTFOUND");
-    });
+    }) as unknown as typeof fetch;
     expect((await probeServerInfo("https://docs.example.com", { fetchImpl: down })).ok).toBe(false);
     expect((await probeServerInfo("https://docs.example.com", { fetchImpl: answer(200, "<html>") })).ok).toBe(false);
     expect((await probeServerInfo("https://docs.example.com", { fetchImpl: answer(200, "x".repeat(70000)) })).ok).toBe(false);

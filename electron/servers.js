@@ -160,6 +160,14 @@ async function probeServerInfo(origin, { fetchImpl = globalThis.fetch, timeoutMs
 /**
  * The trusted list, persisted as JSON at `file`. Markie Cloud is always first
  * and is never written to or removed from the file.
+ * @param {{
+ *   file?: string | null,
+ *   allowDev?: boolean,
+ *   fs?: any,
+ *   now?: () => number,
+ *   fetchImpl?: any,
+ *   randomId?: () => string,
+ * }} [options]
  */
 function createServerStore({
   file,

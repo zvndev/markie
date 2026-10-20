@@ -1,12 +1,11 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
-  getServerURL,
-  setServerURL,
   getSyncEnabled,
   setSyncEnabled,
 } from "@/lib/auth-client";
 import { authStore, useAuth } from "@/lib/auth-store";
 import { SignInForm } from "@/components/sign-in";
+import { ServersSetting } from "@/components/servers-setting";
 import { getElectronAPI } from "@/lib/electron";
 import {
   getLinkPreviewsEnabled,
@@ -78,7 +77,6 @@ export function Settings({ onClose, initialSection = "account" }: SettingsProps)
   // deep-link signs the user in behind this dialog.
   const { user, status } = useAuth();
   const [sync, setSync] = useState(getSyncEnabled);
-  const [server, setServer] = useState(getServerURL);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -87,8 +85,6 @@ export function Settings({ onClose, initialSection = "account" }: SettingsProps)
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-
-  const inputClass = "markie-overlay-field w-full text-[13px] px-3 py-2";
 
   return (
     <div
@@ -177,22 +173,9 @@ export function Settings({ onClose, initialSection = "account" }: SettingsProps)
             <LinkPreviewSetting />
             <CrashReportingSetting />
 
-            <div className="markie-overlay-section mb-2">Server &amp; sync settings</div>
-            <label className="text-[11px] text-muted block mb-1">Markie server URL</label>
-            <input
-              className={inputClass}
-              value={server}
-              onChange={(e) => setServer(e.target.value)}
-              onBlur={() => {
-                setServerURL(server);
-                // A different server means a different session, so re-probe
-                // rather than keep showing the account from the old one.
-                void authStore.refresh();
-              }}
-            />
-            <div className="text-[11px] text-muted mt-2">
-              Point Markie at a different sync server. Leave the default unless you self-host.
-            </div>
+            {/* The free-text server address is gone: a server is trusted only
+                after the app checked it and the user confirmed it here. */}
+            <ServersSetting onSignInDefault={() => setSection("account")} />
           </div>
         )}
       </div>

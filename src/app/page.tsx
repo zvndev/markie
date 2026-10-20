@@ -87,7 +87,16 @@ import {
   pushSyncConfig,
   sharesClient,
 } from "@/lib/auth-client";
-import { consumeAuthState } from "@/lib/auth-state";
+import { consumeAuthStateFor } from "@/lib/auth-state";
+import {
+  authStoreFor,
+  collabWsBaseFor,
+  getServerToken,
+  isPrimaryServer,
+  pushServerSessions,
+  setServerToken,
+  sharesClientFor,
+} from "@/lib/server-sessions";
 import { authStore, useAuth } from "@/lib/auth-store";
 import { markWelcomeSeen, shouldShowWelcome } from "@/lib/first-run";
 import { WELCOME_DOC } from "@/lib/welcome-doc";
@@ -434,7 +443,10 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     entryPromise
       .then(async (entry) => {
         const cid = entry?.cloud_doc_id ?? null;
-        const token = getAuthToken();
+        // The document's own server, and that server's session. Markie Cloud
+        // (null) is the primary one.
+        const server = entry?.cloud_origin && !isPrimaryServer(entry.cloud_origin) ? entry.cloud_origin : null;
+        const token = server ? getServerToken(server) : getAuthToken();
         if (superseded()) return;
         setCanShare(!!cid && !!token);
         if (!cid || !token) {
@@ -449,9 +461,10 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         // this". The document stays read-only until it answers: assuming yes is
         // how a viewer got to type into a doc their edits could never reach.
         setRoleState("checking");
-        const { user: me } = await authStore.ready();
+        const { user: me } = await (server ? authStoreFor(server) : authStore).ready();
+        const shares = server ? sharesClientFor(server) : sharesClient;
         const [access, members] = me
-          ? await Promise.all([sharesClient.access(cid), sharesClient.list(cid)])
+          ? await Promise.all([shares.access(cid), shares.list(cid)])
           : [null, null];
         if (superseded()) return;
         // Owners are deliberately absent from the member list, so ownership
@@ -465,10 +478,11 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           void api?.registrySetRole?.({ path: filePath, role, userId: me.id });
         // Same answer, same doc: the sync engine can now refuse a push the
         // server would only reject.
-        api?.syncDocRole?.({ cloudId: cid, role });
+        api?.syncDocRole?.({ cloudId: cid, role, ...(server ? { server } : {}) });
         // Members read with the owner's pinned theme when one is set;
-        // the owner always keeps their own live theme
-        if (members?.some((m) => m.user_id === me?.id)) {
+        // the owner always keeps their own live theme. Pinned themes live on
+        // Markie Cloud only.
+        if (!server && members?.some((m) => m.user_id === me?.id)) {
           getDocTheme(cid).then((theme) => {
             if (!superseded()) setEnforcedTheme(theme);
           });
@@ -482,7 +496,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
             .then((state) => {
               if (superseded()) return;
               setSharedBy(
-                state.items.find((i) => i.cloudId === cid)?.sharedBy ?? null
+                state.items.find((i) => i.cloudId === cid && (i.server ?? null) === server)?.sharedBy ?? null
               );
             })
             // A missing name costs the banner one clause; it must not cost the
@@ -510,7 +524,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
             ? prev
             : {
                 docId: cid,
-                wsBase: collabWsBase(),
+                wsBase: server ? collabWsBaseFor(server) : collabWsBase(),
                 token,
                 user: { name: display, color: colorForName(display) },
                 readonly,
@@ -541,6 +555,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           getElectronAPI()?.syncDocRole?.({
             cloudId: remembered.cloud_doc_id,
             role: trusted,
+            ...(remembered.cloud_origin && !isPrimaryServer(remembered.cloud_origin) ? { server: remembered.cloud_origin } : {}),
           });
         }
         setSharedBy(null);
@@ -1746,8 +1761,10 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   useEffect(() => {
     applyColorMode(getColorMode());
     const stopWatch = watchSystemColorMode();
-    // hand the stored auth token + server URL to the main-process sync engine
+    // hand the stored auth token + server URL to the main-process sync engine,
+    // then every other server's session
     pushSyncConfig();
+    pushServerSessions();
     // themes follow the account: pull the cloud preset store for availability
     pullCloudThemes().then((pulled) => {
       if (pulled === false) pushCloudThemes();
@@ -1839,13 +1856,22 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           const u = new URL(url);
           const token = u.searchParams.get("token");
           if (u.host === "auth" && token) {
-            if (!consumeAuthState(u.searchParams.get("state"))) {
+            // The pending nonce names the server the sign-in was started
+            // against; the link itself has no say. The token is stored for
+            // that server and only ever sent to it.
+            const pending = consumeAuthStateFor(u.searchParams.get("state"));
+            if (!pending.ok) {
               console.error("markie://auth rejected: no matching sign-in was pending");
               return;
             }
-            adoptAuthToken(token);
+            if (pending.origin && !isPrimaryServer(pending.origin)) {
+              setServerToken(pending.origin, token);
+              void authStoreFor(pending.origin).refresh();
+            } else {
+              adoptAuthToken(token);
+              void authStore.refresh(); // every auth-aware surface updates at once
+            }
             refreshCollabRef.current();
-            void authStore.refresh(); // every auth-aware surface updates at once
             setShowSettings(false); // dismiss the sign-in modal — we're in now
             setLibRefreshKey((k) => k + 1); // Library can show cloud files now
             return;

@@ -44,7 +44,8 @@ import type { EditableDocumentFormat } from "@/lib/document-session";
 import { DEFAULT_LIBRARY_DOCUMENT_QUERY, libraryDocumentFormat, matchesLibraryDocument, queryLibraryDocuments, type LibraryDocumentMetadata, type LibraryDocumentQuery } from "@/lib/library-document-query";
 import { LibraryDocumentFilters } from "@/components/library-document-filters";
 import { NewDocumentModal } from "@/components/new-document-modal";
-import { FormatBadge, FormatFileIcon } from "@/components/format-badge";
+import { FormatBadge, FormatFileIcon, ServerBadge } from "@/components/format-badge";
+import { serverLabel, useTrustedServers } from "@/lib/server-sessions";
 import { DEFAULT_APPS_CHANGED } from "@/components/default-apps-section";
 import { CloudAreaPicker, CloudAreaProvider, CloudAreaScopePicker } from "./cloud-area-picker";
 import { accountScopeKey, confirmedAccountScope, subscribeAccountScope } from "@/lib/account-identities";
@@ -182,6 +183,12 @@ const SYNC_STATUS: Record<SyncStatus, { label: string; color: string; icon: Reac
   },
 };
 
+// A cloud call for a document on a server other than Markie Cloud names it;
+// main checks it is trusted before using it.
+function onServer(item: LibraryItem): { server?: string } {
+  return item.server ? { server: item.server } : {};
+}
+
 function SyncStatusIcon({ status }: { status: SyncStatus }) {
   const { label, color, icon } = SYNC_STATUS[status];
   return (
@@ -212,6 +219,8 @@ export function Library({
   onOpenDefaultApps,
   renderCloudDocuments,
 }: LibraryProps) {
+  // Names for the server badge on documents that live off Markie Cloud.
+  const trustedServers = useTrustedServers();
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [signedIn, setSignedIn] = useState(false);
   const scopeKey = useSyncExternalStore(subscribeAccountScope, accountScopeKey, () => "");
@@ -529,11 +538,11 @@ export function Library({
         onOpenPath(item.path);
       } else if (item.shared && item.cloudId && api.docOpenShared) {
         // shared with me → just save to Downloads and open it, no save dialog
-        act(() => api.docOpenShared!({ cloudId: item.cloudId!, suggestedName: item.name }));
+        act(() => api.docOpenShared!({ cloudId: item.cloudId!, suggestedName: item.name, ...onServer(item) }));
       } else if (cloudCopyOnly(item)) {
         // The cloud has it and this device does not, whether the file was
         // never here or was deleted: either way the click gets the copy back.
-        act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name }));
+        act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name, ...onServer(item) }));
       }
     };
     return (
@@ -551,6 +560,7 @@ export function Library({
             {item.name}
           </span>
           <FormatBadge format={format} />
+          {item.server && <ServerBadge origin={item.server} label={serverLabel(item.server, trustedServers)} />}
           <SyncStatusIcon status={status} />
           {(item.path || item.cloudId) && (
             <button
@@ -620,7 +630,7 @@ export function Library({
               </button>
             )}
             {cloudCopyOnly(item) && signedIn && (
-              <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name }))}>Download…</button>
+              <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name, ...onServer(item) }))}>Download…</button>
             )}
           </div>
         )}

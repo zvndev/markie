@@ -10,7 +10,6 @@ const sendOTP = vi.fn();
 const verifyOTP = vi.fn();
 const signOut = vi.fn();
 const googleSignInURL = vi.fn();
-const setServerURL = vi.fn();
 const setSyncEnabled = vi.fn();
 
 vi.mock("@/lib/auth-client", () => ({
@@ -24,7 +23,6 @@ vi.mock("@/lib/auth-client", () => ({
     googleSignInURL: () => googleSignInURL(),
   },
   getServerURL: () => "https://api.test",
-  setServerURL: (...a: unknown[]) => setServerURL(...a),
   getSyncEnabled: () => true,
   setSyncEnabled: (...a: unknown[]) => setSyncEnabled(...a),
 }));
@@ -99,17 +97,11 @@ describe("Settings — account", () => {
     expect(toggle).not.toBeChecked();
   });
 
-  it("re-probes the session when the server URL changes", async () => {
-    const user = userEvent.setup();
+  it("shows the Markie Cloud account in the Servers list", async () => {
+    await signIn();
     renderSettings({ initialSection: "advanced" });
-    const field = await screen.findByDisplayValue("https://api.test");
-
-    me.mockClear();
-    await user.clear(field);
-    await user.type(field, "https://other.test");
-    await user.tab(); // blur commits the URL and re-probes the session
-    expect(setServerURL).toHaveBeenCalledWith("https://other.test");
-    await vi.waitFor(() => expect(me).toHaveBeenCalled());
+    const cloud = await screen.findByRole("listitem", { name: "Markie Cloud" });
+    expect(within(cloud).getByText("Signed in as ada@markie.app")).toBeInTheDocument();
   });
 });
 
@@ -128,7 +120,7 @@ describe("Settings — sections", () => {
 
     await user.click(tabs[3]);
     expect(tabs[3]).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByDisplayValue("https://api.test")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Markie servers" })).toBeInTheDocument();
   });
 
   it("offers early access under its early-access name and keeps the stored opt-in", async () => {
@@ -153,14 +145,10 @@ describe("Settings — sections", () => {
     expect(screen.getAllByRole("tab")[1]).toHaveAttribute("aria-selected", "true");
   });
 
-  it("saves a new server URL on blur", async () => {
-    const user = userEvent.setup();
+  it("has no free-text server address any more", () => {
     renderSettings({ initialSection: "advanced" });
-    const field = screen.getByDisplayValue("https://api.test");
-    await user.clear(field);
-    await user.type(field, "https://self.hosted");
-    await user.tab();
-    expect(setServerURL).toHaveBeenCalledWith("https://self.hosted");
+    expect(screen.queryByDisplayValue("https://api.test")).toBeNull();
+    expect(screen.queryByText("Markie server URL")).toBeNull();
   });
 
   it("closes on Escape, the × button, and the scrim", async () => {
@@ -363,5 +351,126 @@ describe("Settings — files", () => {
     render(<Settings onClose={() => {}} initialSection="files" />);
     expect(await screen.findByText(/not the dev build/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open JSON files in Markie" })).toBeDisabled();
+  });
+});
+
+describe("Settings — servers", () => {
+  const SELF = {
+    origin: "https://docs.example.com",
+    name: "Team docs",
+    isDefault: false,
+    signIn: { email: true, google: false },
+    version: "1.0.0",
+  };
+  const CLOUD = {
+    origin: "https://api-production-602f.up.railway.app",
+    name: "Markie Cloud",
+    isDefault: true,
+    signIn: { email: true, google: true },
+    version: null,
+  };
+
+  it("adds a server only after showing its name and address and the user confirming", async () => {
+    const user = userEvent.setup();
+    const serversList = vi.fn().mockResolvedValueOnce([CLOUD]).mockResolvedValue([CLOUD, SELF]);
+    const serversProbe = vi.fn(async () => ({
+      ok: true as const,
+      probeId: "probe-1",
+      origin: SELF.origin,
+      host: "docs.example.com",
+      name: SELF.name,
+      version: "1.0.0",
+      signIn: SELF.signIn,
+      alreadyAdded: false,
+    }));
+    const serversAdd = vi.fn(async () => ({ ok: true as const, server: SELF }));
+    installBridge({ serversList, serversProbe, serversAdd } as never);
+    renderSettings({ initialSection: "advanced" });
+
+    await user.click(await screen.findByRole("button", { name: "Add a server…" }));
+    await user.type(screen.getByLabelText("Server address"), "docs.example.com");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    const confirm = await screen.findByRole("group", { name: "Confirm server" });
+    expect(within(confirm).getByText("Team docs")).toBeInTheDocument();
+    expect(within(confirm).getByText("https://docs.example.com")).toBeInTheDocument();
+    expect(serversProbe).toHaveBeenCalledWith("docs.example.com");
+    // Checking is not adding.
+    expect(serversAdd).not.toHaveBeenCalled();
+
+    await user.click(within(confirm).getByRole("button", { name: "Add server" }));
+    expect(serversAdd).toHaveBeenCalledWith("probe-1");
+    expect(await screen.findByRole("listitem", { name: "Team docs" })).toBeInTheDocument();
+  });
+
+  it("says why a check failed and adds nothing", async () => {
+    const user = userEvent.setup();
+    const serversAdd = vi.fn();
+    installBridge({
+      serversList: vi.fn(async () => [CLOUD]),
+      serversProbe: vi.fn(async () => ({ ok: false as const, error: "The address has to start with https://." })),
+      serversAdd,
+    } as never);
+    renderSettings({ initialSection: "advanced" });
+
+    await user.click(await screen.findByRole("button", { name: "Add a server…" }));
+    await user.type(screen.getByLabelText("Server address"), "http://docs.example.com");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("https://");
+    expect(serversAdd).not.toHaveBeenCalled();
+  });
+
+  it("offers no way to remove Markie Cloud", async () => {
+    installBridge({ serversList: vi.fn(async () => [CLOUD, SELF]) } as never);
+    renderSettings({ initialSection: "advanced" });
+    const cloud = await screen.findByRole("listitem", { name: "Markie Cloud" });
+    expect(within(cloud).queryByRole("button", { name: /Remove/ })).toBeNull();
+    const self = await screen.findByRole("listitem", { name: "Team docs" });
+    expect(within(self).getByRole("button", { name: "Remove Team docs" })).toBeInTheDocument();
+  });
+
+  it("removes a server after asking, and forgets its sign-in", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("markie.token.v1@https://docs.example.com", "tok-self");
+    const serversRemove = vi.fn(async () => ({ ok: true }));
+    const serversList = vi.fn().mockResolvedValueOnce([CLOUD, SELF]).mockResolvedValue([CLOUD]);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, headers: new Headers(), json: async () => ({ user: null }) })));
+    installBridge({ serversList, serversRemove } as never);
+    renderSettings({ initialSection: "advanced" });
+
+    const self = await screen.findByRole("listitem", { name: "Team docs" });
+    await user.click(within(self).getByRole("button", { name: "Remove Team docs" }));
+    await user.click(within(screen.getByRole("group", { name: "Confirm removal" })).getByRole("button", { name: "Remove" }));
+
+    expect(serversRemove).toHaveBeenCalledWith("https://docs.example.com");
+    await vi.waitFor(() => expect(screen.queryByRole("listitem", { name: "Team docs" })).toBeNull());
+    expect(localStorage.getItem("markie.token.v1@https://docs.example.com")).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("signs in to an added server with email and password, offering Google only when it does", async () => {
+    const user = userEvent.setup();
+    installBridge({ serversList: vi.fn(async () => [CLOUD, SELF]) } as never);
+    const fetch = vi.fn(async (url: unknown) =>
+      String(url).endsWith("/api/me")
+        ? { ok: true, status: 200, headers: new Headers(), json: async () => ({ user: { id: "u-self", email: "bo@example.com", name: "Bo" } }) }
+        : { ok: true, status: 200, headers: new Headers({ "set-auth-token": "tok-self" }), json: async () => ({ token: "tok-self" }) }
+    );
+    vi.stubGlobal("fetch", fetch);
+    renderSettings({ initialSection: "advanced" });
+
+    const self = await screen.findByRole("listitem", { name: "Team docs" });
+    await user.click(within(self).getByRole("button", { name: "Sign in" }));
+    const form = within(self).getByRole("form", { name: "Sign in to Team docs" });
+    expect(within(form).queryByRole("button", { name: "Continue with Google" })).toBeNull();
+    await user.type(within(form).getByLabelText("Email"), "bo@example.com");
+    await user.type(within(form).getByLabelText("Password"), "pw-123456");
+    await user.click(within(form).getByRole("button", { name: "Sign in" }));
+
+    expect(await within(self).findByText("Signed in as bo@example.com")).toBeInTheDocument();
+    expect(String(fetch.mock.calls[0][0])).toBe("https://docs.example.com/api/auth/sign-in/email");
+    expect(localStorage.getItem("markie.token.v1@https://docs.example.com")).toBe("tok-self");
+    vi.unstubAllGlobals();
   });
 });

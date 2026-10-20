@@ -1,10 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import {
-  sharesClient,
-  type ShareAccess,
-  type ShareMember,
-} from "@/lib/auth-client";
-import { useAuth } from "@/lib/auth-store";
+import { type ShareAccess, type ShareMember } from "@/lib/auth-client";
+import { isPrimaryServer, sharesClientFor, useAuthFor } from "@/lib/server-sessions";
 import { localAssetCount } from "@/lib/attach";
 import { colorForName, initials } from "@/lib/collab";
 import { getDocTheme, setDocTheme } from "@/lib/theme-sync";
@@ -27,6 +23,9 @@ import { getElectronAPI } from "@/lib/electron";
 
 interface ShareDialogProps {
   docId: string;
+  // The server the document lives on, when it is not Markie Cloud. Everything
+  // here then goes to that server, as that server's account.
+  server?: string;
   fileName: string;
   // The document's markdown, so the dialog can say what will not travel with
   // it. Sharing sends the text and nothing else.
@@ -38,12 +37,16 @@ interface ShareDialogProps {
 
 export function ShareDialog({
   docId,
+  server,
   fileName,
   body = "",
   onClose,
   onChanged,
 }: ShareDialogProps) {
-  const { user: me } = useAuth();
+  const { user: me } = useAuthFor(server);
+  const sharesClient = sharesClientFor(server);
+  // Pinned themes are stored on Markie Cloud, so they are offered there only.
+  const themesHere = isPrimaryServer(server);
   const [access, setAccess] = useState<ShareAccess | null>(null);
   const [members, setMembers] = useState<ShareMember[] | null>(null);
   const [email, setEmail] = useState("");
@@ -70,12 +73,12 @@ export function ShareDialog({
       setMembers(list ?? []);
       setPublicUrl(url);
     });
-  }, [docId]);
+  }, [docId, sharesClient]);
 
   useEffect(() => {
     load();
-    getDocTheme(docId).then((tokens) => setThemePinned(!!tokens));
-  }, [load, docId]);
+    if (themesHere) getDocTheme(docId).then((tokens) => setThemePinned(!!tokens));
+  }, [load, docId, themesHere]);
 
   const toggleThemePin = async () => {
     if (!canManage) return setError("Only the owner can pin the shared theme.");
@@ -283,7 +286,7 @@ export function ShareDialog({
               them. They get an email; the doc shows up in their Library when
               they join, and editors edit live with you.
             </div>
-            <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
+            {themesHere && <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={themePinned}
@@ -296,7 +299,7 @@ export function ShareDialog({
               <span className="text-[10px] text-muted">
                 — pins your current preset to this doc
               </span>
-            </label>
+            </label>}
           </div>
         )}
 

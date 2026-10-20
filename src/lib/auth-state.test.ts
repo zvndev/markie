@@ -3,6 +3,7 @@ import {
   AUTH_STATE_TTL_MS,
   clearAuthState,
   consumeAuthState,
+  consumeAuthStateFor,
   createAuthState,
 } from "./auth-state";
 
@@ -115,5 +116,51 @@ describe("clearAuthState", () => {
   it("is safe with nothing pending", () => {
     expect(() => clearAuthState({ storage })).not.toThrow();
     expect(() => clearAuthState({ storage: null })).not.toThrow();
+  });
+});
+
+describe("a nonce bound to a server", () => {
+  it("answers the server it was minted for", () => {
+    const value = createAuthState({ storage, now: 0, origin: "https://docs.example.com" })!;
+    expect(consumeAuthStateFor(value, { storage, now: 0 })).toEqual({
+      ok: true,
+      origin: "https://docs.example.com",
+    });
+  });
+
+  it("is single use, whatever server it names", () => {
+    const value = createAuthState({ storage, now: 0, origin: "https://docs.example.com" })!;
+    consumeAuthStateFor(value, { storage, now: 0 });
+    expect(consumeAuthStateFor(value, { storage, now: 0 })).toEqual({ ok: false });
+  });
+
+  it("is replaced by a sign-in started against another server", () => {
+    // The first server's nonce is gone, so a link carrying it cannot hand a
+    // token to either server.
+    const first = createAuthState({ storage, now: 0, origin: "https://a.example.com" })!;
+    createAuthState({ storage, now: 0, origin: "https://b.example.com" });
+    expect(consumeAuthStateFor(first, { storage, now: 0 })).toEqual({ ok: false });
+  });
+
+  it("rejects a link whose state matches nothing", () => {
+    createAuthState({ storage, now: 0, origin: "https://docs.example.com" });
+    expect(consumeAuthStateFor("f".repeat(32), { storage, now: 0 })).toEqual({ ok: false });
+    createAuthState({ storage, now: 0, origin: "https://docs.example.com" });
+    expect(consumeAuthStateFor(null, { storage, now: 0 })).toEqual({ ok: false });
+  });
+
+  it("reads a nonce from before servers were named as the primary server's", () => {
+    storage.setItem("markie.authstate.v1", JSON.stringify({ value: "abc", createdAt: 0 }));
+    expect(consumeAuthStateFor("abc", { storage, now: 0 })).toEqual({ ok: true, origin: null });
+  });
+
+  it("rejects a record whose server is not a string", () => {
+    storage.setItem("markie.authstate.v1", JSON.stringify({ value: "abc", createdAt: 0, origin: 7 }));
+    expect(consumeAuthStateFor("abc", { storage, now: 0 })).toEqual({ ok: false });
+  });
+
+  it("expires like any other nonce", () => {
+    const value = createAuthState({ storage, now: 0, origin: "https://docs.example.com" })!;
+    expect(consumeAuthStateFor(value, { storage, now: AUTH_STATE_TTL_MS + 1 })).toEqual({ ok: false });
   });
 });

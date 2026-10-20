@@ -8,6 +8,11 @@
 // So we mint a single-use nonce before opening the browser, pass it through the
 // OAuth flow, and adopt a token only when it comes back carrying that exact
 // nonce. Unsolicited deep links have nothing to present and are rejected.
+//
+// With more than one server, the nonce also names the server it was minted
+// for. A token that comes back is that server's token: it is stored for that
+// origin and sent to that origin, and nowhere else. The deep link itself
+// never gets to say which server it is from.
 
 const STATE_KEY = "markie.authstate.v1";
 
@@ -27,6 +32,10 @@ export interface AuthStateStorage {
 interface StoredState {
   value: string;
   createdAt: number;
+  // The server the sign-in was started against. Absent on a nonce minted by
+  // a build from before there were several servers, which only ever signed
+  // in to the primary one.
+  origin?: string;
 }
 
 function defaultStorage(): AuthStateStorage | null {
@@ -66,7 +75,10 @@ function read(storage: AuthStateStorage): StoredState | null {
     if (typeof parsed?.value !== "string" || typeof parsed?.createdAt !== "number") {
       return null;
     }
-    return { value: parsed.value, createdAt: parsed.createdAt };
+    if (parsed.origin !== undefined && typeof parsed.origin !== "string") return null;
+    return typeof parsed.origin === "string"
+      ? { value: parsed.value, createdAt: parsed.createdAt, origin: parsed.origin }
+      : { value: parsed.value, createdAt: parsed.createdAt };
   } catch {
     return null;
   }
@@ -75,11 +87,13 @@ function read(storage: AuthStateStorage): StoredState | null {
 /**
  * Mint a nonce for a sign-in that is about to start, replacing any previous
  * one. Returns null when there is no storage or no CSPRNG to build on, which
- * the caller must treat as "cannot start sign-in safely".
+ * the caller must treat as "cannot start sign-in safely". `origin` is the
+ * server the sign-in is for.
  */
 export function createAuthState(opts?: {
   storage?: AuthStateStorage | null;
   now?: number;
+  origin?: string;
 }): string | null {
   const storage = resolveStorage(opts?.storage);
   if (!storage) return null;
@@ -89,7 +103,11 @@ export function createAuthState(opts?: {
   } catch {
     return null;
   }
-  const record: StoredState = { value, createdAt: opts?.now ?? Date.now() };
+  const record: StoredState = {
+    value,
+    createdAt: opts?.now ?? Date.now(),
+    ...(opts?.origin ? { origin: opts.origin } : {}),
+  };
   try {
     storage.setItem(STATE_KEY, JSON.stringify(record));
   } catch {
@@ -107,13 +125,26 @@ export function consumeAuthState(
   candidate: string | null | undefined,
   opts?: { storage?: AuthStateStorage | null; now?: number }
 ): boolean {
+  return consumeAuthStateFor(candidate, opts).ok;
+}
+
+/**
+ * The same check, answering which server the matching sign-in was for.
+ * `origin` is null for a nonce minted before nonces named one, which the
+ * caller reads as the primary server, the only one such a build knew.
+ */
+export function consumeAuthStateFor(
+  candidate: string | null | undefined,
+  opts?: { storage?: AuthStateStorage | null; now?: number }
+): { ok: true; origin: string | null } | { ok: false } {
   const storage = resolveStorage(opts?.storage);
-  if (!storage) return false;
+  if (!storage) return { ok: false };
   const pending = read(storage);
   clearAuthState({ storage });
-  if (!pending || !candidate) return false;
-  if ((opts?.now ?? Date.now()) - pending.createdAt > AUTH_STATE_TTL_MS) return false;
-  return pending.value === candidate;
+  if (!pending || !candidate) return { ok: false };
+  if ((opts?.now ?? Date.now()) - pending.createdAt > AUTH_STATE_TTL_MS) return { ok: false };
+  if (pending.value !== candidate) return { ok: false };
+  return { ok: true, origin: pending.origin ?? null };
 }
 
 export function clearAuthState(opts?: { storage?: AuthStateStorage | null }): void {

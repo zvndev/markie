@@ -70,3 +70,19 @@ export function FormatBadge({ format }: { format: string }) {
   const label = FORMAT_LABEL[format] ?? FORMAT_LABEL.other;
   return <span className={`${fmtClass(format)} markie-fmt-badge shrink-0`} title={label.name} aria-hidden="true" data-format-badge={format}>{label.short}</span>;
 }
+
+/** Which server a document lives on, for any server but Markie Cloud. Same
+ * shape as the type label, in a neutral color, and read out: unlike the type,
+ * nothing else in the row says where the document is. */
+export function ServerBadge({ label, origin }: { label: string; origin: string }) {
+  return (
+    <span
+      className="markie-fmt markie-fmt-badge markie-server-badge shrink-0"
+      title={`On ${label} (${origin})`}
+      aria-label={`On ${label}`}
+      data-server-badge={origin}
+    >
+      {label}
+    </span>
+  );
+}

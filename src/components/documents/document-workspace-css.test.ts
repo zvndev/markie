@@ -18,6 +18,13 @@ describe("document workspace screen theme", () => {
     expect(css).not.toContain("caret-color:#18181b");
   });
 
+  it("lets native document controls and page-break markers follow the theme tone", () => {
+    expect(css).toMatch(/:root\[data-theme-tone="dark"\] \.docs-workspace[^{]*\{\s*color-scheme:dark/);
+    expect(css).toMatch(/:root\[data-theme-tone="light"\] \.docs-workspace[^{]*\{\s*color-scheme:light/);
+    const marker = css.slice(css.indexOf(".docs-page-break-marker {"), css.indexOf(".docs-revisions {"));
+    expect(marker).not.toMatch(/#[0-9a-f]{3,6}\b/i);
+  });
+
   it("keeps printed pages on white paper regardless of the screen theme", () => {
     expect(printSource).toContain("background:#fff;color:#000;color-scheme:light");
   });

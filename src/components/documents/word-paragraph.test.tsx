@@ -15,6 +15,22 @@ function mount(source = paragraph) {
   return { field: screen.getByRole("textbox"), onRuns, onPasteParagraphs, onRemovePageBreaks, onRejectStructure, onReplace, onSplit };
 }
 describe("Word paragraph user editing", () => {
+  it("recolors authored runs in place when the page theme changes mid-composition", () => {
+    const source: DocxParagraph = { ...paragraph, runs: [{ ...paragraph.runs[0], style: { color: "000000" } }, paragraph.runs[1]] };
+    const onRuns = vi.fn(), onRejectStructure = vi.fn();
+    const field = (background: string) => <WordParagraph paragraph={source} index={0} selected readOnly={false} pageBackground={background} onSelect={vi.fn()} onReplace={vi.fn()} onRuns={onRuns} onSplit={vi.fn()} onPasteParagraphs={vi.fn()} onRemovePageBreaks={vi.fn()} onRejectStructure={onRejectStructure} />;
+    const view = render(field("#f8fafc")), node = screen.getByRole("textbox"), black = node.querySelector<HTMLElement>("[data-run-id=r1]")!;
+    expect(black).toHaveStyle({ color: "#000000" });
+    fireEvent.compositionStart(node);
+    view.rerender(field("#09090b"));
+    expect(node.querySelector("[data-run-id=r1]")).toBe(black);
+    expect(black.style.color).toBe("var(--foreground)");
+    expect(black.dataset.expectedStyle).toBe(black.getAttribute("style"));
+    black.textContent = "alphaあ ";
+    fireEvent.compositionEnd(node);
+    expect(onRejectStructure).not.toHaveBeenCalled();
+    expect(onRuns).toHaveBeenCalledWith([{ runId: "r1", text: "alphaあ " }]);
+  });
   it("restores the pre-input caret after rejected noncancelable browser mutation", async () => {
     const source = { ...paragraph, text: "abc", runs: [{ ...paragraph.runs[0], text: "abc" }] };
     function Host() {

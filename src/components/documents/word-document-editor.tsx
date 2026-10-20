@@ -14,6 +14,7 @@ import { handleExternalLinkClick } from "@/lib/external-link";
 import type { AppCommand } from "@/lib/commands";
 import documentMenuCommands from "../../../electron/document-menu-commands.json";
 import { WordParagraph } from "./word-paragraph";
+import { useWordPageBackground } from "./word-colors";
 import { WordToolsDialog, type WordTool } from "./word-toolbar";
 import { WordImage } from "./word-images";
 import type { WordTextMatch } from "./word-find";
@@ -43,6 +44,7 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
   const paletteFocus = useRef<HTMLElement | null>(null);
   const [selectionRevision, setSelectionRevision] = useState(0);
   const [selectionSupported, setSelectionSupported] = useState(true);
+  const pageBackground = useWordPageBackground();
   type Snapshot = { document: T; selection: RichTextRange | null };
   const undoHistory = useRef<Snapshot[]>([]), redoHistory = useRef<Snapshot[]>([]);
   const logicalSelection = useRef<RichTextRange | null>(null), pendingSelection = useRef<RichTextRange | null>(null);
@@ -368,7 +370,7 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
     if (!paragraph) return null;
     const images = document.images.filter((image) => image.paragraphId === id);
     const shown = originalView && paragraph.originalRuns ? { ...paragraph, text: paragraph.originalText ?? paragraph.text, runs: paragraph.originalRuns } : paragraph;
-    const field = <WordParagraph key={id} paragraph={shown} index={document.paragraphs.indexOf(paragraph)} selected={selected === id} readOnly={blocked || originalView || !!tool || paletteOpen || (!tracking && paragraph.revisionIds.length > 0)} trackText={tracking} reconcileToken={reconcileToken}
+    const field = <WordParagraph key={id} paragraph={shown} index={document.paragraphs.indexOf(paragraph)} selected={selected === id} readOnly={blocked || originalView || !!tool || paletteOpen || (!tracking && paragraph.revisionIds.length > 0)} trackText={tracking} reconcileToken={reconcileToken} pageBackground={pageBackground}
       onSelect={(paragraphId, selectedRun) => { if (paragraphId !== selected) { textSelection.current = null; setSelectionSupported(true); } setSelected(paragraphId); setRunId(selectedRun); }}
       onReplace={(paragraphId, text) => apply([tracking ? { type: "track-paragraph-text", paragraphId, text, author: reviewAuthor.trim() } : { type: "replace-paragraph", paragraphId, text }])}
       onRuns={(edits) => {

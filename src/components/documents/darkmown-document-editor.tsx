@@ -40,6 +40,9 @@ export function DarkmownDocumentEditor({ session, readOnly = false, active = tru
   const [result, setResult] = useState<PreviewResult | null>(null);
   const [sourceCommands, setSourceCommands] = useState<DocumentCommandTarget | null>(null);
   const [previewTheme, setPreviewTheme] = useState<"light" | "dark">(() => {
+    // The applied tone is the truth (color mode, templates); the store is the fallback before first paint.
+    const applied = typeof document === "undefined" ? undefined : document.documentElement.dataset.themeTone;
+    if (applied === "light" || applied === "dark") return applied;
     const store = loadThemeStore();
     return editorThemeForTokens(findTheme(store, store.activeId).tokens);
   });

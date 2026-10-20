@@ -202,9 +202,18 @@ describe("actual shared document workspace", () => {
     fireEvent.blur(screen.getByLabelText("Collection"), { target: { value: "Writing" } });
     fireEvent.click(screen.getByRole("button", { name: "Recover now" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "#project" })).toBeInTheDocument());
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search documents" }), { target: { value: "needle" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter documents" }), { target: { value: "needle" } });
     expect(await screen.findByRole("button", { name: /Untitled.txt.*Searchable needle/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Word" }));
+    // The sidebar shares the Library type vocabulary: Text is literal text only, JSON/YAML/XML/HTML have their own buckets.
+    fireEvent.click(screen.getByRole("button", { name: "Document type: All types" }));
+    expect(screen.getAllByRole("menuitemradio").map((item) => item.textContent?.replace("✓", ""))).toEqual(["All types", "Markdown", "Text", "DOCX", "DOC", "RTF", "ODT", "Darkmown", "CSV", "JSON", "YAML", "XML", "HTML", "Other"]);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "JSON" }));
+    expect(await screen.findByText(/No documents match/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Document type: JSON" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Text" }));
+    expect(await screen.findByRole("button", { name: /Untitled.txt.*Searchable needle/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Document type: Text" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "DOCX" }));
     expect(await screen.findByText(/No documents match/)).toBeInTheDocument();
     view.unmount();
     render(<DocumentWorkspace library={library} />);

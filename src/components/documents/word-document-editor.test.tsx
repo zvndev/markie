@@ -12,6 +12,7 @@ import type { RichDocument } from "@/lib/office/rich-text-types";
 import { applyRichOperations, createRichDocument, exportRichDocument, openRichDocument } from "@/lib/office/rich-document";
 import { installBridge } from "@/test/mock-bridge";
 import { readWordSelection, restoreWordSelection } from "./word-selection";
+import { applyTheme, MARKIE_DARK, MARKIE_LIGHT } from "@/lib/theme";
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 function editor<T extends RichDocument>(initial: T, onHistory?: () => void, localControls = false) {
   const state = { document: initial, target: null as DocumentCommandTarget | null };
@@ -387,6 +388,36 @@ describe("Word renderer inside Markie", () => {
     expect(screen.getByRole("combobox", { name: "Paragraph style" })).toHaveDisplayValue("Themed heading");
     expect(screen.queryByRole("tablist")).toBeNull();
     expect(await exportDocx(view.state.document)).toEqual(imported.bytes);
+  });
+  it("adapts unreadable authored run colors to the live page on screen only, never in the saved document", async () => {
+    const root = globalThis.document.documentElement;
+    try {
+      act(() => applyTheme(MARKIE_DARK.tokens));
+      const imported = await themedDocxFixture(), view = editor(imported.document);
+      const body = screen.getByRole("textbox", { name: "Paragraph 2" });
+      const [dark, red] = [...body.querySelectorAll<HTMLElement>("[data-run-id]")];
+      // #222222 from docDefaults is invisible on the dark page; the theme text color stands in.
+      expect(dark.style.color).toBe("var(--foreground)");
+      expect(red).toHaveStyle({ color: "#cc0000" });
+      expect(screen.getByRole("textbox", { name: "Paragraph 1" }).querySelector("[data-run-id]")).toHaveStyle({ color: "#336699" });
+      expect(await exportDocx(view.state.document)).toEqual(imported.bytes);
+      // Switching theme recolors the same spans in place.
+      act(() => applyTheme(MARKIE_LIGHT.tokens));
+      expect(body.querySelector("[data-run-id]")).toBe(dark);
+      expect(dark).toHaveStyle({ color: "#222222" });
+      act(() => applyTheme(MARKIE_DARK.tokens));
+      expect(dark.style.color).toBe("var(--foreground)");
+      // Typing into an adapted run is accepted, and the authored color is what gets written.
+      body.focus(); const text = dark.firstChild!, range = globalThis.document.createRange();
+      range.setStart(text, 0); range.collapse(true); window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+      fireEvent(body, new InputEvent("beforeinput", { inputType: "insertText", data: "Z", bubbles: true, cancelable: true }));
+      expect(screen.queryByRole("alert")).toBeNull();
+      const reopened = await openDocx(await exportDocx(view.state.document));
+      expect(reopened.paragraphs[1].text.startsWith("Z")).toBe(true);
+      expect(reopened.paragraphs[1].runs[0].resolvedStyle?.color).toBe("222222");
+      expect(reopened.paragraphs[1].runs[0].style).toEqual(imported.document.paragraphs[1].runs[0].style);
+      expect((screen.getByRole("textbox", { name: "Paragraph 2" }).querySelector("[data-run-id]") as HTMLElement).style.color).toBe("var(--foreground)");
+    } finally { root.removeAttribute("style"); delete root.dataset.themeTone; }
   });
   it("keeps themed uniform and mixed Font dialogs byte-neutral until an explicit override", async () => {
     const imported = await themedDocxFixture(), view = editor(imported.document);

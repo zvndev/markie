@@ -70,6 +70,21 @@ describe("Darkmown source and isolated preview", () => {
     }
   });
 
+  it("opens on the applied theme tone even when the saved preset disagrees", async () => {
+    const originalTheme = loadThemeStore();
+    saveThemeStore({ ...originalTheme, activeId: MARKIE_LIGHT.id });
+    document.documentElement.dataset.themeTone = "dark";
+    try {
+      const session = { ...await createDocumentSession("darkmown"), text: SOURCE };
+      render(<DarkmownDocumentEditor session={session} onChange={vi.fn()} onFlushReady={vi.fn()} />);
+      await waitFor(() => expect(frame()).toHaveStyle({ colorScheme: "dark" }));
+      expect(compile.mock.calls.at(-1)?.[2]?.colorScheme).toBe("dark");
+    } finally {
+      delete document.documentElement.dataset.themeTone;
+      saveThemeStore(originalTheme);
+    }
+  });
+
   it("rebuilds only an inactive static preview for theme changes without granting scripts", async () => {
     const originalTheme = loadThemeStore();
     saveThemeStore({ ...originalTheme, activeId: MARKIE_LIGHT.id });

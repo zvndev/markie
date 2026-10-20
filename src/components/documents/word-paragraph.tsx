@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 import type { DocxParagraph, DocxTextEdit } from "@/lib/office/docx";
 import { paragraphInput } from "./word-input";
+import { displayRunColor } from "./word-colors";
 
 function caretOffset(root: HTMLElement): number | null {
   const selection = window.getSelection();
@@ -43,6 +44,11 @@ function selectionBookmark(root: HTMLElement) {
   const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
   return { ...offsets, backward: !!range && selection?.anchorNode === range.endContainer && selection?.anchorOffset === range.endOffset };
 }
+/** On-screen run color: authored colors adapt to the page, links default to the theme link color. */
+function runColor(run: DocxParagraph["runs"][number], pageBackground: string | null): string {
+  const color = (run.resolvedStyle ?? run.style).color;
+  return color && /^[0-9a-f]{6}$/i.test(color) ? displayRunColor(color, pageBackground) : run.hyperlinkId ? "var(--status-blue)" : "";
+}
 interface WordParagraphProps {
   paragraph: DocxParagraph;
   index: number;
@@ -56,10 +62,12 @@ interface WordParagraphProps {
   onSelection?: (paragraphId: string, start: number, end: number, supported: boolean) => void;
   trackText?: boolean;
   reconcileToken?: number;
+  /** Live page background; authored run colors adapt to it on screen only. */
+  pageBackground?: string | null;
   onRemovePageBreaks: (ids: string[]) => void;
   onRejectStructure: (message: string) => void;
 }
-export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, onRuns, onSplit, onPasteParagraphs, onSelection, trackText = false, reconcileToken = 0, onRemovePageBreaks, onRejectStructure }: WordParagraphProps) {
+export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, onRuns, onSplit, onPasteParagraphs, onSelection, trackText = false, reconcileToken = 0, pageBackground = null, onRemovePageBreaks, onRejectStructure }: WordParagraphProps) {
   const root = useRef<HTMLDivElement>(null);
   const pendingCaret = useRef<number | null>(null);
   const composing = useRef(false);
@@ -71,9 +79,25 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
   selectionCallbacks.current = { onSelect, onSelection };
   const safeTracking = paragraph.runs.length === 1 && (paragraph.originalRuns?.length ?? 0) <= 1 && paragraph.runs.every((run) => !run.hyperlinkId && !run.pageBreaks.length);
   const inputParagraph = trackText && safeTracking ? { ...paragraph, revisionIds: [], runs: paragraph.runs.map((run) => ({ ...run, canEdit: true })) } : paragraph;
+  const painted = useRef<{ paragraph: DocxParagraph; trackText: boolean; reconcileToken: number; readOnly: boolean } | null>(null);
   useLayoutEffect(() => {
     const node = root.current;
     if (!node) return;
+    const prior = painted.current;
+    if (prior && prior.paragraph === paragraph && prior.trackText === trackText && prior.reconcileToken === reconcileToken && prior.readOnly === readOnly) {
+      // Only the theme changed. Recolor in place so the caret, a selection or
+      // an IME composition in progress is left untouched. A span whose style
+      // the browser already changed keeps its old expectation, so that edit is
+      // still rejected rather than laundered by the theme switch.
+      for (const span of node.querySelectorAll<HTMLElement>(":scope > [data-run-id]")) {
+        const run = paragraph.runs.find((item) => item.id === span.dataset.runId);
+        if (!run || (span.getAttribute("style") ?? "") !== span.dataset.expectedStyle) continue;
+        span.style.color = runColor(run, pageBackground);
+        span.dataset.expectedStyle = span.getAttribute("style") ?? "";
+      }
+      return;
+    }
+    painted.current = { paragraph, trackText, reconcileToken, readOnly };
     const restore = rejectedSelection.current;
     rejectedSelection.current = null;
     const priorSelection = restore ?? selectionBookmark(node);
@@ -100,7 +124,7 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
       Object.assign(span.style, {
         fontWeight: style.bold ? "700" : "400", fontStyle: style.italic ? "italic" : "normal",
         textDecoration: style.underline === "none" ? "none" : style.underline || run.hyperlinkId ? "underline" : "none",
-        color: style.color && /^[0-9a-f]{6}$/i.test(style.color) ? `#${style.color}` : run.hyperlinkId ? "var(--status-blue)" : "",
+        color: runColor(run, pageBackground),
         fontFamily: style.fontFamily ?? "", fontSize: style.fontSizePoints ? `${style.fontSizePoints}pt` : "",
       });
       span.dataset.expectedStyle = span.getAttribute("style") ?? "";
@@ -116,7 +140,7 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
       }
     }
     else if (offset !== null) placeCaret(node, offset);
-  }, [paragraph, trackText, reconcileToken, readOnly]);
+  }, [paragraph, trackText, reconcileToken, readOnly, pageBackground]);
   const emit = () => {
     const node = root.current!;
     const reject = (message: string) => {

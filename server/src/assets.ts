@@ -15,6 +15,7 @@ import { auth } from "./auth.ts";
 import { accessLevel, canEditLevel, isSharedOut } from "./shares.ts";
 import { assetMimeFor, ASSET_EXTENSIONS } from "./asset-mime.ts";
 import { assetStore, type AssetStore } from "./storage.ts";
+import { quotaRefusal, type QuotaRefusal } from "./quota.ts";
 
 export const MAX_ASSET_BYTES = 100 * 1024 * 1024;
 export const MAX_DOC_ASSET_BYTES = 500 * 1024 * 1024;
@@ -293,13 +294,18 @@ function refEscapes(raw: string): boolean {
 // check against actual bytes, committed together with the row that reserves
 // them, is authoritative. better-sqlite3 transactions are synchronous, so
 // nothing else can interleave between the read and the write here.
-function reserveAssetSpace(ownerId: string, hash: string, size: number, mime: string): boolean {
-  return db.transaction(() => {
-    if (usageFor(ownerId, hash) + size > MAX_ACCOUNT_ASSET_BYTES) return false;
+function reserveAssetSpace(ownerId: string, hash: string, size: number, mime: string): "ok" | "account over cap" | QuotaRefusal {
+  return db.transaction((): "ok" | "account over cap" | QuotaRefusal => {
+    if (usageFor(ownerId, hash) + size > MAX_ACCOUNT_ASSET_BYTES) return "account over cap";
+    // The account-wide storage quota, when one is configured, on the same
+    // measured bytes and inside the same transaction as the asset cap above.
+    const previous = db.prepare("SELECT size FROM assets WHERE owner_id = ? AND hash = ?").get(ownerId, hash) as { size: number } | undefined;
+    const refusal = quotaRefusal(db, ownerId, size - (previous?.size ?? 0));
+    if (refusal) return refusal;
     db.prepare(
       "INSERT OR REPLACE INTO assets (owner_id, hash, size, mime, created_at) VALUES (?, ?, ?, ?, ?)"
     ).run(ownerId, hash, size, mime, new Date().toISOString());
-    return true;
+    return "ok";
   })();
 }
 
@@ -319,9 +325,11 @@ export function inflightForTests(): Map<string, { bytes: number; count: number }
 
 // Synchronous on purpose: nothing may await between reading the map and
 // writing it, or two requests could both see room for the last byte.
-function claimInflight(ownerId: string, declared: number): "account over cap" | "too many uploads" | null {
+function claimInflight(ownerId: string, declared: number): "account over cap" | "too many uploads" | QuotaRefusal | null {
   const held = inflight.get(ownerId) ?? { bytes: 0, count: 0 };
   if (usageFor(ownerId) + held.bytes + declared > MAX_ACCOUNT_ASSET_BYTES) return "account over cap";
+  const overQuota = quotaRefusal(db, ownerId, declared, held.bytes);
+  if (overQuota) return overQuota;
   if (held.count >= MAX_CONCURRENT_UPLOADS) return "too many uploads";
   inflight.set(ownerId, { bytes: held.bytes + declared, count: held.count + 1 });
   return null;
@@ -396,6 +404,7 @@ assetsApi.put("/assets/:hash", async (c) => {
   // finally below, so a refusal costs the server nothing.
   const refused = claimInflight(user.id, declared);
   if (refused === "account over cap") return c.json({ error: refused, cap: MAX_ACCOUNT_ASSET_BYTES }, 413);
+  if (refused && typeof refused === "object") return c.json(refused, 413);
   // Retry-After because the condition clears as soon as one of the four
   // uploads in front of this one finishes, and a client with no number to
   // wait on retries immediately or gives up.
@@ -432,7 +441,8 @@ assetsApi.put("/assets/:hash", async (c) => {
       // The declared-length check above is a cheap courtesy: it reads
       // yesterday's usage against a number the client chose. This is the real
       // gate, on the size just measured from the bytes that actually arrived.
-      if (!reserveAssetSpace(user.id, hash, size, mime)) {
+      const reserved = reserveAssetSpace(user.id, hash, size, mime);
+      if (reserved !== "ok") {
         // The object was written on spec but the account can't afford it:
         // undo the write so it does not linger as an unowned orphan, then
         // refuse. A failure here is logged, not thrown, the same as
@@ -443,6 +453,7 @@ assetsApi.put("/assets/:hash", async (c) => {
         } catch (err) {
           console.error(`asset cleanup failed for ${user.id}/${hash}:`, err);
         }
+        if (reserved !== "account over cap") return c.json(reserved, 413);
         return c.json({ error: "account over cap", cap: MAX_ACCOUNT_ASSET_BYTES }, 413);
       }
       return c.json({ ok: true, hash, size });

@@ -25,12 +25,12 @@ import {
 import { pendingForToken } from "./pending.ts";
 import { sharedPageLinkFor } from "./doc-links.ts";
 import { assetRefsFor, assetVersion, serveAsset } from "./assets.ts";
-import { markieSiteUrl } from "./downloads.ts";
+import { deployment } from "./deployment.ts";
 import { renderAccessRequiredPage, renderSharedDocPage } from "./render.ts";
 
 const db = openDatabase();
 
-const MARKIE_SITE = markieSiteUrl();
+const MARKIE_SITE = deployment().siteUrl;
 
 export const docView = new Hono();
 

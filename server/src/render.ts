@@ -22,6 +22,12 @@ import {
   primaryDownloadCta,
   type DownloadPlatform,
 } from "./downloads.ts";
+import { deployment } from "./deployment.ts";
+
+// Where "Get Markie" and "Markie home" point. The official deployment serves
+// its own download routes, so it keeps the site it was handed; a self-hosted
+// server serves none and sends people to the official site instead.
+const markieSite = (siteUrl: string) => (deployment().official ? siteUrl : deployment().downloadSiteUrl);
 
 // rehype-sanitize schema: drops scripts, event handlers, and javascript:/data:
 // hrefs (defaultSchema.protocols) while preserving what rehype-highlight (hljs
@@ -247,7 +253,7 @@ export function renderPublicPage(opts: {
   const { title, markdown, token, siteUrl } = opts;
   const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
   const safeTitle = esc(title);
-  const download = primaryDownloadCta();
+  const download = primaryDownloadCta(markieSite(""));
   return `<!doctype html>
 <html lang="en"><head>
   <meta charset="utf-8">
@@ -267,7 +273,7 @@ export function renderPublicPage(opts: {
   </div>
   <main>${content}</main>
   <div class="cta">
-    These look even better in <a href="${esc(siteUrl)}">Markie</a>. It's free,
+    These look even better in <a href="${esc(markieSite(siteUrl))}">Markie</a>. It's free,
     it's fast, and your markdown will thank you.
   </div>
 </body></html>`;
@@ -348,7 +354,7 @@ export function renderDownloadPage(opts: {
 }
 
 export function renderNotFoundPage(siteUrl: string): string {
-  const download = primaryDownloadCta(siteUrl);
+  const download = primaryDownloadCta(markieSite(siteUrl));
   return `<!doctype html>
 <html lang="en"><head>
   <meta charset="utf-8">
@@ -390,7 +396,7 @@ export function renderSharedDocPage(opts: {
   const { title, markdown, docId, siteUrl, sharedBy, canEdit, invitedEmail } = opts;
   const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
   const safeTitle = esc(title);
-  const download = primaryDownloadCta(siteUrl);
+  const download = primaryDownloadCta(markieSite(siteUrl));
   const openInMarkie = `markie://doc?id=${encodeURIComponent(docId)}&src=${encodeURIComponent(siteUrl)}`;
   return `<!doctype html>
 <html lang="en"><head>
@@ -433,7 +439,7 @@ export function renderSharedDocPage(opts: {
 // does not distinguish "no such document" from "not yours", so the page cannot
 // be used to find out which document ids exist.
 export function renderAccessRequiredPage(siteUrl: string): string {
-  const download = primaryDownloadCta(siteUrl);
+  const download = primaryDownloadCta(markieSite(siteUrl));
   return `<!doctype html>
 <html lang="en"><head>
   <meta charset="utf-8">

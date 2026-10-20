@@ -171,7 +171,7 @@ export const auth = betterAuth({
         // link: a link needs a hosted page plus a second deep-link hop back
         // into the desktop app, and this plugin already does it in two
         // requests without the user leaving Markie.
-        await sendEmail({ to: email, ...otpEmail(type, otp) });
+        await sendEmail({ to: email, ...otpEmail(type, otp), secret: true });
       },
     }),
   ],

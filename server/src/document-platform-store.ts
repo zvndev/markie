@@ -114,7 +114,11 @@ export interface DocumentPlatformStore {
 }
 
 /** Additive schema on the caller's injected handle only; never opens a database itself. */
-export interface DocumentPlatformStoreOptions { limits?: Partial<PlatformLimits>; now?: () => number; cloudAreas?: CloudAreasStore; verifiedUserForEmail?: (email: string) => string | null }
+export interface DocumentPlatformStoreOptions {
+  limits?: Partial<PlatformLimits>; now?: () => number; cloudAreas?: CloudAreasStore; verifiedUserForEmail?: (email: string) => string | null;
+  /** The account-wide storage quota (quota.ts). Returns a refusal message when the owner may not grow by this many bytes. */
+  storageQuota?: (ownerId: string, growthBytes: number) => { message: string } | null;
+}
 export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, options: DocumentPlatformStoreOptions = {}): DocumentPlatformStore {
   const areas = options.cloudAreas;
   if (areas && areas.database !== db) platformFail("invalid-request", 400, "Cloud placements and document writes require the same database handle.");
@@ -152,6 +156,10 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
     if (!(row.bytes instanceof Uint8Array) || row.bytes.length > limits.maxDocumentBytes || hash(row.bytes) !== row.sha256 || !FORMATS.includes(row.format)) platformFail("storage-error", 503, "Stored document integrity could not be verified.");
     return { ...metadata(row, role, userId), encoding: "base64", data: Buffer.from(row.bytes).toString("base64") };
   };
+  const checkQuota = (ownerId: string, growthBytes: number) => {
+    const refusal = options.storageQuota?.(ownerId, growthBytes);
+    if (refusal) platformFail("storage_quota_exceeded", 413, refusal.message);
+  };
   const checkVersion = (row: DocumentRow, version: number) => { platformVersion(version); if (row.version !== version) platformFail("conflict", 409, "A newer document snapshot exists. Reopen it before saving.", row.version); };
   const appendHistory = (row: DocumentRow) => {
     db.prepare("INSERT INTO dp_history(doc_id,version,name,format,bytes,sha256,created_at) VALUES(?,?,?,?,?,?,?)").run(row.id, row.version, row.name, row.format, row.bytes, row.sha256, row.updated_at);
@@ -173,6 +181,7 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
         const destination = areas ? decoded.areaId !== undefined ? areas.ownArea(userId, decoded.areaId) : areas.ensureDefault(userId) : undefined;
         const count = db.prepare("SELECT COUNT(*) AS count FROM dp_documents WHERE owner_id = ?").get(userId) as { count: number };
         if (count.count >= limits.maxDocumentsPerOwner) platformFail("limit-exceeded", 413, "Account document count limit reached.");
+        checkQuota(userId, decoded.bytes.length);
         const time = now(), row: DocumentRow = { id: randomUUID(), owner_id: userId, name: decoded.name, format: decoded.format, version: 1, bytes: decoded.bytes, sha256: decoded.sha256, created_at: time, updated_at: time };
         db.prepare("INSERT INTO dp_documents(id,owner_id,name,format,version,bytes,sha256,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").run(row.id, userId, row.name, row.format, 1, row.bytes, row.sha256, time, time);
         appendHistory(row);
@@ -189,6 +198,7 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
           if (destination.id !== current.areaId) throw new CloudAreaError("placement-required", 409, "Move this document through the explicit placement endpoint before saving.");
         }
         if (row.version === Number.MAX_SAFE_INTEGER) platformFail("limit-exceeded", 413, "Document version counter is exhausted.");
+        checkQuota(row.owner_id, decoded.bytes.length - row.bytes.length);
         const next: DocumentRow = { ...row, ...decoded, version: row.version + 1, updated_at: Math.max(now(), row.updated_at) };
         const updated = db.prepare("UPDATE dp_documents SET name = ?,format = ?,version = ?,bytes = ?,sha256 = ?,updated_at = ? WHERE id = ? AND version = ?").run(next.name, next.format, next.version, next.bytes, next.sha256, next.updated_at, id, row.version);
         if (Number(updated.changes) !== 1) platformFail("conflict", 409, "A concurrent document update won.", row.version);

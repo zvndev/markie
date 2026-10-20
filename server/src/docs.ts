@@ -17,6 +17,7 @@ import { revokePublicLink } from "./public-links.ts";
 import { serveAsset, unlinkDocAssets } from "./assets.ts";
 import { removeDocLinks } from "./doc-links.ts";
 import { CloudAreaError, createCloudAreas, type CloudAreasStore } from "./cloud-areas.ts";
+import { quotaRefusal, storageQuotaBytes } from "./quota.ts";
 
 const db = openDatabase();
 let cloudAreas: CloudAreasStore | undefined;
@@ -181,6 +182,15 @@ docs.put("/:id", async (c) => {
   }
 
   const version = existing && !existing.deleted_at ? existing.version + 1 : 1;
+  // Counted against the document's owner, whoever is pushing: an editor's
+  // save lands in the owner's storage. Only growth is refused.
+  if (storageQuotaBytes() !== null) {
+    const previous = existing && !existing.deleted_at
+      ? (db.prepare("SELECT length(CAST(content AS BLOB)) AS bytes FROM docs WHERE id = ?").get(id) as { bytes: number }).bytes
+      : 0;
+    const refusal = quotaRefusal(db, existing?.owner_id ?? user.id, Buffer.byteLength(body.content, "utf8") - previous);
+    if (refusal) return c.json(refusal, 413);
+  }
   try {
     db.transaction(() => {
       let destination: string | undefined;

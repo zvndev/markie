@@ -9,7 +9,8 @@ import {
   getPublicLinkToken,
   revokePublicLink,
 } from "./public-links.ts";
-import { markieSiteUrl, primaryDownloadCta } from "./downloads.ts";
+import { primaryDownloadCta } from "./downloads.ts";
+import { deployment } from "./deployment.ts";
 import { disconnectUser } from "./collab.ts";
 import { newLinkToken } from "./link-token.ts";
 import { createInviteLimiter, plainEmailText } from "./invite-guard.ts";
@@ -23,8 +24,11 @@ export function resetInviteLimitsForTests(): void {
 const pendingStore = createPendingShareStore(db);
 const { addPending, listPendingForDoc, removePending } = pendingStore;
 
-// Share emails use the stable release-manifest domain and versionless download routes.
-const MARKIE_SITE = markieSiteUrl();
+// Share emails use the stable release-manifest domain and versionless download
+// routes on the official deployment, and the server's own origin elsewhere,
+// with "Get Markie" still pointing at the official download page.
+const MARKIE_SITE = deployment().siteUrl;
+const DOWNLOAD_SITE = deployment().downloadSiteUrl;
 
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"]/g, (ch) =>
@@ -409,7 +413,7 @@ function inviteHtml(
   previewUrl: string,
   rawUrl: string
 ): string {
-  const download = primaryDownloadCta(MARKIE_SITE);
+  const download = primaryDownloadCta(DOWNLOAD_SITE);
   return `<div style="font-family:system-ui,-apple-system,sans-serif;max-width:460px;margin:0 auto;color:#18181b">
   <div style="font-size:32px;font-weight:800;color:#f59e0b">M</div>
   <h2 style="font-size:19px;margin:8px 0 4px">${escapeHtml(inviter)} tossed you a doc 📄</h2>

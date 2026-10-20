@@ -23,6 +23,11 @@ import { accountIdentitiesEnabled, guardAccountAuthRequest } from "./account-con
 import { createAccountPlatform } from "./account-platform.ts";
 import { resolveAuthSecret } from "./auth-secret.ts";
 import { resolveVerifiedUserForEmail } from "./account-identities.ts";
+import { API_VERSION, SERVER_VERSION, deployment } from "./deployment.ts";
+import { emailSignInAvailable } from "./email.ts";
+import { quotaRefusal, storageQuotaBytes, storageUsedBytes } from "./quota.ts";
+
+const googleConfigured = !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
 const app = new Hono();
 
@@ -107,18 +112,40 @@ app.use("/api/*", async (c, next) => {
   return jsonBodyLimit(c, next);
 });
 
-app.use(
-  "*",
-  cors({
-    origin: applicationOrigins(),
-    credentials: true,
-    exposeHeaders: ["set-auth-token"],
-  })
-);
+// Resolved at boot so a misconfigured server (MARKIE_OFFICIAL=2, mail-log mode
+// on the official deployment, a self-host with no BETTER_AUTH_URL) stops here
+// with the reason, not on the first request that happens to read it.
+const DEPLOYMENT = deployment();
+const EMAIL_SIGN_IN = emailSignInAvailable();
+const SERVER_INFO_PATH = "/api/server-info";
+const appCors = cors({
+  origin: applicationOrigins(),
+  credentials: true,
+  exposeHeaders: ["set-auth-token"],
+});
+// Anyone may ask what this server is, from anywhere, without credentials: the
+// desktop asks before it has an account here, and a page that wants to show
+// "this is a Markie server" needs no session. Nothing in the answer is secret.
+const serverInfoCors = cors({ origin: "*", allowMethods: ["GET"], credentials: false });
+app.use("*", (c, next) => (c.req.path === SERVER_INFO_PATH ? serverInfoCors(c, next) : appCors(c, next)));
 
 app.get("/health", (c) =>
   c.json({ ok: true, service: "markie-api", version: "0.1.0" })
 );
+
+// The handshake a desktop app makes before it adds this server. apiVersion is
+// what future apps negotiate on; see deployment.ts for when it changes.
+app.get(SERVER_INFO_PATH, (c) => {
+  c.header("Cache-Control", "public, max-age=60");
+  return c.json({
+    product: "markie-server",
+    apiVersion: API_VERSION,
+    version: SERVER_VERSION,
+    name: DEPLOYMENT.name,
+    origin: DEPLOYMENT.origin,
+    signIn: { email: EMAIL_SIGN_IN, google: googleConfigured },
+  });
+});
 
 const cloudAreas = configureDocsCloudAreas(accountIdentitiesEnabled);
 // configureDocsCloudAreas retains the installed better-sqlite3 handle. The
@@ -126,6 +153,18 @@ const cloudAreas = configureDocsCloudAreas(accountIdentitiesEnabled);
 const accountDatabase = cloudAreas?.database as Database.Database | undefined;
 const accountPlatform = accountDatabase && cloudAreas
   ? createAccountPlatform(accountDatabase, cloudAreas, resolveAuthSecret(process.env)) : undefined;
+const quotaDatabase = accountDatabase ?? openDatabase();
+
+// What this account stores against MARKIE_STORAGE_QUOTA_BYTES. quotaBytes is
+// null when no quota is configured, which is every server today. Registered
+// ahead of the account platform so its sub-app never shadows it.
+app.get("/api/account/usage", async (c) => {
+  c.header("Cache-Control", "private, no-store");
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  if (!session) return c.json({ error: "unauthorized" }, 401);
+  return c.json({ usedBytes: storageUsedBytes(quotaDatabase, session.user.id), quotaBytes: storageQuotaBytes() });
+});
+
 if (accountPlatform) {
   app.route("/api/account", accountPlatform.app);
   if (accountPlatform.google) {
@@ -214,9 +253,12 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
 
 app.route("/api/docs", docs);
 app.route("/api/document-platform", createDocumentPlatform({
-  store: createSqliteDocumentPlatformStore(accountDatabase ?? openDatabase(), cloudAreas && accountDatabase ? {
-    cloudAreas, verifiedUserForEmail: (email) => resolveVerifiedUserForEmail(accountDatabase, email),
-  } : {}),
+  store: createSqliteDocumentPlatformStore(quotaDatabase, {
+    ...(cloudAreas && accountDatabase ? {
+      cloudAreas, verifiedUserForEmail: (email: string) => resolveVerifiedUserForEmail(accountDatabase, email),
+    } : {}),
+    storageQuota: (ownerId, growthBytes) => quotaRefusal(quotaDatabase, ownerId, growthBytes),
+  }),
   resolveUser: async (request) => (await auth.api.getSession({ headers: request.headers }))?.user ?? null,
 }));
 app.route("/api/docs", shares);

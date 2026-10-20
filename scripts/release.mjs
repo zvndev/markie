@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
+  appendFileSync,
   copyFileSync,
   createReadStream,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -14,6 +16,17 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
+import {
+  EARLY_STATE_FILE,
+  markPromoted,
+  markSuperseded,
+  markWithdrawn,
+  planPromoteDue,
+  promotionBlocker,
+  recordEarlyPublish,
+  resolveSoakDays,
+  setHold,
+} from "./lib/early-state.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const builderConfigPath = path.join(rootDir, "electron-builder.config.cjs");
@@ -27,6 +40,33 @@ const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
 const writeJson = (file, value) => writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 const packageJson = () => readJson(path.join(rootDir, "package.json"));
 const releaseManifest = () => readJson(releaseManifestPath);
+
+// Everything the early-access stage and promotion touch outside this process,
+// in one place, so tests can replace the bucket, git, and the clock without
+// any of them being contacted. Production never calls setReleaseIo; the
+// defaults below are the real thing. Functions are late-bound so a default can
+// call helpers declared further down this file.
+const io = {
+  root: rootDir,
+  now: () => new Date(),
+  pollDelayMs: 5000,
+  packageVersion: () => readJson(path.join(io.root, "package.json")).version,
+  releaseGitState: () => assertReleaseGitState(),
+  promoteGitState: (commit) => assertPromoteGitState(commit),
+  publishCredentials: () => assertPublishCredentials(),
+  verifyLocal: (platform) =>
+    platform === "win" ? verifyLocalWindowsArtifacts() : verifyLocalMacArtifacts({ verifyTrust: true }),
+  publish: (platform, files, version) =>
+    platform === "win" ? publishWindowsFiles(files, version) : publishFiles(files, version),
+  log: (line) => console.log(line),
+};
+
+/** Test seam. Returns a function that restores the previous values. */
+export function setReleaseIo(overrides) {
+  const previous = { ...io };
+  Object.assign(io, overrides);
+  return () => Object.assign(io, previous);
+}
 
 function loadLocalEnv(file = path.join(rootDir, ".env")) {
   if (!existsSync(file)) return;
@@ -133,7 +173,7 @@ async function hashReadable(readable) {
 const hashFile = (file) => hashReadable(createReadStream(file));
 
 function run(command, args, options = {}) {
-  console.log(`[release] ${command} ${(options.displayArgs ?? args).join(" ")}`);
+  if (!options.quiet) console.log(`[release] ${command} ${(options.displayArgs ?? args).join(" ")}`);
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? rootDir,
     env: options.env ?? process.env,
@@ -383,7 +423,7 @@ export async function verifyLocalMacArtifacts({ root = rootDir, verifyTrust = fa
 }
 
 function evidenceDir(version) {
-  return path.join(rootDir, ".release", version);
+  return path.join(io.root, ".release", version);
 }
 
 function evidencePath(version, name) {
@@ -638,8 +678,7 @@ function publishFiles(files, version) {
   ]);
 }
 
-async function waitForPublicFeed(version, attempts = 12) {
-  const { feedUrl } = releaseUrls();
+async function waitForFeedVersion(feedUrl, version, attempts = 12) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       const response = await fetch(`${feedUrl}?release-check=${Date.now()}`, { cache: "no-store" });
@@ -647,9 +686,13 @@ async function waitForPublicFeed(version, attempts = 12) {
     } catch {
       // Retry propagation failures below.
     }
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await new Promise((resolve) => setTimeout(resolve, io.pollDelayMs));
   }
-  throw new Error(`public updater feed did not reach ${version}`);
+  throw new Error(`updater feed ${feedUrl} did not reach ${version}`);
+}
+
+async function waitForPublicFeed(version, attempts = 12) {
+  return waitForFeedVersion(releaseUrls().feedUrl, version, attempts);
 }
 
 export async function waitForWebsiteVersion(version, attempts = 72, delayMs = 5000) {
@@ -725,12 +768,17 @@ async function publishMac(confirmVersion) {
     checks: ["remote-size", "remote-sha512", "stable-download-route", "latest-release-json"],
   });
   console.log(`[release] Markie ${version} is public and verified`);
+  await mirrorStableAfterPublish("mac", version, local.feedPath);
   console.log(`[release] final human check: open the previous Markie release and confirm Check for Updates shows ${version}`);
 }
 
 async function rollbackMac(confirmVersion) {
-  const version = packageJson().version;
-  assert(confirmVersion === version, `pass --confirm-rollback=${version} to restore the previous feed`);
+  // The version comes from the confirmation, not package.json. A promoted
+  // release goes stable days after it was cut, and main may have moved to the
+  // next version by then; the saved previous feed is what proves the version
+  // was really published from here.
+  assert(confirmVersion, `pass --confirm-rollback=<version> to restore the feed saved before that release`);
+  const version = assertVersion(confirmVersion);
   assertPublishCredentials();
   const previous = evidencePath(version, "previous-latest-mac.yml");
   assert(existsSync(previous), `missing ${path.relative(rootDir, previous)}`);
@@ -767,6 +815,7 @@ async function status() {
     const response = await fetch(urls.latestJsonUrl, { cache: "no-store" });
     if (response.ok) result.websiteVersion = (await response.json()).version ?? null;
   } catch {}
+  Object.assign(result, await earlyStatus());
   console.log(JSON.stringify(result, null, 2));
 }
 
@@ -1061,6 +1110,28 @@ async function publishWindows(confirmVersion) {
     checks: ["remote-size", "remote-sha512", "authenticode-subject"],
   });
   console.log(`[release] Markie ${version} Windows artifacts are public at ${artifactBaseUrl}`);
+  await mirrorStableAfterPublish("win", version, local.feedPath);
+}
+
+// The Windows twin of rollbackMac. It exists now because publishWindows (and
+// promotion) save the previous windows/latest.yml before replacing it, which
+// was the missing piece that kept this command out.
+async function rollbackWindows(confirmVersion) {
+  assert(confirmVersion, `pass --confirm-rollback=<version> to restore the feed saved before that release`);
+  const version = assertVersion(confirmVersion);
+  assertPublishCredentials();
+  const target = earlyTarget("win");
+  const previous = evidencePath(version, target.previousStableFile);
+  assert(existsSync(previous), `missing ${path.relative(io.root, previous)}`);
+  const rollbackDir = path.join(evidenceDir(version), "rollback");
+  mkdirSync(rollbackDir, { recursive: true });
+  const rollbackFeed = path.join(rollbackDir, target.stableFeedFile);
+  copyFileSync(previous, rollbackFeed);
+  const previousVersion = assertVersion(parseElectronBuilderFeed(readFileSync(previous, "utf8")).version);
+  io.publish("win", [rollbackFeed], previousVersion);
+  await waitForFeedVersion(target.stableFeedUrl, previousVersion);
+  await verifyPublicWindows({ expectedVersion: previousVersion, deep: false });
+  console.log(`[release] restored the public Windows updater feed to ${previousVersion}`);
 }
 
 function assertWindowsEvidence(version, commit) {
@@ -1091,6 +1162,524 @@ export async function verifyPublicWindows({ expectedVersion, deep = false } = {}
   return { version, feedUrl, artifactBaseUrl };
 }
 
+
+// ---------------------------------------------------------------------------
+// Early access, soak, and promotion
+//
+// A release goes out in two steps. `publish <platform> --early` uploads the
+// signed artifacts and writes only the early (beta) feed, so the people who
+// turned on "Get new versions early" get it first. After the soak, `promote`
+// writes the stable feed, pointing at the very same objects in the bucket.
+// Nothing is rebuilt, re-signed, or re-uploaded, which is why early releases
+// carry their final version number: the bytes early users ran are, by SHA-512,
+// the bytes everyone else gets.
+//
+// The early feed and the stable feed are siblings in one directory
+// (mac/beta-mac.yml beside mac/latest-mac.yml), so the artifact URLs written
+// inside the feed resolve identically from either. A feed file does not name
+// itself, so promoting is uploading the same YAML under the stable name.
+// ---------------------------------------------------------------------------
+
+const PROMOTE_LOCK_STALE_MS = 3 * 60 * 60 * 1000;
+
+const sha512Text = (text) => createHash("sha512").update(text).digest("base64");
+const isStableNumbered = (version) => releaseChannel(version) === "latest";
+
+/**
+ * Where one platform's early and stable feeds live, and the evidence file
+ * names that go with them. Both feed paths come from the manifest; the early
+ * one must sit in the same directory as stable, or promotion would point
+ * stable users at artifacts that were never uploaded beside their feed.
+ */
+export function earlyTarget(platform, manifest = releaseManifest()) {
+  assert(platform === "mac" || platform === "win", `unknown platform: ${platform}`);
+  const publicBase = manifest.storage.publicBaseUrl.replace(/\/+$/, "");
+  const stablePath =
+    platform === "win" ? windowsPlatform(manifest).feed.path : publicMacPlatform(manifest).feed.path;
+  const earlyPath =
+    platform === "win" ? manifest.betaChannel?.windowsFeed?.path : manifest.betaChannel?.feed?.path;
+  assert(earlyPath, `release manifest has no early feed for ${platform}`);
+  const directory = path.posix.dirname(stablePath);
+  assert(
+    path.posix.dirname(earlyPath) === directory,
+    `early feed ${earlyPath} must sit beside ${stablePath} so promotion reuses the same artifacts`
+  );
+  const stableFeedFile = path.posix.basename(stablePath);
+  const earlyFeedFile = path.posix.basename(earlyPath);
+  assert(stableFeedFile !== earlyFeedFile, "early and stable feeds must be different files");
+  return {
+    platform,
+    label: platform === "win" ? "Windows" : "macOS",
+    artifactBaseUrl: `${publicBase}/${directory}`,
+    stableFeedFile,
+    earlyFeedFile,
+    stableFeedUrl: `${publicBase}/${stablePath}`,
+    earlyFeedUrl: `${publicBase}/${earlyPath}`,
+    previousStableFile: `previous-${stableFeedFile}`,
+    previousEarlyFile: `previous-${earlyFeedFile}`,
+    localEvidenceFile: platform === "win" ? "local-windows.json" : "local.json",
+    publicEvidenceFile: platform === "win" ? "public-windows.json" : "public.json",
+  };
+}
+
+/** A feed from the bucket, or null when the object does not exist yet. */
+async function fetchFeed(url) {
+  const response = await fetch(`${url}?release-check=${Date.now()}`, { cache: "no-store" });
+  if (response.status === 404 || response.status === 403) return null;
+  assert(response.ok, `GET ${url} failed with ${response.status}`);
+  const text = await response.text();
+  return { text, ...parseElectronBuilderFeed(text) };
+}
+
+function earlyStatePath(version) {
+  return evidencePath(version, EARLY_STATE_FILE);
+}
+
+function readEarlyState(version) {
+  const file = earlyStatePath(version);
+  return existsSync(file) ? readJson(file) : null;
+}
+
+function writeEarlyState(state) {
+  mkdirSync(evidenceDir(state.version), { recursive: true });
+  writeJson(earlyStatePath(state.version), state);
+}
+
+function listEarlyStates() {
+  const dir = path.join(io.root, ".release");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(dir, entry.name, EARLY_STATE_FILE))
+    .filter((file) => existsSync(file))
+    .map((file) => readJson(file));
+}
+
+// The feed text is what the client trusts, so every entry in it has to be one
+// of the smoke-tested files, byte for byte, and every smoke-tested file has to
+// be in it.
+function assertFeedMatchesEvidence(feed, files, label) {
+  const listed = new Map(feed.files.map((entry) => [decodeURIComponent(entry.url), entry]));
+  assert(listed.size === files.length, `${label} lists ${listed.size} artifacts, evidence has ${files.length}`);
+  for (const file of files) {
+    const entry = listed.get(file.name);
+    assert(entry, `${label} does not list ${file.name}`);
+    assert(entry.sha512 === file.sha512, `${label} SHA-512 for ${file.name} does not match the evidence`);
+    assert(entry.size === file.size, `${label} size for ${file.name} does not match the evidence`);
+  }
+}
+
+async function uploadAndVerifyArtifacts(platform, local, artifactBaseUrl) {
+  const dist = path.dirname(local.feedPath);
+  const files = local.files.flatMap((file) =>
+    file.blockmap ? [path.join(dist, file.name), path.join(dist, file.blockmap)] : [path.join(dist, file.name)]
+  );
+  io.publish(platform, files, local.version);
+  await verifyArtifactsInBucket(local.files, artifactBaseUrl);
+}
+
+// Full download and SHA-512 of every artifact and blockmap, compared with the
+// evidence rather than with the feed: the feed is what is being checked.
+async function verifyArtifactsInBucket(files, artifactBaseUrl) {
+  for (const file of files) {
+    await verifyRemoteFile(`${artifactBaseUrl}/${encodeURIComponent(file.name)}`, { url: file.name, size: file.size, sha512: file.sha512 }, true);
+    if (!file.blockmap) continue;
+    await verifyRemoteFile(
+      `${artifactBaseUrl}/${encodeURIComponent(file.blockmap)}`,
+      { url: file.blockmap, size: file.blockmapSize, sha512: file.blockmapSha512 },
+      true
+    );
+  }
+}
+
+/**
+ * Stage 2: publish the exact signed build to the early feed only.
+ *
+ * Same guards as a stable publish (exact version, clean pushed main, credentials,
+ * exact-commit evidence that matches the files on disk), and the same order:
+ * artifacts first, verified by download, the feed last. The stable feed, the
+ * website, and latest.json are not touched.
+ */
+export async function publishEarly(platform, confirmVersion, { soakDays: soakFlag } = {}) {
+  const target = earlyTarget(platform);
+  const version = io.packageVersion();
+  assert(confirmVersion === version, `pass --confirm-public-release=${version} to publish to early access`);
+  assert(
+    isStableNumbered(version),
+    `--early publishes stable-numbered builds so the same bits can be promoted; ${version} is a prerelease, publish it without --early`
+  );
+  const commit = io.releaseGitState();
+  io.publishCredentials();
+  const evidence =
+    platform === "win" ? assertWindowsEvidence(version, commit) : assertLocalEvidence(version, commit);
+  const local = await io.verifyLocal(platform);
+  assert(local.version === version, `local ${target.label} artifacts are ${local.version}, expected ${version}`);
+  assertEvidenceMatchesArtifacts(evidence.files, local.files);
+
+  const previousState = readEarlyState(version);
+  assert(!previousState?.promotedAt, `${version} is already stable; publish a new version instead`);
+  const soakDays =
+    soakFlag !== undefined || !previousState
+      ? resolveSoakDays(soakFlag, releaseManifest().betaChannel?.defaultSoakDays)
+      : undefined;
+
+  if (platform === "mac") await verifyWebsiteContract({ allowVersionMismatch: true });
+  const stable = await fetchFeed(target.stableFeedUrl);
+  assert(stable, `the stable ${target.label} feed ${target.stableFeedUrl} is missing`);
+  assertVersion(stable.version);
+  assert(
+    compareVersions(version, stable.version) > 0,
+    `release ${version} must be newer than the stable ${target.label} feed ${stable.version}`
+  );
+  const early = await fetchFeed(target.earlyFeedUrl);
+  if (early) {
+    assertVersion(early.version);
+    assert(
+      compareVersions(version, early.version) >= 0,
+      `the early ${target.label} feed already names newer ${early.version}`
+    );
+  }
+  // Save what the early feed held before this release, once. A re-run after a
+  // failure finds its own version there and must not overwrite the real
+  // previous feed with it, or rollback would restore the build it is rolling
+  // back.
+  const previousEarlyFile = evidencePath(version, target.previousEarlyFile);
+  mkdirSync(evidenceDir(version), { recursive: true });
+  if (early && early.version !== version) writeFileSync(previousEarlyFile, early.text);
+  const previousEarlyVersion =
+    early && early.version !== version
+      ? early.version
+      : (previousState?.platforms?.[platform]?.previousEarlyVersion ?? null);
+
+  await uploadAndVerifyArtifacts(platform, local, target.artifactBaseUrl);
+
+  const feedText = readFileSync(local.feedPath, "utf8");
+  const feed = parseElectronBuilderFeed(feedText);
+  assert(feed.version === version, `local ${target.label} feed is ${feed.version}, expected ${version}`);
+  assertFeedMatchesEvidence(feed, local.files, `local ${target.label} feed`);
+  const earlyDir = path.join(evidenceDir(version), "early");
+  mkdirSync(earlyDir, { recursive: true });
+  const earlyFeedPath = path.join(earlyDir, target.earlyFeedFile);
+  writeFileSync(earlyFeedPath, feedText);
+  io.publish(platform, [earlyFeedPath], version);
+  await waitForFeedVersion(target.earlyFeedUrl, version);
+
+  const publishedAt = io.now().toISOString();
+  const state = recordEarlyPublish(previousState, {
+    version,
+    commit,
+    platform,
+    publishedAt,
+    soakDays,
+    approval: `confirm-public-release=${version}`,
+    platformRecord: {
+      earlyFeedUrl: target.earlyFeedUrl,
+      stableFeedUrl: target.stableFeedUrl,
+      feedSha512: sha512Text(feedText),
+      previousEarlyVersion,
+      previousStableVersion: stable.version,
+      ...(local.signerSubject ? { signerSubject: local.signerSubject } : {}),
+      files: local.files,
+    },
+  });
+  writeEarlyState(state);
+  io.log(
+    `[release] Markie ${version} is on the early ${target.label} feed; it promotes to stable at ${state.soakUntil} unless held`
+  );
+  return state;
+}
+
+class PromotionSuperseded extends Error {}
+
+function acquirePromoteLock() {
+  const dir = path.join(io.root, ".release");
+  mkdirSync(dir, { recursive: true });
+  const lock = path.join(dir, "promote.lock");
+  if (existsSync(lock)) {
+    const age = io.now().getTime() - statSync(lock).mtimeMs;
+    assert(age > PROMOTE_LOCK_STALE_MS, `another promotion holds ${path.relative(io.root, lock)}`);
+    rmSync(lock, { force: true });
+  }
+  writeFileSync(lock, `${process.pid} ${io.now().toISOString()}\n`, { flag: "wx" });
+  return () => rmSync(lock, { force: true });
+}
+
+/**
+ * Stage 3: point the stable feeds at the build early users have been running.
+ *
+ * Refuses before the soak ends (unless `force`), when held, and when the early
+ * feed in the bucket no longer names this version. Every artifact is
+ * downloaded again and its SHA-512 compared with the evidence before any feed
+ * changes, and the stable feeds are written last, after every platform has
+ * passed. The same post-publish checks as a stable publish run afterwards.
+ */
+export async function promoteRelease(confirmVersion, { force = false } = {}) {
+  assert(confirmVersion, "pass --confirm-promote=<version> to promote an early release to stable");
+  const version = assertVersion(confirmVersion);
+  let state = readEarlyState(version);
+  const blocker = promotionBlocker(state, io.now(), { force });
+  if (blocker) throw new Error(blocker);
+  io.promoteGitState(state.commit);
+  io.publishCredentials();
+  const release = acquirePromoteLock();
+  try {
+    const plans = [];
+    const platforms = Object.keys(state.platforms).sort();
+    for (const platform of platforms) {
+      const target = earlyTarget(platform);
+      const record = state.platforms[platform];
+      const savedPath = path.join(evidenceDir(version), "early", target.earlyFeedFile);
+      assert(existsSync(savedPath), `missing ${path.relative(io.root, savedPath)}; was ${version} published early from here?`);
+      const savedText = readFileSync(savedPath, "utf8");
+      assert(sha512Text(savedText) === record.feedSha512, `saved early ${target.label} feed does not match ${EARLY_STATE_FILE}`);
+      const saved = parseElectronBuilderFeed(savedText);
+      assert(saved.version === version, `saved early ${target.label} feed names ${saved.version}`);
+      assertFeedMatchesEvidence(saved, record.files, `saved early ${target.label} feed`);
+      // Same commit means the same build, so the smoke-tested evidence still
+      // here must agree with what was recorded at early publish.
+      const localEvidence = evidencePath(version, target.localEvidenceFile);
+      if (existsSync(localEvidence)) {
+        const local = readJson(localEvidence);
+        if (local.commit === state.commit) assertEvidenceMatchesArtifacts(local.files, record.files);
+      }
+
+      const early = await fetchFeed(target.earlyFeedUrl);
+      if (!early || early.version !== version) {
+        state = markSuperseded(state, io.now(), early?.version ?? null);
+        writeEarlyState(state);
+        throw new PromotionSuperseded(
+          `the early ${target.label} feed names ${early?.version ?? "nothing"}, not ${version}; it will not be promoted`
+        );
+      }
+      assert(sha512Text(early.text) === record.feedSha512, `the early ${target.label} feed for ${version} changed since it was published`);
+      const stable = await fetchFeed(target.stableFeedUrl);
+      assert(stable, `the stable ${target.label} feed is missing`);
+      assertVersion(stable.version);
+      const order = compareVersions(version, stable.version);
+      if (order < 0) {
+        state = markSuperseded(state, io.now(), stable.version);
+        writeEarlyState(state);
+        throw new PromotionSuperseded(`stable ${target.label} is already at newer ${stable.version}`);
+      }
+      // Equal means an earlier run got this far for this platform. Only the
+      // same bytes count as done; anything else under this version is a
+      // different build and needs a human.
+      const alreadyStable = order === 0;
+      if (alreadyStable) {
+        assert(sha512Text(stable.text) === record.feedSha512, `stable ${target.label} names ${version} with a different feed than early did`);
+      }
+      await verifyArtifactsInBucket(record.files, target.artifactBaseUrl);
+      plans.push({ platform, target, savedText, stable, alreadyStable });
+    }
+    if (plans.some((plan) => plan.platform === "mac" && !plan.alreadyStable)) {
+      await verifyWebsiteContract({ allowVersionMismatch: true });
+    }
+
+    // Stable feeds last.
+    for (const plan of plans) {
+      if (plan.alreadyStable) continue;
+      writeFileSync(evidencePath(version, plan.target.previousStableFile), plan.stable.text);
+      const promoteDir = path.join(evidenceDir(version), "promote");
+      mkdirSync(promoteDir, { recursive: true });
+      const stableFeedPath = path.join(promoteDir, plan.target.stableFeedFile);
+      writeFileSync(stableFeedPath, plan.savedText);
+      io.publish(plan.platform, [stableFeedPath], version);
+    }
+
+    // The same post-publish checks a stable publish runs.
+    const promotedAt = io.now().toISOString();
+    for (const plan of plans) {
+      await waitForFeedVersion(plan.target.stableFeedUrl, version);
+      if (plan.platform === "mac") {
+        await waitForWebsiteVersion(version, 72, io.pollDelayMs);
+        const verified = await verifyPublicMac({ expectedVersion: version, deep: false });
+        writeEvidence(version, plan.target.publicEvidenceFile, {
+          schemaVersion: 1,
+          version,
+          platform: "mac",
+          commit: state.commit,
+          publishedAt: promotedAt,
+          promotedFrom: "early",
+          feedUrl: verified.urls.feedUrl,
+          downloadPageUrl: verified.urls.downloadPageUrl,
+          latestJsonUrl: verified.urls.latestJsonUrl,
+          primaryUrl: verified.primaryUrl,
+          checks: ["remote-size", "remote-sha512", "stable-download-route", "latest-release-json", "same-bits-as-early"],
+        });
+      } else {
+        const verified = await verifyPublicWindows({ expectedVersion: version, deep: false });
+        writeEvidence(version, plan.target.publicEvidenceFile, {
+          schemaVersion: 1,
+          version,
+          platform: "windows",
+          commit: state.commit,
+          publishedAt: promotedAt,
+          promotedFrom: "early",
+          feedUrl: verified.feedUrl,
+          signerSubject: state.platforms.win.signerSubject ?? null,
+          files: state.platforms.win.files,
+          checks: ["remote-size", "remote-sha512", "same-bits-as-early"],
+        });
+      }
+    }
+    state = markPromoted(state, io.now());
+    writeEarlyState(state);
+    io.log(`[release] promoted Markie ${version} to stable on ${platforms.join(", ")} with the early build's exact bytes`);
+    return state;
+  } finally {
+    release();
+  }
+}
+
+export function holdRelease(version, held, { reason } = {}) {
+  assert(version, `pass --version=<version> to ${held ? "hold" : "unhold"} an early release`);
+  assertVersion(version);
+  const state = setHold(readEarlyState(version), held, { now: io.now(), reason });
+  writeEarlyState(state);
+  io.log(
+    held
+      ? `[release] held Markie ${version}; it will not promote until release:unhold`
+      : `[release] released the hold on Markie ${version}; it promotes at ${state.soakUntil} or the next scheduler run after`
+  );
+  return state;
+}
+
+/**
+ * The scheduler entry point. Safe to run every hour: when nothing is due it
+ * reads local state only, touches neither git nor the network, and prints one
+ * line. A due release is promoted through the same promoteRelease a human
+ * would run. Every run appends its line to .release/promote-due.log.
+ */
+export async function promoteDue() {
+  const plan = planPromoteDue(listEarlyStates(), io.now());
+  let line = plan.summary;
+  let failed = false;
+  if (plan.due) {
+    try {
+      await promoteRelease(plan.due.version);
+      line = `promoted ${plan.due.version}`;
+    } catch (error) {
+      if (error instanceof PromotionSuperseded) {
+        line = `${plan.due.version} superseded: ${error.message}`;
+      } else {
+        line = `${plan.due.version} promotion failed: ${error.message}`;
+        failed = true;
+      }
+    }
+  }
+  const dir = path.join(io.root, ".release");
+  mkdirSync(dir, { recursive: true });
+  appendFileSync(path.join(dir, "promote-due.log"), `${io.now().toISOString()} ${line}\n`);
+  io.log(`[release] promote-due: ${line}`);
+  return { line, failed };
+}
+
+/**
+ * Stage 2 rollback: take a build off the early feed before it reaches stable.
+ * Restores the early feed saved before it was published, or, when there was
+ * none, points the early feed at current stable so early users follow stable
+ * until the next early release.
+ */
+export async function rollbackEarly(confirmVersion) {
+  assert(confirmVersion, "pass --confirm-rollback=<version> to take that build off the early feed");
+  const version = assertVersion(confirmVersion);
+  let state = readEarlyState(version);
+  assert(state, `no early release is recorded for ${version}`);
+  assert(
+    !state.promotedAt,
+    `${version} is already stable; use release:rollback:mac / release:rollback:win for the stable feed`
+  );
+  io.publishCredentials();
+  for (const platform of Object.keys(state.platforms).sort()) {
+    const target = earlyTarget(platform);
+    const live = await fetchFeed(target.earlyFeedUrl);
+    if (live?.version !== version) {
+      io.log(`[release] the early ${target.label} feed names ${live?.version ?? "nothing"}, not ${version}; left alone`);
+      continue;
+    }
+    const previousFile = evidencePath(version, target.previousEarlyFile);
+    const restoreText = existsSync(previousFile)
+      ? readFileSync(previousFile, "utf8")
+      : (await fetchFeed(target.stableFeedUrl))?.text;
+    assert(restoreText, `nothing to restore the early ${target.label} feed to`);
+    const restoreVersion = assertVersion(parseElectronBuilderFeed(restoreText).version);
+    const rollbackDir = path.join(evidenceDir(version), "early-rollback");
+    mkdirSync(rollbackDir, { recursive: true });
+    const file = path.join(rollbackDir, target.earlyFeedFile);
+    writeFileSync(file, restoreText);
+    io.publish(platform, [file], restoreVersion);
+    await waitForFeedVersion(target.earlyFeedUrl, restoreVersion);
+    io.log(`[release] the early ${target.label} feed is back on ${restoreVersion}`);
+  }
+  state = markWithdrawn(state, io.now());
+  writeEarlyState(state);
+  return state;
+}
+
+/**
+ * After a direct stable publish, make sure early users are not left behind.
+ * electron-updater on the early channel reads only the early feed, so a stable
+ * hotfix that skips early access would never reach them. When the early feed
+ * is missing or older, it gets the same feed stable just got. A newer early
+ * build is left alone.
+ */
+export async function mirrorStableToEarly(platform, version, feedPath) {
+  if (!isStableNumbered(version)) return { mirrored: false, reason: "prerelease" };
+  const target = earlyTarget(platform);
+  const early = await fetchFeed(target.earlyFeedUrl);
+  if (early && compareVersions(early.version, version) >= 0) {
+    return { mirrored: false, reason: `early feed already names ${early.version}` };
+  }
+  const dir = path.join(evidenceDir(version), "early-mirror");
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, target.earlyFeedFile);
+  copyFileSync(feedPath, file);
+  io.publish(platform, [file], version);
+  await waitForFeedVersion(target.earlyFeedUrl, version);
+  io.log(`[release] early ${target.label} feed now names ${version} too, so early users get this release`);
+  return { mirrored: true };
+}
+
+async function mirrorStableAfterPublish(platform, version, feedPath) {
+  try {
+    await mirrorStableToEarly(platform, version, feedPath);
+  } catch (error) {
+    throw new Error(
+      `stable ${version} is public and verified, but the early feed could not be brought up to it: ${error.message}`
+    );
+  }
+}
+
+function assertPromoteGitState(commit) {
+  // Promotion rebuilds nothing, so HEAD does not have to be the release
+  // commit; main will usually have moved on. What it does need is the
+  // manifest that decides where feeds go, which is why tracked files must be
+  // clean, and proof that the build came from main.
+  assert(gitOutput(["branch", "--show-current"]) === "main", "promotion must run from main");
+  assert(gitOutput(["status", "--porcelain", "--untracked-files=no"]) === "", "tracked files must be clean");
+  run("git", ["fetch", "--quiet", "origin", "main"], { quiet: true });
+  const result = spawnSync("git", ["merge-base", "--is-ancestor", commit, "origin/main"], {
+    cwd: rootDir,
+    stdio: "ignore",
+  });
+  assert(result.status === 0, `release commit ${commit} is not on origin/main`);
+}
+
+async function earlyStatus() {
+  const result = {};
+  for (const platform of ["mac", "win"]) {
+    try {
+      const target = earlyTarget(platform);
+      result[`${platform}EarlyFeedVersion`] = (await fetchFeed(target.earlyFeedUrl))?.version ?? null;
+    } catch {
+      result[`${platform}EarlyFeedVersion`] = null;
+    }
+  }
+  const plan = planPromoteDue(listEarlyStates(), io.now());
+  result.earlyPipeline = plan.summary;
+  return result;
+}
+
 function flagValue(args, name) {
   const prefix = `--${name}=`;
   return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
@@ -1100,6 +1689,24 @@ export async function runReleaseCli(args = process.argv.slice(2)) {
   loadLocalEnv();
   const [command, target, ...flags] = args;
   if (command === "status") return status();
+  // Commands that act on a recorded release rather than a platform build.
+  const releaseFlags = args.slice(1);
+  if (command === "promote") {
+    return promoteRelease(flagValue(releaseFlags, "confirm-promote"), {
+      force: releaseFlags.includes("--now"),
+    });
+  }
+  if (command === "promote-due") {
+    const { failed } = await promoteDue();
+    if (failed) process.exitCode = 1;
+    return;
+  }
+  if (command === "hold" || command === "unhold") {
+    return holdRelease(flagValue(releaseFlags, "version"), command === "hold", {
+      reason: flagValue(releaseFlags, "reason"),
+    });
+  }
+  if (command === "rollback-early") return rollbackEarly(flagValue(releaseFlags, "confirm-rollback"));
   if (command === "version") {
     const version = assertVersion(target);
     const files = setReleaseVersion(version);
@@ -1109,10 +1716,6 @@ export async function runReleaseCli(args = process.argv.slice(2)) {
   assert(target === "mac" || target === "win", "supported release targets: mac, win");
 
   if (target === "win") {
-    // Windows has no rollback command. The macOS one restores a previous feed
-    // captured during publish, and there is no previous Windows feed to
-    // restore yet. Inventing one that pretends otherwise is worse than not
-    // having the command.
     if (command === "prepare") return prepareWindows();
     if (command === "verify-local") {
       const verified = await verifyLocalWindowsArtifacts();
@@ -1121,7 +1724,15 @@ export async function runReleaseCli(args = process.argv.slice(2)) {
       );
       return;
     }
-    if (command === "publish") return publishWindows(flagValue(flags, "confirm-public-release"));
+    if (command === "publish") {
+      if (flags.includes("--early")) {
+        return publishEarly("win", flagValue(flags, "confirm-public-release"), {
+          soakDays: flagValue(flags, "soak-days"),
+        });
+      }
+      return publishWindows(flagValue(flags, "confirm-public-release"));
+    }
+    if (command === "rollback") return rollbackWindows(flagValue(flags, "confirm-rollback"));
     if (command === "verify-public") {
       const verified = await verifyPublicWindows({
         expectedVersion: flagValue(flags, "version") ?? packageJson().version,
@@ -1134,7 +1745,8 @@ export async function runReleaseCli(args = process.argv.slice(2)) {
     }
     throw new Error(
       "usage: release.mjs prepare win | verify-local win | " +
-        "publish win --confirm-public-release=<semver> | verify-public win [--version=<semver>] [--deep]"
+        "publish win [--early [--soak-days=<n>]] --confirm-public-release=<semver> | " +
+        "rollback win --confirm-rollback=<semver> | verify-public win [--version=<semver>] [--deep]"
     );
   }
 
@@ -1144,7 +1756,14 @@ export async function runReleaseCli(args = process.argv.slice(2)) {
     console.log(`[release] local Markie ${verified.version} artifacts are signed, notarized, and internally consistent`);
     return;
   }
-  if (command === "publish") return publishMac(flagValue(flags, "confirm-public-release"));
+  if (command === "publish") {
+    if (flags.includes("--early")) {
+      return publishEarly("mac", flagValue(flags, "confirm-public-release"), {
+        soakDays: flagValue(flags, "soak-days"),
+      });
+    }
+    return publishMac(flagValue(flags, "confirm-public-release"));
+  }
   if (command === "verify-public") {
     const verified = await verifyPublicMac({
       expectedVersion: flagValue(flags, "version") ?? packageJson().version,
@@ -1156,9 +1775,12 @@ export async function runReleaseCli(args = process.argv.slice(2)) {
   if (command === "rollback") return rollbackMac(flagValue(flags, "confirm-rollback"));
   throw new Error(
     "usage: release.mjs status | version <semver> | prepare mac | verify-local mac | " +
-      "publish mac --confirm-public-release=<semver> | verify-public mac [--version=<semver>] [--deep] | " +
-      "rollback mac --confirm-rollback=<semver> | prepare win | verify-local win | " +
-      "publish win --confirm-public-release=<semver> | verify-public win [--version=<semver>] [--deep]"
+      "publish mac [--early [--soak-days=<n>]] --confirm-public-release=<semver> | " +
+      "verify-public mac [--version=<semver>] [--deep] | rollback mac --confirm-rollback=<semver> | " +
+      "prepare win | verify-local win | publish win [--early] --confirm-public-release=<semver> | " +
+      "rollback win --confirm-rollback=<semver> | verify-public win [--version=<semver>] [--deep] | " +
+      "promote --confirm-promote=<semver> [--now] | promote-due | hold --version=<semver> [--reason=<text>] | " +
+      "unhold --version=<semver> | rollback-early --confirm-rollback=<semver>"
   );
 }
 

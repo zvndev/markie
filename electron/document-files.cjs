@@ -19,8 +19,8 @@ const sha = (value) => createHash("sha256").update(value).digest("hex");
 const typedArrayName = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag).get;
 
 /** Filesystem paths enter only through these main-process OS/dialog entry points. */
-/** @param {{dialog?: {showOpenDialog?: Function, showSaveDialog?: Function}, getWindow?: Function, fileSystem?: typeof fs, platform?: string, maxBytes?: number, maxLeases?: number, maxQueued?: number}} options */
-function createDocumentFileService({ dialog, getWindow = () => undefined, fileSystem = fs, platform = process.platform, maxBytes = MAX_DOCUMENT_BYTES, maxLeases = 128, maxQueued = 32 } = {}) {
+/** @param {{dialog?: {showOpenDialog?: Function, showSaveDialog?: Function}, getWindow?: Function, fileSystem?: typeof fs, platform?: string, maxBytes?: number, maxLeases?: number, maxQueued?: number, onGranted?: (target: string) => void}} options */
+function createDocumentFileService({ dialog, getWindow = () => undefined, fileSystem = fs, platform = process.platform, maxBytes = MAX_DOCUMENT_BYTES, maxLeases = 128, maxQueued = 32, onGranted } = {}) {
   if (!dialog || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > MAX_DOCUMENT_BYTES || !Number.isSafeInteger(maxLeases) || maxLeases < 1 || !Number.isSafeInteger(maxQueued) || maxQueued < 1) throw new Error("Invalid native document service options.");
   const io = fileSystem, leases = new Map(), queued = [], owners = new Map(), targetQueues = new Map(), dropped = new Map();
   let dialogQueue = Promise.resolve(), pendingDialogs = 0, pendingOperations = 0, pendingWriteBytes = 0;
@@ -78,7 +78,10 @@ function createDocumentFileService({ dialog, getWindow = () => undefined, fileSy
   const descriptor = (id, entry) => ({ leaseId: id, name: path.basename(entry.target), size: entry.size, lastModified: entry.lastModified, revision: entry.revision, writable: entry.writable });
   const grant = (owner, entry) => {
     ownerValid(owner); if (leases.size >= maxLeases) fail("limit-exceeded", "Too many native files are retained. Close documents before opening more.");
-    const id = randomUUID(); leases.set(id, { ...entry, owner }); return descriptor(id, entry);
+    const id = randomUUID(); leases.set(id, { ...entry, owner });
+    // Recent-files bookkeeping only. A failure there must never cost the open.
+    if (onGranted) { try { onGranted(entry.target); } catch { /* best effort */ } }
+    return descriptor(id, entry);
   };
   const lease = (owner, id) => { ownerValid(owner); if (typeof id !== "string" || id.length !== 36) fail("invalid-request", "A native file lease is required."); const entry = leases.get(id); if (!entry || entry.owner !== owner) fail("access-denied", "This native file grant is no longer available."); return entry; };
   const onTarget = (target, operation) => {

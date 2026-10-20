@@ -2,9 +2,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   COLOR_MODE_CHANGED_EVENT,
   applyColorMode,
+  applyCustomPreset,
+  applyTemplate,
   colorModeForThemeId,
+  getColorMode,
 } from "./color-mode";
-import { MARKIE_DARK, MARKIE_LIGHT } from "./theme";
+import { editColors, findTemplate, loadThemeStore, saveThemeStore, MARKIE_DARK, MARKIE_LIGHT } from "./theme";
 
 const storage = new Map<string, string>();
 const classes = new Set<string>();
@@ -72,5 +75,51 @@ describe("color mode", () => {
     expect(colorModeForThemeId(MARKIE_LIGHT.id)).toBe("light");
     expect(colorModeForThemeId(MARKIE_DARK.id)).toBe("dark");
     expect(colorModeForThemeId("custom")).toBeNull();
+  });
+
+  it("maps every template variant to its tone", () => {
+    expect(colorModeForThemeId("paper-light")).toBe("light");
+    expect(colorModeForThemeId("nord-dark")).toBe("dark");
+  });
+
+  // The bug this replaced: applying a mode forced Markie Light or Markie Dark,
+  // so any other look was lost on the next launch or toggle.
+  it("keeps the chosen template when the mode changes", () => {
+    applyColorMode("dark");
+    applyTemplate("solarized");
+    expect(styles.get("--background")).toBe(findTemplate("solarized")!.dark.tokens.background);
+
+    applyColorMode("light");
+    expect(loadThemeStore().activeId).toBe("solarized-light");
+    expect(styles.get("--background")).toBe(findTemplate("solarized")!.light.tokens.background);
+
+    // A relaunch re-applies the stored mode and must land on the same template.
+    applyColorMode("dark");
+    applyColorMode(getColorMode());
+    expect(loadThemeStore().activeId).toBe("solarized-dark");
+  });
+
+  it("brings a customized tone back after a trip through the other tone", () => {
+    applyColorMode("dark");
+    applyTemplate("paper");
+    saveThemeStore(editColors(loadThemeStore(), "dark", { link: "#ff8800" }, "custom-dark"));
+
+    applyColorMode("light");
+    expect(loadThemeStore().activeId).toBe("paper-light");
+    applyColorMode("dark");
+    expect(loadThemeStore().activeId).toBe("custom-dark");
+    expect(styles.get("--blue")).toBe("#ff8800");
+  });
+
+  it("switches the mode to match a single-tone custom preset picked directly", () => {
+    applyColorMode("light");
+    applyTemplate("ink");
+    saveThemeStore(editColors(loadThemeStore(), "dark", { accent: "#222233" }, "ink-mine"));
+    applyColorMode("light");
+
+    applyCustomPreset("ink-mine");
+    expect(getColorMode()).toBe("dark");
+    expect(classes.has("dark")).toBe(true);
+    expect(loadThemeStore().activeId).toBe("ink-mine");
   });
 });

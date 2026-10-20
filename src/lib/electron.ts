@@ -201,6 +201,11 @@ export interface ElectronAPI {
   setDefaultMarkdownApp(): Promise<{ ok: boolean; error?: string }>;
   // whether Markie is already the default .md handler (macOS, packaged only)
   defaultMarkdownStatus(): Promise<{ supported: boolean; isDefault: boolean }>;
+  // default app per fully supported file type (macOS, packaged only)
+  defaultAppsStatus?(): Promise<DefaultAppsStatus>;
+  setDefaultApps?(ids: string[]): Promise<{ ok: boolean; error?: string }>;
+  // search every indexed and recent document by name, path and body text
+  searchDocuments?(args: { query: string; formats?: string[]; limit?: number }): Promise<DocumentSearchResponse>;
   // Workspace / Files view
   wsRoots(): Promise<string[]>;
   wsDefaultPath(): Promise<string>;
@@ -293,6 +298,7 @@ export interface ElectronAPI {
   onMenuTheme(cb: () => void): Unsubscribe;
   onMenuSettings(cb: () => void): Unsubscribe;
   onMenuLibrary(cb: () => void): Unsubscribe;
+  onMenuGlobalSearch?(cb: () => void): Unsubscribe;
   onDeepLink(cb: (url: string) => void): Unsubscribe;
   openExternal(url: string): Promise<void>;
   // A link in a document to a file beside it. Resolved and access-checked in
@@ -554,6 +560,45 @@ export interface ElectronAPI {
 }
 
 export type Unsubscribe = (() => void) | undefined;
+
+export interface DefaultAppFormat {
+  id: string;
+  label: string;
+  extensions: string[];
+  isDefault: boolean;
+}
+
+export interface DefaultAppsStatus {
+  supported: boolean;
+  formats: DefaultAppFormat[];
+  // Shown but not offered yet, with the reason.
+  pending: Array<{ id: string; label: string; extensions: string[]; reason: string }>;
+  error?: string;
+}
+
+export interface DocumentSearchHit {
+  path: string;
+  name: string;
+  dir: string;
+  format: string;
+  mtimeMs: number;
+  nameHit: boolean;
+  // A window of body text around the first hit, with [start, end) offsets of
+  // every term inside it.
+  excerpt?: string;
+  marks?: Array<[number, number]>;
+}
+
+export interface DocumentSearchResponse {
+  results: DocumentSearchHit[];
+  scanned: number;
+  total: number;
+  // The time budget ran out before every file's body was read.
+  partial: boolean;
+  // A newer search started before this one finished.
+  superseded?: boolean;
+  error?: string;
+}
 
 export interface MdRow {
   path: string;

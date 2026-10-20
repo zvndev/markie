@@ -12,6 +12,9 @@ const gitDirty = execFileSync("git", ["status", "--porcelain"], { cwd: __dirname
 const provenance = { schemaVersion: 1, gitCommit, gitDirty, builtAt: new Date().toISOString(), platform, arch };
 const { publish: _publish, signtoolOptions: _signing, azureSignOptions: _azure, ...windows } = base.win;
 void _publish; void _signing; void _azure;
+// The preview never claims document types, so the installed app keeps them.
+const { extendInfo: _types, ...mac } = base.mac;
+void _types;
 
 module.exports = {
   ...base,
@@ -26,7 +29,7 @@ module.exports = {
   fileAssociations: [],
   // Apple Silicon needs a sealed local bundle. '-' is ad-hoc only: no
   // Developer ID certificate, keychain identity or notarization is used.
-  mac: { ...base.mac, identity: "-", notarize: false, publish: null, target: [{ target: "dir", arch: [arch] }] },
+  mac: { ...mac, identity: "-", notarize: false, publish: null, target: [{ target: "dir", arch: [arch] }] },
   dmg: { ...base.dmg, sign: false },
   win: { ...windows, signAndEditExecutable: false, publish: null, target: [{ target: "dir", arch: ["x64"] }] },
   async afterPack(context) {

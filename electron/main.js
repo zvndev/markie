@@ -280,7 +280,16 @@ const documentMenu = createDocumentMenuController({
   sendCommand: (command) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("document-command", command); },
   canUseLegacy: (id) => id !== REVERT_MENU_ID || (!!currentDocPath && history().has(currentDocPath)),
 });
-const documentFiles = createDocumentFileService({ dialog, getWindow: () => mainWindow });
+// Every document the workspace opens (dialog, Finder, drop, Browse) is a
+// recent file, whatever its format. Classic Markdown/text opens are tracked by
+// the renderer through registry-track; this is the same promise for the rest.
+function noteOpenedDocument(target) {
+  try { registry.trackOpened(target, path.basename(target)); } catch { /* registry unavailable */ }
+  try { app.addRecentDocument(target); } catch { /* not every platform keeps a list */ }
+  mdIndexAdded(target);
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("library-changed");
+}
+const documentFiles = createDocumentFileService({ dialog, getWindow: () => mainWindow, onGranted: noteOpenedDocument });
 let pendingNativeDocumentError = null;
 let nativeDocumentQueued = false;
 let rendererReady = false;
@@ -1575,6 +1584,7 @@ handle("registry-track", (_event, { path: p, name, content }) => {
     const access = fileGrants.canRead(p);
     if (!access.ok) return { error: access.error };
     registry.track(access.path, name, content);
+    try { app.addRecentDocument(access.path); } catch { /* not every platform keeps a list */ }
     return { ok: true };
   } catch (err) {
     return { error: String(err) };
@@ -2238,6 +2248,31 @@ handle(
   { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
 );
 
+// Global search: every indexed document plus every Recent file (which can sit
+// outside the walked roots), matched on name, path and extracted body text.
+// Results are paths the app now advertises, so opening one goes through the
+// same grant rule as a Browse click.
+const docText = require("./doc-text");
+const SEARCH_FORMATS = new Set(["markdown", "darkmown", "text", "csv", "json", "yaml", "xml", "docx", "doc", "rtf", "html", "odt"]);
+handle("doc-search", async (_event, args) => {
+  const query = typeof args?.query === "string" ? args.query.slice(0, 200) : "";
+  const formats = Array.isArray(args?.formats) ? args.formats.filter((f) => SEARCH_FORMATS.has(f)) : [];
+  const limit = Number.isSafeInteger(args?.limit) ? Math.min(Math.max(args.limit, 1), 200) : 60;
+  const rows = new Map();
+  for (const row of mdindex.getCached()?.files || []) rows.set(row.path, { ...row, format: row.format || mdindex.formatOf(row.name) });
+  let recent = [];
+  try { recent = registry.list(); } catch { /* registry unavailable */ }
+  for (const row of recent) {
+    if (!row?.path || rows.has(row.path)) continue;
+    const format = mdindex.formatOf(row.name || row.path);
+    if (!format) continue;
+    let mtimeMs = 0;
+    try { mtimeMs = fs.statSync(row.path).mtimeMs; } catch { continue; }
+    rows.set(row.path, { path: row.path, name: row.name || path.basename(row.path), dir: path.dirname(row.path), mtimeMs, format });
+  }
+  return docText.searchDocuments([...rows.values()], query, { formats, limit });
+}, { onFailure: () => ({ results: [], scanned: 0, total: 0, partial: false, error: "Search failed." }) });
+
 handle("mdindex-stars", () => registry.listStars(), { onFailure: () => [] });
 handle("mdindex-star-toggle", (_e, { path: p, kind }) =>
   registry.toggleStar(p, kind)
@@ -2677,6 +2712,7 @@ handle("set-default-md", async () => {
   });
   if (unsupported) return unsupported;
   _defaultMdStatus = null; // whatever it was, this call is about to change it
+  _defaultAppsStatus = null;
   const res = await runSwift(
     [
       "import Foundation",
@@ -2697,6 +2733,56 @@ handle("set-default-md", async () => {
     ? { ok: true }
     : { ok: false, error: "LaunchServices rejected the change." };
 });
+
+// IPC: default app per file type, for every format Markie fully edits.
+// One Swift compile answers for all of them; the answer is cached the same way
+// as the Markdown-only status above and cleared by any change made here.
+const defaultApps = require("./default-apps");
+let _defaultAppsStatus = null;
+
+function defaultAppsPayload(formats, supported, error) {
+  return {
+    supported,
+    formats,
+    pending: defaultApps.PENDING_DEFAULT_FORMATS.map(({ id, label, extensions, reason }) => ({ id, label, extensions, reason })),
+    ...(error ? { error } : {}),
+  };
+}
+
+function unsupportedDefaultApps(error) {
+  return defaultAppsPayload(defaultApps.DEFAULT_APP_FORMATS.map(({ id, label, extensions }) => ({ id, label, extensions, isDefault: false })), false, error);
+}
+
+handle("default-apps-status", async () => {
+  if (isDesktopPreview) return unsupportedDefaultApps("Markie Preview does not change installed file associations.");
+  const unavailable = markdownDefaultHandlerUnavailable({ platform: process.platform, isPackaged: app.isPackaged });
+  if (unavailable) return unsupportedDefaultApps(unavailable.error);
+  if (_defaultAppsStatus) return _defaultAppsStatus;
+  const utis = defaultApps.DEFAULT_APP_FORMATS.flatMap((format) => format.utis);
+  const res = await runSwift(defaultApps.statusScript(utis));
+  if (res.error) {
+    _defaultAppsStatus = unsupportedDefaultApps(res.error === "swift-missing" ? "Swift isn't installed. Run: xcode-select --install" : "LaunchServices didn't answer.");
+    return _defaultAppsStatus;
+  }
+  _defaultAppsStatus = defaultAppsPayload(defaultApps.parseStatus(res.stdout), true);
+  return _defaultAppsStatus;
+}, { onFailure: () => unsupportedDefaultApps("Couldn't read the default apps.") });
+
+handle("default-apps-set", async (_event, args) => {
+  if (isDesktopPreview) return { ok: false, error: "Markie Preview does not change installed file associations." };
+  const unavailable = markdownDefaultHandlerUnavailable({ platform: process.platform, isPackaged: app.isPackaged });
+  if (unavailable) return unavailable;
+  const ids = Array.isArray(args?.ids) ? args.ids : [];
+  const formats = ids.map((id) => defaultApps.formatById(id)).filter(Boolean);
+  if (!formats.length) return { ok: false, error: "Choose a file type Markie can open by default." };
+  _defaultAppsStatus = null;
+  _defaultMdStatus = null;
+  const res = await runSwift(defaultApps.setScript(formats.flatMap((format) => format.utis)));
+  if (res.error === "swift-missing") return { ok: false, error: "Swift isn't installed. Run: xcode-select --install" };
+  if (res.error === "timeout") return { ok: false, error: "LaunchServices didn't answer in time. Try again." };
+  if (res.error) return { ok: false, error: res.error };
+  return res.code === 0 ? { ok: true } : { ok: false, error: "LaunchServices rejected part of the change." };
+}, { onFailure: () => ({ ok: false, error: "Couldn't change the default apps." }) });
 
 // IPC: renderer signals it has mounted and asks for any queued file
 handle("get-initial-file", () => {
@@ -2764,7 +2850,13 @@ handle("open-file-path", async (event, filePath) => {
   // Explicit rich-file drops use the existing opaque queue, never the classic
   // UTF-8 reader. A caller without that exact owner/path drop grant gets null.
   if (!OPENABLE.test(filePath)) {
-    if (currentCloseSender(event)) queueNativeDocumentOpen(filePath, { dropOwner: event.sender.id });
+    if (!currentCloseSender(event)) return null;
+    // A drop grant wins when there is one. Otherwise a path Markie itself
+    // listed (a Browse/search row or a Recent entry) opens the way a Finder
+    // double-click does: clicking a DOCX in Browse used to do nothing at all.
+    if (!queueNativeDocumentOpen(filePath, { dropOwner: event.sender.id }) && typeof filePath === "string" && isAdvertisedPath(filePath)) {
+      queueNativeDocumentOpen(filePath);
+    }
     return null;
   }
   return readFilePayload(filePath, { grant: isAdvertisedPath(filePath) });
@@ -2935,6 +3027,11 @@ const template = [
         label: "Library…",
         accelerator: "CmdOrCtrl+L",
         click: () => mainWindow?.webContents.send("menu-library"),
+      },
+      {
+        label: "Search All Documents…",
+        accelerator: "CmdOrCtrl+Shift+F",
+        click: () => mainWindow?.webContents.send("menu-global-search"),
       },
       { type: "separator" },
       {

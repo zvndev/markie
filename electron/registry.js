@@ -353,6 +353,22 @@ function track(filePath, name, content) {
     );
 }
 
+// A document opened through the native document workspace (DOCX, RTF, JSON,
+// ...). It belongs in Recent like any Markdown file, but its bytes are not
+// UTF-8 text the sync engine could hash, so an existing row keeps whatever
+// content_hash and sync state it already had: only the name and the time move.
+function trackOpened(filePath, name) {
+  getDB()
+    .prepare(
+      `INSERT INTO files (path, name, content_hash, last_opened_at)
+       VALUES (?, ?, NULL, ?)
+       ON CONFLICT(path) DO UPDATE SET
+         name = excluded.name,
+         last_opened_at = excluded.last_opened_at`
+    )
+    .run(canonicalPath(filePath), name, new Date().toISOString());
+}
+
 function get(filePath) {
   return getDB().prepare("SELECT * FROM files WHERE path = ?").get(canonicalPath(filePath));
 }
@@ -754,6 +770,7 @@ module.exports = {
   canonicalPath,
   indexCacheFingerprint,
   track,
+  trackOpened,
   get,
   list,
   forget,

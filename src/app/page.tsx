@@ -25,9 +25,10 @@ import { csvToMarkdownTable, csvDropsContent, markdownTableToCSV } from "@/lib/c
 import { classifyDocumentFormat } from "@/lib/document-formats";
 import { CommandPalette } from "@/components/command-palette";
 import { ShortcutsHelp } from "@/components/shortcuts-help";
-import { Settings } from "@/components/settings";
+import { Settings, type SettingsSection } from "@/components/settings";
 import { Library } from "@/components/library";
 import { NewDocumentModal } from "@/components/new-document-modal";
+import { GlobalSearch } from "@/components/global-search";
 import { ActivityBar } from "@/components/activity-bar";
 import { RichPaneError } from "@/components/rich-pane-error";
 import {
@@ -74,7 +75,7 @@ import { TerminalPanel } from "@/components/terminal-panel";
 import { TERMINAL_ENABLED } from "@/lib/features";
 import {
   applyColorMode,
-  colorModeForThemeId,
+  applyTemplate,
   getColorMode,
   watchSystemColorMode,
 } from "@/lib/color-mode";
@@ -110,8 +111,7 @@ import {
   applyTheme,
   findTheme,
   loadThemeStore,
-  saveThemeStore,
-  BUILT_IN_THEMES,
+  THEME_TEMPLATES,
 } from "@/lib/theme";
 import {
   getElectronAPI,
@@ -267,6 +267,8 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   const [showTheme, setShowTheme] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showNewDocument, setShowNewDocument] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
   // Non-null while a gated surface is asking for a session; the value is what
   // it wants the session for, which is what the dialog puts at the top.
   const [signInReason, setSignInReason] = useState<SignInReason | null>(null);
@@ -842,6 +844,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     setLiveUnavailable(false);
     setShowStats(false);
     setShowPalette(false);
+    setShowSearch(false);
     setShowHelp(false);
     setShowTheme(false);
     setShowSettings(false);
@@ -1329,7 +1332,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     if (!cloudHandoff || cloudHandoffRef.current !== cloudHandoff) return;
     const shell = documentShellRef.current;
     const cancel = () => { cloudHandoffRef.current = null; setCloudHandoff(null); };
-    if (!documentsEnabled || closingWindow || showSettings || showTheme || showPalette || showHelp || showShare || signInReason || showAgents || manageShare
+    if (!documentsEnabled || closingWindow || showSettings || showTheme || showPalette || showSearch || showHelp || showShare || signInReason || showAgents || manageShare
       || document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]") || !shell || shell.private || shell.commands?.modalOpen
       || shell.selectedId !== cloudHandoff.source.selectedId || shell.name !== cloudHandoff.source.name || shell.hasSession !== cloudHandoff.source.hasSession
       || (account?.id ?? null) !== cloudHandoff.accountId || filePath !== cloudHandoff.markdown.path || fileName !== cloudHandoff.markdown.name
@@ -1345,7 +1348,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     if (!shell.ready || shell.busy || document.querySelector(".docs-embedded-host")?.closest("[inert]")) return;
     cancel();
     shell.openCloudDocument?.(cloudHandoff.id);
-  }, [cloudHandoff, documentsOpen, documentShell, documentsEnabled, closingWindow, showSettings, showTheme, showPalette, showHelp, showShare, signInReason, showAgents, manageShare, account?.id, filePath, fileName, content, currentMarkdown, showLibrary, leftView]);
+  }, [cloudHandoff, documentsOpen, documentShell, documentsEnabled, closingWindow, showSettings, showTheme, showPalette, showSearch, showHelp, showShare, signInReason, showAgents, manageShare, account?.id, filePath, fileName, content, currentMarkdown, showLibrary, leftView]);
   const openVault = useCallback(async () => {
     if (await openDocumentsWorkspace()) documentShellRef.current?.showVault();
   }, [openDocumentsWorkspace]);
@@ -1378,7 +1381,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   useEffect(() => {
     const api = getElectronAPI();
     if (!api?.setDocumentMenuState) return;
-    const paused = !booted || closingWindow || showSettings || showTheme || showPalette || showHelp || showShare || !!signInReason || showAgents || !!manageShare || documentsOpen && !!documentShell?.commands?.modalOpen;
+    const paused = !booted || closingWindow || showSettings || showTheme || showPalette || showSearch || showHelp || showShare || !!signInReason || showAgents || !!manageShare || documentsOpen && !!documentShell?.commands?.modalOpen;
     const renderer = paused ? "none" : documentsOpen ? documentShell?.renderer ?? "none" : "markdown";
     const capable = documentsOpen ? documentShell?.private || documentShell?.busy ? [] : documentShell?.commands?.enabledCommands ?? []
       : docEditable && mode !== "edit" && richEditor && !richEditor.isDestroyed && richEditor.isEditable ? [...Object.keys(FORMAT_MENU_ACTIONS), ...Object.keys(FORMAT_MENU_STYLES)] : [];
@@ -1387,7 +1390,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     if (signature === menuSignature.current) return;
     menuSignature.current = signature;
     void api.setDocumentMenuState({ renderer, enabledCommands }).then((result) => { if (!result.ok) menuSignature.current = ""; }).catch(() => { menuSignature.current = ""; });
-  }, [booted, closingWindow, showSettings, showTheme, showPalette, showHelp, showShare, signInReason, showAgents, manageShare, documentsOpen, documentShell, docEditable, mode, richEditor, documentsEnabled]);
+  }, [booted, closingWindow, showSettings, showTheme, showPalette, showSearch, showHelp, showShare, signInReason, showAgents, manageShare, documentsOpen, documentShell, docEditable, mode, richEditor, documentsEnabled]);
 
   // The one way a user edit reaches the buffer, and so the only thing that may
   // ever arm a write. Loads, pulls, and reloads go through the document hook's
@@ -1552,6 +1555,13 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       if (TERMINAL_ENABLED && e.ctrlKey && e.key === "`") {
         e.preventDefault();
         setShowTerminal((v) => !v);
+        return;
+      }
+      // ⇧⌘F searches every document, from any editor. Checked before the
+      // find-bar branch below, which would otherwise read it as ⌘F.
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.code === "KeyF") {
+        e.preventDefault();
+        if (!document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) setShowSearch(true);
         return;
       }
       if (documentsOpenRef.current && !["k", "l", "/"].includes(e.key.toLowerCase())) return;
@@ -1815,6 +1825,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       api.onMenuTheme?.(() => setShowTheme((v) => !v)),
       api.onMenuSettings?.(() => setShowSettings((v) => !v)),
       api.onMenuLibrary?.(() => selectView("library")),
+      api.onMenuGlobalSearch?.(() => { if (!document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) setShowSearch(true); }),
       api.onDeepLink?.((url) => {
         // markie://auth?token=…&state=… — Google sign-in returning via the
         // bridge. Anything on the machine can fire this deep link, so the token
@@ -1960,27 +1971,24 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       { id: "copy-path", title: "Copy File Path", group: "File", keywords: "link location terminal clipboard", run: () => { const p = docRef.current.filePath; if (p) navigator.clipboard.writeText(p); } },
       { id: "copy-content", title: "Copy Document Contents", group: "File", keywords: "clipboard markdown text", run: () => navigator.clipboard.writeText(docRef.current.content) },
       { id: "format-tables", title: "Format Tables", group: "Format", shortcut: "⌥⌘T", keywords: "align prettify pipes", run: () => { if (docEditable && !documentsOpenRef.current && !document.querySelector('.markie-shell[inert]')) editContent((prev) => formatMarkdownTables(prev)); } },
-      ...BUILT_IN_THEMES.map((t) => ({
+      // One command per style template. Light and dark stay with the color
+      // mode, which paints the chosen template's matching variant.
+      ...THEME_TEMPLATES.map((t) => ({
         id: `theme-${t.id}`,
         title: `Theme: ${t.name}`,
         group: "Theme" as const,
-        keywords: "dark light color style",
+        keywords: `template style color font typography ${t.description}`,
         run: () => {
-          const mode = colorModeForThemeId(t.id);
-          if (mode) {
-            applyColorMode(mode);
-          } else {
-            const store = loadThemeStore();
-            saveThemeStore({ ...store, activeId: t.id });
-            applyTheme(t.tokens);
-          }
+          applyTemplate(t.id);
           pushCloudThemes();
         },
       })),
       { id: "theme-settings", title: "Theme Settings…", group: "Theme", keywords: "color font preset style", run: () => setShowTheme(true) },
       { id: "settings", title: "Settings…", group: "File", shortcut: "⌘,", keywords: "account sign in sync login", run: () => setShowSettings(true) },
+      { id: "default-apps", title: "Default Apps for File Types…", group: "File", keywords: "open with finder double click default handler txt json yaml csv xml markdown associate", run: () => { setSettingsSection("files"); setShowSettings(true); } },
+      { id: "global-search", title: "Search All Documents…", group: "File", shortcut: "⇧⌘F", keywords: "find files everywhere full text docx rtf word grep content global", run: () => setShowSearch(true) },
       { id: "library", title: "Library…", group: "File", shortcut: "⌘L", keywords: "documents cloud sync files recent projects organize workspace group", run: () => selectView("library") },
-      { id: "browse", title: "Browse all markdown…", group: "File", keywords: "all files device skills index find", run: () => selectView("browse") },
+      { id: "browse", title: "Browse all documents…", group: "File", keywords: "all files device skills index find", run: () => selectView("browse") },
       { id: "cloud", title: "Cloud…", group: "File", keywords: "synced shared sharing people cloud sync backup invited", run: () => selectView("cloud") },
       { id: "skills", title: "Skills & agent files…", group: "File", keywords: "claude agents codex gemini cursor instructions", run: () => selectView("skills") },
       { id: "new-file", title: "New file", group: "File", shortcut: "⌘N", keywords: "blank create empty document", run: requestNewFile },
@@ -2151,6 +2159,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       onOpenDocument={documentsEnabled ? (record) => { if (presentation === "workspace") setShowLibrary(false); void openDocument(record); } : undefined}
       onCreateDocument={documentsEnabled ? (format) => { if (presentation === "workspace") setShowLibrary(false); void createDocument(format); } : undefined}
       onOpenVault={documentsEnabled ? () => void openVault() : undefined}
+      onOpenDefaultApps={() => { setSettingsSection("files"); setShowSettings(true); }}
       renderCloudDocuments={documentsEnabled ? (query, cloudPresentation) => <Suspense fallback={<p role="status" className="px-2 py-2 text-xs text-muted">Loading cloud documents…</p>}><DocumentCloudLibrary query={query} presentation={cloudPresentation} onOpen={(id) => void openCloudDocument(id)} /></Suspense> : undefined}
       retainedDocument={documentsEnabled ? { name: fileName ?? "Untitled.md", path: filePath, dirty: isDirty, selected: !documentsOpen, onSelect: () => { void leaveDocuments(); } } : undefined}
     />
@@ -2193,6 +2202,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           onAgents={() => setShowAgents(true)}
           onShortcuts={() => setShowHelp((v) => !v)}
           onAccount={() => setShowSettings(true)}
+          onSearch={() => setShowSearch(true)}
         />
 
         {/* Docked side panel (Library / Browse / Skills). Cloud now owns the
@@ -2441,6 +2451,9 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       {showPalette && (
         <CommandPalette commands={commands} onClose={() => setShowPalette(false)} />
       )}
+      {showSearch && (
+        <GlobalSearch onOpenPath={openPath} onClose={() => setShowSearch(false)} />
+      )}
       {showNewDocument && documentsEnabled && (
         <NewDocumentModal
           onClose={() => setShowNewDocument(false)}
@@ -2462,8 +2475,10 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       )}
       {showSettings && (
         <Settings
+          initialSection={settingsSection}
           onClose={() => {
             setShowSettings(false);
+            setSettingsSection(undefined);
             setLibRefreshKey((k) => k + 1);
             refreshCollab(); // sign-in/out changes live eligibility
           }}

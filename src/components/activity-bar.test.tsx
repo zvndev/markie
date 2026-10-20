@@ -43,7 +43,7 @@ describe("ActivityBar", () => {
     for (const label of [
       "New file (⌘N)",
       "Library: recent and projects (⌘L)",
-      "Browse all markdown",
+      "Browse all documents",
       "Cloud: synced and shared",
       "Skills & agent files",
       "Formatting tools",
@@ -63,7 +63,7 @@ describe("ActivityBar", () => {
     await user.click(screen.getByRole("button", { name: "New file (⌘N)" }));
     expect(p.onNewFile).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: "Browse all markdown" }));
+    await user.click(screen.getByRole("button", { name: "Browse all documents" }));
     expect(p.onSelectView).toHaveBeenCalledWith("browse");
 
     await user.click(screen.getByRole("button", { name: "Connect an agent (MCP)" }));

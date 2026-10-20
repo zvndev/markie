@@ -500,6 +500,324 @@ body {
   text-transform: uppercase;
 }
 
+/* ── Settings › Appearance ──
+   Template cards paint their preview from the template's own tokens (inline
+   styles); everything around them uses the live app tokens like any overlay. */
+.markie-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
+  gap: 8px;
+}
+
+.markie-template-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 6px 6px 8px;
+  color: var(--foreground);
+  text-align: left;
+  outline: none;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.markie-template-card:hover {
+  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+
+.markie-template-card[aria-checked="true"] {
+  background: color-mix(in srgb, var(--foreground) 3.5%, transparent);
+}
+
+.markie-template-card:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 70%, transparent);
+}
+
+.markie-template-preview {
+  position: relative;
+  display: flex;
+  height: 78px;
+  overflow: hidden;
+  border: 1px solid;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 16%, transparent);
+  transition: box-shadow 150ms ease;
+}
+
+.markie-template-card[aria-checked="true"] .markie-template-preview {
+  box-shadow:
+    0 0 0 2px var(--surface-2),
+    0 0 0 3.5px var(--blue);
+}
+
+.markie-template-rail {
+  display: flex;
+  width: 24%;
+  flex-direction: column;
+  gap: 5px;
+  border-right: 1px solid;
+  padding: 10px 6px;
+}
+
+.markie-template-rail > span {
+  height: 3px;
+  border-radius: 2px;
+  opacity: 0.5;
+}
+
+.markie-template-rail > span:nth-child(2) {
+  width: 72%;
+}
+
+.markie-template-rail > span:nth-child(3) {
+  width: 52%;
+}
+
+.markie-template-page {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 10px;
+}
+
+.markie-template-aa {
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.markie-template-line {
+  overflow: hidden;
+  font-size: 10.5px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markie-template-rule {
+  width: 42%;
+  height: 2px;
+  margin-top: 3px;
+  border-radius: 2px;
+}
+
+.markie-template-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.markie-template-meta {
+  display: flex;
+  min-height: 16px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.markie-template-name {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markie-template-check {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--blue);
+  color: var(--background);
+}
+
+.markie-template-description {
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.markie-template-badge {
+  display: inline-block;
+  margin-right: 5px;
+  border-radius: 4px;
+  padding: 0 5px;
+  background: color-mix(in srgb, var(--blue) 16%, transparent);
+  color: var(--foreground);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.markie-settings-group {
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--background) 32%, transparent);
+}
+
+.markie-typography-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .markie-typography-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The specimen takes the height of the controls beside it rather than setting
+   it: its text sits in an absolutely placed layer and fades at the bottom. */
+.markie-specimen {
+  position: relative;
+  min-height: 210px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 8px;
+  background: var(--background);
+}
+
+.markie-specimen > .markdown-body {
+  position: absolute;
+  inset: 12px 16px 0;
+  overflow: hidden;
+}
+
+.markie-specimen > .markdown-body h3 {
+  margin-top: 0;
+}
+
+.markie-specimen::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 40px;
+  background: linear-gradient(transparent, var(--background));
+  content: "";
+  pointer-events: none;
+}
+
+.markie-disclosure {
+  border-radius: 7px;
+  padding: 0;
+}
+
+.markie-disclosure[aria-expanded="true"] .markie-select-chevron {
+  transform: rotate(180deg);
+}
+
+.markie-color-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 7px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.markie-color-row:hover {
+  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+
+.markie-color-well {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--foreground) 18%, transparent);
+  border-radius: 6px;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  outline: none;
+}
+
+.markie-color-well::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.markie-color-well::-webkit-color-swatch {
+  border: none;
+  border-radius: 5px;
+}
+
+.markie-color-well:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 70%, transparent);
+}
+
+.markie-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+}
+
+.markie-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--blue) var(--fill, 50%),
+    color-mix(in srgb, var(--foreground) 14%, transparent) var(--fill, 50%)
+  );
+}
+
+.markie-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 1px solid color-mix(in srgb, #000 18%, transparent);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 30%, transparent);
+}
+
+.markie-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 55%, transparent);
+}
+
+.markie-range::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+
+.markie-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--blue);
+}
+
+.markie-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 1px solid color-mix(in srgb, #000 18%, transparent);
+  border-radius: 50%;
+  background: #fff;
+}
+
 /* Light tone gets the flat version of the graphite chrome. The top-lit
    gradients, inset highlights, scanline texture and stacked shadows above
    read as glass on dark surfaces; on pale surfaces the same stack reads as
@@ -780,9 +1098,11 @@ body {
 
 /* ── Markdown Preview ── */
 .markdown-body {
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  /* Typography comes from the style template (src/lib/theme.ts, applyTheme);
+     each fallback is the literal used before templates existed. */
+  font-family: var(--doc-font-family, var(--font-geist-sans)), system-ui, sans-serif;
   font-size: 15px;
-  line-height: 1.75;
+  line-height: var(--doc-line-height, 1.75);
   color: var(--foreground);
   overflow-wrap: anywhere;
 }
@@ -831,8 +1151,14 @@ body {
   margin-top: 0;
 }
 
+/* Unset when the template's headings follow the body, so a per-document font
+   choice carries into headings exactly as it always has. */
+.markdown-body :is(h1, h2, h3, h4, h5, h6) {
+  font-family: var(--doc-heading-family, inherit);
+}
+
 .markdown-body p {
-  margin: 0.8em 0;
+  margin: var(--doc-paragraph-gap, 0.8em) 0;
 }
 
 .markdown-body a {

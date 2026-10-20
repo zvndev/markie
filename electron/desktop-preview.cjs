@@ -82,7 +82,11 @@ function initializeDesktopIdentity({ app, metadata, argv = process.argv.slice(1)
   const appData = app.getPath("appData");
   const userData = validatedProfilePath(override || path.join(appData, PREVIEW_NAME), {
     appData, home: app.getPath("home"),
-    stableUserData: isPreview ? null : app.getPath("userData"),
+    // Chromium applies --user-data-dir before this runs, so getPath("userData")
+    // already IS the override and comparing against it refused every isolated
+    // dev profile. The installed Markie locations below appData are still
+    // checked by validatedProfilePath itself.
+    stableUserData: null,
     platform, fs, path,
   });
   if (isPreview) {

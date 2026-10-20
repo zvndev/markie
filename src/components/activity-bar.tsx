@@ -17,6 +17,8 @@ interface ActivityBarProps {
   onShortcuts: () => void;
   onAccount: () => void;
   onDocuments?: () => void;
+  // Search every document on this Mac, by name and by what it says.
+  onSearch?: () => void;
 }
 
 export function ActivityBar({
@@ -29,6 +31,7 @@ export function ActivityBar({
   onShortcuts,
   onAccount,
   onDocuments,
+  onSearch,
 }: ActivityBarProps) {
   const { user } = useAuth();
 
@@ -46,6 +49,12 @@ export function ActivityBar({
           <path d="M14 3v6h6M12 12v6M9 15h6" />
         </svg>
       </NavButton>
+      {onSearch ? <NavButton label="Search all documents (⇧⌘F)" onClick={onSearch}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.5-3.5" />
+        </svg>
+      </NavButton> : null}
       <div className="w-6 h-px bg-border my-1" />
       {onDocuments ? <NavButton label="Documents: Word, text and private files" onClick={onDocuments}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3h8l4 4v14H8zM16 3v5h4M4 7v14M11 12h6M11 16h6" /></svg>
@@ -56,7 +65,7 @@ export function ActivityBar({
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
         </svg>
       </NavButton>
-      <NavButton label="Browse all markdown" active={isActive("browse")} onClick={() => onSelectView("browse")}>
+      <NavButton label="Browse all documents" active={isActive("browse")} onClick={() => onSelectView("browse")}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="9" />
           <polygon points="15.5 8.5 10.5 10.5 8.5 15.5 13.5 13.5" />

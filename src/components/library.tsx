@@ -74,6 +74,8 @@ interface LibraryProps {
   onOpenDocument?: (record: LibraryRecord) => void;
   onCreateDocument?: (format: EditableDocumentFormat) => void;
   onOpenVault?: () => void;
+  // Settings > Files, where every fully supported type can be made Markie's.
+  onOpenDefaultApps?: () => void;
   renderCloudDocuments?: (query: LibraryDocumentQuery, presentation: "panel" | "workspace") => ReactNode;
 }
 
@@ -117,6 +119,12 @@ const VIEW_TITLE: Record<PanelView, string> = {
 
 // Local files are identified by path; cloud-only rows have no path yet.
 const itemKey = (i: LibraryItem) => i.path ?? i.cloudId ?? i.name;
+
+// Markdown and the plain-text family are what the classic reader and the
+// legacy cloud sync understand. Everything else in Recent (DOCX, RTF, JSON...)
+// opens in the document workspace and must not be offered a UTF-8 copy or a
+// Markdown sync it would mangle.
+const CLASSIC_FILE = /\.(?:md|markdown|mdx|txt|text|log|csv)$/i;
 
 function nativeMetadata(item: LibraryItem): LibraryDocumentMetadata {
   return { key: `native:${itemKey(item)}`, name: item.name, path: item.path, format: libraryDocumentFormat(item.name), updatedAt: item.lastOpenedAt };
@@ -173,6 +181,7 @@ export function Library({
   onOpenDocument,
   onCreateDocument,
   onOpenVault,
+  onOpenDefaultApps,
   renderCloudDocuments,
 }: LibraryProps) {
   const [items, setItems] = useState<LibraryItem[]>([]);
@@ -453,7 +462,8 @@ export function Library({
 
   const localFiles = visibleItems.filter((item) => item.path);
   const retainedAvailable = !!retainedDocument && (!retainedDocument.path || !items.some((item) => sameDocumentPath(item.path, retainedDocument.path, getElectronAPI()?.platform)));
-  const retainedVisible = retainedAvailable && matchesLibraryDocument({ key: "retained:markdown", name: retainedDocument!.name, path: retainedDocument!.path, format: "markdown" }, query);
+  const retainedFormat = retainedDocument ? libraryDocumentFormat(retainedDocument.name) : "markdown";
+  const retainedVisible = retainedAvailable && matchesLibraryDocument({ key: "retained:markdown", name: retainedDocument!.name, path: retainedDocument!.path, format: retainedFormat }, query);
   const overview = summarizeLibrary(items);
   const visibleDocuments = useMemo(() => queryLibraryDocuments(documentRecords, query, recoveryMetadata), [documentRecords, query]);
   const queryActive = !!query.search.trim() || query.format !== "all" || query.sort !== "default";
@@ -470,6 +480,8 @@ export function Library({
     const api = getElectronAPI()!;
     const isActive = activePath && item.path === activePath;
     const itemKey = item.path ?? item.cloudId;
+    const classic = CLASSIC_FILE.test(item.name);
+    const format = libraryDocumentFormat(item.name);
     const open = () => {
       setMenuFor(null);
       if (item.path && item.exists) {
@@ -497,6 +509,9 @@ export function Library({
           <span className="text-[12.5px] text-foreground truncate flex-1" title={item.path ?? item.name}>
             {item.name}
           </span>
+          {format !== "markdown" && (
+            <span className="font-mono text-[9px] uppercase tracking-wide text-muted/80 shrink-0">{format === "other" ? "file" : format}</span>
+          )}
           <span className={`text-[9px] px-1 py-px rounded border shrink-0 ${badgeClass}`}>
             {label}
           </span>
@@ -528,7 +543,7 @@ export function Library({
             {item.path && (
               <button className="text-muted hover:text-foreground" onClick={() => copyPath(item.path!)}>Copy path</button>
             )}
-            {item.path && item.exists && (
+            {item.path && item.exists && classic && (
               <button className="text-muted hover:text-foreground" onClick={() => copyContents(item)}>Copy contents</button>
             )}
             {/* "Unpushed" means the snapshot never reached the cloud. It had a
@@ -543,10 +558,10 @@ export function Library({
                 Retry backup
               </button>
             )}
-            {signedIn && item.state === "local-only" && item.exists && (
+            {signedIn && item.state === "local-only" && item.exists && classic && (
               <button className="text-muted hover:text-foreground" onClick={() => syncOn(item)}>Sync to cloud</button>
             )}
-            {signedIn && item.state === "paused" && item.exists && (
+            {signedIn && item.state === "paused" && item.exists && classic && (
               <button className="text-muted hover:text-foreground" onClick={() => syncOn(item)}>Resume sync</button>
             )}
             {signedIn && item.state === "synced" && (
@@ -595,7 +610,7 @@ export function Library({
   const sortedRows = query.sort === "default" ? [] : queryLibraryDocuments([
     ...localFiles.map((item) => ({ metadata: nativeMetadata(item), node: fileRow(item) })),
     ...visibleDocuments.map((record) => ({ metadata: recoveryMetadata(record), node: recoveryRow(record) })),
-    ...(retainedVisible && retainedDocument ? [{ metadata: { key: "retained:markdown", name: retainedDocument.name, path: retainedDocument.path, format: "markdown" as const }, node: retainedRow }] : []),
+    ...(retainedVisible && retainedDocument ? [{ metadata: { key: "retained:markdown", name: retainedDocument.name, path: retainedDocument.path, format: retainedFormat }, node: retainedRow }] : []),
   ], query, ({ metadata }) => metadata);
   const cloudWorkspace = presentation === "workspace" && view === "cloud";
   const effectiveCloudTab: CloudTab = renderCloudDocuments ? cloudTab : "sync";
@@ -823,6 +838,14 @@ export function Library({
           </button>
           {defaultMsg && (
             <div className="text-[10.5px] text-muted px-2 pt-1 leading-snug">{defaultMsg}</div>
+          )}
+          {onOpenDefaultApps && (
+            <button
+              onClick={onOpenDefaultApps}
+              className="w-full text-[10.5px] text-muted/80 hover:text-foreground rounded-md px-2 pt-0.5 text-left"
+            >
+              Text, CSV, JSON and more…
+            </button>
           )}
         </div>
       )}

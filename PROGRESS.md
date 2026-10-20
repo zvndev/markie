@@ -1371,3 +1371,23 @@ Cloud snapshots now accept RTF, ODT, and Darkmown on both the client allowlist a
 Multiplayer: shared plain text (.txt/.text/.log) now enters a live Y.Text session in its own source pane (src/lib/text-collab.ts binding with surrogate-safe single-span diffs, seeded like Markdown, presence names but no remote carets). The server seed lock now recognizes Y.Text content (roomHasCollabContent) so text rooms do not stay locked to the seeder. DOCX/RTF/ODT remain snapshot-shared with version conflicts, not live co-edited; that is still pending and is not claimed here.
 
 Verification: focused suites for every area above; full renderer/Electron run 4,301 passed with 1 existing skip (two timing-bound tests in untouched files flaked once under load and pass standalone); MCP 72 passed; server 387 passed, 1 skipped; lint and typecheck clean; production build clean.
+
+## 2026-10-19 Documents everywhere: search, recents, default apps, style templates, real-world DOCX
+
+Kirby asked for default-app offers for every fully supported type, working type filters, complete recents, a global search with filters, deeper styling with templates, light/dark for text/RTF/DOCX, and a straight answer on whether RTF and DOCX were fixed. Terminal state: shipped as super-nightly 10.
+
+Opens and recents: clicking a DOCX/RTF/ODT/JSON/YAML/XML/Darkmown/HTML row in Browse or Recent did nothing (rich opens required a drag-drop grant); advertised index/registry paths now queue like a Finder open. Every granted document is recorded in the registry (trackOpened keeps any sync hash) and the macOS Recent Documents list; Library rows show a type tag and no longer offer Markdown-only copy/sync on rich files, and the open retained document filters by its real type.
+
+Global search (⇧⌘F, rail button, File menu, palette): main-process doc-text.js extracts bounded body text from Markdown/text/CSV/JSON/YAML/XML, DOCX and ODT (ZIP part with an inflate ceiling), RTF and HTML (legacy DOC stays name-only), caches by path+mtime+size, searches newest first within a time budget, and supersedes stale queries. The modal filters by type (persisted), highlights hits and excerpts, and opens with the keyboard.
+
+Default apps: Settings > Files offers Markdown, plain text (+log), Darkmown, CSV, JSON, YAML and XML individually or all at once through LaunchServices, and lists DOCX/RTF/ODT as not offered yet with reasons. The packaged app now declares those content types (Alternate rank for generic text types so installing never steals them; Darkmown exported and owned); the desktop preview declares none.
+
+Styling: eight style templates (Markie, Paper, Nord, Solarized, Ink, Rosé, Forest, Studio), each with light and dark variants and typography; color mode now picks the template's tone instead of resetting to Markie; custom colors fork a per-tone preset; a redesigned Appearance gallery with typography controls and specimen.
+
+Document theming: authored run colors adapt for display only when they would be unreadable on the current page (neutral to foreground, other hues mirrored to 4.5:1), live on theme change; native controls follow the tone.
+
+DOCX: measured on the owner's real Word files (local, read-only, aggregate only) only 29 of 103 opened editable. Inert parts, external hyperlinks, unknown properties, common page breaks and UTF-16 parts now pass through opaquely with per-run locks for tabs/breaks/fields: 94 of 103 editable, all untouched exports byte-identical, all one-word edits round-trip. Remaining locks: pending tracked changes, protection, OLE, local-file links, nested tables, content controls.
+
+Also fixed: isolated dev Electron profiles were always refused because Chromium applies --user-data-dir before the guard compared against it.
+
+Verification: full renderer/Electron suite, lint, typecheck, build; isolated real-Electron CDP check (temp HOME and profile) passed 8/8: index finds every type, search IPC body hits in DOCX/RTF/MD, type filter, ⇧⌘F modal, result opens editable DOCX, DOCX lands in Recent, indexed RTF opens from a path. LaunchServices status script verified read-only against the real system. Not verified: clicking "Use Markie" in the installed app (changes the owner's real associations; left for Kirby).

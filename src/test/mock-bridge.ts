@@ -97,6 +97,9 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
       supported: true,
       isDefault: false,
     })),
+    defaultAppsStatus: vi.fn(async () => ({ supported: true, formats: [], pending: [] })),
+    setDefaultApps: vi.fn(async () => ({ ok: true })),
+    searchDocuments: vi.fn(async () => ({ results: [], scanned: 0, total: 0, partial: false })),
 
     // Workspace / Files view
     wsRoots: vi.fn(async () => [] as string[]),
@@ -165,6 +168,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     onMenuTheme: vi.fn(subscribe("onMenuTheme")),
     onMenuSettings: vi.fn(subscribe("onMenuSettings")),
     onMenuLibrary: vi.fn(subscribe("onMenuLibrary")),
+    onMenuGlobalSearch: vi.fn(subscribe("onMenuGlobalSearch")),
     onDeepLink: vi.fn(subscribe("onDeepLink")),
 
     openExternal: vi.fn(async () => undefined),

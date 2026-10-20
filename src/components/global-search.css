@@ -1,0 +1,53 @@
+/* Global search: type chips, hit marks, and the in-flight spinner. Colors
+   come from theme tokens only, so every template and tone reads the same. */
+.markie-search-chip {
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 999px;
+  padding: 0.22rem 0.62rem;
+  font-size: 11.5px;
+  line-height: 1.2;
+  color: var(--muted);
+  background: transparent;
+  outline: none;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.markie-search-chip:hover {
+  color: var(--foreground);
+  border-color: color-mix(in srgb, var(--foreground) 22%, transparent);
+}
+
+.markie-search-chip:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 70%, transparent);
+}
+
+.markie-search-chip[aria-pressed="true"] {
+  color: var(--foreground);
+  border-color: color-mix(in srgb, var(--blue) 55%, transparent);
+  background: color-mix(in srgb, var(--blue) 16%, transparent);
+}
+
+.markie-search-mark {
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+  background: color-mix(in srgb, var(--status-yellow) 30%, transparent);
+  box-shadow: inset 0 -1px color-mix(in srgb, var(--status-yellow) 70%, transparent);
+}
+
+.markie-search-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--muted) 35%, transparent);
+  border-top-color: var(--foreground);
+  animation: markie-search-spin 700ms linear infinite;
+}
+
+@keyframes markie-search-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markie-search-spinner { animation-duration: 2s; }
+}

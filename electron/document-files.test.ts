@@ -109,6 +109,16 @@ describe("bounded opaque native document grants", () => {
     expect(saved.revision).not.toBe(opened.revision);
     expect(await api.write(1, { leaseId: opened.leaseId, baseRevision: opened.revision, bytes: new Uint8Array([1]) })).toMatchObject({ ok: false, error: { code: "conflict" } });
   });
+  it("reports every granted document for Recent, and survives a failing reporter", async () => {
+    const directory = fixture(), picked = path.join(directory, "picked.docx"), finder = path.join(directory, "finder.rtf");
+    fs.writeFileSync(picked, "docx"); fs.writeFileSync(finder, "rtf");
+    const seen: string[] = [];
+    const api = service(picked, { onGranted: (target: string) => { seen.push(path.basename(target)); throw new Error("registry down"); } });
+    value(await api.open(1));
+    expect(api.queueOsFile(finder)).toEqual({ ok: true, value: true });
+    expect(value<{ name: string }>(await api.takeInitial(1)).name).toBe("finder.rtf");
+    expect(seen).toEqual(["picked.docx", "finder.rtf"]);
+  });
   it.each(["doc", "html"])("keeps .%s source leases read-only", async (extension) => {
     const target = path.join(fixture(), `source.${extension}`); fs.writeFileSync(target, "source"); const api = service(target), opened = value<{ leaseId: string; revision: string; writable: boolean }>(await api.open(1));
     expect(opened.writable).toBe(false); expect(await api.write(1, { leaseId: opened.leaseId, baseRevision: opened.revision, bytes: new Uint8Array([1]) })).toMatchObject({ ok: false, error: { code: "access-denied" } }); expect(fs.readFileSync(target, "utf8")).toBe("source");

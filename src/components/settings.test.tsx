@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installBridge } from "@/test/mock-bridge";
@@ -121,18 +121,19 @@ describe("Settings — sections", () => {
     expect(tabs.map((t) => t.textContent)).toEqual([
       "Account",
       "Appearance",
+      "Files",
       "Advanced",
     ]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
 
-    await user.click(tabs[2]);
-    expect(tabs[2]).toHaveAttribute("aria-selected", "true");
+    await user.click(tabs[3]);
+    expect(tabs[3]).toHaveAttribute("aria-selected", "true");
     expect(screen.getByDisplayValue("https://api.test")).toBeInTheDocument();
   });
 
   it("opens straight into the section it was asked for", () => {
     renderSettings({ initialSection: "appearance" });
-    expect(screen.getByText("Theme")).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "Style templates" })).toBeInTheDocument();
     expect(screen.getAllByRole("tab")[1]).toHaveAttribute("aria-selected", "true");
   });
 
@@ -159,45 +160,70 @@ describe("Settings — sections", () => {
 });
 
 describe("Settings — appearance", () => {
-  it("lists the built-in presets and marks the active one", () => {
+  const store = () => JSON.parse(localStorage.getItem("markie.themes.v1")!);
+  // Pin the tone so the tests do not depend on the test runner's OS setting.
+  beforeEach(() => localStorage.setItem("markie.colormode.v1", "dark"));
+
+  it("lists every template and marks the active one", () => {
     renderSettings({ initialSection: "appearance" });
-    const dark = screen.getByRole("button", { name: "Markie Dark" });
-    const light = screen.getByRole("button", { name: "Markie Light" });
-    expect(dark.classList.contains("bg-accent")).toBe(true);
-    expect(light.classList.contains("bg-accent")).toBe(false);
-    expect(
-      screen.getByText("Editing a built-in theme saves it as a copy.")
-    ).toBeInTheDocument();
+    const gallery = screen.getByRole("radiogroup", { name: "Style templates" });
+    const cards = within(gallery).getAllByRole("radio");
+    expect(cards.length).toBeGreaterThanOrEqual(8);
+    expect(within(gallery).getByRole("radio", { name: "Markie" })).toHaveAttribute("aria-checked", "true");
+    expect(within(gallery).getByRole("radio", { name: "Paper" })).toHaveAttribute("aria-checked", "false");
+    expect(within(gallery).getByRole("radio", { name: "Paper" })).toHaveAccessibleDescription(
+      /book serif/
+    );
   });
 
-  it("switches the active preset and persists it", async () => {
+  it("switches the template, paints it and persists it", async () => {
     const user = userEvent.setup();
     renderSettings({ initialSection: "appearance" });
-    await user.click(screen.getByRole("button", { name: "Markie Light" }));
+    await user.click(screen.getByRole("radio", { name: "Paper" }));
 
-    expect(
-      screen.getByRole("button", { name: "Markie Light" }).classList.contains("bg-accent")
-    ).toBe(true);
-    expect(JSON.parse(localStorage.getItem("markie.themes.v1")!).activeId).toBe(
-      "markie-light"
-    );
+    expect(screen.getByRole("radio", { name: "Paper" })).toHaveAttribute("aria-checked", "true");
+    expect(store()).toMatchObject({ activeId: "paper-dark", templateId: "paper" });
+    expect(document.documentElement.style.getPropertyValue("--background")).toBe("#1b1916");
     expect(pushCloudThemes).toHaveBeenCalled();
   });
 
-  it("forks a built-in theme into a custom preset when it is edited", async () => {
+  it("keeps the template when the color mode is changed from here", async () => {
+    const user = userEvent.setup();
+    const events: string[] = [];
+    const onMode = (e: Event) => events.push((e as CustomEvent<{ mode: string }>).detail.mode);
+    window.addEventListener("markie:color-mode-changed", onMode);
     renderSettings({ initialSection: "appearance" });
-    const { fireEvent } = await import("@testing-library/react");
+    await user.click(screen.getByRole("radio", { name: "Nord" }));
+    await user.click(screen.getByRole("button", { name: "Light" }));
+    window.removeEventListener("markie:color-mode-changed", onMode);
+
+    expect(screen.getByRole("button", { name: "Light" })).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem("markie.colormode.v1")).toBe("light");
+    // Same event the toolbar listens for, so its picker follows.
+    expect(events).toEqual(["light"]);
+    expect(store().activeId).toBe("nord-light");
+    expect(screen.getByRole("radio", { name: "Nord" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("forks the variant being looked at into a custom preset that remembers its base", async () => {
+    const user = userEvent.setup();
+    renderSettings({ initialSection: "appearance" });
+    expect(document.querySelector('input[type="color"]')).toBeNull();
+    await user.click(screen.getByRole("button", { name: /Customize colors/ }));
     const color = document.querySelector<HTMLInputElement>('input[type="color"]')!;
     fireEvent.change(color, { target: { value: "#123456" } });
 
     expect(await screen.findByText(/^Custom preset: Markie Dark Copy$/)).toBeInTheDocument();
-    const store = JSON.parse(localStorage.getItem("markie.themes.v1")!);
-    expect(store.custom).toHaveLength(1);
-    expect(store.custom[0].tokens.background).toBe("#123456");
-    expect(store.activeId).toBe(store.custom[0].id);
+    const saved = store();
+    expect(saved.custom).toHaveLength(1);
+    expect(saved.custom[0]).toMatchObject({ templateId: "markie", tone: "dark" });
+    expect(saved.custom[0].tokens.background).toBe("#123456");
+    expect(saved.activeId).toBe(saved.custom[0].id);
+    expect(saved.overrides).toEqual({ dark: saved.custom[0].id });
+    expect(screen.getByRole("radio", { name: "Markie Dark Copy" })).toHaveAttribute("aria-checked", "true");
   });
 
-  it("deletes a custom preset and falls back to Markie Dark", async () => {
+  it("deletes a custom preset and falls back to the template", async () => {
     const user = userEvent.setup();
     localStorage.setItem(
       "markie.themes.v1",
@@ -226,10 +252,12 @@ describe("Settings — appearance", () => {
     expect(screen.getByText("Custom preset: Sunset")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Delete preset" }));
-    expect(screen.queryByRole("button", { name: "Sunset" })).toBeNull();
-    expect(JSON.parse(localStorage.getItem("markie.themes.v1")!)).toEqual({
+    expect(screen.queryByRole("radio", { name: "Sunset" })).toBeNull();
+    expect(store()).toEqual({
       activeId: "markie-dark",
       custom: [],
+      templateId: "markie",
+      overrides: {},
     });
   });
 
@@ -238,9 +266,86 @@ describe("Settings — appearance", () => {
     expect(screen.queryByRole("button", { name: "Delete preset" })).toBeNull();
   });
 
-  it("shows the live font size and content width", () => {
+  it("shows the live typography values", () => {
     renderSettings({ initialSection: "appearance" });
-    expect(screen.getByText(/Font size — \d+px/)).toBeInTheDocument();
-    expect(screen.getByText(/Content width — \d+px/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Text size")).toHaveValue("16");
+    expect(screen.getByText("16 px")).toBeInTheDocument();
+    expect(screen.getByText("768 px")).toBeInTheDocument();
+    expect(screen.getByText("1.75")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Body font: System" })).toBeInTheDocument();
+  });
+
+  it("applies typography app-wide and resets it to the template", async () => {
+    const user = userEvent.setup();
+    renderSettings({ initialSection: "appearance" });
+    const reset = screen.getByRole("button", { name: "Reset to template" });
+    expect(reset).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Line height"), { target: { value: "2" } });
+    expect(document.documentElement.style.getPropertyValue("--doc-line-height")).toBe("2");
+    expect(store().typography).toEqual({ lineHeight: 2 });
+
+    await user.click(screen.getByRole("button", { name: "Body font: System" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Charter" }));
+    expect(document.documentElement.style.getPropertyValue("--theme-font-family")).toContain("Charter");
+    expect(store().typography).toEqual({ lineHeight: 2, bodyFont: "charter" });
+
+    expect(reset).toBeEnabled();
+    await user.click(reset);
+    expect(store().typography).toBeUndefined();
+    expect(document.documentElement.style.getPropertyValue("--doc-line-height")).toBe("1.75");
+  });
+
+  it("closes a font menu on Escape without closing Settings", async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderSettings({ initialSection: "appearance" });
+    await user.click(screen.getByRole("button", { name: "Heading font: Same as body" }));
+    expect(screen.getByRole("menu", { name: "Heading font" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("Settings — files", () => {
+  const status = (markdownDefault: boolean) => ({
+    supported: true,
+    formats: [
+      { id: "markdown", label: "Markdown", extensions: [".md"], isDefault: markdownDefault },
+      { id: "json", label: "JSON", extensions: [".json"], isDefault: false },
+      { id: "yaml", label: "YAML", extensions: [".yaml", ".yml"], isDefault: false },
+    ],
+    pending: [{ id: "docx", label: "Word", extensions: [".docx"], reason: "Some Word features still open read-only." }],
+  });
+
+  it("offers every fully supported type and explains what is not offered yet", async () => {
+    installBridge({ defaultAppsStatus: vi.fn(async () => status(true)) });
+    render(<Settings onClose={() => {}} initialSection="files" />);
+    expect(await screen.findByRole("button", { name: "Open JSON files in Markie" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Markdown files in Markie" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Some Word features still open read-only/)).toBeInTheDocument();
+  });
+
+  it("claims one type, or every remaining type at once, and refreshes", async () => {
+    const setDefaultApps = vi.fn(async () => ({ ok: true }));
+    const defaultAppsStatus = vi.fn(async () => status(false));
+    installBridge({ defaultAppsStatus, setDefaultApps });
+    const user = userEvent.setup();
+    render(<Settings onClose={() => {}} initialSection="files" />);
+
+    await user.click(await screen.findByRole("button", { name: "Open JSON files in Markie" }));
+    expect(setDefaultApps).toHaveBeenLastCalledWith(["json"]);
+    expect(await screen.findByText("JSON now open in Markie.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Use Markie for all" }));
+    expect(setDefaultApps).toHaveBeenLastCalledWith(["markdown", "json", "yaml"]);
+    expect(defaultAppsStatus).toHaveBeenCalledTimes(3);
+  });
+
+  it("shows why the switch is unavailable in a dev build", async () => {
+    installBridge({ defaultAppsStatus: vi.fn(async () => ({ ...status(false), supported: false, error: "Run the installed Markie app (not the dev build) to set it as the default." })) });
+    render(<Settings onClose={() => {}} initialSection="files" />);
+    expect(await screen.findByText(/not the dev build/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open JSON files in Markie" })).toBeDisabled();
   });
 });

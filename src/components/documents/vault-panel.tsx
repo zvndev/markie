@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getElectronAPI } from "@/lib/electron";
 import { VaultRepository, VaultSaveError, type VaultEntry, type VaultReadResult } from "@/lib/vault/repository";
 import { IndexedDbVaultStorage, VaultStorageError, type VaultStorage } from "@/lib/vault/storage";
 import { VAULT_LIMITS, VaultError } from "@/lib/vault";
@@ -109,6 +110,8 @@ export function VaultPanel({ storage, onCloseGuard }: VaultPanelProps) {
   const lockNow = useCallback((message: string) => {
     ++operation.current;
     repository.lock();
+    // A key copied out a moment ago should not outlive the vault it came from.
+    void getElectronAPI()?.clearSecretClipboard?.().catch(() => undefined);
     openedRef.current?.bytes.fill(0);
     openedRef.current = null;
     revokeDownloads();

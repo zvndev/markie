@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getElectronAPI } from "@/lib/electron";
 import type { TextNewline } from "@/lib/document-formats";
 import {
   addDotenvEntry,
@@ -53,10 +54,19 @@ async function clearClipboardIfUnchanged(expected: string) {
 }
 
 /**
- * Copies plaintext out of the vault. The delayed clear compares a SHA-256
- * fingerprint, so the secret itself is not retained after the vault locks.
+ * Copies plaintext out of the vault. On the desktop the main process owns the
+ * copy and the 30-second clear, because the renderer cannot read the clipboard
+ * back once Markie loses focus, which is exactly when a key gets pasted. The
+ * browser fallback compares a SHA-256 fingerprint, so the secret itself is
+ * not retained after the vault locks.
  */
 async function copyOutsideVault(text: string): Promise<void> {
+  const api = getElectronAPI();
+  if (api?.copySecret) {
+    const result = await api.copySecret(text);
+    if (!result.ok) throw new Error(result.error ?? "clipboard-unavailable");
+    return;
+  }
   if (!navigator.clipboard?.writeText) throw new Error("clipboard-unavailable");
   await navigator.clipboard.writeText(text);
   void fingerprint(text).then((expected) => { setTimeout(() => void clearClipboardIfUnchanged(expected), CLIPBOARD_CLEAR_MS); }, () => undefined);

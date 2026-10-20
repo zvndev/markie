@@ -74,6 +74,16 @@ describe("handleDocumentClick", () => {
     await vi.waitFor(() => expect(onError).toHaveBeenCalledWith("Nope."));
   });
 
+  it("says so when a program is shown in Finder instead of run", async () => {
+    const onError = vi.fn();
+    installBridge({ openLocalFile: vi.fn(async () => ({ ok: true, revealed: true })) });
+    const a = anchor("../../secret.pdf");
+    document.body.append(a);
+
+    handleDocumentClick(clickOn(a), onError);
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(expect.stringMatching(/Shown in Finder/)));
+  });
+
   it("explicitly opens web links in the device browser instead of an editor window", () => {
     const openLocalFile = vi.fn(async () => ({ ok: true }));
     const openExternal = vi.fn(async () => {});

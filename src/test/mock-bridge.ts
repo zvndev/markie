@@ -99,6 +99,8 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     })),
     defaultAppsStatus: vi.fn(async () => ({ supported: true, formats: [], pending: [] })),
     setDefaultApps: vi.fn(async () => ({ ok: true })),
+    copySecret: vi.fn(async () => ({ ok: true, clearsAfterMs: 30_000 })),
+    clearSecretClipboard: vi.fn(async () => ({ ok: true, cleared: false })),
     searchDocuments: vi.fn(async () => ({ results: [], scanned: 0, total: 0, partial: false })),
 
     // Workspace / Files view

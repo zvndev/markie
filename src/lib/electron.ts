@@ -204,6 +204,10 @@ export interface ElectronAPI {
   // default app per fully supported file type (macOS, packaged only)
   defaultAppsStatus?(): Promise<DefaultAppsStatus>;
   setDefaultApps?(ids: string[]): Promise<{ ok: boolean; error?: string }>;
+  /** Copy a vault secret; the main process clears it after 30s if unchanged. */
+  copySecret?(text: string): Promise<{ ok: boolean; error?: string; clearsAfterMs?: number }>;
+  /** Clear a vault secret from the clipboard now, if it is still there. */
+  clearSecretClipboard?(): Promise<{ ok: boolean; cleared?: boolean }>;
   // search every indexed and recent document by name, path and body text
   searchDocuments?(args: { query: string; formats?: string[]; limit?: number }): Promise<DocumentSearchResponse>;
   // Workspace / Files view
@@ -310,7 +314,7 @@ export interface ElectronAPI {
   openLocalFile(payload: {
     href: string;
     docDir: string | null;
-  }): Promise<{ ok: boolean; error?: string }>;
+  }): Promise<{ ok: boolean; error?: string; revealed?: boolean }>;
   /** What each document link in the open document is: see electron/doc-link-open.js. */
   resolveDocLinks(payload: { docPath: string | null; hrefs: string[] }): Promise<DocLinkAnswer[]>;
   /**

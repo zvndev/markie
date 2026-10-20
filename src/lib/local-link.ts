@@ -43,6 +43,8 @@ function openAsLocalFile(
     .openLocalFile({ href, docDir: getAssetBaseDir() })
     .then((result) => {
       if (result && result.ok === false && result.error) onError(result.error);
+      // Programs and installers are shown in Finder, not run from a link.
+      else if (result?.revealed) onError("Shown in Finder. Markie doesn't run programs or installers from a document link.");
     })
     .catch(() => onError("Markie couldn't open that file."));
 }

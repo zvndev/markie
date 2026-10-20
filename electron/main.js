@@ -1,6 +1,7 @@
 const {
   app,
   BrowserWindow,
+  clipboard,
   crashReporter,
   dialog,
   ipcMain,
@@ -900,36 +901,51 @@ function createWindow() {
 }
 
 // Register custom protocol to serve static files with proper MIME types
+// The CSP rides on every app:// response itself. setupCSP's webRequest hook
+// is a second layer, but whether it sees custom-protocol responses is up to
+// Electron, and the policy is the only thing behind the markdown sanitizer.
+let appCsp = null;
+async function withAppCsp(pending) {
+  const response = await pending;
+  if (isDev) return response;
+  appCsp ??= buildAppCsp(path.join(__dirname, "../out"));
+  const headers = new Headers(response.headers);
+  headers.set("Content-Security-Policy", appCsp);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 function registerProtocol() {
-  protocol.handle("app", (request) => {
-    const requestUrl = new URL(request.url);
-    // Remove the host part and decode the path
-    let filePath = decodeURIComponent(requestUrl.pathname);
+  protocol.handle("app", (request) => withAppCsp(serveAppAsset(request)));
+}
 
-    // Resolve to the out directory
-    const outDir = path.join(__dirname, "../out");
-    const fullPath = path.join(outDir, filePath);
+function serveAppAsset(request) {
+  const requestUrl = new URL(request.url);
+  // Remove the host part and decode the path
+  let filePath = decodeURIComponent(requestUrl.pathname);
 
-    // SECURITY: never serve outside the bundled out/ dir even if the path
-    // contains traversal (defensive — the renderer origin is app:// only).
-    const resolvedOut = path.resolve(outDir);
-    const resolvedFull = path.resolve(fullPath);
-    if (resolvedFull !== resolvedOut && !resolvedFull.startsWith(resolvedOut + path.sep)) {
-      return new Response("Forbidden", { status: 403 });
-    }
+  // Resolve to the out directory
+  const outDir = path.join(__dirname, "../out");
+  const fullPath = path.join(outDir, filePath);
 
-    // Vite emits one index.html plus hashed assets, so the only path that
-    // needs help is the origin root. Anything else that is missing is a build
-    // bug, and a 404 says so where a guessed file would hide it.
-    if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
-      return net.fetch(url.pathToFileURL(path.join(fullPath, "index.html")).toString());
-    }
-    if (!fs.existsSync(fullPath)) {
-      return new Response("Not Found", { status: 404 });
-    }
+  // SECURITY: never serve outside the bundled out/ dir even if the path
+  // contains traversal (defensive — the renderer origin is app:// only).
+  const resolvedOut = path.resolve(outDir);
+  const resolvedFull = path.resolve(fullPath);
+  if (resolvedFull !== resolvedOut && !resolvedFull.startsWith(resolvedOut + path.sep)) {
+    return new Response("Forbidden", { status: 403 });
+  }
 
-    return net.fetch(url.pathToFileURL(fullPath).toString());
-  });
+  // Vite emits one index.html plus hashed assets, so the only path that
+  // needs help is the origin root. Anything else that is missing is a build
+  // bug, and a 404 says so where a guessed file would hide it.
+  if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
+    return net.fetch(url.pathToFileURL(path.join(fullPath, "index.html")).toString());
+  }
+  if (!fs.existsSync(fullPath)) {
+    return new Response("Not Found", { status: 404 });
+  }
+
+  return net.fetch(url.pathToFileURL(fullPath).toString());
 }
 
 const { cloudDocFor } = require("./cloud-doc-for");
@@ -1851,6 +1867,7 @@ handle("doc-open-shared", async (_event, { cloudId, suggestedName }) => {
 // rule as the pictures, so a link cannot reach further than an image can, and
 // shell.openPath rather than shell.openExternal because openExternal would
 // honour whatever scheme the string happens to carry.
+const { localOpenAction } = require("./local-open-policy");
 handle("open-local-file", async (_event, { href, docDir } = {}) => {
   if (!docDir) return { ok: false, error: "Save this document first, then the link will work." };
 
@@ -1870,6 +1887,13 @@ handle("open-local-file", async (_event, { href, docDir } = {}) => {
     };
   }
 
+  let isDirectory = false;
+  try { isDirectory = fs.statSync(allowed).isDirectory(); } catch { /* openPath reports a missing file below */ }
+  if (localOpenAction(allowed, isDirectory) === "reveal") {
+    // Scripts, apps and installers are shown, not run: see local-open-policy.js.
+    shell.showItemInFolder(allowed);
+    return { ok: true, revealed: true };
+  }
   const failure = await shell.openPath(allowed);
   // openPath answers with a message on failure and an empty string on success.
   return failure ? { ok: false, error: failure } : { ok: true };
@@ -2764,6 +2788,15 @@ function unsupportedDefaultApps(error) {
   return defaultAppsPayload(defaultApps.DEFAULT_APP_FORMATS.map(({ id, label, extensions }) => ({ id, label, extensions, isDefault: false })), false, error);
 }
 
+// Vault secrets leave through here so the 30-second clear works after Markie
+// loses focus, and so locking the vault or quitting clears them at once.
+const secretClipboard = require("./secret-clipboard").createSecretClipboard(clipboard);
+handle("secret-clipboard-copy", (event, text) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: "Not available here." };
+  return secretClipboard.copy(text);
+}, { onFailure: () => ({ ok: false, error: "Couldn't copy." }) });
+handle("secret-clipboard-clear", () => ({ ok: true, cleared: secretClipboard.clearNow() }), { onFailure: () => ({ ok: false }) });
+
 handle("default-apps-status", async () => {
   if (isDesktopPreview) return unsupportedDefaultApps("Markie Preview does not change installed file associations.");
   const unavailable = markdownDefaultHandlerUnavailable({ platform: process.platform, isPackaged: app.isPackaged });
@@ -3360,6 +3393,7 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   quitRequested = true;
+  try { secretClipboard.clearNow(); } catch { /* best effort */ }
   stopWatchingOpenFile();
 });
 

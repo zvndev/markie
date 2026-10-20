@@ -1423,3 +1423,12 @@ Also: palette "Connect an Agent (MCP)…".
 Verification: full suite (4528 passed), lint, typecheck, build; live isolated Electron: Library row with CSV icon, badge and status icon; vault created, unlocked, and New environment keys opens the env editor; Darkmown example seeded into the temp workspace.
 
 Held for owner sign-off (CONSTITUTION: MCP tool shape is a human checkpoint): MCP support for every document type (markie_find_documents, markie_search_documents, markie_read_document, markie_write_document; shared search core in mcp/doc-text.cjs) and the matching Connect an agent dialog copy. Uncommitted in the working tree.
+
+## 2026-10-20 Desktop security fixes from the read-only production audit
+
+A read-only audit (no deploys, no variable changes, no database access, no secret values printed) found nothing critical. Fixed on the desktop side here:
+- Vault secrets are copied and cleared by the main process (electron/secret-clipboard.js). The renderer could not read the clipboard back after Markie lost focus, so the 30-second clear never ran in real use. The clear compares a SHA-256 fingerprint, leaves anything copied since alone, and also runs on vault lock and app quit.
+- Document links no longer launch scripts, apps or installers: only documents, PDFs, images, audio and video open; anything else (including bundles such as .app/.pkg) is shown in Finder with a note.
+- The CSP now rides on every app:// response, not only through the webRequest hook; verified live on the page's response headers.
+
+Server findings (public-link token leak via document links, unthrottled share-invite email, unbounded WebSocket payload and history, localhost CORS in production, unencrypted Litestream replica in B2) are being prepared as code for owner review; nothing is deployed. Production api runs a 2026-10-08 CLI upload, so any redeploy also ships every later server change.

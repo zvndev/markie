@@ -58,6 +58,8 @@ if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI",
   defaultMarkdownStatus: () => ipcRenderer.invoke("default-md-status"),
   defaultAppsStatus: () => ipcRenderer.invoke("default-apps-status"),
   setDefaultApps: (ids) => ipcRenderer.invoke("default-apps-set", { ids }),
+  copySecret: (text) => ipcRenderer.invoke("secret-clipboard-copy", text),
+  clearSecretClipboard: () => ipcRenderer.invoke("secret-clipboard-clear"),
   searchDocuments: (args) => ipcRenderer.invoke("doc-search", args),
   // Workspace / Files view
   wsRoots: () => ipcRenderer.invoke("ws-roots"),

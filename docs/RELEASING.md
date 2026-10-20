@@ -42,57 +42,194 @@ creating a GitHub release, and deploying the production server are external-prod
 An agent must get an explicit release instruction before running them. The publish command still
 requires the exact version in `--confirm-public-release=<version>`.
 
-## Beta channel
+Kirby saying "release X.Y.Z" is that instruction for the early-access publish of X.Y.Z **and** for
+its timed promotion to stable after the soak, unless he holds it. The promotion itself runs
+unattended through `release:promote-due`. This depends on the CONSTITUTION amendment proposed with
+this pipeline; until Kirby ratifies it, ask before the promotion as well.
 
-The beta channel exists so a release can be tried on people who volunteered and withdrawn if we
-do not like it. Three properties make that safe, and all three are enforced rather than remembered:
+## Release stages
 
-1. **Opt-in only.** The default is stable. The single way in is the "Receive beta updates" toggle
-   in Settings, Advanced, which writes `update-channel.json` in userData. `channelFor()` treats
-   anything that is not literally `true` as stable, so a corrupted or hand-edited file fails safe.
-2. **Unlisted.** The beta feed is recorded in `betaChannel` in `server/download-manifest.json` and
-   is deliberately **not** a `platforms` entry. The website and the share emails render from
-   `platforms`, so nothing public can point at a beta. `release:preflight` fails if a beta platform
-   entry ever appears.
-3. **Reversible.** Beta and stable are separate feed files in the same directory
-   (`mac/beta-mac.yml` and `mac/latest-mac.yml`), so publishing a beta cannot rewrite the feed
-   stable users follow. Electron Builder names those files per platform, so the Windows pair is
-   `windows/latest.yml` and `windows/beta.yml` with no `-mac` suffix; `feedFor()` in
-   `electron/update-channel.js` is what keeps an install from asking the wrong platform's feed for
-   an update it could not install. Only the macOS beta feed is recorded in `betaChannel` today,
-   because no Windows beta has been cut.
+Every release moves through three stages:
 
-### Cutting a beta
+| Stage | Who sees it | How it gets there |
+| --- | --- | --- |
+| 1. Super nightly | Kirby only | The private lane in `scripts/private-release.mjs` (see `docs/PRIVATE_RELEASES.md`). Unchanged by this pipeline. |
+| 2. Early access | Users who turned on **Get new versions early** | `release:publish:early:mac` / `release:publish:early:win` when Kirby says "release X.Y.Z" |
+| 3. Stable | Everyone, the website, `latest.json` | `release:promote-due` after the soak, or `release:promote` by hand |
+
+Stage 3 never builds anything. It points the stable feeds at the files stage 2 already uploaded.
+
+### How promotion ships the same bits
+
+Early releases carry their final version, `0.9.0` and never `0.9.0-beta.1`. Electron Builder
+writes `latest-mac.yml` (and `latest.yml` on Windows) for that build. The early publish uploads the
+artifacts and then that exact feed text under the early name: `mac/beta-mac.yml` and
+`windows/beta.yml`. Promotion later uploads the same text under the stable name.
+
+This works because of how electron-updater reads an S3 feed:
+
+- The S3 provider is a `GenericProvider`. It fetches `<channel>-mac.yml` on macOS and
+  `<channel>.yml` on Windows, and offers the version inside when it is semver-greater than the
+  running app. It does not care whether the version has a prerelease tag.
+- `allowPrerelease` is only consulted by the GitHub providers, so it plays no part here.
+- A feed file does not name itself, and its artifact URLs are relative. Both feeds live in the same
+  directory, so they resolve to the same objects. `earlyTarget()` refuses a manifest where they do
+  not.
+- Setting `autoUpdater.channel` turns `allowDowngrade` on inside electron-updater. `main.js`
+  assigns the value from `updaterSettingsFor()` after the channel, so stable installs never
+  downgrade.
+
+A stable install only ever reads `latest-mac.yml` or `latest.yml`. Nothing in stage 2 writes those.
+
+### Early-access channel
+
+The channel is still called `beta` on disk and in the feed names. Three properties keep it safe:
+
+1. **Opt-in only.** The default is stable. The single way in is the **Get new versions early**
+   toggle in Settings, Advanced. It writes `update-channel.json` in userData, with the original
+   `beta` key, so a file written by an older build reads the same. `channelFor()` treats anything
+   that is not literally `true` as stable.
+2. **Unlisted.** The early feeds are recorded in `betaChannel` in `server/download-manifest.json`
+   (`feed` for macOS, `windowsFeed` for Windows) and are deliberately **not** `platforms` entries.
+   The website and the share emails render from `platforms`, so nothing public can point at an
+   early build. `release:preflight` fails if a beta platform entry ever appears, or if either early
+   feed stops being a sibling of its stable feed.
+3. **Reversible.** Turning the toggle off records the version the user was running as
+   `leftEarlyFrom`. That exact build is allowed to downgrade to current stable, so a user who leaves
+   on a build we later withdraw is not stranded above stable. A legacy `X.Y.Z-beta.N` build always
+   qualifies. Once the install runs any other version, the marker is cleared.
+
+Installed apps older than this change only allow that downgrade for prerelease versions. A user on
+one of those who leaves early access while on a stable-numbered early build stays on it until
+stable catches up.
+
+### Stage 2: publish to early access
+
+Prepare exactly as for a stable release (sections 1 to 3 of the macOS runbook, and steps 1 and 2 of
+the Windows runbook). Then:
+
+```sh
+npm run release:publish:early:mac -- --confirm-public-release="$MARKIE_RELEASE_VERSION"
+npm run release:publish:early:win -- --confirm-public-release="$MARKIE_RELEASE_VERSION"
+```
+
+These are `release:publish:mac -- --early` and `release:publish:win -- --early`. Use the named
+scripts so a forgotten flag cannot publish straight to stable.
+
+The guards are the same as a stable publish: the exact version, clean pushed `main`, credentials,
+and exact-commit evidence matching the files on disk. The runner then:
+
+1. checks the version is newer than the stable feed and not older than the early feed;
+2. saves the early feed it is about to replace as `.release/<version>/previous-beta-mac.yml` or
+   `previous-beta.yml`, once, so a re-run cannot overwrite it;
+3. uploads the artifacts and blockmaps, then downloads each and verifies its full SHA-512;
+4. uploads the early feed last and waits for it to propagate;
+5. writes `.release/<version>/early.json`.
+
+The stable feeds, the website, and `latest.json` are not touched.
+
+`early.json` holds `publishedAt`, `soakUntil`, `soakDays`, `held`, the commit, and for each platform
+the feed hash and every artifact's size and SHA-512. `.release/` is gitignored, so this state lives
+on the release machine. Promotion has to run on the machine that published early.
+
+### Soak
+
+The soak is `betaChannel.defaultSoakDays` in the manifest, 3 days today. Override it per release
+with `--soak-days=<n>` on the early publish. Fractions work: `0.5` is twelve hours.
+
+The clock is per release. Publishing the second platform restarts it from that publish, and both
+platforms promote together. A newer early release replaces the older one: the older one is never
+promoted, and the newer one starts its own soak.
+
+### Hold
+
+```sh
+npm run release:hold -- --version=0.9.0 --reason="crash on launch in 14.2"
+npm run release:unhold -- --version=0.9.0
+```
+
+A hold stops promotion, including `release:promote --now`. Unholding does not restart the clock: if
+the soak already ended, the next scheduler run promotes.
+
+### Stage 3: promote
+
+The scheduler runs this every hour:
+
+```sh
+npm run release:promote-due
+```
+
+It is idempotent. When nothing is due it reads only `.release/`, touches neither git nor the
+network, and prints one line such as `0.9.0 soaking until 2026-10-23T12:00:00.000Z (31h left)`.
+Every run appends its line to `.release/promote-due.log`. It exits non-zero only when a due
+promotion fails.
+
+By hand, before or after the soak:
+
+```sh
+npm run release:promote -- --confirm-promote=0.9.0          # refuses during the soak
+npm run release:promote -- --confirm-promote=0.9.0 --now    # skips the soak only
+```
+
+Promotion refuses when the release is held, withdrawn, superseded, or a prerelease. It also refuses
+when the early feed in the bucket no longer names that version, and records it as superseded so the
+scheduler stops retrying. Otherwise it:
+
+1. checks `main`, a clean tracked tree, and that the release commit is on `origin/main`;
+2. checks the saved early feed against `early.json` and the live early feed against both;
+3. downloads every artifact and blockmap again and compares its SHA-512 with the evidence;
+4. saves the current stable feed as `previous-latest-mac.yml` or `previous-latest.yml`;
+5. uploads the stable feeds last, after every platform has passed;
+6. runs the same checks a stable publish runs: feed propagation, `/download`, every download route,
+   `/download/latest.json`, and the Windows public feed;
+7. writes `public.json` and `public-windows.json`, and marks `early.json` promoted.
+
+A promotion that stopped halfway is finished by running it again. A platform whose stable feed
+already holds the identical early feed is skipped.
+
+After promotion, run the user-level checks in section 5 of the macOS runbook and step 5 of the
+Windows runbook. They read the saved `previous-latest*.yml`, so they test the update from the
+previous stable release.
+
+### Rollback at each stage
+
+| Stage | Command | Effect |
+| --- | --- | --- |
+| Early, before promotion | `npm run release:rollback:early -- --confirm-rollback=<version>` | Restores the saved previous early feed on each platform, or points the early feed at current stable when there was none. Marks the release withdrawn, so it never promotes. |
+| Stable, after promotion, macOS | `npm run release:rollback:mac -- --confirm-rollback=<version>` | Restores `previous-latest-mac.yml`, then verifies the website routes. |
+| Stable, after promotion, Windows | `npm run release:rollback:win -- --confirm-rollback=<version>` | Restores `previous-latest.yml`. |
+
+Early users who already installed a withdrawn build keep it until the next release. The channel
+deliberately does not downgrade users who are still opted in, because an old early feed could
+otherwise pull them back by several versions.
+
+A stable rollback leaves the early feed alone. Withdraw early as well, or ship a fix, so early users
+do not stay on the build stable just left.
+
+Versioned artifacts stay in storage at every stage. Removing them is a separate destructive storage
+operation and is normally unnecessary.
+
+### Direct stable publish
+
+`release:publish:mac` and `release:publish:win` without `--early` still publish straight to stable.
+Use them only when Kirby asks for a release to skip early access. Afterwards the runner brings the
+early feed up to the same version when it is missing or older, because early-channel installs read
+only the early feed and would otherwise never see a stable hotfix.
+
+### Legacy `X.Y.Z-beta.N` builds
+
+The old prerelease path still works and never promotes:
 
 ```sh
 npm run release:version -- 0.5.0-beta.1
 npm run release:prepare:mac
-npm run release:verify:mac
 npm run release:publish:mac -- --confirm-public-release=0.5.0-beta.1
 ```
 
-Version format is `X.Y.Z-beta.N` and nothing else; `assertVersion` rejects any other prerelease tag
-so a build cannot upload into a channel with no readers. Electron Builder derives the channel from
-the prerelease tag and writes `beta-mac.yml`, which the release script selects through
-`macFeedFile()`. `0.5.0-beta.1` sorts **below** `0.5.0`, so shipping stable afterwards is not read
-as a downgrade.
-
-A beta release does not update the website, `latest.json`, or any download route. Those are stable
-routes and stay pointed at the last stable build.
-
-### Backing out a beta
-
-Restore the previous `beta-mac.yml`:
-
-```sh
-npm run release:rollback:mac -- --confirm-rollback=<beta-version>
-```
-
-Testers who turn the toggle off are moved back to current stable on the next check: leaving the
-channel sets `allowDowngrade`, because a beta carries a higher version than stable and the user
-would otherwise sit on the build we withdrew forever.
-
-Withdrawing a beta needs no public retraction, because nothing public ever advertised it.
+`assertVersion` accepts `X.Y.Z-beta.N` and no other prerelease tag. Electron Builder derives the
+channel from the tag and writes `beta-mac.yml`, which `macFeedFile()` selects. `0.5.0-beta.1` sorts
+below `0.5.0`, so the stable release afterwards is not read as a downgrade. `--early` refuses a
+prerelease version.
 
 ## Desktop artifact matrix
 
@@ -230,7 +367,9 @@ npm run release:verify:mac
 
 ### 4. Production publish checkpoint
 
-Only after explicit approval:
+Only after explicit approval. A normal release goes to early access first; see
+[Stage 2](#stage-2-publish-to-early-access) and [Stage 3](#stage-3-promote). The direct stable
+publish below is for a release Kirby asked to skip early access:
 
 ```sh
 npm run release:publish:mac -- --confirm-public-release="$MARKIE_RELEASE_VERSION"
@@ -246,7 +385,8 @@ notarization, hashes, and the live website contract. It then:
 4. uploads `latest-mac.yml` last, making the release visible to installed apps;
 5. waits for feed propagation;
 6. confirms `/download`, `/download/mac`, and `/download/latest.json` resolve the new release;
-7. writes `.release/<version>/public.json`.
+7. writes `.release/<version>/public.json`;
+8. brings the early feed up to the same version if it was missing or older.
 
 The old `npm run electron:release` command is now only an alias to this guarded publisher; it cannot
 build and upload in one unverified step. Never use `electron-builder publish` as a dry run: its
@@ -302,9 +442,11 @@ If the newly published feed must be withdrawn, explicitly approve rollback and r
 npm run release:rollback:mac -- --confirm-rollback="$MARKIE_RELEASE_VERSION"
 ```
 
-This restores the exact previous `latest-mac.yml` saved before publication and verifies the previous
-version through the public feed and website routes. Versioned artifacts remain in storage; removing
-them is a separate destructive storage operation and is normally unnecessary.
+This restores the exact previous `latest-mac.yml` saved before publication or promotion and verifies
+the previous version through the public feed and website routes. The version comes from the
+confirmation flag, so it still works after `main` has moved to the next version. Versioned artifacts
+remain in storage; removing them is a separate destructive storage operation and is normally
+unnecessary. See [Rollback at each stage](#rollback-at-each-stage) for the early feed.
 
 ## Windows release runbook
 
@@ -350,7 +492,8 @@ the exact commit. `npm run release:verify:win` re-runs that verification on its 
 ### 3. Production publish checkpoint
 
 Publishing is an external-production action. It needs an explicit release instruction, and the
-command needs the exact version.
+command needs the exact version. A normal release uses `release:publish:early:win` here and is
+promoted later; see [Release stages](#release-stages). The direct stable publish is:
 
 ```sh
 npm run release:publish:win -- --confirm-public-release="$MARKIE_RELEASE_VERSION"
@@ -396,10 +539,13 @@ release is not complete until this passes.
 
 ### Withdrawing a Windows release
 
-There is no `release:rollback:win`. The macOS rollback restores the exact previous `latest-mac.yml`
-saved just before publication, and the Windows publisher saves no such copy, so a command that
-pretended to roll back would be worse than not having one. Withdrawing a Windows release means
-republishing the previous version's feed by hand. Versioned artifacts stay in storage either way.
+```sh
+npm run release:rollback:win -- --confirm-rollback="$MARKIE_RELEASE_VERSION"
+```
+
+`release:publish:win` and `release:promote` both save the previous `windows/latest.yml` as
+`.release/<version>/previous-latest.yml` before replacing it. The rollback republishes that exact
+file and verifies the public Windows feed. Versioned artifacts stay in storage either way.
 
 ## 0.5.0 server deploy: email verification and the pending-invite backfill
 

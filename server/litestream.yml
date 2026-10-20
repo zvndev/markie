@@ -4,6 +4,19 @@ dbs:
       - type: s3
         endpoint: ${B2_ENDPOINT}      # e.g. https://s3.us-west-004.backblazeb2.com
         bucket: ${B2_BUCKET}
-        path: markie-db
+        # A new prefix for the encrypted replica, so it never has to read the
+        # plaintext generations written before encryption. Those stay under
+        # markie-db until they are purged from the bucket.
+        path: markie-db-age
         access-key-id: ${B2_KEY_ID}
         secret-access-key: ${B2_APP_KEY}
+        # Every snapshot and WAL segment is encrypted to the recipient before
+        # it leaves the server. The identity is needed to restore, and also on
+        # boot, when Litestream reads the newest segment back to find its
+        # place. Both live in Railway variables; the identity's offline copy
+        # is the only way to restore if those are lost.
+        age:
+          identities:
+            - ${LITESTREAM_AGE_IDENTITY}
+          recipients:
+            - ${LITESTREAM_AGE_RECIPIENT}

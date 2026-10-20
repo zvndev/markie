@@ -41,6 +41,7 @@ describe("library state loader", () => {
       })
     ).resolves.toEqual({
       signedIn: false,
+      servers: [],
       items: [],
       error: "Library couldn't load: native module failed to load",
       cloudError: null,
@@ -129,6 +130,18 @@ describe("initialLibTab", () => {
 });
 
 describe("the cloud half of the list", () => {
+  it("passes on which other servers have a session, and nothing that is not an origin string", async () => {
+    await expect(
+      readLibrarySnapshot({
+        libraryState: async () => ({
+          signedIn: false,
+          servers: ["https://docs.example.com", 7 as unknown as string],
+          items: [],
+        }),
+      })
+    ).resolves.toMatchObject({ signedIn: false, servers: ["https://docs.example.com"] });
+  });
+
   it("passes a failed cloud list through beside the rows that did load", async () => {
     await expect(
       readLibrarySnapshot({

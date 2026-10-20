@@ -126,12 +126,19 @@ function configuredOrigins() {
   return out;
 }
 
-// Where a document that is not on any server yet should go: the server asked
-// for when it has a session, else the primary, else whichever is signed in.
+// Where a document that is not on any server yet should go: the server the
+// caller named, or the primary one. Never "whichever happens to be signed
+// in": a file the user meant for Markie Cloud must not be uploaded to some
+// other server because Cloud's session lapsed. The caller checks the session.
 function pickOrigin(origin) {
-  if (origin && sessionFor(origin)) return origin;
-  if (sessionFor(primaryOrigin)) return primaryOrigin;
-  return configuredOrigins()[0] ?? primaryOrigin;
+  return origin || primaryOrigin;
+}
+
+// What to tell somebody whose upload has nowhere to go.
+function signInFirst(server) {
+  return server === DEFAULT_SERVER
+    ? "Sign in to Markie Cloud to sync this file."
+    : `Sign in to ${hostOf(server)} to sync this file.`;
 }
 
 // The server a cloud id belongs to, as far as this device knows. Asset
@@ -574,12 +581,13 @@ function mediaLeftPending(filePath, staged) {
 }
 
 // Turn syncing on for a file: create the cloud doc (or push a new snapshot).
-// A document already on a server stays on it; a new one goes to `origin`
-// when that server has a session (see pickOrigin).
+// A document already on a server stays on it; a new one goes to `origin`, or
+// to the primary server when none is named, and only with a session there
+// (see pickOrigin).
 async function syncOn(filePath, name, content, areaId, origin) {
   const row = registry.get(filePath);
   const server = row?.cloud_doc_id ? originOfRow(row) : pickOrigin(origin);
-  if (!isConfigured(server)) return { error: "not signed in" };
+  if (!isConfigured(server)) return { error: signInFirst(server) };
   const explicitArea = areaId !== undefined;
   if (explicitArea && (typeof areaId !== "string" || !areaId || areaId.length > 128 || /[\x00-\x20\x7f]/.test(areaId))) return { error: "Choose a valid cloud destination." };
   if (explicitArea && !principalFor(server)) return { error: "Confirm your signed-in account before choosing a cloud destination." };
@@ -1374,7 +1382,15 @@ async function libraryState() {
       });
     }
   }
-  return { signedIn: isConfigured(), items, cloudError: errors.length ? errors.join(" ") : null };
+  // `signedIn` is the primary server, where a file that is on no server yet
+  // goes (pickOrigin). `servers` is every other server with a session, so a
+  // row on one of them offers what that server's session can do.
+  return {
+    signedIn: isConfigured(primaryOrigin),
+    servers: configuredOrigins().filter((o) => o !== primaryOrigin),
+    items,
+    cloudError: errors.length ? errors.join(" ") : null,
+  };
 }
 
 function hostOf(origin) {

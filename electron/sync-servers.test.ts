@@ -208,6 +208,39 @@ describe("routing each document to its own server", () => {
     expect(rows.get("/d/new.md")!.cloud_origin).toBeUndefined();
   });
 
+  it("never uploads a new document to another signed-in server when Markie Cloud is signed out", async () => {
+    seedRow({ path: "/d/new.md" });
+    sync.setConfig({ token: null, serverURL: CLOUD });
+    servers[SELF] = () => ({ status: 200, body: { version: 1 } });
+
+    const res = await sync.syncOn("/d/new.md", "new.md", "hello");
+
+    expect(res).toEqual({ error: "Sign in to Markie Cloud to sync this file." });
+    expect(calls).toHaveLength(0);
+    expect(rows.get("/d/new.md")!.cloud_origin).toBeUndefined();
+  });
+
+  it("refuses a server that was named but is signed out, rather than using another", async () => {
+    seedRow({ path: "/d/new.md" });
+    sync.setSession({ origin: SELF, token: null });
+    servers[CLOUD] = () => ({ status: 200, body: { version: 1 } });
+
+    const res = await sync.syncOn("/d/new.md", "new.md", "hello", undefined, SELF);
+
+    expect(res).toEqual({ error: "Sign in to docs.example.com to sync this file." });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("says Markie Cloud is signed out in the Library when only another server has a session", async () => {
+    sync.setConfig({ token: null, serverURL: CLOUD });
+    servers[SELF] = () => ({ status: 200, body: { docs: [] } });
+
+    const state = await sync.libraryState();
+
+    expect(state.signedIn).toBe(false);
+    expect(state.servers).toEqual([SELF]);
+  });
+
   it("pulls from the server it is told, and remembers that server on the row", async () => {
     servers[SELF] = () => ({ status: 200, body: { doc: { content: "# hi\n", name: "hi.md", version: 3 } } });
     const target = path.join(tmpDir, "hi.md");
@@ -262,6 +295,7 @@ describe("the Library across servers", () => {
     const byId = Object.fromEntries(state.items.map((i: { cloudId: string }) => [i.cloudId, i]));
 
     expect(state.signedIn).toBe(true);
+    expect(state.servers).toEqual([SELF]);
     expect(state.cloudError).toBeNull();
     expect(byId.c1.server).toBeUndefined();
     expect(byId.c2).toMatchObject({ kind: "cloud-only", state: "cloud-only" });

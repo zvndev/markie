@@ -760,6 +760,37 @@ describe("documents on other servers", () => {
     expect(mine.querySelector("[data-server-badge]")).toBeNull();
   });
 
+  // Only another server is signed in. "Sync to cloud" would send the file to
+  // Markie Cloud, which has no session, so it is not offered; a document on
+  // that other server still offers what its own session can do.
+  it("offers each row only what the server it would reach is signed in for", async () => {
+    const libraryState = vi.fn(async () => ({
+      signedIn: false,
+      servers: [SELF],
+      items: [
+        item({ name: "local.md", path: "/notes/local.md" }),
+        item({ name: "theirs.md", path: "/notes/theirs.md", state: "synced", cloudId: "s1", server: SELF }),
+      ],
+    }));
+    renderLibrary([], { overrides: { libraryState, serversList: servers } as Partial<ElectronAPI> });
+    const local = await openMenu("local.md");
+    expect(within(local).queryByRole("button", { name: "Sync to cloud" })).not.toBeInTheDocument();
+    const theirs = await openMenu("theirs.md");
+    expect(within(theirs).getByRole("button", { name: "Stop syncing" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Sign in to sync these files/ })).toBeInTheDocument();
+  });
+
+  it("offers nothing on a row whose server has no session, even with Markie Cloud signed in", async () => {
+    const libraryState = vi.fn(async () => ({
+      signedIn: true,
+      servers: [],
+      items: [item({ name: "theirs.md", path: "/notes/theirs.md", state: "synced", cloudId: "s1", server: SELF })],
+    }));
+    renderLibrary([], { overrides: { libraryState, serversList: servers } as Partial<ElectronAPI> });
+    const theirs = await openMenu("theirs.md");
+    expect(within(theirs).queryByRole("button", { name: "Stop syncing" })).not.toBeInTheDocument();
+  });
+
   it("gets a missing copy back from the server it lives on", async () => {
     const gone = item({ name: "gone.md", path: "/notes/gone.md", state: "synced", cloudId: "s8", exists: false, server: SELF });
     const { api } = renderLibrary([gone], { ...cloudProps, overrides: { serversList: servers } as Partial<ElectronAPI> });

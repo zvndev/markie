@@ -222,7 +222,14 @@ export function Library({
   // Names for the server badge on documents that live off Markie Cloud.
   const trustedServers = useTrustedServers();
   const [items, setItems] = useState<LibraryItem[]>([]);
+  // Markie Cloud: where "Sync to cloud" sends a file that is on no server yet.
   const [signedIn, setSignedIn] = useState(false);
+  // The other servers with a session. A row on one of them acts with that
+  // server's session, never with Cloud's, and offers nothing without one.
+  const [serverSessions, setServerSessions] = useState<string[]>([]);
+  const signedInFor = (item: LibraryItem) => (item.server ? serverSessions.includes(item.server) : signedIn);
+  // The cloud list covers every server with a session.
+  const anySignedIn = signedIn || serverSessions.length > 0;
   const scopeKey = useSyncExternalStore(subscribeAccountScope, accountScopeKey, () => "");
   const [uploadArea, setUploadArea] = useState("");
   useEffect(() => { setUploadArea(""); }, [scopeKey]);
@@ -403,6 +410,7 @@ export function Library({
       // First rows to arrive define the order the panel keeps while open.
       setFrozenOrder((prev) => (prev.length ? prev : sortRecentItems(s.items).map(itemKey)));
       setSignedIn(s.signedIn);
+      setServerSessions(s.servers);
       setWorkspace(s.workspace);
       setLoading(false);
       setCloudError(s.cloudError ?? null);
@@ -420,6 +428,7 @@ export function Library({
       // First rows to arrive define the order the panel keeps while open.
       setFrozenOrder((prev) => (prev.length ? prev : sortRecentItems(s.items).map(itemKey)));
       setSignedIn(s.signedIn);
+      setServerSessions(s.servers);
       setWorkspace(s.workspace);
       setLoading(false);
       setCloudError(s.cloudError ?? null);
@@ -527,6 +536,8 @@ export function Library({
 
   const fileRow = (item: LibraryItem) => {
     const status: SyncStatus = item.shared ? "shared" : item.state;
+    // Signed in to the server this row's actions would reach.
+    const rowSignedIn = signedInFor(item);
     const api = getElectronAPI()!;
     const isActive = activePath && item.path === activePath;
     const itemKey = item.path ?? item.cloudId;
@@ -597,7 +608,7 @@ export function Library({
                 badge and no way out: the update strip only appears when the
                 server is ahead, which this usually is not, so the only recovery
                 was to open the file and save it again with nothing saying so. */}
-            {signedIn && item.state === "unpushed" && item.exists && item.path && (
+            {rowSignedIn && item.state === "unpushed" && item.exists && item.path && (
               <button
                 className="text-[var(--status-blue)] hover:underline"
                 onClick={() => act(() => api.docRetryPush!({ path: item.path! }))}
@@ -605,23 +616,23 @@ export function Library({
                 Retry backup
               </button>
             )}
-            {signedIn && item.state === "local-only" && item.exists && classic && (
+            {rowSignedIn && item.state === "local-only" && item.exists && classic && (
               <button className="text-muted hover:text-foreground" onClick={() => syncOn(item)}>Sync to cloud</button>
             )}
-            {signedIn && item.state === "paused" && item.exists && classic && (
+            {rowSignedIn && item.state === "paused" && item.exists && classic && (
               <button className="text-muted hover:text-foreground" onClick={() => syncOn(item)}>Resume sync</button>
             )}
-            {signedIn && item.state === "synced" && (
+            {rowSignedIn && item.state === "synced" && (
               <button className="text-muted hover:text-foreground" onClick={() => setConfirmOff(item.path)}>Stop syncing</button>
             )}
-            {signedIn && item.state === "behind" && (
+            {rowSignedIn && item.state === "behind" && (
               <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docResolve({ path: item.path!, strategy: "cloud" }))}>Pull latest</button>
             )}
             {/* "Take cloud" sat here as an unlabelled button that silently
                 destroyed every local line the server never received. Opening
                 the document puts the choice where the counts are, so nobody
                 picks it without being told what it costs. */}
-            {signedIn && item.state === "conflict" && item.path && (
+            {rowSignedIn && item.state === "conflict" && item.path && (
               <button
                 className="text-[var(--status-blue)] hover:underline"
                 onClick={() => onOpenPath(item.path!)}
@@ -629,7 +640,7 @@ export function Library({
                 Review changes…
               </button>
             )}
-            {cloudCopyOnly(item) && signedIn && (
+            {cloudCopyOnly(item) && rowSignedIn && (
               <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name, ...onServer(item) }))}>Download…</button>
             )}
           </div>
@@ -782,7 +793,7 @@ export function Library({
                 alongsideSnapshots={!!renderCloudDocuments}
                 loading={loading}
                 renderRow={fileRow}
-                signedIn={signedIn}
+                signedIn={anySignedIn}
                 accountId={accountId}
                 accountSessionKey={confirmedAccountScope()?.userId === accountId ? scopeKey : ""}
                 onManage={onManageShare}
@@ -811,7 +822,7 @@ export function Library({
             alongsideSnapshots={!!renderCloudDocuments}
             loading={loading}
             renderRow={fileRow}
-            signedIn={signedIn}
+            signedIn={anySignedIn}
             accountId={accountId}
             accountSessionKey={confirmedAccountScope()?.userId === accountId ? scopeKey : ""}
             onManage={onManageShare}

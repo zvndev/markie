@@ -390,7 +390,11 @@ export interface ElectronAPI {
   // A failure answers the same shape with an empty list and `error`, so a
   // caller that maps over `items` never meets `undefined`.
   libraryState(): Promise<{
+    // Markie Cloud (the primary server), where a file on no server yet goes.
     signedIn: boolean;
+    // Every other server with a session. A row whose `server` is not here
+    // has no session to act with.
+    servers?: string[];
     items: LibraryItem[];
     error?: string;
     // The local rows loaded but the server's list did not (expired sign-in,

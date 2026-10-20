@@ -217,6 +217,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     registrySetRole: vi.fn(async () => noopResult),
     libraryState: vi.fn(async () => ({
       signedIn: false,
+      servers: [] as string[],
       items: [] as LibraryItem[],
     })),
 

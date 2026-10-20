@@ -16,6 +16,7 @@ describe("library startup", () => {
 
     expect(result).toEqual({
       signedIn: false,
+      servers: [],
       items: [],
       error: null,
       cloudError: null,
@@ -66,6 +67,7 @@ describe("library startup", () => {
 
     expect(result).toEqual({
       signedIn: false,
+      servers: [],
       items: [],
       error: null,
       cloudError: null,

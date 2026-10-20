@@ -33,6 +33,7 @@ const { setTrustedOrigins, isAllowedServerOrigin, DEFAULT_SERVER } = require("./
 const { fetchSharedDoc } = require("./share-open");
 const { createServerStore } = require("./servers");
 const { serverRequest } = require("./server-request");
+const { withSafeDocExtension } = require("./doc-names");
 const { classifyDeepLink, cloudDocId, sourceHint } = require("./deep-links");
 const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
@@ -391,7 +392,7 @@ function showDeepLinkFailure() {
 // Save a shared doc to ~/Downloads with a collision-safe markdown name.
 function downloadsUniquePath(name) {
   let safe = path.basename(String(name || "")).replace(/[\\/:]/g, "_").trim() || "Shared document";
-  if (!/\.(md|markdown|mdx|txt|text|log)$/i.test(safe)) safe += ".md";
+  safe = withSafeDocExtension(safe);
   const dir = app.getPath("downloads");
   const ext = path.extname(safe);
   const stem = path.basename(safe, ext);

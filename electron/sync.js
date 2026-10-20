@@ -19,6 +19,7 @@ const { isAllowedServerOrigin, DEFAULT_SERVER } = require("./share-origin");
 // truncated document behind if the process dies mid-write.
 const { writeFileAtomic } = require("./atomic-write");
 const docTiers = require("./doc-tiers");
+const { withSafeDocExtension } = require("./doc-names");
 
 // origin -> { token, principal, generation }. `principal` is who the renderer last
 // confirmed the token belongs to, with that server: the roles the registry
@@ -1021,13 +1022,15 @@ function landingDir() {
 }
 
 // A file name the document can be written under. Names come from whichever
-// machine synced it, so anything that is not a plain base name is reduced to
-// one, and a document with no extension becomes markdown, which is what it is.
+// machine synced it, or from a server that is not this user's, so anything
+// that is not a plain base name is reduced to one, and anything outside the
+// markdown and plain-text family gets ".md" on the end (doc-names.js): a
+// cloud document is text, and "Cloud/run.command" must not appear in the
+// workspace as something the system would run.
 function landingName(name) {
   let base = path.basename(String(name ?? "").replace(/[\\/]/g, "/")).replace(/[\u0000-\u001f]/g, "").trim();
   if (!base || base === "." || base === "..") base = "document.md";
-  if (!path.extname(base)) base = `${base}.md`;
-  return base;
+  return withSafeDocExtension(base);
 }
 
 // "notes.md", then "notes (2).md": a file already there is someone's, and a

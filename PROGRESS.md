@@ -1439,7 +1439,7 @@ Approved by Kirby: encrypt the backup, redeploy the api, delete the detached vol
 - Litestream replicates age-encrypted to `markie-db-age/`. This was proven locally with v0.3.13 (encrypt, restore, resume after restart). In production the objects carry the age header, and a test restore inside the live container passed integrity with all 43 docs. Every plaintext replica version under `markie-db/` was permanently deleted from B2. A lifecycle rule now purges retired encrypted files a day after they are hidden. The replica key is already scoped to the Markie bucket.
 - The age identity is in Railway variables; its offline copy was handed to Kirby.
 - The api was redeployed from a clean `git archive` of the server directory at d659415, after a snapshot (`/data/pre-deploy-2026-10-20.db`, integrity ok). Before deploying, the migration was rehearsed: the Sep 14 image ran on seeded data, then the new image booted on that same data, carrying over the session, access control, public links, shares and history pruning. Live checks after the deploy passed. There were no errors in the logs.
-- The detached volume `api-volume-a5Kl` was deleted. Railway still listed it right after the delete, which looks like deferred removal.
+- The detached volume `api-volume-a5Kl` was kept. The CLI delete never ran (the account has 2FA), and it may hold original data, so it stays until someone inspects it.
 - Private packaging allowed only `electron/`, `out/` and production `node_modules/`, so the shared `mcp/doc-text.cjs` failed the nightly build. It is now a named exception, and a test pins it.
 
 ## 2026-10-20 Vault: Touch ID, real backups, calm copy

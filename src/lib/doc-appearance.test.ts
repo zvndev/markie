@@ -164,6 +164,12 @@ describe("what the canvas reads", () => {
     expect(vars["--doc-font-size"]).toBe("30.00px");
   });
 
+  // Source view (and every .txt file) keeps its monospace size but still
+  // follows ⌘+ / ⌘-, so zoom is exposed on its own too.
+  it("exposes zoom for the source editor", () => {
+    expect(appearanceVars({ ...DEFAULT_APPEARANCE, zoom: 1.5 })["--doc-zoom"]).toBe("1.5");
+  });
+
   // A document nobody resized reads at the style template's size, so a
   // template (or the Settings slider) can set it. Zoom still multiplies it.
   it("lets the template's size through at the default size, still zoomed", () => {

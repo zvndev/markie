@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDocumentSession, editDocumentText, restoreDocumentText, serializeDocumentSession, type DocumentSession } from "@/lib/document-session";
 import type { DocumentCommandTarget } from "@/lib/document-commands";
@@ -28,6 +28,22 @@ describe("source document controls", () => {
     expect(field).toHaveStyle({ fontFamily: "Georgia, Charter, serif", fontSize: "22px" });
     expect(onChange).not.toHaveBeenCalled();
     expect(await serializeDocumentSession(session)).toEqual(before);
+  });
+
+  it("zooms literal text from the menu, even read-only, and remembers it for the next file", async () => {
+    localStorage.clear();
+    const session = { ...await createDocumentSession("text"), text: "notes" };
+    const onCommandsReady = vi.fn<(target: DocumentCommandTarget | null) => void>();
+    const { unmount } = render(<TextDocumentEditor session={session} readOnly onChange={vi.fn()} onFlushReady={vi.fn()} onCommandsReady={onCommandsReady} />);
+    const commands = onCommandsReady.mock.calls[0][0]!;
+    expect(commands.enabledCommands).toEqual(expect.arrayContaining(["zoom-in", "zoom-out", "view-zoom-reset"]));
+    act(() => { commands.execute("zoom-in"); commands.execute("zoom-in"); });
+    expect(screen.getByRole("textbox", { name: "Document text" })).toHaveStyle({ fontSize: "17.5px" });
+    unmount();
+    render(<TextDocumentEditor session={session} onChange={vi.fn()} onFlushReady={vi.fn()} />);
+    expect(screen.getByRole("textbox", { name: "Document text" })).toHaveStyle({ fontSize: "17.5px" });
+    expect(screen.getByText("125%")).toBeInTheDocument();
+    localStorage.clear();
   });
 
   it("keeps real Markdown source formatting and Table within the shared row", async () => {
@@ -88,7 +104,7 @@ describe("source document controls", () => {
     expect(onChange).not.toHaveBeenCalled();
     rerender(<TextDocumentEditor session={session} readOnly onChange={onChange} onFlushReady={vi.fn()} onCommandsReady={onCommandsReady} />);
     const readonlyCommands = onCommandsReady.mock.calls.at(-1)![0]!;
-    expect(readonlyCommands.enabledCommands).toEqual(["find"]);
+    expect(readonlyCommands.enabledCommands).toEqual(["find", "zoom-in", "zoom-out", "view-zoom-reset"]);
     readonlyCommands.execute("undo");
     expect(onChange).not.toHaveBeenCalled();
   });

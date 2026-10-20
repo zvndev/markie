@@ -7,6 +7,7 @@ import { orderedWordRange, readWordSelection, restoreWordSelection, wordRangeTex
 import type { DocumentCommandTarget } from "@/lib/document-commands";
 import type { FormattingAction } from "@/lib/format-controls";
 import { DEFAULT_APPEARANCE } from "@/lib/doc-appearance";
+import { readDocumentZoom, writeDocumentZoom, zoomForCommand } from "@/lib/document-zoom";
 import { FormattingToolbar } from "@/components/formatting-toolbar";
 import { CommandPalette } from "@/components/command-palette";
 import { LinkPreviewCard } from "@/components/link-preview-card";
@@ -33,7 +34,8 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
   const [selected, setSelected] = useState<string | undefined>(document.paragraphs[0]?.id);
   const [runId, setRunId] = useState<string | undefined>(document.paragraphs[0]?.runs[0]?.id);
   const [error, setError] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(100);
+  const [zoom, setZoom] = useState(() => Math.round(readDocumentZoom() * 100));
+  useEffect(() => writeDocumentZoom(zoom / 100), [zoom]);
   const [pageView, setPageView] = useState(() => document.format === "docx" && (typeof window === "undefined" || window.innerWidth > 650));
   const [outline, setOutline] = useState(false);
   const [tracking, setTracking] = useState(false), [reviewAuthor, setReviewAuthor] = useState("You"), [originalView, setOriginalView] = useState(false);
@@ -462,7 +464,7 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
     if (id === "undo") { undo(); return; } if (id === "redo") { redo(); return; }
     if (id === "find") { setOriginalView(false); setTool("find"); return; }
     if (id === "document-history") { onHistory?.(); return; }
-    if (id === "zoom-in" || id === "zoom-out" || id === "view-zoom-reset") { setZoom(id === "view-zoom-reset" ? 100 : Math.min(200, Math.max(50, zoom + (id === "zoom-in" ? 10 : -10)))); return; }
+    if (id === "zoom-in" || id === "zoom-out" || id === "view-zoom-reset") { setZoom((current) => Math.round((zoomForCommand(current / 100, id) ?? current / 100) * 100)); return; }
     if (id === "view-page" || id === "view-continuous") { setPageView(id === "view-page"); return; }
     if (id === "view-outline") { setOutline(!outline); return; }
     if (id === "review-original" || id === "review-final") { textSelection.current = null; setOriginalView(id === "review-original"); return; }

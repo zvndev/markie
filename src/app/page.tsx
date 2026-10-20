@@ -18,6 +18,7 @@ import {
   stepZoom,
   type DocAppearance,
 } from "@/lib/doc-appearance";
+import { createPinchZoom } from "@/lib/document-zoom";
 import { StatsPanel } from "@/components/stats-panel";
 import type { Editor as TipTapEditor } from "@tiptap/react";
 import { formatMarkdownTables } from "@/lib/format-tables";
@@ -1823,7 +1824,10 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       api.onMenuCommandPalette?.(() => setShowPalette((v) => !v)),
       api.onMenuShortcuts?.(() => setShowHelp((v) => !v)),
       api.onMenuTheme?.(() => setShowTheme((v) => !v)),
-      api.onMenuSettings?.(() => setShowSettings((v) => !v)),
+      api.onMenuSettings?.((section) => {
+        if (section) { setSettingsSection(section); setShowSettings(true); }
+        else setShowSettings((v) => !v);
+      }),
       api.onMenuLibrary?.(() => selectView("library")),
       api.onMenuGlobalSearch?.(() => { if (!document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) setShowSearch(true); }),
       api.onDeepLink?.((url) => {
@@ -2119,6 +2123,23 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     handlersRef.current.zoom = handleZoom;
     handlersRef.current.pageWidth = handlePageWidth;
   }, [handleZoom, handlePageWidth]);
+
+  // A trackpad pinch (or ctrl + scroll) is the same zoom as ⌘+ and ⌘-, for
+  // Markdown and for every document editor. Overlays keep their own scroll.
+  useEffect(() => {
+    const pinch = createPinchZoom((direction) => {
+      if (documentsOpenRef.current) documentShellRef.current?.commands?.execute(direction > 0 ? "zoom-in" : "zoom-out");
+      else handlersRef.current.zoom(direction);
+    });
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      if (document.querySelector('.markie-shell[inert], [role="dialog"][aria-modal="true"]')) return;
+      pinch(event);
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, []);
 
 
   if (!booted) {
@@ -2475,6 +2496,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       )}
       {showSettings && (
         <Settings
+          key={settingsSection ?? "account"}
           initialSection={settingsSection}
           onClose={() => {
             setShowSettings(false);

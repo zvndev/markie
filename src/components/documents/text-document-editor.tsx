@@ -7,6 +7,7 @@ import { DocToolbar } from "@/components/doc-toolbar";
 import { FormattingToolbar } from "@/components/formatting-toolbar";
 import { appearanceVars, clampFontSize, DEFAULT_APPEARANCE, fontStack, type DocAppearance } from "@/lib/doc-appearance";
 import type { FormattingAction } from "@/lib/format-controls";
+import { readDocumentZoom, writeDocumentZoom, zoomForCommand, ZOOM_COMMANDS } from "@/lib/document-zoom";
 
 const RichView = lazy(() => import("@/components/rich-view").then((module) => ({ default: module.RichView })));
 const TEXT_ACTIONS: readonly FormattingAction[] = ["undo", "redo"];
@@ -30,7 +31,7 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
   const host = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<"source" | "rich">("source");
   const [editor, setEditor] = useState<Editor | null>(null);
-  const [appearance, setAppearance] = useState<DocAppearance>({ ...DEFAULT_APPEARANCE, fontFamily: "mono", fontSize: 14 });
+  const [appearance, setAppearance] = useState<DocAppearance>(() => ({ ...DEFAULT_APPEARANCE, fontFamily: "mono", fontSize: 14, zoom: readDocumentZoom() }));
   const [showTable, setShowTable] = useState(false);
   const [findOpen, setFindOpen] = useState(false), [query, setQuery] = useState(""), [replacement, setReplacement] = useState("");
   const findField = useRef<HTMLInputElement>(null);
@@ -47,6 +48,7 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
     onSourceEditRequested?.();
     remember(undoHistory.current, session.text); redoHistory.current = []; onChange(text);
   };
+  useEffect(() => writeDocumentZoom(appearance.zoom), [appearance.zoom]);
   const undo = () => { const text = undoHistory.current.pop(); if (text !== undefined) { onSourceEditRequested?.(); remember(redoHistory.current, session.text); (onRestoreText ?? onChange)(text); } };
   const redo = () => { const text = redoHistory.current.pop(); if (text !== undefined) { onSourceEditRequested?.(); remember(undoHistory.current, session.text); (onRestoreText ?? onChange)(text); } };
   const markdown = session.format === "markdown";
@@ -91,11 +93,12 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
   const actions = useRef({ undo, redo, openFind, readOnly, mode, editor });
   actions.current = { undo, redo, openFind, readOnly, mode, editor };
   const richReady = !!editor && !editor.isDestroyed && editor.isEditable;
-  const enabledKey = ["find", ...(!readOnly && (mode === "rich" ? richReady : undoHistory.current.length > 0) ? ["undo"] : []), ...(!readOnly && (mode === "rich" ? richReady : redoHistory.current.length > 0) ? ["redo"] : [])].join("|");
+  const enabledKey = ["find", ...ZOOM_COMMANDS, ...(!readOnly && (mode === "rich" ? richReady : undoHistory.current.length > 0) ? ["undo"] : []), ...(!readOnly && (mode === "rich" ? richReady : redoHistory.current.length > 0) ? ["redo"] : [])].join("|");
   const execute = useCallback((command: string) => {
     if (!host.current || host.current.closest("[inert]")) return;
     const current = actions.current;
     if (command === "find") { current.openFind(); return; }
+    if ((ZOOM_COMMANDS as readonly string[]).includes(command)) { setAppearance((previous) => ({ ...previous, zoom: zoomForCommand(previous.zoom, command) ?? previous.zoom })); return; }
     if (current.readOnly) return;
     if (current.mode === "rich" && (!current.editor || current.editor.isDestroyed || !current.editor.isEditable)) return;
     if (command === "undo") { if (current.mode === "rich") current.editor?.chain().focus().undo().run(); else current.undo(); }
@@ -144,7 +147,7 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
       showStyleControls={markdownSource} showWidthControls={false} startControls={startControls}
     />}
     {findOpen ? <div className="docs-find-tools docs-text-find" role="search" aria-label="Find document text" onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setFindOpen(false); textarea.current?.focus(); } else if (event.key === "Enter") { event.preventDefault(); findNext(); } }}><label>Find in source<input ref={findField} aria-label="Find document text" value={query} placeholder="Case-sensitive text" onChange={(event) => setQuery(event.target.value)} /></label><button type="button" disabled={!matchCount} onClick={findNext}>Find next</button><label>Replace with<input aria-label="Replace document text with" value={replacement} onChange={(event) => setReplacement(event.target.value)} /></label><button type="button" disabled={readOnly || !matchCount} onClick={() => applyText(source.split(query).join(replacement))}>Replace all</button><span role="status">{matchCount} matches</span><button type="button" aria-label="Close find" onClick={() => setFindOpen(false)}>×</button></div> : null}
-    {rows ? <div className="docs-csv-preview"><table aria-label="CSV table preview"><tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, col) => <td key={col}>{cell}</td>)}</tr>)}</tbody></table></div> : null}
+    {rows ? <div className="docs-csv-preview" style={{ zoom: appearance.zoom }}><table aria-label="CSV table preview"><tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, col) => <td key={col}>{cell}</td>)}</tr>)}</tbody></table></div> : null}
     {markdown && mode === "rich" ? <Suspense fallback={<p className="docs-loading">Loading rich editor…</p>}><RichView value={session.text} onChange={onChange} readOnly={readOnly} onEditorReady={setEditor} onFlushReady={(flush) => { localFlush.current = flush; onFlushReady(flush); }} /></Suspense> : renderSource ? renderSource(sourceField) : sourceField}
   </div>;
 }

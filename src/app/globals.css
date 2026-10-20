@@ -1545,7 +1545,9 @@ body {
   height: 100% !important;
   background: var(--background) !important;
   font-family: var(--font-geist-mono), monospace !important;
-  font-size: 14px !important;
+  /* Source keeps its own monospace size but follows ⌘+ / ⌘- like Rich view,
+     so a .txt file or Markdown source zooms too. */
+  font-size: calc(14px * var(--doc-zoom, 1)) !important;
 }
 
 .cm-editor .cm-scroller {

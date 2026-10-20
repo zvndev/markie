@@ -43,6 +43,7 @@ import type { EditableDocumentFormat } from "@/lib/document-session";
 import { DEFAULT_LIBRARY_DOCUMENT_QUERY, libraryDocumentFormat, matchesLibraryDocument, queryLibraryDocuments, type LibraryDocumentMetadata, type LibraryDocumentQuery } from "@/lib/library-document-query";
 import { LibraryDocumentFilters } from "@/components/library-document-filters";
 import { NewDocumentModal } from "@/components/new-document-modal";
+import { DEFAULT_APPS_CHANGED } from "@/components/default-apps-section";
 import { CloudAreaPicker, CloudAreaProvider, CloudAreaScopePicker } from "./cloud-area-picker";
 import { accountScopeKey, confirmedAccountScope, subscribeAccountScope } from "@/lib/account-identities";
 
@@ -87,6 +88,7 @@ const NO_DOCUMENT_RECORDS: readonly LibraryRecord[] = [];
 // Long enough to read a short sentence, short enough that the panel is not
 // still explaining a copy you made a minute ago.
 const NOTICE_DISMISS_MS = 4000;
+const DEFAULT_APPS_HINT_KEY = "markie.defaultApps.hintDismissed.v1";
 
 // Node hands back "ENOENT: no such file or directory, open '/x/y.md'". The
 // errno is the only part most people can act on, and it is the part they
@@ -309,6 +311,28 @@ export function Library({
       alive = false;
     };
   }, []);
+
+  // Formats other than Markdown that Finder still sends to another app. Asked
+  // again whenever Settings > Files changes an association.
+  const [othersElsewhere, setOthersElsewhere] = useState<string[]>([]);
+  const [othersHintDismissed, setOthersHintDismissed] = useState(() => {
+    try { return localStorage.getItem(DEFAULT_APPS_HINT_KEY) === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    const api = getElectronAPI();
+    if (!api?.defaultAppsStatus || !onOpenDefaultApps) return;
+    let alive = true;
+    const load = () => api.defaultAppsStatus!().then((status) => {
+      if (alive) setOthersElsewhere(status.supported ? status.formats.filter((format) => format.id !== "markdown" && !format.isDefault).map((format) => format.label) : []);
+    }).catch(() => {});
+    void load();
+    window.addEventListener(DEFAULT_APPS_CHANGED, load);
+    return () => { alive = false; window.removeEventListener(DEFAULT_APPS_CHANGED, load); };
+  }, [onOpenDefaultApps]);
+  const dismissOthersHint = () => {
+    setOthersHintDismissed(true);
+    try { localStorage.setItem(DEFAULT_APPS_HINT_KEY, "1"); } catch { /* preference only */ }
+  };
 
   const makeDefault = async () => {
     const api = getElectronAPI();
@@ -847,6 +871,25 @@ export function Library({
               Text, CSV, JSON and more…
             </button>
           )}
+        </div>
+      )}
+
+      {!cloudWorkspace && needsDefault === false && onOpenDefaultApps && othersElsewhere.length > 0 && !othersHintDismissed && (
+        <div className="group flex items-center border-t border-border px-2 py-1.5">
+          <button
+            onClick={onOpenDefaultApps}
+            title={`Still opening elsewhere: ${othersElsewhere.join(", ")}`}
+            className="min-w-0 flex-1 truncate rounded-md px-2 py-1 text-left text-[11px] text-muted hover:bg-accent/40 hover:text-foreground"
+          >
+            Open text, CSV, JSON and more in Markie…
+          </button>
+          <button
+            onClick={dismissOthersHint}
+            aria-label="Hide default apps suggestion"
+            className="shrink-0 rounded px-1.5 text-[13px] leading-none text-muted/70 opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            ×
+          </button>
         </div>
       )}
 

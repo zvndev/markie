@@ -296,7 +296,8 @@ export interface ElectronAPI {
   onMenuCommandPalette(cb: () => void): Unsubscribe;
   onMenuShortcuts(cb: () => void): Unsubscribe;
   onMenuTheme(cb: () => void): Unsubscribe;
-  onMenuSettings(cb: () => void): Unsubscribe;
+  /** `section` is set when a menu item asks for one Settings tab. */
+  onMenuSettings(cb: (section?: "files") => void): Unsubscribe;
   onMenuLibrary(cb: () => void): Unsubscribe;
   onMenuGlobalSearch?(cb: () => void): Unsubscribe;
   onDeepLink(cb: (url: string) => void): Unsubscribe;

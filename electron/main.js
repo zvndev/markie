@@ -2984,6 +2984,13 @@ const settingsItem = {
   click: () => mainWindow?.webContents.send("menu-settings"),
 };
 
+// Straight to Settings > Files, where Markie sets the Finder default for each
+// format it fully edits. macOS has no system pane to link to instead.
+const defaultAppsItem = {
+  label: "Default Apps for File Types…",
+  click: () => mainWindow?.webContents.send("menu-settings", "files"),
+};
+
 const updatesItem = {
   label: "Check for Updates…",
   click: () => requestUpdateCheck({ manual: true }),
@@ -2998,6 +3005,7 @@ const template = [
             { role: "about" },
             { type: "separator" },
             settingsItem,
+            defaultAppsItem,
             updatesItem,
             { type: "separator" },
             { role: "hide" },

@@ -703,4 +703,30 @@ describe("the cloud half failing to load", () => {
     expect(await screen.findByText("here.md")).toBeInTheDocument();
     expect(screen.queryByText(/Your sign-in has expired/)).not.toBeInTheDocument();
   });
+
+  it("links to default apps when Markdown is already Markie's but other types are not, until dismissed", async () => {
+    localStorage.removeItem("markie.defaultApps.hintDismissed.v1");
+    const format = (id: string, label: string, isDefault: boolean) => ({ id, label, extensions: [], isDefault });
+    const onOpenDefaultApps = vi.fn();
+    const defaultAppsStatus = vi.fn(async () => ({ supported: true, pending: [], formats: [format("markdown", "Markdown", true), format("text", "Plain text", false), format("json", "JSON", false)] }));
+    const { view } = renderLibrary([item()], {
+      overrides: { defaultMarkdownStatus: vi.fn(async () => ({ supported: true, isDefault: true })), defaultAppsStatus },
+      props: { onOpenDefaultApps },
+    });
+    const link = await screen.findByRole("button", { name: "Open text, CSV, JSON and more in Markie…" });
+    expect(link).toHaveAttribute("title", "Still opening elsewhere: Plain text, JSON");
+    await userEvent.click(link);
+    expect(onOpenDefaultApps).toHaveBeenCalledOnce();
+
+    defaultAppsStatus.mockResolvedValue({ supported: true, pending: [], formats: [format("markdown", "Markdown", true), format("text", "Plain text", true), format("json", "JSON", true)] });
+    window.dispatchEvent(new Event("markie:default-apps-changed"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open text, CSV, JSON and more in Markie…" })).not.toBeInTheDocument());
+    view.unmount();
+
+    defaultAppsStatus.mockResolvedValue({ supported: true, pending: [], formats: [format("markdown", "Markdown", true), format("text", "Plain text", false)] });
+    renderLibrary([item()], { overrides: { defaultMarkdownStatus: vi.fn(async () => ({ supported: true, isDefault: true })), defaultAppsStatus }, props: { onOpenDefaultApps } });
+    await userEvent.click(await screen.findByRole("button", { name: "Hide default apps suggestion" }));
+    expect(screen.queryByRole("button", { name: "Open text, CSV, JSON and more in Markie…" })).not.toBeInTheDocument();
+    expect(localStorage.getItem("markie.defaultApps.hintDismissed.v1")).toBe("1");
+  });
 });

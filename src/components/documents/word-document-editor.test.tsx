@@ -749,6 +749,18 @@ describe("Word renderer inside Markie", () => {
     expect(view.container.querySelector(".docs-word-continuous")).not.toBeNull(); expect(screen.getByRole("navigation", { name: "Document outline" })).toBeInTheDocument();
     expect(history).toHaveBeenCalledOnce(); expect(await exportDocx(view.state.document)).toEqual(before);
   });
+  it("zooms from the menu through the toolbar's steps and opens the next document at that zoom", async () => {
+    localStorage.clear();
+    const view = editor(await createDocx("Zoomed"));
+    view.execute("zoom-in"); view.execute("zoom-in");
+    expect(screen.getByText("125%")).toBeInTheDocument();
+    view.unmount();
+    const next = editor(await createDocx("Next"));
+    expect(screen.getByText("125%")).toBeInTheDocument();
+    next.execute("view-zoom-reset");
+    expect(screen.getByText("100%")).toBeInTheDocument();
+    localStorage.clear();
+  });
   it("reports an imported font and custom paragraph style without substituting toolbar defaults", async () => {
     const initial = applyDocxOperations(await createDocx("Imported title"), [{ type: "format-run", runId: "p0:r0", style: { fontFamily: "Cambria" } }, { type: "format-paragraph", paragraphId: "p0", format: { styleId: "Title" } }]);
     editor(initial);

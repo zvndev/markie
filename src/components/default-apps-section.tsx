@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { getElectronAPI, type DefaultAppsStatus } from "@/lib/electron";
 import { DocumentFormatMark } from "./document-format-mark";
 
+/** Fired after Markie changes a Finder association, so other surfaces re-ask. */
+export const DEFAULT_APPS_CHANGED = "markie:default-apps-changed";
+
 // Settings > Files: which file types a double-click in Finder opens in Markie.
 // Only formats Markie edits completely are offered; the rest are listed with
 // the reason they are not offered yet, so their absence is not a mystery.
@@ -39,6 +42,7 @@ export function DefaultAppsSection() {
       setMessage({ tone: "error", text: res.error ?? "Couldn't change the default app." });
     }
     await load();
+    window.dispatchEvent(new Event(DEFAULT_APPS_CHANGED));
   };
 
   return (

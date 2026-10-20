@@ -132,6 +132,7 @@ export function appearanceVars(
   const vars: Record<string, string> = {
     "--doc-font-family": fontStack(appearance.fontFamily),
     "--doc-font-size": fontSize,
+    "--doc-zoom": String(appearance.zoom),
   };
   // At "default" the key is left out entirely so the theme's own
   // --doc-width shows through, the same way a document with no override reads

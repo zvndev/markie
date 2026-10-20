@@ -1391,3 +1391,11 @@ DOCX: measured on the owner's real Word files (local, read-only, aggregate only)
 Also fixed: isolated dev Electron profiles were always refused because Chromium applies --user-data-dir before the guard compared against it.
 
 Verification: full renderer/Electron suite, lint, typecheck, build; isolated real-Electron CDP check (temp HOME and profile) passed 8/8: index finds every type, search IPC body hits in DOCX/RTF/MD, type filter, ⇧⌘F modal, result opens editable DOCX, DOCX lands in Recent, indexed RTF opens from a path. LaunchServices status script verified read-only against the real system. Not verified: clicking "Use Markie" in the installed app (changes the owner's real associations; left for Kirby).
+
+## 2026-10-19 Zoom for every text format, and a way to find default apps
+
+Zoom: the classic source editor (every .txt/.log/.csv file and Markdown Source) hard-coded 14px, so ⌘+/⌘- changed nothing visible there; it now scales with the document zoom through --doc-zoom. The documents text editor (CSV/JSON/YAML/XML/Darkmown source) now answers the menu's zoom commands, read-only included, and zooms its CSV table preview. Text, Word, RTF and ODT editors share one remembered zoom (markie.documents.zoom.v1) on the toolbar's steps. A trackpad pinch or ctrl+scroll zooms Markdown and every document editor.
+
+Default apps: Markie menu > Default Apps for File Types… opens Settings > Files directly (Settings remounts on the requested tab). When Markdown is already Markie's, the Library footer now offers "Open text, CSV, JSON and more in Markie…" while any offered type still opens elsewhere; dismissible, and it re-checks when Settings changes an association.
+
+Verification: targeted suites, full suite (one known load-flake in scripts/private-release.test.ts that passes alone and on the clean tree), lint, typecheck, build; isolated real-Electron CDP check: pinch zooms a .txt 14px -> 15.4px and back, and an RTF to 110% with the zoom remembered. Not verified live: the native menu items themselves (CDP cannot click native menus; routing is unit-tested).

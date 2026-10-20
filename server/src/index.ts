@@ -13,7 +13,7 @@ import { docLinksApi } from "./doc-links.ts";
 import { publicShare } from "./public.ts";
 import { docView } from "./doc-view.ts";
 import { attachCollab } from "./collab.ts";
-import { desktopAuthDeepLink, desktopAuthState } from "./desktop-auth.ts";
+import { desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
 import { applicationOrigins } from "./application-origins.ts";
 import { openDatabase } from "./db.ts";
 import { createDocumentPlatform } from "./document-platform.ts";
@@ -226,6 +226,8 @@ app.on(["GET", "POST"], "/api/auth/*", async (c) => {
 // and redirect it to Google's consent screen.
 const AUTH_BASE =
   process.env.BETTER_AUTH_URL ?? "http://localhost:8787";
+// Who this server is, on the deep link that hands its token to the app.
+const AUTH_ISSUER = desktopAuthIssuer(AUTH_BASE);
 
 app.get("/auth/google-start", async (c) => {
   try {
@@ -292,12 +294,13 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
     return page("Sign-in didn't complete", "Head back to Markie and try again.");
   }
   // Carry the app's nonce back so it can verify this deep link is the answer to
-  // a sign-in it started. Without it the app rejects the token.
+  // a sign-in it started, and say which server this token is from, so it is
+  // never filed under another one. Without the nonce the app rejects it.
   const state = desktopAuthState(c.req.query("state"));
   return page(
     "You're signed in",
     "Returning you to Markie…",
-    desktopAuthDeepLink(token, state)
+    desktopAuthDeepLink(token, state, AUTH_ISSUER)
   );
 });
 

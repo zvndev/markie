@@ -5,6 +5,7 @@ import {
   consumeAuthState,
   consumeAuthStateFor,
   createAuthState,
+  resolveAuthDeepLink,
 } from "./auth-state";
 
 function memoryStorage() {
@@ -162,5 +163,80 @@ describe("a nonce bound to a server", () => {
   it("expires like any other nonce", () => {
     const value = createAuthState({ storage, now: 0, origin: "https://docs.example.com" })!;
     expect(consumeAuthStateFor(value, { storage, now: AUTH_STATE_TTL_MS + 1 })).toEqual({ ok: false });
+  });
+});
+
+// The mix-up: the user adds evil.example, which says it offers Google. The
+// app's nonce goes to evil's /auth/google-start; evil bounces the browser to
+// Markie Cloud's desktop bridge with that nonce, and Cloud answers with its
+// own token. Without an issuer check the app files Cloud's token as evil's
+// and sends it to evil.
+describe("resolveAuthDeepLink", () => {
+  const CLOUD = "https://api-production-602f.up.railway.app";
+  const EVIL = "https://evil.example";
+  const link = (state: string, iss?: string) =>
+    `markie://auth?token=cloud-token&state=${state}${iss === undefined ? "" : `&iss=${encodeURIComponent(iss)}`}`;
+  const resolve = (url: string) => resolveAuthDeepLink(url, { primaryOrigin: CLOUD, storage, now: 0 });
+
+  it("refuses a Cloud token that arrives for a nonce minted for another server, with no iss", () => {
+    const state = createAuthState({ storage, now: 0, origin: EVIL })!;
+    expect(resolve(link(state))).toEqual({ ok: false, reason: "issuer-mismatch" });
+  });
+
+  it("refuses a Cloud token that arrives for a nonce minted for another server, with iss naming Cloud", () => {
+    const state = createAuthState({ storage, now: 0, origin: EVIL })!;
+    expect(resolve(link(state, CLOUD))).toEqual({ ok: false, reason: "issuer-mismatch" });
+  });
+
+  it("consumes the nonce when it refuses, so the link cannot be replayed with another iss", () => {
+    const state = createAuthState({ storage, now: 0, origin: EVIL })!;
+    resolve(link(state, CLOUD));
+    expect(resolve(link(state, EVIL))).toEqual({ ok: false, reason: "no-pending" });
+  });
+
+  it("accepts another server's token when iss names that server", () => {
+    const state = createAuthState({ storage, now: 0, origin: EVIL })!;
+    expect(resolve(link(state, EVIL))).toEqual({ ok: true, token: "cloud-token", origin: EVIL });
+  });
+
+  it("compares normalized origins", () => {
+    const state = createAuthState({ storage, now: 0, origin: "https://docs.example.com" })!;
+    expect(resolve(link(state, "https://DOCS.example.com:443/"))).toEqual({
+      ok: true,
+      token: "cloud-token",
+      origin: "https://docs.example.com",
+    });
+  });
+
+  it("refuses an iss that is not an origin at all", () => {
+    const state = createAuthState({ storage, now: 0, origin: EVIL })!;
+    expect(resolve(link(state, "evil.example"))).toEqual({ ok: false, reason: "issuer-mismatch" });
+  });
+
+  it("accepts a Cloud sign-in with no iss, which is what Cloud sends until its next deploy", () => {
+    const state = createAuthState({ storage, now: 0, origin: CLOUD })!;
+    expect(resolve(link(state))).toEqual({ ok: true, token: "cloud-token", origin: null });
+  });
+
+  it("accepts a Cloud sign-in whose iss names Cloud", () => {
+    const state = createAuthState({ storage, now: 0, origin: CLOUD })!;
+    expect(resolve(link(state, CLOUD))).toEqual({ ok: true, token: "cloud-token", origin: null });
+  });
+
+  it("accepts a nonce from before nonces named a server as Cloud's", () => {
+    storage.setItem("markie.authstate.v1", JSON.stringify({ value: "abcdef01", createdAt: 0 }));
+    expect(resolve(link("abcdef01"))).toEqual({ ok: true, token: "cloud-token", origin: null });
+  });
+
+  it("refuses a Cloud sign-in whose token another server says it issued", () => {
+    const state = createAuthState({ storage, now: 0, origin: CLOUD })!;
+    expect(resolve(link(state, EVIL))).toEqual({ ok: false, reason: "issuer-mismatch" });
+  });
+
+  it("refuses a link with no pending sign-in, and anything that is not an auth link", () => {
+    expect(resolve(link("f".repeat(32), CLOUD))).toEqual({ ok: false, reason: "no-pending" });
+    expect(resolve("markie://open?token=x")).toEqual({ ok: false, reason: "not-auth" });
+    expect(resolve("markie://auth?state=abc")).toEqual({ ok: false, reason: "not-auth" });
+    expect(resolve("not a url")).toEqual({ ok: false, reason: "not-auth" });
   });
 });

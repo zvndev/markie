@@ -84,10 +84,11 @@ import {
   adoptAuthToken,
   collabWsBase,
   getAuthToken,
+  getServerURL,
   pushSyncConfig,
   sharesClient,
 } from "@/lib/auth-client";
-import { consumeAuthStateFor } from "@/lib/auth-state";
+import { resolveAuthDeepLink } from "@/lib/auth-state";
 import {
   authStoreFor,
   collabWsBaseFor,
@@ -1848,27 +1849,31 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       api.onMenuLibrary?.(() => selectView("library")),
       api.onMenuGlobalSearch?.(() => { if (!document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) setShowSearch(true); }),
       api.onDeepLink?.((url) => {
-        // markie://auth?token=…&state=… — Google sign-in returning via the
-        // bridge. Anything on the machine can fire this deep link, so the token
-        // is only adopted when it carries the single-use nonce minted when we
-        // opened the browser. See src/lib/auth-state.ts.
+        // markie://auth?token=…&state=…&iss=… — Google sign-in returning via
+        // the bridge. Anything on the machine can fire this deep link, so the
+        // token is only adopted when it carries the single-use nonce minted
+        // when we opened the browser, and when the server that issued it is
+        // the one that sign-in was started against. See src/lib/auth-state.ts.
         try {
           const u = new URL(url);
-          const token = u.searchParams.get("token");
-          if (u.host === "auth" && token) {
+          if (u.host === "auth" && u.searchParams.get("token")) {
             // The pending nonce names the server the sign-in was started
-            // against; the link itself has no say. The token is stored for
+            // against, and `iss` has to agree with it. The token is stored for
             // that server and only ever sent to it.
-            const pending = consumeAuthStateFor(u.searchParams.get("state"));
-            if (!pending.ok) {
-              console.error("markie://auth rejected: no matching sign-in was pending");
+            const link = resolveAuthDeepLink(url, { primaryOrigin: getServerURL() });
+            if (!link.ok) {
+              console.error(
+                link.reason === "issuer-mismatch"
+                  ? "markie://auth rejected: the token is not from the server the sign-in was started on"
+                  : "markie://auth rejected: no matching sign-in was pending"
+              );
               return;
             }
-            if (pending.origin && !isPrimaryServer(pending.origin)) {
-              setServerToken(pending.origin, token);
-              void authStoreFor(pending.origin).refresh();
+            if (link.origin && !isPrimaryServer(link.origin)) {
+              setServerToken(link.origin, link.token);
+              void authStoreFor(link.origin).refresh();
             } else {
-              adoptAuthToken(token);
+              adoptAuthToken(link.token);
               void authStore.refresh(); // every auth-aware surface updates at once
             }
             refreshCollabRef.current();

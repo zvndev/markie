@@ -14,9 +14,30 @@ export function desktopAuthState(raw: string | null | undefined): string | null 
   return typeof raw === "string" && STATE_PATTERN.test(raw) ? raw : null;
 }
 
+// The server's own origin, from BETTER_AUTH_URL, or null when that is not a
+// URL. Only the origin: a path or query on the setting says nothing about who
+// issued the token.
+export function desktopAuthIssuer(authBase: string | null | undefined): string | null {
+  if (typeof authBase !== "string" || !authBase) return null;
+  try {
+    const origin = new URL(authBase).origin;
+    return origin && origin !== "null" ? origin : null;
+  } catch {
+    return null;
+  }
+}
+
 // A link with no state is still produced (an older app build sends none), but
 // current builds reject it, which is what makes the check meaningful.
-export function desktopAuthDeepLink(token: string, state: string | null): string {
-  const base = `markie://auth?token=${encodeURIComponent(token)}`;
-  return state ? `${base}&state=${encodeURIComponent(state)}` : base;
+//
+// `iss` names the server that minted the token. The nonce alone cannot: with
+// more than one server, a server the user added can start its "Google
+// sign-in" by bouncing the browser to another server's bridge with the app's
+// nonce, and the token that comes back would be filed under the wrong server.
+// The app compares `iss` with the server it started the sign-in against.
+export function desktopAuthDeepLink(token: string, state: string | null, issuer: string | null = null): string {
+  let link = `markie://auth?token=${encodeURIComponent(token)}`;
+  if (state) link += `&state=${encodeURIComponent(state)}`;
+  if (issuer) link += `&iss=${encodeURIComponent(issuer)}`;
+  return link;
 }

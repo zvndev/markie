@@ -7,7 +7,7 @@
 // this component can only ask, never add on its own.
 import { useCallback, useEffect, useState } from "react";
 import { authFailureCode } from "@/lib/auth-client";
-import { authErrorMessage } from "@/lib/auth-errors";
+import { authErrorMessage, INVITE_ONLY, signupRefusal } from "@/lib/auth-errors";
 import { authStore, useAuth } from "@/lib/auth-store";
 import { getElectronAPI, type MarkieServer, type ServerProbe } from "@/lib/electron";
 import {
@@ -207,21 +207,25 @@ export function ServerSignIn({
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const client = serverAuthClient(server.origin);
+  const signup = server.signIn.signup ?? "open";
+  // Closed: nobody new gets an account, so there is nothing to offer.
+  const creating = isSignUp && signup !== "closed";
 
   const submit = async () => {
     setBusy(true);
     setError(null);
     setNotice(null);
-    const res = isSignUp
+    const res = creating
       ? await client.signUpEmail(email, password, email.split("@")[0])
       : await client.signInEmail(email, password);
     if (res.ok && res.data?.token && !getServerToken(server.origin)) setServerToken(server.origin, res.data.token);
     setBusy(false);
     if (!res.ok) {
       setError(
-        res.status === 403 && authFailureCode(res.data) === "EMAIL_NOT_VERIFIED"
-          ? "Confirm your email address first, then sign in."
-          : authErrorMessage(res.status, isSignUp ? "password-signup" : "password-signin")
+        signupRefusal(res.status, res.data) ??
+          (res.status === 403 && authFailureCode(res.data) === "EMAIL_NOT_VERIFIED"
+            ? "Confirm your email address first, then sign in."
+            : authErrorMessage(res.status, creating ? "password-signup" : "password-signin"))
       );
       return;
     }
@@ -270,28 +274,33 @@ export function ServerSignIn({
       <input
         className={FIELD}
         type="password"
-        autoComplete={isSignUp ? "new-password" : "current-password"}
+        autoComplete={creating ? "new-password" : "current-password"}
         placeholder="Password"
         aria-label="Password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
       />
+      {signup === "invite" && <div className="text-[11px] text-muted">{INVITE_ONLY}</div>}
       {error && <div className="text-[11px] text-red-500" role="alert">{error}</div>}
       {notice && <div className="text-[11px] text-muted" role="status">{notice}</div>}
       <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          className="text-[11px] text-muted hover:text-foreground"
-          onClick={() => setIsSignUp((v) => !v)}
-        >
-          {isSignUp ? "Have an account? Sign in" : "New here? Create an account"}
-        </button>
+        {signup !== "closed" ? (
+          <button
+            type="button"
+            className="text-[11px] text-muted hover:text-foreground"
+            onClick={() => setIsSignUp((v) => !v)}
+          >
+            {creating ? "Have an account? Sign in" : "New here? Create an account"}
+          </button>
+        ) : (
+          <span />
+        )}
         <div className="flex gap-2">
           <button type="button" className={BUTTON} onClick={onCancel} disabled={busy}>
             Cancel
           </button>
           <button type="submit" className={PRIMARY} disabled={busy || !email || !password}>
-            {busy ? "…" : isSignUp ? "Create account" : "Sign in"}
+            {busy ? "…" : creating ? "Create account" : "Sign in"}
           </button>
         </div>
       </div>

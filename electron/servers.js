@@ -19,9 +19,22 @@ const DEFAULT_INFO = Object.freeze({
   name: DEFAULT_NAME,
   apiVersion: 1,
   version: null,
-  signIn: Object.freeze({ email: true, google: true }),
+  signIn: Object.freeze({ email: true, google: true, signup: "open" }),
 });
 const SUPPORTED_API_VERSION = 1;
+// Who may make an account on a server: anyone, only someone invited, or
+// nobody new. Anything a server says that is not one of these reads as open,
+// which only decides whether the app offers "Create an account".
+const SIGNUP_MODES = new Set(["open", "invite", "closed"]);
+function signupMode(value) {
+  return SIGNUP_MODES.has(value) ? value : "open";
+}
+
+// The sign-in methods a server offers, reduced to what this app understands.
+function cleanSignIn(signIn) {
+  const s = signIn && typeof signIn === "object" ? signIn : {};
+  return { email: s.email !== false, google: s.google === true, signup: signupMode(s.signup) };
+}
 const MAX_NAME = 80;
 const MAX_INFO_BYTES = 64 * 1024;
 const PROBE_TIMEOUT_MS = 8000;
@@ -110,7 +123,7 @@ function parseServerInfo(body, origin) {
       name: cleanName(body.name, host),
       apiVersion: SUPPORTED_API_VERSION,
       version: typeof body.version === "string" ? body.version.slice(0, 40) : null,
-      signIn: { email: signIn.email !== false, google: signIn.google === true },
+      signIn: cleanSignIn(signIn),
     },
   };
 }
@@ -205,7 +218,7 @@ function createServerStore({
       out.push({
         origin: check.origin,
         name: cleanName(s.name, check.host),
-        signIn: { email: s.signIn?.email !== false, google: s.signIn?.google === true },
+        signIn: cleanSignIn(s.signIn),
         version: typeof s.version === "string" ? s.version : null,
         addedAt: typeof s.addedAt === "string" ? s.addedAt : null,
       });

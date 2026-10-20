@@ -81,7 +81,18 @@ describe("parseServerInfo", () => {
     const r = parseServerInfo(INFO, "https://docs.example.com");
     expect(r).toEqual({
       ok: true,
-      info: { name: "Team docs", apiVersion: 1, version: "1.2.3", signIn: { email: true, google: false } },
+      info: { name: "Team docs", apiVersion: 1, version: "1.2.3", signIn: { email: true, google: false, signup: "open" } },
+    });
+  });
+
+  it("keeps the server's sign-up mode, reading anything unknown as open", () => {
+    for (const signup of ["open", "invite", "closed"]) {
+      expect(parseServerInfo({ ...INFO, signIn: { ...INFO.signIn, signup } }, "https://docs.example.com")).toMatchObject({
+        info: { signIn: { signup } },
+      });
+    }
+    expect(parseServerInfo({ ...INFO, signIn: { ...INFO.signIn, signup: "maybe" } }, "https://docs.example.com")).toMatchObject({
+      info: { signIn: { signup: "open" } },
     });
   });
 

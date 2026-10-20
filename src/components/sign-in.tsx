@@ -12,7 +12,7 @@
 import { useState } from "react";
 import { authClient, authFailureCode } from "@/lib/auth-client";
 import { authStore } from "@/lib/auth-store";
-import { authErrorMessage, signInReasonCopy, type AuthContext, type SignInReason } from "@/lib/auth-errors";
+import { authErrorMessage, signInReasonCopy, signupRefusal, type AuthContext, type SignInReason } from "@/lib/auth-errors";
 import { getElectronAPI } from "@/lib/electron";
 
 type View = "choose" | "otp-code" | "password" | "reset-request" | "reset-verify";
@@ -153,7 +153,7 @@ export function SignInForm({ reason, onDone, allowGoogle = true }: SignInFormPro
       return;
     }
     if (!res.ok) {
-      setError(authErrorMessage(res.status, context));
+      setError(signupRefusal(res.status, res.data) ?? authErrorMessage(res.status, context));
       return;
     }
     await landed();

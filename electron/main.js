@@ -1683,11 +1683,15 @@ const serverView = (s) => ({
   origin: s.origin,
   name: s.name,
   isDefault: !!s.isDefault,
-  signIn: { email: s.signIn?.email !== false, google: s.signIn?.google === true },
+  signIn: {
+    email: s.signIn?.email !== false,
+    google: s.signIn?.google === true,
+    signup: ["open", "invite", "closed"].includes(s.signIn?.signup) ? s.signIn.signup : "open",
+  },
   version: s.version ?? null,
 });
 handle("servers-list", () => serverStore.list().map(serverView), {
-  onFailure: () => [serverView({ origin: DEFAULT_SERVER, name: "Markie Cloud", isDefault: true, signIn: { email: true, google: true } })],
+  onFailure: () => [serverView({ origin: DEFAULT_SERVER, name: "Markie Cloud", isDefault: true, signIn: { email: true, google: true, signup: "open" } })],
 });
 handle("servers-probe", (_event, input) => (privateReleaseConfig ? { ok: false, error: PRIVATE_SERVERS_REFUSAL } : serverStore.probe(typeof input === "string" ? input : "")), {
   onFailure: (err) => ({ ok: false, error: errorMessage(err) }),

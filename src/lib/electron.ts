@@ -788,11 +788,14 @@ export interface RegistryEntry {
 }
 
 // A server this app trusts. Markie Cloud is always one of them.
+// Who may make an account there: anyone, only someone invited, or nobody new.
+export type SignupMode = "open" | "invite" | "closed";
+
 export interface MarkieServer {
   origin: string;
   name: string;
   isDefault: boolean;
-  signIn: { email: boolean; google: boolean };
+  signIn: { email: boolean; google: boolean; signup?: SignupMode };
   version: string | null;
 }
 
@@ -804,7 +807,7 @@ export type ServerProbe =
       host: string;
       name: string;
       version: string | null;
-      signIn: { email: boolean; google: boolean };
+      signIn: { email: boolean; google: boolean; signup?: SignupMode };
       alreadyAdded: boolean;
     }
   | { ok: false; error: string };

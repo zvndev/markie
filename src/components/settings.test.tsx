@@ -474,3 +474,63 @@ describe("Settings — servers", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("Settings — sign-up on a server", () => {
+  const server = (signup: "open" | "invite" | "closed") => ({
+    origin: "https://docs.example.com",
+    name: "Team docs",
+    isDefault: false,
+    signIn: { email: true, google: false, signup },
+    version: null,
+  });
+  const CLOUD = {
+    origin: "https://api-production-602f.up.railway.app",
+    name: "Markie Cloud",
+    isDefault: true,
+    signIn: { email: true, google: true, signup: "open" as const },
+    version: null,
+  };
+
+  async function openSignIn(signup: "open" | "invite" | "closed") {
+    const user = userEvent.setup();
+    installBridge({ serversList: vi.fn(async () => [CLOUD, server(signup)]) } as never);
+    renderSettings({ initialSection: "advanced" });
+    const row = await screen.findByRole("listitem", { name: "Team docs" });
+    await user.click(within(row).getByRole("button", { name: "Sign in" }));
+    return { user, form: within(row).getByRole("form", { name: "Sign in to Team docs" }) };
+  }
+
+  it("says plainly that an invite-only server needs an invite", async () => {
+    const { form } = await openSignIn("invite");
+    expect(within(form).getByText("This server is invite-only. Ask its owner for an invite.")).toBeInTheDocument();
+    // An invited person still makes their account here.
+    expect(within(form).getByRole("button", { name: "New here? Create an account" })).toBeInTheDocument();
+  });
+
+  it("does not offer sign-up on a closed server", async () => {
+    const { form } = await openSignIn("closed");
+    expect(within(form).queryByRole("button", { name: /Create an account/ })).toBeNull();
+    expect(within(form).queryByText(/invite-only/)).toBeNull();
+  });
+
+  it("explains a refused sign-up by the server's own reason", async () => {
+    const { user, form } = await openSignIn("open");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 403,
+        headers: new Headers(),
+        json: async () => ({ code: "signup_invite_required", message: "Invite required" }),
+      }))
+    );
+    await user.click(within(form).getByRole("button", { name: "New here? Create an account" }));
+    await user.type(within(form).getByLabelText("Email"), "new@example.com");
+    await user.type(within(form).getByLabelText("Password"), "pw-123456");
+    await user.click(within(form).getByRole("button", { name: "Create account" }));
+    expect(await within(form).findByRole("alert")).toHaveTextContent(
+      "This server is invite-only. Ask its owner for an invite."
+    );
+    vi.unstubAllGlobals();
+  });
+});

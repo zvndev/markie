@@ -6,7 +6,7 @@
 // the update flow owns that, because a pull can overwrite an edit.
 /**
  * @param {{
- *   sync: { api: Function, push: Function },
+ *   sync: { api: Function, push: Function, configuredOrigins?: Function, hasPrincipal?: Function, withOrigin?: Function, originOfRow?: Function },
  *   registry: { list: Function, get: Function, update: Function, hashContent: Function },
  *   assetSync: { pushAssets: Function },
  *   linkSync?: { pushLinks: Function } | null,
@@ -16,10 +16,31 @@
  * }} deps
  */
 function createReconciler({ sync, registry, assetSync, linkSync = null, fs = require("node:fs"), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), gapMs = 250 }) {
-  let cursor = 0;
+  // One cursor per server, so a large library on one does not starve the
+  // other's turn.
+  const cursors = new Map();
 
+  // Every server with a confirmed account gets its own pass, inside its own
+  // origin scope, over only the rows that live on it: one server's listing
+  // says nothing about another's documents. A sync engine without servers
+  // (the tests' stand-in) gets the single pass it always had.
   async function run({ limit = 50 } = {}) {
     const result = { pushed: [], mediaPushed: [], mediaUnchanged: [], linksPushed: [], linksUnchanged: [], skipped: [], errors: [] };
+    if (typeof sync.configuredOrigins !== "function" || typeof sync.withOrigin !== "function") {
+      await runAt(null, limit, result);
+      return result;
+    }
+    const origins = sync
+      .configuredOrigins()
+      .filter((origin) => (typeof sync.hasPrincipal === "function" ? sync.hasPrincipal(origin) : true));
+    for (const origin of origins) {
+      await sync.withOrigin(origin, () => runAt(origin, limit, result));
+    }
+    return result;
+  }
+
+  async function runAt(origin, limit, result) {
+    let cursor = cursors.get(origin) ?? 0;
     let remote;
     let rows;
     // Building the listing is one unit: a throw from either the request or
@@ -31,7 +52,7 @@ function createReconciler({ sync, registry, assetSync, linkSync = null, fs = req
       const res = await sync.api("GET", "/api/docs");
       if (res.status !== 200 || !Array.isArray(res.data?.docs)) {
         result.errors.push({ path: "*", error: "listing unavailable" });
-        return result;
+        return;
       }
       // The freshest listing there is at the moment this pass stages media,
       // and the asset push reads each document's exposure out of the sync
@@ -41,14 +62,18 @@ function createReconciler({ sync, registry, assetSync, linkSync = null, fs = req
       // somebody happened to open the Library.
       if (typeof sync.noteListing === "function") sync.noteListing(res.data.docs);
       remote = new Map(res.data.docs.map((d) => [d.id, d]));
-      rows = registry.list().filter((r) => r.cloud_doc_id && (r.sync_state === "synced" || r.sync_state === "unpushed"));
+      rows = registry
+        .list()
+        .filter((r) => r.cloud_doc_id && (r.sync_state === "synced" || r.sync_state === "unpushed"))
+        .filter((r) => origin === null || typeof sync.originOfRow !== "function" || sync.originOfRow(r) === origin);
     } catch (err) {
       result.errors.push({ path: "*", error: err && err.message ? err.message : String(err) });
-      return result;
+      return;
     }
     if (cursor >= rows.length) cursor = 0;
     const slice = rows.slice(cursor, cursor + limit);
     cursor = cursor + limit >= rows.length ? 0 : cursor + limit;
+    cursors.set(origin, cursor);
 
     for (const [i, row] of slice.entries()) {
       if (i > 0) await sleep(gapMs);
@@ -118,7 +143,6 @@ function createReconciler({ sync, registry, assetSync, linkSync = null, fs = req
         result.errors.push({ path: row.path, error: err && err.message ? err.message : String(err) });
       }
     }
-    return result;
   }
 
   return { run };

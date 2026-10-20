@@ -342,11 +342,29 @@ export interface ElectronAPI {
     // it to know whose persisted roles it is looking at.
     userId?: string | null;
   }): Promise<void>;
+  // The session for one server other than the primary one, leaving every
+  // other server's session alone. Main refuses an origin it does not trust.
+  syncSession?(cfg: {
+    origin: string;
+    token: string | null;
+    userId?: string | null;
+  }): Promise<{ ok?: boolean; error?: string; sessionChanged?: boolean }>;
+  // The trusted servers, Markie Cloud first (Settings > Servers).
+  serversList?(): Promise<MarkieServer[]>;
+  // Step one of adding a server: main checks the address and asks the server
+  // who it is. Nothing is trusted yet.
+  serversProbe?(address: string): Promise<ServerProbe>;
+  // Step two, after the user confirmed what the probe showed. Takes only the
+  // probe's id, so the name and origin added are the ones main fetched.
+  serversAdd?(probeId: string): Promise<{ ok: true; server: MarkieServer } | { ok: false; error: string }>;
+  serversRemove?(origin: string): Promise<{ ok?: boolean; error?: string }>;
   // Hand the sync engine the share role the renderer resolved for a cloud doc,
   // so a push it cannot land is refused here instead of coming back as a 403.
+  // `server` is the doc's server when it is not the primary one.
   syncDocRole?(args: {
     cloudId: string;
     role: "owner" | "editor" | "viewer";
+    server?: string;
   }): Promise<void>;
   registryTrack(args: {
     path: string;
@@ -376,6 +394,9 @@ export interface ElectronAPI {
     content: string;
     /** New uploads only; existing linked documents move via the placement API. */
     areaId?: string;
+    // Where a document that is on no server yet should go. Ignored for one
+    // that already lives somewhere.
+    server?: string;
   }): Promise<SyncResult>;
   docSyncOff(args: {
     path: string;
@@ -393,6 +414,8 @@ export interface ElectronAPI {
   docPull(args: {
     cloudId: string;
     suggestedName: string;
+    // The server the document lives on, when it is not the primary one.
+    server?: string;
   }): Promise<SyncResult>;
   // Retry a failed push for a tracked file the renderer has not opened, so
   // "unpushed" is not a state with a badge and no way out.
@@ -425,6 +448,7 @@ export interface ElectronAPI {
   docOpenShared?(args: {
     cloudId: string;
     suggestedName: string;
+    server?: string;
   }): Promise<{ ok?: boolean; path?: string; error?: string }>;
   onSetMode(cb: (mode: ViewMode) => void): Unsubscribe;
   onToggleStats(cb: () => void): Unsubscribe;
@@ -740,6 +764,8 @@ export interface RegistryEntry {
   name: string;
   content_hash: string | null;
   cloud_doc_id: string | null;
+  // The server the cloud copy lives on; null for the primary server.
+  cloud_origin?: string | null;
   cloud_version: number | null;
   sync_state: string | null;
   last_opened_at: string | null;
@@ -752,11 +778,36 @@ export interface RegistryEntry {
   share_role_user?: string | null;
 }
 
+// A server this app trusts. Markie Cloud is always one of them.
+export interface MarkieServer {
+  origin: string;
+  name: string;
+  isDefault: boolean;
+  signIn: { email: boolean; google: boolean };
+  version: string | null;
+}
+
+export type ServerProbe =
+  | {
+      ok: true;
+      probeId: string;
+      origin: string;
+      host: string;
+      name: string;
+      version: string | null;
+      signIn: { email: boolean; google: boolean };
+      alreadyAdded: boolean;
+    }
+  | { ok: false; error: string };
+
 export interface LibraryItem {
   kind: "local" | "cloud-only" | "shared";
   path: string | null;
   name: string;
   cloudId: string | null;
+  // The server the document lives on, present only when that is not the
+  // primary server (Markie Cloud).
+  server?: string;
   state:
     | "local-only"
     | "synced"
@@ -814,6 +865,8 @@ export interface LandedDoc {
   path: string;
   name: string;
   cloudId: string;
+  // Present when the document came from a server other than the primary.
+  server?: string;
 }
 
 export interface DocUpdate {
@@ -825,6 +878,7 @@ export interface DocUpdate {
   // "conflict" and "unpushed" mean the file on disk holds changes the server
   // never took. A clean buffer does not make those safe to overwrite.
   syncState: string;
+  server?: string;
 }
 
 // What one pass of electron/reconcile.js did: which rows it pushed text or

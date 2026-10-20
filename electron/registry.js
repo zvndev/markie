@@ -158,6 +158,14 @@ function getDB() {
     if (!fileCols.some((c) => c.name === col)) db.exec(`ALTER TABLE files ADD COLUMN ${col} TEXT`);
   }
 
+  // The server a cloud document lives on, once there can be more than one.
+  // Null is the primary server (Markie Cloud), which is where every row
+  // written before self-hosted servers existed lives, so existing rows need
+  // no rewrite and read exactly as they did.
+  if (!fileCols.some((c) => c.name === "cloud_origin")) {
+    db.exec("ALTER TABLE files ADD COLUMN cloud_origin TEXT");
+  }
+
   // Schema versioning starts at 0.5.0. Version 0 is every database that
   // predates it; the PRAGMA-guarded share_role ALTER above predates versioning
   // and stays as-is so any skipped-version database still heals.
@@ -413,6 +421,8 @@ function update(filePath, fields) {
     "name",
     "content_hash",
     "cloud_doc_id",
+    // The server it lives on; null for the primary server.
+    "cloud_origin",
     "cloud_version",
     "sync_state",
     "last_synced_at",

@@ -182,6 +182,19 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     resolveDocLinks: vi.fn(async ({ hrefs }: { hrefs: string[] }) => hrefs.map((href) => ({ href, kind: "unknown" as const }))),
     openDocLink: vi.fn(async () => ({ ok: true })),
     syncConfig: vi.fn(async () => undefined),
+    syncSession: vi.fn(async () => ({ ok: true })),
+    serversList: vi.fn(async () => [
+      {
+        origin: "https://api-production-602f.up.railway.app",
+        name: "Markie Cloud",
+        isDefault: true,
+        signIn: { email: true, google: true },
+        version: null,
+      },
+    ]),
+    serversProbe: vi.fn(async () => ({ ok: false as const, error: "not mocked" })),
+    serversAdd: vi.fn(async () => ({ ok: false as const, error: "not mocked" })),
+    serversRemove: vi.fn(async () => ({ ok: true })),
     syncDocRole: vi.fn(async () => undefined),
 
     registryTrack: vi.fn(async () => noopResult),

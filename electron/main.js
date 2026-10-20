@@ -29,8 +29,10 @@ const privateRelease = createPrivateReleaseGate({ config: privateReleaseConfig, 
   if (mainWindow && !mainWindow.isDestroyed()) { documentFiles.releaseOwner(mainWindow.webContents.id); mainWindow.webContents.reload(); }
 } });
 const autoUpdater = isDesktopPreview ? null : require("electron-updater").autoUpdater;
-const { shareBaseFromSrc } = require("./share-origin");
-const { classifyDeepLink, cloudDocId } = require("./deep-links");
+const { setTrustedOrigins, isAllowedServerOrigin, DEFAULT_SERVER } = require("./share-origin");
+const { fetchSharedDoc } = require("./share-open");
+const { createServerStore } = require("./servers");
+const { classifyDeepLink, cloudDocId, sourceHint } = require("./deep-links");
 const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
 const { createDocumentFileService, findNativeDocumentLaunchFile, registerDocumentFileIpc, DOCUMENT_EXTENSIONS } = require("./document-files.cjs");
@@ -446,16 +448,17 @@ function openLocalFile(filePath) {
 // markie://open?token=…&src=… — fetch the shared doc from its public link (the
 // token is the authorization, no account needed), save it to ~/Downloads, and
 // open it. Waits for app-ready on a cold start.
+//
+// SECURITY: the link's `src` is never a fetch target on its own say-so. A
+// trusted server (Settings > Servers) is used as-is; anything else that is not
+// a public https origin falls back to production; and a public https origin
+// the user has not added is asked about first, then fetched anonymously.
+// Opening a document from it does not add it (electron/share-open.js).
 async function openSharedFromDeepLink(link) {
   if (!app.isReady()) {
     app.whenReady().then(() => openSharedFromDeepLink(link));
     return;
   }
-  let parsed;
-  try { parsed = new URL(link); } catch { return; }
-  const token = parsed.searchParams.get("token");
-  const src = parsed.searchParams.get("src");
-  if (!token) return;
   if (!mainWindow) createWindow();
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -463,15 +466,17 @@ async function openSharedFromDeepLink(link) {
     mainWindow.focus();
   }
   try {
-    // SECURITY: never fetch from the deep link's raw `src` (SSRF). Pin to an
-    // allowlisted Markie origin; unknown/attacker srcs fall back to production.
-    const base = shareBaseFromSrc(src, { allowDev: isDev });
-    const res = await net.fetch(`${base}/s/${encodeURIComponent(token)}/raw`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const content = await res.text();
-    const name = filenameFromDisposition(res.headers.get("content-disposition")) || "Shared document.md";
+    const result = await fetchSharedDoc(link, {
+      allowDev: isDev,
+      confirm: confirmUntrustedShare,
+      // A trusted server is fetched the way it always was; an unknown one
+      // goes through Node's fetch, which has no cookie jar to send from.
+      fetchImpl: (target, init) => (init ? fetch(target, init) : net.fetch(target)),
+    });
+    if (result.status !== "ok") return;
+    const name = filenameFromDisposition(result.disposition) || "Shared document.md";
     const dest = downloadsUniquePath(name);
-    writeFileAtomic(dest, content);
+    writeFileAtomic(dest, result.content);
     openLocalFile(dest);
   } catch (err) {
     console.error("markie://open failed:", err);
@@ -485,11 +490,27 @@ async function openSharedFromDeepLink(link) {
   }
 }
 
+// The question for a link from a server the user never added. Asked by main,
+// in a native dialog, so nothing in the renderer can answer it for them.
+async function confirmUntrustedShare({ host }) {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: "question",
+    buttons: ["Open", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+    message: `Open a document from ${host}?`,
+    detail:
+      "This server isn't in your Markie servers. Markie will download a copy without signing in. To work on this server, add it in Settings > Servers.",
+  });
+  return response === 0;
+}
+
 // Pull a cloud document this account may read into Downloads under its own
 // name, track it, grant it, and answer its path. Shared by the markie://doc
 // deep link and a document link clicked inside another document.
-async function landCloudDoc(cloudId) {
-  const res = await sync.pull(cloudId, downloadsUniquePath("Shared document.md"));
+async function landCloudDoc(cloudId, server) {
+  const res = await sync.pull(cloudId, downloadsUniquePath("Shared document.md"), server);
   if (!res || res.error) return { error: res && res.error ? res.error : "pull failed" };
   // pull() writes under a placeholder name because the real one only comes back
   // with the document. Rename before opening so the Library shows what the
@@ -522,6 +543,10 @@ async function openCloudDocFromDeepLink(link) {
   }
   const cloudId = cloudDocId(link);
   if (!cloudId) return;
+  // The link's src only ever picks between servers already on the trusted
+  // list; anything else means the primary server, as it always did. The
+  // session used is this app's own for that server.
+  const server = docLinkServer(sourceHint(link));
   if (!mainWindow) createWindow();
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -529,7 +554,7 @@ async function openCloudDocFromDeepLink(link) {
     mainWindow.focus();
   }
 
-  const signedIn = await waitForSignIn(15000);
+  const signedIn = await waitForSignIn(15000, server);
   if (!signedIn) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       dialog.showMessageBox(mainWindow, {
@@ -541,7 +566,7 @@ async function openCloudDocFromDeepLink(link) {
     return;
   }
 
-  const landedDoc = await landCloudDoc(cloudId);
+  const landedDoc = await landCloudDoc(cloudId, server);
   if (landedDoc.error) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       dialog.showMessageBox(mainWindow, {
@@ -555,14 +580,26 @@ async function openCloudDocFromDeepLink(link) {
   openLocalFile(landedDoc.path);
 }
 
+// A markie://doc link's src, as a trusted origin, or undefined for the primary.
+function docLinkServer(src) {
+  if (!src) return undefined;
+  try {
+    const origin = new URL(/^https?:\/\//i.test(src) ? src : `https://${src}`).origin;
+    return isAllowedServerOrigin(origin, { allowDev: isDev }) ? origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Resolve once the renderer has configured the sync engine with a session, or
 // give up so the caller can say something useful instead of hanging.
-function waitForSignIn(timeoutMs) {
+function waitForSignIn(timeoutMs, server) {
+  const ready = () => (server ? sync.isConfigured(server) : sync.isConfigured(sync.primary()));
   return new Promise((resolve) => {
-    if (sync.isConfigured()) return resolve(true);
+    if (ready()) return resolve(true);
     const started = Date.now();
     const timer = setInterval(() => {
-      if (sync.isConfigured()) {
+      if (ready()) {
         clearInterval(timer);
         resolve(true);
       } else if (Date.now() - started >= timeoutMs) {
@@ -1448,6 +1485,14 @@ const mdindex = require("./mdindex");
 const sync = require("./sync");
 const workspace = require("./workspace");
 const examples = require("./examples");
+// The servers the user trusts (Settings > Servers). Markie Cloud is always on
+// it. Everything that decides whether a token or a fetch may go to an origin
+// reads this list through share-origin.js.
+const serverStore = createServerStore({
+  file: path.join(app.getPath("userData"), "servers.json"),
+  allowDev: isDev,
+});
+setTrustedOrigins(() => serverStore.origins());
 const fileGrants = createFileGrants({ workspaceRoots: () => workspace.roots() });
 // Module-level so a later handler can reuse the same instance rather than
 // building a second one with its own hash cache.
@@ -1611,10 +1656,65 @@ handle("sync-config", async (_event, cfg) => {
   if (cfg.userId) void reconcileIfDue();
   return result;
 });
+// Every server but the primary one gets its session through here, one server
+// per call, leaving the others as they are. Main checks the origin against
+// the trusted list itself; the renderer naming one is not enough.
+// Private builds stay on the one authentication server their release
+// credential (kept with safeStorage) belongs to, so they take no other.
+const PRIVATE_SERVERS_REFUSAL = "Private builds use only the Markie authentication server.";
+handle("sync-session", async (_event, cfg) => {
+  if (privateReleaseConfig) return { error: PRIVATE_SERVERS_REFUSAL };
+  const result = sync.setSession(cfg);
+  if (result?.error) return { error: result.error };
+  // Same reasoning as sync-config: the cache belongs to the set of sessions.
+  await assetCache.bindSession(result?.sessionKey ?? null).catch(() => assetCache.markPendingClear());
+  if (cfg?.userId) void reconcileIfDue();
+  return { ok: true, sessionChanged: result.sessionChanged };
+});
+
+// ── Servers (Settings > Servers) ──
+// Adding is two calls on purpose. servers-probe checks the address and asks
+// the server who it is; the renderer shows that name and origin; only then
+// does servers-add, with the id of a check main made itself, put it on the
+// list. A renderer that calls servers-add with anything else adds nothing.
+const serverView = (s) => ({
+  origin: s.origin,
+  name: s.name,
+  isDefault: !!s.isDefault,
+  signIn: { email: s.signIn?.email !== false, google: s.signIn?.google === true },
+  version: s.version ?? null,
+});
+handle("servers-list", () => serverStore.list().map(serverView), {
+  onFailure: () => [serverView({ origin: DEFAULT_SERVER, name: "Markie Cloud", isDefault: true, signIn: { email: true, google: true } })],
+});
+handle("servers-probe", (_event, input) => (privateReleaseConfig ? { ok: false, error: PRIVATE_SERVERS_REFUSAL } : serverStore.probe(typeof input === "string" ? input : "")), {
+  onFailure: (err) => ({ ok: false, error: errorMessage(err) }),
+});
+handle("servers-add", (_event, probeId) => {
+  if (privateReleaseConfig) return { ok: false, error: PRIVATE_SERVERS_REFUSAL };
+  const res = serverStore.add(probeId);
+  return res.ok ? { ok: true, server: serverView(res.server) } : res;
+});
+handle("servers-remove", async (_event, origin) => {
+  const res = serverStore.remove(origin);
+  if (!res.ok) return res;
+  // Its token goes with it, and so does what it said about its documents.
+  const forgotten = sync.forgetOrigin(origin);
+  await assetCache.bindSession(forgotten?.sessionKey ?? null).catch(() => assetCache.markPendingClear());
+  return { ok: true };
+});
+
+// The server a renderer call names, if it is one this app trusts. Anything
+// else is the primary server, which is what every call meant before.
+function trustedServerArg(server) {
+  if (typeof server !== "string" || !server) return undefined;
+  return isAllowedServerOrigin(server, { allowDev: isDev }) ? new URL(server).origin : undefined;
+}
+
 // The renderer resolved this doc's share role against the server; the sync
 // engine needs it so a save can refuse a push the server would only 403.
-handle("sync-doc-role", (_event, { cloudId, role }) =>
-  sync.setDocRole(cloudId, role)
+handle("sync-doc-role", (_event, { cloudId, role, server }) =>
+  sync.setDocRole(cloudId, role, trustedServerArg(server))
 );
 handle("registry-track", (_event, { path: p, name, content }) => {
   try {
@@ -1654,8 +1754,8 @@ handle("registry-get", (_event, p) => {
 handle("library-state", () => sync.libraryState(), {
   onFailure: (err) => ({ signedIn: false, items: [], error: errorMessage(err) }),
 });
-handle("doc-sync-on", (_event, { path: p, name, content, areaId }) =>
-  sync.syncOn(p, name, content, areaId)
+handle("doc-sync-on", (_event, { path: p, name, content, areaId, server }) =>
+  sync.syncOn(p, name, content, areaId, trustedServerArg(server))
 );
 handle("doc-sync-off", (_event, { path: p, deleteRemote }) =>
   sync.syncOff(p, deleteRemote)
@@ -1840,7 +1940,7 @@ handle("doc-keep-both", async (_event, { path: p, content }) => {
   refreshDiskMemory(p, res);
   return res;
 });
-handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
+handle("doc-pull", async (_event, { cloudId, suggestedName, server }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: suggestedName || "document.md",
     filters: [
@@ -1850,7 +1950,7 @@ handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
   });
   if (result.canceled || !result.filePath) return { canceled: true };
   if (!OPENABLE.test(result.filePath)) return { error: "Unsupported file type" };
-  const pulled = await sync.pull(cloudId, result.filePath);
+  const pulled = await sync.pull(cloudId, result.filePath, trustedServerArg(server));
   if (pulled?.ok) {
     fileGrants.grantFile(pulled.path);
     refreshDiskMemory(pulled.path, pulled);
@@ -1860,9 +1960,9 @@ handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
 
 // Open a shared cloud doc with one click: save it to ~/Downloads and open it,
 // no "where do you want to save" dialog. Backs the "Shared with you" list.
-handle("doc-open-shared", async (_event, { cloudId, suggestedName }) => {
+handle("doc-open-shared", async (_event, { cloudId, suggestedName, server }) => {
   const dest = downloadsUniquePath(suggestedName || "Shared document.md");
-  const res = await sync.pull(cloudId, dest);
+  const res = await sync.pull(cloudId, dest, trustedServerArg(server));
   if (res && res.error) return res;
   fileGrants.grantFile(dest);
   openLocalFile(dest);

@@ -1,47 +1,189 @@
 // Snapshot sync engine — pushes/pulls whole-doc snapshots to the Markie API.
-// The renderer provides the bearer token + server URL via sync-config IPC.
+// The renderer provides a bearer token per server via the sync-config IPC
+// (the primary server, which is Markie Cloud for everyone but a developer
+// pointed at localhost) and sync-session (every other server the user added
+// and signed in to).
+//
+// Several servers at once. Every document lives on exactly one of them: the
+// registry row's cloud_origin, or the primary server when that is empty,
+// which is what every row written before self-hosted servers existed has.
+// Every request below runs inside withOrigin(<the document's server>), and
+// api() sends that server's token to that server and nowhere else.
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { AsyncLocalStorage } = require("node:async_hooks");
 const registry = require("./registry");
-const { isAllowedServerOrigin } = require("./share-origin");
+const { isAllowedServerOrigin, DEFAULT_SERVER } = require("./share-origin");
 // Every write below lands on a file the user owns, so none of them may leave a
 // truncated document behind if the process dies mid-write.
 const { writeFileAtomic } = require("./atomic-write");
 const docTiers = require("./doc-tiers");
 
-let config = { token: null, serverURL: null };
-let sessionGeneration = 0;
-const boundUpload = new AsyncLocalStorage();
+// origin -> { token, principal, generation }. `principal` is who the renderer last
+// confirmed the token belongs to, with that server: the roles the registry
+// remembers were granted to one account at one server, so reading them back
+// for any other is worth nothing. Unknown until a confirmed session says, and
+// unknown never claims ownership.
+const sessions = new Map();
 
-// What the signed-in user may do with each cloud doc, keyed by cloud doc id.
-// The renderer resolves the role once (src/lib/share-role.ts) and reports it
-// here; libraryState fills in the rest from the doc list it already fetches.
-// Nothing is inferred locally, so an unreported doc stays unknown.
+// A generation per session change, across every server, so an operation
+// that captured a session can tell it is no longer the one it started with.
+let generationCounter = 0;
+
+// The server a row with no cloud_origin lives on, and the one sync-config
+// configures. Markie Cloud unless a dev build was pointed elsewhere.
+let primaryOrigin = DEFAULT_SERVER;
+
+// What the last sync-config push said, so "did the session change" keeps
+// meaning what it always meant for the primary slot.
+let legacy = { token: null, serverURL: null };
+
+// Which server the code running right now is talking to. Set by withOrigin
+// around each operation, so the asset and link pushes it calls into
+// (electron/asset-sync.js, electron/link-sync.js) reach the same server
+// without every signature growing an origin. The store is
+// `{ serverURL, bound }`; a bound one (an upload, see captureBinding) also
+// carries the token, account and generation it started with, and every
+// request inside it is refused once that session is no longer current.
+const scope = new AsyncLocalStorage();
+
+function allowDev() {
+  return process.env.NODE_ENV === "development";
+}
+
+function originOf(url) {
+  if (!url || typeof url !== "string") return null;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+// Trust is checked at the moment of use too, not only when a session was
+// set: a server removed from Settings > Servers stops receiving its token at
+// once, even before its session is dropped.
+function isTrusted(origin) {
+  return !!origin && isAllowedServerOrigin(origin, { allowDev: allowDev() });
+}
+
+function currentOrigin() {
+  return scope.getStore()?.serverURL ?? primaryOrigin;
+}
+
+// Run `fn` against one server. Inside an operation already on that server,
+// the operation's own scope (and any session it captured) carries on.
+function withOrigin(origin, fn) {
+  const server = origin || primaryOrigin;
+  const store = scope.getStore();
+  if (store && store.serverURL === server) return fn();
+  return scope.run({ serverURL: server, bound: false }, fn);
+}
+
+// The session an upload belongs to, captured when it starts: the token, the
+// account and the generation of that server's session. Nested in an upload
+// already bound to the same server, that upload's capture is kept.
+function captureBinding(origin) {
+  const server = origin || primaryOrigin;
+  const store = scope.getStore();
+  if (store && store.bound && store.serverURL === server) return store;
+  const s = sessionFor(server);
+  return {
+    serverURL: server,
+    bound: true,
+    token: s ? s.token : null,
+    userId: s ? s.principal : null,
+    generation: s ? s.generation : 0,
+  };
+}
+
+// The server a registry row's document lives on.
+function originOfRow(row) {
+  return (row && row.cloud_origin) || primaryOrigin;
+}
+
+// The cloud_origin a row on `origin` should carry: nothing for the primary
+// server, so rows on it look exactly as they always have.
+function originFields(row, origin) {
+  const want = origin && origin !== primaryOrigin ? origin : null;
+  const have = (row && row.cloud_origin) || null;
+  return want === have ? {} : { cloud_origin: want };
+}
+
+function sessionFor(origin) {
+  const s = sessions.get(origin);
+  return s && s.token && isTrusted(origin) ? s : null;
+}
+
+// Servers with a session, the primary first.
+function configuredOrigins() {
+  const out = [];
+  if (sessionFor(primaryOrigin)) out.push(primaryOrigin);
+  for (const origin of sessions.keys()) {
+    if (origin !== primaryOrigin && sessionFor(origin)) out.push(origin);
+  }
+  return out;
+}
+
+// Where a document that is not on any server yet should go: the server asked
+// for when it has a session, else the primary, else whichever is signed in.
+function pickOrigin(origin) {
+  if (origin && sessionFor(origin)) return origin;
+  if (sessionFor(primaryOrigin)) return primaryOrigin;
+  return configuredOrigins()[0] ?? primaryOrigin;
+}
+
+// The server a cloud id belongs to, as far as this device knows. Asset
+// fetches arrive with only an id; the row that holds it says where it lives.
+function originForCloudId(cloudId) {
+  if (!cloudId) return primaryOrigin;
+  let found = null;
+  try {
+    for (const row of registry.list()) {
+      if (row.cloud_doc_id !== cloudId) continue;
+      const o = originOfRow(row);
+      if (found && found !== o) return primaryOrigin;
+      found = o;
+    }
+  } catch {
+    return primaryOrigin;
+  }
+  return found ?? primaryOrigin;
+}
+
+const roleKey = (origin, cloudId) => `${origin}\n${cloudId}`;
+
+// What the signed-in user may do with each cloud doc, keyed by server and
+// cloud doc id. The renderer resolves the role once (src/lib/share-role.ts)
+// and reports it here; libraryState fills in the rest from the doc list it
+// already fetches. Nothing is inferred locally, so an unreported doc stays
+// unknown.
 const docRoles = new Map();
 
-// Whether anybody but this account can read each cloud doc, keyed by cloud
-// doc id, as the last listing the server sent said. A doc shared with me is
-// exposed by definition; one I own is exposed when the listing marks it
-// `sharedOut` (a member, an invite waiting for an address, or a public link).
-// The asset push asks this before deciding which of a document's references
-// may leave this machine, so a doc no listing has covered stays absent here
-// and reads as "nobody has said", which that caller treats as exposed. An
-// owned doc a listing names without saying is exposed too: a server that does
-// not answer the question has not answered it in this account's favour.
+// Whether anybody but this account can read each cloud doc, keyed by server
+// and cloud doc id, as the last listing that server sent said. A doc shared
+// with me is exposed by definition; one I own is exposed when the listing
+// marks it `sharedOut` (a member, an invite waiting for an address, or a
+// public link). The asset push asks this before deciding which of a
+// document's references may leave this machine, so a doc no listing has
+// covered stays absent here and reads as "nobody has said", which that
+// caller treats as exposed. An owned doc a listing names without saying is
+// exposed too: a server that does not answer the question has not answered
+// it in this account's favour.
 const docExposure = new Map();
 
-// Who is signed in, as the renderer last confirmed with the server. The roles
-// the registry remembers were granted to one account, so reading them back for
-// any other is worth nothing. Unknown until a confirmed session says, and
-// unknown never claims ownership.
-let principal = null;
+function clearOriginState(origin) {
+  const prefix = `${origin}\n`;
+  for (const k of [...docRoles.keys()]) if (k.startsWith(prefix)) docRoles.delete(k);
+  for (const k of [...docExposure.keys()]) if (k.startsWith(prefix)) docExposure.delete(k);
+}
 
-function setDocRole(cloudId, role) {
+function setDocRole(cloudId, role, origin) {
   if (!cloudId) return;
-  if (role) docRoles.set(cloudId, role);
-  else docRoles.delete(cloudId);
+  const key = roleKey(origin || currentOrigin(), cloudId);
+  if (role) docRoles.set(key, role);
+  else docRoles.delete(key);
 }
 
 // Everything a `GET /api/docs` listing says about roles and exposure, recorded
@@ -53,81 +195,145 @@ function setDocRole(cloudId, role) {
 // so an absent doc is one the server no longer answers for at all (deleted
 // elsewhere, or this account's access revoked), and keeping "nobody else can
 // read it" from the listing before would be the one stale answer that lets a
-// file leave this machine.
-function noteListing(docs) {
+// file leave this machine. A listing speaks for its own server only.
+function noteListing(docs, origin) {
   if (!Array.isArray(docs)) return;
+  const o = origin || currentOrigin();
   const named = new Set();
   for (const d of docs) {
     if (!d || !d.id) continue;
-    named.add(d.id);
-    setDocRole(d.id, d.shared ? d.role ?? "viewer" : "owner");
-    docExposure.set(d.id, d.shared ? true : d.sharedOut !== false);
+    const key = roleKey(o, d.id);
+    named.add(key);
+    docRoles.set(key, d.shared ? d.role ?? "viewer" : "owner");
+    docExposure.set(key, d.shared ? true : d.sharedOut !== false);
   }
-  for (const id of [...docExposure.keys()]) {
-    if (!named.has(id)) docExposure.delete(id);
+  const prefix = `${o}\n`;
+  for (const key of [...docExposure.keys()]) {
+    if (key.startsWith(prefix) && !named.has(key)) docExposure.delete(key);
   }
 }
 
 // True when somebody else can read this doc, false when nobody can, null when
 // nobody has said. Null is not "private": the caller decides what to do with
 // silence, and the asset push fails closed on it.
-function isExposed(cloudId) {
+function isExposed(cloudId, origin) {
   if (!cloudId) return null;
-  const known = docExposure.get(cloudId);
+  const known = docExposure.get(roleKey(origin || currentOrigin(), cloudId));
   return known === undefined ? null : known;
 }
 
-function setConfig(next) {
-  const previousPrincipal = principal;
-  const serverURL = next.serverURL ?? null;
-  // SECURITY: only forward the bearer token to an allowlisted origin so a future
-  // code path can't be tricked into exfiltrating the session token.
-  const allowed = isAllowedServerOrigin(serverURL, {
-    allowDev: process.env.NODE_ENV === "development",
-  });
-  const token = next.token ?? null;
-  const server = allowed ? serverURL : null;
-  // The session is the token at a server. The same token string offered to
-  // another address is a different session: nothing there has said whose it
-  // is, and the renderer sends no user with it (setServerURL in auth-client).
-  const sessionChanged = token !== config.token || server !== config.serverURL;
-  config = { token, serverURL: server };
-  // Roles belong to whoever was signed in. Another account's grants on the same
-  // doc are a different answer entirely, and so is who else can read it.
-  docRoles.clear();
-  docExposure.clear();
-  // The principal is evidence about one token at one server. A different
-  // token or server is a different session, whether or not anyone signed out
-  // in between, so the old answer goes at once, and a user named in the same
-  // push cannot have been confirmed for the new session yet: the renderer
-  // sends whatever it last heard, which was said for the session before. The
-  // principal comes back only with a later push made after /api/me answered
-  // under this token at this server. A push that carries no user and the same
-  // session leaves it alone: that usually means nobody has asked the server
-  // yet, and offline nobody can. No token at all is a sign-out, and nobody is
-  // signed in.
-  if (sessionChanged || !token) principal = null;
-  else if (next.userId) principal = next.userId;
-  if (sessionChanged || principal !== previousPrincipal) sessionGeneration++;
-  // `sessionKey` names this session without being it: the asset cache stores
-  // it beside its index, so a relaunch of the same account keeps the pictures
-  // it fetched and any other account's binding empties the directory. A
-  // digest rather than the token, because this is written to a plain file
-  // next to the cached bytes and the token is a bearer credential.
-  const sessionKey =
-    token && server ? crypto.createHash("sha256").update(`${token}\n${server}`).digest("hex") : null;
-  return { sessionChanged, sessionKey };
+// `sessionKey` names the set of sessions without being any of them: the
+// asset cache stores it beside its index, so a relaunch of the same accounts
+// keeps the pictures it fetched and any other binding empties the directory.
+// A digest rather than the tokens, because this is written to a plain file
+// next to the cached bytes and a token is a bearer credential. One session
+// hashes exactly as it did when there could only be one.
+function sessionsKey() {
+  const lines = configuredOrigins()
+    .map((origin) => `${sessions.get(origin).token}\n${origin}`)
+    .sort();
+  if (lines.length === 0) return null;
+  return crypto.createHash("sha256").update(lines.join("\n\n")).digest("hex");
 }
 
-function isConfigured() {
-  return !!(config.token && config.serverURL);
+// Record one server's token. A different token is a different session,
+// whether or not anyone signed out in between, so the old principal goes at
+// once, and a user named in the same push cannot have been confirmed for the
+// new token yet: the renderer sends whatever it last heard, which was said
+// for the session before. The principal comes back only with a later push
+// made after /api/me answered under this token at this server. A push that
+// carries no user and the same token leaves it alone: that usually means
+// nobody has asked the server yet, and offline nobody can. No token at all is
+// a sign-out, and nobody is signed in.
+function applySession(origin, token, userId, changed) {
+  if (!token) {
+    sessions.delete(origin);
+    return;
+  }
+  const prev = sessions.get(origin);
+  let principal = prev && !changed ? prev.principal : null;
+  if (!changed && userId) principal = userId;
+  // A new token or a newly confirmed account is a new generation: an upload
+  // captured under the old one stops before it acknowledges anything.
+  const generation = prev && !changed && prev.principal === principal ? prev.generation : ++generationCounter;
+  sessions.set(origin, { token, principal, generation });
+}
+
+// The primary server's session, from sync-config. The contract is the one
+// this engine has always had: the token at that server, replacing whatever
+// the primary slot held before, including the server itself.
+function setConfig(next) {
+  const serverURL = next.serverURL ?? null;
+  // SECURITY: only forward the bearer token to a trusted origin so a future
+  // code path can't be tricked into exfiltrating the session token.
+  const server = isTrusted(originOf(serverURL)) ? originOf(serverURL) : null;
+  const token = next.token ?? null;
+  // The session is the token at a server. The same token string offered to
+  // another address is a different session: nothing there has said whose it
+  // is, and the renderer sends no user with it.
+  const sessionChanged = token !== legacy.token || server !== legacy.serverURL;
+  legacy = { token, serverURL: server };
+  const before = primaryOrigin;
+  // Roles belong to whoever was signed in. Another account's grants on the
+  // same doc are a different answer entirely, and so is who else can read it.
+  clearOriginState(before);
+  if (server && server !== before) {
+    // The primary slot moved to another server, and its old session goes
+    // with it. That server was never told anything new.
+    sessions.delete(before);
+    primaryOrigin = server;
+    clearOriginState(server);
+  }
+  if (!server) {
+    sessions.delete(primaryOrigin);
+  } else {
+    applySession(server, token, next.userId ?? null, sessionChanged || !sessions.has(server));
+  }
+  return { sessionChanged, sessionKey: sessionsKey() };
+}
+
+// Any other trusted server's session, from sync-session. Leaves every other
+// server's session exactly as it was.
+function setSession(next) {
+  const origin = originOf(next && next.origin);
+  if (!origin || !isTrusted(origin)) {
+    return { error: "That server isn't one of your Markie servers.", sessionChanged: false, sessionKey: sessionsKey() };
+  }
+  const token = (next && next.token) || null;
+  const prev = sessions.get(origin);
+  const sessionChanged = (prev ? prev.token : null) !== token;
+  if (sessionChanged || !token) clearOriginState(origin);
+  applySession(origin, token, (next && next.userId) || null, sessionChanged);
+  return { sessionChanged, sessionKey: sessionsKey() };
+}
+
+// A server the user removed: its session goes whether or not it is still
+// trusted (it no longer is), along with everything it said.
+function forgetOrigin(origin) {
+  const o = originOf(origin);
+  if (!o) return { sessionKey: sessionsKey() };
+  sessions.delete(o);
+  clearOriginState(o);
+  return { sessionKey: sessionsKey() };
+}
+
+// With an origin: whether that server has a session. Without: whether any
+// server has one.
+function isConfigured(origin) {
+  if (origin) return !!sessionFor(origin);
+  return configuredOrigins().length > 0;
 }
 
 // Whether a session has been confirmed to belong to somebody, as opposed to
 // merely holding a token. Reconciliation needs an account on the other end
 // before it goes looking for what that account's server thinks it has.
-function hasPrincipal() {
-  return principal !== null;
+function hasPrincipal(origin) {
+  if (origin) return !!sessionFor(origin)?.principal;
+  return configuredOrigins().some((o) => !!sessions.get(o).principal);
+}
+
+function principalFor(origin) {
+  return sessionFor(origin)?.principal ?? null;
 }
 
 // One asset of a cloud document, streamed with the session's token.
@@ -144,8 +350,12 @@ function hasPrincipal() {
 const ANSWER_TIMEOUT_MS = 5000;
 const TRANSFER_TIMEOUT_MS = 300000;
 
-async function fetchAsset(cloudId, ref, ifNoneMatch) {
-  if (!isConfigured()) return null;
+// The document's server comes from the row that holds its cloud id, unless
+// the caller already knows it.
+async function fetchAsset(cloudId, ref, ifNoneMatch, origin) {
+  const server = origin || originForCloudId(cloudId);
+  const session = sessionFor(server);
+  if (!session) return null;
   // Two deadlines, not one. A signal handed to fetch governs the response
   // body as well as the wait for its headers, so a single five-second cap on
   // a revalidation would be five seconds for the whole replacement to
@@ -156,9 +366,9 @@ async function fetchAsset(cloudId, ref, ifNoneMatch) {
   let deadline = setTimeout(() => abort.abort(), ifNoneMatch ? ANSWER_TIMEOUT_MS : TRANSFER_TIMEOUT_MS);
   let streaming = false;
   try {
-    const headers = { Authorization: `Bearer ${config.token}` };
+    const headers = { Authorization: `Bearer ${session.token}` };
     if (ifNoneMatch) headers["If-None-Match"] = ifNoneMatch;
-    const res = await fetch(`${config.serverURL}/api/docs/${encodeURIComponent(cloudId)}/assets/file?ref=${encodeURIComponent(ref)}`, {
+    const res = await fetch(`${server}/api/docs/${encodeURIComponent(cloudId)}/assets/file?ref=${encodeURIComponent(ref)}`, {
       headers,
       signal: abort.signal,
     });
@@ -200,22 +410,37 @@ async function fetchAsset(cloudId, ref, ifNoneMatch) {
 const NO_RESPONSE = 0;
 const STALE_UPLOAD = "Your sign-in or cloud server changed during the upload. Confirm the account and destination before retrying.";
 function currentUpload(binding) {
-  return !binding || (binding.generation === sessionGeneration && binding.token === config.token && binding.serverURL === config.serverURL && binding.userId === principal);
+  if (!binding || !binding.bound) return true;
+  const s = sessionFor(binding.serverURL);
+  return (
+    (s ? s.generation : 0) === binding.generation &&
+    (s ? s.token : null) === binding.token &&
+    (s ? s.principal : null) === binding.userId
+  );
 }
+// Pin `operation` to the primary server's current session (reconciliation
+// uses this). Work inside it that turns to another server captures that
+// server's session instead.
 function withSessionBinding(operation) {
-  const binding = boundUpload.getStore() ?? { ...config, userId: principal, generation: sessionGeneration };
-  return boundUpload.run(binding, operation);
+  const binding = captureBinding(currentOrigin());
+  return scope.run(binding, operation);
 }
 
+// The request goes to the server of the operation it runs inside (withOrigin),
+// with that server's token. A server with no session, or one that is no
+// longer trusted, is never sent anything.
 async function api(method, p, body, opts = {}) {
+  const server = opts.origin || currentOrigin();
+  const store = scope.getStore();
+  const binding = store && store.bound && store.serverURL === server ? store : null;
   // Abort a hung request so the renderer's invoke() can't pend forever
   // (e.g. an unreachable server would otherwise freeze the save indicator).
   try {
-    const binding = boundUpload.getStore();
     if (!currentUpload(binding)) return { status: NO_RESPONSE, data: null, staleSession: true };
-    const session = binding ?? config;
+    const session = binding ? (binding.token ? binding : null) : sessionFor(server);
+    if (!session) return { status: NO_RESPONSE, data: null };
     const raw = opts.raw ?? null;
-    const res = await fetch(`${session.serverURL}${p}`, {
+    const res = await fetch(`${server}${p}`, {
       method,
       headers: raw
         ? { "Content-Type": raw.mime, "Content-Length": String(raw.size), Authorization: `Bearer ${session.token}` }
@@ -274,7 +499,7 @@ function readVersion(res) {
 // actually wrong instead of reporting a failed backup. The server check stays:
 // this is about not lying to the user, not about security.
 function viewerRefusal(filePath, cloudId) {
-  if (!cloudId || docRoles.get(cloudId) !== "viewer") return null;
+  if (!cloudId || docRoles.get(roleKey(currentOrigin(), cloudId)) !== "viewer") return null;
   // The snapshot is on local disk and is never going to reach the cloud, so the
   // row must not keep telling the Library it is backed up.
   registry.update(filePath, { sync_state: "unpushed" });
@@ -349,22 +574,25 @@ function mediaLeftPending(filePath, staged) {
 }
 
 // Turn syncing on for a file: create the cloud doc (or push a new snapshot).
-async function syncOn(filePath, name, content, areaId) {
-  if (!isConfigured()) return { error: "not signed in" };
+// A document already on a server stays on it; a new one goes to `origin`
+// when that server has a session (see pickOrigin).
+async function syncOn(filePath, name, content, areaId, origin) {
+  const row = registry.get(filePath);
+  const server = row?.cloud_doc_id ? originOfRow(row) : pickOrigin(origin);
+  if (!isConfigured(server)) return { error: "not signed in" };
   const explicitArea = areaId !== undefined;
   if (explicitArea && (typeof areaId !== "string" || !areaId || areaId.length > 128 || /[\x00-\x20\x7f]/.test(areaId))) return { error: "Choose a valid cloud destination." };
-  if (explicitArea && !principal) return { error: "Confirm your signed-in account before choosing a cloud destination." };
-  const row = registry.get(filePath);
+  if (explicitArea && !principalFor(server)) return { error: "Confirm your signed-in account before choosing a cloud destination." };
   if (explicitArea && row?.cloud_doc_id) return { error: "This document is already linked. Move it through cloud-area controls; uploading cannot change its destination." };
   // Even an omitted/default destination belongs to the session that queued it.
   // A legacy unconfirmed principal may stay null, but its token/server epoch
   // must still remain unchanged throughout the upload.
-  const binding = boundUpload.getStore() ?? { ...config, userId: principal, generation: sessionGeneration };
+  const binding = captureBinding(server);
   if (!currentUpload(binding)) return { error: STALE_UPLOAD };
-  return boundUpload.run(binding, () => syncOnSnapshot(filePath, name, content, areaId, row, binding));
+  return scope.run(binding, () => syncOnSnapshot(filePath, name, content, areaId, row, binding, server));
 }
 
-async function syncOnSnapshot(filePath, name, content, areaId, row, binding) {
+async function syncOnSnapshot(filePath, name, content, areaId, row, binding, server) {
   const refused = viewerRefusal(filePath, row?.cloud_doc_id);
   if (refused) return refused;
   const linked = row?.cloud_doc_id ?? null;
@@ -395,7 +623,7 @@ async function syncOnSnapshot(filePath, name, content, areaId, row, binding) {
       // next attempt a retry of the *same* cloud doc; without it every retry
       // minted a fresh uuid and left an orphan copy behind. No cloud_version is
       // recorded, so the row stays unpushed and the next push re-sends from 0.
-      registry.update(filePath, { cloud_doc_id: cloudId, sync_state: "unpushed" });
+      registry.update(filePath, { cloud_doc_id: cloudId, ...originFields(row, server), sync_state: "unpushed" });
       mediaLeftPending(filePath, staged);
       return { error: UNREADABLE, media };
     }
@@ -404,6 +632,7 @@ async function syncOnSnapshot(filePath, name, content, areaId, row, binding) {
     // pins any nested media API request and refuses it after a session change.
     const acknowledge = () => registry.update(filePath, {
       cloud_doc_id: cloudId,
+      ...originFields(row, server),
       cloud_version: version,
       content_hash: hash,
       sync_state: "synced",
@@ -435,10 +664,11 @@ async function syncOnSnapshot(filePath, name, content, areaId, row, binding) {
 // changed. "unpushed" is pushable on purpose: a row that failed its last push
 // has to stay retryable or the local edit would never reach the server again.
 async function push(filePath, name, content) {
-  if (!isConfigured()) return { skipped: "not signed in" };
-  const binding = boundUpload.getStore() ?? { ...config, userId: principal, generation: sessionGeneration };
+  const row = registry.get(filePath);
+  if (!isConfigured(row ? originOfRow(row) : primaryOrigin)) return { skipped: "not signed in" };
+  const binding = captureBinding(row ? originOfRow(row) : primaryOrigin);
   if (!currentUpload(binding)) return { error: STALE_UPLOAD };
-  return boundUpload.run(binding, () => pushSnapshot(filePath, name, content, binding));
+  return scope.run(binding, () => pushSnapshot(filePath, name, content, binding));
 }
 
 async function pushSnapshot(filePath, name, content, binding) {
@@ -499,8 +729,8 @@ async function pushSnapshot(filePath, name, content, binding) {
 // Turn syncing off; optionally delete the cloud copy.
 async function syncOff(filePath, deleteRemote) {
   const row = registry.get(filePath);
-  if (row?.cloud_doc_id && deleteRemote && isConfigured()) {
-    const res = await api("DELETE", `/api/docs/${row.cloud_doc_id}`);
+  if (row?.cloud_doc_id && deleteRemote && isConfigured(originOfRow(row))) {
+    const res = await api("DELETE", `/api/docs/${row.cloud_doc_id}`, undefined, { origin: originOfRow(row) });
     // 404 is the outcome we wanted: it is already gone. On anything else the
     // cloud copy is still live and still served to everyone it was shared with,
     // so keep cloud_doc_id: it is the only handle left to retry the delete.
@@ -510,6 +740,7 @@ async function syncOff(filePath, deleteRemote) {
     registry.update(filePath, {
       sync_state: "local-only",
       cloud_doc_id: null,
+      ...originFields(row, null),
       cloud_version: 0,
     });
     return { ok: true, deleted: true };
@@ -519,8 +750,14 @@ async function syncOff(filePath, deleteRemote) {
 }
 
 // Download a cloud-only doc to a local path and track it as synced.
-async function pull(cloudId, targetPath) {
-  if (!isConfigured()) return { error: "not signed in" };
+// `origin` is the server the document lives on; the primary when not given.
+async function pull(cloudId, targetPath, origin) {
+  const server = origin || primaryOrigin;
+  if (!isConfigured(server)) return { error: "not signed in" };
+  return withOrigin(server, () => pullAt(server, cloudId, targetPath));
+}
+
+async function pullAt(server, cloudId, targetPath) {
   const res = await api("GET", `/api/docs/${cloudId}`);
   if (res.status !== 200) return { error: `fetch failed (${res.status})` };
   const doc = readDoc(res);
@@ -555,6 +792,7 @@ async function pull(cloudId, targetPath) {
   registry.track(realPath, name, doc.content);
   registry.update(realPath, {
     cloud_doc_id: cloudId,
+    ...originFields(registry.get(realPath), server),
     cloud_version: typeof doc.version === "number" ? doc.version : 0,
     sync_state: "synced",
     last_synced_at: new Date().toISOString(),
@@ -566,7 +804,7 @@ async function pull(cloudId, targetPath) {
   // restored. A row whose file is still on disk is a different situation
   // (two live copies) and is left alone.
   for (const row of registry.list()) {
-    if (row.cloud_doc_id !== cloudId || row.path === realPath) continue;
+    if (row.cloud_doc_id !== cloudId || originOfRow(row) !== server || row.path === realPath) continue;
     if (!fs.existsSync(row.path)) registry.forget(row.path);
   }
   return { ok: true, path: realPath, name };
@@ -589,7 +827,11 @@ function overCap(doc, name) {
 // Resolve a conflict: "local" force-pushes the local file, "cloud" overwrites it.
 async function resolve(filePath, strategy) {
   const row = registry.get(filePath);
-  if (!row?.cloud_doc_id || !isConfigured()) return { error: "not resolvable" };
+  if (!row?.cloud_doc_id || !isConfigured(originOfRow(row))) return { error: "not resolvable" };
+  return withOrigin(originOfRow(row), () => resolveAt(row, filePath, strategy));
+}
+
+async function resolveAt(row, filePath, strategy) {
   if (strategy === "cloud") {
     // The server never received this file's latest edit, so the cloud copy is
     // strictly older and overwriting would destroy the only copy that exists.
@@ -673,7 +915,30 @@ async function resolve(filePath, strategy) {
 // content only matters once someone opens the prompt, and fetching it here
 // would mean downloading every out-of-date document on a timer.
 async function checkUpdates() {
-  if (!isConfigured()) return { updates: [], listing: null, landed: [] };
+  const origins = configuredOrigins();
+  if (origins.length === 0) return { updates: [], listing: null, landed: [] };
+  const updates = [];
+  const landed = [];
+  const prints = [];
+  let anyLoaded = false;
+  for (const origin of origins) {
+    const one = await withOrigin(origin, () => checkUpdatesAt(origin));
+    updates.push(...one.updates);
+    landed.push(...one.landed);
+    if (one.listing) anyLoaded = true;
+    prints.push(`${origin}:${one.listing ?? "unavailable"}`);
+  }
+  if (!anyLoaded) return { updates, listing: null, landed };
+  // One server is the fingerprint it always was, so nothing upstream of a
+  // single-server user notices a change.
+  const listing =
+    origins.length === 1
+      ? prints[0].slice(origins[0].length + 1)
+      : crypto.createHash("sha1").update(prints.join("\n")).digest("hex");
+  return { updates, listing, landed };
+}
+
+async function checkUpdatesAt(origin) {
   const res = await api("GET", "/api/docs");
   // A list we never received says nothing about who is ahead. Reporting
   // "no updates" is right: it is the same as the state before the check, and
@@ -681,15 +946,15 @@ async function checkUpdates() {
   if (res.status !== 200 || !Array.isArray(res.data?.docs)) {
     return { updates: [], listing: null, landed: [] };
   }
-  noteListing(res.data.docs);
+  noteListing(res.data.docs, origin);
   // Before anything else: a document synced from another machine lands here
   // by itself, so the loop below sees it as a file of this device's own.
-  const landed = await landCloudDocs(res.data.docs);
+  const landed = await landCloudDocs(res.data.docs, origin);
   const remote = new Map(res.data.docs.map((d) => [d.id, d]));
   // What the list looked like, in one string. The renderer keeps the previous
   // one and refreshes the Library when it moves, which is how a document synced
   // from another machine appears here without anyone reopening the panel.
-  const rows = registry.list();
+  const rows = registry.list().filter((row) => originOfRow(row) === origin);
   const listing = listingFingerprint(res.data.docs, rows);
   const updates = [];
   for (const row of rows) {
@@ -711,6 +976,7 @@ async function checkUpdates() {
         // took, so pulling over it destroys them even though nothing looks
         // unsaved. The caller cannot tell from the buffer alone.
         syncState: row.sync_state,
+        ...(origin !== primaryOrigin ? { server: origin } : {}),
       });
     }
   }
@@ -762,9 +1028,18 @@ function freePath(dir, base, exists = fs.existsSync) {
   return null;
 }
 
-async function landCloudDocs(docs) {
+// `origin` is the server that sent the listing. A cloud id is only "known"
+// for the server it was seen on: another server naming the same id has said
+// nothing about this device's copy of the first one's document.
+async function landCloudDocs(docs, origin) {
   if (landingNow) return [];
-  const known = new Set(registry.list().map((r) => r.cloud_doc_id).filter(Boolean));
+  const server = origin || currentOrigin();
+  const known = new Set(
+    registry
+      .list()
+      .filter((r) => r.cloud_doc_id && originOfRow(r) === server)
+      .map((r) => r.cloud_doc_id)
+  );
   const arriving = docs.filter((d) => d && !d.shared && d.id && !known.has(d.id));
   if (arriving.length === 0) return [];
   landingNow = true;
@@ -782,8 +1057,15 @@ async function landCloudDocs(docs) {
       if (!target) continue;
       // A failure is left for the next check: the document stays "in your
       // cloud" in the Library, with the same pull a click would make.
-      const pulled = await pull(doc.id, target);
-      if (pulled?.ok) landed.push({ path: pulled.path, name: pulled.name, cloudId: doc.id });
+      const pulled = await pull(doc.id, target, server);
+      if (pulled?.ok) {
+        landed.push({
+          path: pulled.path,
+          name: pulled.name,
+          cloudId: doc.id,
+          ...(server !== primaryOrigin ? { server } : {}),
+        });
+      }
     }
   } catch {
     // The workspace could not be made or read; nothing landed, nothing lost.
@@ -827,8 +1109,8 @@ function listingFingerprint(docs, rows = []) {
 async function remoteContent(filePath) {
   const row = registry.get(filePath);
   if (!row?.cloud_doc_id) return { error: "not synced" };
-  if (!isConfigured()) return { error: "not signed in" };
-  const res = await api("GET", `/api/docs/${row.cloud_doc_id}`);
+  if (!isConfigured(originOfRow(row))) return { error: "not signed in" };
+  const res = await api("GET", `/api/docs/${row.cloud_doc_id}`, undefined, { origin: originOfRow(row) });
   if (res.status !== 200) return { error: failure("fetch", res) };
   const doc = readDoc(res);
   if (!doc) return { error: UNREADABLE };
@@ -878,7 +1160,11 @@ function keepBothPath(filePath, exists = fs.existsSync) {
 async function resolveKeepBoth(filePath, localContent) {
   const row = registry.get(filePath);
   if (!row?.cloud_doc_id) return { error: "not synced" };
-  if (!isConfigured()) return { error: "not signed in" };
+  if (!isConfigured(originOfRow(row))) return { error: "not signed in" };
+  return withOrigin(originOfRow(row), () => resolveKeepBothAt(row, filePath, localContent));
+}
+
+async function resolveKeepBothAt(row, filePath, localContent) {
 
   let local;
   if (typeof localContent === "string") {
@@ -943,6 +1229,7 @@ async function resolveKeepBoth(filePath, localContent) {
 // is. Anything else is null: nobody has said.
 function rememberedRole(row, remoteLoaded) {
   if (remoteLoaded) return null;
+  const principal = principalFor(originOfRow(row));
   if (!principal || row.share_role_user !== principal) return null;
   const role = row.share_role;
   return role === "owner" || role === "editor" || role === "viewer" ? role : null;
@@ -963,29 +1250,33 @@ function ownership(remoteRecord, row, remoteLoaded) {
   return null;
 }
 
-// Merged local + remote view for the Library.
+// Merged local + remote view for the Library, across every signed-in server.
+// An item carries `server` when its document lives anywhere but the primary
+// server, which is what the Library's server badge is drawn from.
 async function libraryState() {
   // vanished local-only files (deleted agent worktrees, temp scratch docs)
   // leave the registry here instead of piling up as "Missing on disk" rows
   registry.pruneMissing();
   const local = registry.list();
-  let remote = [];
-  // A list request that failed is not the same as a server with no docs. Without
-  // this flag one transient error relabels every synced row as deleted remotely.
-  let remoteLoaded = false;
+  // Per server. A list request that failed is not the same as a server with
+  // no docs: without the flag one transient error relabels every synced row
+  // as deleted remotely. A server with no session has no list at all.
+  const lists = new Map();
   // A list that did not load used to look exactly like an account with no
   // documents: "signed in", nothing in the cloud, no word about why. On a
   // second machine that reads as "sync is broken".
-  let cloudError = null;
-  if (isConfigured()) {
-    const res = await api("GET", "/api/docs");
+  const errors = [];
+  for (const origin of configuredOrigins()) {
+    const res = await api("GET", "/api/docs", undefined, { origin });
     if (res.status === 200 && Array.isArray(res.data?.docs)) {
-      remote = res.data.docs;
-      remoteLoaded = true;
+      lists.set(origin, { remote: res.data.docs, loaded: true });
     } else {
-      cloudError = listFailure(res.status);
+      lists.set(origin, { remote: [], loaded: false });
+      const message = listFailure(res.status);
+      errors.push(origin === primaryOrigin ? message : `${hostOf(origin)}: ${message}`);
     }
   }
+  const listOf = (origin) => lists.get(origin) ?? { remote: [], loaded: false };
   // The list already says what this user may do with each doc and who else can
   // read it, so record both and a later push can refuse without asking the
   // server a second time. A doc that is shared but arrives without a role
@@ -996,16 +1287,19 @@ async function libraryState() {
   // that on would clear every document's exposure and read as nobody having
   // said. Unstated fails closed, so one transient error would stop a private
   // document's ../assets/logo.png travelling for the length of an outage.
-  if (remoteLoaded) noteListing(remote);
+  for (const [origin, l] of lists) if (l.loaded) noteListing(l.remote, origin);
   // Rows from before share_role_user existed carry a role and nobody beside
   // it, which offline reads as nobody having said. Opening the document
   // online writes the account in, and a document never opened again would
   // stay unconfirmed for ever; the list names the same rows, so it does the
   // writing. Only rows it names: a row it omits is already read as not this
   // account's while the list is loaded, and gets nothing written.
-  if (remoteLoaded && principal) {
-    const named = new Map(remote.map((d) => [d.id, d]));
+  for (const [origin, l] of lists) {
+    const principal = principalFor(origin);
+    if (!l.loaded || !principal) continue;
+    const named = new Map(l.remote.map((d) => [d.id, d]));
     for (const f of local) {
+      if (originOfRow(f) !== origin) continue;
       const d = f.cloud_doc_id ? named.get(f.cloud_doc_id) : null;
       if (!d) continue;
       const role = d.shared ? (d.role === "editor" ? "editor" : "viewer") : "owner";
@@ -1015,8 +1309,11 @@ async function libraryState() {
       f.share_role_user = principal;
     }
   }
-  const byCloudId = new Map(local.filter((f) => f.cloud_doc_id).map((f) => [f.cloud_doc_id, f]));
+  const serverField = (origin) => (origin !== primaryOrigin ? { server: origin } : {});
+  const known = new Set(local.filter((f) => f.cloud_doc_id).map((f) => roleKey(originOfRow(f), f.cloud_doc_id)));
   const items = local.map((f) => {
+    const origin = originOfRow(f);
+    const { remote, loaded: remoteLoaded } = listOf(origin);
     const r = f.cloud_doc_id ? remote.find((d) => d.id === f.cloud_doc_id) : null;
     let state = f.sync_state;
     if (state === "synced" && r && r.version > (f.cloud_version ?? 0)) {
@@ -1039,6 +1336,7 @@ async function libraryState() {
       path: f.path,
       name: f.name,
       cloudId: f.cloud_doc_id,
+      ...(f.cloud_doc_id ? serverField(origin) : {}),
       state,
       lastOpenedAt: f.last_opened_at,
       remoteVersion: r?.version ?? null,
@@ -1055,13 +1353,15 @@ async function libraryState() {
       },
     };
   });
-  for (const d of remote) {
-    if (!byCloudId.has(d.id)) {
+  for (const [origin, l] of lists) {
+    for (const d of l.remote) {
+      if (known.has(roleKey(origin, d.id))) continue;
       items.push({
         kind: d.shared ? "shared" : "cloud-only",
         path: null,
         name: d.name,
         cloudId: d.id,
+        ...serverField(origin),
         state: "cloud-only",
         lastOpenedAt: d.updated_at,
         remoteVersion: d.version,
@@ -1074,7 +1374,15 @@ async function libraryState() {
       });
     }
   }
-  return { signedIn: isConfigured(), items, cloudError };
+  return { signedIn: isConfigured(), items, cloudError: errors.length ? errors.join(" ") : null };
+}
+
+function hostOf(origin) {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return origin;
+  }
 }
 
 function listFailure(status) {
@@ -1092,6 +1400,13 @@ module.exports = {
   isConfigured,
   hasPrincipal,
   setConfig,
+  setSession,
+  forgetOrigin,
+  configuredOrigins,
+  originOfRow,
+  originForCloudId,
+  withOrigin,
+  primary: () => primaryOrigin,
   setDocRole,
   noteListing,
   isExposed,

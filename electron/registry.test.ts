@@ -673,6 +673,14 @@ describe("upgrading a populated version 1 database", () => {
     expect(blocks.find((b) => b.block_id === "blk-2")?.merged_into).toBe("blk-1");
     expect(registry.projectsConfigGet("rules-known-good")).toBe("kept");
     expect((registry.get("/v1/notes.md") as { cloud_doc_id: string }).cloud_doc_id).toBe("doc_v1");
+    // Rows from before self-hosted servers live on the primary server: the
+    // new column arrives empty, and an update can name another server.
+    expect((registry.get("/v1/notes.md") as { cloud_origin: string | null }).cloud_origin).toBeNull();
+    registry.update("/v1/notes.md", { cloud_origin: "https://docs.example.com" });
+    expect((registry.get("/v1/notes.md") as { cloud_origin: string | null }).cloud_origin).toBe(
+      "https://docs.example.com"
+    );
+    registry.update("/v1/notes.md", { cloud_origin: null });
 
     // The new table exists on the same open, and the project the pin points at
     // can be renamed without the pin noticing.

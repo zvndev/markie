@@ -1,5 +1,13 @@
-import { describe, it, expect } from "vitest";
-import { shareBaseFromSrc, isAllowedServerOrigin, DEFAULT_SERVER } from "./share-origin.js";
+import { describe, it, expect, afterEach } from "vitest";
+import {
+  shareBaseFromSrc,
+  isAllowedServerOrigin,
+  untrustedShareOrigin,
+  setTrustedOrigins,
+  DEFAULT_SERVER,
+} from "./share-origin.js";
+
+afterEach(() => setTrustedOrigins(null));
 
 describe("shareBaseFromSrc", () => {
   it("returns the allowlisted production origin when src matches", () => {
@@ -33,5 +41,64 @@ describe("isAllowedServerOrigin", () => {
   it("accepts localhost only in dev", () => {
     expect(isAllowedServerOrigin("http://localhost:8787", { allowDev: true })).toBe(true);
     expect(isAllowedServerOrigin("http://localhost:8787")).toBe(false);
+  });
+});
+
+describe("the trusted list replaces the pinned host", () => {
+  const SELF = "https://docs.example.com";
+
+  it("trusts an added server by exact origin, for tokens and share fetches", () => {
+    expect(isAllowedServerOrigin(SELF)).toBe(false);
+    setTrustedOrigins(() => [DEFAULT_SERVER, SELF]);
+    expect(isAllowedServerOrigin(SELF)).toBe(true);
+    expect(isAllowedServerOrigin(`${SELF}/`)).toBe(true);
+    expect(shareBaseFromSrc(SELF)).toBe(SELF);
+    // Not the same origin: another port, plain http, a lookalike host.
+    expect(isAllowedServerOrigin("https://docs.example.com:8443")).toBe(false);
+    expect(isAllowedServerOrigin("http://docs.example.com")).toBe(false);
+    expect(isAllowedServerOrigin("https://docs.example.com.evil.com")).toBe(false);
+    expect(shareBaseFromSrc("https://docs.example.com.evil.com")).toBe(DEFAULT_SERVER);
+  });
+
+  it("never sends a token to a URL carrying credentials, even for a trusted host", () => {
+    setTrustedOrigins(() => [DEFAULT_SERVER, SELF]);
+    expect(isAllowedServerOrigin("https://u:p@docs.example.com")).toBe(false);
+    expect(shareBaseFromSrc("https://u:p@docs.example.com")).toBe(DEFAULT_SERVER);
+  });
+
+  it("always trusts the default server, whatever the provider says", () => {
+    setTrustedOrigins(() => []);
+    expect(isAllowedServerOrigin(DEFAULT_SERVER)).toBe(true);
+    setTrustedOrigins(() => {
+      throw new Error("broken");
+    });
+    expect(isAllowedServerOrigin(DEFAULT_SERVER)).toBe(true);
+    expect(isAllowedServerOrigin(SELF)).toBe(false);
+  });
+});
+
+describe("untrustedShareOrigin", () => {
+  it("names a public https origin the user has not added", () => {
+    expect(untrustedShareOrigin("https://docs.example.com")).toBe("https://docs.example.com");
+    expect(untrustedShareOrigin("docs.example.com")).toBe("https://docs.example.com");
+  });
+
+  it("is null for a trusted origin, which needs no question", () => {
+    expect(untrustedShareOrigin(DEFAULT_SERVER)).toBeNull();
+    setTrustedOrigins(() => [DEFAULT_SERVER, "https://docs.example.com"]);
+    expect(untrustedShareOrigin("https://docs.example.com")).toBeNull();
+  });
+
+  it("is null for anything that is not a clean public https origin", () => {
+    expect(untrustedShareOrigin("")).toBeNull();
+    expect(untrustedShareOrigin(null as unknown as string)).toBeNull();
+    expect(untrustedShareOrigin("http://docs.example.com")).toBeNull();
+    expect(untrustedShareOrigin("https://u:p@docs.example.com")).toBeNull();
+    expect(untrustedShareOrigin("169.254.169.254")).toBeNull();
+    expect(untrustedShareOrigin("https://10.0.0.5")).toBeNull();
+    expect(untrustedShareOrigin("https://[::1]")).toBeNull();
+    expect(untrustedShareOrigin("https://intranet")).toBeNull();
+    expect(untrustedShareOrigin("https://printer.local")).toBeNull();
+    expect(untrustedShareOrigin("https://localhost:8787")).toBeNull();
   });
 });

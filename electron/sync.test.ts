@@ -2211,7 +2211,7 @@ describe("landing", () => {
   // the user's own: only the markdown and plain-text family keeps its
   // extension, the same list a shared link's download uses.
   it("lands only markdown and plain-text extensions as they are", () => {
-    for (const name of ["a.md", "a.MARKDOWN", "a.mdx", "a.txt", "a.text", "a.log"]) {
+    for (const name of ["a.md", "a.MARKDOWN", "a.mdx", "a.txt", "a.text", "a.log", "data.csv"]) {
       expect(sync.landingName(name), name).toBe(name);
     }
     for (const name of ["run.command", "run.sh", "page.html", "app.app", "x.exe", "doc.svg", "notes.md.command", "a.webloc"]) {

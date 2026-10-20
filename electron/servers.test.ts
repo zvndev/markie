@@ -90,6 +90,37 @@ describe("parseServerOrigin", () => {
     // Dev still does not open http to the rest of the world.
     expect(parseServerOrigin("http://docs.example.com", { allowDev: true }).ok).toBe(false);
   });
+
+  it("refuses this computer by any spelling in a packaged build", () => {
+    for (const address of [
+      "https://localhost",
+      "https://localhost.",
+      "https://LocalHost.:8443",
+      "https://app.localhost",
+      "https://127.0.0.1",
+      "https://127.1",
+      "https://127.255.255.254",
+      "https://0x7f000001",
+      "https://2130706433",
+      "https://0.0.0.0",
+      "https://0",
+      "https://[::1]",
+      "https://[0:0:0:0:0:0:0:1]",
+      "https://[::]",
+      "https://[::ffff:127.0.0.1]",
+      "https://[::ffff:7f00:1]",
+      "https://[::ffff:0.0.0.0]",
+      "https://[::127.0.0.1]",
+    ]) {
+      expect(parseServerOrigin(address), address).toEqual({ ok: false, error: "Markie can't use a server on this computer." });
+    }
+  });
+
+  it("still takes a server on the user's own network", () => {
+    for (const address of ["https://10.0.0.5", "https://100.64.1.2", "https://[2001:db8::1]", "https://localhost.example.com"]) {
+      expect(parseServerOrigin(address).ok, address).toBe(true);
+    }
+  });
 });
 
 describe("parseServerInfo", () => {

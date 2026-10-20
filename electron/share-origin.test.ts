@@ -4,6 +4,7 @@ import {
   isAllowedServerOrigin,
   untrustedShareOrigin,
   setTrustedOrigins,
+  isLoopbackHostname,
   DEFAULT_SERVER,
 } from "./share-origin.js";
 
@@ -100,5 +101,45 @@ describe("untrustedShareOrigin", () => {
     expect(untrustedShareOrigin("https://intranet")).toBeNull();
     expect(untrustedShareOrigin("https://printer.local")).toBeNull();
     expect(untrustedShareOrigin("https://localhost:8787")).toBeNull();
+  });
+});
+
+describe("isLoopbackHostname", () => {
+  const host = (address: string) => new URL(address).hostname;
+
+  it("is true for this computer in every form the URL parser leaves", () => {
+    for (const address of [
+      "https://localhost",
+      "https://localhost.",
+      "https://x.localhost",
+      "https://127.0.0.1",
+      "https://127.9.9.9",
+      "https://0.0.0.0",
+      "https://[::1]",
+      "https://[::]",
+      "https://[::ffff:127.0.0.1]",
+      "https://[::ffff:7f00:1]",
+      "https://[::ffff:0:0]",
+      "https://[::7f00:1]",
+      "https://[::ffff:0:7f00:1]",
+    ]) {
+      expect(isLoopbackHostname(host(address)), address).toBe(true);
+    }
+  });
+
+  it("is false for every other address", () => {
+    for (const address of [
+      "https://docs.example.com",
+      "https://localhost.example.com",
+      "https://10.0.0.1",
+      "https://128.0.0.1",
+      "https://[::2]",
+      "https://[::ffff:a00:1]",
+      "https://[2001:db8::1]",
+      "https://[fe80::1]",
+    ]) {
+      expect(isLoopbackHostname(host(address)), address).toBe(false);
+    }
+    expect(isLoopbackHostname("")).toBe(false);
   });
 });

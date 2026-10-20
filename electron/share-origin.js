@@ -71,6 +71,74 @@ function isPublicHostname(hostname) {
   return /^[a-z0-9.-]+$/.test(h);
 }
 
+// An IPv6 literal as the URL parser writes it ("[::ffff:7f00:1]"), as its
+// eight 16-bit groups, or null when it is not one.
+function ipv6Groups(hostname) {
+  const m = /^\[([0-9a-f:.]+)\]$/i.exec(String(hostname));
+  if (!m) return null;
+  let text = m[1].toLowerCase();
+  // A trailing dotted quad ("::ffff:127.0.0.1") is two groups.
+  const quad = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(text);
+  if (quad) {
+    const b = quad.slice(1).map(Number);
+    if (b.some((n) => n > 255)) return null;
+    text = `${text.slice(0, quad.index)}${((b[0] << 8) | b[1]).toString(16)}:${((b[2] << 8) | b[3]).toString(16)}`;
+  }
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+  const parse = (part) => (part ? part.split(":") : []);
+  const head = parse(halves[0]);
+  const tail = halves.length === 2 ? parse(halves[1]) : [];
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  if (fill < 0 || (halves.length === 1 && head.length !== 8)) return null;
+  const groups = [...head, ...Array(fill).fill("0"), ...tail].map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN));
+  return groups.length === 8 && groups.every((g) => Number.isInteger(g)) ? groups : null;
+}
+
+// 127.0.0.0/8 (loopback) and 0.0.0.0/8 ("this host", which reaches the
+// loopback interface on the common platforms), as dotted-quad text.
+function isLoopbackIPv4(text) {
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(text);
+  if (!m) return false;
+  const b = m.slice(1).map(Number);
+  if (b.some((n) => n > 255)) return false;
+  return b[0] === 127 || b[0] === 0;
+}
+
+/**
+ * Whether a URL's hostname is this computer: localhost by any spelling
+ * ("localhost", "localhost.", "anything.localhost"), 127.0.0.0/8, 0.0.0.0/8,
+ * ::1, the unspecified ::, and an IPv4 loopback or unspecified address
+ * written as IPv6 (mapped "::ffff:7f00:1", compatible "::7f00:1",
+ * translated "::ffff:0:7f00:1"). Takes `URL.hostname`, which has already
+ * turned "127.1", "0x7f000001" and "2130706433" into "127.0.0.1".
+ *
+ * Narrower than isPublicHostname on purpose: a server the user adds by hand
+ * may be on their own network (a LAN name, a Tailscale address); only the
+ * machine itself is ruled out, because a packaged app has no business
+ * sending a session token to a port some other local program opened.
+ */
+function isLoopbackHostname(hostname) {
+  const h = String(hostname ?? "").toLowerCase();
+  if (!h) return false;
+  const name = h.endsWith(".") ? h.slice(0, -1) : h;
+  if (name === "localhost" || name.endsWith(".localhost")) return true;
+  if (isLoopbackIPv4(name)) return true;
+  const g = ipv6Groups(h);
+  if (!g) return false;
+  const zeros = (from, to) => g.slice(from, to).every((x) => x === 0);
+  // :: and ::1
+  if (zeros(0, 7) && (g[7] === 0 || g[7] === 1)) return true;
+  // An IPv4 address carried in the last 32 bits.
+  const v4 = `${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.${g[7] & 255}`;
+  const mapped = zeros(0, 5) && g[5] === 0xffff;
+  const translated = zeros(0, 4) && g[4] === 0xffff && g[5] === 0;
+  if ((mapped || translated) && isLoopbackIPv4(v4)) return true;
+  // The deprecated "compatible" form: only 127/8, since ::2 and the like are
+  // ordinary (if unused) IPv6 addresses, not 0.0.0.2.
+  return zeros(0, 6) && g[6] >> 8 === 127;
+}
+
 // The origin a markie://open link names when it is a plausible Markie server
 // the user has NOT added: https, no credentials, a public host. The caller has
 // to ask the user before fetching anything from it. Null for a trusted origin
@@ -110,4 +178,5 @@ module.exports = {
   untrustedShareOrigin,
   isAllowedServerOrigin,
   isPublicHostname,
+  isLoopbackHostname,
 };

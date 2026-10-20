@@ -11,7 +11,7 @@
 const nodeFs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { DEFAULT_SERVER } = require("./share-origin");
+const { DEFAULT_SERVER, isLoopbackHostname } = require("./share-origin");
 const { readTextCapped } = require("./bounded-body");
 
 const DEFAULT_NAME = "Markie Cloud";
@@ -43,15 +43,12 @@ const PROBE_TIMEOUT_MS = 8000;
 // differently by the time they come back to the dialog.
 const PROBE_TTL_MS = 10 * 60 * 1000;
 
-function isLocalhostName(hostname) {
-  const h = String(hostname).toLowerCase();
-  return h === "localhost" || h === "127.0.0.1" || h === "[::1]";
-}
 
 /**
  * What the user typed, reduced to an exact origin, or the reason it is not
  * one. https only, no user name or password, nothing after the host but an
- * optional trailing slash. Localhost (http or https) only in dev.
+ * optional trailing slash. This computer (localhost, 127.0.0.0/8, 0.0.0.0,
+ * ::1, ::, IPv4 loopback written as IPv6), over http or https, only in dev.
  */
 function parseServerOrigin(input, { allowDev = false } = {}) {
   if (typeof input !== "string") return { ok: false, error: "Enter a server address." };
@@ -69,7 +66,9 @@ function parseServerOrigin(input, { allowDev = false } = {}) {
   if (u.username || u.password) {
     return { ok: false, error: "Leave the user name and password out of the address." };
   }
-  const local = isLocalhostName(u.hostname);
+  // This computer, by any spelling (share-origin.js). Only a dev build may
+  // use a server here.
+  const local = isLoopbackHostname(u.hostname);
   if (local && !allowDev) return { ok: false, error: "Markie can't use a server on this computer." };
   if (u.protocol !== "https:" && !(local && u.protocol === "http:")) {
     return { ok: false, error: "The address has to start with https://." };

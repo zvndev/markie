@@ -415,6 +415,14 @@ describe("promote-due", () => {
     );
   });
 
+  it("ignores the private super-nightly lane's output beside it in .release/", async () => {
+    const privateOut = path.join(root, ".release/private-artifacts/0.9.1-super-nightly.1");
+    mkdirSync(privateOut, { recursive: true });
+    writeFileSync(path.join(privateOut, "super-nightly-mac.yml"), "version: 0.9.1-super-nightly.1\n");
+    expect((await promoteDue()).line).toBe("nothing pending");
+    expect(world.fetchCount).toBe(0);
+  });
+
   it("waits out the soak, promotes once, and is a no-op after", async () => {
     prepare(root, "0.9.0");
     await publishEarly("mac", "0.9.0");

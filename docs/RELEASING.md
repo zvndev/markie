@@ -53,11 +53,21 @@ Every release moves through three stages:
 
 | Stage | Who sees it | How it gets there |
 | --- | --- | --- |
-| 1. Super nightly | Kirby only | The private lane in `scripts/private-release.mjs` (see `docs/PRIVATE_RELEASES.md`). Unchanged by this pipeline. |
+| 1. Super nightly | Kirby only, through the authenticated private gateway | `node scripts/private-release.mjs build`, `verify`, then `publish-private`, run by the authorized root agent. See `docs/PRIVATE_RELEASES.md`. Unchanged by this pipeline. |
 | 2. Early access | Users who turned on **Get new versions early** | `release:publish:early:mac` / `release:publish:early:win` when Kirby says "release X.Y.Z" |
 | 3. Stable | Everyone, the website, `latest.json` | `release:promote-due` after the soak, or `release:promote` by hand |
 
 Stage 3 never builds anything. It points the stable feeds at the files stage 2 already uploaded.
+
+Stage 1 does not feed stage 2 that way. A super-nightly build has its own version
+(`X.Y.Z-super-nightly.N`), its own builder config, a private marker, and a ZIP-only feed on the
+private gateway. Its verification requires that marker and version, so a stable or beta artifact
+cannot pass as a private build, and the reverse is never attempted. Stage 2 is a fresh
+`release:prepare:mac` / `release:prepare:win` build of the stable-numbered version. Private builds
+also cannot join early access: `main.js` refuses the channel switch in a private build.
+
+The private lane writes its output under `.release/private-artifacts/` by default. The early-access
+commands only read `.release/<version>/early.json`, so they never touch it.
 
 ### How promotion ships the same bits
 

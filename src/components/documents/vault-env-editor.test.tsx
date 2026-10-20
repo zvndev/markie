@@ -136,7 +136,8 @@ describe("vault environment key editor", () => {
     await vi.waitFor(() => expect(vi.getTimerCount()).toBe(1));
     expect(spy.notices.at(-1)).toBe("Copied the value of STRIPE_KEY. It is now on the clipboard, outside the vault. Markie clears it after 30 seconds if it is still there.");
     await act(async () => { await vi.advanceTimersByTimeAsync(CLIPBOARD_CLEAR_MS); });
-    expect(clipboard.writeText).toHaveBeenLastCalledWith("");
+    // The clear reads the clipboard and hashes it on real async crypto after the timer fires.
+    await vi.waitFor(() => expect(clipboard.writeText).toHaveBeenLastCalledWith(""));
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Copy value of DB_URL" })); });
     await vi.waitFor(() => expect(vi.getTimerCount()).toBe(1));

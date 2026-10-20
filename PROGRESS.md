@@ -1452,3 +1452,16 @@ Kirby asked to drop the vault's warning paragraphs and make the vault tight with
 
 Verification: the full suite passed (4586) along with lint and typecheck. In a live isolated Electron run, the create screen, passphrase suggestion, unlock and settings all render with no main-process stall.
 Not verified: the real Touch ID sheet and Keychain storage in the signed build.
+
+## 2026-10-20 Release pipeline, self-hosting, public repo hardening
+
+Kirby asked for a super nightly, early access, then timed stable pipeline, self-hosted servers that can still share, and a secure public repo.
+- Public repo: gitleaks over all history and the unpushed commits found only fixtures. Actions hold no secrets; Azure signing trusts only `main`. Pinned the signing workflow's actions to SHAs with Dependabot for the pins, turned on Dependabot alerts and security fixes, required CI approval for all outside contributors, and protected `main` (PR plus unit, lint-build, server, mcp, version-consistency; admins can bypass).
+- Release pipeline: `release:publish:early:*`, `release:promote`, `release:promote-due`, `release:hold`/`unhold`, `release:rollback:early`/`:win`. Early builds carry stable numbers and the same files are promoted after a 3-day soak. The CONSTITUTION amendment that lets one "release" approve the timed promotion is drafted for Kirby; nothing schedules `promote-due` yet.
+- Self-hosted server: `/api/server-info`, `MARKIE_OFFICIAL` (unset keeps Markie Cloud's guards), any S3 storage, encrypted backups required, `deploy/init.sh`, invite-only sign-up by default (`MARKIE_SIGNUP`, `MARKIE_ADMIN_EMAIL`), optional quotas, `docs/SELF-HOSTING.md`. Docker end to end with MinIO passed, including restore after losing the volume. Production needs no new variables.
+- Desktop: trusted servers list, a native prompt before opening links from unknown servers, a session per server, per-doc `cloud_origin` registry column, server badges, invite-only messaging. Private builds stay on Markie Cloud.
+- Security review of the multi-server code found a high-severity token mix-up through Google sign-in; fixed with an `iss` on the desktop deep link, plus seven smaller fixes (explicit sync destination, look-alike names, bounded bodies, encoded path checks with origin-bound tokens, loopback, landing extensions, private-build lock).
+- Fixed test flakes: vault clipboard clear race, MCP tests inheriting the developer's CLAUDE_CONFIG_DIR.
+
+Verification: npm test 4789 passed, server 453 passed, MCP 81, lint, typecheck, build. 0.8.1-super-nightly.16 published at d5bd85c; the unauthenticated feed returns 404.
+Not verified: a real self-hosted server on the internet, real Google sign-in against one, live editing across servers, B2 with the new empty `region` line (lands at the next api deploy).

@@ -34,7 +34,7 @@ if (toBeCreated.length > 0 || toBeAdded.length > 0) {
 
 const { docs } = await import("./docs.ts");
 const { shares } = await import("./shares.ts");
-const { ACCESS_CACHE_MS, attachCollab, seedLockState, disconnectSessions } = await import("./collab.ts");
+const { ACCESS_CACHE_MS, COLLAB_MAX_PAYLOAD_BYTES, attachCollab, seedLockState, disconnectSessions } = await import("./collab.ts");
 const Database = (await import("better-sqlite3")).default;
 
 const db = new Database(process.env.DB_PATH);
@@ -319,6 +319,27 @@ test("an editor can write into the room", async () => {
   await ownerPeer.resync();
 
   assert.ok(ownerPeer.text().includes("editor-write"), "an editor's update belongs in the room");
+});
+
+test("a whole-document update fits under the frame cap, and a frame over it is refused", async () => {
+  const docId = `collab-payload-${stamp}`;
+  await createDoc(owner.token, docId, "");
+  const ownerPeer = await connect(docId, owner.token);
+
+  // A seed-sized write: larger than any document a live session opens for
+  // (1 MB), several times over.
+  const big = "x".repeat(4 * 1024 * 1024);
+  ownerPeer.write(big);
+  await ownerPeer.resync();
+  assert.equal(ownerPeer.closeCode(), null, "a legitimate large update keeps the socket");
+  const reader = await connect(docId, owner.token);
+  assert.equal(reader.text().length, big.length);
+
+  // One byte over the cap: ws refuses the frame before any Yjs decoding.
+  ownerPeer.ws.send(new Uint8Array(COLLAB_MAX_PAYLOAD_BYTES + 1));
+  await waitFor("the oversized frame to close the socket", () => ownerPeer.closeCode() !== null);
+  assert.equal(ownerPeer.closeCode(), 1009);
+  assert.equal(reader.closeCode(), null, "other members are unaffected");
 });
 
 test("a revoked editor's open socket can no longer write", async () => {

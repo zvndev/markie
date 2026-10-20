@@ -49,6 +49,15 @@ db.exec(`
   );
 `);
 
+// How many snapshots of one document the server keeps, newest first, the
+// current one included. Every push of a document used to add a full copy of
+// its text and nothing ever removed one, so a document edited daily grew the
+// database (and every Litestream snapshot of it) without limit, at up to the
+// ~100 MB a single push may carry. Nothing on the server reads these rows yet:
+// the desktop's history panel is local (electron/history.js). They exist for
+// a future server-side restore, which needs recent versions, not all of them.
+export const DOC_HISTORY_KEEP = 20;
+
 interface DocRow {
   id: string;
   owner_id: string;
@@ -192,6 +201,10 @@ docs.put("/:id", async (c) => {
       db.prepare(
         "INSERT OR REPLACE INTO doc_history (doc_id, version, content, hash, created_at) VALUES (?, ?, ?, ?, ?)"
       ).run(id, version, body.content, body.hash, now);
+      // Versions climb by one per push and restart only after a delete, which
+      // empties the history, so "older than the newest N" is a range on the
+      // primary key.
+      db.prepare("DELETE FROM doc_history WHERE doc_id = ? AND version <= ?").run(id, version - DOC_HISTORY_KEEP);
       if (cloudAreas && destination) cloudAreas.setPlacement(user.id, "markdown", id, destination);
     })();
   } catch (error) {

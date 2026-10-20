@@ -410,3 +410,37 @@ test("a document link on a public page resolves only to another public page", as
   html = await (await fullApp.request(`/s/${sourceToken}`)).text();
   assert.match(html, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">the plan<\/a>/);
 });
+
+test("a public page linking to another account's publicly shared document does not publish its token", async () => {
+  const stamp = Date.now();
+  const a = await signUpVerified(fullApp, { name: "A", email: `pl.a.${stamp}@test.local` });
+  const b = await signUpVerified(fullApp, { name: "B", email: `pl.b.${stamp}@test.local` });
+  const hdr = (token: string) => ({ "Content-Type": "application/json", Authorization: `Bearer ${token}`, Origin: "http://localhost:3000", "x-forwarded-for": "127.0.0.1" });
+  const put = async (token: string, id: string, content: string) => {
+    const hash = createHash("sha256").update(content, "utf8").digest("hex");
+    const r = await fullApp.request(`/api/docs/${id}`, { method: "PUT", headers: hdr(token), body: JSON.stringify({ name: `${id}.md`, content, hash, baseVersion: 0 }) });
+    assert.equal(r.status, 200);
+  };
+  const publish = async (token: string, id: string) => {
+    const r = await fullApp.request(`/api/docs/${id}/public-link`, { method: "POST", headers: hdr(token) });
+    assert.equal(r.status, 200);
+    return String(((await r.json()) as { url: string }).url).split("/s/")[1];
+  };
+
+  // B publishes a document; A learns its id (an id is not a secret).
+  const bDoc = `pl-b-${stamp}`;
+  await put(b.token, bDoc, "# B's page\n");
+  const bToken = await publish(b.token, bDoc);
+
+  // A points their own public page at it.
+  const aDoc = `pl-a-${stamp}`;
+  await put(a.token, aDoc, "# A\n\n[their page](theirs.md)\n");
+  const linked = await fullApp.request(`/api/docs/${aDoc}/links`, { method: "PUT", headers: hdr(a.token), body: JSON.stringify({ links: [{ ref: "theirs.md", target: bDoc }] }) });
+  assert.equal(linked.status, 200);
+  const aToken = await publish(a.token, aDoc);
+
+  const html = await (await fullApp.request(`/s/${aToken}`)).text();
+  assert.ok(!html.includes(bToken), "A's public page must not carry B's public link token");
+  assert.ok(!html.includes(bDoc));
+  assert.match(html, /<a class="doc-link-muted"[^>]*>their page<\/a>/);
+});

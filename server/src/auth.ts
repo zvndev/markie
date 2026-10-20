@@ -45,10 +45,22 @@ export const auth = betterAuth({
     // same class of flaw upstream.
     requireEmailVerification: true,
   },
-  ...(accountIdentitiesEnabled ? { account: { accountLinking: {
-    enabled: true, disableImplicitLinking: true, requireLocalEmailVerified: true,
-    allowDifferentEmails: true, updateUserInfoOnLink: false, trustedProviders: [],
-  } } } : {}),
+  account: {
+    // Google access and refresh tokens are written to the account table
+    // encrypted with BETTER_AUTH_SECRET instead of in the clear, so a copy of
+    // the database (a Litestream replica, a volume snapshot) is not also a set
+    // of live Google credentials. Rows written before this stay plaintext and
+    // still read: better-auth only decrypts values that look like its own
+    // hex ciphertext, which Google's `ya29.` / `1//` tokens never do.
+    // Rotating BETTER_AUTH_SECRET makes encrypted tokens unreadable; Markie
+    // never reads them back (sign-in needs only the identity), and the next
+    // Google sign-in overwrites them.
+    encryptOAuthTokens: true,
+    ...(accountIdentitiesEnabled ? { accountLinking: {
+      enabled: true, disableImplicitLinking: true, requireLocalEmailVerified: true,
+      allowDifferentEmails: true, updateUserInfoOnLink: false, trustedProviders: [],
+    } } : {}),
+  },
   emailVerification: {
     // Proving your own address is not the same event as signing in by code,
     // and the difference is whether the password survives. The email-OTP

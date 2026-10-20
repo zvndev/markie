@@ -18,3 +18,20 @@ test("web origin configuration cannot enable arbitrary HTTP, paths or credential
   }
   assert.throws(() => applicationOrigins({ MARKIE_WEB_ORIGINS: Array(17).fill("https://example.com").join(",") }));
 });
+
+test("production does not trust the localhost dev renderer unless it is configured explicitly", () => {
+  const production = applicationOrigins({ NODE_ENV: "production" });
+  assert.ok(!production.includes("http://localhost:3000"));
+  assert.ok(!production.includes("http://127.0.0.1:3000"));
+  assert.ok(!production.some((origin) => origin.startsWith("http:")));
+  assert.ok(production.includes("app://markie"));
+  assert.ok(production.includes("https://markiedocs.com"));
+  assert.ok(production.includes("https://www.markiedocs.com"));
+
+  assert.ok(applicationOrigins({ NODE_ENV: "development" }).includes("http://localhost:3000"));
+  assert.ok(applicationOrigins({}).includes("http://127.0.0.1:3000"));
+
+  // The explicit opt-in still works, for someone deliberately testing a
+  // production build against a local renderer.
+  assert.ok(applicationOrigins({ NODE_ENV: "production", MARKIE_WEB_ORIGINS: "http://localhost:3000" }).includes("http://localhost:3000"));
+});

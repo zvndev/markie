@@ -12,8 +12,14 @@ import {
 import { markieSiteUrl, primaryDownloadCta } from "./downloads.ts";
 import { disconnectUser } from "./collab.ts";
 import { newLinkToken } from "./link-token.ts";
+import { createInviteLimiter, plainEmailText } from "./invite-guard.ts";
 
 const db = openDatabase();
+const inviteLimiter = createInviteLimiter();
+/** Test seam: suites that invite more than a day's worth start each test clean. */
+export function resetInviteLimitsForTests(): void {
+  inviteLimiter.reset();
+}
 const pendingStore = createPendingShareStore(db);
 const { addPending, listPendingForDoc, removePending } = pendingStore;
 
@@ -276,10 +282,22 @@ shares.post("/:id/shares", async (c) => {
   if (cleanEmail === (user.email ?? "").toLowerCase()) {
     return c.json({ error: "That's you" }, 400);
   }
+  // Before anything changes: a refused invite must not leave a pending row or
+  // a membership behind any more than it may send mail.
+  const allowed = inviteLimiter.take(user.id, cleanEmail);
+  if (!allowed.ok) {
+    c.header("Retry-After", String(allowed.retryAfterSeconds));
+    return c.json({ error: "Too many invitations right now. Try again later." }, 429);
+  }
   const doc = db
     .prepare("SELECT name FROM docs WHERE id = ?")
     .get(docId) as { name: string };
-  const inviter = user.name || user.email;
+  // Both are typed by the caller and land in mail sent from Markie's domain,
+  // so they lose links and markup first (invite-guard.ts). The email address
+  // fallback is the inviter's own verified address, which is the one thing in
+  // the message that honestly says who sent it.
+  const inviter = plainEmailText(user.name ?? "", 60) || user.email;
+  const docName = plainEmailText(doc.name, 120) || "a document";
 
   const recipient = pendingStore.shareWithEmail(docId, cleanEmail, role, user.id);
   if (recipient?.id === user.id) return c.json({ error: "That's you" }, 400);
@@ -292,11 +310,11 @@ shares.post("/:id/shares", async (c) => {
     const link = docLink(docId, ensureShareToken(docId, recipient.id));
     await sendEmail({
       to: recipient.email,
-      subject: `${inviter} shared “${doc.name}” with you`,
-      text: `${inviter} shared "${doc.name}" with you on Markie as ${
+      subject: `${inviter} shared “${docName}” with you`,
+      text: `${inviter} shared "${docName}" with you on Markie as ${
         role === "editor" ? "an editor" : "a viewer"
       }.\n\nRead it here: ${link}\n\nOr open it straight in Markie: ${appLink(docId)}\n\nThis link is yours alone and only works for your account.`,
-      html: addedHtml(inviter, doc.name, role, link, appLink(docId)),
+      html: addedHtml(inviter, docName, role, link, appLink(docId)),
     });
     return c.json({ ok: true, status: "member", userId: recipient.id, role });
   }
@@ -310,8 +328,8 @@ shares.post("/:id/shares", async (c) => {
   await sendEmail({
     to: cleanEmail,
     subject: `📄 ${inviter} tossed you a doc`,
-    text: `${inviter} shared "${doc.name}" with you on Markie.\n\nRead it right now (no account needed): ${previewUrl}\n\nReading raw markdown in a browser is a small tragedy, and Markie fixes that. Make an account with this email and "${doc.name}" will be waiting in your Library.\n\nThis link was sent to you alone. Don't forward it.`,
-    html: inviteHtml(inviter, doc.name, previewUrl, docRawLink(docId, inviteToken)),
+    text: `${inviter} shared "${docName}" with you on Markie.\n\nRead it right now (no account needed): ${previewUrl}\n\nReading raw markdown in a browser is a small tragedy, and Markie fixes that. Make an account with this email and "${docName}" will be waiting in your Library.\n\nThis link was sent to you alone. Don't forward it.`,
+    html: inviteHtml(inviter, docName, previewUrl, docRawLink(docId, inviteToken)),
   });
   return c.json({ ok: true, status: "invited", email: cleanEmail, role });
 });

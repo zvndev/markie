@@ -165,6 +165,28 @@ test("the page resolvers answer per reader and per public link", async () => {
   assert.equal(publicPageLinkFor(a)("unlinked.md"), null);
 });
 
+test("a public page never publishes another account's public link token", async () => {
+  // The stranger owns a publicly shared document whose id the owner learned
+  // (here: it was shared with them, which is how an id usually travels).
+  const theirs = await makeDoc(stranger.token, "# theirs\n");
+  const made = await json("POST", `/api/docs/${theirs}/public-link`, stranger.token);
+  assert.equal(made.status, 200);
+  const theirToken = String(made.data.url).split("/s/")[1];
+  await share(stranger.token, theirs, "owner@links.test", "viewer");
+
+  // The owner links to it from their own document, which they then publish.
+  const mine = await makeDoc(owner.token);
+  const put = await json("PUT", `/api/docs/${mine}/links`, owner.token, { links: [{ ref: "plan.md", target: theirs }] });
+  assert.equal(put.status, 200);
+  assert.equal((await json("POST", `/api/docs/${mine}/public-link`, owner.token)).status, 200);
+
+  const answer = publicPageLinkFor(mine)("plan.md");
+  assert.deepEqual(answer, { muted: true });
+  assert.ok(!JSON.stringify(answer).includes(theirToken));
+  // The owner, who may read it, still gets the private-page link on /d/.
+  assert.deepEqual(sharedPageLinkFor(mine, owner.id)("plan.md"), { href: `/d/${theirs}` });
+});
+
 // Counts calls to Database.prototype.prepare whose SQL contains `needle`,
 // across every handle any module opened (db.ts hands each module its own
 // connection to the same file, so this is the only vantage point common to

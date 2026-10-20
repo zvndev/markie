@@ -393,6 +393,16 @@ function handleConnection(
   claimSeeder(room, conn, level);
   conn.binaryType = "arraybuffer";
 
+  // ws reports a bad frame (over COLLAB_MAX_PAYLOAD_BYTES, unmasked, invalid
+  // opcode or UTF-8) as an 'error' event and then closes the socket itself.
+  // An EventEmitter 'error' with no listener is thrown, and thrown here means
+  // an uncaught exception that takes the whole API process down, so one
+  // malformed frame from any signed-in member would end every session on the
+  // server. Log it; the 'close' handler below does the cleanup.
+  conn.on("error", (err: Error) => {
+    console.error(`collab socket error in room ${docId}:`, err.message);
+  });
+
   conn.on("message", (data: ArrayBuffer | Buffer) => {
     try {
       // Never trust the level captured at upgrade time (see ACCESS_CACHE_MS).
@@ -488,10 +498,29 @@ async function sessionFromToken(token: string) {
   });
 }
 
+// The largest single message a collaborator may send. ws defaults to 100 MiB,
+// which lets any signed-in member of any document make the server buffer and
+// then decode 100 MiB per frame.
+//
+// The biggest legitimate frame is the one that carries a whole document: the
+// seeder's first update, or a sync step 2 from a client holding the full state.
+// Live sessions only open for documents under LARGE_DOC_BYTES (1 MB, see
+// electron/doc-tiers.js and refreshCollab in src/app/page.tsx). A 1 MB
+// document of short, densely formatted paragraphs encodes as a 3.8 MB Yjs
+// update; plain text in a Y.Text is about 1:1. 16 MiB is roughly four times
+// that worst case, so an honest client never meets it, and a frame over it is
+// refused by ws (close code 1009) before any Yjs decoding runs.
+export const COLLAB_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
+
 export function attachCollab(server: Server): void {
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: COLLAB_MAX_PAYLOAD_BYTES });
 
   server.on("upgrade", async (req, socket, head) => {
+    // Same reason as the listener in handleConnection: a client that resets
+    // while the session lookup below is awaited must not become an uncaught
+    // exception. ws's own noServer example guards the socket the same way.
+    const onSocketError = () => socket.destroy();
+    socket.on("error", onSocketError);
     try {
       const url = new URL(req.url ?? "", "http://localhost");
       const match = url.pathname.match(/^\/collab\/([^/]+)$/);
@@ -509,6 +538,7 @@ export function attachCollab(server: Server): void {
         return;
       }
       const user = session.user;
+      socket.removeListener("error", onSocketError);
       wss.handleUpgrade(req, socket, head, (conn) => {
         handleConnection(conn, docId, user, session.session.id);
       });

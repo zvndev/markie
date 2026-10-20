@@ -83,7 +83,35 @@ function buildAppCsp(outDir) {
   ].join("; ");
 }
 
+// The renderer talks to Markie Cloud and to every server the user added
+// (electron/servers.js), so connect-src carries each trusted origin too, as
+// https and as wss for live collaboration. An origin is written into the
+// policy only when it is exactly a plain https origin: anything else could
+// smuggle a directive in.
+const PLAIN_HTTPS_ORIGIN = /^https:\/\/[a-z0-9.-]+(?::\d{1,5})?$/;
+
+/**
+ * @param {string} csp
+ * @param {unknown[]} [origins]
+ * @returns {string}
+ */
+function withConnectOrigins(csp, origins = []) {
+  const extra = [];
+  for (const origin of origins) {
+    if (typeof origin !== "string" || !PLAIN_HTTPS_ORIGIN.test(origin)) continue;
+    const ws = origin.replace(/^https:/, "wss:");
+    if (!csp.includes(` ${origin}`)) extra.push(origin);
+    if (!csp.includes(` ${ws}`)) extra.push(ws);
+  }
+  if (extra.length === 0) return csp;
+  return csp
+    .split("; ")
+    .map((d) => (d.startsWith("connect-src ") ? `${d} ${[...new Set(extra)].join(" ")}` : d))
+    .join("; ");
+}
+
 module.exports = {
+  withConnectOrigins,
   ASSET_SCHEME,
   DARKMOWN_RUNTIME_HASH,
   DARKMOWN_BOOTSTRAP_HASH,

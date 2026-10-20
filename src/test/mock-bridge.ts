@@ -195,6 +195,21 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     serversProbe: vi.fn(async () => ({ ok: false as const, error: "not mocked" })),
     serversAdd: vi.fn(async () => ({ ok: false as const, error: "not mocked" })),
     serversRemove: vi.fn(async () => ({ ok: true })),
+    // Stands in for main: the same request, made with the global fetch a
+    // test stubs, so a test sees exactly what would go on the wire.
+    serverRequest: vi.fn(
+      async (req: { origin: string; path: string; method?: string; body?: string; token?: string | null }) => {
+        const res = await fetch(`${req.origin}${req.path}`, {
+          method: req.method ?? "GET",
+          redirect: "error",
+          credentials: "omit",
+          headers: { "Content-Type": "application/json", ...(req.token ? { Authorization: `Bearer ${req.token}` } : {}) },
+          body: req.method && req.method !== "GET" ? req.body : undefined,
+        });
+        const data = await res.json().catch(() => null);
+        return { ok: res.ok, status: res.status, data, setAuthToken: res.headers?.get?.("set-auth-token") ?? null };
+      }
+    ),
     syncDocRole: vi.fn(async () => undefined),
 
     registryTrack: vi.fn(async () => noopResult),

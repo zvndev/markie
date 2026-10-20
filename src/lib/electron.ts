@@ -358,6 +358,15 @@ export interface ElectronAPI {
   // probe's id, so the name and origin added are the ones main fetched.
   serversAdd?(probeId: string): Promise<{ ok: true; server: MarkieServer } | { ok: false; error: string }>;
   serversRemove?(origin: string): Promise<{ ok?: boolean; error?: string }>;
+  // A REST call to a trusted server other than Markie Cloud, made by main
+  // (see main.js "server-request").
+  serverRequest?(req: {
+    origin: string;
+    path: string;
+    method?: string;
+    body?: string;
+    token?: string | null;
+  }): Promise<{ ok: boolean; status: number; data: unknown; setAuthToken?: string | null; error?: string }>;
   // Hand the sync engine the share role the renderer resolved for a cloud doc,
   // so a push it cannot land is refused here instead of coming back as a 403.
   // `server` is the doc's server when it is not the primary one.

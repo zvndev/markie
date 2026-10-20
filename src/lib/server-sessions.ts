@@ -186,6 +186,24 @@ export function forgetServerSession(origin: string): void {
 function serverApi(origin: string): ApiRequest {
   return async <T,>(path: string, init?: RequestInit) => {
     const token = read(tokenKey(origin));
+    // In the app, main makes the call: the window's content security policy
+    // only learns a newly added server on the next load.
+    const bridge = getElectronAPI();
+    if (bridge?.serverRequest) {
+      const res = await bridge
+        .serverRequest({
+          origin,
+          path,
+          method: init?.method ?? "GET",
+          body: typeof init?.body === "string" ? init.body : undefined,
+          token,
+        })
+        .catch(() => null);
+      if (!res) return { ok: false, status: 0, data: null };
+      if (read(tokenKey(origin)) !== token) return { ok: false, status: 0, data: null };
+      if (res.ok && res.setAuthToken) setServerToken(origin, res.setAuthToken);
+      return { ok: res.ok, status: res.status, data: (res.data ?? null) as T | null };
+    }
     try {
       const res = await fetch(`${origin}${path}`, {
         ...init,

@@ -11,6 +11,7 @@ import {
   collectInlineScriptHashes,
   inlineScriptHashesForHtml,
   scriptSrcDirective,
+  withConnectOrigins,
 } from "./csp.js";
 import { EMBED_FRAME_ORIGINS as PROVIDER_FRAME_ORIGINS } from "../src/lib/embeds";
 
@@ -72,5 +73,36 @@ describe("packaged app CSP", () => {
     expect(directives.find((value) => value.startsWith("script-src "))).toBe(`script-src 'self' ${DARKMOWN_RUNTIME_HASH} ${DARKMOWN_BOOTSTRAP_HASH}`);
     expect(directives.find((value) => value.startsWith("object-src "))).toBe("object-src 'none'");
     expect(directives.find((value) => value.startsWith("frame-src "))).not.toContain("blob:");
+  });
+});
+
+describe("connect-src for trusted servers", () => {
+  const base = buildAppCsp("missing-out-dir");
+  const connect = (csp: string) => csp.split("; ").find((d) => d.startsWith("connect-src "))!;
+
+  it("adds each trusted server as https and wss, once", () => {
+    const csp = withConnectOrigins(base, [
+      "https://api-production-602f.up.railway.app",
+      "https://docs.example.com",
+      "https://docs.example.com",
+    ]);
+    expect(connect(csp)).toBe(
+      "connect-src 'self' https://api-production-602f.up.railway.app wss://api-production-602f.up.railway.app https://docs.example.com wss://docs.example.com"
+    );
+    // Nothing else in the policy moves.
+    expect(csp.split("; ").filter((d) => !d.startsWith("connect-src "))).toEqual(
+      base.split("; ").filter((d) => !d.startsWith("connect-src "))
+    );
+  });
+
+  it("never writes anything but a plain https origin into the policy", () => {
+    const csp = withConnectOrigins(base, [
+      "http://docs.example.com",
+      "https://docs.example.com; script-src *",
+      "https://docs.example.com/path",
+      "https://*",
+      42 as unknown as string,
+    ]);
+    expect(csp).toBe(base);
   });
 });

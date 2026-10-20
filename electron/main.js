@@ -40,6 +40,7 @@ const docTiers = require("./doc-tiers");
 const { hasUtf16Bom, needsBytePreservingText } = require("./text-byte-route");
 const { createDiskMemory } = require("./disk-memory");
 const { ASSET_SCHEME, buildAppCsp } = require("./csp");
+const { withConnectOrigins } = require("./csp");
 const localAssets = require("./local-assets");
 const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
 const { guardedLogger } = require("./updater-logging");
@@ -957,7 +958,8 @@ async function withAppCsp(pending) {
   if (isDev) return response;
   appCsp ??= buildAppCsp(path.join(__dirname, "../out"));
   const headers = new Headers(response.headers);
-  headers.set("Content-Security-Policy", appCsp);
+  // Every trusted server, as the list stands when the document loads.
+  headers.set("Content-Security-Policy", withConnectOrigins(appCsp, serverStore.origins()));
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
@@ -1171,7 +1173,7 @@ function setupCSP() {
   const csp = buildAppCsp(path.join(__dirname, "../out"));
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
-      responseHeaders: { ...details.responseHeaders, "Content-Security-Policy": [csp] },
+      responseHeaders: { ...details.responseHeaders, "Content-Security-Policy": [withConnectOrigins(csp, serverStore.origins())] },
     });
   });
 }
@@ -1710,6 +1712,45 @@ function trustedServerArg(server) {
   if (typeof server !== "string" || !server) return undefined;
   return isAllowedServerOrigin(server, { allowDev: isDev }) ? new URL(server).origin : undefined;
 }
+
+// The renderer's REST calls to a server other than Markie Cloud: sign-in,
+// sharing. Made here so a server added a moment ago works before the window's
+// content security policy (fixed when the page loaded) knows about it. Main
+// sends only to a trusted origin, only to its API routes, with no redirects,
+// and with the token the renderer holds for that same origin.
+const SERVER_REQUEST_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+handle("server-request", async (_event, req) => {
+  if (privateReleaseConfig) return { ok: false, status: 0, data: null, error: PRIVATE_SERVERS_REFUSAL };
+  const origin = trustedServerArg(req?.origin);
+  const p = typeof req?.path === "string" ? req.path : "";
+  if (!origin || !/^\/(?:api|auth)\/[A-Za-z0-9/_\-.~%?=&]*$/.test(p) || p.includes("..")) {
+    return { ok: false, status: 0, data: null, error: "That request isn't allowed." };
+  }
+  const method = SERVER_REQUEST_METHODS.has(req?.method) ? req.method : "GET";
+  const token = typeof req?.token === "string" && req.token.length <= 4096 ? req.token : null;
+  const body = typeof req?.body === "string" && req.body.length <= 1024 * 1024 ? req.body : undefined;
+  try {
+    const res = await fetch(`${origin}${p}`, {
+      method,
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: method === "GET" ? undefined : body,
+      redirect: "error",
+      signal: AbortSignal.timeout(15000),
+    });
+    const text = await res.text();
+    let data = null;
+    if (text.length <= 2 * 1024 * 1024) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = null;
+      }
+    }
+    return { ok: res.ok, status: res.status, data, setAuthToken: res.headers.get("set-auth-token") };
+  } catch {
+    return { ok: false, status: 0, data: null };
+  }
+}, { onFailure: () => ({ ok: false, status: 0, data: null }) });
 
 // The renderer resolved this doc's share role against the server; the sync
 // engine needs it so a save can refuse a push the server would only 403.

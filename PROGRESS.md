@@ -1399,3 +1399,9 @@ Zoom: the classic source editor (every .txt/.log/.csv file and Markdown Source) 
 Default apps: Markie menu > Default Apps for File Types… opens Settings > Files directly (Settings remounts on the requested tab). When Markdown is already Markie's, the Library footer now offers "Open text, CSV, JSON and more in Markie…" while any offered type still opens elsewhere; dismissible, and it re-checks when Settings changes an association.
 
 Verification: targeted suites, full suite (one known load-flake in scripts/private-release.test.ts that passes alone and on the clean tree), lint, typecheck, build; isolated real-Electron CDP check: pinch zooms a .txt 14px -> 15.4px and back, and an RTF to 110% with the zoom remembered. Not verified live: the native menu items themselves (CDP cannot click native menus; routing is unit-tested).
+
+## 2026-10-20 Word editor: no paragraph boxes, page setup on the toolbar
+
+The faint blue frame around the paragraph holding the caret (.docs-word-paragraph.is-selected, plus a 2px focus-visible ring that contenteditable always matches) is gone; the caret is the focus indicator, as in every word processor. Page Setup and Paragraph Spacing, previously only in the Layout menu and ⌘K, now have toolbar buttons for DOCX, RTF and ODT. Page Setup is laid out as Paper (current size highlighted, dimensions shown), Orientation and Margins rows.
+
+Verification: full suite 4434 passed, lint, typecheck, build; isolated live Electron DOCX check: focused paragraph computes outline none, the toolbar button opens Page Setup, screenshot reviewed.

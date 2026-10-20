@@ -23,6 +23,7 @@ import "./document-workspace.css";
 
 interface WordDocumentEditorProps<T extends RichDocument> { document: T; readOnly?: boolean; isReadOnly?: () => boolean; onChange: (document: T) => void; onCommandsReady?: (target: DocumentCommandTarget | null) => void; onHistory?: () => void }
 const WORD_ACTIONS: readonly FormattingAction[] = ["undo", "redo", "bold", "italic", "underline", "link", "image", "bullet", "ordered", "align-left", "align-center", "align-right", "clear"];
+const LAYOUT_BUTTON = "h-7 min-w-7 px-1.5 rounded flex items-center justify-center shrink-0 transition-colors text-muted hover:text-foreground hover:bg-accent/40 aria-pressed:bg-accent aria-pressed:text-foreground disabled:opacity-35 disabled:hover:bg-transparent";
 const WORD_FONTS = ["Arial", "Calibri", "Georgia", "Times New Roman", "Helvetica"];
 const WORD_STYLES = [{ id: "", label: "Default paragraph" }, { id: "Normal", label: "Normal" }, { id: "Heading1", label: "Heading 1" }, { id: "Heading2", label: "Heading 2" }, { id: "Heading3", label: "Heading 3" }];
 function commonValue<T>(values: readonly T[]): T | "mixed" | undefined {
@@ -543,7 +544,17 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
     }}
     onClickCapture={(event) => handleExternalLinkClick(event.nativeEvent)} onAuxClickCapture={(event) => handleExternalLinkClick(event.nativeEvent)}>
     <FormattingToolbar
-      startControls={!onCommandsReady ? <button type="button" aria-label="Document commands" title="Document commands (⌘K / Ctrl+K)" onClick={openPalette} disabled={!!tool}>Commands</button> : undefined}
+      startControls={<>
+        {!onCommandsReady ? <button type="button" aria-label="Document commands" title="Document commands (⌘K / Ctrl+K)" onClick={openPalette} disabled={!!tool}>Commands</button> : null}
+        {/* Page setup and spacing live in the Layout menu too; the toolbar is
+            where people look for them. A second click closes the panel. */}
+        {capabilities.pageLayout ? <button type="button" className={LAYOUT_BUTTON} aria-label="Page setup" title="Page setup: paper size, orientation and margins" aria-pressed={tool === "page"} disabled={tool ? tool !== "page" : !enabledCommands.includes("layout-page-setup")} onClick={() => tool === "page" ? setTool(null) : command("layout-page-setup")}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="1.5" /><path d="M8.5 7h7M8.5 17h7M8.5 7v10M15.5 7v10" strokeDasharray="1.6 2" /></svg>
+        </button> : null}
+        {capabilities.paragraphFormatting ? <button type="button" className={LAYOUT_BUTTON} aria-label="Paragraph spacing" title="Paragraph spacing: before, after and line spacing" aria-pressed={tool === "spacing"} disabled={tool ? tool !== "spacing" : !enabledCommands.includes("layout-paragraph-spacing")} onClick={() => tool === "spacing" ? setTool(null) : command("layout-paragraph-spacing")}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M11 6h9M11 12h9M11 18h9M5 4v16M3 6l2-2 2 2M3 18l2 2 2-2" /></svg>
+        </button> : null}
+      </>}
       state={{ bold: selectionFormat.bold, italic: selectionFormat.italic, underline: selectionFormat.underline, bullet: paragraph?.listKind === "bullet", ordered: paragraph?.listKind === "numbered", alignLeft: (paragraph?.alignment ?? "left") === "left", alignCenter: paragraph?.alignment === "center", alignRight: paragraph?.alignment === "right", canUndo, canRedo }}
       canEdit={canFormat} appearance={{ ...DEFAULT_APPEARANCE, zoom: zoom / 100 }}
       onAppearance={(next) => { if (canView() && !tool && !paletteOpen) setZoom(Math.min(200, Math.max(50, Math.round(next.zoom * 100)))); }}

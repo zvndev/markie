@@ -321,6 +321,14 @@ describe("Word renderer inside Markie", () => {
       view.execute("view-page"); expect(screen.getByRole("textbox", { name: "Paragraph 1" }).closest(".docs-word-paper")).not.toBeNull();
       view.execute("undo"); expect(view.state.document.pageLayout.marginTopPoints).toBe(initial.pageLayout.marginTopPoints);
     });
+    it("opens Page Setup from the toolbar, not only from the Layout menu", async () => {
+      editor(await createRichDocument(format, "A native page"));
+      const toolbar = screen.getByRole("toolbar", { name: "Document formatting" });
+      fireEvent.click(within(toolbar).getByRole("button", { name: "Page setup" }));
+      const dialog = screen.getByRole("dialog", { name: "Page Setup" });
+      expect(within(dialog).getByRole("spinbutton", { name: "Left margin (in)" })).toBeInTheDocument();
+      expect(within(toolbar).getByRole("button", { name: "Paragraph spacing" })).toBeInTheDocument();
+    });
     it("formats a range, undoes/redoes and replaces text with same-format export/reopen", async () => {
       const initial = await createRichDocument(format, "Hello native"), view = editor(initial);
       select(0, 5); view.execute("format-bold");

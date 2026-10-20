@@ -10,7 +10,7 @@ released version is shown on <https://markiedocs.com/download>.
 Please report privately rather than in a public issue.
 
 - Use GitHub's [private vulnerability reporting](https://github.com/zvndev/markie/security/advisories/new), or
-- email **security@zvndev.com**
+- email **support@markiedocs.com**
 
 Please include what you found, how to reproduce it, and what an attacker could
 do with it. A proof of concept helps but is not required.

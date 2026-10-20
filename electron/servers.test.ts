@@ -22,11 +22,26 @@ const INFO = {
 };
 
 function answer(status: number, body: unknown) {
-  const fn = vi.fn(async (..._args: unknown[]) => ({
-    status,
-    text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
-  }));
+  const fn = vi.fn(async (..._args: unknown[]) =>
+    new Response(typeof body === "string" ? body : JSON.stringify(body), { status })
+  );
   return fn as typeof fn & typeof fetch;
+}
+
+// A body that never ends, counting how much of it was pulled and whether
+// the reader gave up on it.
+function endless(chunk = 16 * 1024) {
+  const seen = { pulled: 0, cancelled: false };
+  const stream = new ReadableStream<Uint8Array>({
+    pull(c) {
+      seen.pulled += chunk;
+      c.enqueue(new Uint8Array(chunk).fill(32));
+    },
+    cancel() {
+      seen.cancelled = true;
+    },
+  });
+  return { stream, seen };
 }
 
 describe("parseServerOrigin", () => {
@@ -191,6 +206,22 @@ describe("probeServerInfo", () => {
     expect((await probeServerInfo("https://docs.example.com", { fetchImpl: down })).ok).toBe(false);
     expect((await probeServerInfo("https://docs.example.com", { fetchImpl: answer(200, "<html>") })).ok).toBe(false);
     expect((await probeServerInfo("https://docs.example.com", { fetchImpl: answer(200, "x".repeat(70000)) })).ok).toBe(false);
+  });
+
+  it("stops reading a server-info body that never ends, and aborts the request", async () => {
+    const { stream, seen } = endless();
+    let signal: AbortSignal | undefined;
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      signal = init.signal ?? undefined;
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const r = await probeServerInfo("https://docs.example.com", { fetchImpl });
+
+    expect(r).toEqual({ ok: false, error: "That address isn't a Markie server." });
+    expect(seen.cancelled).toBe(true);
+    expect(seen.pulled).toBeLessThanOrEqual(64 * 1024 + 2 * 16 * 1024);
+    expect(signal?.aborted).toBe(true);
   });
 });
 

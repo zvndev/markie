@@ -12,6 +12,7 @@ const nodeFs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { DEFAULT_SERVER } = require("./share-origin");
+const { readTextCapped } = require("./bounded-body");
 
 const DEFAULT_NAME = "Markie Cloud";
 // What a default server that predates /api/server-info is assumed to offer.
@@ -198,27 +199,44 @@ function parseServerInfo(body, origin) {
  */
 async function probeServerInfo(origin, { fetchImpl = globalThis.fetch, timeoutMs = PROBE_TIMEOUT_MS } = {}) {
   const isDefault = origin === DEFAULT_SERVER;
-  let res;
+  // One controller for the whole exchange: the timeout covers reading the
+  // body too, and an oversize body aborts the request rather than draining it.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    res = await fetchImpl(`${origin}/api/server-info`, {
-      method: "GET",
-      redirect: "error",
-      credentials: "omit",
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch {
-    return { ok: false, error: "Couldn't reach that server." };
+    let res;
+    try {
+      res = await fetchImpl(`${origin}/api/server-info`, {
+        method: "GET",
+        redirect: "error",
+        credentials: "omit",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+    } catch {
+      return { ok: false, error: "Couldn't reach that server." };
+    }
+    if (res.status !== 200) {
+      // Nothing in a refusal is read, so none of it is downloaded.
+      controller.abort();
+      if (isDefault && res.status === 404) return { ok: true, info: { ...DEFAULT_INFO, signIn: { ...DEFAULT_INFO.signIn } } };
+      return { ok: false, error: "That address isn't a Markie server." };
+    }
+    let text;
+    try {
+      text = await readTextCapped(res, MAX_INFO_BYTES, { controller });
+    } catch (err) {
+      return err && err.code === "EBODYTOOLARGE"
+        ? { ok: false, error: "That address isn't a Markie server." }
+        : { ok: false, error: "Couldn't read that server's answer." };
+    }
+    return finishProbe(text, origin, isDefault);
+  } finally {
+    clearTimeout(timer);
   }
-  if (isDefault && res.status === 404) return { ok: true, info: { ...DEFAULT_INFO, signIn: { ...DEFAULT_INFO.signIn } } };
-  if (res.status !== 200) return { ok: false, error: "That address isn't a Markie server." };
-  let text;
-  try {
-    text = await res.text();
-  } catch {
-    return { ok: false, error: "Couldn't read that server's answer." };
-  }
-  if (text.length > MAX_INFO_BYTES) return { ok: false, error: "That address isn't a Markie server." };
+}
+
+function finishProbe(text, origin, isDefault) {
   let body;
   try {
     body = JSON.parse(text);

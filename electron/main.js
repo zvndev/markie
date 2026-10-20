@@ -32,6 +32,7 @@ const autoUpdater = isDesktopPreview ? null : require("electron-updater").autoUp
 const { setTrustedOrigins, isAllowedServerOrigin, DEFAULT_SERVER } = require("./share-origin");
 const { fetchSharedDoc } = require("./share-open");
 const { createServerStore } = require("./servers");
+const { serverRequest } = require("./server-request");
 const { classifyDeepLink, cloudDocId, sourceHint } = require("./deep-links");
 const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
@@ -472,7 +473,8 @@ async function openSharedFromDeepLink(link) {
       confirm: confirmUntrustedShare,
       // A trusted server is fetched the way it always was; an unknown one
       // goes through Node's fetch, which has no cookie jar to send from.
-      fetchImpl: (target, init) => (init ? fetch(target, init) : net.fetch(target)),
+      // Either way the request carries share-open's timeout and size cap.
+      fetchImpl: (target, init, { anonymous }) => (anonymous ? fetch(target, init) : net.fetch(target, init)),
     });
     if (result.status !== "ok") return;
     const name = filenameFromDisposition(result.disposition) || "Shared document.md";
@@ -1718,42 +1720,13 @@ function trustedServerArg(server) {
 }
 
 // The renderer's REST calls to a server other than Markie Cloud: sign-in,
-// sharing. Made here so a server added a moment ago works before the window's
-// content security policy (fixed when the page loaded) knows about it. Main
-// sends only to a trusted origin, only to its API routes, with no redirects,
-// and with the token the renderer holds for that same origin.
-const SERVER_REQUEST_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+// sharing. The checks, the timeout and the size cap live in
+// electron/server-request.js.
 handle("server-request", async (_event, req) => {
   if (privateReleaseConfig) return { ok: false, status: 0, data: null, error: PRIVATE_SERVERS_REFUSAL };
   const origin = trustedServerArg(req?.origin);
-  const p = typeof req?.path === "string" ? req.path : "";
-  if (!origin || !/^\/(?:api|auth)\/[A-Za-z0-9/_\-.~%?=&]*$/.test(p) || p.includes("..")) {
-    return { ok: false, status: 0, data: null, error: "That request isn't allowed." };
-  }
-  const method = SERVER_REQUEST_METHODS.has(req?.method) ? req.method : "GET";
-  const token = typeof req?.token === "string" && req.token.length <= 4096 ? req.token : null;
-  const body = typeof req?.body === "string" && req.body.length <= 1024 * 1024 ? req.body : undefined;
-  try {
-    const res = await fetch(`${origin}${p}`, {
-      method,
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: method === "GET" ? undefined : body,
-      redirect: "error",
-      signal: AbortSignal.timeout(15000),
-    });
-    const text = await res.text();
-    let data = null;
-    if (text.length <= 2 * 1024 * 1024) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = null;
-      }
-    }
-    return { ok: res.ok, status: res.status, data, setAuthToken: res.headers.get("set-auth-token") };
-  } catch {
-    return { ok: false, status: 0, data: null };
-  }
+  if (!origin) return { ok: false, status: 0, data: null, error: "That request isn't allowed." };
+  return serverRequest({ ...req, origin });
 }, { onFailure: () => ({ ok: false, status: 0, data: null }) });
 
 // The renderer resolved this doc's share role against the server; the sync

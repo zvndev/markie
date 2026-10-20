@@ -13,12 +13,25 @@ const link = (src?: string) =>
   `markie://open?token=tok123${src === undefined ? "" : `&src=${encodeURIComponent(src)}`}`;
 
 function okFetch(body = "# Hello") {
-  return vi.fn(async () => ({
-    ok: true,
-    status: 200,
-    headers: new Headers({ "content-disposition": 'attachment; filename="hello.md"' }),
-    text: async () => body,
-  }));
+  return vi.fn(async (..._args: unknown[]) =>
+    new Response(body, { status: 200, headers: { "content-disposition": 'attachment; filename="hello.md"' } })
+  );
+}
+
+// A body that never ends, counting how much of it was pulled and whether
+// the reader gave up on it.
+function endless(chunk = 1024) {
+  const seen = { pulled: 0, cancelled: false };
+  const stream = new ReadableStream<Uint8Array>({
+    pull(c) {
+      seen.pulled += chunk;
+      c.enqueue(new Uint8Array(chunk).fill(97));
+    },
+    cancel() {
+      seen.cancelled = true;
+    },
+  });
+  return { stream, seen };
 }
 
 describe("planShareOpen", () => {
@@ -107,6 +120,33 @@ describe("opening a link from a server the user has not added", () => {
       fetchSharedDoc(link("https://docs.example.com"), { confirm: async () => true, fetchImpl, maxBytes: 10 })
     ).rejects.toThrow(/too large/);
   });
+
+  it("stops reading a body that never ends at the cap, and aborts the request", async () => {
+    const { stream, seen } = endless();
+    let signal: AbortSignal | undefined;
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      signal = init.signal ?? undefined;
+      return new Response(stream, { status: 200 });
+    });
+    await expect(
+      fetchSharedDoc(link("https://docs.example.com"), { confirm: async () => true, fetchImpl, maxBytes: 8192 })
+    ).rejects.toThrow(/too large/);
+    expect(seen.cancelled).toBe(true);
+    expect(seen.pulled).toBeLessThanOrEqual(8192 + 2 * 1024);
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("gives up on a server that never answers", async () => {
+    const fetchImpl = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        })
+    );
+    await expect(
+      fetchSharedDoc(link("https://docs.example.com"), { confirm: async () => true, fetchImpl, timeoutMs: 20 })
+    ).rejects.toThrow("aborted");
+  });
 });
 
 describe("opening a link from a trusted server", () => {
@@ -117,10 +157,14 @@ describe("opening a link from a trusted server", () => {
     expect(confirm).not.toHaveBeenCalled();
     expect(result).toMatchObject({ status: "ok", origin: DEFAULT_SERVER, untrusted: false });
     expect((fetchImpl.mock.calls[0] as unknown as [string])[0]).toBe(`${DEFAULT_SERVER}/s/tok123/raw`);
+    // Not anonymous, and still on a clock.
+    const [, init, how] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit, { anonymous: boolean }];
+    expect(how).toEqual({ anonymous: false });
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("throws on an HTTP failure so the caller can say the link expired", async () => {
-    const fetchImpl = vi.fn(async () => ({ ok: false, status: 404, headers: new Headers(), text: async () => "" }));
+    const fetchImpl = vi.fn(async () => new Response("", { status: 404 }));
     await expect(fetchSharedDoc(link(), { fetchImpl })).rejects.toThrow("HTTP 404");
   });
 });

@@ -2,8 +2,14 @@ dbs:
   - path: /data/markie.db
     replicas:
       - type: s3
+        # Any S3-compatible bucket. The B2_* names are what the live deployment
+        # sets; a server configured with the generic S3_* names has them copied
+        # into these by docker-entrypoint.sh, so run Litestream through
+        # `./docker-entrypoint.sh backup <command>` rather than directly there.
         endpoint: ${B2_ENDPOINT}      # e.g. https://s3.us-west-004.backblazeb2.com
         bucket: ${B2_BUCKET}
+        # Empty unless S3_REGION is set, which leaves Litestream's own default.
+        region: ${B2_REGION}
         # A new prefix for the encrypted replica, so it never has to read the
         # plaintext generations written before encryption. Those stay under
         # markie-db until they are purged from the bucket.
@@ -14,7 +20,8 @@ dbs:
         # it leaves the server. The identity is needed to restore, and also on
         # boot, when Litestream reads the newest segment back to find its
         # place. Both live in Railway variables; the identity's offline copy
-        # is the only way to restore if those are lost.
+        # is the only way to restore if those are lost. docker-entrypoint.sh
+        # refuses to start replication when either is missing.
         age:
           identities:
             - ${LITESTREAM_AGE_IDENTITY}

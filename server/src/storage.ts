@@ -147,12 +147,16 @@ export function s3Store(cfg: {
   keyId: string;
   appKey: string;
   region?: string;
+  /** A folder inside the bucket, for a bucket that also holds the database backup. */
+  prefix?: string;
   fetchImpl?: typeof fetch;
   now?: () => Date;
 }): AssetStore {
   const fetchImpl = cfg.fetchImpl ?? fetch;
   const region = regionOf(cfg.endpoint, cfg.region);
-  const urlFor = (key: string) => new URL(`${cfg.endpoint.replace(/\/$/, "")}/${cfg.bucket}/${checkKey(key)}`);
+  if (cfg.prefix !== undefined && !/^[a-z0-9-]{1,32}$/.test(cfg.prefix)) throw new Error(`storage prefix refused: ${cfg.prefix}`);
+  const folder = cfg.prefix ? `${cfg.prefix}/` : "";
+  const urlFor = (key: string) => new URL(`${cfg.endpoint.replace(/\/$/, "")}/${cfg.bucket}/${folder}${checkKey(key)}`);
   const send = (method: string, key: string, headers: Record<string, string>, body?: BodyInit) => {
     const url = urlFor(key);
     const signed = sigV4Headers({
@@ -206,11 +210,41 @@ export function s3Store(cfg: {
   };
 }
 
+// Any S3-compatible bucket, named the same way for every provider (Backblaze
+// B2, Cloudflare R2, MinIO, AWS). One bucket can hold both the database backup
+// (Litestream writes under markie-db-age/) and the media (under assets/);
+// S3_ASSETS_BUCKET moves the media to a bucket of its own. These names win when
+// they are set. The live deployment sets none of them and keeps reading the
+// ASSETS_* and B2_* names below, exactly as before.
+const GENERIC_S3 = ["S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"] as const;
+export const GENERIC_ASSETS_PREFIX = "assets";
+
+export function genericS3Config(env: Record<string, string | undefined>): {
+  endpoint: string; bucket: string; keyId: string; appKey: string; region?: string;
+} | null {
+  if (!GENERIC_S3.some((name) => env[name])) return null;
+  const missing = GENERIC_S3.filter((name) => !env[name]);
+  if (missing.length > 0) {
+    throw new Error(`S3 storage is only partly configured. Also set: ${missing.join(", ")}.`);
+  }
+  return {
+    endpoint: env.S3_ENDPOINT!,
+    bucket: env.S3_BUCKET!,
+    keyId: env.S3_ACCESS_KEY_ID!,
+    appKey: env.S3_SECRET_ACCESS_KEY!,
+    region: env.S3_REGION || undefined,
+  };
+}
+
 // The store the server runs with, or null when none is configured. The asset
 // routes answer 503 in that case, which lets the server deploy before the
 // bucket exists.
 export function assetStore(env: Record<string, string | undefined> = process.env): AssetStore | null {
   if (env.ASSETS_DIR) return fsStore(env.ASSETS_DIR);
+  const generic = genericS3Config(env);
+  if (generic) {
+    return s3Store({ ...generic, bucket: env.S3_ASSETS_BUCKET || generic.bucket, prefix: GENERIC_ASSETS_PREFIX });
+  }
   const bucket = env.ASSETS_BUCKET;
   const endpoint = env.ASSETS_ENDPOINT ?? env.B2_ENDPOINT;
   const keyId = env.ASSETS_KEY_ID ?? env.B2_KEY_ID;

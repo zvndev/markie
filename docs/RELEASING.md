@@ -17,7 +17,9 @@ version through **Check for Updates**.
 `electron-builder.config.cjs` reads that manifest. The server reads the same file. Never duplicate
 the bucket, feed path, or direct artifact URL in website code, email templates, docs, or release
 scripts. Production also rejects `MARKIE_SITE_URL` or `MARKIE_DOWNLOAD_BASE` overrides that would
-drift from this manifest.
+drift from this manifest. Those guards belong to the official deployment, which is what the server
+is whenever `MARKIE_OFFICIAL` is unset or `1`. A self-hosted server (`MARKIE_OFFICIAL=0`,
+docs/SELF-HOSTING.md) serves no download routes and redirects them to `https://markiedocs.com/download`.
 
 Permanent links:
 

@@ -73,3 +73,6 @@ mcp/node_modules
 # Projects screenshots, for the same reason: every one of them is a picture of
 # somebody's real project and file names.
 /shots-v4/
+
+# Self-hosting kit output (deploy/init.sh): secrets, never commit
+deploy/markie-backup-key.txt

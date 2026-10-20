@@ -1,14 +1,35 @@
+# Your own Markie server: the API (with Litestream inside it) and Caddy for TLS.
+#
+#   sh init.sh            writes .env (secrets generated, never overwritten)
+#   docker compose up -d  builds the image and starts both services
+#
+# See docs/SELF-HOSTING.md. Litestream runs inside the markie-api container,
+# exactly as on the official deployment, so the pinned Litestream version and
+# its age encryption are the ones the server image was built and tested with.
 services:
   markie-api:
     build: ../server
+    image: markie-server:local
     restart: unless-stopped
     env_file: .env
     environment:
+      # A self-hosted server. Set here rather than in .env so it cannot be
+      # dropped by editing that file: without it the server would behave as
+      # the official Markie Cloud (see server/src/deployment.ts).
+      MARKIE_OFFICIAL: "0"
       DB_PATH: /data/markie.db
+      NODE_ENV: production
     volumes:
       - markie-data:/data
+      - ./litestream.yml:/etc/litestream.yml:ro
     expose:
       - "8787"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8787/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
 
   caddy:
     image: caddy:2-alpine
@@ -16,21 +37,13 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "443:443/udp"
+    environment:
+      MARKIE_DOMAIN: ${MARKIE_DOMAIN:?run init.sh first, MARKIE_DOMAIN is not set}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on:
-      - markie-api
-
-  litestream:
-    image: litestream/litestream:latest
-    restart: unless-stopped
-    command: replicate -config /etc/litestream.yml
-    env_file: .env
-    volumes:
-      - ./litestream.yml:/etc/litestream.yml:ro
-      - markie-data:/data
     depends_on:
       - markie-api
 

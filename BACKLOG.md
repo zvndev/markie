@@ -4,6 +4,21 @@
 > evidence; do not delete history. Move completed items to Done with the verification record.
 
 ## Open
+- [ ] A self-hosted server lets anyone who can reach it create an account. There is no
+      invite-only or allowlisted sign-up mode, so a server meant for a closed group relies on
+      a firewall, and a storage quota is the only bound on what a stranger can store.
+      type: security
+      severity: medium
+      acceptance_criteria: A self-hosted server can restrict sign-up to invited addresses or an
+        admin allowlist, behind an explicit setting, with Markie Cloud unchanged.
+      source: self-hosting kit, docs/SELF-HOSTING.md security notes
+- [ ] The storage quota (MARKIE_STORAGE_QUOTA_BYTES) does not count version history
+      (doc_history, dp_history) or the live-collaboration update log (doc_updates). Both are
+      bounded today, but a billing plan needs a decision on whether they are charged.
+      type: product
+      severity: low
+      acceptance_criteria: Usage accounting states, and tests, what each stored table counts.
+      source: self-hosting kit, server/src/quota.ts
 - [ ] The Windows release job's install/launch/uninstall step is not reliable. On the 0.5.3
       release the signed installer crashed under `/S` with `-1073741819` (0xC0000005, an
       access violation) on the GitHub runner; an unchanged re-run of the same job on the

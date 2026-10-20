@@ -1,58 +1,30 @@
 # Deploying the Markie API
 
-One small ARM VPS runs everything: the API (Hono + better-auth + SQLite),
-Caddy (TLS), and Litestream (continuous SQLite backup to Backblaze B2).
-Estimated cost: ~€4/mo VPS + pennies of B2 storage.
+## Your own server
 
-## What Kirby provisions (one time)
+To run your own Markie server on a VPS, follow
+[docs/SELF-HOSTING.md](../docs/SELF-HOSTING.md). It covers `init.sh`, `docker compose up -d`,
+storage, mail, backups, restore and upgrades. The files in this folder are that kit.
 
-1. **Hetzner** — CAX11 (ARM, 2 vCPU / 4 GB), Ubuntu 24.04. Install Docker
-   (`curl -fsSL https://get.docker.com | sh`).
-2. **DNS** — A record for the API host (suggest `api.markiedocs.com`
-   until a product domain is chosen) → the VPS IP.
-3. **Backblaze B2** — create a bucket (private) + an app key with access
-   to it. Note the S3 endpoint for the bucket's region.
-4. **Resend** — account + API key; verify the sending domain.
-5. **Google OAuth** — Google Cloud Console → OAuth client (Web). Authorized
-   redirect URI: `https://<api-host>/api/auth/callback/google`.
+## The official deployment (Markie Cloud)
 
-## Deploy
+Markie Cloud is the Railway `api` service, built from `server/Dockerfile`. Litestream runs inside
+the same container and replicates age-encrypted to Backblaze B2. The auth schema migrates on every
+boot, so a deploy needs no manual migration step.
 
-```bash
-# on the VPS
-git clone https://github.com/zvndev/markie.git && cd markie/deploy
-cp ../server/.env.example .env
-# edit .env:
-#   BETTER_AUTH_URL=https://<api-host>
-#   BETTER_AUTH_SECRET=$(openssl rand -hex 32)
-#   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
-#   RESEND_API_KEY / EMAIL_FROM
-#   B2_ENDPOINT / B2_BUCKET / B2_KEY_ID / B2_APP_KEY
-sed -i 's/api.markie.example.com/<api-host>/' Caddyfile
-docker compose up -d --build
-# first run only: create the auth schema
-docker compose exec markie-api npx @better-auth/cli@latest migrate --config src/auth.ts -y
-curl https://<api-host>/health   # → {"ok":true,...}
-```
+Deploys, backups and rollback are in [docs/RELEASING.md](../docs/RELEASING.md), "API server deploy
+and rollback".
 
-## Point the app at production
-
-In Markie: Settings → Advanced → server URL → `https://<api-host>`.
-(Shipping this as the default is a one-line change in
-`src/lib/auth-client.ts` `DEFAULT_SERVER` once the host exists.)
-
-## Restore drill (do this once after first deploy)
-
-```bash
-docker compose stop markie-api
-docker compose run --rm litestream restore -config /etc/litestream.yml /data/markie.db
-docker compose start markie-api
-```
+The service runs as the official deployment because `MARKIE_OFFICIAL` is unset, which the server
+reads as `1`. That keeps the release-manifest guards, the `/download` routes and the markiedocs.com
+browser origins. Setting `MARKIE_OFFICIAL=1` explicitly changes nothing and is recommended. Never
+set it to `0` there: that turns the download routes into redirects to markiedocs.com.
 
 ## Assets bucket
 
 Pictures, video and audio synced with a document live in their own private
-Backblaze B2 bucket, separate from the Litestream backup bucket above.
+Backblaze B2 bucket on Markie Cloud, separate from the Litestream backup bucket.
+A self-hosted server can share one bucket for both (see docs/SELF-HOSTING.md).
 
 1. Create a private bucket (suggested name `markie-assets`).
 2. Create an application key scoped to that bucket, with read and write.
@@ -87,11 +59,8 @@ cd server && ASSETS_LIVE_TEST=1 \
    the request, which in production would mean every upload answers 403 and
    Markie sits on "media pending" without reporting an error.
 
-5. Deploy:
-
-```bash
-railway up server --path-as-root --service api --environment production --ci
-```
+5. Deploy from a clean export of the committed server, as described in
+   docs/RELEASING.md, "API server deploy and rollback".
 
 Until all four are set, the asset routes answer `503 {"error":"assets not
 configured"}` and Markie shows "media pending" on the Cloud page rather than a failure.

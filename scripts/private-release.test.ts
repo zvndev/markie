@@ -99,7 +99,8 @@ describe("guarded private Super-nightly packaging", () => {
 
   it("allows only runtime trees and resolved production dependencies; rejects tests, source maps and private files", () => {
     const config = settings(), options = { productionNames: new Set(["electron-updater"]), forbidden: [] };
-    expect(verifyPrivateEntries([packageEntry(config), { name: "electron/main.js", data: Buffer.from("runtime") }, { name: "node_modules/electron-updater/out/main.js", data: Buffer.from("runtime") }], config, options)).toBe(3);
+    expect(verifyPrivateEntries([packageEntry(config), { name: "electron/main.js", data: Buffer.from("runtime") }, { name: "node_modules/electron-updater/out/main.js", data: Buffer.from("runtime") }, { name: "mcp/doc-text.cjs", data: Buffer.from("runtime") }], config, options)).toBe(4);
+    for (const name of ["mcp/markie-mcp.mjs", "mcp/lib.mjs", "mcp/doc-text.cjs.bak"]) expect(() => verifyPrivateEntries([packageEntry(config), { name, data: Buffer.from("fixture") }], config, options)).toThrow(/Unexpected application inclusion/);
     for (const name of [".env", "out/.env.local", "out/bundle.js.map", "electron/auth.test.js", "src/app.tsx", "scripts/private-release.mjs", "node_modules/react/index.js", "node_modules/electron-updater/test/example.js", "../outside"]) expect(() => verifyPrivateEntries([packageEntry(config), { name, data: Buffer.from("fixture") }], config, options)).toThrow();
     expect(() => verifyPrivateEntries([packageEntry(config), { name: "electron/ignored.js", data: Buffer.from("fixture") }], config, { ...options, ignoredFiles: ["electron/ignored.js"] })).toThrow(/ignored/);
     expect(productionPackageNames(root).has("electron-updater")).toBe(true);

@@ -1432,3 +1432,12 @@ A read-only audit (no deploys, no variable changes, no database access, no secre
 - The CSP now rides on every app:// response, not only through the webRequest hook; verified live on the page's response headers.
 
 Server findings (public-link token leak via document links, unthrottled share-invite email, unbounded WebSocket payload and history, localhost CORS in production, unencrypted Litestream replica in B2) are being prepared as code for owner review; nothing is deployed. Production api runs a 2026-10-08 CLI upload, so any redeploy also ships every later server change.
+
+## 2026-10-20 Production hardened with owner approval
+
+Approved by Kirby: encrypt the backup, redeploy the api, delete the detached volume, commit the MCP tools (2FA skipped).
+- Litestream replicates age-encrypted to `markie-db-age/`. This was proven locally with v0.3.13 (encrypt, restore, resume after restart). In production the objects carry the age header, and a test restore inside the live container passed integrity with all 43 docs. Every plaintext replica version under `markie-db/` was permanently deleted from B2. A lifecycle rule now purges retired encrypted files a day after they are hidden. The replica key is already scoped to the Markie bucket.
+- The age identity is in Railway variables; its offline copy was handed to Kirby.
+- The api was redeployed from a clean `git archive` of the server directory at d659415, after a snapshot (`/data/pre-deploy-2026-10-20.db`, integrity ok). Before deploying, the migration was rehearsed: the Sep 14 image ran on seeded data, then the new image booted on that same data, carrying over the session, access control, public links, shares and history pruning. Live checks after the deploy passed. There were no errors in the logs.
+- The detached volume `api-volume-a5Kl` was deleted. Railway still listed it right after the delete, which looks like deferred removal.
+- Private packaging allowed only `electron/`, `out/` and production `node_modules/`, so the shared `mcp/doc-text.cjs` failed the nightly build. It is now a named exception, and a test pins it.

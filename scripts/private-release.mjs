@@ -126,10 +126,15 @@ export function productionPackageNames(root = rootDir) {
   return names;
 }
 
+// The one module the main process shares with the MCP server, which ships
+// outside the asar as plain Node and so cannot live under electron/. Named
+// exactly: anything else under mcp/ in the asar is still an accident.
+const SHARED_MCP_RUNTIME = new Set(["mcp/doc-text.cjs"]);
+
 export function assertPrivateEntryName(name, productionNames) {
   assert(name && !name.startsWith("/") && !name.split("/").some((part) => part === ".." || part === ".") && !/[\\\x00-\x1f]/.test(name), "Unsafe packaged entry name.");
   assert(!/(?:^|\/)(?:\.env[^/]*|\.git|__tests__|tests?|coverage|\.DS_Store)(?:\/|$)|\.(?:map|pem|p12|pfx)$|\.(?:test|spec)\.[^/]+$/i.test(name), `Non-runtime/private file in package: ${name}`);
-  assert(name === "package.json" || /^(?:electron|out)\//.test(name) || name.startsWith("node_modules/"), `Unexpected application inclusion: ${name}`);
+  assert(name === "package.json" || /^(?:electron|out)\//.test(name) || SHARED_MCP_RUNTIME.has(name) || name.startsWith("node_modules/"), `Unexpected application inclusion: ${name}`);
   if (name.startsWith("node_modules/")) {
     for (const suffix of name.split("node_modules/").slice(1)) {
       const pieces = suffix.split("/"), packageName = pieces[0].startsWith("@") ? pieces.slice(0, 2).join("/") : pieces[0];

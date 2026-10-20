@@ -172,8 +172,9 @@ npm run release:promote -- --confirm-promote=0.9.0 --now    # skips the soak onl
 ```
 
 Promotion refuses when the release is held, withdrawn, superseded, or a prerelease. It also refuses
-when the early feed in the bucket no longer names that version, and records it as superseded so the
-scheduler stops retrying. Otherwise it:
+when the early feed in the bucket names a different version, and records it as superseded so the
+scheduler stops retrying. A missing or unreadable early feed is a plain failure that the next run
+retries. Otherwise it:
 
 1. checks `main`, a clean tracked tree, and that the release commit is on `origin/main`;
 2. checks the saved early feed against `early.json` and the live early feed against both;

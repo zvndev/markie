@@ -1225,7 +1225,9 @@ export function earlyTarget(platform, manifest = releaseManifest()) {
 /** A feed from the bucket, or null when the object does not exist yet. */
 async function fetchFeed(url) {
   const response = await fetch(`${url}?release-check=${Date.now()}`, { cache: "no-store" });
-  if (response.status === 404 || response.status === 403) return null;
+  // Only a 404 means "no such feed". A 403 or 5xx is the bucket or CDN
+  // misbehaving, and reading that as "missing" could retire a good release.
+  if (response.status === 404) return null;
   assert(response.ok, `GET ${url} failed with ${response.status}`);
   const text = await response.text();
   return { text, ...parseElectronBuilderFeed(text) };
@@ -1444,11 +1446,15 @@ export async function promoteRelease(confirmVersion, { force = false } = {}) {
       }
 
       const early = await fetchFeed(target.earlyFeedUrl);
-      if (!early || early.version !== version) {
-        state = markSuperseded(state, io.now(), early?.version ?? null);
+      // A missing feed is a reason to stop, not proof of anything, so it is
+      // retried on the next run. Only a feed that names another version
+      // retires this release.
+      assert(early, `the early ${target.label} feed is missing; not promoting ${version}`);
+      if (early.version !== version) {
+        state = markSuperseded(state, io.now(), early.version);
         writeEarlyState(state);
         throw new PromotionSuperseded(
-          `the early ${target.label} feed names ${early?.version ?? "nothing"}, not ${version}; it will not be promoted`
+          `the early ${target.label} feed names ${early.version}, not ${version}; it will not be promoted`
         );
       }
       assert(sha512Text(early.text) === record.feedSha512, `the early ${target.label} feed for ${version} changed since it was published`);

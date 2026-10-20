@@ -474,6 +474,20 @@ describe("promote-due", () => {
     expect((await promoteDue()).line).toBe("nothing pending");
   });
 
+  it("retries rather than retiring a release when the early feed is briefly missing", async () => {
+    prepare(root, "0.9.0");
+    await publishEarly("mac", "0.9.0");
+    const feed = world.text("mac/beta-mac.yml") ?? "";
+    world.objects.delete(`${PUBLIC}/mac/beta-mac.yml`);
+    clock = new Date(T0.getTime() + 4 * DAY);
+    const first = await promoteDue();
+    expect(first.failed).toBe(true);
+    expect(first.line).toMatch(/early macOS feed is missing/);
+    expect(earlyState("0.9.0").supersededAt).toBeNull();
+    world.put("mac/beta-mac.yml", feed);
+    expect((await promoteDue()).line).toBe("promoted 0.9.0");
+  });
+
   it("reports a real failure with a non-zero result", async () => {
     prepare(root, "0.9.0");
     await publishEarly("mac", "0.9.0");

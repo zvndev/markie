@@ -5,7 +5,7 @@
 # overwrites an existing .env or backup key. Secret values are written to the
 # file and never printed. See docs/SELF-HOSTING.md.
 #
-#   sh init.sh --domain markie.example.org \
+#   sh init.sh --domain markie.example.org --admin-email you@example.org \
 #     --s3-endpoint https://s3.eu-central-003.backblazeb2.com --s3-bucket my-markie \
 #     --s3-access-key-id KEYID --s3-secret-access-key SECRET \
 #     --resend-api-key re_xxx --mail-from 'Markie <markie@example.org>'
@@ -31,6 +31,8 @@ NO_MAIL=""
 GOOGLE_CLIENT_ID=""
 GOOGLE_CLIENT_SECRET=""
 QUOTA_BYTES=""
+SIGNUP=""
+ADMIN_EMAIL=""
 AGE_KEY_FILE=""
 INTERACTIVE=""
 [ -t 0 ] && INTERACTIVE=1
@@ -62,6 +64,12 @@ Optional:
   --google-client-id ID         Google sign-in
   --google-client-secret SECRET
   --quota-bytes N               storage quota per account, in bytes
+
+Accounts:
+  --admin-email ADDRESS         your address: the admin, and the only account that can
+                                be created first (recommended)
+  --signup MODE                 invite (default): you, people invited to a document, and
+                                addresses you allow; open: anyone; closed: nobody new
   --age-key-file FILE           reuse an existing backup key (restoring onto a new server)
   --env-file FILE               where to write (default: .env beside this script)
   --non-interactive             never prompt; fail on anything missing
@@ -91,6 +99,8 @@ while [ $# -gt 0 ]; do
     --google-client-id) need_value "$@"; GOOGLE_CLIENT_ID=$2; shift 2 ;;
     --google-client-secret) need_value "$@"; GOOGLE_CLIENT_SECRET=$2; shift 2 ;;
     --quota-bytes) need_value "$@"; QUOTA_BYTES=$2; shift 2 ;;
+    --admin-email) need_value "$@"; ADMIN_EMAIL=$2; shift 2 ;;
+    --signup) need_value "$@"; SIGNUP=$2; shift 2 ;;
     --age-key-file) need_value "$@"; AGE_KEY_FILE=$2; shift 2 ;;
     --env-file) need_value "$@"; ENV_FILE=$2; shift 2 ;;
     --non-interactive) INTERACTIVE=""; shift ;;
@@ -138,6 +148,13 @@ DOMAIN=$(printf '%s' "$DOMAIN" | sed -e 's#^[a-zA-Z]*://##' -e 's#/.*$##' | tr '
 printf '%s' "$DOMAIN" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' \
   || die "'$DOMAIN' is not a domain name"
 
+case "${SIGNUP:-invite}" in open|invite|closed) ;; *) die "--signup must be open, invite or closed" ;; esac
+ask ADMIN_EMAIL "Your email address (the server's admin account)"
+ADMIN_EMAIL=$(printf '%s' "$ADMIN_EMAIL" | tr '[:upper:]' '[:lower:]')
+if [ -n "$ADMIN_EMAIL" ]; then
+  printf '%s' "$ADMIN_EMAIL" | grep -Eq '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$' || die "'$ADMIN_EMAIL' is not an email address"
+fi
+
 if [ -z "$NO_STORAGE" ]; then
   if [ -z "$S3_BUCKET" ] && [ -n "$INTERACTIVE" ]; then
     echo "Storage: an S3-compatible bucket holds the encrypted database backup and synced media." >&2
@@ -178,7 +195,7 @@ fi
 # Values are written single-quoted, which Docker Compose reads literally. A
 # value that itself holds a quote or a line break cannot be written that way.
 for value in "$DOMAIN" "$SERVER_NAME" "$S3_ENDPOINT" "$S3_BUCKET" "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" \
-  "$S3_REGION" "$S3_ASSETS_BUCKET" "$RESEND_API_KEY" "$RESEND_BASE_URL" "$EMAIL_FROM" "$GOOGLE_CLIENT_ID" "$GOOGLE_CLIENT_SECRET"; do
+  "$S3_REGION" "$S3_ASSETS_BUCKET" "$RESEND_API_KEY" "$RESEND_BASE_URL" "$EMAIL_FROM" "$GOOGLE_CLIENT_ID" "$GOOGLE_CLIENT_SECRET" "$ADMIN_EMAIL"; do
   case "$value" in *"'"*) die "a value contains a single quote, which .env cannot hold literally" ;; esac
   case "$value" in *'
 '*) die "a value contains a line break" ;; esac
@@ -237,6 +254,15 @@ q() { printf "'%s'" "$1"; }
   echo "BETTER_AUTH_URL=$(q "https://$DOMAIN")"
   echo "BETTER_AUTH_SECRET=$(q "$AUTH_SECRET")"
   if [ -n "$SERVER_NAME" ]; then echo "MARKIE_SERVER_NAME=$(q "$SERVER_NAME")"; else echo "# MARKIE_SERVER_NAME='My Markie' (defaults to the domain)"; fi
+  echo
+  echo "# Who may create an account: invite (you, people invited to a document, and"
+  echo "# addresses you allow with ./docker-entrypoint.sh signup allow), open, or closed."
+  echo "MARKIE_SIGNUP=$(q "${SIGNUP:-invite}")"
+  if [ -n "$ADMIN_EMAIL" ]; then
+    echo "MARKIE_ADMIN_EMAIL=$(q "$ADMIN_EMAIL")"
+  else
+    echo "# MARKIE_ADMIN_EMAIL='' (unset: the first account to sign up becomes the admin)"
+  fi
   echo
   echo "# Storage: database backup under markie-db-age/, media under assets/."
   if [ -n "$NO_STORAGE" ]; then
@@ -305,4 +331,7 @@ if [ -n "$NO_MAIL" ]; then
   echo "No mail: read sign-up codes with: docker compose logs markie-api | grep 'mail-log' -A 3"
 fi
 echo
+if [ "${SIGNUP:-invite}" = invite ] && [ -z "$ADMIN_EMAIL" ]; then
+  echo "WARNING: no --admin-email. The first account anyone creates becomes the admin, so sign up as soon as the server is up." >&2
+fi
 echo "Next: point the DNS A record for $DOMAIN at this machine, then run: docker compose up -d"

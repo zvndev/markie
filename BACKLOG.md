@@ -4,14 +4,6 @@
 > evidence; do not delete history. Move completed items to Done with the verification record.
 
 ## Open
-- [ ] A self-hosted server lets anyone who can reach it create an account. There is no
-      invite-only or allowlisted sign-up mode, so a server meant for a closed group relies on
-      a firewall, and a storage quota is the only bound on what a stranger can store.
-      type: security
-      severity: medium
-      acceptance_criteria: A self-hosted server can restrict sign-up to invited addresses or an
-        admin allowlist, behind an explicit setting, with Markie Cloud unchanged.
-      source: self-hosting kit, docs/SELF-HOSTING.md security notes
 - [ ] The storage quota (MARKIE_STORAGE_QUOTA_BYTES) does not count version history
       (doc_history, dp_history) or the live-collaboration update log (doc_updates). Both are
       bounded today, but a billing plan needs a decision on whether they are charged.
@@ -113,6 +105,19 @@
       source: long-agent-loop initializer 2026-06-28
 
 ## Done
+- [x] A self-hosted server let anyone who could reach it create an account. MARKIE_SIGNUP
+      now decides: open (Markie Cloud's default, unchanged), invite (the self-hosted
+      default: the admin, addresses with a pending invite, and an admin allowlist) or
+      closed. Enforced in better-auth's user-create hook, so email sign-up, a first
+      email-code sign-in and a first Google sign-in are all covered; refusals answer
+      403 `signup_invite_required` / `signup_closed`.
+      type: security
+      severity: medium
+      evidence: server/src/invite-signup.test.ts (first account is admin, invited guest
+        signs up and finds the document, stranger refused by email, by email code and by a
+        real Google callback, allowlist admin-only), signup.test.ts, official-boot.test.ts
+        (Markie Cloud stays open and has no admin routes).
+      closed: 2026-10-20
 - [x] Confirm the Windows update path from a previous public version. Done on a GitHub
       Windows runner, which is real Windows, rather than by hand: `windows-update-check.yml`
       runs the same `scripts/update-flow-check.mjs` as macOS. Run 33843439589 on 0.5.3:

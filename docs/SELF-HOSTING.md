@@ -72,7 +72,7 @@ sh init.sh
 docker compose up -d
 ```
 
-`init.sh` asks for the domain, the bucket and mail, then writes `deploy/.env`. It generates the
+`init.sh` asks for the domain, your email address (the admin), the bucket and mail, then writes `deploy/.env`. It generates the
 auth secret with `openssl` and the backup key with `age-keygen`. It never prints a secret, and it
 never overwrites an existing `.env`.
 
@@ -81,6 +81,7 @@ Everything can be passed as flags instead, for scripts:
 ```sh
 sh init.sh --non-interactive \
   --domain markie.example.org \
+  --admin-email you@example.org \
   --name "Example Docs" \
   --s3-endpoint https://s3.eu-central-003.backblazeb2.com \
   --s3-bucket example-markie \
@@ -135,18 +136,68 @@ there.
 
 Markie Cloud stays available beside it. Each document belongs to one server.
 
+## Who can sign up
+
+A self-hosted server is invite-only by default. `MARKIE_SIGNUP` in `.env` decides:
+
+| Value | Who can create an account |
+| --- | --- |
+| `invite` | The default. The admin, anyone invited to a document on this server, and addresses the admin allows |
+| `open` | Anyone who can reach the server |
+| `closed` | Nobody new. Existing accounts keep working |
+
+The admin is the account for `MARKIE_ADMIN_EMAIL`, which `init.sh` asks for. With it set, that
+address is the only one that can create the first account, so nobody can claim the server before
+you do. Without it, the first account anyone creates becomes the admin. Sign up straight after
+the first `docker compose up -d`.
+
+The rule covers every way an account is made: email sign-up, a first sign-in by email code, and a
+first Google sign-in. A refused sign-up answers HTTP 403 with
+`{"code":"signup_invite_required"}`, or `signup_closed`, with a message to show. After a refused
+Google sign-in, the browser page says the server is invite-only.
+
+### The allowlist
+
+To let someone in before anything is shared with them, allow their address. From a shell on the
+server, in `deploy/`:
+
+```sh
+docker compose exec markie-api ./docker-entrypoint.sh signup allow friend@example.org
+docker compose exec markie-api ./docker-entrypoint.sh signup list
+docker compose exec markie-api ./docker-entrypoint.sh signup remove friend@example.org
+```
+
+The admin can do the same over HTTPS with their session token. In Markie this is the token the app
+holds after you sign in; with curl, sign in first:
+
+```sh
+TOKEN=$(curl -s -D - -o /dev/null -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.org","password":"…"}' \
+  https://markie.example.org/api/auth/sign-in/email | sed -n 's/^set-auth-token: //Ip' | tr -d '\r')
+
+curl -H "Authorization: Bearer $TOKEN" https://markie.example.org/api/admin/signup-allowlist
+curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"email":"friend@example.org"}' https://markie.example.org/api/admin/signup-allowlist
+curl -X DELETE -H "Authorization: Bearer $TOKEN" \
+  https://markie.example.org/api/admin/signup-allowlist/friend@example.org
+```
+
+Any other account gets 403 `{"error":"admin_required"}`. Removing an address stops it signing up;
+it does not remove an account that already exists.
+
 ## Inviting guests
 
 Share a document from Markie as usual. Your server emails the guest a link to read it in the
-browser at your domain.
+browser at your domain. The invitation is also what lets them create an account on an invite-only
+server, so you never need to allow a guest by hand.
 
 To edit, comment or keep the document in their Library, the guest adds your server in Markie and
 creates an account with the invited address. The invitation is claimed once the address is
 verified. Their account lives on your server, separate from any Markie Cloud account.
 
-Without mail, ask the guest to create an account on your server first and pass them their code
-from the log. Then share the document with their address: an existing account gets it straight
-away.
+Without mail, share the document first, then ask the guest to create an account with that
+address. Pass them their sign-up code from the log. They find the document once they are signed
+in.
 
 ## Storage quota
 
@@ -238,8 +289,9 @@ The marker file starts a fresh backup generation from the restored database.
 
 - `.env` holds every secret the server has. `init.sh` makes it readable by its owner only. Never
   commit it.
-- Anyone who can reach the server can create an account. Set a storage quota, and put the server
-  behind a firewall or VPN if it is for a closed group.
+- Sign-up is invite-only unless you set `MARKIE_SIGNUP=open`. Anyone with an account can invite an
+  address to a document, and that invitation lets the address sign up, so only give accounts to
+  people you would let invite others. Set a storage quota as well.
 - Sign-up requires a verified email address, exactly as on Markie Cloud. With `MARKIE_MAIL_LOG=1`
   the codes are in the server log, so treat access to the logs and to Docker as access to every
   account being created.
@@ -263,6 +315,8 @@ Everything else lives in `.env`.
 | `BETTER_AUTH_URL` | `https://<domain>`. Links, sign-in and `server-info` follow it |
 | `BETTER_AUTH_SECRET` | Signs sessions. Changing it signs everyone out |
 | `MARKIE_SERVER_NAME` | Name shown in Markie. Defaults to the domain |
+| `MARKIE_SIGNUP` | `invite` (default here), `open` or `closed` |
+| `MARKIE_ADMIN_EMAIL` | The admin's address, and the only possible first account |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | The bucket. All four or none |
 | `S3_REGION` | Only if the provider needs one. R2 uses `auto` |
 | `S3_ASSETS_BUCKET` | Keep media in a separate bucket |

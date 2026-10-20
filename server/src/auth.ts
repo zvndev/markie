@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { randomUUID } from "node:crypto";
 import { bearer, emailOTP } from "better-auth/plugins";
+import { createAuthMiddleware } from "better-auth/api";
 import { openDatabase } from "./db.ts";
 import { sendEmail } from "./email.ts";
 import { claimPendingInvites } from "./pending.ts";
@@ -8,12 +9,28 @@ import { resolveAuthSecret } from "./auth-secret.ts";
 import { otpEmail } from "./otp-email.ts";
 import { applicationOrigins } from "./application-origins.ts";
 import { accountContext, accountIdentitiesEnabled, assertNewAccountEmail } from "./account-context.ts";
+import { assertSignupAllowed } from "./signup.ts";
 
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
+const authDatabase = openDatabase();
+
 export const auth = betterAuth({
-  database: openDatabase(),
+  database: authDatabase,
+  hooks: {
+    // The create-user hook below is the gate for every path. Email sign-up
+    // also needs the refusal said out loud: better-auth answers a 403 from a
+    // create hook on that route with a fake success (so a sign-up never shows
+    // which addresses exist), which would leave someone waiting for a code
+    // that never comes. Checked before the route reads the database, so an
+    // existing address and a new one are refused alike.
+    before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path !== "/sign-up/email") return;
+      const email = (ctx.body as { email?: unknown } | undefined)?.email;
+      assertSignupAllowed(authDatabase, typeof email === "string" ? email : "");
+    }),
+  },
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:8787",
   secret: resolveAuthSecret(process.env),
   trustedOrigins: [
@@ -78,7 +95,13 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
-        before: async (user) => { if (user.email) assertNewAccountEmail(user.email); },
+        // MARKIE_SIGNUP (signup.ts). Every way an account comes into being
+        // passes through here: email sign-up, a first email-code sign-in and
+        // a first Google sign-in, so this is the one place it is decided.
+        before: async (user) => {
+          assertSignupAllowed(authDatabase, user.email ?? "");
+          if (user.email) assertNewAccountEmail(user.email);
+        },
         // Claiming moved out of "an account exists" and into "the address is
         // proven". A Google account, or a first email-OTP sign-in, arrives
         // already verified because the provider or the mailbox proved it, so

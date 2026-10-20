@@ -26,6 +26,10 @@ import { resolveVerifiedUserForEmail } from "./account-identities.ts";
 import { API_VERSION, SERVER_VERSION, deployment } from "./deployment.ts";
 import { emailSignInAvailable } from "./email.ts";
 import { quotaRefusal, storageQuotaBytes, storageUsedBytes } from "./quota.ts";
+import {
+  SIGNUP_CLOSED, SIGNUP_INVITE_REQUIRED, adminEmail, adminUserId, allowEmail, allowlist, disallowEmail,
+  signupMode, signupRefusalMessage,
+} from "./signup.ts";
 
 const googleConfigured = !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
@@ -117,6 +121,8 @@ app.use("/api/*", async (c, next) => {
 // with the reason, not on the first request that happens to read it.
 const DEPLOYMENT = deployment();
 const EMAIL_SIGN_IN = emailSignInAvailable();
+const SIGNUP = signupMode();
+adminEmail();
 const SERVER_INFO_PATH = "/api/server-info";
 const appCors = cors({
   origin: applicationOrigins(),
@@ -143,7 +149,7 @@ app.get(SERVER_INFO_PATH, (c) => {
     version: SERVER_VERSION,
     name: DEPLOYMENT.name,
     origin: DEPLOYMENT.origin,
-    signIn: { email: EMAIL_SIGN_IN, google: googleConfigured },
+    signIn: { email: EMAIL_SIGN_IN, google: googleConfigured, signup: SIGNUP },
   });
 });
 
@@ -164,6 +170,40 @@ app.get("/api/account/usage", async (c) => {
   if (!session) return c.json({ error: "unauthorized" }, 401);
   return c.json({ usedBytes: storageUsedBytes(quotaDatabase, session.user.id), quotaBytes: storageQuotaBytes() });
 });
+
+// The sign-up allowlist for MARKIE_SIGNUP=invite, managed by this server's
+// admin (signup.ts adminUserId). Self-hosted servers only: Markie Cloud has
+// no admin account and registers none of these routes.
+if (!DEPLOYMENT.official) {
+  const requireAdmin = async (c: Context): Promise<Response | { id: string }> => {
+    c.header("Cache-Control", "private, no-store");
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) return c.json({ error: "unauthorized" }, 401);
+    if (session.user.id !== adminUserId(quotaDatabase)) return c.json({ error: "admin_required" }, 403);
+    return { id: session.user.id };
+  };
+  app.get("/api/admin/signup-allowlist", async (c) => {
+    const admin = await requireAdmin(c);
+    if (admin instanceof Response) return admin;
+    return c.json({ signup: SIGNUP, emails: allowlist(quotaDatabase) });
+  });
+  app.post("/api/admin/signup-allowlist", async (c) => {
+    const admin = await requireAdmin(c);
+    if (admin instanceof Response) return admin;
+    const body = (await c.req.json().catch(() => null)) as { email?: unknown } | null;
+    if (typeof body?.email !== "string") return c.json({ error: "invalid_email" }, 400);
+    try {
+      return c.json({ ok: true, email: allowEmail(quotaDatabase, body.email, admin.id) });
+    } catch {
+      return c.json({ error: "invalid_email" }, 400);
+    }
+  });
+  app.delete("/api/admin/signup-allowlist/:email", async (c) => {
+    const admin = await requireAdmin(c);
+    if (admin instanceof Response) return admin;
+    return c.json({ ok: true, removed: disallowEmail(quotaDatabase, decodeURIComponent(c.req.param("email"))) });
+  });
+}
 
 if (accountPlatform) {
   app.route("/api/account", accountPlatform.app);
@@ -239,6 +279,16 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
       token ? 200 : 401
     );
   if (!token) {
+    // A first Google sign-in this server's MARKIE_SIGNUP refused. better-auth
+    // sends the hook's code here as ?error=, so say what happened rather than
+    // inviting a retry that will be refused the same way.
+    const error = c.req.query("error");
+    if (error === SIGNUP_INVITE_REQUIRED || error === SIGNUP_CLOSED) {
+      return page(
+        error === SIGNUP_CLOSED ? "No new accounts here" : "This server is invite-only",
+        signupRefusalMessage(error)
+      );
+    }
     return page("Sign-in didn't complete", "Head back to Markie and try again.");
   }
   // Carry the app's nonce back so it can verify this deep link is the answer to

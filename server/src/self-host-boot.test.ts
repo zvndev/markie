@@ -38,6 +38,11 @@ const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.optio
 if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 const { app } = await import("./index.ts");
 const { markVerified } = await import("./test-users.ts");
+// Invite-only is the self-hosted default; every account here is let in the
+// way an admin would let it in. invite-signup.test.ts covers the gate itself.
+const { allowEmail } = await import("./signup.ts");
+const { openDatabase } = await import("./db.ts");
+const allow = (email: string) => allowEmail(openDatabase(), email, null);
 console.log = originalLog;
 const captureLog = () => {
   console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
@@ -55,6 +60,7 @@ const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex")
 
 async function account(name: string): Promise<{ token: string; id: string; email: string }> {
   const email = `${name}-${Date.now()}@example.org`;
+  allow(email);
   const restore = captureLog();
   const signUp = await req("/api/auth/sign-up/email", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -84,7 +90,7 @@ test("server-info describes this server, not Markie Cloud", async () => {
     version: "0.1.0",
     name: "markie.example.org",
     origin: ORIGIN,
-    signIn: { email: true, google: false },
+    signIn: { email: true, google: false, signup: "invite" },
   });
   assert.equal(res.headers.get("access-control-allow-origin"), "*");
 });
@@ -113,6 +119,7 @@ test("download routes send people to the official download page", async () => {
 
 test("with no mail, the sign-up code is written to the server log for the admin to pass on", async () => {
   const email = `guest-${Date.now()}@example.org`;
+  allow(email);
   logged.length = 0;
   const restore = captureLog();
   const res = await req("/api/auth/sign-up/email", {

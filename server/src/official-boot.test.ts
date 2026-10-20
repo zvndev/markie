@@ -67,7 +67,7 @@ test("server-info names the official Markie Cloud", async () => {
     version: "0.1.0",
     name: "Markie Cloud",
     origin: RAILWAY,
-    signIn: { email: true, google: true },
+    signIn: { email: true, google: true, signup: "open" },
   });
   assert.equal(res.headers.get("access-control-allow-origin"), "*");
   assert.equal(res.headers.get("access-control-allow-credentials"), null);
@@ -150,4 +150,17 @@ test("email sign-up sends its code through Resend from the configured address, a
   assert.equal(usage.headers.get("cache-control"), "private, no-store");
   assert.deepEqual(await usage.json(), { usedBytes: 200_000, quotaBytes: null });
   assert.equal((await req("/api/account/usage")).status, 401);
+});
+
+test("Markie Cloud keeps open sign-up and has no sign-up admin routes", async () => {
+  const stranger = await req("/api/auth/sign-up/email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Anyone", email: `anyone-${Date.now()}@markie.test`, password: "password-123" }),
+  });
+  assert.equal(stranger.status, 200);
+  assert.equal(((await stranger.json()) as { user?: { email: string } }).user?.email?.startsWith("anyone-"), true);
+  assert.equal((await req("/api/admin/signup-allowlist")).status, 404);
+  const post = await req("/api/admin/signup-allowlist", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  assert.equal(post.status, 404);
 });

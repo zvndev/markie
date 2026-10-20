@@ -133,7 +133,7 @@ const STORAGE = ["--s3-endpoint", "http://minio:9000", "--s3-bucket", "markie", 
 const hasAgeKeygen = spawnSync("sh", ["-c", "command -v age-keygen"]).status === 0;
 
 test("init.sh writes a private .env with generated secrets it never prints", { skip: !hasAgeKeygen && "age-keygen is not installed" }, () => {
-  const r = runInit(["--domain", "https://Markie.Example.org/", ...STORAGE, "--no-mail", "--quota-bytes", "1048576"]);
+  const r = runInit(["--domain", "https://Markie.Example.org/", ...STORAGE, "--no-mail", "--quota-bytes", "1048576", "--admin-email", "Owner@Example.org"]);
   assert.equal(r.status, 0, r.out);
   const env = readFileSync(r.envFile, "utf8");
   const value = (name: string) => env.match(new RegExp(`^${name}='([^']*)'$`, "m"))?.[1];
@@ -144,6 +144,9 @@ test("init.sh writes a private .env with generated secrets it never prints", { s
   assert.match(value("LITESTREAM_AGE_RECIPIENT") ?? "", /^age1[0-9a-z]+$/);
   assert.equal(value("MARKIE_MAIL_LOG"), "1");
   assert.equal(value("MARKIE_STORAGE_QUOTA_BYTES"), "1048576");
+  assert.equal(value("MARKIE_SIGNUP"), "invite");
+  assert.equal(value("MARKIE_ADMIN_EMAIL"), "owner@example.org");
+  assert.doesNotMatch(r.out, /first account anyone creates/);
   assert.equal(statSync(r.envFile).mode & 0o777, 0o600);
   assert.equal(statSync(join(r.dir, "markie-backup-key.txt")).mode & 0o777, 0o600);
   for (const secret of [value("BETTER_AUTH_SECRET")!, value("LITESTREAM_AGE_IDENTITY")!, "minio-secret-value"]) {
@@ -177,6 +180,8 @@ test("init.sh without age-keygen leaves the key empty and says how to make one",
   assert.match(env, /^RESEND_API_KEY='re_test_key'$/m);
   assert.match(env, /^EMAIL_FROM='Markie <m@m.example.org>'$/m);
   assert.doesNotMatch(env, /MARKIE_MAIL_LOG='1'/);
+  assert.match(env, /^MARKIE_SIGNUP='invite'$/m);
+  assert.match(r.out, /first account anyone creates becomes the admin/);
   assert.match(r.out, /age-keygen -o markie-backup-key.txt/);
   assert.match(r.out, /refuses to start until both are set/);
   assert.ok(!existsSync(join(r.dir, "markie-backup-key.txt")));
@@ -186,5 +191,7 @@ test("init.sh refuses missing or half-given storage instead of guessing", () => 
   assert.match(runInit(["--domain", "m.example.org"]).out, /no storage given/);
   assert.match(runInit(["--domain", "m.example.org", "--s3-bucket", "b"]).out, /missing its S3 endpoint/);
   assert.match(runInit(["--domain", "not a domain", "--no-storage"]).out, /is not a domain name/);
+  assert.match(runInit(["--domain", "m.example.org", "--no-storage", "--signup", "public"]).out, /--signup must be open, invite or closed/);
+  assert.match(runInit(["--domain", "m.example.org", "--no-storage", "--admin-email", "nope"]).out, /is not an email address/);
   assert.match(runInit([]).out, /--domain is required/);
 });

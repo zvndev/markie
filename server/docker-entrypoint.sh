@@ -3,6 +3,7 @@
 # idempotent auth-schema migration, then the API.
 #
 #   ./docker-entrypoint.sh                     boot the server (the default)
+#   ./docker-entrypoint.sh signup list|allow|remove [email]   the sign-up allowlist
 #   ./docker-entrypoint.sh backup <command>    run `litestream <command>` with
 #                                              this server's config, for example
 #                                              `backup generations /data/markie.db`
@@ -11,6 +12,13 @@ set -e
 DB_PATH="${DB_PATH:-/data/markie.db}"
 export DB_PATH
 LITESTREAM_CONFIG=/etc/litestream.yml
+
+# The sign-up allowlist (MARKIE_SIGNUP=invite), against the live database.
+# Needs no backup storage, so it runs before any of the checks below.
+if [ "$1" = "signup" ]; then
+  shift
+  exec node --experimental-strip-types src/signup-admin.ts "$@"
+fi
 
 # Generic S3 names (any provider) win; the B2_* names are what the live
 # deployment sets and what litestream.yml reads, so the generic ones are copied

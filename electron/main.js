@@ -1726,7 +1726,10 @@ handle("server-request", async (_event, req) => {
   if (privateReleaseConfig) return { ok: false, status: 0, data: null, error: PRIVATE_SERVERS_REFUSAL };
   const origin = trustedServerArg(req?.origin);
   if (!origin) return { ok: false, status: 0, data: null, error: "That request isn't allowed." };
-  return serverRequest({ ...req, origin });
+  // Main's own copy of this origin's token, from the session the renderer
+  // handed the sync engine; see serverRequest for why it is not the
+  // renderer's.
+  return serverRequest({ ...req, origin }, { storedToken: sync.sessionToken(origin) });
 }, { onFailure: () => ({ ok: false, status: 0, data: null }) });
 
 // The renderer resolved this doc's share role against the server; the sync

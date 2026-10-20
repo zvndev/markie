@@ -121,6 +121,27 @@ describe("a session on another server", () => {
     expect(syncConfig).not.toHaveBeenCalled();
   });
 
+  // Main sends only a token it was handed for that server. One read from
+  // storage before the launch push went out reaches main first.
+  it("hands main a stored token before the first request that names it", async () => {
+    localStorage.setItem(`markie.token.v1@${SELF}`, "tok-self");
+    await fresh();
+    const order: string[] = [];
+    syncSession.mockImplementation(async () => {
+      order.push("sync-session");
+      return { ok: true };
+    });
+    answer({ user: null });
+    const fetch = globalThis.fetch as ReturnType<typeof vi.fn>;
+    fetch.mockImplementation(async () => {
+      order.push("server-request");
+      return { ok: true, status: 200, headers: new Headers(), json: async () => ({ user: null }) };
+    });
+    await sessions.serverAuthClient(SELF).me();
+    expect(order[0]).toBe("sync-session");
+    expect(syncSession).toHaveBeenCalledWith({ origin: SELF, token: "tok-self", userId: null });
+  });
+
   it("sends its token only to its own server", async () => {
     sessions.setServerToken(SELF, "tok-self");
     localStorage.setItem("markie.token.v1", "tok-cloud");

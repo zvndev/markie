@@ -27,7 +27,7 @@ function replying(res: () => Response) {
 describe("serverRequest", () => {
   it("sends to the origin's API route with no redirects and reads the JSON back", async () => {
     const fetchImpl = replying(() => new Response(JSON.stringify({ user: { id: "u" } }), { headers: { "set-auth-token": "fresh" } }));
-    const res = await serverRequest({ origin: SELF, path: "/api/me", token: "tok" }, { fetchImpl });
+    const res = await serverRequest({ origin: SELF, path: "/api/me", token: "tok" }, { fetchImpl, storedToken: "tok" });
     expect(res).toEqual({ ok: true, status: 200, data: { user: { id: "u" } }, setAuthToken: "fresh" });
     const [url, init] = fetchImpl.mock.calls[0];
     expect(url).toBe(`${SELF}/api/me`);
@@ -67,5 +67,65 @@ describe("serverRequest", () => {
       expect(await serverRequest({ origin: SELF, path }, { fetchImpl }), path).toMatchObject({ ok: false, status: 0 });
     }
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("the path a request may take", () => {
+  const { checkedPath } = load("./server-request.js");
+
+  it("keeps an API path and its query as the parser makes them", () => {
+    expect(checkedPath(SELF, "/api/docs/abc/shares?x=1&y=2")).toBe("/api/docs/abc/shares?x=1&y=2");
+    expect(checkedPath(SELF, "/auth/sign-in/email")).toBe("/auth/sign-in/email");
+    expect(checkedPath(SELF, "/api/./me")).toBe("/api/me");
+  });
+
+  it("refuses a percent-encoded dot, slash or backslash in any case", () => {
+    for (const p of [
+      "/api/%2e%2e/admin",
+      "/api/%2E%2E/admin",
+      "/api/.%2e/admin",
+      "/api/%2fadmin",
+      "/api/%2Fadmin",
+      "/api/%5cadmin",
+      "/api/%5Cadmin",
+      "/api/docs?next=%2e%2e",
+    ]) {
+      expect(checkedPath(SELF, p), p).toBeNull();
+    }
+  });
+
+  it("refuses anything whose normalized path leaves the API routes", () => {
+    for (const p of ["/api/../admin", "/api/./../admin", "/admin", "//evil.example/api/me", "/api\\..\\admin", "/api/me#x", "api/me", ""]) {
+      expect(checkedPath(SELF, p), p).toBeNull();
+    }
+  });
+});
+
+describe("the token a request carries", () => {
+  it("sends main's stored token for the origin when the renderer names that same token", async () => {
+    const fetchImpl = replying(() => new Response("{}"));
+    await serverRequest({ origin: SELF, path: "/api/me", token: "self-token" }, { fetchImpl, storedToken: "self-token" });
+    expect((fetchImpl.mock.calls[0][1].headers as Record<string, string>).Authorization).toBe("Bearer self-token");
+  });
+
+  it("refuses a token that is not the one stored for this origin, sending nothing", async () => {
+    const fetchImpl = replying(() => new Response("{}"));
+    // Markie Cloud's token, named for another server.
+    const res = await serverRequest({ origin: SELF, path: "/api/me", token: "cloud-token" }, { fetchImpl, storedToken: "self-token" });
+    expect(res).toMatchObject({ ok: false, status: 0, error: "That sign-in isn't this server's." });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("refuses any token for an origin main holds none for", async () => {
+    const fetchImpl = replying(() => new Response("{}"));
+    const res = await serverRequest({ origin: SELF, path: "/api/me", token: "anything" }, { fetchImpl, storedToken: null });
+    expect(res).toMatchObject({ ok: false, status: 0 });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("sends no token when the renderer asks for none, as a sign-in does", async () => {
+    const fetchImpl = replying(() => new Response("{}"));
+    await serverRequest({ origin: SELF, path: "/api/auth/sign-in/email", method: "POST", body: "{}" }, { fetchImpl, storedToken: "self-token" });
+    expect((fetchImpl.mock.calls[0][1].headers as Record<string, string>).Authorization).toBeUndefined();
   });
 });

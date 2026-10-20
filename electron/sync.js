@@ -343,6 +343,13 @@ function principalFor(origin) {
   return sessionFor(origin)?.principal ?? null;
 }
 
+// The token this engine holds for a trusted origin, for main's server-request
+// to send in place of whatever the renderer names. Null without a session.
+function sessionToken(origin) {
+  const o = originOf(origin);
+  return (o && sessionFor(o)?.token) || null;
+}
+
 // One asset of a cloud document, streamed with the session's token.
 // `{ stream, mime, hash, size }` for a 200, `{ gone: true }` for a 404 or a
 // 403, and null for anything else, so a caller can tell a revoked share from
@@ -1415,6 +1422,7 @@ module.exports = {
   withSessionBinding,
   isConfigured,
   hasPrincipal,
+  sessionToken,
   setConfig,
   setSession,
   forgetOrigin,

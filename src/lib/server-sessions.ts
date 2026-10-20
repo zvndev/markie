@@ -190,6 +190,10 @@ function serverApi(origin: string): ApiRequest {
     // only learns a newly added server on the next load.
     const bridge = getElectronAPI();
     if (bridge?.serverRequest) {
+      // Main sends only the token it holds for this server, and refuses one
+      // it was never given. Hand it over first if it has not been yet; the
+      // two calls reach main in order.
+      if (token && lastPushed.get(origin) !== token) pushServerSession(origin);
       const res = await bridge
         .serverRequest({
           origin,

@@ -20,6 +20,9 @@
 // and share renderer). Nothing here is written from memory, and a claim that
 // stops being true is a bug in the guide. Two of them were the opposite of what
 // the code comments said at the time, so re-measure rather than re-read.
+// The "Other document types" table at the end restates what doc-text.cjs and
+// lib.mjs (READ_FORMATS, WRITE_FORMATS) enforce; lib.test.mjs checks each row
+// against them.
 // Self-contained: no imports from outside mcp/ (see the scan.mjs header).
 
 export const MARKDOWN_GUIDE = `# What Markie renders
@@ -263,6 +266,41 @@ A claim that needs a source[^1]
 
 [^1]: The source.
 \`\`\`
+
+## Other document types
+
+Markie opens more than markdown, and the tools follow it. Each type has a
+format id, which is what the formats filter of \`markie_find_documents\` and
+\`markie_search_documents\` takes.
+
+| Format id | Files | Search reads its text | \`markie_read_document\` | \`markie_write_document\` |
+| --- | --- | --- | --- | --- |
+| \`markdown\` | \`.md\` \`.markdown\` \`.mdx\` | yes | as written | yes |
+| \`darkmown\` | \`.wd\` | yes | as written | yes |
+| \`text\` | \`.txt\` \`.text\` \`.log\` | yes | as written | yes |
+| \`csv\` | \`.csv\` | yes | as written | yes |
+| \`json\` | \`.json\` | yes | as written | yes, valid JSON only |
+| \`yaml\` | \`.yaml\` \`.yml\` | yes | as written | yes |
+| \`xml\` | \`.xml\` | yes | as written | yes |
+| \`html\` | \`.html\` \`.htm\` | yes | extracted text | no |
+| \`docx\` | \`.docx\` | yes | extracted text | no |
+| \`odt\` | \`.odt\` | yes | extracted text | no |
+| \`rtf\` | \`.rtf\` | yes | extracted text | no |
+| \`doc\` | \`.doc\` | name and path only | no | no |
+
+Extracted text is the words of a document without its formatting, pictures or
+layout. It comes back labelled read-only, because writing plain text over a
+Word, OpenDocument or RTF file would destroy everything else in it. To change
+one of those, open it with \`markie_open_in_markie\` so the user edits it in
+Markie, or put your changes in a new markdown document. Legacy .doc only gives
+up its text to the reader Markie runs when the document is opened.
+
+A file past its read limit (4 MB for text and HTML, 8 MB for RTF, 32 MB for
+Word and OpenDocument) is still found by name and path, but its text is not
+searched or read.
+
+Everything above this section is about markdown. Pictures, embeds, inline HTML
+and the project and block front matter do not apply to the other types.
 `;
 
 // The digest that goes into the MCP initialize instructions. Sliced out of the

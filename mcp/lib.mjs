@@ -7,8 +7,32 @@ import { homedir } from "node:os";
 // Self-contained scan rules (no ../electron dependency — see scan.mjs header).
 import { isExcludedDir, allowlist, configuredSkillDirs } from "./scan.mjs";
 import { classifyAgentFile, isCachedAgentPath } from "./agent-classify.mjs";
+// The one table of document formats, shared with the app's global search.
+import docText from "./doc-text.cjs";
 
 export const MD_RE = /\.(md|markdown|mdx)$/i;
+
+const { formatOf, extensionsFor, DOCUMENT_FORMATS, TEXT_FORMATS, EXTRACTED_FORMATS } = docText;
+export { formatOf, DOCUMENT_FORMATS };
+
+// What each MCP verb may touch, by format id. Reading covers every format the
+// device index lists (legacy .doc is refused later, with a reason, because its
+// text only comes out of the app's real reader). Writing covers the formats
+// whose bytes ARE the text, minus HTML, which Markie opens read-only. Word,
+// RTF and OpenDocument are packages the app's codecs write; an agent handing
+// over plain text for one would destroy it, so they are never writable here.
+export const READ_FORMATS = Object.freeze([...DOCUMENT_FORMATS]);
+export const WRITE_FORMATS = Object.freeze([...TEXT_FORMATS]);
+export const EXTRACTED_READ_FORMATS = Object.freeze([...EXTRACTED_FORMATS]);
+const MARKDOWN_ONLY = Object.freeze(["markdown"]);
+
+function formatError(formats) {
+  if (formats.length === 1 && formats[0] === "markdown") {
+    return "only .md, .markdown, or .mdx files are allowed";
+  }
+  const exts = extensionsFor(formats);
+  return `only ${exts.slice(0, -1).join(", ")}${exts.length > 1 ? ", or " : ""}${exts.at(-1)} files are allowed`;
+}
 
 // Display order + labels for grouped skills, mirroring src/lib/agent-files.ts,
 // plus the universal skills folder (~/.agents/skills), which every tool reads
@@ -83,8 +107,10 @@ function canonicalize(full) {
   }
 }
 
-// Validate a path for read/write. Returns { ok, path } or { ok:false, error }.
-// Mirrors what the device index would surface: markdown extension, under home
+// Validate a path for read/write. Returns { ok, path, format } or
+// { ok:false, error }.
+// Mirrors what the device index would surface: an allowed extension (markdown
+// unless the caller passes `formats`, a list of format ids), under home
 // (or under a configured skills folder outside it, which the scan starts at
 // and so lists), and no excluded/hidden ancestor segment (except the
 // allowlisted skill roots).
@@ -93,10 +119,15 @@ function canonicalize(full) {
 // refuse the allowlisted skill roots so agents can't implant skill files, and
 // that covers every configured folder outside home: nothing outside home is
 // ever written.
-export function guardPath(input, home, { mode = "read", env = process.env } = {}) {
+export function guardPath(input, home, { mode = "read", env = process.env, formats = MARKDOWN_ONLY } = {}) {
   if (!input || typeof input !== "string") {
     return { ok: false, error: "path is required" };
   }
+  // A caller cannot widen writes past the text formats by passing a longer
+  // list: the write ceiling is enforced here, not trusted from the caller.
+  const allowed = (Array.isArray(formats) && formats.length ? formats : MARKDOWN_ONLY).filter(
+    (f) => mode !== "write" || WRITE_FORMATS.includes(f)
+  );
   let full = input;
   if (full === "~") full = home;
   else if (full.startsWith("~/")) full = join(home, full.slice(2));
@@ -110,8 +141,10 @@ export function guardPath(input, home, { mode = "read", env = process.env } = {}
     return { ok: false, error: "path could not be resolved" };
   }
 
-  if (!MD_RE.test(real)) {
-    return { ok: false, error: "only .md, .markdown, or .mdx files are allowed" };
+  // Judged on the canonical path, so a notes.md link to a .docx is a .docx.
+  const format = formatOf(real);
+  if (!format || !allowed.includes(format)) {
+    return { ok: false, error: formatError(allowed.length ? allowed : MARKDOWN_ONLY) };
   }
   // A configured skills folder is compared as it really is, like the path.
   const configured = configuredSkillDirs(env).map((dir) => {
@@ -138,7 +171,65 @@ export function guardPath(input, home, { mode = "read", env = process.env } = {}
       return { ok: false, error: `refused: "${s}" is an excluded directory` };
     }
   }
-  return { ok: true, path: real };
+  return { ok: true, path: real, format };
+}
+
+// The `formats` argument of the find and search tools: absent or empty means
+// every format; anything else must be format ids the index uses. An unknown id
+// is an error rather than a silent empty result, because "no .pdf matched" and
+// "Markie does not index .pdf" are different answers.
+export function parseFormats(value) {
+  if (value === undefined || value === null) return null;
+  const list = Array.isArray(value) ? value : [value];
+  if (!list.length) return null;
+  for (const f of list) {
+    if (typeof f !== "string" || !READ_FORMATS.includes(f)) {
+      throw new Error(`Unknown format ${JSON.stringify(f)}. Use any of: ${READ_FORMATS.join(", ")}.`);
+    }
+  }
+  return [...new Set(list)];
+}
+
+const READ_ONLY_REASONS = {
+  docx: "a Word document is a package of text, styles, pictures and settings, and plain text written over it would destroy it",
+  odt: "an OpenDocument file is a package of text, styles, pictures and settings, and plain text written over it would destroy it",
+  rtf: "RTF carries its formatting as control words, and plain text written over it would lose all of that",
+  doc: "legacy Word .doc is a binary format Markie only imports",
+  html: "Markie opens HTML read-only",
+};
+
+// A clear refusal for a write aimed at a document type MCP never writes, or
+// null. Judged on the name as given: the guard that runs next judges the real
+// path and refuses these formats regardless, so this only chooses the words.
+export function readOnlyWriteRefusal(input) {
+  const format = typeof input === "string" ? formatOf(input) : null;
+  if (!format || !READ_ONLY_REASONS[format]) return null;
+  const ext = input.slice(input.lastIndexOf("."));
+  return `Markie does not write ${ext} files through MCP: ${READ_ONLY_REASONS[format]}. Read it with markie_read_document, write your changes to a .md or .txt file, or open it with markie_open_in_markie so the user can edit it in Markie. Nothing was written.`;
+}
+
+// Content a text-format write would refuse, as a sentence, or null when it is
+// fine. The ceiling matches the read limit, so anything written here can be
+// read back. Control characters are what the app's own text editor refuses to
+// open (src/lib/document-formats.ts assertText), so writing them would make a
+// file Markie cannot edit. JSON must parse; YAML and XML are not checked,
+// because a real check needs a parser and this server takes no dependencies.
+export function checkWritableContent(body, format) {
+  const bytes = Buffer.byteLength(body);
+  if (bytes > docText.MAX_TEXT_BYTES) {
+    return `The content is ${(bytes / 1048576).toFixed(1)} MB, over the ${docText.MAX_TEXT_BYTES / 1048576} MB write limit.`;
+  }
+  if (/[\u0000-\u0008\u000b\u000e-\u001f]/.test(body)) {
+    return "The content holds control characters (such as NUL) that a text file cannot carry, so Markie could not open it for editing.";
+  }
+  if (format === "json") {
+    try {
+      JSON.parse(body);
+    } catch (err) {
+      return `The content is not valid JSON (${err.message}).`;
+    }
+  }
+  return null;
 }
 
 // Case-insensitive substring match on a scan row's name or path. Empty → all.
@@ -258,7 +349,7 @@ export function markieOpenCommand(filePath, platform = process.platform, {
       };
     }
     // No install found: hand the path to explorer.exe, which launches the
-    // system .md handler and does no command-line re-parsing. `cmd.exe /c start`
+    // system handler for the file's type and does no command-line re-parsing. `cmd.exe /c start`
     // was rejected: Node only quotes arguments containing spaces or quotes, so
     // a file named `notes&calc&.md` would make cmd.exe run `calc` — a real
     // command-injection through a filename an agent or archive can create.
@@ -267,7 +358,7 @@ export function markieOpenCommand(filePath, platform = process.platform, {
       ok: true,
       command: explorer,
       args: [filePath],
-      message: `Opening ${filePath} with your system Markdown handler`,
+      message: `Opening ${filePath} with your system's default app for that file`,
     };
   }
   if (platform === "linux") {
@@ -275,7 +366,7 @@ export function markieOpenCommand(filePath, platform = process.platform, {
       ok: true,
       command: "xdg-open",
       args: [filePath],
-      message: `Opening ${filePath} with your system Markdown handler`,
+      message: `Opening ${filePath} with your system's default app for that file`,
     };
   }
   return { ok: false, error: `unsupported platform: ${platform}` };

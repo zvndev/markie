@@ -5,21 +5,24 @@
 // Self-contained: no imports from outside mcp/ (see the scan.mjs header).
 import { GUIDE_URI, guideEssentials } from "./markdown-guide.mjs";
 
-export const INSTRUCTIONS = `Markie is the user's local markdown workspace: a desktop app over the .md files already on this computer. These tools touch the user's real files.
+export const INSTRUCTIONS = `Markie is the user's local document workspace: a desktop app over the documents already on this computer. Markdown first, and also plain text, CSV, JSON, YAML, XML, Darkmown (.wd), Word (.docx and legacy .doc), RTF, OpenDocument (.odt) and HTML. These tools touch the user's real files.
 
 When to reach for each tool:
-- markie_find_md: search the device-wide markdown index (name or path, newest first). Run it before writing anything new so you update the document that already exists instead of leaving a second copy beside it.
-- markie_read_md, markie_write_md: read or write one file by absolute path. Writes are limited to markdown inside the user's home folder.
-- markie_check_md: read a document back and report what will not display: a picture that is not where it says it is, an embed of a kind Markie cannot draw, markup that renders nowhere, and every tag the editor and an export treat differently. Run it after writing anything with a picture, a clip or inline HTML in it.
-- markie_open_in_markie: render a file in front of the user. Use it after writing, when they asked to see the result.
+- markie_find_documents: search the device-wide document index by name or path, newest first, with each file's format. Narrow it with formats (any of markdown, darkmown, text, csv, json, yaml, xml, html, docx, odt, rtf, doc). markie_find_md is its markdown-only form. Run one of them before writing anything new so you update the document that already exists instead of leaving a second copy beside it.
+- markie_search_documents: find documents by what they say. It reads the text inside markdown, plain text, data files, Word, OpenDocument, RTF and HTML, and ranks the way Markie's own global search does, with an excerpt around each hit.
+- markie_read_document: read any of those by absolute path. Text formats come back exactly as written. Word, OpenDocument, RTF and HTML come back as extracted plain text, labelled read-only. Legacy .doc cannot be read this way.
+- markie_write_document: write markdown or another text format (.txt, .csv, .json, .yaml, .xml, .wd) inside the user's home folder. JSON must be valid. Word, OpenDocument, RTF, .doc and HTML are never written: open one with markie_open_in_markie for the user to edit, or put your changes in a new markdown document.
+- markie_read_md, markie_write_md: the markdown-only forms of read and write, kept for existing setups.
+- markie_check_md: read a markdown document back and report what will not display: a picture that is not where it says it is, an embed of a kind Markie cannot draw, markup that renders nowhere, and every tag the editor and an export treat differently. Run it after writing anything with a picture, a clip or inline HTML in it.
+- markie_open_in_markie: put a document of any of these types in front of the user. Use it after writing, when they asked to see the result.
 - markie_list_skills: the user's agent instruction files (CLAUDE.md, AGENTS.md, skills, Cursor rules), grouped by tool.
-- markie_guide: the whole of what Markie renders, with an example of each. Also served as the ${GUIDE_URI} resource.
+- markie_guide: the whole of what Markie renders, with an example of each, and which document types each tool reads and writes. Also served as the ${GUIDE_URI} resource.
 
 What Markie renders, in short:
 ${guideEssentials()}
 
 How Markie organizes, and what it needs from you:
-Markie groups files into projects (a repo or a product) and blocks (one unit of work inside a project). Declare where a document belongs as you write it, either with the optional project and block arguments to markie_write_md or by writing the front matter yourself:
+Markie groups files into projects (a repo or a product) and blocks (one unit of work inside a project). Declare where a markdown document belongs as you write it, either with the optional project and block arguments to markie_write_document or markie_write_md, or by writing the front matter yourself:
 
 ---
 markie:

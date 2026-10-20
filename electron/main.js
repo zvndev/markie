@@ -2288,7 +2288,7 @@ handle(
 // Results are paths the app now advertises, so opening one goes through the
 // same grant rule as a Browse click.
 const docText = require("./doc-text");
-const SEARCH_FORMATS = new Set(["markdown", "darkmown", "text", "csv", "json", "yaml", "xml", "docx", "doc", "rtf", "html", "odt"]);
+const SEARCH_FORMATS = new Set(docText.DOCUMENT_FORMATS);
 handle("doc-search", async (_event, args) => {
   const query = typeof args?.query === "string" ? args.query.slice(0, 200) : "";
   const formats = Array.isArray(args?.formats) ? args.formats.filter((f) => SEARCH_FORMATS.has(f)) : [];

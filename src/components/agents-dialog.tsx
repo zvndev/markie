@@ -5,14 +5,18 @@ interface AgentsDialogProps {
   onClose: () => void;
 }
 
+// Mirrors TOOLS in mcp/markie-mcp.mjs. The markdown-only originals stay in the
+// server for configs that already name them, so they get one line here.
 const TOOLS: [string, string][] = [
-  ["markie_find_md", "find markdown anywhere on this computer, by name or path"],
-  ["markie_read_md", "read a markdown file"],
-  ["markie_write_md", "write a markdown file, inside your home folder only"],
+  ["markie_find_documents", "find any document by name, path or type"],
+  ["markie_search_documents", "search inside documents, Word and RTF too"],
+  ["markie_read_document", "read any document, Word and RTF as plain text"],
+  ["markie_write_document", "write markdown, text and data files, home folder only"],
+  ["markie_open_in_markie", "open any document here in Markie"],
   ["markie_list_skills", "list your agent and skill files, grouped by tool"],
-  ["markie_open_in_markie", "open a file rendered in Markie"],
   ["markie_check_md", "say which pictures, clips and tags in a document will not show"],
-  ["markie_guide", "what Markie renders, so an agent writes richer documents"],
+  ["markie_guide", "what Markie renders and which types each tool handles"],
+  ["markie_*_md", "markdown-only find, read and write, for older setups"],
 ];
 
 // The front matter an agent writes when it declares where a document belongs.
@@ -77,11 +81,17 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
           </button>
         </div>
         <p className="text-[12px] text-muted leading-relaxed mb-2.5">
-          Hand your agent the markdown on this computer. It can find a document
-          by name, read it, write a new one, and open it here in Markie: your
-          notes and docs, and your agent files too (<code>CLAUDE.md</code>,{" "}
-          <code>AGENTS.md</code>, <code>~/.claude/skills</code>,{" "}
-          <code>~/.codex</code>).
+          Hand your agent the documents on this computer. It can find a
+          document by name, search inside it, read it, write a new one, and
+          open it here in Markie: your notes and docs, Word, RTF and
+          OpenDocument files, CSV, JSON and YAML, and your agent files too
+          (<code>CLAUDE.md</code>, <code>AGENTS.md</code>,{" "}
+          <code>~/.claude/skills</code>, <code>~/.codex</code>).
+        </p>
+        <p className="text-[12px] text-muted leading-relaxed mb-2.5">
+          Word, RTF, OpenDocument and HTML files stay read-only to agents. An
+          agent reads their text and opens them here for you to edit, so their
+          formatting is never overwritten.
         </p>
         <p className="text-[12px] leading-relaxed mb-4 text-[var(--status-green)]">
           Runs on demand, on this computer. Nothing is uploaded.
@@ -129,7 +139,7 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
 
         <p className="text-[11px] text-muted leading-relaxed mt-3">
           Needs <code>node</code> on your PATH. After adding it, ask your agent to{" "}
-          <em>“list my Markie skills”</em> or <em>“find my markdown about X.”</em>
+          <em>“list my Markie skills”</em> or <em>“search my documents for X.”</em>
           {!serverPath && (
             <>
               {" "}

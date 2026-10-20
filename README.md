@@ -45,12 +45,18 @@ Release integrations can read the current stable version and platform URLs from
 ## The Markie MCP
 
 Markie ships a dependency-free [MCP](https://modelcontextprotocol.io) server that
-gives an AI agent a markdown workspace on *your* machine: `markie_find_md`,
-`markie_read_md`, `markie_write_md`, `markie_check_md`, `markie_list_skills`,
-`markie_guide`, and `markie_open_in_markie`. It runs entirely locally — no cloud,
-no API key. Reads/writes are fenced to markdown under your home folder
+gives an AI agent a document workspace on *your* machine: markdown, plain text,
+CSV, JSON, YAML, XML, Darkmown, Word, RTF, OpenDocument and HTML. Its tools are
+`markie_find_documents`, `markie_search_documents` (the same full-text search as
+the app's ⇧⌘F), `markie_read_document`, `markie_write_document`,
+`markie_check_md`, `markie_list_skills`, `markie_guide`, and
+`markie_open_in_markie`, plus the original markdown-only `markie_find_md`,
+`markie_read_md` and `markie_write_md`. It runs entirely locally, with no cloud
+and no API key. Reads and writes are fenced to your home folder
 (symlink-guarded), so an agent can *"find my notes and add a section"* and
-actually do it.
+actually do it. Writes are limited to text formats: Word, RTF, OpenDocument and
+HTML come back to an agent as extracted, read-only text, and legacy `.doc` only
+opens in the app.
 
 Connecting also hands the agent Markie's organization conventions, so it says
 where a document belongs as it writes:

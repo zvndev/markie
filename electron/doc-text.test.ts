@@ -150,4 +150,15 @@ describe("searchDocuments", () => {
     expect((await first).superseded).toBe(true);
     expect((await second).results).toHaveLength(2);
   });
+
+  it("lets side-by-side searches both finish when superseding is off, as the MCP server asks", async () => {
+    const dir = tempDir();
+    const rows = [write(dir, "one.md", "plan"), write(dir, "two.md", "plan")];
+    const cache = createTextCache();
+    const first = searchDocuments(rows, "plan", { cache, supersede: false });
+    const second = searchDocuments(rows, "plan", { cache, supersede: false });
+    expect((await first).superseded).toBeUndefined();
+    expect((await first).results).toHaveLength(2);
+    expect((await second).results).toHaveLength(2);
+  });
 });

@@ -2,7 +2,7 @@
   "name": "markie",
   "displayName": "Markie",
   "version": "0.8.0",
-  "description": "Local markdown workspace for AI agents — find, read & write the .md files on your machine. No cloud, no API key.",
+  "description": "Local document workspace for AI agents: find, search, read and write the markdown, text, data and Word files on your machine. No cloud, no API key.",
   "author": {
     "name": "ZVN",
     "url": "https://markiedocs.com"
@@ -12,6 +12,7 @@
   "license": "MIT",
   "keywords": [
     "markdown",
+    "documents",
     "mcp",
     "local-first",
     "ai-agent",

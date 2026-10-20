@@ -172,6 +172,11 @@ module.exports = {
   files: [
     "electron/**/*",
     "out/**/*",
+    // electron/doc-text.js re-exports this one MCP module so global search and
+    // the MCP's markie_search_documents share one implementation. It is also
+    // copied to Resources/mcp below; the asar needs its own copy because the
+    // main process resolves ../mcp from inside the archive.
+    "mcp/doc-text.cjs",
     "!electron/**/*.test.*",
     "!node_modules/better-sqlite3/deps/**",
     "!node_modules/better-sqlite3/src/**",
@@ -203,6 +208,7 @@ module.exports = {
         "agent-classify.mjs",
         "check-md.mjs",
         "conventions.mjs",
+        "doc-text.cjs",
         "lib.mjs",
         "markdown-guide.mjs",
         "markie-mcp.mjs",

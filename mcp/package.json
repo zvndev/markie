@@ -3,7 +3,7 @@
   "version": "0.8.0",
   "private": true,
   "type": "module",
-  "description": "Local markdown-workspace MCP server bundled in Markie (dependency-free).",
+  "description": "Local document-workspace MCP server bundled in Markie (dependency-free).",
   "author": "ZVN",
   "license": "MIT",
   "repository": {

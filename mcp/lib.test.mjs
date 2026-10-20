@@ -1,6 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { guardPath, matchQuery, classifyAgentFile, isCachedAgentPath, groupSkills, markieOpenCommand, AGENT_TOOLS } from "./lib.mjs";
+import {
+  guardPath,
+  matchQuery,
+  classifyAgentFile,
+  isCachedAgentPath,
+  groupSkills,
+  markieOpenCommand,
+  AGENT_TOOLS,
+  READ_FORMATS,
+  WRITE_FORMATS,
+  parseFormats,
+  readOnlyWriteRefusal,
+  checkWritableContent,
+} from "./lib.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, realpathSync, rmSync, existsSync } from "node:fs";
 import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { MARKDOWN_GUIDE, GUIDE_URI, guideEssentials } from "./markdown-guide.mjs";
@@ -14,10 +27,18 @@ import { fileURLToPath } from "node:url";
 const HOME = "/home/u";
 const MCP_DIR = pdirname(fileURLToPath(import.meta.url));
 
-function startMcpClient(home) {
+// `isolate` drops the config-folder overrides the developer's own shell may
+// carry (CLAUDE_CONFIG_DIR, CODEX_HOME), which would otherwise add their real
+// skills folders to the scan.
+function startMcpClient(home, { isolate = false } = {}) {
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  if (isolate) {
+    delete env.CLAUDE_CONFIG_DIR;
+    delete env.CODEX_HOME;
+  }
   const child = spawn(process.execPath, [pjoin(MCP_DIR, "markie-mcp.mjs")], {
     cwd: pdirname(MCP_DIR),
-    env: { ...process.env, HOME: home, USERPROFILE: home },
+    env,
     stdio: ["pipe", "pipe", "pipe"],
   });
   const pending = new Map();
@@ -449,7 +470,7 @@ test("markieOpenCommand falls back to explorer.exe, never a shell", () => {
       ok: true,
       command: "C:\\Windows\\explorer.exe",
       args: ["C:\\Users\\u\\Notes\\a&calc&.md"],
-      message: "Opening C:\\Users\\u\\Notes\\a&calc&.md with your system Markdown handler",
+      message: "Opening C:\\Users\\u\\Notes\\a&calc&.md with your system's default app for that file",
     }
   );
 });
@@ -459,7 +480,7 @@ test("markieOpenCommand uses xdg-open on Linux", () => {
     ok: true,
     command: "xdg-open",
     args: ["/home/u/Notes/a.md"],
-    message: "Opening /home/u/Notes/a.md with your system Markdown handler",
+    message: "Opening /home/u/Notes/a.md with your system's default app for that file",
   });
 });
 
@@ -1347,5 +1368,293 @@ test("MCP serves the guide as a resource and as a tool, and checks a real file",
   } finally {
     client.close();
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+
+// ---- Every document type (find, search, read, safe write, open) ----
+
+// A minimal DOCX: the one part the extractor reads, deflated, in a real ZIP
+// container. Built here so the test needs nothing outside node: builtins.
+async function tinyDocx(paragraphs) {
+  const { deflateRawSync } = await import("node:zlib");
+  const xml =
+    '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+    paragraphs.map((p) => `<w:p><w:r><w:t>${p}</w:t></w:r></w:p>`).join("") +
+    "</w:body></w:document>";
+  const name = Buffer.from("word/document.xml");
+  const data = deflateRawSync(Buffer.from(xml));
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(8, 8);
+  local.writeUInt32LE(data.length, 18);
+  local.writeUInt32LE(xml.length, 22);
+  local.writeUInt16LE(name.length, 26);
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt16LE(8, 10);
+  central.writeUInt32LE(data.length, 20);
+  central.writeUInt32LE(xml.length, 24);
+  central.writeUInt16LE(name.length, 28);
+  central.writeUInt32LE(0, 42);
+  const centralOffset = local.length + name.length + data.length;
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(central.length + name.length, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  return Buffer.concat([local, name, data, central, name, end]);
+}
+
+test("the MCP format table stays in sync with the app's device index", async () => {
+  const { createRequire } = await import("node:module");
+  const mdindex = createRequire(import.meta.url)("../electron/mdindex.js");
+  const docText = createRequire(import.meta.url)("./doc-text.cjs");
+  assert.equal(docText.DOC_RE.source, mdindex.DOC_RE.source, "DOC_RE drifted from electron/mdindex.js");
+  for (const ext of Object.keys(docText.FORMAT_BY_EXT)) {
+    for (const name of [`a.${ext}`, `A.${ext.toUpperCase()}`]) {
+      assert.equal(docText.formatOf(name), mdindex.formatOf(name), `formatOf(${name}) drifted`);
+    }
+  }
+  assert.equal(docText.formatOf("notes.pdf"), null);
+  assert.equal(docText.formatOf("Makefile"), null);
+  assert.equal(docText.formatOf("a.constructor"), null);
+  // Every format the index produces is one an agent can ask for.
+  assert.deepEqual([...new Set(Object.values(docText.FORMAT_BY_EXT))].sort(), [...READ_FORMATS].sort());
+});
+
+test("guardPath reads every indexed format when asked, and still only markdown by default", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  try {
+    for (const rel of ["a.txt", "b.csv", "c.json", "d.yml", "e.xml", "f.wd", "g.docx", "h.doc", "i.rtf", "j.odt", "k.htm", "l.log"]) {
+      const r = guardPath(pjoin(home, "docs", rel), home, { formats: READ_FORMATS });
+      assert.equal(r.ok, true, `${rel} should be readable: ${r.error}`);
+    }
+    assert.equal(guardPath(pjoin(home, "docs", "g.docx"), home, { formats: READ_FORMATS }).format, "docx");
+    assert.equal(guardPath(pjoin(home, "docs", "a.txt"), home).ok, false);
+    const pdf = guardPath(pjoin(home, "docs", "x.pdf"), home, { formats: READ_FORMATS });
+    assert.equal(pdf.ok, false);
+    assert.match(pdf.error, /only \.md, .*\.docx.*files are allowed/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("guardPath never writes a package format, whatever list the caller passes", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  try {
+    for (const rel of ["g.docx", "h.doc", "i.rtf", "j.odt", "k.html"]) {
+      const r = guardPath(pjoin(home, rel), home, { mode: "write", formats: READ_FORMATS });
+      assert.equal(r.ok, false, `${rel} must not be writable`);
+    }
+    for (const rel of ["a.txt", "b.csv", "c.json", "d.yaml", "e.xml", "f.wd", "g.md"]) {
+      assert.equal(guardPath(pjoin(home, rel), home, { mode: "write", formats: WRITE_FORMATS }).ok, true, rel);
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("text-format writes keep every markdown fence: home only, no excluded or skill folders, no symlink escape", () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const outside = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-out-")));
+  try {
+    const opts = { mode: "write", formats: WRITE_FORMATS };
+    assert.match(guardPath(pjoin(outside, "x.json"), home, opts).error, /inside your home folder/);
+    assert.match(guardPath(pjoin(home, "app", "node_modules", "x.json"), home, opts).error, /excluded directory/);
+    assert.match(guardPath(pjoin(home, ".config", "x.yaml"), home, opts).error, /excluded directory/);
+    assert.match(guardPath(pjoin(home, ".claude", "skills", "k", "notes.txt"), home, opts).error, /agent\/skill files is disabled/);
+    symlinkSync(outside, pjoin(home, "escape"));
+    assert.match(guardPath(pjoin(home, "escape", "x.csv"), home, opts).error, /inside your home folder/);
+    // A .txt name that is really a link to a Word file is judged as the Word file.
+    writeFileSync(pjoin(home, "real.docx"), "x");
+    symlinkSync(pjoin(home, "real.docx"), pjoin(home, "alias.txt"));
+    assert.equal(guardPath(pjoin(home, "alias.txt"), home, opts).ok, false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("parseFormats accepts index format ids and names an unknown one", () => {
+  assert.equal(parseFormats(undefined), null);
+  assert.equal(parseFormats([]), null);
+  assert.deepEqual(parseFormats("docx"), ["docx"]);
+  assert.deepEqual(parseFormats(["docx", "rtf", "docx"]), ["docx", "rtf"]);
+  assert.throws(() => parseFormats(["pdf"]), /Unknown format "pdf"\. Use any of: markdown/);
+  assert.throws(() => parseFormats([3]), /Unknown format 3/);
+});
+
+test("a write aimed at a package format is refused in plain words", () => {
+  for (const [name, why] of [
+    ["/h/report.docx", /Word document/],
+    ["/h/report.ODT", /OpenDocument/],
+    ["/h/memo.rtf", /control words/],
+    ["/h/old.doc", /legacy Word/],
+    ["/h/page.html", /read-only/],
+  ]) {
+    const message = readOnlyWriteRefusal(name);
+    assert.match(message, why, name);
+    assert.match(message, /markie_read_document/);
+    assert.match(message, /Nothing was written/);
+    assert.doesNotMatch(message, /—/);
+  }
+  assert.equal(readOnlyWriteRefusal("/h/notes.txt"), null);
+  assert.equal(readOnlyWriteRefusal("/h/notes.md"), null);
+  assert.equal(readOnlyWriteRefusal(undefined), null);
+});
+
+test("the guide's document-type table says what the tools enforce", () => {
+  for (const id of READ_FORMATS) {
+    const row = MARKDOWN_GUIDE.split("\n").find((line) => line.startsWith(`| \`${id}\` |`));
+    assert.ok(row, `the guide has no row for ${id}`);
+    const cells = row.split("|").map((c) => c.trim()).filter(Boolean);
+    const writes = cells[4].startsWith("yes");
+    assert.equal(writes, WRITE_FORMATS.includes(id), `the guide's write column for ${id} is wrong`);
+    assert.equal(cells[3] === "no", id === "doc", `the guide's read column for ${id} is wrong`);
+  }
+});
+
+test("checkWritableContent validates JSON, refuses control bytes, and caps the size", () => {
+  assert.equal(checkWritableContent('{"a": [1, 2]}', "json"), null);
+  assert.match(checkWritableContent("{a: 1}", "json"), /not valid JSON/);
+  assert.match(checkWritableContent("", "json"), /not valid JSON/);
+  // YAML and XML are left alone: checking them needs a parser.
+  assert.equal(checkWritableContent("a: [unclosed", "yaml"), null);
+  assert.equal(checkWritableContent("tab\there\r\nform\ffeed", "text"), null);
+  assert.match(checkWritableContent("a\u0000b", "text"), /control characters/);
+  assert.match(checkWritableContent("x".repeat(4 * 1024 * 1024 + 1), "csv"), /write limit/);
+});
+
+test("MCP finds, searches, reads, writes and opens every document type, inside the same fences", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const outside = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-out-")));
+  const client = startMcpClient(home, { isolate: true });
+  try {
+    const docs = pjoin(home, "docs");
+    mkdirSync(docs, { recursive: true });
+    const at = (name, body, seconds) => {
+      const full = pjoin(docs, name);
+      writeFileSync(full, body);
+      const { utimesSync } = process.getBuiltinModule("node:fs");
+      utimesSync(full, seconds, seconds);
+      return full;
+    };
+    const docx = at("board.docx", await tinyDocx(["Northwind budget approved", "Second paragraph"]), 5000);
+    const rtf = at("memo.rtf", String.raw`{\rtf1\ansi{\fonttbl{\f0 Arial;}}The Northwind budget memo\par}`, 4000);
+    const md = at("notes.md", "# Notes\nNorthwind follow-ups\n", 3000);
+    const csv = at("table.csv", "name,total\nNorthwind,12\n", 2000);
+    const legacy = at("old.doc", "binary soup", 1000);
+    at("page.html", "<style>x{}</style><p>Hello <b>web</b></p>", 900);
+    mkdirSync(pjoin(home, ".claude", "skills", "k"), { recursive: true });
+    writeFileSync(pjoin(home, ".claude", "skills", "k", "SKILL.md"), "---\nname: k\ndescription: d\n---\n");
+    writeFileSync(pjoin(home, ".claude", "skills", "k", "config.json"), "{}");
+    writeFileSync(pjoin(outside, "secret.txt"), "outside");
+
+    await client.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "markie-test", version: "0.0.0" },
+    });
+    const call = async (name, args) => {
+      const res = await client.callTool(name, args);
+      return { error: res.result.isError === true, text: res.result.content[0].text };
+    };
+    const json = async (name, args) => JSON.parse((await call(name, args)).text);
+
+    // Old tool names survive beside the new ones.
+    const names = (await client.request("tools/list")).result.tools.map((t) => t.name);
+    for (const n of [
+      "markie_find_documents", "markie_search_documents", "markie_read_document", "markie_write_document",
+      "markie_find_md", "markie_read_md", "markie_write_md", "markie_list_skills", "markie_open_in_markie",
+      "markie_check_md", "markie_guide",
+    ]) assert.ok(names.includes(n), `${n} missing from tools/list`);
+
+    // Find: every format, a format filter, and markdown-only for the old name.
+    const all = await json("markie_find_documents", { query: "docs" });
+    assert.deepEqual(all.files.map((f) => f.name), ["board.docx", "memo.rtf", "notes.md", "table.csv", "old.doc", "page.html"]);
+    assert.equal(all.files[0].format, "docx");
+    assert.equal(all.files[0].mtime, new Date(5000 * 1000).toISOString());
+    const onlyWord = await json("markie_find_documents", { formats: ["docx", "doc"] });
+    assert.deepEqual(onlyWord.files.map((f) => f.path), [docx, legacy]);
+    const mdOnly = await json("markie_find_md", { query: "docs" });
+    assert.deepEqual(mdOnly.files, [{ path: md, name: "notes.md", dir: docs }]);
+    const badFormat = await call("markie_find_documents", { formats: ["pdf"] });
+    assert.equal(badFormat.error, true);
+    assert.match(badFormat.text, /Unknown format "pdf"/);
+
+    // Search: inside Word and RTF bodies, ranked and excerpted like the app.
+    const found = await json("markie_search_documents", { query: "northwind budget" });
+    assert.deepEqual(found.results.map((r) => r.name), ["board.docx", "memo.rtf"]);
+    assert.match(found.results[0].excerpt, /Northwind budget approved/);
+    assert.deepEqual(Object.keys(found.results[0]).sort(), ["excerpt", "format", "mtime", "name", "path"]);
+    const filtered = await json("markie_search_documents", { query: "northwind", formats: ["csv", "markdown"] });
+    assert.deepEqual(filtered.results.map((r) => r.name), ["notes.md", "table.csv"]);
+    // Legacy .doc has no extractable text, but its name still matches.
+    const named = await json("markie_search_documents", { query: "old.doc" });
+    assert.deepEqual(named.results.map((r) => r.name), ["old.doc"]);
+    assert.equal((await call("markie_search_documents", { query: "  " })).error, true);
+
+    // Read: text as written, packages as labelled extracted text, .doc refused honestly.
+    assert.equal((await call("markie_read_document", { path: csv })).text, "name,total\nNorthwind,12\n");
+    const wordText = (await call("markie_read_document", { path: docx })).text;
+    assert.match(wordText, /^\[Extracted read-only text from a Word document \(\.docx\)\./);
+    assert.match(wordText, /cannot be written back/);
+    assert.match(wordText, /Northwind budget approved\nSecond paragraph$/);
+    assert.match((await call("markie_read_document", { path: rtf })).text, /RTF[\s\S]*The Northwind budget memo$/i);
+    assert.match((await call("markie_read_document", { path: pjoin(docs, "page.html") })).text, /HTML page[\s\S]*Hello web$/);
+    const doc = await call("markie_read_document", { path: legacy });
+    assert.equal(doc.error, true);
+    assert.match(doc.text, /Legacy Word \.doc files cannot be read through MCP/);
+    assert.match((await call("markie_read_document", { path: pjoin(outside, "secret.txt") })).text, /inside your home folder/);
+    symlinkSync(pjoin(outside, "secret.txt"), pjoin(home, "link.txt"));
+    assert.match((await call("markie_read_document", { path: pjoin(home, "link.txt") })).text, /inside your home folder/);
+
+    // Write: text formats only, JSON checked, nothing written on refusal.
+    const cfg = pjoin(home, "work", "config.json");
+    assert.equal((await call("markie_write_document", { path: cfg, content: '{"ok": true}\n' })).error, false);
+    assert.equal(readFileSync(cfg, "utf8"), '{"ok": true}\n');
+    const badJson = await call("markie_write_document", { path: pjoin(home, "work", "bad.json"), content: "{nope" });
+    assert.equal(badJson.error, true);
+    assert.match(badJson.text, /not valid JSON[\s\S]*Nothing was written/);
+    assert.equal(existsSync(pjoin(home, "work", "bad.json")), false);
+    const before = readFileSync(docx);
+    const word = await call("markie_write_document", { path: docx, content: "plain" });
+    assert.equal(word.error, true);
+    assert.match(word.text, /does not write \.docx files through MCP/);
+    assert.deepEqual(readFileSync(docx), before);
+    assert.match((await call("markie_write_document", { path: rtf, content: "x" })).text, /does not write \.rtf/);
+    const tagged = await call("markie_write_document", { path: pjoin(home, "work", "n.txt"), content: "x", project: "p" });
+    assert.match(tagged.text, /markdown front matter/);
+    assert.equal(existsSync(pjoin(home, "work", "n.txt")), false);
+    await call("markie_write_document", { path: pjoin(home, "work", "plan.md"), content: "# Plan\n", project: "bevrly", block: "checkout" });
+    assert.match(readFileSync(pjoin(home, "work", "plan.md"), "utf8"), /^---\nmarkie:\n  project: bevrly\n  block: checkout\n---\n# Plan/);
+    assert.match((await call("markie_write_document", { path: pjoin(home, ".claude", "skills", "k", "x.txt"), content: "x" })).text, /agent\/skill files is disabled/);
+    symlinkSync(outside, pjoin(home, "escape"));
+    assert.match((await call("markie_write_document", { path: pjoin(home, "escape", "x.yaml"), content: "a: 1" })).text, /inside your home folder/);
+    assert.equal(existsSync(pjoin(outside, "x.yaml")), false);
+    assert.match((await call("markie_write_document", { path: pjoin(home, "x.exe"), content: "x" })).text, /files are allowed/);
+    // The old markdown tool still refuses everything else.
+    assert.match((await call("markie_write_md", { path: pjoin(home, "x.txt"), content: "x" })).text, /only \.md, \.markdown, or \.mdx/);
+
+    // Open: the guard accepts every type (a missing file proves it got past the
+    // format check without launching anything), and still refuses outside home.
+    assert.match((await call("markie_open_in_markie", { path: pjoin(docs, "gone.docx") })).text, /No such file/);
+    assert.match((await call("markie_open_in_markie", { path: pjoin(outside, "secret.txt") })).text, /inside your home folder/);
+    assert.match((await call("markie_open_in_markie", { path: pjoin(docs, "x.pdf") })).text, /files are allowed/);
+
+    // Skills stay markdown: a JSON file in a skill folder is not a skill.
+    const skills = await json("markie_list_skills", {});
+    for (const group of skills) {
+      for (const f of group.files) assert.match(f.path, /\.(md|markdown|mdx)$/i, f.path);
+    }
+  } finally {
+    client.close();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });

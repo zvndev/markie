@@ -78,6 +78,28 @@ describe("AgentsDialog", () => {
     expect(dialog.textContent).toMatch(/Claude\s+Code, Codex, and any other MCP client/);
   });
 
+  it("lists the document tools and keeps the markdown originals", async () => {
+    renderDialog();
+    const dialog = screen.getAllByRole("dialog")[0];
+    for (const tool of [
+      "markie_find_documents",
+      "markie_search_documents",
+      "markie_read_document",
+      "markie_write_document",
+      "markie_open_in_markie",
+      "markie_*_md",
+    ]) {
+      expect(within(dialog).getByText(tool)).toBeTruthy();
+    }
+    expect(dialog.textContent).toMatch(/Word, RTF and\s+OpenDocument files/);
+  });
+
+  it("says that Word, RTF, OpenDocument and HTML stay read-only to agents", async () => {
+    renderDialog();
+    const dialog = screen.getAllByRole("dialog")[0];
+    expect(dialog.textContent).toMatch(/Word, RTF, OpenDocument and HTML files stay read-only to agents/);
+  });
+
   it("writes no em-dashes into the user's copy", async () => {
     renderDialog();
     await waitFor(() => expect(block("claude mcp add markie")).toBeTruthy());

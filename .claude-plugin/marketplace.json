@@ -8,7 +8,7 @@
     {
       "name": "markie",
       "source": "./mcp",
-      "description": "Local markdown workspace for AI agents — find, read & write the .md files on your machine. The MCP server that ships inside Markie."
+      "description": "Local document workspace for AI agents: find, search, read and write the markdown, text, data and Word files on your machine. The MCP server that ships inside Markie."
     }
   ]
 }

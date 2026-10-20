@@ -547,3 +547,47 @@ write happened; 2 means a flagged row appeared between runs and nothing was writ
 The migration is one-time. Once every pre-deploy account is verified, a second run reports zero
 accounts to grandfather. Leave the script in the tree: its audit query is the standing way to ask
 whether any share was ever claimed without proof.
+
+## API server deploy and rollback
+
+The `api` Railway service is deployed by uploading `server/` from the CLI. Production carries no
+commit hash of its own, so every deploy must record one in its message. Released apps going back
+to v0.8.0 call this API. The v0.8.0-era server test suite passes against the current server, apart
+from a one-time admin script, so treat any change that breaks those tests as a client-breaking
+change.
+
+### Deploy
+
+1. Commit everything. Upload only committed code, from a clean export:
+   `git archive HEAD:server | tar -x -C /tmp/markie-api` followed by
+   `railway up /tmp/markie-api --path-as-root --service api --environment production --ci -m "<what> (<short sha>)"`.
+   Never upload the working tree: `server/` holds an untracked local database and env files.
+2. Take a snapshot on the volume before any deploy that changes the schema. The 2026-10-20 deploy
+   left `/data/pre-deploy-2026-10-20.db`, which holds the full history from before history was
+   capped at 20 versions. Keep it.
+3. After the deploy, check that `/health` returns 200, that `/api/docs` returns 401 without a
+   token, and that the logs show Litestream writing to `markie-db-age`.
+
+### Backups
+
+Litestream replicates age-encrypted to `markie-db-age/` in the B2 bucket `Markie`. The identity
+and the recipient are the `api` variables `LITESTREAM_AGE_IDENTITY` and `LITESTREAM_AGE_RECIPIENT`.
+Kirby holds the offline copy of the identity. Always restore with
+`litestream restore -config /etc/litestream.yml`, which reads the identity from the config. A bare
+replica URL cannot decrypt. A lifecycle rule deletes hidden replica files one day after Litestream
+retires them.
+
+### Rollback
+
+- **Code:** redeploy an older commit the same way, from `git archive <sha>:server`. **First copy
+  the current `server/litestream.yml` into that export.** Any commit before d659415 replicates in
+  plaintext to `markie-db/`, which would put an unencrypted copy of every document back in B2.
+- **Data:** the database restores from the encrypted replica, or from a `/data/pre-deploy-*.db`
+  snapshot. With the service stopped, copy the snapshot over `/data/markie.db`, remove the `-wal`
+  and `-shm` files, `touch /data/.litestream-new-generation`, then start the service.
+- **Schema:** the old server ignores the tables newer servers add, so a code rollback needs no
+  database change. Document history pruned to 20 versions per document comes back only from a
+  snapshot.
+- **Volume `api-volume-a5Kl`:** a detached volume created on the service's first day, 2026-06-11.
+  Its contents have not been inspected, so it is kept on purpose. Attach it to a temporary service
+  and compare it with the live database before anyone deletes it.

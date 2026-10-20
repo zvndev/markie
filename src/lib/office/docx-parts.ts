@@ -3,12 +3,14 @@ import { escapeXmlText, parseXml, xmlAttribute, type XmlElement } from "./xml";
 import { type ZipEntry } from "./zip";
 import { isWord, wordChild, type DocxEditState } from "./docx-edit";
 import { docxThemeResolver } from "./docx-theme";
+import { decodeDocxXml } from "./docx-encoding";
+export { decodeDocxXml, encodeDocxXml, type DocxXmlEncoding } from "./docx-encoding";
 
 export const DOCX_REL = "http://schemas.openxmlformats.org/package/2006/relationships";
 export const DOCX_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 export const DOCX_R_STRICT = "http://purl.oclc.org/ooxml/officeDocument/relationships";
 const encoder = new TextEncoder();
-const decoder = new TextDecoder("utf-8", { fatal: true });
+
 export interface DocxPartsState {
   entries: readonly ZipEntry[];
   mainPart: string;
@@ -20,9 +22,15 @@ export function docxPart(state: DocxPartsState, name: string): Uint8Array | unde
   if (state.deletedParts?.has(name)) return undefined;
   return state.partOverrides.get(name) ?? state.entries.find((p) => p.name === name)?.data;
 }
+const utf8 = new TextDecoder("utf-8", { fatal: true });
+/** Overrides are always held as UTF-8 internally; exportDocx re-encodes a
+ * rewritten part in the encoding its original bytes used. */
 export function docxPartSource(state: DocxPartsState, name: string): string | undefined {
-  const bytes = docxPart(state, name);
-  return bytes && decoder.decode(bytes);
+  if (state.deletedParts?.has(name)) return undefined;
+  const override = state.partOverrides.get(name);
+  if (override) return utf8.decode(override);
+  const bytes = state.entries.find((p) => p.name === name)?.data;
+  return bytes && decodeDocxXml(bytes).text;
 }
 export function docxEntries(state: DocxPartsState): ZipEntry[] {
   const parts = new Map(state.entries.filter((p) => !state.deletedParts?.has(p.name)).map((p) => [p.name, p.data]));

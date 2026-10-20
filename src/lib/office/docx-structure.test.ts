@@ -20,9 +20,13 @@ const mixed = '<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wor
 describe("DOCX source-preserving logical ranges", () => {
   it("protects paragraph section boundaries from cloning at both public and source seams", async () => {
     const doc = await fixture('<w:p><w:pPr><w:sectPr><w:type w:val="nextPage"/></w:sectPr></w:pPr><w:r><w:t>Section</w:t></w:r></w:p>');
-    expect(doc.canEdit).toBe(false);
+    // The section properties ride along opaquely: text in the paragraph is
+    // editable, but splitting, joining or deleting the section mark is not.
+    expect(doc.canEdit).toBe(true);
     const bytes = await exportDocx(doc);
-    expect(() => replaceDocxRange(doc, range(doc, 0, 3), "\n")).toThrow(/safely/);
+    expect(() => replaceDocxRange(doc, range(doc, 0, 3), "\n")).toThrow(/section boundaries/);
+    expect(() => applyDocxOperations(doc, [{ type: "delete-paragraph", paragraphId: doc.paragraphs[0].id }])).toThrow(/section/);
+    expect(await source(replaceDocxText(doc, [{ runId: doc.paragraphs[0].runs[0].id, text: "Renamed" }]))).toContain('<w:pPr><w:sectPr><w:type w:val="nextPage"/></w:sectPr></w:pPr><w:r><w:t xml:space="preserve">Renamed</w:t></w:r>');
     const state = { source: await source(doc), identities: new Map<number, string>(), nextId: 0 };
     indexDocxIdentities(state);
     expect(() => replaceDocxSourceRange(state, { paragraphId: "p0", offset: 3 }, { paragraphId: "p0", offset: 3 }, "\n")).toThrow(/section boundaries/);
@@ -32,9 +36,10 @@ describe("DOCX source-preserving logical ranges", () => {
   it("rejects unnormalized multiple text nodes and safely coalesces supported cache-split runs", async () => {
     const body = '<w:p><w:r><w:t>First</w:t><w:t>Second</w:t></w:r></w:p>';
     const doc = await fixture(body);
-    expect(doc.canEdit).toBe(false);
+    expect(doc.canEdit).toBe(true);
+    expect(doc.paragraphs[0].runs[0].canEdit).toBe(false);
     const bytes = await exportDocx(doc);
-    expect(() => replaceDocxRange(doc, range(doc, 0, 2), "\n")).toThrow(/safely/);
+    expect(() => replaceDocxRange(doc, range(doc, 0, 2), "\n")).toThrow(/multiple text/);
     expect(await exportDocx(doc)).toEqual(bytes);
     const state = { source: await source(doc), identities: new Map<number, string>(), nextId: 0 };
     indexDocxIdentities(state);

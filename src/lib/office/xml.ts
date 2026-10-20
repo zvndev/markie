@@ -128,8 +128,9 @@ export function parseXml(source: string, maxCharacters = 8 * 1024 * 1024): XmlEl
       const end = source.indexOf("?>", cursor + 2);
       if (end < 0) throw new XmlError("Unterminated XML instruction.");
       const instruction = source.slice(cursor + 2, end);
-      // Only a leading UTF-8 XML declaration belongs to the supported subset.
-      if (cursor !== declarationOffset || !/^xml[\x20\t\r\n]+version[\x20\t\r\n]*=[\x20\t\r\n]*(["'])1\.0\1(?:[\x20\t\r\n]+encoding[\x20\t\r\n]*=[\x20\t\r\n]*(["'])[Uu][Tt][Ff]-8\2)?(?:[\x20\t\r\n]+standalone[\x20\t\r\n]*=[\x20\t\r\n]*(["'])(?:yes|no)\3)?[\x20\t\r\n]*$/.test(instruction)) {
+      // Only a leading UTF-8/UTF-16 XML declaration belongs to the supported
+      // subset; callers decode bytes first and verify the declaration agrees.
+      if (cursor !== declarationOffset || !/^xml[\x20\t\r\n]+version[\x20\t\r\n]*=[\x20\t\r\n]*(["'])1\.0\1(?:[\x20\t\r\n]+encoding[\x20\t\r\n]*=[\x20\t\r\n]*(["'])[Uu][Tt][Ff]-(?:8|16(?:[LlBb][Ee])?)\2)?(?:[\x20\t\r\n]+standalone[\x20\t\r\n]*=[\x20\t\r\n]*(["'])(?:yes|no)\3)?[\x20\t\r\n]*$/.test(instruction)) {
         throw new XmlError("Unsupported XML instruction or encoding.");
       }
       cursor = end + 2;

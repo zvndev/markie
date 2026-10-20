@@ -82,6 +82,26 @@ describe("passive Word proofing and calculated page boundaries", () => {
     expect(document.modified).toBe(false); expect(await exportDocx(document)).toEqual(bytes);
   });
 
+  it("keeps adjacent text nodes that are not a cached page split read-only per run, never merging them", async () => {
+    const bytes = await fixture('<w:r><w:t>Hello</w:t><w:t>world</w:t><w:lastRenderedPageBreak/></w:r>');
+    const document = await openDocx(bytes);
+    expect(document.canEdit).toBe(true);
+    expect(document.paragraphs[0].runs[0]).toMatchObject({ text: "Helloworld", canEdit: false });
+    expect(() => replaceDocxText(document, [{ runId: document.paragraphs[0].runs[0].id, text: "Blocked" }])).toThrow(/Unknown/);
+    expect(await exportDocx(document)).toEqual(bytes);
+  });
+
+  it("confines invalidation of an in-run text edit to the edited paragraph", async () => {
+    const bytes = await fixture('<w:proofErr w:type="spellStart"/><w:r><w:t>Hello</w:t><w:lastRenderedPageBreak/></w:r><w:proofErr w:type="spellEnd"/></w:p><w:p><w:proofErr w:type="gramStart"/><w:r><w:t>Next</w:t><w:lastRenderedPageBreak/></w:r><w:proofErr w:type="gramEnd"/>');
+    const document = await openDocx(bytes);
+    const before = await source(bytes);
+    const changed = replaceDocxText(document, [{ runId: document.paragraphs[0].runs[0].id, text: "Corrected" }]);
+    const after = await source(await exportDocx(changed));
+    const second = (xml: string) => xml.slice(xml.indexOf("gramStart") - 30);
+    expect(second(after)).toBe(second(before));
+    expect(after.slice(0, after.indexOf("gramStart"))).not.toMatch(/spellStart|spellEnd|lastRenderedPageBreak/);
+  });
+
   it.each(["spellStart", "spellEnd", "gramStart", "gramEnd"])("treats unmatched %s as ignorable, per the public specification", async (type) => {
     const document = await openDocx(await fixture(`<w:proofErr w:type="${type}"/><w:r><w:t>Hello</w:t></w:r>`));
     expect(document.canEdit).toBe(true);
@@ -93,7 +113,6 @@ describe("passive Word proofing and calculated page boundaries", () => {
     '<w:r><w:t>Hello</w:t><w:lastRenderedPageBreak w:type="page"/></w:r>',
     '<w:r><w:t>Hello</w:t><w:lastRenderedPageBreak>hidden</w:lastRenderedPageBreak></w:r>',
     '<w:r><w:t>Hello</w:t><w:lastRenderedPageBreak><w:t>hidden</w:t></w:lastRenderedPageBreak></w:r>',
-    '<w:r><w:t>Hello</w:t><w:t>world</w:t><w:lastRenderedPageBreak/></w:r>',
     '<w:bookmarkStart w:id="1" w:name="x"/><w:r><w:t>Hello</w:t></w:r>',
   ])("continues protecting malformed or unrelated unsupported markup: %s", async (markup) => {
     const bytes = await fixture(markup), document = await openDocx(bytes);

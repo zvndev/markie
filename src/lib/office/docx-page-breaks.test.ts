@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyDocxOperations, createDocx, exportDocx, openDocx } from "./docx";
+import { applyDocxOperations, createDocx, exportDocx, openDocx, replaceDocxText } from "./docx";
 import { readZip, writeZip } from "./zip";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -44,7 +44,35 @@ describe("original explicit DOCX page breaks", () => {
     expect(original.pageBreaks).toHaveLength(0);
   });
 
-  it.each(['<w:br/>', '<w:br w:type="column"/>', '<w:br w:type="page" w:clear="all"/>'])("keeps unsupported breaks read-only without silently dropping them", async (br) => {
+  it.each(['<w:br/>', '<w:br w:type="textWrapping"/>', '<w:br w:type="column"/>', '<w:br w:type="textWrapping" w:clear="all"/>'])("preserves line/column break %s verbatim in a read-only run while the document stays editable", async (br) => {
+    const parts = await readZip(await exportDocx(await createDocx("A\nOther")));
+    const main = parts.find((p) => p.name === "word/document.xml")!;
+    main.data = encoder.encode(decoder.decode(main.data).replace("A</w:t>", `A</w:t>${br}<w:t>B</w:t>`));
+    const bytes = writeZip(parts);
+    const doc = await openDocx(bytes);
+    expect(doc.canEdit).toBe(true);
+    expect(doc.pageBreaks).toEqual([]);
+    expect(doc.paragraphs[0].runs[0]).toMatchObject({ text: "A\nB", canEdit: false });
+    expect(() => applyDocxOperations(doc, [{ type: "replace-paragraph", paragraphId: doc.paragraphs[0].id, text: "Flatten" }])).toThrow(/line breaks/);
+    expect(() => applyDocxOperations(doc, [{ type: "format-range", paragraphId: doc.paragraphs[0].id, start: 0, end: 1, style: { bold: true } }])).toThrow(/mixed/);
+    const output = await exportDocx(replaceDocxText(doc, [{ runId: doc.paragraphs[1].runs[0].id, text: "Edited" }]));
+    expect(decoder.decode((await readZip(output)).find((p) => p.name === "word/document.xml")!.data)).toContain(`A</w:t>${br}<w:t>B</w:t>`);
+    expect(await exportDocx(doc)).toEqual(bytes);
+  });
+
+  it("places page-break offsets on the visible text when a tab precedes them", async () => {
+    const parts = await readZip(await exportDocx(await createDocx("A")));
+    const main = parts.find((p) => p.name === "word/document.xml")!;
+    main.data = encoder.encode(decoder.decode(main.data).replace(/<w:r>.*?<\/w:r>/, '<w:r><w:tab/></w:r><w:r><w:t>A</w:t><w:br w:type="page"/></w:r>'));
+    const doc = await openDocx(writeZip(parts));
+    expect(doc.canEdit).toBe(true);
+    expect(doc.paragraphs[0].text).toBe("\tA");
+    expect(doc.pageBreaks[0].offset).toBe(2);
+    const inserted = applyDocxOperations(doc, [{ type: "insert-page-break", paragraphId: doc.paragraphs[0].id, offset: 1 }]);
+    expect((await openDocx(await exportDocx(inserted))).pageBreaks.map((b) => b.offset)).toEqual([1, 2]);
+  });
+
+  it.each(['<w:br w:type="page" w:clear="all"/>', '<w:br w:type="unknown"/>'])("keeps unsupported break %s read-only without silently dropping it", async (br) => {
     const parts = await readZip(await exportDocx(await createDocx("A")));
     const main = parts.find((p) => p.name === "word/document.xml")!;
     main.data = encoder.encode(decoder.decode(main.data).replace("</w:t>", `</w:t>${br}`));

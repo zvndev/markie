@@ -107,7 +107,6 @@ describe("original DOCX package text foundation", () => {
     '<w:p><w:commentRangeStart w:id="1"/><w:r><w:t>A</w:t></w:r></w:p>',
     '<w:p><w:ins w:id="1"><w:r><w:t>A</w:t></w:r></w:ins></w:p>',
     '<w:p><w:r><w:fldChar w:fldCharType="begin"/><w:t>A</w:t></w:r></w:p>',
-    '<w:p><w:r><w:t>A</w:t><w:t>B</w:t></w:r></w:p>',
     '<w:p><w:bookmarkStart w:id="1" w:name="x"/><w:r><w:t>A</w:t></w:r></w:p>',
     '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr></w:tbl>',
     '<w:p><w:r><w:rPr><w:vanish/></w:rPr><w:t>A</w:t></w:r></w:p>',
@@ -121,11 +120,36 @@ describe("original DOCX package text foundation", () => {
     expect(await exportDocx(doc)).toEqual(bytes);
   });
 
-  it("does not fetch external links and makes the package read-only", async () => {
+  it("keeps a run with several text nodes read-only and verbatim while the rest of the document stays editable", async () => {
+    const markup = '<w:p><w:r><w:t>A</w:t><w:t>B</w:t></w:r></w:p><w:p><w:r><w:t>Plain</w:t></w:r></w:p>';
+    const bytes = await fixture((entries) => body(entries, markup));
+    const doc = await openDocx(bytes);
+    expect(doc.canEdit).toBe(true);
+    expect(doc.paragraphs[0].runs[0]).toMatchObject({ text: "AB", canEdit: false });
+    expect(() => replaceDocxText(doc, [{ runId: doc.paragraphs[0].runs[0].id, text: "no" }])).toThrow(/Unknown/);
+    const output = await exportDocx(replaceDocxText(doc, [{ runId: doc.paragraphs[1].runs[0].id, text: "Edited" }]));
+    const xml = decoder.decode((await readZip(output)).find((e) => e.name === "word/document.xml")!.data);
+    expect(xml).toContain("<w:r><w:t>A</w:t><w:t>B</w:t></w:r>");
+    expect((await openDocx(output)).text).toBe("AB\nEdited");
+    expect(await exportDocx(doc)).toEqual(bytes);
+  });
+
+  it("preserves an unreferenced external hyperlink relationship without fetching it, and stays editable", async () => {
     const bytes = await fixture((entries) => addRelationship(entries, "hyperlink", "https://example.invalid/private", ' TargetMode="External"'));
+    const doc = await openDocx(bytes);
+    expect(doc.canEdit).toBe(true);
+    expect(doc.hyperlinks).toEqual([]);
+    const output = await exportDocx(replaceDocxText(doc, [{ runId: doc.paragraphs[0].runs[0].id, text: "Changed" }]));
+    const rels = (await readZip(output)).find((e) => e.name === "word/_rels/document.xml.rels")!;
+    expect(decoder.decode(rels.data)).toContain('Target="https://example.invalid/private" TargetMode="External"');
+  });
+
+  it.each(["attachedTemplate", "image", "oleObject", "frame", "subDocument"])("keeps external %s targets read-only because Word would load them", async (kind) => {
+    const bytes = await fixture((entries) => addRelationship(entries, kind, "https://example.invalid/remote", ' TargetMode="External"'));
     const doc = await openDocx(bytes);
     expect(doc.canEdit).toBe(false);
     expect(doc.diagnostics.some((d) => d.code === "external-relationship")).toBe(true);
+    expect(await exportDocx(doc)).toEqual(bytes);
   });
 
   it("honors document protection and revision settings outside the main part", async () => {

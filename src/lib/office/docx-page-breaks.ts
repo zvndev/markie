@@ -2,7 +2,7 @@
  * break data only, not font-aware pagination or a promise of identical layout.
  */
 import { DocxError, type DocxPageBreak } from "./docx-types";
-import { isWord, patchDocxSource, wordChild, type DocxEditState } from "./docx-edit";
+import { docxInlineText, isWord, patchDocxSource, wordChild, type DocxEditState } from "./docx-edit";
 import { docxRunTextFragment } from "./docx-revisions-range";
 import { parseXml, xmlAttribute, xmlDescendants, type XmlElement } from "./xml";
 interface PageBreak extends DocxPageBreak { node: XmlElement; run: XmlElement; localOffset: number }
@@ -11,25 +11,34 @@ export function inspectDocxPageBreaks(state: DocxEditState): { breaks: readonly 
   const root = parseXml(state.source);
   const all = xmlDescendants(root);
   const result: PageBreak[] = [];
+  let lineBreaks = 0;
   for (const paragraph of all.filter((n) => isWord(n, "p"))) {
     let offset = 0;
     for (const run of xmlDescendants(paragraph).filter((n) => isWord(n, "r"))) {
       let localOffset = 0;
       for (const child of run.children) {
-        if (isWord(child, "t")) { offset += child.text.length; localOffset += child.text.length; }
-        else if (isWord(child, "br")) {
-          if (!paragraph.children.includes(run) || xmlAttribute(child, "type", child.namespace) !== "page" || child.children.length || child.text
-            || child.attributes.some((a) => a.namespace !== "http://www.w3.org/2000/xmlns/" && !(a.namespace === child.namespace && a.localName === "type"))) return { breaks: [], problem: "Only ordinary direct-run explicit page breaks are editable." };
-          if (!state.identities.has(child.start)) state.identities.set(child.start, `page-break~${state.nextId++}`);
-          if (!state.identities.has(run.start)) state.identities.set(run.start, `r~${state.nextId++}`);
-          result.push({ id: state.identities.get(child.start)!, paragraphId: state.identities.get(paragraph.start)!, runId: state.identities.get(run.start)!, offset,
-            node: child, run, localOffset });
-          if (result.length > 2000) return { breaks: [], problem: "Too many explicit page breaks." };
+        // Offsets follow the snapshot's visible run text (tabs and line breaks
+        // are one character each), so markers land where the text shows them.
+        if (!isWord(child, "br")) { const length = docxInlineText(child).length; offset += length; localOffset += length; continue; }
+        const type = xmlAttribute(child, "type", child.namespace);
+        if (type !== "page") {
+          // Line (textWrapping) and column breaks are inline text structure,
+          // preserved verbatim; their run simply is not typeable here.
+          if (child.children.length || child.text || child.attributes.some((a) => a.namespace !== "http://www.w3.org/2000/xmlns/" && !(a.namespace === child.namespace && ["type", "clear"].includes(a.localName)))) return { breaks: [], problem: "Unsupported line break markup." };
+          lineBreaks++; offset++; localOffset++;
+          continue;
         }
+        if (!paragraph.children.includes(run) || child.children.length || child.text
+          || child.attributes.some((a) => a.namespace !== "http://www.w3.org/2000/xmlns/" && !(a.namespace === child.namespace && a.localName === "type"))) return { breaks: [], problem: "Only ordinary direct-run explicit page breaks are editable." };
+        if (!state.identities.has(child.start)) state.identities.set(child.start, `page-break~${state.nextId++}`);
+        if (!state.identities.has(run.start)) state.identities.set(run.start, `r~${state.nextId++}`);
+        result.push({ id: state.identities.get(child.start)!, paragraphId: state.identities.get(paragraph.start)!, runId: state.identities.get(run.start)!, offset,
+          node: child, run, localOffset });
+        if (result.length > 2000) return { breaks: [], problem: "Too many explicit page breaks." };
       }
     }
   }
-  if (all.filter((n) => isWord(n, "br")).length !== result.length) return { breaks: [], problem: "Break is outside a supported paragraph run." };
+  if (all.filter((n) => isWord(n, "br")).length !== result.length + lineBreaks) return { breaks: [], problem: "Break is outside a supported paragraph run." };
   return { breaks: result };
 }
 
@@ -38,8 +47,8 @@ export function insertDocxPageBreak<T extends DocxEditState>(state: T, paragraph
   const paragraph = xmlDescendants(root).find((p) => isWord(p, "p") && state.identities.get(p.start) === paragraphId);
   if (!paragraph) throw new DocxError("invalid-break", "Unknown paragraph identity.");
   if (xmlDescendants(paragraph).some((n) => isWord(n) && ["ins", "del"].includes(n.localName))) throw new DocxError("unsupported-break", "Resolve paragraph revisions before inserting a page break.");
-  const textOf = (node: XmlElement) => xmlDescendants(node).filter((n) => isWord(n, "t")).map((n) => n.text).join("");
-  const text = textOf(paragraph);
+  const textOf = (node: XmlElement) => docxInlineText(node);
+  const text = paragraph.children.filter((n) => isWord(n, "r") || isWord(n, "hyperlink")).map(textOf).join("");
   if (!Number.isInteger(offset) || offset < 0 || offset > text.length || (offset > 0 && offset < text.length && /[\uD800-\uDBFF]/.test(text[offset - 1]) && /[\uDC00-\uDFFF]/.test(text[offset]))) throw new DocxError("invalid-break", "Page break offset must be a valid paragraph text boundary.");
   const xml = `<w:r xmlns:w="${paragraph.namespace}"><w:br w:type="page"/></w:r>`;
   let cursor = 0;

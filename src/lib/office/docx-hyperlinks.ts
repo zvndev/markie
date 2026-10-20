@@ -4,7 +4,7 @@
  * https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oi29500/df06e423-11a6-4a36-bfb3-82139e531781
  */
 import { DocxError, type DocxHyperlink } from "./docx-types";
-import { isWord, patchDocxSource, wordChild, type DocxEditState } from "./docx-edit";
+import { docxInlineText, isWord, patchDocxSource, wordChild, type DocxEditState } from "./docx-edit";
 import { appendDocxXml, declareDocxRelationshipPart, DOCX_R, DOCX_R_STRICT, DOCX_REL, docxPartSource, docxRelationshipsPart, xmlAttributeText, type DocxPartsState } from "./docx-parts";
 import { docxRunTextFragment } from "./docx-revisions-range";
 import { parseXml, xmlAttribute, xmlDescendants, type XmlElement } from "./xml";
@@ -23,6 +23,16 @@ export function safeDocxHyperlinkTarget(value: unknown): string {
   throw new DocxError("unsafe-link", "Only credential-free HTTP/HTTPS and simple mailto destinations are supported.");
 }
 
+/** A destination that may be preserved untouched (never fetched or followed
+ * here). Script, data and file-system schemes run or open something when
+ * clicked in Word, so they keep the package read-only. Scheme-less targets are
+ * what some generators write for bare web addresses. */
+export function preservableDocxHyperlinkTarget(value: string | undefined): boolean {
+  if (!value || /[\x00-\x1f\x7f]/.test(value)) return false;
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(value)?.[1].toLowerCase();
+  return scheme === undefined ? !/^[\\/]|\.\.|^[A-Za-z]:/.test(value) : ["http", "https", "mailto", "tel"].includes(scheme);
+}
+
 export function inspectDocxHyperlinks(state: LinkState): { links: readonly Link[]; problem?: string } {
   const root = parseXml(state.source);
   const all = xmlDescendants(root);
@@ -38,12 +48,22 @@ export function inspectDocxHyperlinks(state: LinkState): { links: readonly Link[
     const relation = rels.find((rel) => xmlAttribute(rel, "Id") === id && xmlAttribute(rel, "Type") === `${r}/hyperlink` && xmlAttribute(rel, "TargetMode") === "External");
     const history = xmlAttribute(node, "history", node.namespace);
     const tooltip = xmlAttribute(node, "tooltip", node.namespace);
-    if (!paragraph || !id || !relation || !node.children.length || !/^[\x20\t\r\n]*$/.test(node.text)
-      || (history && !["true", "false", "on", "off", "0", "1"].includes(history)) || (tooltip?.length ?? 0) > 260
-      || node.attributes.some((a) => a.namespace !== XMLNS && !(a.namespace === r && a.localName === "id") && !(a.namespace === node.namespace && ["history", "tooltip"].includes(a.localName)))
-      || node.children.some((run) => !isWord(run, "r") || run.namespace !== node.namespace || !wordChild(run, "t") || run.children.some((c) => !isWord(c, "rPr") && !isWord(c, "t")))) return { links: [], problem: "Only direct ordinary text hyperlinks are editable." };
-    let target: string;
-    try { target = safeDocxHyperlinkTarget(xmlAttribute(relation, "Target")); } catch { return { links: [], problem: "Hyperlink destination is unsafe or unsupported." }; }
+    if (!paragraph || !node.children.length || !/^[\x20\t\r\n]*$/.test(node.text)
+      || node.attributes.some((a) => a.namespace !== XMLNS && !(a.namespace === r && a.localName === "id") && !(a.namespace === node.namespace && ["history", "tooltip", "anchor", "docLocation", "tgtFrame"].includes(a.localName)))
+      || node.children.some((run) => !isWord(run, "r") || run.namespace !== node.namespace)) return { links: [], problem: "Only direct ordinary text hyperlinks are editable." };
+    // Internal anchors (tables of contents, cross references), non-web
+    // destinations and links over mixed run content are kept as opaque
+    // containers: preserved verbatim, never followed or exposed as a target,
+    // while their plain text runs stay editable like any other run.
+    if (relation && !preservableDocxHyperlinkTarget(xmlAttribute(relation, "Target"))) return { links: [], problem: "Hyperlink destination is unsafe or unsupported." };
+    let target: string | undefined;
+    try { target = relation && !xmlAttribute(node, "anchor", node.namespace) && !xmlAttribute(node, "docLocation", node.namespace) ? safeDocxHyperlinkTarget(xmlAttribute(relation, "Target")) : undefined; } catch { target = undefined; }
+    const ordinary = !!target && (!history || ["true", "false", "on", "off", "0", "1"].includes(history)) && (tooltip?.length ?? 0) <= 260
+      && node.children.every((run) => wordChild(run, "t") && run.children.every((c) => isWord(c, "rPr") || isWord(c, "t")) && run.children.filter((c) => isWord(c, "t")).length === 1);
+    if (!ordinary || !target || !id) {
+      for (const run of node.children) if (!state.identities.has(run.start)) state.identities.set(run.start, `r~${state.nextId++}`);
+      continue;
+    }
     if (!state.identities.has(node.start)) state.identities.set(node.start, `hyperlink~${state.nextId++}`);
     for (const run of node.children) if (!state.identities.has(run.start)) state.identities.set(run.start, `r~${state.nextId++}`);
     links.push({ id: state.identities.get(node.start)!, paragraphId: state.identities.get(paragraph.start)!, text: node.children.map((run) => wordChild(run, "t")!.text).join(""), target,
@@ -81,16 +101,16 @@ export function setDocxHyperlink<T extends LinkState>(state: T, paragraphId: str
   const root = parseXml(state.source);
   const paragraph = xmlDescendants(root).find((n) => isWord(n, "p") && state.identities.get(n.start) === paragraphId);
   if (!paragraph) throw new DocxError("invalid-link", "Unknown paragraph identity.");
-  const runs = xmlDescendants(paragraph).filter((n) => isWord(n, "r") && wordChild(n, "t"));
-  const text = runs.map((r) => wordChild(r, "t")!.text).join("");
+  const runs = xmlDescendants(paragraph).filter((n) => isWord(n, "r"));
+  const text = runs.map((r) => docxInlineText(r)).join("");
   if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || end > text.length
     || [start, end].some((offset) => offset > 0 && offset < text.length && /[\uD800-\uDBFF]/.test(text[offset - 1]) && /[\uDC00-\uDFFF]/.test(text[offset]))) throw new DocxError("invalid-link", "Select a valid nonempty text range inside one paragraph.");
   let cursor = 0;
   const selected: { run: XmlElement; start: number; end: number }[] = [];
   for (const run of runs) {
-    const value = wordChild(run, "t")!.text;
+    const value = docxInlineText(run);
     if (cursor < end && cursor + value.length > start) {
-      if (!paragraph.children.includes(run) || run.children.some((n) => !isWord(n, "rPr") && !isWord(n, "t"))) throw new DocxError("unsupported-link", "Selection intersects an existing link, revision or inline object.");
+      if (!paragraph.children.includes(run) || run.children.some((n) => !isWord(n, "rPr") && !isWord(n, "t")) || run.children.filter((n) => isWord(n, "t")).length !== 1) throw new DocxError("unsupported-link", "Selection intersects an existing link, revision or inline object.");
       selected.push({ run, start: Math.max(0, start - cursor), end: Math.min(value.length, end - cursor) });
     }
     cursor += value.length;

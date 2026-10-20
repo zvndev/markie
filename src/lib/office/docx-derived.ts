@@ -23,9 +23,14 @@ export function cachedTextRun(node: XmlElement): boolean {
 
 /** Mutations invalidate calculated pagination; text changes also invalidate
  * proofing. Work on a new source only, so failed edits and undo keep originals.
+ * An optional scope (source ranges, e.g. the paragraphs an in-run text edit
+ * touches) confines invalidation there, so the rest of the part stays
+ * byte-identical; stale page hints elsewhere are advisory and Word recomputes
+ * them.
  */
-export function invalidateDocxDerived<T extends DocxEditState>(state: T, proofing: boolean): T {
-  const root = parseXml(state.source), nodes = xmlDescendants(root), patches: DocxPatch[] = [];
+export function invalidateDocxDerived<T extends DocxEditState>(state: T, proofing: boolean, scope?: readonly { start: number; end: number }[]): T {
+  const root = parseXml(state.source), patches: DocxPatch[] = [];
+  const nodes = xmlDescendants(root).filter((node) => !scope || scope.some((range) => node.start >= range.start && node.end <= range.end));
   const merged = nodes.filter((node) => isWord(node, "r") && cachedTextRun(node) && node.children.filter((child) => isWord(child, "t")).length > 1);
   const mergedChildren = new Set(merged.flatMap((run) => run.children));
   for (const run of merged) {

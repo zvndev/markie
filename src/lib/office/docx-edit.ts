@@ -13,9 +13,17 @@ export interface DocxEditState {
 }
 export interface DocxPatch { start: number; end: number; text: string; preserveIdentity?: boolean }
 export const WORD_NAMESPACES = ["http://schemas.openxmlformats.org/wordprocessingml/2006/main", "http://purl.oclc.org/ooxml/wordprocessingml/main"];
-const R_ORDER = ["rStyle", "rFonts", "b", "bCs", "i", "iCs", "color", "sz", "szCs", "u", "lang"];
-const P_ORDER = ["pStyle", "keepNext", "keepLines", "pageBreakBefore", "widowControl", "numPr", "spacing", "ind", "jc"];
-const SECTION_ORDER = ["type", "pgSz", "pgMar", "cols", "docGrid"];
+/** ECMA-376 Part 1 sequence orders (CT_RPr §17.3.2.28, CT_PPr §17.3.1.26,
+ * CT_SectPr §17.6.17). New properties are inserted at their schema position;
+ * existing children, including ones this editor does not model, keep theirs. */
+const R_ORDER = ["rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike", "outline", "shadow", "emboss", "imprint", "noProof", "snapToGrid", "vanish", "webHidden",
+  "color", "spacing", "w", "kern", "position", "sz", "szCs", "highlight", "u", "effect", "bdr", "shd", "fitText", "vertAlign", "rtl", "cs", "em", "lang", "eastAsianLayout", "specVanish", "oMath", "rPrChange"];
+export const DOCX_PARAGRAPH_PROPERTY_ORDER = ["pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr", "suppressLineNumbers", "pBdr", "shd", "tabs", "suppressAutoHyphens",
+  "kinsoku", "wordWrap", "overflowPunct", "topLinePunct", "autoSpaceDE", "autoSpaceDN", "bidi", "adjustRightInd", "snapToGrid", "spacing", "ind", "contextualSpacing", "mirrorIndents", "suppressOverlap",
+  "jc", "textDirection", "textAlignment", "textboxTightWrap", "outlineLvl", "divId", "cnfStyle", "rPr", "sectPr", "pPrChange"];
+const P_ORDER = DOCX_PARAGRAPH_PROPERTY_ORDER;
+const SECTION_ORDER = ["headerReference", "footerReference", "footnotePr", "endnotePr", "type", "pgSz", "pgMar", "paperSrc", "pgBorders", "lnNumType", "pgNumType", "cols", "formProt", "vAlign",
+  "noEndnote", "titlePg", "textDirection", "bidi", "rtlGutter", "docGrid", "printerSettings", "sectPrChange"];
 
 export function isWord(node: XmlElement, name?: string): boolean {
   return WORD_NAMESPACES.includes(node.namespace) && (!name || node.localName === name);
@@ -71,6 +79,22 @@ export function indexDocxIdentities(state: DocxEditState): void {
   if (state.nextId === 0) state.nextId = 1;
 }
 
+/** Visible text of a run or inline container, as the snapshot exposes it:
+ * text, tabs and line/column breaks count; explicit page breaks, field codes,
+ * properties and cached page markers do not. */
+export function docxInlineText(node: XmlElement, original = false): string {
+  if (!isWord(node)) return "";
+  switch (node.localName) {
+    case "t": return node.text;
+    case "delText": return original ? node.text : "";
+    case "tab": return "\t";
+    case "br": return xmlAttribute(node, "type", node.namespace) === "page" ? "" : "\n";
+    case "cr": return "\n";
+    case "pPr": case "rPr": case "instrText": return "";
+    default: return node.children.map((child) => docxInlineText(child, original)).join("");
+  }
+}
+
 export function patchDocxSource(state: DocxEditState, patches: readonly DocxPatch[]): DocxEditState {
   const sorted = [...patches].sort((a, b) => a.start - b.start);
   for (let i = 0; i < sorted.length; i++) {
@@ -102,14 +126,37 @@ function findNode(state: DocxEditState, root: XmlElement, id: string, kind: stri
   if (!node) throw new DocxError("invalid-edit", `Unknown ${kind} identity.`);
   return node;
 }
+/** Rebuilds a property container from its own raw children. Changed Word
+ * properties are replaced in place, removed ones dropped, and new ones inserted
+ * before the first existing schema-later sibling (or after the last modeled
+ * one, ahead of trailing extension elements). Unmodeled, extension and
+ * repeated children (e.g. several headerReference) are carried through
+ * verbatim, in their original order. */
+function orderedProperties(state: DocxEditState, current: XmlElement | undefined, changes: ReadonlyMap<string, string | null>, order: readonly string[]): string {
+  const items = (current?.children ?? []).map((n) => ({ key: isWord(n) ? n.localName : undefined, xml: raw(state, n), rank: isWord(n) ? order.indexOf(n.localName) : -1 }));
+  for (const [key, xml] of changes) {
+    const index = items.findIndex((item) => item.key === key);
+    if (index >= 0) {
+      if (xml === null) items.splice(index, 1);
+      else items[index] = { ...items[index], xml };
+      continue;
+    }
+    if (xml === null) continue;
+    const rank = order.indexOf(key);
+    let at = items.findIndex((item) => item.rank > rank);
+    if (at < 0) at = items.reduce((last, item, i) => item.rank >= 0 ? i : last, -1) + 1;
+    items.splice(at, 0, { key, xml, rank });
+  }
+  return items.map((item) => item.xml).join("");
+}
+
+export function docxPropertyPatch(state: DocxEditState, parent: XmlElement, kind: string, changes: Map<string, string | null>, order: readonly string[]): DocxPatch {
+  return propertyPatch(state, parent, kind, changes, order);
+}
+
 function propertyPatch(state: DocxEditState, parent: XmlElement, kind: string, changes: Map<string, string | null>, order: readonly string[]): DocxPatch {
   const current = wordChild(parent, kind);
-  const props = new Map(current?.children.map((n) => [n.localName, raw(state, n)]));
-  for (const [key, xml] of changes) {
-    if (xml === null) props.delete(key);
-    else props.set(key, xml);
-  }
-  const content = [...props].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])).map(([, xml]) => xml).join("");
+  const content = orderedProperties(state, current, changes, order);
   if (current) return { start: current.start, end: current.end, text: content ? wrap(state, current, content) : "" };
   if (parent.endTagStart < parent.startTagEnd) return { start: parent.start, end: parent.end, text: wrap(state, parent, content ? element(parent.namespace, kind, {}, content) : ""), preserveIdentity: true };
   return { start: parent.startTagEnd, end: parent.startTagEnd, text: content ? element(parent.namespace, kind, {}, content) : "" };
@@ -220,11 +267,7 @@ function pageLayout(state: DocxEditState, root: XmlElement, change: DocxPageLayo
     ["pgSz", element(root.namespace, "pgSz", { w: Math.round(width * 20), h: Math.round(height * 20), orient: orientation })],
     ["pgMar", element(root.namespace, "pgMar", Object.fromEntries(Object.entries(margins).map(([key, v]) => [key, typeof v === "number" ? Math.round(v) : v])))],
   ]);
-  if (section) {
-    const props = new Map(section.children.map((n) => [n.localName, raw(state, n)]));
-    for (const [key, xml] of changes) props.set(key, xml);
-    return { start: section.start, end: section.end, text: wrap(state, section, [...props].sort((a, b) => SECTION_ORDER.indexOf(a[0]) - SECTION_ORDER.indexOf(b[0])).map(([, xml]) => xml).join("")) };
-  }
+  if (section) return { start: section.start, end: section.end, text: wrap(state, section, orderedProperties(state, section, changes, SECTION_ORDER)) };
   return { start: body.endTagStart, end: body.endTagStart, text: element(root.namespace, "sectPr", {}, [...changes.values()].join("")) };
 }
 
@@ -282,6 +325,7 @@ export function applyDocxXmlOperation(state: DocxEditState, operation: DocxOpera
       const paragraph = findNode(state, root, operation.paragraphId, "p");
       const parent = xmlDescendants(root).find((n) => n.children.includes(paragraph))!;
       if (paragraph.children.some((n) => isWord(n, "commentRangeStart"))) throw new DocxError("invalid-edit", "Delete paragraph comments before deleting their paragraph.");
+      if (wordChild(wordChild(paragraph, "pPr"), "sectPr")) throw new DocxError("invalid-edit", "This paragraph ends a document section (its own page setup, headers and footers); it cannot be deleted here.");
       if (xmlDescendants(paragraph).some((n) => isWord(n, "drawing"))) throw new DocxError("invalid-edit", "Delete inline images explicitly before deleting their paragraph.");
       if (parent.children.filter((n) => isWord(n, "p") || isWord(n, "tbl")).length <= 1) {
         throw new DocxError("invalid-edit", "Keep at least one paragraph in a document or table cell.");

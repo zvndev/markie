@@ -147,11 +147,72 @@ export function insertDocxImage<T extends DocxMediaState>(state: T, input: DocxI
     if (!p) throw new DocxError("invalid-edit", "Image insertion requires a top-level paragraph.");
     offset = p.end;
   }
-  const nextImageId = state.nextImageId ?? current.images.reduce((max, image) => Math.max(max, Number(image.id)), 0) + 1;
+  const nextImageId = state.nextImageId ?? current.images.reduce((max, image) => Math.max(max, Number.parseInt(image.id, 10)), 0) + 1;
   const drawingId = String(nextImageId);
   const xml = `<w:p xmlns:w="${root.namespace}">${makeInline(root.namespace, id, drawingId, input.widthPoints, input.heightPoints, input.altText || "")}</w:p>`;
   return { ...state, ...patchDocxSource(state, [{ start: offset, end: offset, text: xml }]), partOverrides, nextImageId: nextImageId + 1 };
 }
+
+/** Bounded inline-picture grammar (ECMA-376 §20.4 wordprocessingDrawing,
+ * §20.1 DrawingML, §20.2 picture). Presentation the editor never edits (crop
+ * rectangle, outline, fill, locks, effect extents, local-DPI/SVG extension) is
+ * preserved verbatim inside the drawing; anything outside this list, shape
+ * fills referencing other parts, linked (r:link) pictures or text boxes keeps
+ * the document read-only. Keys are "<prefix>:<name>"; attributes listed with a
+ * prefix are namespaced, the rest unqualified. */
+const PICTURE_GRAMMAR: Readonly<Record<string, { children: readonly string[]; attributes: readonly string[] }>> = {
+  "wp:inline": { children: ["wp:extent", "wp:effectExtent", "wp:docPr", "wp:cNvGraphicFramePr", "a:graphic"], attributes: ["distT", "distB", "distL", "distR", "wp14:anchorId", "wp14:editId"] },
+  "wp:extent": { children: [], attributes: ["cx", "cy"] },
+  "wp:effectExtent": { children: [], attributes: ["l", "t", "r", "b"] },
+  "wp:docPr": { children: [], attributes: ["id", "name", "descr", "title", "hidden"] },
+  "wp:cNvGraphicFramePr": { children: ["a:graphicFrameLocks"], attributes: [] },
+  "a:graphicFrameLocks": { children: [], attributes: ["noChangeAspect", "noGrp", "noDrilldown", "noSelect", "noMove", "noResize"] },
+  "a:graphic": { children: ["a:graphicData"], attributes: [] },
+  "a:graphicData": { children: ["pic:pic"], attributes: ["uri"] },
+  "pic:pic": { children: ["pic:nvPicPr", "pic:blipFill", "pic:spPr"], attributes: [] },
+  "pic:nvPicPr": { children: ["pic:cNvPr", "pic:cNvPicPr"], attributes: [] },
+  "pic:cNvPr": { children: [], attributes: ["id", "name", "descr", "title", "hidden"] },
+  "pic:cNvPicPr": { children: ["a:picLocks"], attributes: ["preferRelativeResize"] },
+  "a:picLocks": { children: [], attributes: ["noGrp", "noSelect", "noRot", "noChangeAspect", "noMove", "noResize", "noEditPoints", "noAdjustHandles", "noChangeArrowheads", "noChangeShapeType", "noCrop"] },
+  "pic:blipFill": { children: ["a:blip", "a:srcRect", "a:stretch"], attributes: ["dpi", "rotWithShape"] },
+  "a:blip": { children: ["a:extLst"], attributes: ["r:embed", "cstate"] },
+  "a:extLst": { children: ["a:ext"], attributes: [] },
+  "a:ext": { children: ["a14:useLocalDpi", "asvg:svgBlip"], attributes: ["uri", "cx", "cy"] },
+  "a14:useLocalDpi": { children: [], attributes: ["val"] },
+  "asvg:svgBlip": { children: [], attributes: ["r:embed"] },
+  "a:srcRect": { children: [], attributes: ["l", "t", "r", "b"] },
+  "a:stretch": { children: ["a:fillRect"], attributes: [] },
+  "a:fillRect": { children: [], attributes: ["l", "t", "r", "b"] },
+  "pic:spPr": { children: ["a:xfrm", "a:prstGeom", "a:noFill", "a:solidFill", "a:ln"], attributes: ["bwMode"] },
+  "a:xfrm": { children: ["a:off", "a:ext"], attributes: ["rot", "flipH", "flipV"] },
+  "a:off": { children: [], attributes: ["x", "y"] },
+  "a:prstGeom": { children: ["a:avLst"], attributes: ["prst"] },
+  "a:avLst": { children: [], attributes: [] },
+  "a:noFill": { children: [], attributes: [] },
+  "a:solidFill": { children: ["a:srgbClr", "a:schemeClr", "a:prstClr"], attributes: [] },
+  "a:srgbClr": { children: [], attributes: ["val"] }, "a:schemeClr": { children: [], attributes: ["val"] }, "a:prstClr": { children: [], attributes: ["val"] },
+  "a:ln": { children: ["a:noFill", "a:solidFill", "a:prstDash", "a:round", "a:bevel", "a:miter", "a:headEnd", "a:tailEnd"], attributes: ["w", "cap", "cmpd", "algn"] },
+  "a:prstDash": { children: [], attributes: ["val"] }, "a:round": { children: [], attributes: [] }, "a:bevel": { children: [], attributes: [] }, "a:miter": { children: [], attributes: ["lim"] },
+  "a:headEnd": { children: [], attributes: ["type", "w", "len"] }, "a:tailEnd": { children: [], attributes: ["type", "w", "len"] },
+};
+
+function pictureGrammarProblem(drawing: XmlElement, wordNamespace: string): boolean {
+  const ns = namespaces(wordNamespace);
+  const prefixes = new Map([[ns.wp, "wp"], [ns.a, "a"], [ns.pic, "pic"], [ns.r, "r"], ["http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing", "wp14"],
+    ["http://schemas.microsoft.com/office/drawing/2010/main", "a14"], ["http://schemas.microsoft.com/office/drawing/2016/SVG/main", "asvg"]]);
+  const key = (namespace: string, local: string) => prefixes.has(namespace) ? `${prefixes.get(namespace)}:${local}` : undefined;
+  if (drawing.children.length !== 1 || hasText(drawing) || drawing.attributes.some((a) => a.namespace !== XMLNS)) return true;
+  for (const node of xmlDescendants(drawing.children[0])) {
+    const name = key(node.namespace, node.localName);
+    const rule = name && PICTURE_GRAMMAR[name];
+    if (!rule || hasText(node)) return true;
+    if (node.children.some((c) => !rule.children.includes(key(c.namespace, c.localName) ?? ""))) return true;
+    if (node.attributes.some((a) => a.namespace !== XMLNS && !rule.attributes.includes(a.namespace ? key(a.namespace, a.localName) ?? "" : a.localName))) return true;
+  }
+  return false;
+}
+const hasText = (node: XmlElement) => !/^[\x20\t\r\n]*$/.test(node.text);
+const XMLNS = "http://www.w3.org/2000/xmlns/";
 
 interface InternalImage extends DocxMediaInfo { drawing: XmlElement; run: XmlElement; partName: string; relationshipId: string }
 export function inspectDocxImages(state: DocxEditState & DocxPartsState): { images: readonly InternalImage[]; problem?: string } {
@@ -175,30 +236,50 @@ export function inspectDocxImages(state: DocxEditState & DocxPartsState): { imag
     const blip = nodes.find((n) => n.namespace === ns.a && n.localName === "blip");
     const id = docPr && xmlAttribute(docPr, "id");
     const relationshipId = blip && xmlAttribute(blip, "embed", ns.r);
-    const relation = rels.find((n) => xmlAttribute(n, "Id") === relationshipId && xmlAttribute(n, "Type") === `${ns.r}/image` && !xmlAttribute(n, "TargetMode"));
+    const imageRelation = (rid: string | undefined) => rid ? rels.find((n) => xmlAttribute(n, "Id") === rid && xmlAttribute(n, "Type") === `${ns.r}/image` && (xmlAttribute(n, "TargetMode") ?? "Internal") === "Internal") : undefined;
+    const relation = imageRelation(relationshipId);
     const target = relation && xmlAttribute(relation, "Target");
     const directory = state.mainPart.slice(0, state.mainPart.lastIndexOf("/") + 1);
-    const partName = target?.startsWith("/") ? target.slice(1) : target && `${directory}${target}`;
-    const type = partName && manifest.children.find((n) => n.localName === "Override" && xmlAttribute(n, "PartName") === `/${partName}`);
-    const contentType = type && xmlAttribute(type, "ContentType");
+    const resolve = (value: string) => {
+      const segments = value.startsWith("/") ? [] : directory.split("/").slice(0, -1);
+      for (const piece of value.replace(/^\//, "").split("/")) { if (piece === "..") segments.pop(); else segments.push(piece); }
+      return segments.join("/");
+    };
+    const partName = target && resolve(target);
+    // Declared by a part override, or (as Word usually writes it) by extension.
+    const type = partName && (manifest.children.find((n) => n.localName === "Override" && xmlAttribute(n, "PartName") === `/${partName}`)
+      ?? manifest.children.find((n) => n.localName === "Default" && xmlAttribute(n, "Extension")?.toLowerCase() === partName.split(".").pop()!.toLowerCase()));
+    // Media-type parameters (some generators append ";base64") do not change
+    // the bitmap; its bytes are structurally validated below either way.
+    const contentType = type && xmlAttribute(type, "ContentType")?.split(";")[0].trim().toLowerCase();
+    // Any other picture reference (an SVG companion blip) must be an embedded
+    // package part too; linked pictures would be fetched by Word.
+    const otherEmbeds = nodes.flatMap((n) => n.attributes.filter((a) => a.namespace === ns.r && (n !== blip || a.localName !== "embed")));
+    if (otherEmbeds.some((a) => a.localName !== "embed" || !imageRelation(a.value) || !docxPart(state, resolve(xmlAttribute(imageRelation(a.value)!, "Target")!)))) return { images: [], problem: "Picture references a linked or unresolved resource." };
     const data = partName && docxPart(state, partName);
     const run = all.find((n) => isWord(n, "r") && n.children.includes(drawing));
     const paragraph = run && all.find((n) => isWord(n, "p") && n.children.includes(run));
     const cx = extent && xmlAttribute(extent, "cx"), cy = extent && xmlAttribute(extent, "cy");
-    if (!inline || inline.namespace !== ns.wp || inline.localName !== "inline" || drawing.children.length !== 1 || !id || !/^[1-9]\d{0,8}$/.test(id) || ids.has(id)
+    if (!inline || inline.namespace !== ns.wp || inline.localName !== "inline" || drawing.children.length !== 1 || !id || !/^(?:0|[1-9]\d{0,8})$/.test(id)
       || !relationshipId || !relation || !partName || !data || !["image/png", "image/jpeg"].includes(contentType || "") || !run || !paragraph
       || !cx || !cy || !/^\d+$/.test(cx) || !/^\d+$/.test(cy) || Number(cx) < 12700 || Number(cy) < 12700 || Number(cx) > 25400000 || Number(cy) > 25400000) return { images: [], problem: "Unsupported or unresolved inline image." };
-    // Exact shape grammar is intentionally stricter than arbitrary DrawingML.
-    const expected = parseXml(`<w:p xmlns:w="${root.namespace}">${makeInline(root.namespace, relationshipId, id, Number(cx) / 12700, Number(cy) / 12700, xmlAttribute(docPr!, "descr") || "")}</w:p>`).children[0].children[0];
-    const shape = (n: XmlElement): string => `${n.namespace}|${n.localName}[${n.attributes.filter((a) => a.namespace !== "http://www.w3.org/2000/xmlns/").map((a) => `${a.namespace}|${a.localName}=${a.value}`).sort().join(";")}]${n.text}{${n.children.map(shape).join("")}}`;
-    if (shape(drawing) !== shape(expected)) return { images: [], problem: "Picture contains unsupported DrawingML effects, shapes or links." };
+    // Bounded grammar: inert presentation passes through, active or linked
+    // DrawingML (effects, shapes, text boxes, r:link) stays read-only.
+    const graphicData = nodes.find((n) => n.namespace === ns.a && n.localName === "graphicData");
+    const geometry = nodes.find((n) => n.namespace === ns.a && n.localName === "prstGeom");
+    if (pictureGrammarProblem(drawing, root.namespace) || (geometry && xmlAttribute(geometry, "prst") !== "rect") || !graphicData || xmlAttribute(graphicData, "uri") !== ns.pic
+      || nodes.filter((n) => n.namespace === ns.a && n.localName === "blip").length !== 1) return { images: [], problem: "Picture contains unsupported DrawingML effects, shapes or links." };
     try {
       const bitmap = inspectDocxBitmap(data, contentType as "image/png" | "image/jpeg");
       totalPixels += bitmap.width * bitmap.height;
       if (totalPixels > 64_000_000) return { images: [], problem: "Document exceeds the aggregate image pixel budget." };
     } catch { return { images: [], problem: "Embedded bitmap failed structural validation." }; }
-    ids.add(id);
-    images.push({ id, paragraphId: state.identities.get(paragraph.start)!, widthPoints: Number(cx) / 12700, heightPoints: Number(cy) / 12700, altText: xmlAttribute(docPr!, "descr") || "", contentType: contentType as "image/png" | "image/jpeg", drawing, run, partName, relationshipId });
+    // Generators sometimes repeat a drawing id. The source id is preserved; the
+    // session identity of a repeat gets an occurrence suffix so it stays unique.
+    let identity = id;
+    for (let n = 2; ids.has(identity); n++) identity = `${id}~${n}`;
+    ids.add(identity);
+    images.push({ id: identity, paragraphId: state.identities.get(paragraph.start)!, widthPoints: Number(cx) / 12700, heightPoints: Number(cy) / 12700, altText: xmlAttribute(docPr!, "descr") || "", contentType: contentType as "image/png" | "image/jpeg", drawing, run, partName, relationshipId });
   }
   return { images };
 }
@@ -223,7 +304,7 @@ export function deleteDocxImage<T extends DocxMediaState>(state: T, id: string):
     // Refuse to erase data referenced anywhere else in the package graph.
     const otherReference = docxEntries(state).filter((p) => p.name.endsWith(".rels")).some((p) => {
       const sourcePart = p.name === "_rels/.rels" ? "" : p.name.replace(/(^|\/)\_rels\/([^/]+)\.rels$/, "$1$2");
-      return parseXml(new TextDecoder("utf-8", { fatal: true }).decode(p.data)).children.some((relation) => {
+      return parseXml(docxPartSource(state, p.name)!).children.some((relation) => {
         if (p.name === docxRelationshipsPart(state.mainPart) && xmlAttribute(relation, "Id") === image.relationshipId) return false;
         if (xmlAttribute(relation, "TargetMode") === "External") return false;
         const target = xmlAttribute(relation, "Target") || "";

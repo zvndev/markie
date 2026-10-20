@@ -1,5 +1,5 @@
 import { DocxError, type DocxRunFormat } from "./docx-types";
-import { applyDocxXmlOperation, isWord, patchDocxSource, wordChild, type DocxEditState } from "./docx-edit";
+import { applyDocxXmlOperation, docxInlineText, isWord, patchDocxSource, wordChild, type DocxEditState } from "./docx-edit";
 import { escapeXmlText, parseXml, xmlDescendants, type XmlElement } from "./xml";
 
 /** UTF-16 offsets match browser Range text offsets; surrogate pairs are atomic. */
@@ -8,18 +8,20 @@ export function formatDocxTextRange<T extends DocxEditState>(state: T, paragraph
   const paragraph = xmlDescendants(root).find((p) => isWord(p, "p") && state.identities.get(p.start) === paragraphId);
   if (!paragraph) throw new DocxError("invalid-edit", "Unknown paragraph identity.");
   if (xmlDescendants(paragraph).some((n) => isWord(n) && ["ins", "del"].includes(n.localName))) throw new DocxError("unsupported-edit", "Resolve paragraph revisions before changing inline formatting.");
-  const runs = xmlDescendants(paragraph).filter((n) => isWord(n, "r") && wordChild(n, "t"));
-  const text = runs.map((r) => wordChild(r, "t")!.text).join("");
+  // Offsets are the snapshot's visible paragraph text: tab, line-break and
+  // other non-typeable runs count, but can never be part of a formatted range.
+  const runs = xmlDescendants(paragraph).filter((n) => isWord(n, "r"));
+  const text = runs.map((r) => docxInlineText(r)).join("");
   if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || end > text.length) throw new DocxError("invalid-range", "Select a nonempty text range inside one paragraph.");
   const splitsSurrogate = (offset: number) => offset > 0 && offset < text.length && /[\uD800-\uDBFF]/.test(text[offset - 1]) && /[\uDC00-\uDFFF]/.test(text[offset]);
   if (splitsSurrogate(start) || splitsSurrogate(end)) throw new DocxError("invalid-range", "Selection cannot split a Unicode character.");
   let cursor = 0;
   const selected: { id: string; start: number; end: number }[] = [];
   for (const run of runs) {
-    const content = wordChild(run, "t")!.text;
+    const content = docxInlineText(run);
     const localStart = Math.max(0, start - cursor), localEnd = Math.min(content.length, end - cursor);
     if (localStart < localEnd) {
-      if (run.children.some((c) => !isWord(c, "rPr") && !isWord(c, "t"))) throw new DocxError("unsupported-edit", "Selection intersects a mixed text/object run.");
+      if (run.children.some((c) => !isWord(c, "rPr") && !isWord(c, "t")) || run.children.filter((c) => isWord(c, "t")).length !== 1) throw new DocxError("unsupported-edit", "Selection intersects a mixed text/object run.");
       selected.push({ id: state.identities.get(run.start)!, start: localStart, end: localEnd });
     }
     cursor += content.length;

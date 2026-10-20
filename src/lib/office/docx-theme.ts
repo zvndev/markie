@@ -6,6 +6,7 @@
  * Color mapping: ECMA-376 Part 1 §§17.18.97,17.18.103. Stored sysClr lastClr is a
  * deterministic fallback, not a query of the current operating system's colors. */
 import type { DocxPartsState } from "./docx-parts";
+import { decodeDocxXml } from "./docx-encoding";
 import { WORD_NAMESPACES, isWord } from "./docx-edit";
 import { parseXml, xmlAttribute, type XmlElement } from "./xml";
 
@@ -13,7 +14,6 @@ const REL = "http://schemas.openxmlformats.org/package/2006/relationships";
 const TYPES = "http://schemas.openxmlformats.org/package/2006/content-types";
 const R = ["http://schemas.openxmlformats.org/officeDocument/2006/relationships", "http://purl.oclc.org/ooxml/officeDocument/relationships"];
 const DRAWING = ["http://schemas.openxmlformats.org/drawingml/2006/main", "http://purl.oclc.org/ooxml/drawingml/main"];
-const decoder = new TextDecoder("utf-8", { fatal: true });
 const wordValue = (node: XmlElement | undefined, name = "val") => node && xmlAttribute(node, name, node.namespace);
 const uniqueChild = (node: XmlElement | undefined, name: string, namespaces: readonly string[]) => {
   const matches = node?.children.filter((child) => child.localName === name && namespaces.includes(child.namespace));
@@ -88,7 +88,7 @@ export function docxThemeResolver(state: DocxPartsState) {
   const read = (name: string): XmlElement | undefined => {
     if (parsed.has(name)) return parsed.get(name);
     const bytes = state.deletedParts?.has(name) ? undefined : state.partOverrides.get(name) ?? state.entries.find((part) => part.name === name)?.data;
-    const root = bytes ? parseXml(decoder.decode(bytes)) : undefined;
+    const root = bytes ? parseXml(decodeDocxXml(bytes).text) : undefined;
     parsed.set(name, root);
     return root;
   };

@@ -152,11 +152,14 @@ describe("original DOCX supported print projection", () => {
     expect(() => buildDocxPrintHTML(document)).toThrow();
   });
 
-  it("rejects imported runs with multiple text nodes rather than flattening their mid-run break", async () => {
+  it("prints a mid-run page break between imported text nodes instead of flattening it, keeping that run read-only", async () => {
     const { document, bytes } = await packageWithMain((xml) => xml.replace('<w:t xml:space="preserve">BeforeAfter</w:t>', '<w:t>Before</w:t><w:br w:type="page"/><w:t>After</w:t>'));
-    expect(document.canEdit).toBe(false);
-    expect(canPrintDocx(document)).toBe(false);
-    expect(() => buildDocxPrintHTML(document)).toThrow();
+    expect(document.canEdit).toBe(true);
+    expect(document.paragraphs[0].runs[0]).toMatchObject({ text: "BeforeAfter", canEdit: false });
+    expect(document.pageBreaks.map((pageBreak) => pageBreak.offset)).toEqual([6]);
+    expect(canPrintDocx(document)).toBe(true);
+    const output = parse(buildDocxPrintHTML(document));
+    expect(Array.from(output.body.children, (element) => element.classList.contains("page-break") ? "break" : element.textContent)).toEqual(["Before", "break", "After"]);
     expect(await exportDocx(document)).toEqual(bytes);
   });
 

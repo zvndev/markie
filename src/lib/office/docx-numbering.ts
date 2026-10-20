@@ -4,7 +4,7 @@
  * semantics needed for display and safe list assignment are modeled.
  */
 import { DocxError } from "./docx-types";
-import { isWord, patchDocxSource, wordChild, type DocxEditState } from "./docx-edit";
+import { DOCX_PARAGRAPH_PROPERTY_ORDER, docxPropertyPatch, isWord, patchDocxSource, wordChild, type DocxEditState } from "./docx-edit";
 import { appendDocxXml, docxPartSource, ensureDocxPart, relatedDocxPart, type DocxPartsState } from "./docx-parts";
 import { parseXml, xmlAttribute, xmlDescendants, type XmlElement } from "./xml";
 const encoder = new TextEncoder();
@@ -123,16 +123,7 @@ export function setDocxList<T extends DocxPartsState & DocxEditState>(state: T, 
   const content = kind === null ? "" : `<w:numPr xmlns:w="${paragraph.namespace}"><w:ilvl w:val="0"/><w:numId w:val="${ensured.id}"/></w:numPr>`;
   if (current) return { ...next, ...patchDocxSource(next, [{ start: current.start, end: current.end, text: content }]) };
   if (!content) return next;
-  if (properties) {
-    if (properties.endTagStart < properties.startTagEnd) {
-      const xml = next.source.slice(properties.start, properties.startTagEnd).replace(/\/>$/, ">") + content + `</${properties.name}>`;
-      return { ...next, ...patchDocxSource(next, [{ start: properties.start, end: properties.end, text: xml }]) };
-    }
-    const before = properties.children.find((n) => ["spacing", "ind", "jc"].includes(n.localName));
-    const offset = before?.start ?? properties.endTagStart;
-    return { ...next, ...patchDocxSource(next, [{ start: offset, end: offset, text: content }]) };
-  }
-  const xml = `<w:pPr xmlns:w="${paragraph.namespace}">${content}</w:pPr>`;
-  if (paragraph.endTagStart < paragraph.startTagEnd) return { ...next, ...patchDocxSource(next, [{ start: paragraph.start, end: paragraph.end, text: next.source.slice(paragraph.start, paragraph.startTagEnd).replace(/\/>$/, ">") + xml + `</${paragraph.name}>`, preserveIdentity: true }]) };
-  return { ...next, ...patchDocxSource(next, [{ start: paragraph.startTagEnd, end: paragraph.startTagEnd, text: xml }]) };
+  // numPr goes to its schema position; other (possibly unmodeled) paragraph
+  // properties keep theirs.
+  return { ...next, ...patchDocxSource(next, [docxPropertyPatch(next, paragraph, "pPr", new Map([["numPr", content]]), DOCX_PARAGRAPH_PROPERTY_ORDER)]) };
 }

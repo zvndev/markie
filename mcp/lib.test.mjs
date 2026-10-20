@@ -27,14 +27,15 @@ import { fileURLToPath } from "node:url";
 const HOME = "/home/u";
 const MCP_DIR = pdirname(fileURLToPath(import.meta.url));
 
-// `isolate` drops the config-folder overrides the developer's own shell may
-// carry (CLAUDE_CONFIG_DIR, CODEX_HOME), which would otherwise add their real
-// skills folders to the scan.
+// The config-folder overrides the developer's own shell may carry
+// (CLAUDE_CONFIG_DIR, CODEX_HOME) would add their real skills and documents to
+// the scan, so the child never inherits them. A test that sets one itself
+// still passes it through; `isolate` drops even those.
+const SHELL_CONFIG_DIRS = { CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, CODEX_HOME: process.env.CODEX_HOME };
 function startMcpClient(home, { isolate = false } = {}) {
   const env = { ...process.env, HOME: home, USERPROFILE: home };
-  if (isolate) {
-    delete env.CLAUDE_CONFIG_DIR;
-    delete env.CODEX_HOME;
+  for (const [name, inherited] of Object.entries(SHELL_CONFIG_DIRS)) {
+    if (isolate || env[name] === inherited) delete env[name];
   }
   const child = spawn(process.execPath, [pjoin(MCP_DIR, "markie-mcp.mjs")], {
     cwd: pdirname(MCP_DIR),

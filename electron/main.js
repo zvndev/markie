@@ -471,6 +471,8 @@ async function openSharedFromDeepLink(link) {
   try {
     const result = await fetchSharedDoc(link, {
       allowDev: isDev,
+      // A private build talks to its one server only (see serverStore).
+      trustedOnly: !!privateReleaseConfig,
       confirm: confirmUntrustedShare,
       // A trusted server is fetched the way it always was; an unknown one
       // goes through Node's fetch, which has no cookie jar to send from.
@@ -1492,9 +1494,15 @@ const workspace = require("./workspace");
 const examples = require("./examples");
 // The servers the user trusts (Settings > Servers). Markie Cloud is always on
 // it. Everything that decides whether a token or a fetch may go to an origin
-// reads this list through share-origin.js.
+// reads this list through share-origin.js: the trusted origins, the window's
+// content security policy, markie://doc routing.
+//
+// A private build is locked to the one authentication server its release
+// credential belongs to, so it never reads servers.json at all: a list left
+// by a regular build on the same machine does not widen any of those. The
+// file is left as it is for that build.
 const serverStore = createServerStore({
-  file: path.join(app.getPath("userData"), "servers.json"),
+  file: privateReleaseConfig ? null : path.join(app.getPath("userData"), "servers.json"),
   allowDev: isDev,
 });
 setTrustedOrigins(() => serverStore.origins());

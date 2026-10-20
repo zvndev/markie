@@ -125,6 +125,16 @@ describe("private runtime integration wiring", () => {
     expect(source).toContain('Private builds cannot switch to stable or beta updates.');
     expect(source).toContain('autoUpdater.logger = privateReleaseConfig ? null');
   });
+  // One server only: servers.json would widen the trusted origins, the CSP
+  // and markie://doc routing, and a share link naming any other host is
+  // ignored rather than asked about.
+  it("keeps a private build off every server but its own", () => {
+    expect(source).toContain('file: privateReleaseConfig ? null : path.join(app.getPath("userData"), "servers.json")');
+    expect(source).toContain("trustedOnly: !!privateReleaseConfig");
+    const store = source.indexOf("const serverStore = createServerStore(");
+    expect(store).toBeGreaterThan(-1);
+    expect(store).toBeLessThan(source.indexOf("setTrustedOrigins(() => serverStore.origins())"));
+  });
   it.each([false, true])("shows native preflight windows without activating them (preflight %s)", (preflightMode) => {
     let ready!: () => void;
     const mainWindow = { once: (_name: string, callback: () => void) => { ready = callback; }, show: vi.fn(), showInactive: vi.fn() };

@@ -149,6 +149,24 @@ describe("opening a link from a server the user has not added", () => {
   });
 });
 
+describe("a private build, locked to one server", () => {
+  it("ignores a link naming a server it has not got, without asking or fetching", async () => {
+    const confirm = vi.fn(async () => true);
+    const fetchImpl = okFetch();
+    for (const src of ["https://docs.example.com", "http://docs.example.com", "169.254.169.254", "not a url"]) {
+      expect(planShareOpen(link(src), { trustedOnly: true }), src).toEqual({ action: "ignore" });
+      expect(await fetchSharedDoc(link(src), { trustedOnly: true, confirm, fetchImpl }), src).toEqual({ status: "ignored" });
+    }
+    expect(confirm).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("still opens a link from its own server, or one that names none", () => {
+    expect(planShareOpen(link(), { trustedOnly: true })).toMatchObject({ action: "fetch", base: DEFAULT_SERVER });
+    expect(planShareOpen(link(DEFAULT_SERVER), { trustedOnly: true })).toMatchObject({ action: "fetch", base: DEFAULT_SERVER });
+  });
+});
+
 describe("opening a link from a trusted server", () => {
   it("never asks", async () => {
     const confirm = vi.fn(async () => true);

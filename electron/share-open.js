@@ -13,13 +13,27 @@ const DEFAULT_MAX_BYTES = MAX_DOC_BYTES;
 // in main for ever.
 const DEFAULT_TIMEOUT_MS = 120000;
 
+// Whether a link's src names exactly the server shareBaseFromSrc would use.
+function srcIsTrusted(src, allowDev) {
+  const base = shareBaseFromSrc(src, { allowDev });
+  try {
+    return new URL(/^https?:\/\//i.test(src) ? src : `https://${src}`).origin === base;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * What a link asks for, before anything touches the network.
  *   { action: "ignore" }                         no token, or not a URL
  *   { action: "fetch", base, token }             a trusted server (or the default)
  *   { action: "confirm", origin, host, token }   a server the user has not added
+ *
+ * `trustedOnly` is a private build, locked to its one server: a link naming
+ * any other is ignored outright, with no question asked and nothing
+ * fetched, rather than offered or quietly sent to the default.
  */
-function planShareOpen(link, { allowDev = false } = {}) {
+function planShareOpen(link, { allowDev = false, trustedOnly = false } = {}) {
   let parsed;
   try {
     parsed = new URL(link);
@@ -29,6 +43,7 @@ function planShareOpen(link, { allowDev = false } = {}) {
   const token = parsed.searchParams.get("token");
   if (!token) return { action: "ignore" };
   const src = parsed.searchParams.get("src");
+  if (trustedOnly && src && !srcIsTrusted(src, allowDev)) return { action: "ignore" };
   const untrusted = untrustedShareOrigin(src, { allowDev });
   if (untrusted) return { action: "confirm", origin: untrusted, host: new URL(untrusted).host, token };
   return { action: "fetch", base: shareBaseFromSrc(src, { allowDev }), token };
@@ -46,9 +61,9 @@ function planShareOpen(link, { allowDev = false } = {}) {
  */
 async function fetchSharedDoc(
   link,
-  { allowDev = false, confirm, fetchImpl, maxBytes = DEFAULT_MAX_BYTES, timeoutMs = DEFAULT_TIMEOUT_MS } = {}
+  { allowDev = false, trustedOnly = false, confirm, fetchImpl, maxBytes = DEFAULT_MAX_BYTES, timeoutMs = DEFAULT_TIMEOUT_MS } = {}
 ) {
-  const plan = planShareOpen(link, { allowDev });
+  const plan = planShareOpen(link, { allowDev, trustedOnly });
   if (plan.action === "ignore") return { status: "ignored" };
   let base = plan.base;
   const anonymous = plan.action === "confirm";

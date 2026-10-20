@@ -755,7 +755,7 @@ describe("documents on other servers", () => {
       { ...cloudProps, overrides: { serversList: servers } as Partial<ElectronAPI> }
     );
     const theirs = await rowFor("theirs.md");
-    expect(await within(theirs).findByLabelText("On Team docs")).toHaveAttribute("data-server-badge", SELF);
+    expect(await within(theirs).findByLabelText("On Team docs (docs.example.com)")).toHaveAttribute("data-server-badge", SELF);
     const mine = await rowFor("mine.md");
     expect(mine.querySelector("[data-server-badge]")).toBeNull();
   });

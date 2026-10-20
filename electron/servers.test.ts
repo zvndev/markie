@@ -8,6 +8,7 @@ import {
   parseServerInfo,
   probeServerInfo,
   createServerStore,
+  isReservedName,
   PROBE_TTL_MS,
 } from "./servers.js";
 
@@ -118,6 +119,40 @@ describe("parseServerInfo", () => {
     });
     expect(parseServerInfo({ ...INFO, name: "Team‮ docs\n" }, "https://docs.example.com")).toMatchObject({
       info: { name: "Team docs" },
+    });
+  });
+
+  // A server that calls itself Markie Cloud would have the user type their
+  // Cloud password into its sign-in form. It is shown under its host instead.
+  it("shows a server that passes for Markie Cloud under its host", () => {
+    for (const name of [
+      "Markie Cloud",
+      "Markie",
+      "  markie   CLOUD ",
+      "M a r k i e  C l o u d",
+      "Mаrkie Cloud", // Cyrillic a
+      "Markіe", // Cyrillic i
+      "Mark1e Cloud",
+      "Ｍａｒｋｉｅ Ｃｌｏｕｄ", // full-width
+      "Mar\u200bkie Cloud", // zero-width space
+      "Markie Cloud (official)",
+      "The Markie Cloud",
+      "markie.cloud",
+      "rnarkie",
+    ]) {
+      expect(isReservedName(name), name).toBe(true);
+      expect(parseServerInfo({ ...INFO, name }, "https://docs.example.com"), name).toMatchObject({
+        info: { name: "docs.example.com" },
+      });
+    }
+  });
+
+  it("keeps a name that only mentions Markie among words of its own", () => {
+    for (const name of ["Acme's Markie", "Markie at Acme", "Team docs", "Cloud"]) {
+      expect(isReservedName(name), name).toBe(false);
+    }
+    expect(parseServerInfo({ ...INFO, name: "Markie at Acme" }, "https://docs.example.com")).toMatchObject({
+      info: { name: "Markie at Acme" },
     });
   });
 
@@ -250,6 +285,14 @@ describe("the trusted server list", () => {
       "http://localhost:8787",
       "https://ok.example.com",
     ]);
+  });
+
+  it("renames a stored server that passes for Markie Cloud, so a hand-edited file cannot either", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ version: 1, servers: [{ origin: "https://evil.example.com", name: "Markie Cloud" }] })
+    );
+    expect(createServerStore({ file }).get("https://evil.example.com")).toMatchObject({ name: "evil.example.com" });
   });
 
   it("survives a missing or corrupt file", () => {

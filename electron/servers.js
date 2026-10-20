@@ -80,12 +80,74 @@ function parseServerOrigin(input, { allowDev = false } = {}) {
   return { ok: true, origin: u.origin, host: u.host };
 }
 
+// Characters drawn like a Latin letter: other scripts' look-alikes, and the
+// digits and symbols people use in place of letters. Only for comparing a
+// name with the reserved ones below, never for showing it.
+const CONFUSABLE = new Map(Object.entries({
+  0: "o", 1: "i", l: "i", "|": "i", "!": "i", 3: "e", 4: "a", "@": "a", 5: "s", $: "s", 7: "t",
+  // Cyrillic
+  а: "a", е: "e", і: "i", ї: "i", ӏ: "i", к: "k", м: "m", о: "o", р: "p", с: "c", у: "y", х: "x", ԁ: "d",
+  // Greek
+  α: "a", ε: "e", ι: "i", κ: "k", μ: "m", ο: "o", ρ: "p", ν: "v", τ: "t",
+  // dotless i
+  ı: "i",
+}));
+
+// A name reduced to the letters it reads as: compatibility forms folded
+// (full-width letters, ligatures), accents and every space, dot, zero-width
+// or other non-letter character dropped, look-alikes mapped, and "rn" read
+// as the "m" it passes for.
+function nameSkeleton(value) {
+  const folded = String(value).normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+  let out = "";
+  for (const ch of folded) out += CONFUSABLE.get(ch) ?? ch;
+  return out.replace(/[^a-z]/g, "").replace(/rn/g, "m");
+}
+
+// Only Markie Cloud may call itself Markie. These words may sit around
+// "markie" in a reserved name without making it a different one.
+const RESERVED_CORE = nameSkeleton("markie");
+const RESERVED_FILLER = ["the", "official", "cloud", "app", "server", "servers", "docs", "desktop", "sync", "team", "service", "hq"]
+  .map(nameSkeleton)
+  .sort((a, b) => b.length - a.length);
+
+/**
+ * Whether a server's name reads as Markie Cloud's: "Markie", "Markie Cloud",
+ * "MARKIE  cloud", "Mаrkie Cloud" with a Cyrillic a, "Markie Cloud
+ * (official)" and the like. A name that only mentions Markie among words of
+ * its own ("Acme's Markie") is not.
+ */
+function isReservedName(value) {
+  const sk = nameSkeleton(value);
+  if (!sk.includes(RESERVED_CORE)) return false;
+  if (sk.includes(nameSkeleton("markie cloud")) || sk.includes(nameSkeleton("cloud markie"))) return true;
+  let rest = sk.replace(RESERVED_CORE, "");
+  for (let changed = true; changed && rest; ) {
+    changed = false;
+    for (const word of RESERVED_FILLER) {
+      if (rest.includes(word)) {
+        rest = rest.replace(word, "");
+        changed = true;
+      }
+    }
+  }
+  return rest === "";
+}
+
 function cleanName(value, fallback) {
   if (typeof value !== "string") return fallback;
   // Control and bidi-override characters could make one name read as another.
   const name = value.replace(/[\u0000-\u001f\u007f‎‏‪-‮⁦-⁩]/g, "").trim();
   if (!name) return fallback;
   return name.length > MAX_NAME ? `${name.slice(0, MAX_NAME - 1)}…` : name;
+}
+
+// The name a server the user added is shown under. One that passes for
+// Markie Cloud's is replaced by its host, so a server cannot borrow Cloud's
+// name to collect a password meant for Cloud.
+function serverName(value, host) {
+  const name = cleanName(value, host);
+  return isReservedName(name) ? host : name;
 }
 
 /**
@@ -120,7 +182,7 @@ function parseServerInfo(body, origin) {
   return {
     ok: true,
     info: {
-      name: cleanName(body.name, host),
+      name: serverName(body.name, host),
       apiVersion: SUPPORTED_API_VERSION,
       version: typeof body.version === "string" ? body.version.slice(0, 40) : null,
       signIn: cleanSignIn(signIn),
@@ -217,7 +279,7 @@ function createServerStore({
       seen.add(check.origin);
       out.push({
         origin: check.origin,
-        name: cleanName(s.name, check.host),
+        name: serverName(s.name, check.host),
         signIn: cleanSignIn(s.signIn),
         version: typeof s.version === "string" ? s.version : null,
         addedAt: typeof s.addedAt === "string" ? s.addedAt : null,
@@ -334,5 +396,6 @@ module.exports = {
   parseServerInfo,
   probeServerInfo,
   createServerStore,
+  isReservedName,
   PROBE_TTL_MS,
 };

@@ -73,13 +73,21 @@ export function FormatBadge({ format }: { format: string }) {
 
 /** Which server a document lives on, for any server but Markie Cloud. Same
  * shape as the type label, in a neutral color, and read out: unlike the type,
- * nothing else in the row says where the document is. */
+ * nothing else in the row says where the document is. The name is the
+ * server's own say; the host beside it is the fact. */
 export function ServerBadge({ label, origin }: { label: string; origin: string }) {
+  let host = origin;
+  try {
+    host = new URL(origin).host;
+  } catch {
+    // keep the origin as written
+  }
+  const where = label === host ? host : `${label} (${host})`;
   return (
     <span
       className="markie-fmt markie-fmt-badge markie-server-badge shrink-0"
-      title={`On ${label} (${origin})`}
-      aria-label={`On ${label}`}
+      title={`On ${where}`}
+      aria-label={`On ${where}`}
       data-server-badge={origin}
     >
       {label}

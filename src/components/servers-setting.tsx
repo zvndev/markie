@@ -248,15 +248,27 @@ export function ServerSignIn({
     setNotice("Finish signing in in your browser.");
   };
 
+  // The name is whatever the server calls itself. The host is where the
+  // password goes, so it is said in so many words.
+  const host = hostOf(server.origin);
   return (
     <form
       className="mt-2 flex flex-col gap-2"
-      aria-label={`Sign in to ${server.name}`}
+      aria-label={`Sign in to ${server.name} at ${host}`}
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
       }}
     >
+      <div>
+        <div className="text-[12px] text-foreground">
+          Sign in to {server.name}
+          {server.name !== host && <span className="text-muted"> ({host})</span>}
+        </div>
+        <div className="text-[11px] text-muted" data-testid="server-sign-in-destination">
+          Your email and password go to {host}, not to Markie Cloud.
+        </div>
+      </div>
       {server.signIn.google && (
         <button type="button" className={BUTTON} onClick={() => void google()} disabled={busy}>
           Continue with Google

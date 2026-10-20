@@ -462,7 +462,11 @@ describe("Settings — servers", () => {
 
     const self = await screen.findByRole("listitem", { name: "Team docs" });
     await user.click(within(self).getByRole("button", { name: "Sign in" }));
-    const form = within(self).getByRole("form", { name: "Sign in to Team docs" });
+    const form = within(self).getByRole("form", { name: "Sign in to Team docs at docs.example.com" });
+    // The name is the server's own say; where the password goes is not.
+    expect(within(form).getByText("(docs.example.com)")).toBeInTheDocument();
+    expect(within(form).getByText("Your email and password go to docs.example.com, not to Markie Cloud.")).toBeInTheDocument();
+    expect(within(self).getByText("docs.example.com")).toBeInTheDocument();
     expect(within(form).queryByRole("button", { name: "Continue with Google" })).toBeNull();
     await user.type(within(form).getByLabelText("Email"), "bo@example.com");
     await user.type(within(form).getByLabelText("Password"), "pw-123456");
@@ -497,7 +501,7 @@ describe("Settings — sign-up on a server", () => {
     renderSettings({ initialSection: "advanced" });
     const row = await screen.findByRole("listitem", { name: "Team docs" });
     await user.click(within(row).getByRole("button", { name: "Sign in" }));
-    return { user, form: within(row).getByRole("form", { name: "Sign in to Team docs" }) };
+    return { user, form: within(row).getByRole("form", { name: "Sign in to Team docs at docs.example.com" }) };
   }
 
   it("says plainly that an invite-only server needs an invite", async () => {

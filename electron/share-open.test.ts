@@ -62,6 +62,14 @@ describe("planShareOpen", () => {
     }
   });
 
+  it("opens a link naming Markie Cloud's old address as Markie Cloud, without asking", () => {
+    const railway = "https://api-production-602f.up.railway.app";
+    expect(planShareOpen(link(railway))).toEqual({ action: "fetch", base: "https://api.markiedocs.com", token: "tok123" });
+    // A private build, locked to Markie Cloud, still takes it.
+    expect(planShareOpen(link(railway), { trustedOnly: true })).toEqual({ action: "fetch", base: "https://api.markiedocs.com", token: "tok123" });
+    expect(planShareOpen(link("https://api-production-602f.up.railway.app.evil.com"), { trustedOnly: true })).toEqual({ action: "ignore" });
+  });
+
   it("ignores a link without a token", () => {
     expect(planShareOpen("markie://open?src=https://docs.example.com")).toEqual({ action: "ignore" });
     expect(planShareOpen("not a url")).toEqual({ action: "ignore" });

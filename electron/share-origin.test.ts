@@ -5,22 +5,34 @@ import {
   untrustedShareOrigin,
   setTrustedOrigins,
   isLoopbackHostname,
+  isTrustedOrigin,
+  isCloudOrigin,
+  canonicalCloudOrigin,
+  CLOUD_ALIASES,
   DEFAULT_SERVER,
 } from "./share-origin.js";
+
+const CLOUD = "https://api.markiedocs.com";
+const RAILWAY = "https://api-production-602f.up.railway.app";
 
 afterEach(() => setTrustedOrigins(null));
 
 describe("shareBaseFromSrc", () => {
   it("returns the allowlisted production origin when src matches", () => {
-    expect(shareBaseFromSrc("https://api-production-602f.up.railway.app")).toBe(
-      "https://api-production-602f.up.railway.app",
-    );
+    expect(shareBaseFromSrc(CLOUD)).toBe(CLOUD);
+  });
+  it("reads Markie Cloud's old Railway address as Markie Cloud", () => {
+    expect(shareBaseFromSrc(RAILWAY)).toBe(CLOUD);
+    expect(shareBaseFromSrc("api-production-602f.up.railway.app")).toBe(CLOUD);
+    expect(shareBaseFromSrc(`${RAILWAY}/`)).toBe(CLOUD);
   });
   it("falls back to DEFAULT_SERVER for an attacker host (no SSRF)", () => {
     expect(shareBaseFromSrc("evil.com")).toBe(DEFAULT_SERVER);
     expect(shareBaseFromSrc("169.254.169.254")).toBe(DEFAULT_SERVER);
     expect(shareBaseFromSrc("http://api-production-602f.up.railway.app")).toBe(DEFAULT_SERVER); // not https
     expect(shareBaseFromSrc("https://api-production-602f.up.railway.app.evil.com")).toBe(DEFAULT_SERVER);
+    expect(shareBaseFromSrc("http://api.markiedocs.com")).toBe(DEFAULT_SERVER); // not https
+    expect(shareBaseFromSrc("https://api.markiedocs.com.evil.com")).toBe(DEFAULT_SERVER);
   });
   it("falls back to DEFAULT_SERVER for empty/garbage src", () => {
     expect(shareBaseFromSrc("")).toBe(DEFAULT_SERVER);
@@ -34,7 +46,9 @@ describe("shareBaseFromSrc", () => {
 
 describe("isAllowedServerOrigin", () => {
   it("accepts the production origin, rejects others", () => {
-    expect(isAllowedServerOrigin("https://api-production-602f.up.railway.app")).toBe(true);
+    expect(isAllowedServerOrigin(CLOUD)).toBe(true);
+    expect(isAllowedServerOrigin(RAILWAY)).toBe(true);
+    expect(isAllowedServerOrigin("http://api.markiedocs.com")).toBe(false);
     expect(isAllowedServerOrigin("https://evil.com")).toBe(false);
     expect(isAllowedServerOrigin("http://api-production-602f.up.railway.app")).toBe(false);
     expect(isAllowedServerOrigin(null as unknown as string)).toBe(false);
@@ -141,5 +155,39 @@ describe("isLoopbackHostname", () => {
       expect(isLoopbackHostname(host(address)), address).toBe(false);
     }
     expect(isLoopbackHostname("")).toBe(false);
+  });
+});
+
+describe("Markie Cloud's address and its old one", () => {
+  it("names api.markiedocs.com as Markie Cloud, with the Railway host as an alias", () => {
+    expect(DEFAULT_SERVER).toBe(CLOUD);
+    expect(CLOUD_ALIASES).toEqual([RAILWAY]);
+  });
+
+  it("recognises both, exactly", () => {
+    expect(isCloudOrigin(CLOUD)).toBe(true);
+    expect(isCloudOrigin(RAILWAY)).toBe(true);
+    expect(isCloudOrigin("http://api-production-602f.up.railway.app")).toBe(false);
+    expect(isCloudOrigin("https://other-production-602f.up.railway.app")).toBe(false);
+    expect(isCloudOrigin(null)).toBe(false);
+  });
+
+  it("maps only an alias to the canonical origin", () => {
+    expect(canonicalCloudOrigin(RAILWAY)).toBe(CLOUD);
+    expect(canonicalCloudOrigin(`${RAILWAY}/`)).toBe(CLOUD);
+    expect(canonicalCloudOrigin(CLOUD)).toBe(CLOUD);
+    expect(canonicalCloudOrigin("https://docs.example.com")).toBe("https://docs.example.com");
+    expect(canonicalCloudOrigin("http://localhost:8787")).toBe("http://localhost:8787");
+    expect(canonicalCloudOrigin("not a url")).toBe("not a url");
+    expect(canonicalCloudOrigin(null)).toBe(null);
+  });
+
+  it("trusts the old address even when the list main hands in names only the new one", () => {
+    setTrustedOrigins(() => [CLOUD]);
+    expect(isTrustedOrigin(RAILWAY)).toBe(true);
+    expect(untrustedShareOrigin(RAILWAY)).toBeNull();
+    expect(untrustedShareOrigin("https://api-production-602f.up.railway.app.evil.com")).toBe(
+      "https://api-production-602f.up.railway.app.evil.com"
+    );
   });
 });

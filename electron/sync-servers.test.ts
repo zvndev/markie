@@ -13,7 +13,7 @@ const registry = load("./registry.js");
 const sync = load("./sync.js");
 const { setTrustedOrigins } = load("./share-origin.js");
 
-const CLOUD = "https://api-production-602f.up.railway.app";
+const CLOUD = "https://api.markiedocs.com";
 const SELF = "https://docs.example.com";
 
 interface Row {
@@ -250,6 +250,51 @@ describe("routing each document to its own server", () => {
     expect(res.ok).toBe(true);
     expect(calls).toEqual([{ method: "GET", url: `${SELF}/api/docs/s9`, auth: "Bearer self-token" }]);
     expect(rows.get(fs.realpathSync(target))!.cloud_origin).toBe(SELF);
+  });
+});
+
+describe("Markie Cloud's old address", () => {
+  const RAILWAY = "https://api-production-602f.up.railway.app";
+
+  it("pushes a row still recorded under the old address to Markie Cloud, with Cloud's token", async () => {
+    seedRow({ path: "/d/old.md", sync_state: "synced", cloud_doc_id: "c1", cloud_origin: RAILWAY, cloud_version: 1, content_hash: "hash:x" });
+    servers[CLOUD] = () => ({ status: 200, body: { version: 2 } });
+
+    await sync.push("/d/old.md", "old.md", "new");
+
+    expect(calls).toEqual([{ method: "PUT", url: `${CLOUD}/api/docs/c1`, auth: "Bearer cloud-token" }]);
+  });
+
+  it("reads a sign-in pushed under the old address as Markie Cloud's", () => {
+    sync.setConfig({ token: "cloud-token", serverURL: RAILWAY });
+    expect(sync.primary()).toBe(CLOUD);
+    expect(sync.isConfigured(CLOUD)).toBe(true);
+    // The same token at the same server is the same session.
+    expect(sync.hasPrincipal(CLOUD)).toBe(true);
+    expect(sync.sessionToken(RAILWAY)).toBe("cloud-token");
+  });
+
+  it("files a pull from the old address as Markie Cloud's, unmarked", async () => {
+    servers[CLOUD] = () => ({ status: 200, body: { doc: { content: "# hi\n", name: "hi.md", version: 3 } } });
+    const target = path.join(tmpDir, "hi.md");
+
+    const res = await sync.pull("c9", target, RAILWAY);
+
+    expect(res.ok).toBe(true);
+    expect(calls).toEqual([{ method: "GET", url: `${CLOUD}/api/docs/c9`, auth: "Bearer cloud-token" }]);
+    expect(rows.get(fs.realpathSync(target))!.cloud_origin ?? null).toBeNull();
+  });
+
+  it("clears the old address off a row it writes again", async () => {
+    const target = path.join(tmpDir, "old.md");
+    fs.writeFileSync(target, "# old\n");
+    const real = fs.realpathSync(target);
+    seedRow({ path: real, sync_state: "synced", cloud_doc_id: "c1", cloud_origin: RAILWAY, cloud_version: 1 });
+    servers[CLOUD] = () => ({ status: 200, body: { doc: { content: "# hi\n", name: "old.md", version: 3 } } });
+
+    expect((await sync.pull("c1", target, RAILWAY)).ok).toBe(true);
+
+    expect(rows.get(real)!.cloud_origin).toBeNull();
   });
 });
 

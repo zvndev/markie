@@ -14,7 +14,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { AsyncLocalStorage } = require("node:async_hooks");
 const registry = require("./registry");
-const { isAllowedServerOrigin, DEFAULT_SERVER } = require("./share-origin");
+const { isAllowedServerOrigin, DEFAULT_SERVER, canonicalCloudOrigin } = require("./share-origin");
 // Every write below lands on a file the user owns, so none of them may leave a
 // truncated document behind if the process dies mid-write.
 const { writeFileAtomic } = require("./atomic-write");
@@ -53,10 +53,12 @@ function allowDev() {
   return process.env.NODE_ENV === "development";
 }
 
+// Markie Cloud's old address reads as its current one, so a session or a
+// row recorded under either is the same server's.
 function originOf(url) {
   if (!url || typeof url !== "string") return null;
   try {
-    return new URL(url).origin;
+    return canonicalCloudOrigin(new URL(url).origin);
   } catch {
     return null;
   }
@@ -76,7 +78,7 @@ function currentOrigin() {
 // Run `fn` against one server. Inside an operation already on that server,
 // the operation's own scope (and any session it captured) carries on.
 function withOrigin(origin, fn) {
-  const server = origin || primaryOrigin;
+  const server = canonicalCloudOrigin(origin) || primaryOrigin;
   const store = scope.getStore();
   if (store && store.serverURL === server) return fn();
   return scope.run({ serverURL: server, bound: false }, fn);
@@ -86,7 +88,7 @@ function withOrigin(origin, fn) {
 // account and the generation of that server's session. Nested in an upload
 // already bound to the same server, that upload's capture is kept.
 function captureBinding(origin) {
-  const server = origin || primaryOrigin;
+  const server = canonicalCloudOrigin(origin) || primaryOrigin;
   const store = scope.getStore();
   if (store && store.bound && store.serverURL === server) return store;
   const s = sessionFor(server);
@@ -101,20 +103,24 @@ function captureBinding(origin) {
 
 // The server a registry row's document lives on.
 function originOfRow(row) {
-  return (row && row.cloud_origin) || primaryOrigin;
+  return canonicalCloudOrigin(row && row.cloud_origin) || primaryOrigin;
 }
 
 // The cloud_origin a row on `origin` should carry: nothing for the primary
 // server, so rows on it look exactly as they always have.
 function originFields(row, origin) {
   const want = origin && origin !== primaryOrigin ? origin : null;
-  const have = (row && row.cloud_origin) || null;
-  return want === have ? {} : { cloud_origin: want };
+  const recorded = (row && row.cloud_origin) || null;
+  // A row still naming Markie Cloud's old address is rewritten the next time
+  // it is touched, to what it would say if it were written today.
+  if (recorded && canonicalCloudOrigin(recorded) !== recorded) return { cloud_origin: want };
+  return want === recorded ? {} : { cloud_origin: want };
 }
 
 function sessionFor(origin) {
-  const s = sessions.get(origin);
-  return s && s.token && isTrusted(origin) ? s : null;
+  const o = canonicalCloudOrigin(origin);
+  const s = sessions.get(o);
+  return s && s.token && isTrusted(o) ? s : null;
 }
 
 // Servers with a session, the primary first.
@@ -132,7 +138,7 @@ function configuredOrigins() {
 // in": a file the user meant for Markie Cloud must not be uploaded to some
 // other server because Cloud's session lapsed. The caller checks the session.
 function pickOrigin(origin) {
-  return origin || primaryOrigin;
+  return canonicalCloudOrigin(origin) || primaryOrigin;
 }
 
 // What to tell somebody whose upload has nowhere to go.
@@ -189,7 +195,7 @@ function clearOriginState(origin) {
 
 function setDocRole(cloudId, role, origin) {
   if (!cloudId) return;
-  const key = roleKey(origin || currentOrigin(), cloudId);
+  const key = roleKey(canonicalCloudOrigin(origin) || currentOrigin(), cloudId);
   if (role) docRoles.set(key, role);
   else docRoles.delete(key);
 }
@@ -206,7 +212,7 @@ function setDocRole(cloudId, role, origin) {
 // file leave this machine. A listing speaks for its own server only.
 function noteListing(docs, origin) {
   if (!Array.isArray(docs)) return;
-  const o = origin || currentOrigin();
+  const o = canonicalCloudOrigin(origin) || currentOrigin();
   const named = new Set();
   for (const d of docs) {
     if (!d || !d.id) continue;
@@ -226,7 +232,7 @@ function noteListing(docs, origin) {
 // silence, and the asset push fails closed on it.
 function isExposed(cloudId, origin) {
   if (!cloudId) return null;
-  const known = docExposure.get(roleKey(origin || currentOrigin(), cloudId));
+  const known = docExposure.get(roleKey(canonicalCloudOrigin(origin) || currentOrigin(), cloudId));
   return known === undefined ? null : known;
 }
 
@@ -368,7 +374,7 @@ const TRANSFER_TIMEOUT_MS = 300000;
 // The document's server comes from the row that holds its cloud id, unless
 // the caller already knows it.
 async function fetchAsset(cloudId, ref, ifNoneMatch, origin) {
-  const server = origin || originForCloudId(cloudId);
+  const server = canonicalCloudOrigin(origin) || originForCloudId(cloudId);
   const session = sessionFor(server);
   if (!session) return null;
   // Two deadlines, not one. A signal handed to fetch governs the response
@@ -445,7 +451,7 @@ function withSessionBinding(operation) {
 // with that server's token. A server with no session, or one that is no
 // longer trusted, is never sent anything.
 async function api(method, p, body, opts = {}) {
-  const server = opts.origin || currentOrigin();
+  const server = canonicalCloudOrigin(opts.origin) || currentOrigin();
   const store = scope.getStore();
   const binding = store && store.bound && store.serverURL === server ? store : null;
   // Abort a hung request so the renderer's invoke() can't pend forever
@@ -768,7 +774,7 @@ async function syncOff(filePath, deleteRemote) {
 // Download a cloud-only doc to a local path and track it as synced.
 // `origin` is the server the document lives on; the primary when not given.
 async function pull(cloudId, targetPath, origin) {
-  const server = origin || primaryOrigin;
+  const server = canonicalCloudOrigin(origin) || primaryOrigin;
   if (!isConfigured(server)) return { error: "not signed in" };
   return withOrigin(server, () => pullAt(server, cloudId, targetPath));
 }
@@ -1051,7 +1057,7 @@ function freePath(dir, base, exists = fs.existsSync) {
 // nothing about this device's copy of the first one's document.
 async function landCloudDocs(docs, origin) {
   if (landingNow) return [];
-  const server = origin || currentOrigin();
+  const server = canonicalCloudOrigin(origin) || currentOrigin();
   const known = new Set(
     registry
       .list()

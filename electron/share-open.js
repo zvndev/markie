@@ -2,7 +2,7 @@
 // only authority it needs. Kept out of main.js so the order of events can be
 // tested without Electron: for a server the user has not added, nothing is
 // fetched until they say yes, and then only anonymously.
-const { shareBaseFromSrc, untrustedShareOrigin } = require("./share-origin");
+const { shareBaseFromSrc, untrustedShareOrigin, canonicalCloudOrigin } = require("./share-origin");
 const { MAX_DOC_BYTES } = require("./doc-tiers");
 const { readTextCapped } = require("./bounded-body");
 
@@ -14,10 +14,11 @@ const DEFAULT_MAX_BYTES = MAX_DOC_BYTES;
 const DEFAULT_TIMEOUT_MS = 120000;
 
 // Whether a link's src names exactly the server shareBaseFromSrc would use.
+// Markie Cloud's old address names Markie Cloud.
 function srcIsTrusted(src, allowDev) {
   const base = shareBaseFromSrc(src, { allowDev });
   try {
-    return new URL(/^https?:\/\//i.test(src) ? src : `https://${src}`).origin === base;
+    return canonicalCloudOrigin(new URL(/^https?:\/\//i.test(src) ? src : `https://${src}`).origin) === base;
   } catch {
     return false;
   }

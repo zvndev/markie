@@ -82,16 +82,23 @@ describe("connect-src for trusted servers", () => {
 
   it("adds each trusted server as https and wss, once", () => {
     const csp = withConnectOrigins(base, [
+      "https://api.markiedocs.com",
       "https://api-production-602f.up.railway.app",
       "https://docs.example.com",
       "https://docs.example.com",
     ]);
     expect(connect(csp)).toBe(
-      "connect-src 'self' https://api-production-602f.up.railway.app wss://api-production-602f.up.railway.app https://docs.example.com wss://docs.example.com"
+      "connect-src 'self' https://api.markiedocs.com wss://api.markiedocs.com https://api-production-602f.up.railway.app wss://api-production-602f.up.railway.app https://docs.example.com wss://docs.example.com"
     );
     // Nothing else in the policy moves.
     expect(csp.split("; ").filter((d) => !d.startsWith("connect-src "))).toEqual(
       base.split("; ").filter((d) => !d.startsWith("connect-src "))
+    );
+  });
+
+  it("lets the app reach Markie Cloud at its new address and its old one, over https and wss", () => {
+    expect(connect(base)).toBe(
+      "connect-src 'self' https://api.markiedocs.com wss://api.markiedocs.com https://api-production-602f.up.railway.app wss://api-production-602f.up.railway.app"
     );
   });
 

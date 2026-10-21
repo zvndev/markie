@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { runtimeSha256, bootstrapSha256 } = require("./darkmown-runtime-policy.json");
+const { DEFAULT_SERVER, CLOUD_ALIASES } = require("./share-origin");
 
 // The scheme the viewer serves a document's own pictures over. Named here
 // because the CSP has to allow it and main has to register it, and two string
@@ -14,6 +15,8 @@ const ASSET_SCHEME = "markie-asset";
 const EMBED_FRAME_ORIGINS = ["https://www.youtube-nocookie.com", "https://player.vimeo.com"];
 const DARKMOWN_RUNTIME_HASH = `'sha256-${runtimeSha256}'`;
 const DARKMOWN_BOOTSTRAP_HASH = `'sha256-${bootstrapSha256}'`;
+
+const CLOUD_CONNECT_SOURCES = [DEFAULT_SERVER, ...CLOUD_ALIASES].flatMap((origin) => [origin, origin.replace(/^https:/, "wss:")]);
 
 const INLINE_SCRIPT_RE = /<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
 
@@ -73,7 +76,9 @@ function buildAppCsp(outDir) {
     // the same access rule as the pictures.
     `media-src 'self' data: ${ASSET_SCHEME}:`,
     "font-src 'self' data:",
-    "connect-src 'self' https://api-production-602f.up.railway.app wss://api-production-602f.up.railway.app",
+    // Markie Cloud under its current name and every old one: a document or
+    // a session recorded under the old address still talks to it.
+    `connect-src 'self' ${CLOUD_CONNECT_SOURCES.join(" ")}`,
     // default-src would otherwise refuse every iframe, which is right for
     // everything but the one player a card opens when it is clicked.
     `frame-src about: ${EMBED_FRAME_ORIGINS.join(" ")}`,

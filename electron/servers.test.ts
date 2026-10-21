@@ -159,6 +159,15 @@ describe("parseServerInfo", () => {
     expect(r.ok).toBe(false);
   });
 
+  it("takes Markie Cloud's old and new addresses as the same server, in either direction", () => {
+    const RAILWAY = "https://api-production-602f.up.railway.app";
+    expect(parseServerInfo({ ...INFO, origin: RAILWAY }, DEFAULT_SERVER).ok).toBe(true);
+    expect(parseServerInfo({ ...INFO, origin: DEFAULT_SERVER }, RAILWAY).ok).toBe(true);
+    // Only Markie Cloud gets that: another server claiming either is refused.
+    expect(parseServerInfo({ ...INFO, origin: RAILWAY }, "https://docs.example.com").ok).toBe(false);
+    expect(parseServerInfo({ ...INFO, origin: "https://docs.example.com" }, DEFAULT_SERVER).ok).toBe(false);
+  });
+
   it("falls back to the host for a missing name and strips control characters", () => {
     expect(parseServerInfo({ ...INFO, name: undefined }, "https://docs.example.com")).toMatchObject({
       info: { name: "docs.example.com" },
@@ -355,6 +364,30 @@ describe("the trusted server list", () => {
       JSON.stringify({ version: 1, servers: [{ origin: "https://evil.example.com", name: "Markie Cloud" }] })
     );
     expect(createServerStore({ file }).get("https://evil.example.com")).toMatchObject({ name: "evil.example.com" });
+  });
+
+  it("never keeps Markie Cloud's old address as an added server", () => {
+    const RAILWAY = "https://api-production-602f.up.railway.app";
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ version: 1, servers: [{ origin: RAILWAY, name: "Old cloud" }, { origin: "https://ok.example.com", name: "Fine" }] })
+    );
+    const store = createServerStore({ file });
+    expect(store.origins()).toEqual([DEFAULT_SERVER, "https://ok.example.com"]);
+    // Still trusted, as Markie Cloud, and still not removable.
+    expect(store.isTrusted(RAILWAY)).toBe(true);
+    expect(store.get(RAILWAY)).toMatchObject({ origin: DEFAULT_SERVER, isDefault: true, name: "Markie Cloud" });
+    expect(store.remove(RAILWAY).ok).toBe(false);
+  });
+
+  it("checks Markie Cloud's old address as Markie Cloud, at its current address", async () => {
+    const fetchImpl = answer(200, { ...INFO, name: "Markie Cloud", origin: "https://api-production-602f.up.railway.app" });
+    const store = createServerStore({ file, fetchImpl });
+    const checked = await store.probe("https://api-production-602f.up.railway.app");
+    expect(checked).toMatchObject({ ok: true, origin: DEFAULT_SERVER, host: "api.markiedocs.com", name: "Markie Cloud", alreadyAdded: true });
+    expect(fetchImpl.mock.calls[0][0]).toBe(`${DEFAULT_SERVER}/api/server-info`);
+    expect(store.add((checked as { probeId: string }).probeId)).toMatchObject({ ok: true, server: { origin: DEFAULT_SERVER, isDefault: true } });
+    expect(createServerStore({ file }).origins()).toEqual([DEFAULT_SERVER]);
   });
 
   it("survives a missing or corrupt file", () => {

@@ -11,7 +11,7 @@
 const nodeFs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { DEFAULT_SERVER, isLoopbackHostname } = require("./share-origin");
+const { DEFAULT_SERVER, CLOUD_ALIASES, isCloudOrigin, canonicalCloudOrigin, isLoopbackHostname } = require("./share-origin");
 const { readTextCapped } = require("./bounded-body");
 
 const DEFAULT_NAME = "Markie Cloud";
@@ -168,7 +168,9 @@ function parseServerInfo(body, origin) {
     } catch {
       reported = null;
     }
-    if (reported !== origin) {
+    // Markie Cloud answers for its old address with its new one, and the
+    // other way round while the move is under way: both are Markie Cloud.
+    if (reported !== origin && !(isCloudOrigin(reported) && isCloudOrigin(origin))) {
       return { ok: false, error: `That server says its address is ${String(body.origin).slice(0, 200)}. Use that address instead.` };
     }
   }
@@ -197,7 +199,7 @@ function parseServerInfo(body, origin) {
  * from it reads as the defaults.
  */
 async function probeServerInfo(origin, { fetchImpl = globalThis.fetch, timeoutMs = PROBE_TIMEOUT_MS } = {}) {
-  const isDefault = origin === DEFAULT_SERVER;
+  const isDefault = isCloudOrigin(origin);
   // One controller for the whole exchange: the timeout covers reading the
   // body too, and an oversize body aborts the request rather than draining it.
   const controller = new AbortController();
@@ -285,7 +287,8 @@ function createServerStore({
       return [];
     }
     const list = Array.isArray(parsed?.servers) ? parsed.servers : [];
-    const seen = new Set([DEFAULT_SERVER]);
+    // Markie Cloud is never an entry, under any of its addresses.
+    const seen = new Set([DEFAULT_SERVER, ...CLOUD_ALIASES]);
     const out = [];
     for (const s of list) {
       if (!s || typeof s.origin !== "string") continue;
@@ -326,11 +329,12 @@ function createServerStore({
   }
 
   function isTrusted(origin) {
-    return origins().includes(origin);
+    return origins().includes(canonicalCloudOrigin(origin));
   }
 
   function get(origin) {
-    return list().find((s) => s.origin === origin) ?? null;
+    const o = canonicalCloudOrigin(origin);
+    return list().find((s) => s.origin === o) ?? null;
   }
 
   function prune() {
@@ -340,8 +344,10 @@ function createServerStore({
 
   // Step one of adding: check the address and ask the server who it is.
   async function probe(input) {
-    const parsed = parseServerOrigin(input, { allowDev });
-    if (!parsed.ok) return parsed;
+    const typed = parseServerOrigin(input, { allowDev });
+    if (!typed.ok) return typed;
+    // Markie Cloud's old address is Markie Cloud: checked, and shown, as it is now.
+    const parsed = isCloudOrigin(typed.origin) ? { ok: true, origin: DEFAULT_SERVER, host: new URL(DEFAULT_SERVER).host } : typed;
     const answer = await probeServerInfo(parsed.origin, { fetchImpl });
     if (!answer.ok) return answer;
     prune();
@@ -389,7 +395,7 @@ function createServerStore({
   }
 
   function remove(origin) {
-    if (origin === DEFAULT_SERVER) return { ok: false, error: "Markie Cloud can't be removed." };
+    if (isCloudOrigin(origin)) return { ok: false, error: "Markie Cloud can't be removed." };
     const before = added.length;
     added = added.filter((s) => s.origin !== origin);
     if (added.length === before) return { ok: true, removed: false };

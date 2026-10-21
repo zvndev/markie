@@ -29,7 +29,7 @@ const privateRelease = createPrivateReleaseGate({ config: privateReleaseConfig, 
   if (mainWindow && !mainWindow.isDestroyed()) { documentFiles.releaseOwner(mainWindow.webContents.id); mainWindow.webContents.reload(); }
 } });
 const autoUpdater = isDesktopPreview ? null : require("electron-updater").autoUpdater;
-const { setTrustedOrigins, isAllowedServerOrigin, DEFAULT_SERVER } = require("./share-origin");
+const { setTrustedOrigins, isAllowedServerOrigin, canonicalCloudOrigin, DEFAULT_SERVER } = require("./share-origin");
 const { fetchSharedDoc } = require("./share-open");
 const { createServerStore } = require("./servers");
 const { serverRequest } = require("./server-request");
@@ -591,7 +591,7 @@ function docLinkServer(src) {
   if (!src) return undefined;
   try {
     const origin = new URL(/^https?:\/\//i.test(src) ? src : `https://${src}`).origin;
-    return isAllowedServerOrigin(origin, { allowDev: isDev }) ? origin : undefined;
+    return isAllowedServerOrigin(origin, { allowDev: isDev }) ? canonicalCloudOrigin(origin) : undefined;
   } catch {
     return undefined;
   }
@@ -1725,7 +1725,7 @@ handle("servers-remove", async (_event, origin) => {
 // else is the primary server, which is what every call meant before.
 function trustedServerArg(server) {
   if (typeof server !== "string" || !server) return undefined;
-  return isAllowedServerOrigin(server, { allowDev: isDev }) ? new URL(server).origin : undefined;
+  return isAllowedServerOrigin(server, { allowDev: isDev }) ? canonicalCloudOrigin(new URL(server).origin) : undefined;
 }
 
 // The renderer's REST calls to a server other than Markie Cloud: sign-in,

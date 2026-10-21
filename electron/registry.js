@@ -165,6 +165,14 @@ function getDB() {
   if (!fileCols.some((c) => c.name === "cloud_origin")) {
     db.exec("ALTER TABLE files ADD COLUMN cloud_origin TEXT");
   }
+  // Markie Cloud moved to its own domain. A row recorded under its old
+  // address names the same server, so it now says so. Idempotent, and a no-op
+  // once no row names an old address.
+  {
+    const { DEFAULT_SERVER, CLOUD_ALIASES } = require("./share-origin");
+    const rename = db.prepare("UPDATE files SET cloud_origin = ? WHERE cloud_origin = ?");
+    for (const alias of CLOUD_ALIASES) rename.run(DEFAULT_SERVER, alias);
+  }
 
   // Schema versioning starts at 0.5.0. Version 0 is every database that
   // predates it; the PRAGMA-guarded share_role ALTER above predates versioning

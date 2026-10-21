@@ -8,8 +8,35 @@
 // setTrustedOrigins; until then, and in every test that does not care, the
 // only trusted server is Markie Cloud.
 
-// Canonical Markie production API. Update here if the backend moves.
-const DEFAULT_SERVER = "https://api-production-602f.up.railway.app";
+// Markie Cloud's address, and the addresses it used to have. The one copy
+// lives in cloud-origin.json, which the renderer imports too (the sandboxed
+// preload and the server package keep literal copies, tested against it).
+// An alias is the same server under an older name: the same backend, the
+// same database, so a session or a link from one is good on the other.
+// Anything stored under an alias is read as the canonical origin.
+const CLOUD = require("./cloud-origin.json");
+const DEFAULT_SERVER = CLOUD.origin;
+const CLOUD_ALIASES = Object.freeze([...CLOUD.legacyAliases]);
+
+/** Whether `origin` is Markie Cloud under its current name or an old one. */
+function isCloudOrigin(origin) {
+  return typeof origin === "string" && (origin === DEFAULT_SERVER || CLOUD_ALIASES.includes(origin));
+}
+
+/**
+ * Markie Cloud's current origin for any of its old ones; anything else,
+ * including a value that is not an origin at all, comes back unchanged.
+ */
+function canonicalCloudOrigin(origin) {
+  if (typeof origin !== "string" || !origin) return origin;
+  let parsed = null;
+  try {
+    parsed = new URL(origin).origin;
+  } catch {
+    return origin;
+  }
+  return CLOUD_ALIASES.includes(parsed) ? DEFAULT_SERVER : origin;
+}
 
 // Returns the trusted origins, default first. Replaced by main.
 let trustedOrigins = () => [DEFAULT_SERVER];
@@ -20,7 +47,7 @@ function setTrustedOrigins(provider) {
 
 function isTrustedOrigin(origin) {
   if (typeof origin !== "string") return false;
-  if (origin === DEFAULT_SERVER) return true;
+  if (isCloudOrigin(origin)) return true;
   try {
     return trustedOrigins().includes(origin);
   } catch {
@@ -51,7 +78,7 @@ function shareBaseFromSrc(src, { allowDev = false } = {}) {
     if (u && !u.username && !u.password) {
       const okProto = u.protocol === "https:" || (allowDev && u.protocol === "http:");
       const okHost = isTrustedOrigin(u.origin) || (allowDev && isLocalhost(u.host));
-      if (okHost && okProto) return `${u.protocol}//${u.host}`;
+      if (okHost && okProto) return canonicalCloudOrigin(`${u.protocol}//${u.host}`);
     }
   }
   return DEFAULT_SERVER;
@@ -172,6 +199,9 @@ function isAllowedServerOrigin(serverURL, { allowDev = false } = {}) {
 
 module.exports = {
   DEFAULT_SERVER,
+  CLOUD_ALIASES,
+  isCloudOrigin,
+  canonicalCloudOrigin,
   setTrustedOrigins,
   isTrustedOrigin,
   shareBaseFromSrc,

@@ -850,3 +850,21 @@ describe("upgrading a populated version 0 database", () => {
     expect(registry.listRoots()).toEqual(["/legacy/root"]);
   });
 });
+
+describe.skipIf(!DatabaseSync)("Markie Cloud's old address on a row", () => {
+  it("is rewritten to the current address when the registry opens, and nothing else moves", () => {
+    registry.track("/cloud/old.md", "old.md", "x");
+    registry.update("/cloud/old.md", { cloud_doc_id: "c-old", cloud_origin: "https://api-production-602f.up.railway.app" });
+    registry.track("/cloud/self.md", "self.md", "x");
+    registry.update("/cloud/self.md", { cloud_doc_id: "c-self", cloud_origin: "https://docs.example.com" });
+    registry.track("/cloud/primary.md", "primary.md", "x");
+    registry.update("/cloud/primary.md", { cloud_doc_id: "c-primary" });
+
+    registry.close();
+    const origin = (p: string) => (registry.get(p) as { cloud_origin: string | null }).cloud_origin;
+    expect(origin("/cloud/old.md")).toBe("https://api.markiedocs.com");
+    expect(origin("/cloud/self.md")).toBe("https://docs.example.com");
+    expect(origin("/cloud/primary.md")).toBeNull();
+    expect((registry.get("/cloud/old.md") as { cloud_doc_id: string }).cloud_doc_id).toBe("c-old");
+  });
+});

@@ -2,8 +2,13 @@ const fsDefault = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 
+const { DEFAULT_SERVER } = require("./share-origin");
+
 const CHANNEL = "super-nightly";
-const AUTH_ORIGIN = "https://api-production-602f.up.railway.app";
+// A private build signs in to Markie Cloud and nowhere else. electron/preload.js
+// carries the same origin as a literal, since a sandboxed preload cannot
+// require it; electron/cloud-origin.test.ts holds the two together.
+const AUTH_ORIGIN = DEFAULT_SERVER;
 const FRESH_MS = 60_000;
 const BOOTSTRAP_CHANNELS = new Set(["private-release-status", "private-release-authorize", "private-release-lock", "open-external"]);
 

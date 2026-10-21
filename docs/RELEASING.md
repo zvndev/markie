@@ -724,6 +724,8 @@ change.
 2. Take a snapshot on the volume before any deploy that changes the schema. The 2026-10-20 deploy
    left `/data/pre-deploy-2026-10-20.db`, which holds the full history from before history was
    capped at 20 versions. Keep it.
+   The 2026-10-21 deploy, which added the document platform and linked sign-in tables, left
+   `/data/pre-deploy-2026-10-21.db` (integrity ok).
 3. After the deploy, check that `/health` returns 200, that `/api/docs` returns 401 without a
    token, and that the logs show Litestream writing to `markie-db-age`.
 
@@ -731,7 +733,9 @@ change.
 
 Litestream replicates age-encrypted to `markie-db-age/` in the B2 bucket `Markie`. The identity
 and the recipient are the `api` variables `LITESTREAM_AGE_IDENTITY` and `LITESTREAM_AGE_RECIPIENT`.
-Kirby holds the offline copy of the identity. Always restore with
+Kirby holds the offline copy of the identity. The key was rotated on 2026-10-21 after the old
+identity was exposed in an agent session; generations written before 01:37 UTC that day decrypt
+only with the old identity, which Kirby also holds. Always restore with
 `litestream restore -config /etc/litestream.yml`, which reads the identity from the config. A bare
 replica URL cannot decrypt. A lifecycle rule deletes hidden replica files one day after Litestream
 retires them.

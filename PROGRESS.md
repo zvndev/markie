@@ -1465,3 +1465,14 @@ Kirby asked for a super nightly, early access, then timed stable pipeline, self-
 
 Verification: npm test 4789 passed, server 453 passed, MCP 81, lint, typecheck, build. 0.8.1-super-nightly.16 published at d5bd85c; the unauthenticated feed returns 404.
 Not verified: a real self-hosted server on the internet, real Google sign-in against one, live editing across servers, B2 with the new empty `region` line (lands at the next api deploy).
+
+## 2026-10-21 Production: api.markiedocs.com, linked sign-ins, key rotation, nightly.17
+
+Kirby approved the production steps.
+- **Domain.** Railway custom domain `api.markiedocs.com` on service `api`; Vercel DNS `CNAME api -> 3ghxt5sn.up.railway.app`. Certificate was still validating at the time of writing.
+- **API deploy.** `a101c56` from a clean `git archive`, after snapshot `/data/pre-deploy-2026-10-21.db` (integrity ok) and a check that no two accounts' emails differ only by case (18 users, 0 collisions). `/health` 200, `/api/docs` 401, Litestream writing to `markie-db-age`.
+- **Linked sign-ins.** `MARKIE_ACCOUNT_IDENTITIES=1`; `/api/account/identities` answers 401 without a session.
+- **Litestream key rotated.** New age identity in `~/.markie-secrets/litestream-age-identity-2026-10-21.txt`; Railway identity and recipient both match it. A full restore from B2 inside the container decrypted with the new key (18 users, integrity ok).
+- **Nightly.** `0.8.1-super-nightly.17` published at `a101c56` (nightly.16 had already shipped at d5bd85c). Unauthenticated feed 404.
+
+Not done: the Google redirect URI (`https://api.markiedocs.com/api/auth/callback/google`) needs Kirby signed in to Google Cloud, so `BETTER_AUTH_URL` still names Railway.

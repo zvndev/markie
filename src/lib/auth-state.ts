@@ -14,6 +14,8 @@
 // origin and sent to that origin, and nowhere else. The deep link itself
 // never gets to say which server it is from.
 
+import { canonicalCloudOrigin } from "@/lib/cloud-origin";
+
 const STATE_KEY = "markie.authstate.v1";
 
 // A sign-in that takes longer than this was almost certainly abandoned. Bounding
@@ -158,13 +160,16 @@ export function clearAuthState(opts?: { storage?: AuthStateStorage | null }): vo
 }
 
 // An origin as the URL parser writes it (lower-case host, default port
-// dropped), or null for anything that is not an http(s) origin.
+// dropped), or null for anything that is not an http(s) origin. Markie
+// Cloud's old address comes back as its current one: the two are one
+// server, and while BETTER_AUTH_URL moves from one to the other the server
+// may name either as the issuer.
 function normalizeOrigin(value: string | null | undefined): string | null {
   if (typeof value !== "string" || !value) return null;
   try {
     const u = new URL(value);
     if (u.protocol !== "https:" && u.protocol !== "http:") return null;
-    return u.origin;
+    return canonicalCloudOrigin(u.origin);
   } catch {
     return null;
   }
@@ -187,6 +192,8 @@ export type AuthDeepLinkResult =
  * - A sign-in started against the primary server (Markie Cloud) takes `iss`
  *   equal to the primary origin, or no `iss` at all, because Markie Cloud
  *   only starts sending it with its next deploy.
+ * - Markie Cloud's old Railway address and api.markiedocs.com are the same
+ *   server, on either side of the comparison.
  *
  * `origin` in the answer is null for the primary server. The pending nonce is
  * consumed whatever the answer, so a refused link cannot be replayed.

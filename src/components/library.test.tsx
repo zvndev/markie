@@ -742,7 +742,7 @@ describe("documents on other servers", () => {
   const SELF = "https://docs.example.com";
   const cloudProps = { props: { view: "cloud" as const } };
   const servers = vi.fn(async () => [
-    { origin: "https://api-production-602f.up.railway.app", name: "Markie Cloud", isDefault: true, signIn: { email: true, google: true }, version: null },
+    { origin: "https://api.markiedocs.com", name: "Markie Cloud", isDefault: true, signIn: { email: true, google: true }, version: null },
     { origin: SELF, name: "Team docs", isDefault: false, signIn: { email: true, google: false }, version: null },
   ]);
 

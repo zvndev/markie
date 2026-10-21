@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import { authFailureCode } from "@/lib/auth-client";
 import { authErrorMessage, INVITE_ONLY, signupRefusal } from "@/lib/auth-errors";
 import { authStore, useAuth } from "@/lib/auth-store";
+import { CLOUD_ORIGIN } from "@/lib/cloud-origin";
 import { getElectronAPI, type MarkieServer, type ServerProbe } from "@/lib/electron";
 import {
   authStoreFor,
@@ -27,7 +28,7 @@ const PRIMARY =
 
 const DEFAULT_SERVERS: MarkieServer[] = [
   {
-    origin: "https://api-production-602f.up.railway.app",
+    origin: CLOUD_ORIGIN,
     name: "Markie Cloud",
     isDefault: true,
     signIn: { email: true, google: true },

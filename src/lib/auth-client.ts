@@ -3,6 +3,7 @@
 // process (sync engine) whenever it changes.
 import { getElectronAPI } from "@/lib/electron";
 import { createAuthState } from "@/lib/auth-state";
+import { CLOUD_ALIASES, CLOUD_ORIGIN, canonicalCloudOrigin, isCloudOrigin } from "@/lib/cloud-origin";
 
 export interface MarkieUser {
   id: string;
@@ -11,7 +12,9 @@ export interface MarkieUser {
 }
 
 const SERVER_KEY = "markie.server.v1";
-export const DEFAULT_SERVER = "https://api-production-602f.up.railway.app";
+// Markie Cloud (electron/cloud-origin.json). Its old Railway address reads
+// as this wherever it was stored.
+export const DEFAULT_SERVER = CLOUD_ORIGIN;
 let sessionEpoch = 0;
 function accountSessionChanged(): void {
   sessionEpoch++;
@@ -22,7 +25,7 @@ export function getServerURL(): string {
   const privateOrigin = getElectronAPI()?.privateReleaseAuthOrigin;
   if (privateOrigin === DEFAULT_SERVER) return DEFAULT_SERVER;
   try {
-    return localStorage.getItem(SERVER_KEY) ?? DEFAULT_SERVER;
+    return canonicalCloudOrigin(localStorage.getItem(SERVER_KEY)) ?? DEFAULT_SERVER;
   } catch {
     return DEFAULT_SERVER;
   }
@@ -123,11 +126,12 @@ function readBinding(): PrincipalBinding | null {
     const raw = localStorage.getItem(PRINCIPAL_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PrincipalBinding> | null;
+    // A confirmation by Markie Cloud under its old address is Markie Cloud's.
     return parsed &&
       typeof parsed.token === "string" &&
       typeof parsed.serverURL === "string" &&
       typeof parsed.userId === "string"
-      ? { token: parsed.token, serverURL: parsed.serverURL, userId: parsed.userId }
+      ? { token: parsed.token, serverURL: canonicalCloudOrigin(parsed.serverURL), userId: parsed.userId }
       : null;
   } catch {
     return null;
@@ -164,8 +168,9 @@ function restorePrincipal(): string | null {
 /**
  * The free-text "Markie server URL" field is gone. What it left behind is
  * sorted out once, at launch:
- *  - nothing stored, or Markie Cloud: the token already sits in Markie
- *    Cloud's entry, the primary slot, so nothing moves and nobody notices.
+ *  - nothing stored, or Markie Cloud under any of its addresses: the token
+ *    already sits in Markie Cloud's entry, the primary slot, so nothing
+ *    moves and nobody notices.
  *  - localhost in a dev build: left alone, it is a developer's override.
  *  - any other address: the token was that server's, never Markie Cloud's,
  *    so it moves under that server's own key, and the primary slot goes back
@@ -196,7 +201,7 @@ export function migrateLegacyServer(opts: { allowDev?: boolean } = {}): boolean 
   }
   if (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) && opts.allowDev) return false;
   try {
-  if (origin && origin !== "null" && origin !== DEFAULT_SERVER) {
+  if (origin && origin !== "null" && !isCloudOrigin(origin)) {
     const token = read(TOKEN_KEY);
     if (token) write(`${TOKEN_KEY}@${origin}`, token);
     try {
@@ -218,9 +223,48 @@ export function migrateLegacyServer(opts: { allowDev?: boolean } = {}): boolean 
   return true;
 }
 
+/**
+ * Markie Cloud moved from its Railway hostname to api.markiedocs.com. The
+ * primary slot carries no origin, so a Cloud session there is untouched. A
+ * session filed under the old address as a server of its own (a dev build
+ * pointed at localhost keeps Cloud there) moves to the new address once, so
+ * it is found where every lookup now goes. An entry already at the new
+ * address wins; the old one is dropped either way.
+ */
+export function migrateCloudAliasSessions(): boolean {
+  let moved = false;
+  try {
+    for (const alias of CLOUD_ALIASES) {
+      const oldToken = localStorage.getItem(`${TOKEN_KEY}@${alias}`);
+      const oldBinding = localStorage.getItem(`${PRINCIPAL_KEY}@${alias}`);
+      if (oldToken === null && oldBinding === null) continue;
+      const newTokenKey = `${TOKEN_KEY}@${DEFAULT_SERVER}`;
+      const newBindingKey = `${PRINCIPAL_KEY}@${DEFAULT_SERVER}`;
+      if (oldToken && localStorage.getItem(newTokenKey) === null) {
+        localStorage.setItem(newTokenKey, oldToken);
+        try {
+          const parsed = JSON.parse(oldBinding ?? "null") as Partial<PrincipalBinding> | null;
+          if (parsed && parsed.token === oldToken && typeof parsed.userId === "string") {
+            localStorage.setItem(newBindingKey, JSON.stringify({ token: oldToken, serverURL: DEFAULT_SERVER, userId: parsed.userId }));
+          }
+        } catch {
+          // an unreadable binding is simply not carried over
+        }
+      }
+      localStorage.removeItem(`${TOKEN_KEY}@${alias}`);
+      localStorage.removeItem(`${PRINCIPAL_KEY}@${alias}`);
+      moved = true;
+    }
+  } catch {
+    // storage unavailable; try again next launch
+  }
+  return moved;
+}
+
 // Before anything reads the session: a launch after the server field went
 // away must not read the old server's token as Markie Cloud's.
 migrateLegacyServer({ allowDev: import.meta.env?.DEV === true });
+migrateCloudAliasSessions();
 
 let principal: string | null = restorePrincipal();
 

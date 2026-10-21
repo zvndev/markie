@@ -82,10 +82,10 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
   const bridge = {
     platform: "darwin",
     privateReleaseAuthOrigin: "",
-    privateReleaseStatus: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api-production-602f.up.railway.app" })),
+    privateReleaseStatus: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api.markiedocs.com" })),
     privateReleaseSession: vi.fn(async () => ({ token: null })),
-    privateReleaseAuthorize: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api-production-602f.up.railway.app" })),
-    privateReleaseLock: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api-production-602f.up.railway.app" })),
+    privateReleaseAuthorize: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api.markiedocs.com" })),
+    privateReleaseLock: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api.markiedocs.com" })),
 
     openFile: vi.fn(async () => null),
     openFilePath: vi.fn(async () => null),
@@ -185,7 +185,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     syncSession: vi.fn(async () => ({ ok: true })),
     serversList: vi.fn(async () => [
       {
-        origin: "https://api-production-602f.up.railway.app",
+        origin: "https://api.markiedocs.com",
         name: "Markie Cloud",
         isDefault: true,
         signIn: { email: true, google: true },

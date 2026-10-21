@@ -6,7 +6,7 @@ import { installBridge } from "@/test/mock-bridge";
 vi.mock("./sign-in", () => ({ SignInForm: ({ onDone }: { onDone: () => void }) => <button onClick={onDone}>Existing Markie sign-in</button> }));
 vi.mock("@/lib/auth-client", () => ({ getAuthToken: () => "synthetic-token", pushSyncConfig: vi.fn(), adoptAuthToken: vi.fn() }));
 afterEach(cleanup);
-const locked = { required: true, authorized: false, channel: "super-nightly", gitCommit: "abcdef0123456789", authOrigin: "https://api-production-602f.up.railway.app" };
+const locked = { required: true, authorized: false, channel: "super-nightly", gitCommit: "abcdef0123456789", authOrigin: "https://api.markiedocs.com" };
 describe("private renderer bootstrap gate", () => {
   it("does not mount a document shell until native authorization succeeds", async () => {
     const authorize = vi.fn(async () => ({ ...locked, authorized: true }));

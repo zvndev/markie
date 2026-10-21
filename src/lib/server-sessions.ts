@@ -25,17 +25,22 @@ import {
   type SharesClient,
 } from "@/lib/auth-client";
 import { authStore, createAuthStore, type AuthSnapshot, type AuthStore } from "@/lib/auth-store";
+import { canonicalCloudOrigin } from "@/lib/cloud-origin";
 
 const TOKEN_KEY = "markie.token.v1";
 const PRINCIPAL_KEY = "markie.auth.principal.v1";
 
+// Markie Cloud's old address names Markie Cloud: every entry point below
+// reads an origin through this before it keys, compares or stores anything.
+const norm = <T extends string | null | undefined>(origin: T): T => canonicalCloudOrigin(origin) as T;
+
 /** The primary server: Markie Cloud, or a dev build's localhost override. */
 export function isPrimaryServer(origin: string | null | undefined): boolean {
-  return !origin || origin === getServerURL();
+  return !origin || norm(origin) === getServerURL();
 }
 
-const tokenKey = (origin: string) => `${TOKEN_KEY}@${origin}`;
-const principalKey = (origin: string) => `${PRINCIPAL_KEY}@${origin}`;
+const tokenKey = (origin: string) => `${TOKEN_KEY}@${norm(origin)}`;
+const principalKey = (origin: string) => `${PRINCIPAL_KEY}@${norm(origin)}`;
 
 // Settings and the share surfaces redraw when a server's session moves.
 const listeners = new Set<() => void>();
@@ -70,6 +75,7 @@ function write(key: string, value: string | null): void {
 
 /** The token for `origin`, from whichever client owns it. */
 export function getServerToken(origin: string | null | undefined): string | null {
+  origin = norm(origin);
   if (isPrimaryServer(origin)) return getAuthToken();
   return read(tokenKey(origin!));
 }
@@ -126,6 +132,7 @@ function pushServerSession(origin: string): void {
 
 /** Store (or clear) one non-primary server's token. */
 export function setServerToken(origin: string, token: string | null): void {
+  origin = norm(origin);
   if (isPrimaryServer(origin)) return;
   const before = read(tokenKey(origin));
   write(tokenKey(origin), token);
@@ -154,8 +161,8 @@ export function storedServerOrigins(): string[] {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key && key.startsWith(prefix)) {
-        const origin = key.slice(prefix.length);
-        if (origin && !isPrimaryServer(origin)) out.push(origin);
+        const origin = norm(key.slice(prefix.length));
+        if (origin && !isPrimaryServer(origin) && !out.includes(origin)) out.push(origin);
       }
     }
   } catch {
@@ -171,6 +178,7 @@ export function pushServerSessions(): void {
 
 /** A server the user removed: its token and account go with it. */
 export function forgetServerSession(origin: string): void {
+  origin = norm(origin);
   if (isPrimaryServer(origin)) return;
   write(tokenKey(origin), null);
   write(principalKey(origin), null);
@@ -232,6 +240,7 @@ function serverApi(origin: string): ApiRequest {
 
 /** Authenticated fetch for other per-server calls (comments). */
 export function serverFetch(origin: string, path: string, init?: RequestInit): Promise<Response> {
+  origin = norm(origin);
   const token = getServerToken(origin);
   return fetch(`${isPrimaryServer(origin) ? getServerURL() : origin}${path}`, {
     ...init,
@@ -248,6 +257,7 @@ export function serverFetch(origin: string, path: string, init?: RequestInit): P
  * that server says it offers it. The email-code flows stay Markie Cloud's.
  */
 export function serverAuthClient(origin: string) {
+  origin = norm(origin);
   const api = serverApi(origin);
   return {
     me: async (): Promise<MarkieUser | null> => {
@@ -285,6 +295,7 @@ export type ServerAuthClient = ReturnType<typeof serverAuthClient>;
 const shareClients = new Map<string, SharesClient>();
 /** Sharing goes to the server the document lives on. */
 export function sharesClientFor(origin: string | null | undefined): SharesClient {
+  origin = norm(origin);
   if (isPrimaryServer(origin)) return sharesClient;
   let c = shareClients.get(origin!);
   if (!c) {
@@ -297,6 +308,7 @@ export function sharesClientFor(origin: string | null | undefined): SharesClient
 const stores = new Map<string, AuthStore>();
 /** The session store for one server; the primary's is the app-wide authStore. */
 export function authStoreFor(origin: string | null | undefined): AuthStore {
+  origin = norm(origin);
   if (isPrimaryServer(origin)) return authStore;
   let s = stores.get(origin!);
   if (!s) {
@@ -318,6 +330,7 @@ export function useAuthFor(origin: string | null | undefined): AuthSnapshot {
 }
 
 export function collabWsBaseFor(origin: string | null | undefined): string {
+  origin = norm(origin);
   return isPrimaryServer(origin) ? collabWsBase() : `${origin!.replace(/^http/, "ws")}/collab`;
 }
 
@@ -356,6 +369,7 @@ export function useTrustedServers(): MarkieServer[] {
 
 /** The name to show for a server: its own, or its host. */
 export function serverLabel(origin: string, list: MarkieServer[] = trustedServers): string {
+  origin = norm(origin);
   const known = list.find((s) => s.origin === origin);
   if (known) return known.name;
   try {

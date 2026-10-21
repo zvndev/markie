@@ -172,7 +172,8 @@ describe("a nonce bound to a server", () => {
 // own token. Without an issuer check the app files Cloud's token as evil's
 // and sends it to evil.
 describe("resolveAuthDeepLink", () => {
-  const CLOUD = "https://api-production-602f.up.railway.app";
+  const CLOUD = "https://api.markiedocs.com";
+  const RAILWAY = "https://api-production-602f.up.railway.app";
   const EVIL = "https://evil.example";
   const link = (state: string, iss?: string) =>
     `markie://auth?token=cloud-token&state=${state}${iss === undefined ? "" : `&iss=${encodeURIComponent(iss)}`}`;
@@ -221,6 +222,35 @@ describe("resolveAuthDeepLink", () => {
   it("accepts a Cloud sign-in whose iss names Cloud", () => {
     const state = createAuthState({ storage, now: 0, origin: CLOUD })!;
     expect(resolve(link(state, CLOUD))).toEqual({ ok: true, token: "cloud-token", origin: null });
+  });
+
+  // BETTER_AUTH_URL moves from the Railway host to api.markiedocs.com, and
+  // the iss the server stamps moves with it. One server, two names: neither
+  // the deploy nor this app's update may land first and break sign-in.
+  it("accepts a Cloud sign-in whose iss names Cloud's old Railway address", () => {
+    const state = createAuthState({ storage, now: 0, origin: CLOUD })!;
+    expect(resolve(link(state, RAILWAY))).toEqual({ ok: true, token: "cloud-token", origin: null });
+  });
+
+  it("accepts a sign-in begun under the old address before an update, with either iss", () => {
+    for (const iss of [CLOUD, RAILWAY]) {
+      const state = createAuthState({ storage, now: 0, origin: RAILWAY })!;
+      expect(resolve(link(state, iss))).toEqual({ ok: true, token: "cloud-token", origin: null });
+    }
+  });
+
+  it("does not let another server borrow Cloud's old address as its issuer", () => {
+    const state = createAuthState({ storage, now: 0, origin: EVIL })!;
+    expect(resolve(link(state, RAILWAY))).toEqual({ ok: false, reason: "issuer-mismatch" });
+  });
+
+  it("accepts the Railway iss for Cloud even when Cloud is not the primary server", () => {
+    const state = createAuthState({ storage, now: 0, origin: CLOUD })!;
+    expect(resolveAuthDeepLink(link(state, RAILWAY), { primaryOrigin: "http://localhost:8787", storage, now: 0 })).toEqual({
+      ok: true,
+      token: "cloud-token",
+      origin: CLOUD,
+    });
   });
 
   it("accepts a nonce from before nonces named a server as Cloud's", () => {

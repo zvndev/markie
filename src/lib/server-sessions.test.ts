@@ -6,7 +6,8 @@ type Sessions = typeof import("./server-sessions");
 type Client = typeof import("./auth-client");
 type State = typeof import("./auth-state");
 
-const CLOUD = "https://api-production-602f.up.railway.app";
+const CLOUD = "https://api.markiedocs.com";
+const RAILWAY = "https://api-production-602f.up.railway.app";
 const SELF = "https://docs.example.com";
 
 let sessions: Sessions;
@@ -106,6 +107,75 @@ describe("migrating the old single server setting", () => {
     expect(client.migrateLegacyServer()).toBe(false);
     expect(localStorage.getItem("markie.token.v1")).toBe("tok-cloud");
     expect(localStorage.getItem(`markie.token.v1@${SELF}`)).toBe("tok-self");
+  });
+});
+
+describe("Markie Cloud's move off its Railway address", () => {
+  // Every desktop that signed in before the move holds its Cloud token in the
+  // primary slot, with the account confirmed by the Railway origin. The same
+  // backend answers at both addresses, so none of it may read as signed out.
+  it("keeps a signed-in Cloud user signed in, with the account they had", async () => {
+    localStorage.setItem("markie.token.v1", "tok-cloud");
+    localStorage.setItem(
+      "markie.auth.principal.v1",
+      JSON.stringify({ token: "tok-cloud", serverURL: RAILWAY, userId: "u1" })
+    );
+    await fresh();
+    expect(client.getServerURL()).toBe(CLOUD);
+    expect(client.getAuthToken()).toBe("tok-cloud");
+    expect(client.getConfirmedAuthIdentity()).toEqual({ userId: "u1", serverURL: CLOUD });
+    client.pushSyncConfig();
+    expect(syncConfig.mock.calls.at(-1)![0]).toEqual({ token: "tok-cloud", serverURL: CLOUD, userId: "u1" });
+  });
+
+  it("reads the old free-text setting naming the Railway address as Markie Cloud, keeping the token", async () => {
+    localStorage.setItem("markie.server.v1", RAILWAY);
+    localStorage.setItem("markie.token.v1", "tok-cloud");
+    await fresh();
+    expect(localStorage.getItem("markie.server.v1")).toBeNull();
+    expect(client.getAuthToken()).toBe("tok-cloud");
+    expect(localStorage.getItem(`markie.token.v1@${RAILWAY}`)).toBeNull();
+  });
+
+  it("treats a document recorded under the Railway address as a Markie Cloud document", async () => {
+    localStorage.setItem("markie.token.v1", "tok-cloud");
+    await fresh();
+    expect(sessions.isPrimaryServer(RAILWAY)).toBe(true);
+    expect(sessions.getServerToken(RAILWAY)).toBe("tok-cloud");
+    expect(sessions.authStoreFor(RAILWAY)).toBe(sessions.authStoreFor(CLOUD));
+    expect(sessions.serverLabel(RAILWAY, [{ origin: CLOUD, name: "Markie Cloud", isDefault: true, signIn: { email: true, google: true }, version: null }])).toBe("Markie Cloud");
+    // Never a session of its own beside Cloud's.
+    sessions.setServerToken(RAILWAY, "tok-other");
+    expect(localStorage.getItem(`markie.token.v1@${RAILWAY}`)).toBeNull();
+    expect(sessions.storedServerOrigins()).toEqual([]);
+  });
+
+  it("moves a session filed under the Railway address to the new one, once", async () => {
+    localStorage.setItem(`markie.token.v1@${RAILWAY}`, "tok-old");
+    localStorage.setItem(`markie.auth.principal.v1@${RAILWAY}`, JSON.stringify({ token: "tok-old", serverURL: RAILWAY, userId: "u-old" }));
+    await fresh();
+    expect(localStorage.getItem(`markie.token.v1@${RAILWAY}`)).toBeNull();
+    expect(localStorage.getItem(`markie.auth.principal.v1@${RAILWAY}`)).toBeNull();
+    expect(localStorage.getItem(`markie.token.v1@${CLOUD}`)).toBe("tok-old");
+    expect(JSON.parse(localStorage.getItem(`markie.auth.principal.v1@${CLOUD}`)!)).toEqual({ token: "tok-old", serverURL: CLOUD, userId: "u-old" });
+    expect(client.migrateCloudAliasSessions()).toBe(false);
+  });
+
+  it("keeps a session already at the new address over one at the old", async () => {
+    localStorage.setItem(`markie.token.v1@${RAILWAY}`, "tok-old");
+    localStorage.setItem(`markie.token.v1@${CLOUD}`, "tok-new");
+    await fresh();
+    expect(localStorage.getItem(`markie.token.v1@${CLOUD}`)).toBe("tok-new");
+    expect(localStorage.getItem(`markie.token.v1@${RAILWAY}`)).toBeNull();
+  });
+
+  it("accepts a Google sign-in whose iss is either address, and still refuses another server's", async () => {
+    await fresh();
+    const url = client.authClient.googleSignInURL()!;
+    expect(url.startsWith(`${CLOUD}/auth/google-start?state=`)).toBe(true);
+    const nonce = new URL(url).searchParams.get("state")!;
+    const link = (iss: string) => `markie://auth?token=t&state=${nonce}&iss=${encodeURIComponent(iss)}`;
+    expect(state.resolveAuthDeepLink(link(RAILWAY), { primaryOrigin: client.getServerURL() })).toEqual({ ok: true, token: "t", origin: null });
   });
 });
 

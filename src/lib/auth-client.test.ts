@@ -59,19 +59,19 @@ afterEach(() => {
 
 describe("who the sync engine is told is signed in", () => {
   it("pins private authentication to the trusted server and keeps bearer/principal persistence in memory", async () => {
-    installBridge({ syncConfig: syncConfig as never, privateReleaseAuthOrigin: "https://api-production-602f.up.railway.app" });
+    installBridge({ syncConfig: syncConfig as never, privateReleaseAuthOrigin: "https://api.markiedocs.com" });
     localStorage.setItem("markie.server.v1", "https://untrusted.invalid");
     vi.resetModules(); client = await import("./auth-client");
-    expect(client.getServerURL()).toBe("https://api-production-602f.up.railway.app");
-    client.setServerURL("https://other.invalid"); expect(client.getServerURL()).toBe("https://api-production-602f.up.railway.app");
+    expect(client.getServerURL()).toBe("https://api.markiedocs.com");
+    client.setServerURL("https://other.invalid"); expect(client.getServerURL()).toBe("https://api.markiedocs.com");
     client.adoptAuthToken("private-synthetic-token"); answerMe(A); await client.authClient.me();
     expect(client.getAuthToken()).toBe("private-synthetic-token"); expect(client.getConfirmedAuthIdentity()?.userId).toBe(A.id);
     expect(localStorage.getItem(TOKEN_KEY)).toBeNull(); expect(localStorage.getItem(PRINCIPAL_KEY)).toBeNull();
     vi.resetModules(); client = await import("./auth-client"); expect(client.getAuthToken()).toBeNull();
   });
   it("forgets private native enrollment before offline sign-out completes, independently of denied sync IPC", async () => {
-    const privateReleaseLock = vi.fn(async () => ({ required: true, authorized: false, channel: "super-nightly", gitCommit: "abcdef0", authOrigin: "https://api-production-602f.up.railway.app" }));
-    installBridge({ privateReleaseAuthOrigin: "https://api-production-602f.up.railway.app", privateReleaseLock, syncConfig: vi.fn(async () => ({ error: "private-release-locked" })) as never });
+    const privateReleaseLock = vi.fn(async () => ({ required: true, authorized: false, channel: "super-nightly", gitCommit: "abcdef0", authOrigin: "https://api.markiedocs.com" }));
+    installBridge({ privateReleaseAuthOrigin: "https://api.markiedocs.com", privateReleaseLock, syncConfig: vi.fn(async () => ({ error: "private-release-locked" })) as never });
     vi.resetModules(); client = await import("./auth-client"); client.adoptAuthToken("private-synthetic-token");
     let fail!: (reason: Error) => void;
     vi.stubGlobal("fetch", vi.fn(() => new Promise((_resolve, reject) => { fail = reject; })));

@@ -365,7 +365,7 @@ describe("Settings — servers", () => {
     version: "1.0.0",
   };
   const CLOUD = {
-    origin: "https://api-production-602f.up.railway.app",
+    origin: "https://api.markiedocs.com",
     name: "Markie Cloud",
     isDefault: true,
     signIn: { email: true, google: true },
@@ -490,7 +490,7 @@ describe("Settings — sign-up on a server", () => {
     version: null,
   });
   const CLOUD = {
-    origin: "https://api-production-602f.up.railway.app",
+    origin: "https://api.markiedocs.com",
     name: "Markie Cloud",
     isDefault: true,
     signIn: { email: true, google: true, signup: "open" as const },

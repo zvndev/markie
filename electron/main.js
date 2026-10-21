@@ -34,7 +34,7 @@ const { fetchSharedDoc } = require("./share-open");
 const { createServerStore } = require("./servers");
 const { serverRequest } = require("./server-request");
 const { withSafeDocExtension } = require("./doc-names");
-const { classifyDeepLink, cloudDocId, sourceHint } = require("./deep-links");
+const { classifyDeepLink, cloudDocId, isAuthDeepLink, sourceHint } = require("./deep-links");
 const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
 const { createDocumentFileService, findNativeDocumentLaunchFile, registerDocumentFileIpc, DOCUMENT_EXTENSIONS } = require("./document-files.cjs");
@@ -340,7 +340,9 @@ function queueNativeDocumentOpen(filePath, options = {}) {
 // the window so the user lands back in Markie focused.
 function deliverDeepLink(link) {
   if (isDesktopPreview) return;
-  if (!privateRelease.authorized()) return;
+  // A locked private build still takes the Google sign-in hand-back, or the
+  // sign-in that unlocks it could never finish. Nothing else gets through.
+  if (!privateRelease.authorized() && !isAuthDeepLink(link)) return;
   const kind = classifyDeepLink(link);
   if (kind === "ignore") return;
   // A public link: fetch it with the token the link carries and open a copy

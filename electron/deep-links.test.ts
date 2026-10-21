@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyDeepLink, cloudDocId, sourceHint } from "./deep-links.js";
+import { classifyDeepLink, cloudDocId, isAuthDeepLink, sourceHint } from "./deep-links.js";
 
 describe("markie:// deep link routing", () => {
   it("sends a shared document invite to the account-credentialed opener", () => {
@@ -83,5 +83,17 @@ describe("reading a shared document link", () => {
       "https://markiedocs.com"
     );
     expect(sourceHint("markie://doc?id=x")).toBeNull();
+  });
+});
+
+describe("the one link a locked private build accepts", () => {
+  it("is the Google sign-in hand-back and nothing else", () => {
+    expect(isAuthDeepLink("markie://auth?token=t&state=s&iss=https://api.markiedocs.com")).toBe(true);
+    expect(isAuthDeepLink("markie://doc?id=abc")).toBe(false);
+    expect(isAuthDeepLink("markie://open?token=t")).toBe(false);
+    expect(isAuthDeepLink("markie://authx?token=t")).toBe(false);
+    expect(isAuthDeepLink("markie://settings")).toBe(false);
+    expect(isAuthDeepLink("https://auth?token=t")).toBe(false);
+    expect(isAuthDeepLink(42)).toBe(false);
   });
 });

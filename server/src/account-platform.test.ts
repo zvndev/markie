@@ -290,3 +290,26 @@ test("actual Better Auth CREATE rejects Google provider insertion when session i
     assert.ok(db.prepare("SELECT 1 FROM account_google_link_writes WHERE account_id=?").get(assignedId), "Failed authorization marker is retained rather than turning into an unmarked signup");
   } finally { clearTimeout(pauseTimeout); resume(); hooks.before = original; }
 });
+
+test("an address no verified account owns signs up or reclaims through the identity sign-in routes", async () => {
+  const signIn = async (email: string) => {
+    const start = await request("/api/account/identities/sign-in/start", undefined, { email });
+    assert.equal(start.status, 200);
+    const flow = await start.json() as { challengeId: string; flowId: string };
+    assert.deepEqual(Object.keys(flow).sort(), ["challengeId", "expiresInSeconds", "flowId"]);
+    assert.equal(sent.at(-1)!.email, email);
+    return request("/api/account/identities/sign-in/verify", undefined, { challengeId: flow.challengeId, flowId: flow.flowId, code: sent.at(-1)!.code });
+  };
+  const fresh = await signIn("first-code-signin@example.test");
+  assert.equal(fresh.status, 200);
+  const me = (await (await request("/api/me", (await fresh.json()).token)).json()).user;
+  assert.equal(me.email, "first-code-signin@example.test");
+  const again = await signIn("first-code-signin@example.test");
+  assert.equal((await (await request("/api/me", (await again.json()).token)).json()).user.id, me.id);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM "user" WHERE email=?').get("first-code-signin@example.test").n, 1);
+  // An unproven password signup is reclaimed by the mailbox owner, as on the legacy route.
+  assert.equal((await request("/api/auth/sign-up/email", undefined, { email: "squatted@example.test", password: "squatter-password-1", name: "Squatter" })).status, 200);
+  const reclaimed = await signIn("squatted@example.test");
+  assert.equal(reclaimed.status, 200);
+  assert.equal((await request("/api/auth/sign-in/email", undefined, { email: "squatted@example.test", password: "squatter-password-1" })).status, 401);
+});

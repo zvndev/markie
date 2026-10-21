@@ -284,7 +284,7 @@ test("backfill skips verified accounts whose primary collides with another and s
     const store = createIdentityStore(db, { secret, ensureIdentityArea: (uid) => { areas.push(uid); } });
     assert.deepEqual(store.listIdentities("solo").map((row) => row.email), ["solo@example.test"]);
     assert.deepEqual(areas, ["solo"]);
-    assert.equal(db.prepare("SELECT count(*) AS n FROM account_emails WHERE user_id LIKE 'twin-%'").get().n, 0);
+    assert.equal((db.prepare("SELECT count(*) AS n FROM account_emails WHERE user_id LIKE 'twin-%'").get() as { n: number }).n, 0);
     assert.equal(resolveVerifiedUserForEmail(db, "twin@example.test"), null);
     assert.throws(() => store.listIdentities("twin-a"), /identity-conflict/);
     assert.deepEqual(createIdentityStore(db, { secret }).backfillVerifiedPrimaries(), { skipped: 2 });

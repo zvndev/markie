@@ -306,7 +306,7 @@ test("an address no verified account owns signs up or reclaims through the ident
   assert.equal(me.email, "first-code-signin@example.test");
   const again = await signIn("first-code-signin@example.test");
   assert.equal((await (await request("/api/me", (await again.json()).token)).json()).user.id, me.id);
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM "user" WHERE email=?').get("first-code-signin@example.test").n, 1);
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM "user" WHERE email=?').get("first-code-signin@example.test") as { n: number }).n, 1);
   // An unproven password signup is reclaimed by the mailbox owner, as on the legacy route.
   assert.equal((await request("/api/auth/sign-up/email", undefined, { email: "squatted@example.test", password: "squatter-password-1", name: "Squatter" })).status, 200);
   const reclaimed = await signIn("squatted@example.test");

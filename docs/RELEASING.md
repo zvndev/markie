@@ -776,6 +776,10 @@ Each step below is a human checkpoint. Do them in order and check each one befor
 1. **Railway custom domain.** On project `markie`, environment `production`, service `api`, add the
    custom domain `api.markiedocs.com`. Railway shows a CNAME target, and possibly a TXT record to
    prove ownership. Note both.
+   `railway domain <name> --json` prints only the CNAME. The ownership TXT record
+   (`_railway-verify.<label>`) shows up only in the dashboard or the GraphQL `customDomain.status`
+   (`verificationDnsHost`, `verificationToken`). Without it the certificate stays at
+   `VALIDATING_OWNERSHIP` indefinitely.
 2. **Vercel DNS.** markiedocs.com's DNS is on Vercel. Add a `CNAME` record `api` pointing at the
    Railway target from step 1, plus the TXT record if Railway asked for one. Wait until Railway shows
    the domain as active with a certificate, then check

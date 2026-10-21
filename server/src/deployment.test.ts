@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { resolveDeployment, officialFlag, API_VERSION, SERVER_VERSION } from "./deployment.ts";
+import { resolveDeployment, officialFlag, API_VERSION, SERVER_VERSION, CLOUD_API_ORIGIN, CLOUD_API_LEGACY_ORIGINS, CLOUD_API_ORIGINS } from "./deployment.ts";
 import { applicationOrigins } from "./application-origins.ts";
 import { feedForPlatform, primaryDownloadPlatform } from "./downloads.ts";
 import { mailMode, emailSignInAvailable, sendEmail } from "./email.ts";
@@ -81,7 +81,8 @@ test("a self-hosted server trusts the desktop app and itself, not the official w
   assert.ok(!self.includes("https://markiedocs.com"));
   assert.ok(!self.includes("https://www.markiedocs.com"));
   const official = applicationOrigins({ NODE_ENV: "production", BETTER_AUTH_URL: RAILWAY });
-  assert.deepEqual(official, ["app://markie", "https://markiedocs.com", "https://www.markiedocs.com"]);
+  // Plus Cloud's other name, which is the same server (official.ts cloudApiAliases).
+  assert.deepEqual(official, ["app://markie", "https://markiedocs.com", "https://www.markiedocs.com", "https://api.markiedocs.com"]);
 });
 
 test("mail modes: Resend when keyed, the log only by declaration, and never silently in production", () => {
@@ -126,4 +127,46 @@ test("the storage quota is off unless set, and refuses anything but whole bytes"
   for (const bad of ["0", "-1", "1.5", "10GB", "1e9", "99999999999999999999"]) {
     assert.throws(() => parseStorageQuota({ MARKIE_STORAGE_QUOTA_BYTES: bad }), /positive whole number/, bad);
   }
+});
+
+test("Markie Cloud's API origins are the ones the desktop app knows", () => {
+  const desktop = JSON.parse(readFileSync(new URL("../../electron/cloud-origin.json", import.meta.url), "utf8")) as {
+    origin: string;
+    legacyAliases: string[];
+  };
+  assert.equal(CLOUD_API_ORIGIN, desktop.origin);
+  assert.deepEqual([...CLOUD_API_LEGACY_ORIGINS], desktop.legacyAliases);
+  assert.deepEqual([...CLOUD_API_ORIGINS], [desktop.origin, ...desktop.legacyAliases]);
+});
+
+test("the official deployment answers on both of Cloud's names, whichever BETTER_AUTH_URL names", () => {
+  const warnings: string[] = [];
+  const moved = resolveDeployment({ NODE_ENV: "production", BETTER_AUTH_URL: "https://api.markiedocs.com" }, (m) => warnings.push(m));
+  assert.equal(moved.official, true);
+  assert.equal(moved.origin, "https://api.markiedocs.com");
+  assert.deepEqual(moved.apiAliases, [RAILWAY]);
+  assert.equal(moved.siteUrl, "https://markiedocs.com");
+  assert.deepEqual(warnings, []);
+
+  assert.deepEqual(resolveDeployment({ NODE_ENV: "production", BETTER_AUTH_URL: RAILWAY }).apiAliases, ["https://api.markiedocs.com"]);
+  // A trailing slash on the variable is still the same origin.
+  assert.deepEqual(resolveDeployment({ NODE_ENV: "production", BETTER_AUTH_URL: "https://api.markiedocs.com/" }).apiAliases, [RAILWAY]);
+});
+
+test("no other server gets Cloud's other name", () => {
+  assert.deepEqual(resolveDeployment({ MARKIE_OFFICIAL: "0", BETTER_AUTH_URL: "https://docs.example.com" }).apiAliases, []);
+  // A self-hosted server that claims Cloud's address is still not Cloud.
+  assert.deepEqual(resolveDeployment({ MARKIE_OFFICIAL: "0", BETTER_AUTH_URL: "https://api.markiedocs.com" }).apiAliases, []);
+  assert.deepEqual(resolveDeployment({}).apiAliases, []);
+  assert.deepEqual(resolveDeployment({ NODE_ENV: "production", BETTER_AUTH_URL: "https://markie.example.org" }, () => {}).apiAliases, []);
+});
+
+test("the official deployment's browser origins include both of Cloud's names, and a self-hosted server's do not", () => {
+  const moved = applicationOrigins({ NODE_ENV: "production", BETTER_AUTH_URL: "https://api.markiedocs.com" });
+  assert.ok(moved.includes(RAILWAY));
+  const before = applicationOrigins({ NODE_ENV: "production", BETTER_AUTH_URL: RAILWAY });
+  assert.ok(before.includes("https://api.markiedocs.com"));
+  const selfHosted = applicationOrigins({ NODE_ENV: "production", MARKIE_OFFICIAL: "0", BETTER_AUTH_URL: "https://docs.example.com" });
+  assert.ok(!selfHosted.includes(RAILWAY));
+  assert.ok(!selfHosted.includes("https://api.markiedocs.com"));
 });

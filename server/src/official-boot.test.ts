@@ -164,3 +164,20 @@ test("Markie Cloud keeps open sign-up and has no sign-up admin routes", async ()
   const post = await req("/api/admin/signup-allowlist", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   assert.equal(post.status, 404);
 });
+
+// Before BETTER_AUTH_URL moves, api.markiedocs.com already points here (DNS
+// and the Railway custom domain go first), and a desktop build that knows the
+// new name is calling it. The API answers there; browser pages go to the
+// Railway name, where the Google callback lands today.
+test("before the move, the new name serves the API and sends browser pages to the Railway name", async () => {
+  const at = (path: string) =>
+    app.fetch(new Request(`http://api.markiedocs.com${path}`, { headers: { host: "api.markiedocs.com", origin: "app://markie" } }));
+  const info = await at("/api/server-info");
+  assert.equal(info.status, 200);
+  assert.equal(((await info.json()) as { origin: string }).origin, RAILWAY);
+  assert.equal((await at("/api/me")).status, 200);
+  const start = await at("/auth/google-start?state=0123456789abcdef");
+  assert.equal(start.status, 308);
+  assert.equal(start.headers.get("location"), `${RAILWAY}/auth/google-start?state=0123456789abcdef`);
+  assert.deepEqual(start.headers.getSetCookie(), []);
+});

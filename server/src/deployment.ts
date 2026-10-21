@@ -12,15 +12,21 @@
 // a warning at boot, never the weaker one.
 import { readFileSync } from "node:fs";
 import { downloadManifest, markieSiteUrl } from "./downloads.ts";
-import { officialFlag } from "./official.ts";
+import { CLOUD_API_ORIGIN, CLOUD_API_LEGACY_ORIGINS, CLOUD_API_ORIGINS, cloudApiAliases, officialFlag } from "./official.ts";
 
-export { officialFlag };
+export { CLOUD_API_ORIGIN, CLOUD_API_LEGACY_ORIGINS, CLOUD_API_ORIGINS, officialFlag };
 
 export interface Deployment {
   /** The official Markie Cloud: release-manifest guards and download routes. */
   official: boolean;
   /** BETTER_AUTH_URL's origin: where this server's API, auth and pages live. */
   origin: string;
+  /**
+   * Other origins the same API answers on: Markie Cloud's other name while
+   * it moves hosts, and nothing on any other server. Browser pages that set
+   * cookies are sent from these to `origin` (canonical-host.ts).
+   */
+  apiAliases: string[];
   /** Base for links this server hands out: share pages, invite emails, `src=`. */
   siteUrl: string;
   /** Where "Get Markie" points. Always the official site on a self-hosted server. */
@@ -36,10 +42,9 @@ const stripTrailingSlash = (value: string) => value.replace(/\/+$/, "");
 // Hosts the official deployment is reached on. Only used to decide whether an
 // unset MARKIE_OFFICIAL deserves a warning; it never turns a server official.
 const OFFICIAL_HOSTS = new Set([
-  "api-production-602f.up.railway.app",
+  ...CLOUD_API_ORIGINS.map((origin) => new URL(origin).host),
   "markiedocs.com",
   "www.markiedocs.com",
-  "api.markiedocs.com",
 ]);
 
 export function resolveDeployment(env: Env = process.env, warn: (message: string) => void = console.warn): Deployment {
@@ -73,6 +78,7 @@ export function resolveDeployment(env: Env = process.env, warn: (message: string
   return {
     official,
     origin,
+    apiAliases: cloudApiAliases(env),
     siteUrl,
     downloadSiteUrl: official ? siteUrl : canonical,
     name: name.slice(0, 80),

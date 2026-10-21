@@ -1,4 +1,4 @@
-import { officialFlag } from "./official.ts";
+import { cloudApiAliases, officialFlag } from "./official.ts";
 
 // The dev renderer (`next dev` / Vite on :3000). Trusted only outside
 // production: a credentialed CORS grant to localhost in production hands any
@@ -30,6 +30,11 @@ export function applicationOrigins(
   // requests need no CORS grant, but naming it keeps better-auth's origin
   // check and the CORS answer reading from one list.
   if (!official && env.BETTER_AUTH_URL) origins.add(new URL(env.BETTER_AUTH_URL).origin);
+  // Markie Cloud answers on two names while it moves hosts. better-auth
+  // trusts its own BETTER_AUTH_URL already; the other name is the same
+  // server, so a page it served before the move can still finish what it
+  // started.
+  for (const alias of cloudApiAliases(env)) origins.add(alias);
   const additional = env.MARKIE_WEB_ORIGINS?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
   if (additional.length > 16) throw new Error("Too many configured browser origins.");
   for (const value of additional) {

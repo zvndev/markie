@@ -15,6 +15,7 @@ import { docView } from "./doc-view.ts";
 import { attachCollab } from "./collab.ts";
 import { desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
 import { applicationOrigins } from "./application-origins.ts";
+import { canonicalHostRedirect } from "./canonical-host.ts";
 import { openDatabase } from "./db.ts";
 import { createDocumentPlatform } from "./document-platform.ts";
 import { createSqliteDocumentPlatformStore } from "./document-platform-store.ts";
@@ -120,6 +121,16 @@ app.use("/api/*", async (c, next) => {
 // on the official deployment, a self-host with no BETTER_AUTH_URL) stops here
 // with the reason, not on the first request that happens to read it.
 const DEPLOYMENT = deployment();
+
+// Markie Cloud's browser pages run on one name only, BETTER_AUTH_URL's, so a
+// cookie set on the way in is there on the way back (canonical-host.ts).
+// 308 keeps the method; no-store because which name is canonical flips
+// during the move, and a cached redirect would then point the wrong way.
+app.use("*", async (c, next) => {
+  const target = canonicalHostRedirect(c.req.raw, DEPLOYMENT);
+  if (!target) return next();
+  return new Response(null, { status: 308, headers: { location: target, "cache-control": "no-store" } });
+});
 const EMAIL_SIGN_IN = emailSignInAvailable();
 const SIGNUP = signupMode();
 adminEmail();

@@ -104,3 +104,50 @@ test("a new Google user is created, and signs in again to the same account", asy
 });
 
 test.after(() => { console.log = originalLog; globalThis.fetch = originalFetch; });
+
+test("an email account links Google from Settings, then that Google account signs in to it", async () => {
+  const email = "link-owner@example.org", googleAddress = "link-owner.personal@gmail.example";
+  const json = { "Content-Type": "application/json" };
+  assert.equal((await req("/api/auth/sign-up/email", { method: "POST", headers: json, body: JSON.stringify({ name: "Linker", email, password: "password-123" }) })).status, 200);
+  markVerified(email);
+  const signed = await req("/api/auth/sign-in/email", { method: "POST", headers: json, body: JSON.stringify({ email, password: "password-123" }) });
+  const token = signed.headers.get("set-auth-token")!; assert.ok(token);
+  const authed = { ...json, Authorization: `Bearer ${token}` };
+  const uid = ((await (await req("/api/me", { headers: authed })).json()) as { user: { id: string } }).user.id;
+  // Step-up: the code mailed to the primary address.
+  const codes: string[] = [];
+  console.log = (...args: unknown[]) => { const match = args.map(String).join(" ").match(/code is (\d{6})/); if (match) codes.push(match[1]); };
+  const stepUp = await (await req("/api/account/identities/step-up/start", { method: "POST", headers: authed, body: JSON.stringify({ scope: "google-link" }) })).json() as { challengeId: string };
+  const { proofId } = await (await req("/api/account/identities/step-up/verify", { method: "POST", headers: authed, body: JSON.stringify({ challengeId: stepUp.challengeId, code: codes.at(-1) }) })).json() as { proofId: string };
+  console.log = () => {};
+  const started = await req("/api/account/identities/google/start", { method: "POST", headers: authed, body: JSON.stringify({ proofId }) });
+  assert.equal(started.status, 200);
+  const { intentId, browserUrl } = await started.json() as { intentId: string; browserUrl: string };
+  assert.equal(new URL(browserUrl).origin, ORIGIN);
+  // The browser page posts its fragment back from the server's own origin.
+  const secret = new URL(browserUrl).hash.slice(1).split(".")[1];
+  const browser = await req("/api/account/identities/google/browser-start", { method: "POST", headers: json, body: JSON.stringify({ intentId, secret }) }, ORIGIN);
+  assert.equal(browser.status, 200);
+  const consent = new URL(((await browser.json()) as { url: string }).url);
+  assert.equal(`${consent.origin}${consent.pathname}`, "https://accounts.google.com/o/oauth2/v2/auth");
+  assert.equal(consent.searchParams.get("redirect_uri"), `${ORIGIN}/api/auth/callback/google`);
+  const cookies = browser.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  googleEmail = googleAddress;
+  const callback = await req(`/api/auth/callback/google?code=link-code&state=${encodeURIComponent(consent.searchParams.get("state")!)}`, { headers: { Cookie: cookies } }, ORIGIN);
+  assert.equal(callback.status, 302, await callback.clone().text());
+  const landed = new URL(callback.headers.get("location")!, ORIGIN);
+  assert.equal(landed.pathname, "/account/google-link/complete", landed.href);
+  const complete = await req(`${landed.pathname}${landed.search}`, { headers: { Cookie: cookies } }, ORIGIN);
+  assert.equal(complete.status, 200, await complete.clone().text());
+  assert.match(await complete.text(), /Google account linked/);
+  const status = await (await req(`/api/account/identities/google/${intentId}`, { headers: authed })).json() as { status: string };
+  assert.equal(status.status, "complete");
+  const listed = await (await req("/api/account/identities", { headers: authed })).json() as { providers: { providerId: string }[] };
+  assert.ok(listed.providers.some((row) => row.providerId === "google"));
+  // The linked Google account now signs in to the same account, and makes no other.
+  const viaGoogle = await googleSignIn(googleAddress);
+  assert.equal(viaGoogle.searchParams.get("error"), null, viaGoogle.href);
+  assert.equal(users(googleAddress), 0);
+  const owner = db.prepare(`SELECT userId FROM account WHERE providerId = 'google' AND accountId = ?`).get(`google-${googleAddress}`) as { userId: string };
+  assert.equal(owner.userId, uid);
+});

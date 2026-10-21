@@ -618,6 +618,8 @@ export interface DefaultAppFormat {
   id: string;
   label: string;
   extensions: string[];
+  /** A caveat shown under the extensions, such as when files open read-only. */
+  note?: string;
   isDefault: boolean;
 }
 

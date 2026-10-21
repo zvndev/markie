@@ -79,13 +79,16 @@ module.exports = {
     // for the formats Settings > Files offers (electron/default-apps.js). The
     // extension-only fileAssociations below cannot express a UTI. Everything
     // except Markdown and Darkmown is claimed at Alternate rank: installing
-    // Markie must never quietly take .txt or .json away from the user's editor;
+    // Markie must never quietly take .txt or .docx away from the user's editor;
     // only an explicit choice in Settings does that.
     extendInfo: {
       CFBundleDocumentTypes: [
         { CFBundleTypeName: "Markdown document", CFBundleTypeRole: "Editor", LSHandlerRank: "Default", LSItemContentTypes: ["net.daringfireball.markdown"] },
         { CFBundleTypeName: "Darkmown document", CFBundleTypeRole: "Editor", LSHandlerRank: "Owner", LSItemContentTypes: ["com.zvn.markie.darkmown"] },
-        { CFBundleTypeName: "Plain text", CFBundleTypeRole: "Editor", LSHandlerRank: "Alternate", LSItemContentTypes: ["public.plain-text", "com.apple.log"] },
+        { CFBundleTypeName: "Plain text", CFBundleTypeRole: "Editor", LSHandlerRank: "Alternate", LSItemContentTypes: ["public.plain-text"] },
+        { CFBundleTypeName: "Word document", CFBundleTypeRole: "Editor", LSHandlerRank: "Alternate", LSItemContentTypes: ["org.openxmlformats.wordprocessingml.document"] },
+        { CFBundleTypeName: "Rich Text document", CFBundleTypeRole: "Editor", LSHandlerRank: "Alternate", LSItemContentTypes: ["public.rtf"] },
+        { CFBundleTypeName: "OpenDocument text", CFBundleTypeRole: "Editor", LSHandlerRank: "Alternate", LSItemContentTypes: ["org.oasis-open.opendocument.text"] },
         { CFBundleTypeName: "Structured text", CFBundleTypeRole: "Editor", LSHandlerRank: "Alternate", LSItemContentTypes: ["public.comma-separated-values-text", "public.json", "public.yaml", "public.xml"] },
       ],
       UTImportedTypeDeclarations: [

@@ -1,29 +1,27 @@
 // Which file types Markie offers to become the default app for, and the
 // Swift that asks LaunchServices about them.
 //
-// Only formats Markie edits completely are offered. DOCX, RTF, ODT and legacy
-// DOC still lock some documents read-only, and being the app a double-click
-// lands in is a promise that the file will just work, so they are listed as
-// not yet available rather than left out without explanation.
+// Offered: the document formats people actually double-click. Structured data
+// (CSV, JSON, YAML, XML) and logs are not offered: Markie opens them from
+// Open… or Open With, but taking them over from a spreadsheet or code editor
+// is not what Markie is for. Word, RTF and OpenDocument carry a note, because
+// a file using a feature Markie cannot save yet opens read-only.
 const MARKIE_BUNDLE_ID = "com.zvn.markie";
 
 const DEFAULT_APP_FORMATS = Object.freeze([
   { id: "markdown", label: "Markdown", extensions: [".md", ".markdown", ".mdx"], utis: ["net.daringfireball.markdown"] },
-  { id: "text", label: "Plain text", extensions: [".txt", ".text", ".log"], utis: ["public.plain-text", "com.apple.log"] },
+  { id: "text", label: "Plain text", extensions: [".txt", ".text"], utis: ["public.plain-text"] },
   { id: "darkmown", label: "Darkmown", extensions: [".wd"], utis: ["com.zvn.markie.darkmown"] },
-  { id: "csv", label: "CSV", extensions: [".csv"], utis: ["public.comma-separated-values-text"] },
-  { id: "json", label: "JSON", extensions: [".json"], utis: ["public.json"] },
-  { id: "yaml", label: "YAML", extensions: [".yaml", ".yml"], utis: ["public.yaml"] },
-  { id: "xml", label: "XML", extensions: [".xml"], utis: ["public.xml"] },
+  { id: "docx", label: "Word", extensions: [".docx"], utis: ["org.openxmlformats.wordprocessingml.document"], note: "Files using features Markie can't save yet open read-only." },
+  { id: "rtf", label: "Rich Text", extensions: [".rtf"], utis: ["public.rtf"], note: "Files with tables or images open read-only." },
+  { id: "odt", label: "OpenDocument", extensions: [".odt"], utis: ["org.oasis-open.opendocument.text"], note: "Files using features Markie can't save yet open read-only." },
 ].map((format) => Object.freeze(format)));
 
 // Shown, disabled, with the reason. Kept here so the UI and the packaging
 // declarations cannot disagree about what is and is not offered.
-const PENDING_DEFAULT_FORMATS = Object.freeze([
-  { id: "docx", label: "Word", extensions: [".docx"], reason: "Some Word features still open read-only." },
-  { id: "rtf", label: "Rich Text", extensions: [".rtf"], reason: "Tables and images in RTF still open read-only." },
-  { id: "odt", label: "OpenDocument", extensions: [".odt"], reason: "Some OpenDocument features still open read-only." },
-].map((format) => Object.freeze(format)));
+// Each entry: { id, label, extensions, reason }. Empty while every format
+// Markie can open is offered above.
+const PENDING_DEFAULT_FORMATS = Object.freeze([]);
 
 const UTI_RE = /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i;
 
@@ -69,6 +67,7 @@ function parseStatus(stdout, bundleId = MARKIE_BUNDLE_ID) {
     id: format.id,
     label: format.label,
     extensions: format.extensions,
+    ...(format.note ? { note: format.note } : {}),
     isDefault: format.utis.every((uti) => handlers.get(uti) === bundleId),
   }));
 }

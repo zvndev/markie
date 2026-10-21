@@ -6,8 +6,8 @@ import { DocumentFormatMark } from "./document-format-mark";
 export const DEFAULT_APPS_CHANGED = "markie:default-apps-changed";
 
 // Settings > Files: which file types a double-click in Finder opens in Markie.
-// Only formats Markie edits completely are offered; the rest are listed with
-// the reason they are not offered yet, so their absence is not a mystery.
+// Formats with a caveat show it under the row. Anything listed as pending is
+// shown with the reason it is not offered yet, so its absence is not a mystery.
 export function DefaultAppsSection() {
   const api = getElectronAPI();
   const [status, setStatus] = useState<DefaultAppsStatus | null>(null);
@@ -77,6 +77,7 @@ export function DefaultAppsSection() {
             <span className="min-w-0 flex-1">
               <span className="block text-[12.5px] text-foreground">{format.label}</span>
               <span className="block truncate font-mono text-[10.5px] text-muted">{format.extensions.join("  ")}</span>
+              {format.note && <span className="block text-[11px] text-muted">{format.note}</span>}
             </span>
             {format.isDefault ? (
               <span className="inline-flex items-center gap-1 text-[11.5px] text-[var(--status-green)]">

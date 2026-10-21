@@ -318,8 +318,9 @@ describe("Settings — files", () => {
       { id: "markdown", label: "Markdown", extensions: [".md"], isDefault: markdownDefault },
       { id: "json", label: "JSON", extensions: [".json"], isDefault: false },
       { id: "yaml", label: "YAML", extensions: [".yaml", ".yml"], isDefault: false },
+      { id: "docx", label: "Word", extensions: [".docx"], note: "Files using features Markie can't save yet open read-only.", isDefault: false },
     ],
-    pending: [{ id: "docx", label: "Word", extensions: [".docx"], reason: "Some Word features still open read-only." }],
+    pending: [{ id: "pages", label: "Pages", extensions: [".pages"], reason: "Pages files cannot be read yet." }],
   });
 
   it("offers every fully supported type and explains what is not offered yet", async () => {
@@ -327,7 +328,8 @@ describe("Settings — files", () => {
     render(<Settings onClose={() => {}} initialSection="files" />);
     expect(await screen.findByRole("button", { name: "Open JSON files in Markie" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open Markdown files in Markie" })).not.toBeInTheDocument();
-    expect(screen.getByText(/Some Word features still open read-only/)).toBeInTheDocument();
+    expect(screen.getByText("Files using features Markie can't save yet open read-only.")).toBeInTheDocument();
+    expect(screen.getByText(/Pages files cannot be read yet/)).toBeInTheDocument();
   });
 
   it("claims one type, or every remaining type at once, and refreshes", async () => {
@@ -342,7 +344,7 @@ describe("Settings — files", () => {
     expect(await screen.findByText("JSON now open in Markie.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Use Markie for all" }));
-    expect(setDefaultApps).toHaveBeenLastCalledWith(["markdown", "json", "yaml"]);
+    expect(setDefaultApps).toHaveBeenLastCalledWith(["markdown", "json", "yaml", "docx"]);
     expect(defaultAppsStatus).toHaveBeenCalledTimes(3);
   });
 

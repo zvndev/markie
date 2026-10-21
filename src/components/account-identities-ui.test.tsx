@@ -49,4 +49,16 @@ describe("linked identities and area controls", () => {
     expect(request.mock.calls.find(([url]) => String(url).endsWith("step-up/start"))?.[1]?.body).toBe(JSON.stringify({ scope: "google-remove" }));
     expect(request.mock.calls.find(([, init]) => init?.method === "DELETE")?.[1]?.body).toBe(JSON.stringify({ proofId: "proof" }));
   });
+  it("on a server without linked sign-ins says so plainly and offers no link actions", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 404 })));
+    render(<LinkedIdentities accountId="user-a" />); fireEvent.click(screen.getByRole("button", { name: "Manage linked sign-ins" }));
+    const message = await screen.findByText(/This server does not support linked sign-ins or cloud areas yet/);
+    expect(message).toHaveAttribute("role", "status"); expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Link another email" })).toBeNull(); expect(screen.queryByRole("button", { name: /Google/ })).toBeNull();
+  });
+  it("keeps the link actions and an alert when a supported server fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "identity-unavailable" }, { status: 503 })));
+    render(<LinkedIdentities accountId="user-a" />); fireEvent.click(screen.getByRole("button", { name: "Manage linked sign-ins" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Link another email" })).toBeDisabled();
+  });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { AccountIdentitiesClient, accountScopeKey, subscribeAccountScope, type AccountIdentity, type AccountProvider } from "@/lib/account-identities";
+import { AccountIdentitiesClient, AccountIdentityError, accountScopeKey, subscribeAccountScope, type AccountIdentity, type AccountProvider } from "@/lib/account-identities";
 import { getElectronAPI } from "@/lib/electron";
 import { authStore } from "@/lib/auth-store";
 
@@ -22,6 +22,8 @@ function IdentityPanel() {
   const [removeGoogle, setRemoveGoogle] = useState<AccountProvider | null>(null);
   const [email, setEmail] = useState(""), [code, setCode] = useState("");
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null), [notice, setNotice] = useState<string | null>(null);
+  // A server without the feature answers 404. Say so once and offer nothing that cannot work.
+  const [unsupported, setUnsupported] = useState(false);
   const request = useRef<AbortController | null>(null), generation = useRef(0);
   const googleHandoff = useRef<string | null>(null);
   const visible = listing?.scope === scope ? listing.identities : [];
@@ -29,8 +31,8 @@ function IdentityPanel() {
   useEffect(() => {
     const controller = new AbortController(), ticket = ++generation.current; request.current?.abort(); request.current = controller;
     googleHandoff.current = null;
-    setStep("idle"); setGoogle(false); setGoogleAvailable(false); setIntent(""); setProof(""); setChallenge(""); setCode(""); setEmail(""); setRemove(null); setRemoveGoogle(null); setNotice(null); setError(null); setBusy(false);
-    if (scope) { setBusy(true); void new AccountIdentitiesClient().identities(controller.signal).then((data) => { if (!controller.signal.aborted && ticket === generation.current) { setListing({ scope, identities: data.identities, providers: data.providers }); setGoogleAvailable(data.googleAvailable); } }).catch((failure: unknown) => { if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : "Linked sign-ins could not be loaded."); }).finally(() => { if (!controller.signal.aborted) setBusy(false); }); }
+    setStep("idle"); setGoogle(false); setGoogleAvailable(false); setIntent(""); setProof(""); setChallenge(""); setCode(""); setEmail(""); setRemove(null); setRemoveGoogle(null); setNotice(null); setError(null); setBusy(false); setUnsupported(false);
+    if (scope) { setBusy(true); void new AccountIdentitiesClient().identities(controller.signal).then((data) => { if (!controller.signal.aborted && ticket === generation.current) { setListing({ scope, identities: data.identities, providers: data.providers }); setGoogleAvailable(data.googleAvailable); } }).catch((failure: unknown) => { if (!controller.signal.aborted) { setUnsupported(failure instanceof AccountIdentityError && failure.code === "unsupported"); setError(failure instanceof Error ? failure.message : "Linked sign-ins could not be loaded."); } }).finally(() => { if (!controller.signal.aborted) setBusy(false); }); }
     return () => controller.abort();
   }, [scope]);
   useEffect(() => {
@@ -77,7 +79,7 @@ function IdentityPanel() {
       {visible.length ? <ul className="space-y-1">{visible.map((identity) => <li key={identity.id} className="flex flex-wrap items-center justify-between gap-2"><span className="break-all">{identity.email} · {identity.primary ? "Primary" : "Verified"}</span>{!identity.primary ? <button className={BUTTON} type="button" disabled={busy} onClick={() => begin(identity)} aria-label={`Unlink ${identity.email}`}>Unlink</button> : null}</li>)}</ul> : null}
       {providers.filter((provider) => provider.providerId === "google").map((provider, index) => <div key={provider.id} className="flex flex-wrap justify-between gap-2"><span>Google sign-in {index + 1}</span><button className={BUTTON} type="button" disabled={busy} onClick={() => begin(null, false, provider)} aria-label={`Unlink Google sign-in ${index + 1}`}>Unlink</button></div>)}
       {removeGoogle ? <p role="alert">Removing this Google sign-in signs out every active session, including this one. Documents and your primary account are kept. Confirm with the code sent to your primary email.</p> : null}
-      {step === "idle" ? <><button className={BUTTON} type="button" disabled={busy || !visible.length} onClick={() => begin(null)}>Link another email</button>{googleAvailable ? <button className={BUTTON} type="button" disabled={busy || !visible.length} onClick={() => begin(null, true)}>Link Google sign-in</button> : null}</> : null}
+      {step === "idle" && !unsupported ? <><button className={BUTTON} type="button" disabled={busy || !visible.length} onClick={() => begin(null)}>Link another email</button>{googleAvailable ? <button className={BUTTON} type="button" disabled={busy || !visible.length} onClick={() => begin(null, true)}>Link Google sign-in</button> : null}</> : null}
       {step === "primary-code" ? <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); confirmPrimary(); }}><label className="block">Primary email confirmation code<input className={FIELD} autoComplete="one-time-code" inputMode="numeric" value={code} onChange={(event) => setCode(event.target.value)} /></label><button className={BUTTON} disabled={busy || !code.trim()}>{removeGoogle ? "Confirm unlink and sign out" : remove ? "Confirm and unlink" : "Confirm primary email"}</button><button className={BUTTON} type="button" disabled={busy} onClick={() => begin(remove, google, removeGoogle)}>Send a new primary code</button></form> : null}
       {step === "email" ? <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void run(async (client, signal) => { const next = await client.startEmail(email, proof, signal); setChallenge(next.challengeId); setCode(""); setStep("email-code"); setNotice("Enter the code sent to the new email. It is not linked until verified."); }); }}><label className="block">New sign-in email<input className={FIELD} type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label><button className={BUTTON} disabled={busy || !email.trim()}>Send verification code</button></form> : null}
       {step === "email-code" ? <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void run(async (client, signal) => { const next = await client.verifyEmail(challenge, code.trim(), signal); setListing({ scope, identities: [...visible.filter((item) => item.id !== next.id), next], providers }); setStep("idle"); setCode(""); setProof(""); setEmail(""); setNotice("Verified email linked to this account. No accounts were merged."); }); }}><label className="block">New email verification code<input className={FIELD} autoComplete="one-time-code" inputMode="numeric" value={code} onChange={(event) => setCode(event.target.value)} /></label><button className={BUTTON} disabled={busy || !code.trim()}>Verify and link email</button></form> : null}
@@ -85,6 +87,6 @@ function IdentityPanel() {
       {step !== "idle" ? <button className={BUTTON} type="button" disabled={busy} onClick={() => { setStep("idle"); setCode(""); setProof(""); setChallenge(""); setRemove(null); setRemoveGoogle(null); googleHandoff.current = null; setIntent(""); setGoogle(false); setNotice(step === "google-wait" ? "Stopped checking. A browser flow already started may still complete before it expires." : null); }}>{step === "google-wait" ? "Stop checking Google link" : "Cancel linking change"}</button> : null}
     </>}
     {busy ? <p role="status" className="text-muted">Checking account…</p> : notice ? <p role="status" className="text-muted">{notice}</p> : null}
-    {error ? <p role="alert" className="text-[var(--status-red)]">{error}</p> : null}
+    {error ? unsupported ? <p role="status" className="text-muted">{error}</p> : <p role="alert" className="text-[var(--status-red)]">{error}</p> : null}
   </div>;
 }

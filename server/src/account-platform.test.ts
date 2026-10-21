@@ -313,3 +313,9 @@ test("an address no verified account owns signs up or reclaims through the ident
   assert.equal(reclaimed.status, 200);
   assert.equal((await request("/api/auth/sign-in/email", undefined, { email: "squatted@example.test", password: "squatter-password-1" })).status, 401);
 });
+
+test("the desktop bridge explains a Google sign-in that matches an existing account", async () => {
+  const page = await app.request("/auth/desktop-bridge?error=account_not_linked");
+  assert.equal(page.status, 401);
+  assert.match(await page.text(), /link Google in Settings/);
+});

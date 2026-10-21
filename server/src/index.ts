@@ -302,6 +302,15 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
         signupRefusalMessage(error)
       );
     }
+    // With linked sign-ins on, Google is never attached to an existing
+    // account just because the addresses match (accountLinking in auth.ts).
+    // Retrying cannot work, so say how to get there.
+    if (error === "account_not_linked") {
+      return page(
+        "Google isn't linked to this account yet",
+        "This email already has a Markie account. Sign in with an email code, then link Google in Settings, Account, Manage linked sign-ins."
+      );
+    }
     return page("Sign-in didn't complete", "Head back to Markie and try again.");
   }
   // Carry the app's nonce back so it can verify this deep link is the answer to

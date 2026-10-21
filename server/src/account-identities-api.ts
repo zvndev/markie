@@ -11,6 +11,16 @@ export interface IdentityApiOptions {
   revokeSession?: (sessionId: string, userId: string) => Promise<void> | void;
   onIdentityVerified?: (userId: string, email: string, identityId: string) => Promise<void> | void;
   onSessionsRevoked?: (sessionIds: string[]) => Promise<void> | void;
+  /**
+   * Ordinary email-code sign-in for an address no verified account owns: a new
+   * account, or an unproven one its mailbox owner is reclaiming. Without it the
+   * identity flow answers such an address with a challenge no code ever reaches.
+   * verify resolves null for a wrong code and throws IdentityError to refuse.
+   */
+  unclaimedSignIn?: {
+    send(email: string): Promise<void>;
+    verify(email: string, code: string): Promise<{ token: string } | null>;
+  };
 }
 async function payload(request: Request, keys: string[]): Promise<Record<string, unknown>> {
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get("content-type") ?? "")) throw new IdentityError("invalid-request", 400);
@@ -85,10 +95,22 @@ export function createAccountIdentitiesApi(options: IdentityApiOptions): Hono {
   app.post("/identities/sign-in/start", async (c) => {
     const body = await payload(c.req.raw, ["email"]), flowId = randomBytes(32).toString("base64url");
     const challenge = store.startAliasSignIn(field(body, "email", 254), flowId);
+    if (challenge.unclaimedEmail && options.unclaimedSignIn) {
+      try { await options.unclaimedSignIn.send(challenge.unclaimedEmail); }
+      catch { store.cancelChallenge(challenge.challengeId); throw new IdentityError("identity-unavailable", 503); }
+    }
+    // Same shape whether or not an account owns the address.
     return c.json({ ...await deliver(challenge, "alias-sign-in"), flowId });
   });
   app.post("/identities/sign-in/verify", async (c) => {
     const body = await payload(c.req.raw, ["challengeId", "flowId", "code"]);
+    const unclaimed = options.unclaimedSignIn && store.takeUnclaimedSignIn(field(body, "challengeId"), field(body, "flowId", 43));
+    if (unclaimed) {
+      const session = await options.unclaimedSignIn!.verify(unclaimed, field(body, "code", 6));
+      if (!session?.token) throw new IdentityError("invalid-verification", 400);
+      store.cancelChallenge(field(body, "challengeId"));
+      return c.json({ token: session.token });
+    }
     const identity = store.verifyAliasSignIn(field(body, "challengeId"), field(body, "code", 6), field(body, "flowId", 43));
     const session = await options.mintSession(identity.userId, { identityId: identity.identityId, email: identity.email });
     let finalized = false;

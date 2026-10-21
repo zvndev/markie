@@ -20,6 +20,8 @@ The rollout flag is not a down-migration. Preserve verified-address history, inv
 4. Sign out and use email-code sign-in with the added address. It must open that same account—not create another one.
 5. Ask a test collaborator to share a disposable Markdown document to the added address. Both new shares and pending invitations should arrive in this account. An existing viewer grant must not become editor merely because another address was verified.
 
+With the feature on, email-code sign-in for an address that no verified account owns still works as before: a new address creates an account (subject to `MARKIE_SIGNUP`), and an unproven account is reclaimed by its mailbox owner.
+
 An address belonging to a different existing account is refused, even if that other account is not verified. No accounts are merged. The primary address cannot be removed through these controls. An incorrect, expired, replayed, cross-session or replaced code must fail without changing the account.
 
 ## Google sign-ins

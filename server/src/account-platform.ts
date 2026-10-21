@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { auth } from "./auth.ts";
 import { configureAccountContext } from "./account-context.ts";
-import { createIdentityStore, resolveVerifiedUserForEmail, activeVerifiedEmails, type IdentityActor } from "./account-identities.ts";
+import { createIdentityStore, resolveVerifiedUserForEmail, activeVerifiedEmails, IdentityError, type IdentityActor } from "./account-identities.ts";
 import { createAccountIdentitiesApi } from "./account-identities-api.ts";
 import { createGoogleIdentityLinks } from "./google-identity-links.ts";
 import { createCloudAreasApi, type CloudAreasStore } from "./cloud-areas.ts";
@@ -52,6 +52,21 @@ export function createAccountPlatform(db: Database.Database, areas: CloudAreasSt
     },
     onIdentityVerified: (uid, email) => { if (resolveVerifiedUserForEmail(db, email) === uid) claimPendingInvitesForUser(uid); },
     onSessionsRevoked: disconnectSessions,
+    // An address with no verified account keeps today's email-code behavior:
+    // better-auth's own sign-in creates the account (subject to MARKIE_SIGNUP
+    // and the identity guards in its user hooks) or reclaims an unproven one.
+    unclaimedSignIn: {
+      send: async (email) => { await auth.api.sendVerificationOTP({ body: { email, type: "sign-in" } }); },
+      verify: async (email, otp) => {
+        try {
+          const result = await auth.api.signInEmailOTP({ body: { email, otp } });
+          return typeof result?.token === "string" && result.token ? { token: result.token } : null;
+        } catch (error) {
+          if ((error as { statusCode?: unknown } | null)?.statusCode === 403) throw new IdentityError("signup-refused", 403);
+          return null;
+        }
+      },
+    },
   }));
   app.route("/", createCloudAreasApi({
     store: areas,

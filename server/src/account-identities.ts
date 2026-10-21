@@ -4,7 +4,7 @@ import type Database from "better-sqlite3";
 export interface IdentityActor { userId: string; email: string; emailVerified: boolean; sessionId: string }
 export type IdentityScope = "email-add" | "email-remove" | "google-link" | "google-remove";
 export interface AccountIdentity { id: string; email: string; primary: boolean; verifiedAt: number }
-export interface IdentityDelivery { challengeId: string; expiresInSeconds: number; email?: string; code?: string }
+export interface IdentityDelivery { challengeId: string; expiresInSeconds: number; email?: string; code?: string; unclaimedEmail?: string }
 export class IdentityError extends Error {
   code: string; status: 400 | 401 | 403 | 409 | 429 | 503;
   constructor(code: string, status: IdentityError["status"]) { super(code); this.code = code; this.status = status; }
@@ -272,7 +272,21 @@ export function createIdentityStore(db: Database.Database, options: IdentityStor
         const uid = verifiedUserForEmail(email!);
         if (uid) primary(uid); // Newly verified primary after initial backfill.
         const delivery = issue(uid, flowId, "alias-sign-in", email!);
-        return uid ? delivery : { challengeId: delivery.challengeId, expiresInSeconds: 300 };
+        // No verified account owns this address. The caller may hand it to the
+        // ordinary email-code sign-in (new account, or an unproven one being
+        // reclaimed); this challenge then only binds that flow.
+        return uid ? delivery : { challengeId: delivery.challengeId, expiresInSeconds: 300, unclaimedEmail: email! };
+      });
+    },
+    /** Counts one attempt on an unowned sign-in challenge bound to this flow; returns its address. */
+    takeUnclaimedSignIn(id: string, flowId: string): string | null {
+      if (typeof id !== "string" || id.length > 64 || typeof flowId !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(flowId)) return null;
+      return transaction(() => {
+        const row = db.prepare("SELECT * FROM account_identity_challenges WHERE id=?").get(id) as Challenge | undefined;
+        if (!row || row.purpose !== "alias-sign-in" || row.user_id !== null || row.session_hash !== mac("binding", flowId) ||
+            row.consumed_at !== null || row.expires_at <= now() || row.attempts >= 3) return null;
+        db.prepare("UPDATE account_identity_challenges SET attempts=attempts+1,consumed_at=CASE WHEN attempts+1>=3 THEN ? ELSE NULL END WHERE id=?").run(now(), id);
+        return row.target_email;
       });
     },
     verifyAliasSignIn(id: string, code: string, flowId: string): { userId: string; identityId: string; email: string } {

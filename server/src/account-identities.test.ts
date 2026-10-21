@@ -290,3 +290,47 @@ test("backfill skips verified accounts whose primary collides with another and s
     assert.deepEqual(createIdentityStore(db, { secret }).backfillVerifiedPrimaries(), { skipped: 2 });
   } finally { db.close(); }
 });
+test("an address no verified account owns signs in through the ordinary email-code flow, bound to its challenge", async () => {
+  const t = setup(), sent: string[] = [], verified: [string, string][] = [], identityCodes: string[] = [];
+  let answer: { token: string } | null = null, sendFails = false;
+  const app = createAccountIdentitiesApi({
+    store: t.store, authenticate: () => null,
+    sendCode: async ({ code }) => { identityCodes.push(code); },
+    mintSession: async () => { throw new Error("canonical mint must not run for an unclaimed address"); },
+    unclaimedSignIn: {
+      send: async (email) => { if (sendFails) throw new Error("mail down"); sent.push(email); },
+      verify: async (email, code) => { verified.push([email, code]); return answer; },
+    },
+  });
+  const request = (path: string, body: unknown) => app.request(`/identities/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    const start = await request("sign-in/start", { email: " NewPerson@Example.test " });
+    assert.equal(start.status, 200);
+    const flow = await start.json() as { challengeId: string; flowId: string };
+    assert.deepEqual(Object.keys(flow).sort(), ["challengeId", "expiresInSeconds", "flowId"]);
+    assert.deepEqual(sent, ["newperson@example.test"]); assert.deepEqual(identityCodes, []);
+    // Another flow cannot borrow the challenge, and it costs the real flow nothing.
+    assert.equal((await request("sign-in/verify", { challengeId: flow.challengeId, flowId: randomBytes(32).toString("base64url"), code: "123456" })).status, 400);
+    assert.deepEqual(verified, []);
+    assert.equal((await request("sign-in/verify", { challengeId: flow.challengeId, flowId: flow.flowId, code: "111111" })).status, 400);
+    answer = { token: "fresh-account-token" };
+    const done = await request("sign-in/verify", { challengeId: flow.challengeId, flowId: flow.flowId, code: "222222" });
+    assert.equal(done.status, 200); assert.deepEqual(await done.json(), { token: "fresh-account-token" });
+    assert.deepEqual(verified, [["newperson@example.test", "111111"], ["newperson@example.test", "222222"]]);
+    assert.equal((await request("sign-in/verify", { challengeId: flow.challengeId, flowId: flow.flowId, code: "222222" })).status, 400);
+    assert.equal(verified.length, 2);
+    // Three attempts per challenge, as for every other code.
+    answer = null;
+    const capped = await (await request("sign-in/start", { email: "capped@example.test" })).json() as { challengeId: string; flowId: string };
+    for (let i = 0; i < 3; i++) await request("sign-in/verify", { challengeId: capped.challengeId, flowId: capped.flowId, code: "000000" });
+    answer = { token: "too-late" };
+    assert.equal((await request("sign-in/verify", { challengeId: capped.challengeId, flowId: capped.flowId, code: "000000" })).status, 400);
+    assert.equal(verified.length, 5);
+    // A verified account still gets the canonical identity code, never the fallback.
+    await request("sign-in/start", { email: "primary@example.test" });
+    assert.equal(identityCodes.length, 1); assert.equal(sent.length, 2);
+    sendFails = true;
+    const failed = await request("sign-in/start", { email: "down@example.test" });
+    assert.equal(failed.status, 503);
+  } finally { t.db.close(); }
+});

@@ -750,3 +750,59 @@ retires them.
 - **Volume `api-volume-a5Kl`:** a detached volume created on the service's first day, 2026-06-11.
   Its contents have not been inspected, so it is kept on purpose. Attach it to a temporary service
   and compare it with the live database before anyone deletes it.
+
+## Moving the Cloud hostname
+
+Markie Cloud's API is moving from `https://api-production-602f.up.railway.app` to
+`https://api.markiedocs.com`, a name we control, so the backend can change hosts later without an
+app release. The code is ready for it:
+
+- The desktop app names `https://api.markiedocs.com` in `electron/cloud-origin.json`, with the Railway
+  origin as a legacy alias. Sessions, documents, links and the sign-in `iss` recorded under the alias
+  read as Markie Cloud, so nobody is signed out and no document moves.
+- The server (`server/src/official.ts`) answers on both names. `/api/*` is served on both. Browser
+  pages under `/auth/` and `/account/` that arrive on the name that is not `BETTER_AUTH_URL` get a
+  308 to the same path on `BETTER_AUTH_URL`, so Google's state cookie and callback share one host.
+
+Released apps call the Railway hostname for as long as they run. Never remove it from the `api`
+service, and never remove the `api` DNS record once a desktop build that uses it has shipped.
+
+Each step below is a human checkpoint. Do them in order and check each one before the next.
+
+1. **Railway custom domain.** On project `markie`, environment `production`, service `api`, add the
+   custom domain `api.markiedocs.com`. Railway shows a CNAME target, and possibly a TXT record to
+   prove ownership. Note both.
+2. **Vercel DNS.** markiedocs.com's DNS is on Vercel. Add a `CNAME` record `api` pointing at the
+   Railway target from step 1, plus the TXT record if Railway asked for one. Wait until Railway shows
+   the domain as active with a certificate, then check
+   `curl -sS https://api.markiedocs.com/health` returns 200 and
+   `curl -sS https://api.markiedocs.com/api/server-info` names the Railway origin.
+3. **Google OAuth.** In the Google Cloud console, open the OAuth client whose ID is the `api`
+   service's `GOOGLE_CLIENT_ID`. Under Authorized redirect URIs, add
+   `https://api.markiedocs.com/api/auth/callback/google`. Keep the Railway callback URI: a sign-in
+   that started before the flip still returns there.
+4. **Deploy the server** with this change, following "API server deploy and rollback" above.
+   `BETTER_AUTH_URL` still names Railway, so
+   `curl -sSI "https://api.markiedocs.com/auth/google-start?state=0123456789abcdef"` answers 308 to the
+   Railway origin, while `/api/server-info` answers 200 on both names.
+5. **Flip `BETTER_AUTH_URL`** on the `api` service to `https://api.markiedocs.com`. Changing the
+   variable redeploys the service. Then check:
+   - `/api/server-info` names `https://api.markiedocs.com` on both names.
+   - `/auth/google-start` on the Railway name answers 308 to `https://api.markiedocs.com`.
+   - Following it lands at Google with `redirect_uri=https://api.markiedocs.com/api/auth/callback/google`.
+   - A released app still signs in with email and with Google, and still syncs.
+
+   A Google sign-in that was halfway through during the redeploy fails once. Trying again works.
+   To roll back, set `BETTER_AUTH_URL` back to the Railway origin. Both names keep working either way.
+6. **Ship the desktop app** that carries this change, through the normal release above. It reaches
+   Cloud at `https://api.markiedocs.com` and accepts either name as the issuer, so it works on both
+   sides of step 5, but it needs steps 1 and 2 to be live.
+
+Private nightly builds lock to Markie Cloud too. A nightly built from a commit that already checks
+`iss` (8ab7abe onward) but predates this change compares it with the Railway origin, so it refuses
+Google sign-in after step 5. Ship a nightly with this change before flipping. Released 0.8.x apps do
+not check `iss` and are unaffected. Email sign-in is unaffected. The super-nightly gateway's
+`PRIVATE_RELEASE_AUTH_ORIGIN` may stay on the Railway origin, since the same API answers there.
+
+markiedocs.com's own Vercel rewrites for `/s/`, `/d/` and `/download` proxy to the Railway hostname.
+They keep working and can move to `https://api.markiedocs.com` later, in that repository.

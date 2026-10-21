@@ -1475,4 +1475,8 @@ Kirby approved the production steps.
 - **Litestream key rotated.** New age identity in `~/.markie-secrets/litestream-age-identity-2026-10-21.txt`; Railway identity and recipient both match it. A full restore from B2 inside the container decrypted with the new key (18 users, integrity ok).
 - **Nightly.** `0.8.1-super-nightly.17` published at `a101c56` (nightly.16 had already shipped at d5bd85c). Unauthenticated feed 404.
 
-Not done: the Google redirect URI (`https://api.markiedocs.com/api/auth/callback/google`) needs Kirby signed in to Google Cloud, so `BETTER_AUTH_URL` still names Railway.
+- **Certificate.** Stuck at `VALIDATING_OWNERSHIP` until the `_railway-verify.api` TXT record was added; the CLI never printed it.
+- **Google redirect URI.** Added through Codex computer use in Arc on project `markie-499114`; the Railway callback stays.
+- **Flip.** `BETTER_AUTH_URL=https://api.markiedocs.com`. Both names report that origin in `/api/server-info`; `/auth/google-start` on the Railway name answers 308 to the new name; Google receives `redirect_uri=https://api.markiedocs.com/api/auth/callback/google` and shows its sign-in page with no mismatch.
+
+Not verified: a full Google and email sign-in by a real released app after the flip.

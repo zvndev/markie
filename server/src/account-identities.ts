@@ -117,14 +117,25 @@ export function createIdentityStore(db: Database.Database, options: IdentityStor
     db.prepare("INSERT INTO account_emails(id,user_id,email_norm,email_display,verified_at,proof_kind,is_primary) VALUES(?,?,?,?,?,'primary',1)").run(id, uid, email, email, now());
     area(uid, id, email);
   }
-  function backfillVerifiedPrimaries() {
-    transaction(() => {
+  // One savepoint per user: a legacy row whose primary collides with another
+  // user's (case or whitespace twins, an alias claimed elsewhere) is skipped
+  // and stays unresolvable, instead of aborting the whole backfill and with it
+  // the server's boot.
+  const backfillOne = db.transaction((uid: string) => primary(uid));
+  function backfillVerifiedPrimaries(): { skipped: number } {
+    return transaction(() => {
       const rows = db.prepare('SELECT id FROM "user" WHERE emailVerified=1').all() as { id: string }[];
-      for (const row of rows) primary(row.id);
+      let skipped = 0;
+      for (const row of rows) {
+        try { backfillOne(row.id); }
+        catch (error) { if (error instanceof IdentityError && error.code === "identity-conflict") skipped++; else throw error; }
+      }
+      return { skipped };
     });
   }
   // Explicit factory initialization only; importing this module opens no database.
-  backfillVerifiedPrimaries();
+  const { skipped } = backfillVerifiedPrimaries();
+  if (skipped) console.warn(`account identities: ${skipped} verified account(s) share a primary email with another account and were left unlinked`);
   function verifiedUserForEmail(value: string): string | null {
     return resolveVerifiedUserForEmail(db, value);
   }

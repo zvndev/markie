@@ -273,3 +273,20 @@ test("pure primary fallback covers new verified signups without reviving revoked
     assert.deepEqual(activeVerifiedEmails(t.db, "one"), []);
   } finally { t.db.close(); }
 });
+test("backfill skips verified accounts whose primary collides with another and still boots the rest", () => {
+  const db = new Database(":memory:");
+  try {
+    db.exec(`CREATE TABLE user(id TEXT PRIMARY KEY,email TEXT NOT NULL,emailVerified INTEGER NOT NULL);
+      CREATE TABLE session(id TEXT PRIMARY KEY,userId TEXT NOT NULL,token TEXT,expiresAt TEXT DEFAULT '2099-01-01T00:00:00.000Z');`);
+    // Legacy rows that differ only by case or whitespace, as an older auth build could have written.
+    db.prepare("INSERT INTO user VALUES('twin-a','Twin@Example.test',1),('twin-b',' twin@example.test',1),('solo','solo@example.test',1)").run();
+    const areas: string[] = [];
+    const store = createIdentityStore(db, { secret, ensureIdentityArea: (uid) => { areas.push(uid); } });
+    assert.deepEqual(store.listIdentities("solo").map((row) => row.email), ["solo@example.test"]);
+    assert.deepEqual(areas, ["solo"]);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM account_emails WHERE user_id LIKE 'twin-%'").get().n, 0);
+    assert.equal(resolveVerifiedUserForEmail(db, "twin@example.test"), null);
+    assert.throws(() => store.listIdentities("twin-a"), /identity-conflict/);
+    assert.deepEqual(createIdentityStore(db, { secret }).backfillVerifiedPrimaries(), { skipped: 2 });
+  } finally { db.close(); }
+});

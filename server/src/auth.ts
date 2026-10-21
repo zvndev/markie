@@ -101,6 +101,17 @@ export const auth = betterAuth({
         before: async (user) => {
           assertSignupAllowed(authDatabase, user.email ?? "");
           if (user.email) assertNewAccountEmail(user.email);
+          const google = accountContext()?.google;
+          if (google) {
+            // A first Google sign-in creates the user and its provider row in
+            // one transaction, and create.after only runs once that commits:
+            // after the provider row's create.before has already asked whether
+            // this request created the user. Fix the ID here and record it,
+            // or every new Google user is refused.
+            const id = typeof (user as { id?: unknown }).id === "string" && (user as { id: string }).id ? (user as { id: string }).id : randomUUID();
+            google.noteCreatedUser(id);
+            return { data: { ...user, id } };
+          }
         },
         // Claiming moved out of "an account exists" and into "the address is
         // proven". A Google account, or a first email-OTP sign-in, arrives

@@ -15,6 +15,8 @@ const TOOLS: [string, string][] = [
   ["markie_open_in_markie", "open any document here in Markie"],
   ["markie_list_skills", "list your agent and skill files, grouped by tool"],
   ["markie_check_md", "say which pictures, clips and tags in a document will not show"],
+  ["markie_cloud_sync", "put a file in your Markie Cloud and hand back its private link"],
+  ["markie_cloud_public_link", "a public link, only when you ask for one, and you confirm it"],
   ["markie_guide", "what Markie renders and which types each tool handles"],
   ["markie_*_md", "markdown-only find, read and write, for older setups"],
 ];
@@ -32,6 +34,14 @@ const FALLBACK_PATH =
 
 export function AgentsDialog({ onClose }: AgentsDialogProps) {
   const [serverPath, setServerPath] = useState<string | null>(null);
+  const [cloudAlways, setCloudAlways] = useState(false);
+
+  useEffect(() => {
+    getElectronAPI()
+      ?.agentPermissions?.()
+      .then((p) => setCloudAlways(p.cloudSync))
+      .catch(() => setCloudAlways(false));
+  }, []);
 
   useEffect(() => {
     getElectronAPI()
@@ -94,7 +104,8 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
           formatting is never overwritten.
         </p>
         <p className="text-[12px] leading-relaxed mb-4 text-[var(--status-green)]">
-          Runs on demand, on this computer. Nothing is uploaded.
+          Runs on demand, on this computer. Nothing is uploaded unless you let
+          an agent put a file in your Markie Cloud.
         </p>
 
         <div className="markie-overlay-section mb-1.5">
@@ -108,6 +119,28 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
             </div>
           ))}
         </div>
+
+        <div className="markie-overlay-section mb-1.5">
+          Markie Cloud
+        </div>
+        <p className="text-[12px] text-muted leading-relaxed mb-2">
+          Ask an agent for a private Markie copy of something and it puts the
+          file in your Cloud and hands you a private link. That link opens only
+          for you, after you sign in, on any browser or phone. Markie asks you
+          before the first upload. A public link is only made when you ask for
+          one, and Markie confirms it with you every time.
+        </p>
+        <label className="flex items-center gap-2 text-[12px] text-foreground mb-4">
+          <input
+            type="checkbox"
+            checked={cloudAlways}
+            onChange={(e) => {
+              const next = e.target.checked;
+              void getElectronAPI()?.setAgentPermissions?.({ cloudSync: next }).then((r) => setCloudAlways(r.cloudSync)).catch(() => {});
+            }}
+          />
+          Let agents put files in Markie Cloud without asking
+        </label>
 
         <div className="markie-overlay-section mb-1.5">
           It files what it writes

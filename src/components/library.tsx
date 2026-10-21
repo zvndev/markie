@@ -10,6 +10,7 @@ import {
 } from "react";
 import { stableOrder } from "@/lib/stable-order";
 import { getElectronAPI, isTooLarge, type LibraryItem } from "@/lib/electron";
+import { getServerURL } from "@/lib/auth-client";
 import { tooLargeMessage } from "@/lib/doc-tiers";
 import { ProjectsPanelContainer } from "@/components/projects-panel";
 import { BrowseView } from "@/components/browse-view";
@@ -471,6 +472,19 @@ export function Library({
   };
   const flashError = (msg: string) => flash(msg, "error");
 
+  // The server's own /d/<id> page: it opens for the owner and the people the
+  // document is shared with, after they sign in, on any browser or phone.
+  const copyPrivateLink = async (item: LibraryItem) => {
+    if (!item.cloudId) return;
+    const origin = (item.server ?? getServerURL()).replace(/\/+$/, "");
+    try {
+      await navigator.clipboard.writeText(`${origin}/d/${encodeURIComponent(item.cloudId)}`);
+      flash("Private link copied. It opens for you after signing in, on any device.");
+    } catch {
+      flashError("Couldn't copy the link.");
+    }
+  };
+
   const copyPath = async (path: string) => {
     try {
       await navigator.clipboard.writeText(path);
@@ -603,6 +617,9 @@ export function Library({
             )}
             {item.path && item.exists && classic && (
               <button className="text-muted hover:text-foreground" onClick={() => copyContents(item)}>Copy contents</button>
+            )}
+            {item.cloudId && item.state !== "local-only" && (
+              <button className="text-muted hover:text-foreground" onClick={() => void copyPrivateLink(item)}>Copy private link</button>
             )}
             {/* "Unpushed" means the snapshot never reached the cloud. It had a
                 badge and no way out: the update strip only appears when the

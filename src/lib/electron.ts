@@ -574,6 +574,9 @@ export interface ElectronAPI {
   }): Promise<ProjectsWriteResult & { path?: string }>;
   // Markie MCP server location, for the Agents setup dialog
   mcpInfo?(): Promise<{ serverPath: string; packaged: boolean; error?: string }>;
+  /** Whether agents may put files in Markie Cloud without asking each time. */
+  agentPermissions?(): Promise<{ cloudSync: boolean }>;
+  setAgentPermissions?(next: { cloudSync: boolean }): Promise<{ cloudSync: boolean }>;
   // Skills — the catalog, and installing out of it. Reading never touches the
   // network; refreshing and searching do.
   skillsCatalogList?(): Promise<Catalog>;

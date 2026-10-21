@@ -99,6 +99,8 @@ if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI",
   projectsConfig: () => ipcRenderer.invoke("projects-config"),
   projectsWriteOverview: (args) => ipcRenderer.invoke("projects-write-overview", args),
   mcpInfo: () => ipcRenderer.invoke("mcp-info"),
+  agentPermissions: () => ipcRenderer.invoke("agent-permissions"),
+  setAgentPermissions: (next) => ipcRenderer.invoke("agent-permissions-set", next),
   // Skills — the catalog of installable skills, and what is installed
   skillsCatalogList: () => ipcRenderer.invoke("skills-catalog-list"),
   skillsCatalogRefresh: (source) => ipcRenderer.invoke("skills-catalog-refresh", source),

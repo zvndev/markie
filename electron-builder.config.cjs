@@ -209,6 +209,7 @@ module.exports = {
       // this list is fine in dev and a dead MCP server in the shipped app.
       filter: [
         "agent-classify.mjs",
+        "agent-client.mjs",
         "check-md.mjs",
         "conventions.mjs",
         "doc-text.cjs",

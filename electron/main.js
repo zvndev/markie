@@ -2483,6 +2483,84 @@ handle("mcp-info", () => {
   };
 }, { onFailure: (err) => ({ serverPath: "", packaged: false, error: errorMessage(err) }) });
 
+// ── Agent bridge: Markie Cloud for MCP agents ──
+// agent-bridge.js is the socket, agent-cloud.js decides what an agent may do.
+// The consent prompts live here because they need a window to sit on.
+const AGENT_PERMISSIONS_FILE = () => path.join(app.getPath("userData"), "agent-permissions.json");
+const agentPermissions = {
+  get() {
+    try {
+      const v = JSON.parse(fs.readFileSync(AGENT_PERMISSIONS_FILE(), "utf8"));
+      return v && typeof v === "object" ? v : {};
+    } catch {
+      return {};
+    }
+  },
+  set(next) {
+    // App settings, not a user document, so the private-build write lock does not apply.
+    writeAuthorizedFileAtomic(AGENT_PERMISSIONS_FILE(), JSON.stringify({ cloudSync: next.cloudSync === "always" ? "always" : undefined }));
+  },
+};
+
+async function confirmAgentCloud({ kind, name, path: filePath }) {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  if (process.platform === "darwin") app.focus({ steal: true });
+  if (kind === "public") {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      buttons: ["Make Public Link", "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+      message: `An agent wants a public link for \u201c${name}\u201d`,
+      detail: `${filePath}\n\nAnyone with the link can read and download it, without a Markie account. You can revoke the link later.`,
+    });
+    return { allowed: response === 0 };
+  }
+  const { response, checkboxChecked } = await dialog.showMessageBox(mainWindow, {
+    type: "question",
+    buttons: ["Put in Cloud", "Don\u2019t Allow"],
+    defaultId: 0,
+    cancelId: 1,
+    message: `An agent wants to put \u201c${name}\u201d in Markie Cloud`,
+    detail: `${filePath}\n\nIt stays private: only you can open it until you share it.`,
+    checkboxLabel: "Always allow agents to put files in Markie Cloud",
+    checkboxChecked: false,
+  });
+  return { allowed: response === 0, always: response === 0 && checkboxChecked };
+}
+
+let agentBridge = null;
+function startAgentBridge() {
+  if (isDesktopPreview || preflightMode || process.env.MARKIE_E2E === "1" || process.platform === "win32") return;
+  const { createAgentBridge } = require("./agent-bridge");
+  const { createAgentCloud } = require("./agent-cloud");
+  const cloud = createAgentCloud({
+    registry,
+    sync,
+    home: require("os").homedir(),
+    unlocked: () => privateRelease.authorized(),
+    confirm: confirmAgentCloud,
+    permissions: agentPermissions,
+    libraryChanged: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("library-changed"); },
+  });
+  const instance = require("crypto").createHash("sha256").update(app.getPath("userData")).digest("hex").slice(0, 10);
+  agentBridge = createAgentBridge({
+    dir: path.join(require("os").homedir(), ".markie"),
+    instance,
+    info: { app: app.getName(), version: app.getVersion() },
+    handlers: cloud.handlers,
+  });
+  agentBridge.start().catch((err) => { logCrash("agent-bridge-start-failed", err); agentBridge = null; });
+}
+
+handle("agent-permissions", () => ({ cloudSync: agentPermissions.get().cloudSync === "always" }), { onFailure: () => ({ cloudSync: false }) });
+handle("agent-permissions-set", (_event, next) => {
+  agentPermissions.set({ cloudSync: next && next.cloudSync === true ? "always" : undefined });
+  return { cloudSync: agentPermissions.get().cloudSync === "always" };
+}, { onFailure: () => ({ cloudSync: false }) });
+
 // ── Skills: the catalog, and installing out of it ──
 // skill-registry.js owns every decision. main resolves the two things that
 // need Electron (where the download cache lives, and the version the
@@ -3548,6 +3626,7 @@ if (!gotLock) {
     createWindow();
     setupAutoUpdate();
     seedWorkspaceExamples();
+    startAgentBridge();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -3559,6 +3638,11 @@ if (!gotLock) {
 
 // Flush the SQLite registry handle + kill PTYs deterministically before exit.
 app.on("will-quit", () => {
+  try {
+    agentBridge?.stop();
+  } catch {
+    // best effort
+  }
   try {
     require("./terminal").killAll();
   } catch {

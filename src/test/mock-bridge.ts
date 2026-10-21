@@ -306,6 +306,8 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
       serverPath: "/tmp/markie-mcp.mjs",
       packaged: false,
     })),
+    agentPermissions: vi.fn(async () => ({ cloudSync: false })),
+    setAgentPermissions: vi.fn(async (next: { cloudSync: boolean }) => ({ cloudSync: next.cloudSync })),
 
     // Skills — empty by default: a test that wants a catalog supplies one, and
     // nothing here ever reaches the network or the user's agent folders.

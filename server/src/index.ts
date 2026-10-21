@@ -12,6 +12,7 @@ import { assetsApi, sweepOrphans } from "./assets.ts";
 import { docLinksApi } from "./doc-links.ts";
 import { publicShare } from "./public.ts";
 import { docView } from "./doc-view.ts";
+import { createWebSignIn } from "./web-signin.ts";
 import { attachCollab } from "./collab.ts";
 import { desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
 import { applicationOrigins } from "./application-origins.ts";
@@ -239,6 +240,9 @@ const AUTH_BASE =
   process.env.BETTER_AUTH_URL ?? "http://localhost:8787";
 // Who this server is, on the deep link that hands its token to the app.
 const AUTH_ISSUER = desktopAuthIssuer(AUTH_BASE);
+
+// Signing in from a browser to read a private /d/<id> page (web-signin.ts).
+app.route("/", createWebSignIn({ authBase: AUTH_BASE, google: googleConfigured }));
 
 app.get("/auth/google-start", async (c) => {
   try {

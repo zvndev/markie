@@ -15,6 +15,8 @@ When to reach for each tool:
 - markie_read_md, markie_write_md: the markdown-only forms of read and write, kept for existing setups.
 - markie_check_md: read a markdown document back and report what will not display: a picture that is not where it says it is, an embed of a kind Markie cannot draw, markup that renders nowhere, and every tag the editor and an export treat differently. Run it after writing anything with a picture, a clip or inline HTML in it.
 - markie_open_in_markie: put a document of any of these types in front of the user. Use it after writing, when they asked to see the result.
+- markie_cloud_sync: put a Markdown or text file in the user's Markie Cloud and get its private link, which they can open on any browser or phone after signing in. The running Markie app does the upload and may ask the user first. When the user wants a "hosted", "synced", "cloud" or "private Markie" copy, or a link to read something away from this computer: write the document (under ~/Documents/Markie/ when they did not say where), call markie_cloud_sync, and give them the privateLink. markie_cloud_status reports a file's Cloud state and link without uploading.
+- markie_cloud_public_link: a link anyone can open without an account. Only pass create: true when the user asked for a public link in so many words; otherwise give them the private link. Markie confirms every public link with the user. markie_cloud_revoke_public_link turns one off.
 - markie_list_skills: the user's agent instruction files (CLAUDE.md, AGENTS.md, skills, Cursor rules), grouped by tool.
 - markie_guide: the whole of what Markie renders, with an example of each, and which document types each tool reads and writes. Also served as the ${GUIDE_URI} resource.
 

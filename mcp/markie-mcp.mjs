@@ -34,6 +34,7 @@ import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { MARKDOWN_GUIDE, GUIDE_URI } from "./markdown-guide.mjs";
 import { checkMarkdown } from "./check-md.mjs";
 import { walkAll } from "./scan.mjs";
+import { askMarkie } from "./agent-client.mjs";
 import { createRequire } from "node:module";
 
 // Read the version from package.json so the MCP handshake can never drift from
@@ -216,6 +217,53 @@ const TOOLS = [
     name: "markie_open_in_markie",
     description:
       "Open a document in the Markie app, in front of the user: markdown, plain text, CSV, JSON, YAML, XML, Darkmown, Word (.docx and legacy .doc), RTF, OpenDocument or HTML.",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string", description: "Absolute path, ~ allowed" } },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "markie_cloud_status",
+    description:
+      "Is this file in the user's Markie Cloud, and what is its private link? Asks the running Markie app. Returns synced, syncState, server and privateLink (null until synced). The private link opens only for the user and people they shared it with, after signing in, on any browser or phone.",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string", description: "Absolute path, ~ allowed" } },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "markie_cloud_sync",
+    description:
+      "Put a Markdown or plain text file in the user's Markie Cloud, or push its latest text if it is already there, and return its private link. The Markie app does the upload with the user's own sign-in, and asks the user to allow it the first time unless they chose to always allow it, so this call can wait on them. The file stays private: only the user can open the link until they share it. Use it when the user asks for a hosted, synced, cloud, or private Markie copy, or a link they can open away from this computer. Write the file first with markie_write_document.",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string", description: "Absolute path, ~ allowed" } },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "markie_cloud_public_link",
+    description:
+      "Get, or with create true make, a public link for a file already in Markie Cloud. Anyone holding a public link can read and download the document without an account. Only set create when the user explicitly asked for a public link in this conversation; a private link is what they get otherwise. Markie asks the user to confirm every public link it makes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Absolute path, ~ allowed" },
+        create: { type: "boolean", description: "Make the link if there is none. Only when the user asked for a public link." },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "markie_cloud_revoke_public_link",
+    description:
+      "Turn off a file's public link, so it stops working for everyone holding it. The private link keeps working.",
     inputSchema: {
       type: "object",
       properties: { path: { type: "string", description: "Absolute path, ~ allowed" } },
@@ -435,6 +483,18 @@ async function runTool(name, args) {
       });
       child.unref();
       return launcher.message;
+    }
+    case "markie_cloud_status":
+    case "markie_cloud_sync":
+    case "markie_cloud_public_link":
+    case "markie_cloud_revoke_public_link": {
+      // Fence the path here too, so an agent learns the rule from this server;
+      // the app checks again before it touches anything.
+      const g = guardPath(args.path, HOME, { formats: ["markdown", "text"] });
+      if (!g.ok) throw new Error(g.error);
+      const method = name.replace(/^markie_/, "");
+      const params = { path: g.path, ...(name === "markie_cloud_public_link" ? { create: args.create === true } : {}) };
+      return await askMarkie(method, params);
     }
     case "markie_check_md": {
       const g = guardPath(args.path, HOME);

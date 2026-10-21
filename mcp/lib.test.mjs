@@ -1659,3 +1659,99 @@ test("MCP finds, searches, reads, writes and opens every document type, inside t
     rmSync(outside, { recursive: true, force: true });
   }
 });
+
+// ---- Markie Cloud through the app's agent bridge ----
+
+import { createServer } from "node:net";
+import { findBridge, askMarkie } from "./agent-client.mjs";
+
+function fakeBridge(dir, reply) {
+  mkdirSync(dir, { recursive: true });
+  const socket = pjoin(dir, "agent-ab12.sock");
+  const seen = [];
+  const server = createServer((c) => {
+    let buf = "";
+    c.setEncoding("utf8");
+    c.on("data", (d) => {
+      buf += d;
+      if (!buf.includes("\n")) return;
+      const req = JSON.parse(buf.split("\n")[0]);
+      seen.push(req);
+      c.end(JSON.stringify(req.token === "tok" ? reply(req) : { ok: false, error: "Not authorized." }) + "\n");
+    });
+  });
+  return new Promise((resolve) => server.listen(socket, () => {
+    writeFileSync(pjoin(dir, "agent-bridge-ab12.json"), JSON.stringify({ socket, token: "tok", pid: process.pid, startedAt: "2026-10-21T00:00:00Z" }));
+    resolve({ server, seen });
+  }));
+}
+
+test("findBridge picks the newest live app and skips dead or foreign files", async () => {
+  const dir = mkdtempSync(pjoin(tmpdir(), "mb-"));
+  writeFileSync(pjoin(dir, "agent-bridge-aa.json"), JSON.stringify({ socket: "/a", token: "t", pid: 1, startedAt: "2026-10-01" }));
+  writeFileSync(pjoin(dir, "agent-bridge-bb.json"), JSON.stringify({ socket: "/b", token: "t", pid: 2, startedAt: "2026-10-20" }));
+  writeFileSync(pjoin(dir, "agent-bridge-cc.json"), JSON.stringify({ socket: "/c", token: "t", pid: 3, startedAt: "2026-10-21" }));
+  writeFileSync(pjoin(dir, "agent-bridge-dd.json"), "{half");
+  writeFileSync(pjoin(dir, "other.json"), JSON.stringify({ socket: "/x", token: "t", pid: 1 }));
+  const found = await findBridge({ dir, isAlive: (pid) => pid !== 3 });
+  assert.equal(found.socket, "/b");
+  assert.equal(await findBridge({ dir: pjoin(dir, "missing") }), null);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("askMarkie starts Markie when it is not running, and says so when it never appears", async () => {
+  let launched = 0;
+  await assert.rejects(
+    askMarkie("cloud_status", {}, { find: async () => null, launch: () => { launched++; return true; }, waitMs: 1000, sleep: async () => {} }),
+    /Markie isn't running/
+  );
+  assert.equal(launched, 1);
+  let calls = 0;
+  const info = { socket: "/s", token: "t" };
+  const result = await askMarkie("cloud_status", { path: "/p" }, {
+    find: async () => (++calls > 2 ? info : null),
+    launch: () => true,
+    sleep: async () => {},
+    call: async (i, method, params) => ({ i, method, params }),
+  });
+  assert.deepEqual(result, { i: info, method: "cloud_status", params: { path: "/p" } });
+});
+
+test("the cloud tools reach the app with a fenced path and return its answer", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "mcpc-")));
+  const { server, seen } = await fakeBridge(pjoin(home, ".markie"), (req) =>
+    req.method === "cloud_sync"
+      ? { ok: true, result: { synced: true, privateLink: "https://api.markiedocs.com/d/doc-1" } }
+      : { ok: false, error: "The user declined to make a public link." }
+  );
+  const client = startMcpClient(home);
+  try {
+    await client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } });
+    const names = (await client.request("tools/list")).result.tools.map((t) => t.name);
+    for (const n of ["markie_cloud_status", "markie_cloud_sync", "markie_cloud_public_link", "markie_cloud_revoke_public_link"]) assert.ok(names.includes(n), n);
+    const doc = pjoin(home, "Documents", "Markie", "plan.md");
+    mkdirSync(pdirname(doc), { recursive: true });
+    writeFileSync(doc, "# Plan\n");
+    const ok = await client.callTool("markie_cloud_sync", { path: "~/Documents/Markie/plan.md" });
+    assert.equal(ok.result.isError, undefined);
+    assert.match(ok.result.content[0].text, /api\.markiedocs\.com\/d\/doc-1/);
+    assert.deepEqual(seen[0], { token: "tok", method: "cloud_sync", params: { path: doc } });
+    const no = await client.callTool("markie_cloud_public_link", { path: doc, create: true });
+    assert.equal(no.result.isError, true);
+    assert.match(no.result.content[0].text, /declined/);
+    assert.deepEqual(seen[1].params, { path: doc, create: true });
+    const fenced = await client.callTool("markie_cloud_sync", { path: "/etc/hosts" });
+    assert.equal(fenced.result.isError, true);
+    assert.equal(seen.length, 2);
+  } finally {
+    client.close();
+    server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("the instructions tell agents to give the private link and make public ones only on request", () => {
+  assert.match(INSTRUCTIONS, /markie_cloud_sync/);
+  assert.match(INSTRUCTIONS, /privateLink/);
+  assert.match(INSTRUCTIONS, /Only pass create: true when the user asked for a public link/);
+});

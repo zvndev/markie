@@ -438,7 +438,7 @@ export function renderSharedDocPage(opts: {
 // document id, or someone whose access was removed. It names no document and
 // does not distinguish "no such document" from "not yours", so the page cannot
 // be used to find out which document ids exist.
-export function renderAccessRequiredPage(siteUrl: string): string {
+export function renderAccessRequiredPage(siteUrl: string, signInHref: string | null = null): string {
   const download = primaryDownloadCta(markieSite(siteUrl));
   return `<!doctype html>
 <html lang="en"><head>
@@ -451,8 +451,9 @@ export function renderAccessRequiredPage(siteUrl: string): string {
   <main style="text-align:center;padding-top:80px">
     <div style="font-size:40px;font-weight:800;color:var(--accent-strong)">M</div>
     <h1>You need access to this document</h1>
-    <p style="color:var(--muted)">Markie documents are never public. Open the link from your invite email, or open the document in Markie with the account it was shared with.</p>
-    <p><a class="btn primary" href="${esc(download.href)}">${esc(download.label)}</a></p>
+    <p style="color:var(--muted)">Markie documents are never public. ${signInHref ? "Sign in with the account it belongs to, or open the link from your invite email." : "Open the link from your invite email, or open the document in Markie with the account it was shared with."}</p>
+    ${signInHref ? `<p><a class="btn primary" href="${esc(signInHref)}">Sign in</a></p>` : ""}
+    <p><a class="btn ${signInHref ? "ghost" : "primary"}" href="${esc(download.href)}">${esc(download.label)}</a></p>
   </main>
 </body></html>`;
 }

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { installBridge } from "@/test/mock-bridge";
 import type { ElectronAPI } from "@/lib/electron";
@@ -115,5 +115,22 @@ describe("AgentsDialog", () => {
     expect(
       screen.getByText(/Open this from the Markie desktop app/)
     ).toBeTruthy();
+  });
+
+  it("lets the user turn agent Cloud uploads on and off, and says public links are always confirmed", async () => {
+    const bridge = {
+      agentPermissions: vi.fn(async () => ({ cloudSync: false })),
+      setAgentPermissions: vi.fn(async (next: { cloudSync: boolean }) => ({ cloudSync: next.cloudSync })),
+    };
+    renderDialog(bridge);
+    const box = screen.getByRole("checkbox", { name: "Let agents put files in Markie Cloud without asking" }) as HTMLInputElement;
+    await waitFor(() => expect(bridge.agentPermissions).toHaveBeenCalled());
+    expect(box.checked).toBe(false);
+    fireEvent.click(box);
+    await waitFor(() => expect(box.checked).toBe(true));
+    expect(bridge.setAgentPermissions).toHaveBeenCalledWith({ cloudSync: true });
+    const dialog = screen.getAllByRole("dialog")[0];
+    expect(dialog.textContent).toMatch(/confirms it with you every time/);
+    expect(within(dialog).getByText("markie_cloud_sync")).toBeTruthy();
   });
 });

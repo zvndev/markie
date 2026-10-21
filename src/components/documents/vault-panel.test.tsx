@@ -1,10 +1,14 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { webcrypto } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VaultPanel } from "./vault-panel";
 import { validateStoredVault, VaultStorageError, type StoredVault, type VaultStorage } from "@/lib/vault/storage";
 import { VaultRepository } from "@/lib/vault/repository";
 import { installBridge } from "@/test/mock-bridge";
+
+// Every unlock here runs the real key derivation, which takes well over the
+// default one second when the full suite loads the machine.
+configure({ asyncUtilTimeout: 5000 });
 
 const picker = vi.hoisted(() => ({ pick: vi.fn(), download: vi.fn() }));
 vi.mock("@/lib/web-files", async () => ({ ...await vi.importActual("@/lib/web-files"), pickWebDocument: picker.pick, downloadWebDocument: picker.download }));

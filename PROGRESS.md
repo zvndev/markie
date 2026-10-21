@@ -1480,3 +1480,11 @@ Kirby approved the production steps.
 - **Flip.** `BETTER_AUTH_URL=https://api.markiedocs.com`. Both names report that origin in `/api/server-info`; `/auth/google-start` on the Railway name answers 308 to the new name; Google receives `redirect_uri=https://api.markiedocs.com/api/auth/callback/google` and shows its sign-in page with no mismatch.
 
 Not verified: a full Google and email sign-in by a real released app after the flip.
+
+## 2026-10-21 Locked private builds finish Google sign-in (nightly.18, .19)
+
+A real sign-out test on nightly.17 stranded Kirby on the private-build screen: it offered only email codes. Two causes, fixed in turn:
+- **nightly.18 (1a5bb99).** The gate hid Google because main dropped every deep link while locked and only the document shell listened for `markie://auth`. Main now lets `markie://auth` through while locked, and the gate takes it while locked.
+- **nightly.19 (8c025ae).** Google still did not unlock: locking reloads the window and clears `rendererReady`, which only the document shell sets, so main queued the link forever. Main now keeps it as `pendingAuthLink` for the gate to collect, and also sends it live.
+
+Verification: full suite 4826, lint, typecheck. Live, through Codex computer use in Markie and Arc: nightly.19 signed out, Continue with Google, the gate cleared on its own, same account, synced docs and the 9 local drafts intact. Email-code sign-in through `api.markiedocs.com` also passed on nightly.17.

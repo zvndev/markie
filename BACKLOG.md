@@ -252,3 +252,5 @@
         passed and stopped before any signing, notarization, upload, publish, deploy, or
         credentialed network action; `./init.sh > .autoloop/runs/init-20260628-035139-post-f003.log 2>&1`
         passed.
+
+- **Private builds do not ship the MCP server.** `createPrivateBuilderConfig` sets `extraResources: []`, so `Contents/Resources/mcp/` is missing from super-nightlies and the Agents dialog shows a path that does not exist. Ship `mcp/` in private builds (the bundle scan must allow it), or point the dialog at the repo copy in private builds. Found 2026-10-21 while testing agent cloud links.

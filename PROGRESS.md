@@ -1488,3 +1488,14 @@ A real sign-out test on nightly.17 stranded Kirby on the private-build screen: i
 - **nightly.19 (8c025ae).** Google still did not unlock: locking reloads the window and clears `rendererReady`, which only the document shell sets, so main queued the link forever. Main now keeps it as `pendingAuthLink` for the gate to collect, and also sends it live.
 
 Verification: full suite 4826, lint, typecheck. Live, through Codex computer use in Markie and Arc: nightly.19 signed out, Continue with Google, the gate cleared on its own, same account, synced docs and the 9 local drafts intact. Email-code sign-in through `api.markiedocs.com` also passed on nightly.17.
+
+## 2026-10-21 Agent cloud links (nightly.20, a7eec0f)
+
+Kirby asked that an agent can make him "a hosted private Markie" and hand back a link he can open away from the computer; public links only when he says so.
+- **App:** `electron/agent-bridge.js` listens on `~/.markie/agent-<id>.sock` (0600, dir 0700) with a token in `agent-bridge-<id>.json` (0600). `electron/agent-cloud.js` decides: Markdown and text under home only; consent on an agent's first upload with "always allow" (Agents dialog toggle); every public link confirmed; locked private builds refuse.
+- **MCP:** `markie_cloud_status`, `markie_cloud_sync`, `markie_cloud_public_link` (create only when asked), `markie_cloud_revoke_public_link`, via `mcp/agent-client.mjs`. Instructions tell agents to hand back the private link.
+- **Server:** `/auth/web-signin` and `/auth/web-google`, and the `/d/<id>` access page offers Sign in. Not deployed yet: Railway paused builds in all regions during a major outage on 2026-10-21.
+- **Library:** Copy private link.
+
+Verification: app suite 4842, server 480, MCP 85, lint, typecheck. Live on nightly.20: the repo MCP server synced `~/Documents/Markie/agent-cloud-link-test.md` after one consent click (driven through Codex computer use), returned `https://api.markiedocs.com/d/be41f999-…`, which is 403 anonymously, has no public link, and opens in Arc with Kirby's session.
+Not verified: web sign-in on the live server (pending deploy), a public link made live, an agent registered in Claude Code or Codex using the tools on its own.

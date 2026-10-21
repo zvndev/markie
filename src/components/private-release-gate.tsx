@@ -30,14 +30,18 @@ export function PrivateReleaseGate({ children }: { children: ReactNode }) {
   // checks apply, and a private build only ever adopts its primary server.
   const locked = !!bridge?.privateReleaseAuthOrigin && status?.required === true && status.authorized !== true;
   useEffect(() => {
-    if (!locked || !bridge?.onDeepLink) return;
-    return bridge.onDeepLink((url) => {
+    if (!locked) return;
+    const take = (url: string | null) => {
+      if (!url) return;
       const link = resolveAuthDeepLink(url, { primaryOrigin: getServerURL() });
       if (!link.ok || (link.origin && link.origin !== getServerURL())) return;
       adoptAuthToken(link.token);
       void authStore.refresh();
       void authorize();
-    });
+    };
+    // A hand-back that landed before this listener existed waits in main.
+    void bridge?.privateReleaseTakeAuthLink?.().then(take).catch(() => {});
+    return bridge?.onDeepLink?.(take);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- authorize reads only the bridge and the stored token
   }, [locked, bridge]);
   const authorize = async () => {

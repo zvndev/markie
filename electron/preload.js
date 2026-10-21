@@ -21,6 +21,7 @@ if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI",
   privateReleaseSession: () => ipcRenderer.invoke("private-release-session"),
   privateReleaseAuthorize: (token) => ipcRenderer.invoke("private-release-authorize", token),
   privateReleaseLock: () => ipcRenderer.invoke("private-release-lock"),
+  privateReleaseTakeAuthLink: () => ipcRenderer.invoke("private-release-take-auth-link"),
   documentFiles: {
     open: () => ipcRenderer.invoke("document-files:open"),
     saveAs: (args) => ipcRenderer.invoke("document-files:save-as", args),

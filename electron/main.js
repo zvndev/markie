@@ -316,6 +316,8 @@ let quitRequested = false;
 let pendingFilePath = null;
 // markie:// deep link that arrived before the renderer was ready to receive it
 let pendingDeepLink = null;
+// A Google sign-in hand-back that arrived while a private build was locked.
+let pendingAuthLink = null;
 
 // OS paths never cross the renderer boundary: it receives only a notification,
 // then claims a bounded opaque file grant through document-files:take-initial.
@@ -342,7 +344,21 @@ function deliverDeepLink(link) {
   if (isDesktopPreview) return;
   // A locked private build still takes the Google sign-in hand-back, or the
   // sign-in that unlocks it could never finish. Nothing else gets through.
-  if (!privateRelease.authorized() && !isAuthDeepLink(link)) return;
+  if (!privateRelease.authorized()) {
+    if (!isAuthDeepLink(link)) return;
+    // Locked, the document shell never mounts, so rendererReady stays false
+    // (a lock also reloads the window) and the queue below would hold this
+    // forever. Keep it for the gate to collect when it mounts, and also send
+    // it now in case the gate is already listening. The nonce is single-use,
+    // so whichever copy arrives second is refused.
+    pendingAuthLink = link;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (!mainWindow.webContents.isLoading()) mainWindow.webContents.send("deep-link", link);
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+    } else if (app.isReady()) createWindow();
+    return;
+  }
   const kind = classifyDeepLink(link);
   if (kind === "ignore") return;
   // A public link: fetch it with the token the link carries and open a copy
@@ -1205,6 +1221,7 @@ handle("private-release-status", () => {
   return privateRelease.status();
 });
 handle("private-release-session", () => ({ token: privateRelease.rendererCredential() }));
+handle("private-release-take-auth-link", () => { const link = pendingAuthLink; pendingAuthLink = null; return link; });
 handle("private-release-authorize", async (_event, token) => {
   const status = await privateRelease.authorize(token);
   if (status.authorized && privateReleaseConfig && autoUpdater) applyUpdateChannel();

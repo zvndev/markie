@@ -86,6 +86,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     privateReleaseSession: vi.fn(async () => ({ token: null })),
     privateReleaseAuthorize: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api.markiedocs.com" })),
     privateReleaseLock: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api.markiedocs.com" })),
+    privateReleaseTakeAuthLink: vi.fn(async () => null),
 
     openFile: vi.fn(async () => null),
     openFilePath: vi.fn(async () => null),

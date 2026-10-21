@@ -39,6 +39,14 @@ describe("private renderer bootstrap gate", () => {
     expect(await screen.findByText("Document shell")).toBeInTheDocument();
     expect(adoptAuthToken).toHaveBeenCalledWith("google-token"); expect(authorize).toHaveBeenCalledTimes(1);
   });
+  it("collects a Google hand-back that reached main before the gate was listening", async () => {
+    const authorize = vi.fn(async () => ({ ...locked, authorized: true }));
+    const take = vi.fn(async () => "markie://auth?token=google-token&state=good");
+    installBridge({ privateReleaseAuthOrigin: locked.authOrigin, privateReleaseStatus: async () => locked, privateReleaseAuthorize: authorize, privateReleaseTakeAuthLink: take });
+    render(<PrivateReleaseGate><p>Document shell</p></PrivateReleaseGate>);
+    expect(await screen.findByText("Document shell")).toBeInTheDocument();
+    expect(take).toHaveBeenCalled(); expect(authorize).toHaveBeenCalledTimes(1);
+  });
   it("leaves normal builds available after their native status check", async () => {
     installBridge({ privateReleaseStatus: async () => ({ ...locked, required: false, authorized: true }) });
     render(<PrivateReleaseGate><p>Normal document shell</p></PrivateReleaseGate>);

@@ -189,6 +189,8 @@ export interface ElectronAPI {
   privateReleaseSession?(): Promise<{ token: string | null }>;
   privateReleaseAuthorize?(token: string): Promise<PrivateReleaseStatus>;
   privateReleaseLock?(): Promise<PrivateReleaseStatus>;
+  /** A Google sign-in hand-back that reached a locked private build, once. */
+  privateReleaseTakeAuthLink?(): Promise<string | null>;
   documentFiles?: NativeDocumentFileApi;
   onDocumentFileOpened?(callback: () => void): Unsubscribe;
   onDocumentCommand?(callback: (command: string) => void): Unsubscribe;

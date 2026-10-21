@@ -46,6 +46,8 @@ async function boundedJson(response: Response): Promise<Record<string, unknown>>
 function failure(status: number, code: string) {
   const message = status === 404 || status === 501 ? "This server does not support linked sign-ins or cloud areas yet. Your account and documents are unchanged."
     : status === 401 ? "Sign in again to confirm this account."
+      : code === "identity-not-removable" ? "The primary sign-in cannot be removed."
+      : code === "identity-limit" ? "This account already has the most linked emails it can hold. Unlink one first."
       : status === 409 ? "That email already belongs to another account. Accounts were not merged."
         : /primary/i.test(code) ? "The primary sign-in cannot be removed."
           : /proof|step.?up/i.test(code) ? "Confirm your primary email again before making this change."

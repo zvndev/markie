@@ -30,6 +30,12 @@ describe("confirmed account identity client", () => {
     await expect(client.identities()).rejects.toThrow("does not support"); expect(request).toHaveBeenCalledOnce();
     request.mockResolvedValueOnce(Response.json({ code: "email-conflict" }, { status: 409 })); await expect(client.startEmail("alias@example.test", "proof")).rejects.toThrow("Accounts were not merged");
   });
+  it("names the server's 409 refusals that are not another account's address", async () => {
+    const client = new AccountIdentitiesClient(vi.fn(async () => Response.json({ error: "identity-not-removable" }, { status: 409 })));
+    await expect(client.unlink("primary", "proof")).rejects.toThrow("The primary sign-in cannot be removed.");
+    const limited = new AccountIdentitiesClient(vi.fn(async () => Response.json({ error: "identity-limit" }, { status: 409 })));
+    await expect(limited.startEmail("one-more@example.test", "proof")).rejects.toThrow("Unlink one first.");
+  });
   it("keeps alias sign-in flow binding in the verification body and returns an explicit session", async () => {
     const flowId = "a".repeat(43), request = vi.fn<typeof fetch>(async () => Response.json({ challengeId: "challenge", flowId, expiresInSeconds: 300 }));
     const challenge = await AccountIdentitiesClient.startAliasSignIn("alias@example.test", request); expect(challenge.flowId).toBe(flowId);

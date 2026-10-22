@@ -1523,3 +1523,10 @@ Still to do: new Google and email secrets; move the super-nightly gateway (still
 - **Google:** the OAuth client had two secrets (the cap). `yCIl` was unused and deleted; new secret `JxK-` set on Fly; a real web Google sign-in landed on the private test document; the leaked `v_8J` was disabled and is gone. The client now holds only `JxK-`.
 - **Rate limits:** better-auth could not resolve the client IP on Fly and used one shared bucket. `MARKIE_CLIENT_IP_HEADER=fly-client-ip` on Fly only (618ce8a); warning gone after deploy.
 - **0.8.1:** PR #13 merged to main (84cb5a5); `release:prepare:mac` passed (preflight, arm64 and x64 launch smoke, codesign, Gatekeeper, notarization stapled on apps and DMGs). The packaged app names `api.markiedocs.com`; the one Railway string left is the saved-address migration. Preflight needs `CLAUDE_CONFIG_DIR` unset on main until the MCP test isolation fix lands there. Not published: waiting for Kirby.
+
+## 2026-10-22 Markie 0.8.1 published (macOS)
+
+- `release:publish:mac -- --confirm-public-release=0.8.1` at Kirby's "yea publish": zips, DMGs, blockmaps and `latest-mac.yml` uploaded; `release:verify:public --version=0.8.1 --deep` valid with full SHA-512 checks; markiedocs.com/download/latest.json reports 0.8.1.
+- Final human check done through Codex computer use: the real 0.8.0 arm64 zip from markie-releases, run from a test folder, had already downloaded 0.8.1, installed it with Restart & Update, relaunched as 0.8.1, and showed the old stable profile signed in (kirby@zvndev.com) with no Cloud error. Test copy removed; the nightly was quit for the test and relaunched.
+- Tag `v0.8.1` on 84cb5a5 pushed. Windows was not built or published.
+- Main now carries 0.8.1 (hotfix plus #1-#3); `feat/document-platform-foundation` does not have the hotfix commit yet and must take it when it merges.

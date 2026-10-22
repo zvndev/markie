@@ -11,11 +11,19 @@ export interface MarkieUser {
 }
 
 const SERVER_KEY = "markie.server.v1";
-const DEFAULT_SERVER = "https://api-production-602f.up.railway.app";
+const DEFAULT_SERVER = "https://api.markiedocs.com";
+// Markie Cloud's old Railway address. A server saved in Settings before the
+// move still names it; it now means Markie Cloud at its new address.
+const RETIRED_SERVER = "https://api-production-602f.up.railway.app";
 
 export function getServerURL(): string {
   try {
-    return localStorage.getItem(SERVER_KEY) ?? DEFAULT_SERVER;
+    const saved = localStorage.getItem(SERVER_KEY);
+    if (saved && saved.replace(/\/$/, "") === RETIRED_SERVER) {
+      localStorage.setItem(SERVER_KEY, DEFAULT_SERVER);
+      return DEFAULT_SERVER;
+    }
+    return saved ?? DEFAULT_SERVER;
   } catch {
     return DEFAULT_SERVER;
   }

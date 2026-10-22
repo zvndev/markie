@@ -246,3 +246,20 @@ describe("the account across a relaunch", () => {
     expect(localStorage.getItem(PRINCIPAL_KEY)).toBeNull();
   });
 });
+
+describe("Markie Cloud's address after the move off Railway", () => {
+  it("defaults to api.markiedocs.com", () => {
+    expect(client.getServerURL()).toBe("https://api.markiedocs.com");
+  });
+
+  it("turns a saved Railway address into the new one, once and for good", () => {
+    localStorage.setItem("markie.server.v1", "https://api-production-602f.up.railway.app/");
+    expect(client.getServerURL()).toBe("https://api.markiedocs.com");
+    expect(localStorage.getItem("markie.server.v1")).toBe("https://api.markiedocs.com");
+  });
+
+  it("leaves a self-hosted server alone", () => {
+    localStorage.setItem("markie.server.v1", "https://markie.example.org");
+    expect(client.getServerURL()).toBe("https://markie.example.org");
+  });
+});

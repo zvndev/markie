@@ -3,13 +3,15 @@
 // engine to stop an attacker-controlled origin from receiving a fetch (SSRF) or
 // the bearer token (token exfiltration).
 
-// Canonical Markie production API. Update here if the backend moves.
-const DEFAULT_SERVER = "https://api-production-602f.up.railway.app";
+// Canonical Markie production API, on a name we control. Update here if the
+// backend moves. Markie Cloud left Railway on 2026-10-22, after Railway's
+// credential breach; its old Railway hostname is gone and is deliberately not
+// allowed any more, so a bearer token can never be sent to whoever holds it next.
+const DEFAULT_SERVER = "https://api.markiedocs.com";
 
-// Hosts we will talk to. Add the custom domain here when it ships.
+// Hosts we will talk to.
 const ALLOWED_HOSTS = new Set([
-  "api-production-602f.up.railway.app",
-  // "markiedocs.com",
+  "api.markiedocs.com",
 ]);
 
 function isLocalhost(host) {

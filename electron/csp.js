@@ -66,7 +66,7 @@ function buildAppCsp(outDir) {
     // the same access rule as the pictures.
     `media-src 'self' data: ${ASSET_SCHEME}:`,
     "font-src 'self' data:",
-    "connect-src 'self' https://api-production-602f.up.railway.app wss://api-production-602f.up.railway.app",
+    "connect-src 'self' https://api.markiedocs.com wss://api.markiedocs.com",
     // default-src would otherwise refuse every iframe, which is right for
     // everything but the one player a card opens when it is clicked.
     `frame-src ${EMBED_FRAME_ORIGINS.join(" ")}`,

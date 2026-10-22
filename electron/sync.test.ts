@@ -13,7 +13,7 @@ const registry = load("./registry.js");
 const sync = load("./sync.js");
 
 // The only origin setConfig will accept outside dev mode.
-const SERVER = "https://api-production-602f.up.railway.app";
+const SERVER = "https://api.markiedocs.com";
 
 // Whoever is signed in for these tests, and somebody else.
 const ME = "user-me";

@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const PRIVATE_PREFIX = "/private-releases/super-nightly/";
 export const PRIVATE_FEED = "super-nightly-mac.yml";
-export const PRIVATE_GATEWAY_ORIGIN = "https://markie-super-nightly-production.up.railway.app";
+export const PRIVATE_GATEWAY_ORIGIN = "https://markie-nightly.fly.dev";
 const LIMIT = 512 * 1024 * 1024;
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const digest = (bytes) => createHash("sha512").update(bytes).digest("base64");

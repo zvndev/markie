@@ -19,7 +19,7 @@ it accepts no arbitrary builder arguments or public fallback.
 Set these non-secret values in the root agent's process:
 
 - `MARKIE_PRIVATE_API_ORIGIN`: required exact origin
-  `https://markie-super-nightly-production.up.railway.app`. A future gateway
+  `https://markie-nightly.fly.dev`. A future gateway
   change requires an explicit reviewed tooling change; arbitrary HTTPS hosts
   cannot receive the publisher key.
 - `MARKIE_PRIVATE_VERSION`: for example `0.8.1-super-nightly.1`. This changes only

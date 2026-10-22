@@ -12,6 +12,10 @@
 // kept. The renderer receives four short plain strings and a data URI.
 
 const dns = require("node:dns");
+const http = require("node:http");
+const https = require("node:https");
+const { isIP } = require("node:net");
+const { Readable } = require("node:stream");
 
 const UA = "Markie link preview (+https://markie.app)";
 const MAX_HTML_BYTES = 512 * 1024;
@@ -20,6 +24,9 @@ const MAX_REDIRECTS = 4;
 const TIMEOUT_MS = 6000;
 const TTL_MS = 30 * 60 * 1000;
 const MAX_TEXT = 300;
+const MAX_URL_LENGTH = 8192;
+const MAX_CACHE_BYTES = 8 * 1024 * 1024;
+const MAX_IN_FLIGHT = 4;
 
 // ── What may be asked for ────────────────────────────────────────────────────
 
@@ -27,17 +34,24 @@ const MAX_TEXT = 300;
 // and hovering a link in it must not become a way to knock on doors inside the
 // reader's network and learn which ones answer.
 function isPrivateAddress(address) {
-  const ip = String(address || "");
-  if (ip.includes(":")) {
-    const v6 = ip.toLowerCase();
-    if (v6 === "::1" || v6 === "::") return true;
-    if (/^f[cd]/.test(v6)) return true; // unique local
-    if (/^fe[89ab]/.test(v6)) return true; // link local
-    // ::ffff:10.0.0.1 and friends
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(v6);
-    if (mapped) return isPrivateAddress(mapped[1]);
+  let ip = String(address || "");
+  const family = isIP(ip);
+  if (family === 6) {
+    // URL canonicalization converts dotted tails and expanded mapped addresses
+    // to the same hex representation. Permit only global unicast, excluding
+    // transition, documentation and special-purpose allocations. Everything
+    // else (including mapped IPv4) fails closed rather than relying on DNS.
+    try { ip = new URL(`http://[${ip}]/`).hostname.slice(1, -1); }
+    catch { return true; } // scoped interface identifiers are never public targets
+    const [first, second = "0"] = ip.split(":");
+    const a = Number.parseInt(first, 16);
+    const b = Number.parseInt(second, 16);
+    if (a < 0x2000 || a > 0x3fff || !Number.isFinite(a)) return true;
+    if (a === 0x2001 && (b < 0x200 || b === 0xdb8)) return true;
+    if (a === 0x2002 || (a === 0x3fff && b < 0x1000)) return true;
     return false;
   }
+  if (family !== 4) return true;
   const parts = ip.split(".").map((n) => Number(n));
   if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
     return true; // not an address we understand, so not one we will fetch
@@ -48,11 +62,17 @@ function isPrivateAddress(address) {
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
   if (a === 100 && b >= 64 && b <= 127) return true; // carrier grade NAT
+  if (a === 192 && b === 0) return true; // protocol/documentation allocations
+  if (a === 192 && b === 88 && parts[2] === 99) return true; // 6to4 relay
+  if (a === 198 && (b === 18 || b === 19)) return true; // benchmark networks
+  if (a === 198 && b === 51 && parts[2] === 100) return true;
+  if (a === 203 && b === 0 && parts[2] === 113) return true;
   if (a >= 224) return true; // multicast and reserved
   return false;
 }
 
 function parseTarget(rawUrl, allowPrivate = false) {
+  if (typeof rawUrl !== "string" || rawUrl.length > MAX_URL_LENGTH) return null;
   let url;
   try {
     url = new URL(String(rawUrl || ""));
@@ -60,30 +80,42 @@ function parseTarget(rawUrl, allowPrivate = false) {
     return null;
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase().replace(/\.$/, "");
   if (!host) return null;
   if (!allowPrivate && (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local"))) {
     return null;
   }
   // Credentials in the URL would be sent to whatever it redirects to.
   if (url.username || url.password) return null;
+  if (!allowPrivate && url.port) return null; // preview web content, not other services
+  const sensitive = /(?:token|authorization|password|passwd|secret|signature|credential|session)|(?:^|[-_])(?:key|auth|code|jwt|sig)(?:$|[-_])/i;
+  for (const name of url.searchParams.keys()) {
+    if (sensitive.test(name) || /^(?:accessToken|apiKey|clientSecret)$/i.test(name)) return null;
+  }
+  if (/(?:token|secret|password|credential|authorization)\s*(?:=|%3d)/i.test(url.hash)) return null;
+  // Common signed share/reset links put the credential in the path instead.
+  if (/\/(?:reset[-_]?password|password[-_]?reset|magic[-_]?link|auth\/callback)(?:\/|$)/i.test(url.pathname)) return null;
+  url.hash = ""; // fragments neither reach the server nor create separate cache entries
   return url;
 }
 
-async function resolvesPublicly(hostname, lookup, allowPrivate = false) {
-  if (allowPrivate) return true;
-  // A literal address never reaches the resolver, so check it directly first.
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(":")) {
-    return !isPrivateAddress(hostname);
-  }
-  let addresses;
-  try {
-    addresses = await lookup(hostname, { all: true });
-  } catch {
-    return false;
-  }
-  if (!addresses || addresses.length === 0) return false;
-  return addresses.every((entry) => !isPrivateAddress(entry.address));
+function untilAborted(promise, signal) {
+  if (signal.aborted) return Promise.reject(new Error("Preview cancelled"));
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(new Error("Preview cancelled"));
+    signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
+async function resolveAddresses(hostname, lookup, signal, allowPrivate) {
+  const literalFamily = isIP(hostname);
+  const addresses = literalFamily
+    ? [{ address: hostname, family: literalFamily }]
+    : await untilAborted(lookup(hostname, { all: true }), signal);
+  if (!Array.isArray(addresses) || addresses.length === 0 || addresses.length > 64) return null;
+  if (addresses.some(({ address }) => !isIP(address) || (!allowPrivate && isPrivateAddress(address)))) return null;
+  return addresses.map(({ address }) => ({ address, family: isIP(address) }));
 }
 
 // ── Reading somebody else's page ─────────────────────────────────────────────
@@ -98,11 +130,11 @@ function decodeEntities(text) {
     if (Object.prototype.hasOwnProperty.call(ENTITIES, key)) return ENTITIES[key];
     if (key.startsWith("#x")) {
       const code = Number.parseInt(key.slice(2), 16);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : whole;
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
     }
     if (key.startsWith("#")) {
       const code = Number.parseInt(key.slice(1), 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : whole;
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
     }
     return whole;
   });
@@ -162,6 +194,11 @@ function parseMeta(html) {
 // ── Fetching ─────────────────────────────────────────────────────────────────
 
 async function readCapped(response, maxBytes) {
+  const advertised = Number(response.headers.get("content-length"));
+  if (Number.isFinite(advertised) && advertised > maxBytes) {
+    await response.body?.cancel();
+    throw new Error("Preview too large");
+  }
   const body = response.body;
   if (!body) return Buffer.alloc(0);
   const reader = body.getReader();
@@ -171,10 +208,9 @@ async function readCapped(response, maxBytes) {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      chunks.push(Buffer.from(value));
       total += value.length;
-      // Stop pulling rather than reading a whole video somebody pointed at.
-      if (total >= maxBytes) break;
+      if (total > maxBytes) throw new Error("Preview too large");
+      chunks.push(Buffer.from(value));
     }
   } finally {
     try {
@@ -183,7 +219,51 @@ async function readCapped(response, maxBytes) {
       // already closed
     }
   }
-  return Buffer.concat(chunks).subarray(0, maxBytes);
+  return Buffer.concat(chunks);
+}
+
+// Main's transport has no browser cookie jar, referrer or environment proxy.
+// Pin the already-validated address without changing the URL hostname: Host,
+// TLS SNI and certificate verification must still identify the original site.
+function pinnedFetch(urlString, { signal, headers, addresses }, requestImpl) {
+  const url = new URL(urlString);
+  const transport = url.protocol === "https:" ? https : http;
+  const agent = new transport.Agent({ keepAlive: false, maxSockets: 1, maxCachedSessions: 0, proxyEnv: {} });
+  return new Promise((resolve, reject) => {
+    const selected = addresses[0];
+    const lookup = (_hostname, options, callback) => {
+      if (typeof options === "function") { callback = options; options = {}; }
+      if (options?.all) callback(null, [selected]);
+      else callback(null, selected.address, selected.family);
+    };
+    let request;
+    try { request = requestImpl(url, { method: "GET", headers, signal, lookup, agent, autoSelectFamily: false, maxHeaderSize: 16 * 1024 }, (incoming) => {
+      incoming.once("close", () => agent.destroy());
+      const status = incoming.statusCode || 500;
+      if (!Number.isInteger(status) || status < 200 || status > 599) {
+        incoming.destroy();
+        agent.destroy();
+        reject(new Error("Invalid preview response"));
+        return;
+      }
+      const responseHeaders = new Headers();
+      for (const [name, value] of Object.entries(incoming.headers)) {
+        for (const item of Array.isArray(value) ? value : [value]) {
+          if (item !== undefined) responseHeaders.append(name, item);
+        }
+      }
+      // Redirect and failed bodies are irrelevant and may otherwise be large
+      // or endless. Never leave one streaming while following the next hop.
+      if (status < 200 || status >= 300 || status === 204 || status === 205) {
+        incoming.destroy();
+        resolve(new Response(null, { status, headers: responseHeaders }));
+      } else {
+        resolve(new Response(Readable.toWeb(incoming), { status, headers: responseHeaders }));
+      }
+    }); } catch (error) { agent.destroy(); reject(error); return; }
+    request.once("error", (error) => { agent.destroy(); reject(error); });
+    request.end();
+  });
 }
 
 /**
@@ -195,15 +275,18 @@ async function fetchChecked(rawUrl, { fetchImpl, lookup, accept, maxBytes, signa
   let url = parseTarget(rawUrl, allowPrivate);
   for (let hop = 0; url && hop <= MAX_REDIRECTS; hop++) {
     const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    if (!(await resolvesPublicly(host, lookup, allowPrivate))) return null;
-    const response = await fetchImpl(url.href, {
+    const addresses = await resolveAddresses(host, lookup, signal, allowPrivate);
+    if (!addresses || signal.aborted) return null;
+    const response = await untilAborted(fetchImpl(url.href, {
       method: "GET",
       redirect: "manual",
       signal,
-      headers: { "user-agent": UA, accept },
-    });
+      headers: { "user-agent": UA, accept, "accept-encoding": "identity" },
+      addresses,
+    }), signal);
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
+      await response.body?.cancel();
       if (!location) return null;
       let next;
       try {
@@ -215,15 +298,19 @@ async function fetchChecked(rawUrl, { fetchImpl, lookup, accept, maxBytes, signa
       url = next;
       continue;
     }
-    if (!response.ok) return null;
-    return { response, url, bytes: await readCapped(response, maxBytes) };
+    if (!response.ok || ![null, "identity"].includes(response.headers.get("content-encoding"))) {
+      await response.body?.cancel();
+      return null;
+    }
+    return { response, url, bytes: await untilAborted(readCapped(response, maxBytes), signal) };
   }
   return null;
 }
 
 function createLinkPreviews(deps = {}) {
   const {
-    fetchImpl = globalThis.fetch,
+    requestImpl = (url, options, callback) => (url.protocol === "https:" ? https : http).request(url, options, callback),
+    fetchImpl = (url, options) => pinnedFetch(url, options, requestImpl),
     lookup = dns.promises.lookup,
     now = () => Date.now(),
     // Only the end-to-end check sets this, and only so it can point Markie at a
@@ -233,6 +320,8 @@ function createLinkPreviews(deps = {}) {
     allowPrivate = false,
     ttlMs = TTL_MS,
     maxEntries = 200,
+    maxCacheBytes = MAX_CACHE_BYTES,
+    maxInFlight = MAX_IN_FLIGHT,
     timeoutMs = TIMEOUT_MS,
   } = deps;
 
@@ -241,6 +330,7 @@ function createLinkPreviews(deps = {}) {
   // keeping on disk to save a second fetch.
   const cache = new Map();
   const inFlight = new Map();
+  let cacheBytes = 0;
 
   const withTimeout = async (run) => {
     const controller = new AbortController();
@@ -313,17 +403,27 @@ function createLinkPreviews(deps = {}) {
 
       const hit = cache.get(key);
       if (hit && hit.until > now()) return hit.value;
+      if (hit) { cache.delete(key); cacheBytes -= hit.bytes; }
 
       // Hover fires repeatedly; one request per link, not one per twitch.
       const running = inFlight.get(key);
       if (running) return running;
+      if (inFlight.size >= maxInFlight) return null;
 
       const promise = load(key)
         .catch(() => null)
         .then((value) => {
           inFlight.delete(key);
-          if (cache.size >= maxEntries) cache.delete(cache.keys().next().value);
-          cache.set(key, { value, until: now() + ttlMs });
+          const bytes = Buffer.byteLength(key) + Buffer.byteLength(JSON.stringify(value));
+          while (cache.size && (cache.size >= maxEntries || cacheBytes + bytes > maxCacheBytes)) {
+            const oldest = cache.keys().next().value;
+            cacheBytes -= cache.get(oldest).bytes;
+            cache.delete(oldest);
+          }
+          if (bytes <= maxCacheBytes && maxEntries > 0) {
+            cache.set(key, { value, until: now() + ttlMs, bytes });
+            cacheBytes += bytes;
+          }
           return value;
         });
       inFlight.set(key, promise);

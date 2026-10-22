@@ -20,6 +20,7 @@ export const MENU_ACCELERATORS = [
   "Mod-n", // New
   "Mod-o", // Open
   "Mod-l", // Open library
+  "Mod-Shift-f", // Search all documents
   "Mod-s", // Save
   "Mod-Shift-s", // Save As
   "Mod-Shift-d", // Duplicate

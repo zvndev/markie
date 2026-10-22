@@ -286,6 +286,108 @@ describe("push", () => {
 });
 
 describe("syncOn", () => {
+  it("keeps omitted-area legacy uploads valid without a confirmed principal", async () => {
+    sync.setConfig({ token: "legacy-unconfirmed", serverURL: SERVER, userId: ME });
+    expect(sync.hasPrincipal()).toBe(false);
+    const row = seedRow({ path: "/docs/legacy-default.md" }), calls = respondWith({ status: 200, body: { version: 1 } });
+    expect((await sync.syncOn(row.path, row.name, "text")).ok).toBe(true);
+    expect(calls[0].body).not.toHaveProperty("areaId"); expect(row.sync_state).toBe("synced");
+  });
+
+  it.each(["token", "server", "away-and-back"])("default uploads never send text after an awaited linked-media stage changes the %s", async (change) => {
+    const row = seedRow({ path: "/docs/default-linked.md", cloud_doc_id: "linked-before", cloud_version: 4, sync_state: "synced" });
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; }), barrier = new Promise<void>((resolve) => { release = resolve; });
+    sync.setAssetSync({ stageAssets: async () => { entered(); await barrier; return { staged: { linkRefs: [] } }; } });
+    const calls = respondWith(), pending = sync.syncOn(row.path, row.name, "unsent");
+    await started;
+    if (change === "token") signIn("other-token", THEM);
+    else if (change === "server") sync.setConfig({ token: "test-token", serverURL: null });
+    else { signIn("other-token", THEM); signIn("test-token", ME); }
+    release();
+    expect((await pending).error).toMatch(/changed during the upload/); expect(calls).toHaveLength(0);
+    expect(row.cloud_version).toBe(4); expect(row.cloud_doc_id).toBe("linked-before");
+  });
+
+  it.each(["token", "server", "away-and-back"])("default creates reject stale %s completion and never bind the wrong account", async (change) => {
+    const row = seedRow({ path: "/docs/default-stale.md" });
+    let release!: () => void; const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const calls: { url: string; init: RequestInit }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => { calls.push({ url, init }); await barrier; return { status: 200, json: async () => ({ version: 1 }) }; }));
+    const pending = sync.syncOn(row.path, row.name, "text");
+    if (change === "token") signIn("other-token", THEM);
+    else if (change === "server") sync.setConfig({ token: "test-token", serverURL: null });
+    else { signIn("other-token", THEM); signIn("test-token", ME); }
+    release(); expect((await pending).error).toMatch(/changed during the upload/);
+    expect(calls).toHaveLength(1); expect(calls[0].url).toContain(SERVER);
+    expect(calls[0].init.headers).toMatchObject({ Authorization: "Bearer test-token" });
+    expect(JSON.parse(calls[0].init.body as string)).not.toHaveProperty("areaId");
+    expect(row.cloud_doc_id).toBeNull(); expect(row.sync_state).toBe("local-only");
+  });
+  it("sends an explicit area only for a new confirmed-account upload and never falls back after refusal", async () => {
+    const row = seedRow({ path: "/docs/area.md" });
+    const calls = respondWith({ status: 404, body: { error: "not-found" } });
+    const failed = await sync.syncOn(row.path, row.name, "text", "selected-area");
+    expect(failed.error).toBe("push failed (404)");
+    expect(calls).toHaveLength(1); expect(calls[0].body).toMatchObject({ areaId: "selected-area", baseVersion: 0 });
+    expect(row.cloud_doc_id).toBeNull(); expect(row.sync_state).toBe("unpushed");
+    await sync.push(row.path, row.name, "next save");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("rejects existing links, invalid areas and unconfirmed principals without staging or writing", async () => {
+    const row = seedRow({ path: "/docs/linked.md", cloud_doc_id: "already-linked", cloud_version: 1 });
+    const calls = respondWith(); const stage = vi.fn(); sync.setAssetSync({ stageAssets: stage });
+    expect((await sync.syncOn(row.path, row.name, "text", "selected-area")).error).toMatch(/already linked/);
+    expect(stage).not.toHaveBeenCalled(); expect(calls).toHaveLength(0);
+    row.cloud_doc_id = null;
+    for (const area of [null, "", "x".repeat(129), "bad\narea"]) expect((await sync.syncOn(row.path, row.name, "text", area)).error).toMatch(/valid cloud destination/);
+    sync.setConfig({ token: "new-unconfirmed-token", serverURL: SERVER, userId: ME });
+    expect((await sync.syncOn(row.path, row.name, "text", "selected-area")).error).toMatch(/Confirm/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each(["token", "server", "principal", "away-and-back"])("does not acknowledge an explicit destination after the captured %s changes", async (change) => {
+    const row = seedRow({ path: "/docs/stale.md" });
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const requests: { url: string; init: RequestInit }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => { requests.push({ url, init }); await barrier; return { status: 200, json: async () => ({ version: 1 }) }; }));
+    const pending = sync.syncOn(row.path, row.name, "text", "selected-area");
+    if (change === "token") signIn("other-token", THEM);
+    else if (change === "server") sync.setConfig({ token: "test-token", serverURL: null });
+    else if (change === "principal") sync.setConfig({ token: "test-token", serverURL: SERVER, userId: THEM });
+    else { signIn("other-token", THEM); signIn("test-token", ME); }
+    release();
+    expect((await pending).error).toMatch(/changed during the upload/);
+    expect(requests).toHaveLength(1); expect(requests[0].url).toContain(SERVER);
+    expect(requests[0].init.headers).toMatchObject({ Authorization: "Bearer test-token" });
+    expect(requests[0].init.redirect).toBe("error");
+    expect(row.cloud_doc_id).toBeNull(); expect(row.sync_state).toBe("local-only");
+  });
+
+  it("pins nested media requests and leaves the registry unacknowledged after an awaited account change", async () => {
+    const row = seedRow({ path: "/docs/media-area.md" }), calls = respondWith({ status: 200, body: { version: 1 } });
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; }), barrier = new Promise<void>((resolve) => { release = resolve; });
+    let nested: { status: number; staleSession?: boolean } | undefined;
+    const linkAssets = vi.fn();
+    sync.setAssetSync({ stageAssets: async () => { entered(); await barrier; nested = await sync.api("POST", "/api/docs/some-id/assets/missing", { hashes: [] }); return { staged: { linkRefs: [] } }; }, linkAssets });
+    const pending = sync.syncOn(row.path, row.name, "text", "selected-area");
+    await started; expect(row.cloud_doc_id).toBeNull(); signIn("other-token", THEM); release();
+    expect((await pending).error).toMatch(/changed during the upload/);
+    expect(nested).toMatchObject({ status: 0, staleSession: true });
+    expect(linkAssets).not.toHaveBeenCalled(); expect(calls).toHaveLength(1); expect(row.cloud_doc_id).toBeNull();
+  });
+
+  it("acknowledges a successful explicit upload after media and keeps default-client payloads unchanged", async () => {
+    const row = seedRow({ path: "/docs/new-area.md" }); const calls = respondWith({ status: 200, body: { version: 1 } });
+    expect((await sync.syncOn(row.path, row.name, "text", "selected-area")).ok).toBe(true);
+    expect(row.sync_state).toBe("synced"); expect(row.cloud_doc_id).toBeTruthy();
+    expect(calls[0].body?.areaId).toBe("selected-area");
+    const old = seedRow({ path: "/docs/default-area.md" }); const defaultCalls = respondWith({ status: 200, body: { version: 1 } });
+    await sync.syncOn(old.path, old.name, "text"); expect(defaultCalls[0].body).not.toHaveProperty("areaId");
+  });
   it("marks the row unpushed when the server refuses the first snapshot", async () => {
     const row = seedRow({ path: "/docs/a.md", sync_state: "local-only" });
     respondWith({ status: 500 });
@@ -337,6 +439,39 @@ describe("syncOn", () => {
 
     expect(second).toEqual({ ok: true, version: 2, media: null });
     expect(row.cloud_doc_id).toBe(minted);
+  });
+});
+
+describe("ordinary push captured-session safety", () => {
+  it("inherits the original session from a reconciliation pass queued before an account change", async () => {
+    const row = seedRow({ path: "/docs/queued-pass.md", cloud_doc_id: "original-cloud", cloud_version: 4, sync_state: "unpushed" });
+    let release!: () => void; const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const calls = respondWith();
+    const queued = sync.withSessionBinding(async () => { await barrier; return sync.push(row.path, row.name, "old queued content"); });
+    signIn("other-token", THEM); release();
+    expect((await queued).error).toMatch(/changed during the upload/); expect(calls).toHaveLength(0);
+    expect(row.cloud_version).toBe(4); expect(row.sync_state).toBe("unpushed");
+  });
+  it("never sends a queued push after media staging changes accounts", async () => {
+    const row = seedRow({ path: "/docs/push-stale.md", cloud_doc_id: "original-cloud", cloud_version: 4, sync_state: "synced", content_hash: "original-hash" });
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; }), barrier = new Promise<void>((resolve) => { release = resolve; });
+    sync.setAssetSync({ stageAssets: async () => { entered(); await barrier; return { staged: { linkRefs: [] } }; } });
+    const calls = respondWith(), pending = sync.push(row.path, row.name, "new bytes");
+    await started; signIn("other-token", THEM); release();
+    expect((await pending).error).toMatch(/changed during the upload/); expect(calls).toHaveLength(0);
+    expect(row.cloud_version).toBe(4); expect(row.content_hash).toBe("original-hash");
+  });
+
+  it("does not acknowledge a push response from an abandoned session", async () => {
+    const row = seedRow({ path: "/docs/push-inflight.md", cloud_doc_id: "original-cloud", cloud_version: 4, sync_state: "unpushed", content_hash: "original-hash" });
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; }), barrier = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async () => { entered(); await barrier; return { status: 200, json: async () => ({ version: 5 }) }; }));
+    const pending = sync.push(row.path, row.name, "new bytes");
+    await started; signIn("other-token", THEM); release();
+    expect((await pending).error).toMatch(/changed during the upload/);
+    expect(row.sync_state).toBe("unpushed"); expect(row.cloud_version).toBe(4); expect(row.content_hash).toBe("original-hash");
   });
 });
 
@@ -2070,6 +2205,18 @@ describe("landing", () => {
     expect(sync.landingName("")).toBe("document.md");
     expect(sync.landingName("..")).toBe("document.md");
     expect(sync.landingName(" spaced .md ")).toBe("spaced .md");
+  });
+
+  // A server decides the name, and the file lands in the workspace beside
+  // the user's own: only the markdown and plain-text family keeps its
+  // extension, the same list a shared link's download uses.
+  it("lands only markdown and plain-text extensions as they are", () => {
+    for (const name of ["a.md", "a.MARKDOWN", "a.mdx", "a.txt", "a.text", "a.log", "data.csv"]) {
+      expect(sync.landingName(name), name).toBe(name);
+    }
+    for (const name of ["run.command", "run.sh", "page.html", "app.app", "x.exe", "doc.svg", "notes.md.command", "a.webloc"]) {
+      expect(sync.landingName(name), name).toBe(`${name}.md`);
+    }
   });
 
   it("numbers a name that is taken", () => {

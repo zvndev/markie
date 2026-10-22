@@ -4,6 +4,13 @@
 > evidence; do not delete history. Move completed items to Done with the verification record.
 
 ## Open
+- [ ] The storage quota (MARKIE_STORAGE_QUOTA_BYTES) does not count version history
+      (doc_history, dp_history) or the live-collaboration update log (doc_updates). Both are
+      bounded today, but a billing plan needs a decision on whether they are charged.
+      type: product
+      severity: low
+      acceptance_criteria: Usage accounting states, and tests, what each stored table counts.
+      source: self-hosting kit, server/src/quota.ts
 - [ ] The Windows release job's install/launch/uninstall step is not reliable. On the 0.5.3
       release the signed installer crashed under `/S` with `-1073741819` (0xC0000005, an
       access violation) on the GitHub runner; an unchanged re-run of the same job on the
@@ -98,6 +105,19 @@
       source: long-agent-loop initializer 2026-06-28
 
 ## Done
+- [x] A self-hosted server let anyone who could reach it create an account. MARKIE_SIGNUP
+      now decides: open (Markie Cloud's default, unchanged), invite (the self-hosted
+      default: the admin, addresses with a pending invite, and an admin allowlist) or
+      closed. Enforced in better-auth's user-create hook, so email sign-up, a first
+      email-code sign-in and a first Google sign-in are all covered; refusals answer
+      403 `signup_invite_required` / `signup_closed`.
+      type: security
+      severity: medium
+      evidence: server/src/invite-signup.test.ts (first account is admin, invited guest
+        signs up and finds the document, stranger refused by email, by email code and by a
+        real Google callback, allowlist admin-only), signup.test.ts, official-boot.test.ts
+        (Markie Cloud stays open and has no admin routes).
+      closed: 2026-10-20
 - [x] Confirm the Windows update path from a previous public version. Done on a GitHub
       Windows runner, which is real Windows, rather than by hand: `windows-update-check.yml`
       runs the same `scripts/update-flow-check.mjs` as macOS. Run 33843439589 on 0.5.3:
@@ -232,3 +252,5 @@
         passed and stopped before any signing, notarization, upload, publish, deploy, or
         credentialed network action; `./init.sh > .autoloop/runs/init-20260628-035139-post-f003.log 2>&1`
         passed.
+
+- **Private builds do not ship the MCP server.** `createPrivateBuilderConfig` sets `extraResources: []`, so `Contents/Resources/mcp/` is missing from super-nightlies and the Agents dialog shows a path that does not exist. Ship `mcp/` in private builds (the bundle scan must allow it), or point the dialog at the repo copy in private builds. Found 2026-10-21 while testing agent cloud links.

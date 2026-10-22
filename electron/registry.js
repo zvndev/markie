@@ -158,6 +158,22 @@ function getDB() {
     if (!fileCols.some((c) => c.name === col)) db.exec(`ALTER TABLE files ADD COLUMN ${col} TEXT`);
   }
 
+  // The server a cloud document lives on, once there can be more than one.
+  // Null is the primary server (Markie Cloud), which is where every row
+  // written before self-hosted servers existed lives, so existing rows need
+  // no rewrite and read exactly as they did.
+  if (!fileCols.some((c) => c.name === "cloud_origin")) {
+    db.exec("ALTER TABLE files ADD COLUMN cloud_origin TEXT");
+  }
+  // Markie Cloud moved to its own domain. A row recorded under its old
+  // address names the same server, so it now says so. Idempotent, and a no-op
+  // once no row names an old address.
+  {
+    const { DEFAULT_SERVER, CLOUD_ALIASES } = require("./share-origin");
+    const rename = db.prepare("UPDATE files SET cloud_origin = ? WHERE cloud_origin = ?");
+    for (const alias of CLOUD_ALIASES) rename.run(DEFAULT_SERVER, alias);
+  }
+
   // Schema versioning starts at 0.5.0. Version 0 is every database that
   // predates it; the PRAGMA-guarded share_role ALTER above predates versioning
   // and stays as-is so any skipped-version database still heals.
@@ -353,6 +369,22 @@ function track(filePath, name, content) {
     );
 }
 
+// A document opened through the native document workspace (DOCX, RTF, JSON,
+// ...). It belongs in Recent like any Markdown file, but its bytes are not
+// UTF-8 text the sync engine could hash, so an existing row keeps whatever
+// content_hash and sync state it already had: only the name and the time move.
+function trackOpened(filePath, name) {
+  getDB()
+    .prepare(
+      `INSERT INTO files (path, name, content_hash, last_opened_at)
+       VALUES (?, ?, NULL, ?)
+       ON CONFLICT(path) DO UPDATE SET
+         name = excluded.name,
+         last_opened_at = excluded.last_opened_at`
+    )
+    .run(canonicalPath(filePath), name, new Date().toISOString());
+}
+
 function get(filePath) {
   return getDB().prepare("SELECT * FROM files WHERE path = ?").get(canonicalPath(filePath));
 }
@@ -397,6 +429,8 @@ function update(filePath, fields) {
     "name",
     "content_hash",
     "cloud_doc_id",
+    // The server it lives on; null for the primary server.
+    "cloud_origin",
     "cloud_version",
     "sync_state",
     "last_synced_at",
@@ -754,6 +788,7 @@ module.exports = {
   canonicalPath,
   indexCacheFingerprint,
   track,
+  trackOpened,
   get,
   list,
   forget,

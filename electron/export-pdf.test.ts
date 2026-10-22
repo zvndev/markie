@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import realFs from "node:fs";
 import realOs from "node:os";
 import path from "node:path";
+import { runInNewContext } from "node:vm";
 
 const load = createRequire(import.meta.url);
 const { createPdfExporter, ensureExtension } = load("./export-pdf.js");
@@ -188,6 +189,44 @@ describe("createPdfExporter", () => {
     const script = created[0].scripts.join("\n");
     expect(script).toContain("document.fonts");
     expect(script).toContain("requestAnimationFrame");
+  });
+
+  it("waits for image decoding and fonts before the two layout frames", async () => {
+    const { exporter } = makeExporter();
+    await exporter.exportPdf({ html: "<img src='data:image/png;base64,test'>", filePath: path.join(outDir, "image.pdf") });
+    let fontsReady!: () => void, imageReady!: () => void;
+    const fonts = new Promise<void>((resolve) => { fontsReady = resolve; });
+    const decoded = new Promise<void>((resolve) => { imageReady = resolve; });
+    const frame = vi.fn((callback: () => void) => callback()), decode = vi.fn(() => decoded);
+    const ready = runInNewContext(created[0].scripts[0], { document: { fonts: { ready: fonts }, images: [{ decode }] }, requestAnimationFrame: frame, setTimeout: vi.fn() });
+    await Promise.resolve(); fontsReady(); await Promise.resolve();
+    expect(decode).toHaveBeenCalledOnce(); expect(frame).not.toHaveBeenCalled();
+    imageReady(); await ready; expect(frame).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a bounded failure when an embedded image never decodes", async () => {
+    const { exporter } = makeExporter();
+    await exporter.exportPdf({ html: "x", filePath: path.join(outDir, "pending-image.pdf") });
+    let timeout!: () => void;
+    const ready = runInNewContext(created[0].scripts[0], { document: { images: [{ decode: () => new Promise(() => {}) }] }, requestAnimationFrame: vi.fn(), setTimeout: (callback: () => void) => { timeout = callback; } });
+    timeout(); await expect(ready).resolves.toMatchObject({ imageError: expect.stringContaining("too long to decode") });
+  });
+
+  it("does not print a blank picture after decoder failure and cleans up", async () => {
+    const { exporter } = makeExporter({ executeJavaScript: async () => ({ imageError: "A document image could not be decoded. The output was stopped." }) });
+    const result = await exporter.exportPdf({ html: "x", filePath: path.join(outDir, "failed-image.pdf") });
+    expect(result).toEqual({ success: false, error: "A document image could not be decoded. The output was stopped." });
+    expect(created[0].printed).toBe(0); expect(created[0].destroyed).toBe(true);
+    expect(realFs.existsSync(created[0].loaded[0])).toBe(false);
+    expect(realFs.existsSync(path.join(outDir, "failed-image.pdf"))).toBe(false);
+    expect(exporter.isBusy()).toBe(false);
+  });
+
+  it("reports a failed decoder rather than treating it as image readiness", async () => {
+    const { exporter } = makeExporter();
+    await exporter.exportPdf({ html: "x", filePath: path.join(outDir, "decoder.pdf") });
+    const ready = runInNewContext(created[0].scripts[0], { document: { images: [{ decode: () => Promise.reject(new Error("invalid raster")) }] }, requestAnimationFrame: vi.fn(), setTimeout: vi.fn() });
+    await expect(ready).resolves.toMatchObject({ imageError: expect.stringContaining("could not be decoded") });
   });
 
   it("normalises the extension the dialog handed back", async () => {
@@ -454,11 +493,19 @@ describe("createPdfExporter", () => {
     expect(res).toEqual({ success: true, printed: true });
   });
 
-  it("survives a page whose readiness probe throws", async () => {
-    const { exporter } = makeExporter({
+  it.each(["pdf", "print"])("stops %s when readiness cannot execute, with no output and full cleanup", async (mode) => {
+    const { exporter, errors } = makeExporter({
       executeJavaScript: () => Promise.reject(new Error("no javascript")),
     });
-    const res = await exporter.exportPdf({ html: "x", filePath: path.join(outDir, "d.pdf") });
-    expect(res.success).toBe(true);
+    const destination = path.join(outDir, "probe-failed.pdf");
+    const res = await exporter.exportPdf({ html: "x", filePath: destination, ...(mode === "print" ? { mode } : {}) });
+    expect(res).toEqual({ success: false, error: "The document could not be checked for output readiness. The output was stopped." });
+    expect(created[0].scripts).toHaveLength(1);
+    expect(created[0].printed).toBe(0); expect(created[0].systemPrints).toHaveLength(0);
+    expect(created[0].isDestroyed()).toBe(true);
+    expect(realFs.existsSync(created[0].loaded[0])).toBe(false);
+    expect(realFs.existsSync(path.dirname(created[0].loaded[0]))).toBe(false);
+    expect(realFs.existsSync(destination)).toBe(false);
+    expect(exporter.isBusy()).toBe(false); expect(errors).toHaveLength(1);
   });
 });

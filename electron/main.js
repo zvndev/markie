@@ -1,6 +1,7 @@
 const {
   app,
   BrowserWindow,
+  clipboard,
   crashReporter,
   dialog,
   ipcMain,
@@ -9,23 +10,46 @@ const {
   net,
   shell,
   session,
+  safeStorage,
+  systemPreferences,
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const url = require("url");
-const { autoUpdater } = require("electron-updater");
-const { shareBaseFromSrc } = require("./share-origin");
-const { classifyDeepLink, cloudDocId } = require("./deep-links");
+const { initializePrivateReleaseIdentity, createPrivateReleaseGate, writePrivatePreflightReady, AUTH_ORIGIN: PRIVATE_AUTH_ORIGIN } = require("./private-release");
+const privateReleaseConfig = initializePrivateReleaseIdentity({ app, metadata: require("../package.json") });
+let privateUpdateCancellation = null;
+const { initializeDesktopIdentity, desktopStartUrl, isStableDesktopAuthUrl } = require("./desktop-preview.cjs");
+const { isPreview: isDesktopPreview } = privateReleaseConfig ? { isPreview: false } : initializeDesktopIdentity({ app, metadata: require("../package.json") });
+const privateRelease = createPrivateReleaseGate({ config: privateReleaseConfig, userData: app.getPath("userData"), safeStorage, onLock: () => {
+  pendingFilePath = null; pendingDeepLink = null; rendererReady = false; currentDocPath = null; stopWatchingOpenFile(); documentMenu.reset();
+  try { privateUpdateCancellation?.cancel(); if (autoUpdater) autoUpdater.requestHeaders = {}; } catch { /* No active private download. */ }
+  try { sync.setConfig({ token: null, serverURL: PRIVATE_AUTH_ORIGIN, userId: null }); } catch { /* Already locked. */ }
+  try { terminal.killAll(); } catch { /* No active terminal. */ }
+  if (mainWindow && !mainWindow.isDestroyed()) { documentFiles.releaseOwner(mainWindow.webContents.id); mainWindow.webContents.reload(); }
+} });
+const autoUpdater = isDesktopPreview ? null : require("electron-updater").autoUpdater;
+const { setTrustedOrigins, isAllowedServerOrigin, canonicalCloudOrigin, DEFAULT_SERVER } = require("./share-origin");
+const { fetchSharedDoc } = require("./share-open");
+const { createServerStore } = require("./servers");
+const { serverRequest } = require("./server-request");
+const { withSafeDocExtension } = require("./doc-names");
+const { classifyDeepLink, cloudDocId, isAuthDeepLink, sourceHint } = require("./deep-links");
 const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
+const { createDocumentFileService, findNativeDocumentLaunchFile, registerDocumentFileIpc, DOCUMENT_EXTENSIONS } = require("./document-files.cjs");
 const docTiers = require("./doc-tiers");
+const { hasUtf16Bom, needsBytePreservingText } = require("./text-byte-route");
 const { createDiskMemory } = require("./disk-memory");
 const { ASSET_SCHEME, buildAppCsp } = require("./csp");
+const { withConnectOrigins } = require("./csp");
 const localAssets = require("./local-assets");
 const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
 const { guardedLogger } = require("./updater-logging");
 const {
   readBetaOptIn,
+  readChannelPrefs,
+  settleLeftEarly,
   updaterSettingsFor,
   writeBetaOptIn,
 } = require("./update-channel");
@@ -39,17 +63,39 @@ const { createCrashLog } = require("./crash-log");
 const { guardStdio, isBrokenPipeError } = require("./stdio-guard");
 const { createPdfExporter, ensureExtension } = require("./export-pdf");
 const { createLinkPreviews } = require("./link-preview");
+const { externalWebTarget } = require("./external-web.cjs");
 const { createIpcHandler, errorMessage } = require("./ipc-result");
-const { writeFileAtomic } = require("./atomic-write");
+const { writeFileAtomic: writeAuthorizedFileAtomic } = require("./atomic-write");
+function writeFileAtomic(...args) {
+  if (!privateRelease.authorized()) throw new Error("Private release authorization is required.");
+  return writeAuthorizedFileAtomic(...args);
+}
+if (privateReleaseConfig) for (const method of ["showOpenDialog", "showSaveDialog"]) {
+  const original = dialog[method].bind(dialog);
+  dialog[method] = async (...args) => {
+    if (!privateRelease.authorized()) return { canceled: true, filePaths: [] };
+    const result = await original(...args);
+    return privateRelease.authorized() ? result : { canceled: true, filePaths: [] };
+  };
+}
 const { createHistory } = require("./history");
 const { saveConflictAction } = require("./save-conflict");
 const { createCloseFlusher } = require("./close-flush");
+const { createDocumentMenuController } = require("./document-menu");
 
 // The renderer answers app-will-close here once it has flushed. Registered at
 // module scope, once, because ipcMain listeners outlive any one window.
 let _closeReadyCb = null;
-ipcMain.on("app-close-ready", () => {
-  if (_closeReadyCb) _closeReadyCb();
+let _closeCancelCb = null;
+function currentCloseSender(event) {
+  return mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
+    && event.senderFrame === mainWindow.webContents.mainFrame && isAppUrl(event.senderFrame.url);
+}
+ipcMain.on("app-close-ready", (event, requestId) => {
+  if (currentCloseSender(event) && _closeReadyCb) _closeReadyCb(requestId);
+});
+ipcMain.on("app-close-cancel", (event, requestId) => {
+  if (currentCloseSender(event) && _closeCancelCb) _closeCancelCb(requestId);
 });
 
 // Electron answers an uncaught exception in the main process with a modal
@@ -213,7 +259,7 @@ const {
   supportsMarkdownDefaultHandler,
 } = require("./desktop-intents");
 
-const isDev = process.env.NODE_ENV === "development";
+const isDev = !privateReleaseConfig && !isDesktopPreview && process.env.NODE_ENV === "development";
 
 // Must run before app ready: gives app:// a real (standard, secure) origin
 // so the renderer gets persistent localStorage/IndexedDB in production.
@@ -244,6 +290,24 @@ try {
 }
 
 let mainWindow;
+const documentMenu = createDocumentMenuController({
+  getWindow: () => mainWindow,
+  getMenu: () => Menu.getApplicationMenu(),
+  sendCommand: (command) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("document-command", command); },
+  canUseLegacy: (id) => id !== REVERT_MENU_ID || (!!currentDocPath && history().has(currentDocPath)),
+});
+// Every document the workspace opens (dialog, Finder, drop, Browse) is a
+// recent file, whatever its format. Classic Markdown/text opens are tracked by
+// the renderer through registry-track; this is the same promise for the rest.
+function noteOpenedDocument(target) {
+  try { registry.trackOpened(target, path.basename(target)); } catch { /* registry unavailable */ }
+  try { app.addRecentDocument(target); } catch { /* not every platform keeps a list */ }
+  mdIndexAdded(target);
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("library-changed");
+}
+const documentFiles = createDocumentFileService({ dialog, getWindow: () => mainWindow, onGranted: noteOpenedDocument });
+let pendingNativeDocumentError = null;
+let nativeDocumentQueued = false;
 let rendererReady = false;
 // Set once the user has asked to quit. The close interception below prevents
 // the window close that a quit performs, and a prevented close cancels the
@@ -252,11 +316,49 @@ let quitRequested = false;
 let pendingFilePath = null;
 // markie:// deep link that arrived before the renderer was ready to receive it
 let pendingDeepLink = null;
+// A Google sign-in hand-back that arrived while a private build was locked.
+let pendingAuthLink = null;
+
+// OS paths never cross the renderer boundary: it receives only a notification,
+// then claims a bounded opaque file grant through document-files:take-initial.
+function queueNativeDocumentOpen(filePath, options = {}) {
+  if (!privateRelease.authorized()) return false;
+  const result = options.dropOwner === undefined
+    ? documentFiles.queueOsFile(filePath, options)
+    : documentFiles.queueDroppedFile(options.dropOwner, filePath);
+  if (!result.ok) pendingNativeDocumentError = result;
+  else if (!result.value) return false;
+  nativeDocumentQueued = true;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (rendererReady) mainWindow.webContents.send("document-file-opened");
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show(); mainWindow.focus();
+  } else if (app.isReady()) createWindow();
+  return true;
+}
 
 // Deliver a markie:// deep link to the renderer, or queue it if the window
 // isn't ready yet (cold start from the OAuth browser hand-off). Always raises
 // the window so the user lands back in Markie focused.
 function deliverDeepLink(link) {
+  if (isDesktopPreview) return;
+  // A locked private build still takes the Google sign-in hand-back, or the
+  // sign-in that unlocks it could never finish. Nothing else gets through.
+  if (!privateRelease.authorized()) {
+    if (!isAuthDeepLink(link)) return;
+    // Locked, the document shell never mounts, so rendererReady stays false
+    // (a lock also reloads the window) and the queue below would hold this
+    // forever. Keep it for the gate to collect when it mounts, and also send
+    // it now in case the gate is already listening. The nonce is single-use,
+    // so whichever copy arrives second is refused.
+    pendingAuthLink = link;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (!mainWindow.webContents.isLoading()) mainWindow.webContents.send("deep-link", link);
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+    } else if (app.isReady()) createWindow();
+    return;
+  }
   const kind = classifyDeepLink(link);
   if (kind === "ignore") return;
   // A public link: fetch it with the token the link carries and open a copy
@@ -308,7 +410,7 @@ function showDeepLinkFailure() {
 // Save a shared doc to ~/Downloads with a collision-safe markdown name.
 function downloadsUniquePath(name) {
   let safe = path.basename(String(name || "")).replace(/[\\/:]/g, "_").trim() || "Shared document";
-  if (!/\.(md|markdown|mdx|txt)$/i.test(safe)) safe += ".md";
+  safe = withSafeDocExtension(safe);
   const dir = app.getPath("downloads");
   const ext = path.extname(safe);
   const stem = path.basename(safe, ext);
@@ -345,9 +447,11 @@ const preflightMode = process.env.MARKIE_PREFLIGHT === "1";
 // Open a markdown file that already exists on disk in the editor window,
 // creating/showing the window and bridging cold start via pendingFilePath.
 function openLocalFile(filePath) {
+  if (!privateRelease.authorized()) return;
   // macOS reopens the last document by sending open-file at launch, which is
   // the path that renamed the window during the packaging gate.
   if (preflightMode) return;
+  if (documentsWorkspaceActive() && queueNativeDocumentOpen(filePath, { includeClassic: true })) return;
   if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
     const payload = readFilePayload(filePath, { grant: true });
     if (payload) mainWindow.webContents.send("file-opened", payload);
@@ -365,16 +469,17 @@ function openLocalFile(filePath) {
 // markie://open?token=…&src=… — fetch the shared doc from its public link (the
 // token is the authorization, no account needed), save it to ~/Downloads, and
 // open it. Waits for app-ready on a cold start.
+//
+// SECURITY: the link's `src` is never a fetch target on its own say-so. A
+// trusted server (Settings > Servers) is used as-is; anything else that is not
+// a public https origin falls back to production; and a public https origin
+// the user has not added is asked about first, then fetched anonymously.
+// Opening a document from it does not add it (electron/share-open.js).
 async function openSharedFromDeepLink(link) {
   if (!app.isReady()) {
     app.whenReady().then(() => openSharedFromDeepLink(link));
     return;
   }
-  let parsed;
-  try { parsed = new URL(link); } catch { return; }
-  const token = parsed.searchParams.get("token");
-  const src = parsed.searchParams.get("src");
-  if (!token) return;
   if (!mainWindow) createWindow();
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -382,15 +487,20 @@ async function openSharedFromDeepLink(link) {
     mainWindow.focus();
   }
   try {
-    // SECURITY: never fetch from the deep link's raw `src` (SSRF). Pin to an
-    // allowlisted Markie origin; unknown/attacker srcs fall back to production.
-    const base = shareBaseFromSrc(src, { allowDev: isDev });
-    const res = await net.fetch(`${base}/s/${encodeURIComponent(token)}/raw`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const content = await res.text();
-    const name = filenameFromDisposition(res.headers.get("content-disposition")) || "Shared document.md";
+    const result = await fetchSharedDoc(link, {
+      allowDev: isDev,
+      // A private build talks to its one server only (see serverStore).
+      trustedOnly: !!privateReleaseConfig,
+      confirm: confirmUntrustedShare,
+      // A trusted server is fetched the way it always was; an unknown one
+      // goes through Node's fetch, which has no cookie jar to send from.
+      // Either way the request carries share-open's timeout and size cap.
+      fetchImpl: (target, init, { anonymous }) => (anonymous ? fetch(target, init) : net.fetch(target, init)),
+    });
+    if (result.status !== "ok") return;
+    const name = filenameFromDisposition(result.disposition) || "Shared document.md";
     const dest = downloadsUniquePath(name);
-    writeFileAtomic(dest, content);
+    writeFileAtomic(dest, result.content);
     openLocalFile(dest);
   } catch (err) {
     console.error("markie://open failed:", err);
@@ -404,11 +514,27 @@ async function openSharedFromDeepLink(link) {
   }
 }
 
+// The question for a link from a server the user never added. Asked by main,
+// in a native dialog, so nothing in the renderer can answer it for them.
+async function confirmUntrustedShare({ host }) {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: "question",
+    buttons: ["Open", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+    message: `Open a document from ${host}?`,
+    detail:
+      "This server isn't in your Markie servers. Markie will download a copy without signing in. To work on this server, add it in Settings > Servers.",
+  });
+  return response === 0;
+}
+
 // Pull a cloud document this account may read into Downloads under its own
 // name, track it, grant it, and answer its path. Shared by the markie://doc
 // deep link and a document link clicked inside another document.
-async function landCloudDoc(cloudId) {
-  const res = await sync.pull(cloudId, downloadsUniquePath("Shared document.md"));
+async function landCloudDoc(cloudId, server) {
+  const res = await sync.pull(cloudId, downloadsUniquePath("Shared document.md"), server);
   if (!res || res.error) return { error: res && res.error ? res.error : "pull failed" };
   // pull() writes under a placeholder name because the real one only comes back
   // with the document. Rename before opening so the Library shows what the
@@ -441,6 +567,10 @@ async function openCloudDocFromDeepLink(link) {
   }
   const cloudId = cloudDocId(link);
   if (!cloudId) return;
+  // The link's src only ever picks between servers already on the trusted
+  // list; anything else means the primary server, as it always did. The
+  // session used is this app's own for that server.
+  const server = docLinkServer(sourceHint(link));
   if (!mainWindow) createWindow();
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -448,7 +578,7 @@ async function openCloudDocFromDeepLink(link) {
     mainWindow.focus();
   }
 
-  const signedIn = await waitForSignIn(15000);
+  const signedIn = await waitForSignIn(15000, server);
   if (!signedIn) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       dialog.showMessageBox(mainWindow, {
@@ -460,7 +590,7 @@ async function openCloudDocFromDeepLink(link) {
     return;
   }
 
-  const landedDoc = await landCloudDoc(cloudId);
+  const landedDoc = await landCloudDoc(cloudId, server);
   if (landedDoc.error) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       dialog.showMessageBox(mainWindow, {
@@ -474,14 +604,26 @@ async function openCloudDocFromDeepLink(link) {
   openLocalFile(landedDoc.path);
 }
 
+// A markie://doc link's src, as a trusted origin, or undefined for the primary.
+function docLinkServer(src) {
+  if (!src) return undefined;
+  try {
+    const origin = new URL(/^https?:\/\//i.test(src) ? src : `https://${src}`).origin;
+    return isAllowedServerOrigin(origin, { allowDev: isDev }) ? canonicalCloudOrigin(origin) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Resolve once the renderer has configured the sync engine with a session, or
 // give up so the caller can say something useful instead of hanging.
-function waitForSignIn(timeoutMs) {
+function waitForSignIn(timeoutMs, server) {
+  const ready = () => (server ? sync.isConfigured(server) : sync.isConfigured(sync.primary()));
   return new Promise((resolve) => {
-    if (sync.isConfigured()) return resolve(true);
+    if (ready()) return resolve(true);
     const started = Date.now();
     const timer = setInterval(() => {
-      if (sync.isConfigured()) {
+      if (ready()) {
         clearInterval(timer);
         resolve(true);
       } else if (Date.now() - started >= timeoutMs) {
@@ -571,9 +713,7 @@ function setCurrentDoc(filePath) {
 
 function refreshRevertMenuItem() {
   try {
-    const item = Menu.getApplicationMenu()?.getMenuItemById(REVERT_MENU_ID);
-    if (!item) return; // menu not built yet (startup) or not this platform
-    item.enabled = !!currentDocPath && history().has(currentDocPath);
+    documentMenu.refresh();
   } catch {
     // A menu that stays enabled is a dialog that explains itself instead.
   }
@@ -587,13 +727,22 @@ function refreshRevertMenuItem() {
 // the whole text back over IPC just so the registry could hash it, and for a
 // file this size that copy is worth skipping.
 function readFilePayload(filePath, { grant = false } = {}) {
+  if (!privateRelease.authorized()) return null;
   try {
     const access = grant ? fileGrants.grantFile(filePath) : fileGrants.canRead(filePath);
     if (!access.ok) return null;
     const name = path.basename(access.path);
+    if (hasUtf16Bom(access.path)) {
+      queueNativeDocumentOpen(access.path, { includeClassic: true });
+      return null;
+    }
     const doc = docTiers.readDocumentTiered(access.path);
     if (doc.tooLarge) {
       return { tooLarge: true, size: doc.size, name, path: access.path };
+    }
+    if (needsBytePreservingText(name, doc.content)) {
+      queueNativeDocumentOpen(access.path, { includeClassic: true });
+      return null;
     }
     diskMemory.remember(access.path, doc.content);
     setCurrentDoc(access.path);
@@ -617,11 +766,12 @@ function readFilePayload(filePath, { grant = false } = {}) {
 }
 
 // File passed as a CLI argument (dev runs, Windows/Linux double-click)
-const argFile = preflightMode ? null : findOpenableLaunchFile(process.argv.slice(1));
+const argFile = preflightMode || !privateRelease.authorized() ? null : findOpenableLaunchFile(process.argv.slice(1));
 if (argFile) pendingFilePath = argFile;
+else if (!preflightMode && privateRelease.authorized()) { const nativeFile = findNativeDocumentLaunchFile(process.argv.slice(1)); if (nativeFile) queueNativeDocumentOpen(nativeFile); }
 
 // markie:// deep link passed as a CLI argument (Windows/Linux cold start)
-const argDeepLink = findDeepLinkArg(process.argv.slice(1));
+const argDeepLink = isDesktopPreview ? null : findDeepLinkArg(process.argv.slice(1));
 if (argDeepLink) pendingDeepLink = argDeepLink;
 
 // The renderer's own document: app://markie/... in production, the Next dev
@@ -639,8 +789,15 @@ function isAppUrl(target) {
     return false;
   }
 }
+function documentsWorkspaceActive() {
+  try {
+    const params = new URL(mainWindow.webContents.getURL()).searchParams;
+    return params.get("workspace") === "1" && params.get("classic") !== "1" && !(isDev && params.get("documents") === "1");
+  } catch { return false; }
+}
 
 function createWindow() {
+  documentMenu.reset();
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -657,13 +814,30 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      additionalArguments: privateReleaseConfig ? ["--markie-private-release"] : [],
     },
+  });
+  const nativeDocumentOwner = mainWindow.webContents.id;
+  mainWindow.webContents.once("destroyed", () => { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); });
+  mainWindow.webContents.on("render-process-gone", () => { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); });
+  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); } });
+
+  // Escape from a focused provider iframe cannot bubble to the host document.
+  // Forward only dismissal over the existing private command channel; leave
+  // the original key and fullscreen/menu behavior untouched.
+  const mediaContents = mainWindow.webContents;
+  mediaContents.on("before-input-event", (_event, input) => {
+    if (input.type === "keyDown" && input.key === "Escape" && !input.isComposing
+      && !mediaContents.isDestroyed() && isAppUrl(mediaContents.getURL())) {
+      mediaContents.send("document-command", "dismiss-media-viewer");
+    }
   });
 
   mainWindow.once("ready-to-show", () => {
     // E2E drivers keep the window hidden so runs don't steal focus
     if (process.env.MARKIE_E2E === "1") return;
-    mainWindow?.show();
+    if (preflightMode) mainWindow?.showInactive();
+    else mainWindow?.show();
   });
 
   // Browse: re-scan the markdown index on window focus.
@@ -674,6 +848,7 @@ function createWindow() {
   // have actually asked for an index this session, and it waits five minutes
   // between walks.
   mainWindow.on("focus", () => {
+    if (!privateRelease.authorized()) return;
     if (!_mdScanRequested) return;
     const now = Date.now();
     if (now - _mdLastScanAt < MD_RESCAN_INTERVAL_MS) return;
@@ -715,8 +890,10 @@ function createWindow() {
   // rendered markdown should reach the user's browser, not a chrome-less window
   // with no way back.
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
-    if (/^https?:\/\//i.test(target)) {
-      shell.openExternal(target).catch((err) => logCrash("open-external-failed", err));
+    const webTarget = externalWebTarget(target);
+    if (webTarget) {
+      try { shell.openExternal(webTarget).catch(() => logCrash("open-external-failed", "Could not open the external browser.")); }
+      catch { logCrash("open-external-failed", "Could not open the external browser."); }
     }
     return { action: "deny" };
   });
@@ -727,8 +904,10 @@ function createWindow() {
   mainWindow.webContents.on("will-navigate", (event, target) => {
     if (isAppUrl(target)) return;
     event.preventDefault();
-    if (/^https?:\/\//i.test(target)) {
-      shell.openExternal(target).catch((err) => logCrash("open-external-failed", err));
+    const webTarget = externalWebTarget(target);
+    if (webTarget) {
+      try { shell.openExternal(webTarget).catch(() => logCrash("open-external-failed", "Could not open the external browser.")); }
+      catch { logCrash("open-external-failed", "Could not open the external browser."); }
     }
   });
 
@@ -738,17 +917,23 @@ function createWindow() {
   // same interception: quit closes the window, this settles once, and
   // window-all-closed then quits as it always did.
   const closeFlusher = createCloseFlusher({
-    send: (channel) => {
+    send: (channel, requestId) => {
       // Spelled out rather than forwarded, so electron/ipc-contract.test.ts can
       // see main.js as the sender of this channel.
       if (channel !== "app-will-close") return;
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("app-will-close");
+        mainWindow.webContents.send("app-will-close", requestId);
       }
     },
     onReady: (cb) => {
       _closeReadyCb = cb;
     },
+    onCancel: (cb) => { _closeCancelCb = cb; },
+    onCanceled: () => { quitRequested = false; },
+    // Word and private documents now share Markie's original shell. Its URL
+    // cannot tell us whether all recovery guards have finished, so a missing
+    // acknowledgement keeps the window open instead of discarding edits.
+    forceOnTimeout: () => false,
     destroy: () => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
     },
@@ -764,8 +949,10 @@ function createWindow() {
 
   mainWindow.on("closed", () => {
     mainWindow = null;
+    documentMenu.reset();
     rendererReady = false;
     _closeReadyCb = null;
+    _closeCancelCb = null;
     // never leave orphaned shells behind
     try {
       require("./terminal").killAll();
@@ -780,41 +967,57 @@ function createWindow() {
       mainWindow.webContents.openDevTools({ mode: "detach" });
     }
   } else {
-    mainWindow.loadURL("app://markie/index.html");
+    mainWindow.loadURL(desktopStartUrl({ isPreview: isDesktopPreview }));
   }
 }
 
 // Register custom protocol to serve static files with proper MIME types
+// The CSP rides on every app:// response itself. setupCSP's webRequest hook
+// is a second layer, but whether it sees custom-protocol responses is up to
+// Electron, and the policy is the only thing behind the markdown sanitizer.
+let appCsp = null;
+async function withAppCsp(pending) {
+  const response = await pending;
+  if (isDev) return response;
+  appCsp ??= buildAppCsp(path.join(__dirname, "../out"));
+  const headers = new Headers(response.headers);
+  // Every trusted server, as the list stands when the document loads.
+  headers.set("Content-Security-Policy", withConnectOrigins(appCsp, serverStore.origins()));
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 function registerProtocol() {
-  protocol.handle("app", (request) => {
-    const requestUrl = new URL(request.url);
-    // Remove the host part and decode the path
-    let filePath = decodeURIComponent(requestUrl.pathname);
+  protocol.handle("app", (request) => withAppCsp(serveAppAsset(request)));
+}
 
-    // Resolve to the out directory
-    const outDir = path.join(__dirname, "../out");
-    const fullPath = path.join(outDir, filePath);
+function serveAppAsset(request) {
+  const requestUrl = new URL(request.url);
+  // Remove the host part and decode the path
+  let filePath = decodeURIComponent(requestUrl.pathname);
 
-    // SECURITY: never serve outside the bundled out/ dir even if the path
-    // contains traversal (defensive — the renderer origin is app:// only).
-    const resolvedOut = path.resolve(outDir);
-    const resolvedFull = path.resolve(fullPath);
-    if (resolvedFull !== resolvedOut && !resolvedFull.startsWith(resolvedOut + path.sep)) {
-      return new Response("Forbidden", { status: 403 });
-    }
+  // Resolve to the out directory
+  const outDir = path.join(__dirname, "../out");
+  const fullPath = path.join(outDir, filePath);
 
-    // Vite emits one index.html plus hashed assets, so the only path that
-    // needs help is the origin root. Anything else that is missing is a build
-    // bug, and a 404 says so where a guessed file would hide it.
-    if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
-      return net.fetch(url.pathToFileURL(path.join(fullPath, "index.html")).toString());
-    }
-    if (!fs.existsSync(fullPath)) {
-      return new Response("Not Found", { status: 404 });
-    }
+  // SECURITY: never serve outside the bundled out/ dir even if the path
+  // contains traversal (defensive — the renderer origin is app:// only).
+  const resolvedOut = path.resolve(outDir);
+  const resolvedFull = path.resolve(fullPath);
+  if (resolvedFull !== resolvedOut && !resolvedFull.startsWith(resolvedOut + path.sep)) {
+    return new Response("Forbidden", { status: 403 });
+  }
 
-    return net.fetch(url.pathToFileURL(fullPath).toString());
-  });
+  // Vite emits one index.html plus hashed assets, so the only path that
+  // needs help is the origin root. Anything else that is missing is a build
+  // bug, and a 404 says so where a guessed file would hide it.
+  if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
+    return net.fetch(url.pathToFileURL(path.join(fullPath, "index.html")).toString());
+  }
+  if (!fs.existsSync(fullPath)) {
+    return new Response("Not Found", { status: 404 });
+  }
+
+  return net.fetch(url.pathToFileURL(fullPath).toString());
 }
 
 const { cloudDocFor } = require("./cloud-doc-for");
@@ -849,6 +1052,7 @@ function cloudDocForPath(docPath, requested) {
 // refusal, never instead of it.
 function registerAssetProtocol() {
   protocol.handle(ASSET_SCHEME, async (request) => {
+    if (!privateRelease.authorized()) return new Response("Private release authorization required", { status: 403 });
     let requested;
     try {
       // The path is one percent-encoded segment, so the standard scheme's own
@@ -992,7 +1196,7 @@ function setupCSP() {
   const csp = buildAppCsp(path.join(__dirname, "../out"));
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
-      responseHeaders: { ...details.responseHeaders, "Content-Security-Policy": [csp] },
+      responseHeaders: { ...details.responseHeaders, "Content-Security-Policy": [withConnectOrigins(csp, serverStore.origins())] },
     });
   });
 }
@@ -1003,9 +1207,48 @@ function setupCSP() {
 // almost no call site has a .catch(). The visible result was a spinner that
 // never stopped. Failures now answer `{ error }` (or the `onFailure` shape the
 // channel's callers already understand) and land in the crash log.
-const handle = createIpcHandler({
+const baseHandle = createIpcHandler({
   ipcMain,
   onError: (channel, err) => logCrash(`ipc:${channel}`, err),
+});
+const handle = (channel, fn, options) => baseHandle(channel, async (event, ...args) => {
+  if (privateReleaseConfig && (!currentCloseSender(event) || !privateRelease.allows(channel))) return { ok: false, success: false, error: "Private release authorization is required.", code: "private-release-locked" };
+  return fn(event, ...args);
+}, options);
+handle("private-release-status", () => {
+  // The private React gate has mounted; readiness is not document authorization.
+  writePrivatePreflightReady({ config: privateReleaseConfig, preflight: preflightMode, userData: app.getPath("userData") });
+  return privateRelease.status();
+});
+handle("private-release-session", () => ({ token: privateRelease.rendererCredential() }));
+handle("private-release-take-auth-link", () => { const link = pendingAuthLink; pendingAuthLink = null; return link; });
+handle("private-release-authorize", async (_event, token) => {
+  const status = await privateRelease.authorize(token);
+  if (status.authorized && privateReleaseConfig && autoUpdater) applyUpdateChannel();
+  return status;
+});
+handle("private-release-lock", () => privateRelease.lock({ forget: true }));
+handle("document-menu-state", (event, state) => {
+  if (!currentCloseSender(event)) return { ok: false, error: "This frame cannot update document menus." };
+  return documentMenu.update(state);
+}, { onFailure: () => ({ ok: false, error: "Document menus could not be updated." }) });
+registerDocumentFileIpc({
+  handle,
+  service: { ...documentFiles, takeInitial(owner) {
+    rendererReady = true;
+    if (pendingFilePath && documentsWorkspaceActive()) {
+      const file = pendingFilePath; pendingFilePath = null;
+      queueNativeDocumentOpen(file, { includeClassic: true });
+    }
+    if (pendingNativeDocumentError) { const error = pendingNativeDocumentError; pendingNativeDocumentError = null; return error; }
+    const result = documentFiles.takeInitial(owner);
+    // takeInitial is asynchronous; the null receipt marks the queue drained.
+    return Promise.resolve(result).then((value) => { if (value.ok && !value.value) nativeDocumentQueued = false; return value; });
+  } },
+  ownerForEvent: (event) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents || !event.senderFrame || event.senderFrame !== mainWindow.webContents.mainFrame || !isAppUrl(event.senderFrame.url)) return null;
+    return event.sender.id;
+  },
 });
 
 // Export handlers answer `{ success, error }`; their callers show `error`.
@@ -1020,9 +1263,10 @@ handle("open-file", async (_event, args) => {
     properties: ["openFile"],
     ...(startDir ? { defaultPath: startDir } : {}),
     filters: [
+      { name: "Documents", extensions: DOCUMENT_EXTENSIONS },
       { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
       { name: "CSV", extensions: ["csv"] },
-      { name: "Text", extensions: ["txt"] },
+      { name: "Text", extensions: ["txt", "text", "log"] },
       { name: "All Files", extensions: ["*"] },
     ],
   });
@@ -1031,8 +1275,12 @@ handle("open-file", async (_event, args) => {
     return null;
   }
 
+  const filePath = result.filePaths[0];
+  // Rich and structured formats use opaque byte grants, never the classic
+  // UTF-8 Markdown reader. Its event opens them inside the existing shell.
+  if (!OPENABLE.test(filePath) && queueNativeDocumentOpen(filePath)) return null;
   // The dialog is the user grant. Store it in main before returning the file.
-  return readFilePayload(result.filePaths[0], { grant: true });
+  return readFilePayload(filePath, { grant: true });
 }, { onFailure: () => null });
 
 // IPC: Export PDF — the hidden-window rendering lives in export-pdf.js.
@@ -1160,7 +1408,7 @@ handle("save-file-as", async (_event, { defaultName, content, csvContent }) => {
     filters: [
       { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
       { name: "CSV", extensions: ["csv"] },
-      { name: "Text", extensions: ["txt"] },
+      { name: "Text", extensions: ["txt", "text", "log"] },
     ],
   });
   if (result.canceled || !result.filePath) {
@@ -1262,6 +1510,21 @@ const registry = require("./registry");
 const mdindex = require("./mdindex");
 const sync = require("./sync");
 const workspace = require("./workspace");
+const examples = require("./examples");
+// The servers the user trusts (Settings > Servers). Markie Cloud is always on
+// it. Everything that decides whether a token or a fetch may go to an origin
+// reads this list through share-origin.js: the trusted origins, the window's
+// content security policy, markie://doc routing.
+//
+// A private build is locked to the one authentication server its release
+// credential belongs to, so it never reads servers.json at all: a list left
+// by a regular build on the same machine does not widen any of those. The
+// file is left as it is for that build.
+const serverStore = createServerStore({
+  file: privateReleaseConfig ? null : path.join(app.getPath("userData"), "servers.json"),
+  allowDev: isDev,
+});
+setTrustedOrigins(() => serverStore.origins());
 const fileGrants = createFileGrants({ workspaceRoots: () => workspace.roots() });
 // Module-level so a later handler can reuse the same instance rather than
 // building a second one with its own hash cache.
@@ -1292,7 +1555,7 @@ async function reconcileIfDue(force = false) {
   if (reconcileInFlight) return reconcileInFlight;
   if (!force && Date.now() - lastReconcile < 10 * 60 * 1000) return lastReconcileResult;
   lastReconcile = Date.now();
-  reconcileInFlight = reconciler.run();
+  reconcileInFlight = sync.withSessionBinding(() => reconciler.run());
   try {
     lastReconcileResult = await reconcileInFlight;
     // A pass that moved a row from "media pending" to synced changed what the
@@ -1343,7 +1606,17 @@ const wsTry = (fn) => {
 };
 handle("ws-roots", () => workspace.roots(), { onFailure: () => [] });
 handle("ws-default-path", () => workspace.defaultRootPath(), { onFailure: () => "" });
-handle("ws-create-default", () => wsTry(() => ({ ok: true, path: workspace.createDefaultRoot() })));
+// The example lands in Markie's own folder the first time that folder exists,
+// whether this launch found it or the renderer just created it.
+function seedWorkspaceExamples() {
+  try { examples.seedExamples(workspace.defaultRootPath(), path.join(app.getPath("userData"), "seeded-examples.json")); }
+  catch { /* an example is never worth a failed launch */ }
+}
+handle("ws-create-default", () => wsTry(() => {
+  const created = workspace.createDefaultRoot();
+  seedWorkspaceExamples();
+  return { ok: true, path: created };
+}));
 handle("ws-add-root", async () => {
   const r = await dialog.showOpenDialog(mainWindow, {
     properties: ["openDirectory", "createDirectory"],
@@ -1388,6 +1661,11 @@ handle("term-external-apps", () => terminal.externalApps(), { onFailure: () => [
 handle("term-open-external", (_e, { app, cwd }) => terminal.openExternal(app, cwd));
 
 handle("sync-config", async (_event, cfg) => {
+  if (privateReleaseConfig && cfg?.serverURL !== PRIVATE_AUTH_ORIGIN) return { error: "Private builds use the trusted Markie authentication server." };
+  if (privateReleaseConfig && !privateRelease.matchesCredential(cfg?.token)) {
+    if (!cfg?.token) { privateRelease.lock({ forget: true }); return { error: "Private release authorization is required." }; }
+    if (!(await privateRelease.authorize(cfg.token)).authorized) return { error: "Private release authorization is required." };
+  }
   const result = sync.setConfig(cfg);
   // Whose cached pictures this machine is holding. The cache keys carry no
   // principal, so the directory has to belong to one session at a time: it
@@ -1410,16 +1688,89 @@ handle("sync-config", async (_event, cfg) => {
   if (cfg.userId) void reconcileIfDue();
   return result;
 });
+// Every server but the primary one gets its session through here, one server
+// per call, leaving the others as they are. Main checks the origin against
+// the trusted list itself; the renderer naming one is not enough.
+// Private builds stay on the one authentication server their release
+// credential (kept with safeStorage) belongs to, so they take no other.
+const PRIVATE_SERVERS_REFUSAL = "Private builds use only the Markie authentication server.";
+handle("sync-session", async (_event, cfg) => {
+  if (privateReleaseConfig) return { error: PRIVATE_SERVERS_REFUSAL };
+  const result = sync.setSession(cfg);
+  if (result?.error) return { error: result.error };
+  // Same reasoning as sync-config: the cache belongs to the set of sessions.
+  await assetCache.bindSession(result?.sessionKey ?? null).catch(() => assetCache.markPendingClear());
+  if (cfg?.userId) void reconcileIfDue();
+  return { ok: true, sessionChanged: result.sessionChanged };
+});
+
+// ── Servers (Settings > Servers) ──
+// Adding is two calls on purpose. servers-probe checks the address and asks
+// the server who it is; the renderer shows that name and origin; only then
+// does servers-add, with the id of a check main made itself, put it on the
+// list. A renderer that calls servers-add with anything else adds nothing.
+const serverView = (s) => ({
+  origin: s.origin,
+  name: s.name,
+  isDefault: !!s.isDefault,
+  signIn: {
+    email: s.signIn?.email !== false,
+    google: s.signIn?.google === true,
+    signup: ["open", "invite", "closed"].includes(s.signIn?.signup) ? s.signIn.signup : "open",
+  },
+  version: s.version ?? null,
+});
+handle("servers-list", () => serverStore.list().map(serverView), {
+  onFailure: () => [serverView({ origin: DEFAULT_SERVER, name: "Markie Cloud", isDefault: true, signIn: { email: true, google: true, signup: "open" } })],
+});
+handle("servers-probe", (_event, input) => (privateReleaseConfig ? { ok: false, error: PRIVATE_SERVERS_REFUSAL } : serverStore.probe(typeof input === "string" ? input : "")), {
+  onFailure: (err) => ({ ok: false, error: errorMessage(err) }),
+});
+handle("servers-add", (_event, probeId) => {
+  if (privateReleaseConfig) return { ok: false, error: PRIVATE_SERVERS_REFUSAL };
+  const res = serverStore.add(probeId);
+  return res.ok ? { ok: true, server: serverView(res.server) } : res;
+});
+handle("servers-remove", async (_event, origin) => {
+  const res = serverStore.remove(origin);
+  if (!res.ok) return res;
+  // Its token goes with it, and so does what it said about its documents.
+  const forgotten = sync.forgetOrigin(origin);
+  await assetCache.bindSession(forgotten?.sessionKey ?? null).catch(() => assetCache.markPendingClear());
+  return { ok: true };
+});
+
+// The server a renderer call names, if it is one this app trusts. Anything
+// else is the primary server, which is what every call meant before.
+function trustedServerArg(server) {
+  if (typeof server !== "string" || !server) return undefined;
+  return isAllowedServerOrigin(server, { allowDev: isDev }) ? canonicalCloudOrigin(new URL(server).origin) : undefined;
+}
+
+// The renderer's REST calls to a server other than Markie Cloud: sign-in,
+// sharing. The checks, the timeout and the size cap live in
+// electron/server-request.js.
+handle("server-request", async (_event, req) => {
+  if (privateReleaseConfig) return { ok: false, status: 0, data: null, error: PRIVATE_SERVERS_REFUSAL };
+  const origin = trustedServerArg(req?.origin);
+  if (!origin) return { ok: false, status: 0, data: null, error: "That request isn't allowed." };
+  // Main's own copy of this origin's token, from the session the renderer
+  // handed the sync engine; see serverRequest for why it is not the
+  // renderer's.
+  return serverRequest({ ...req, origin }, { storedToken: sync.sessionToken(origin) });
+}, { onFailure: () => ({ ok: false, status: 0, data: null }) });
+
 // The renderer resolved this doc's share role against the server; the sync
 // engine needs it so a save can refuse a push the server would only 403.
-handle("sync-doc-role", (_event, { cloudId, role }) =>
-  sync.setDocRole(cloudId, role)
+handle("sync-doc-role", (_event, { cloudId, role, server }) =>
+  sync.setDocRole(cloudId, role, trustedServerArg(server))
 );
 handle("registry-track", (_event, { path: p, name, content }) => {
   try {
     const access = fileGrants.canRead(p);
     if (!access.ok) return { error: access.error };
     registry.track(access.path, name, content);
+    try { app.addRecentDocument(access.path); } catch { /* not every platform keeps a list */ }
     return { ok: true };
   } catch (err) {
     return { error: String(err) };
@@ -1452,8 +1803,8 @@ handle("registry-get", (_event, p) => {
 handle("library-state", () => sync.libraryState(), {
   onFailure: (err) => ({ signedIn: false, items: [], error: errorMessage(err) }),
 });
-handle("doc-sync-on", (_event, { path: p, name, content }) =>
-  sync.syncOn(p, name, content)
+handle("doc-sync-on", (_event, { path: p, name, content, areaId, server }) =>
+  sync.syncOn(p, name, content, areaId, trustedServerArg(server))
 );
 handle("doc-sync-off", (_event, { path: p, deleteRemote }) =>
   sync.syncOff(p, deleteRemote)
@@ -1638,17 +1989,17 @@ handle("doc-keep-both", async (_event, { path: p, content }) => {
   refreshDiskMemory(p, res);
   return res;
 });
-handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
+handle("doc-pull", async (_event, { cloudId, suggestedName, server }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: suggestedName || "document.md",
     filters: [
       { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
-      { name: "Text", extensions: ["txt"] },
+      { name: "Text", extensions: ["txt", "text", "log"] },
     ],
   });
   if (result.canceled || !result.filePath) return { canceled: true };
   if (!OPENABLE.test(result.filePath)) return { error: "Unsupported file type" };
-  const pulled = await sync.pull(cloudId, result.filePath);
+  const pulled = await sync.pull(cloudId, result.filePath, trustedServerArg(server));
   if (pulled?.ok) {
     fileGrants.grantFile(pulled.path);
     refreshDiskMemory(pulled.path, pulled);
@@ -1658,9 +2009,9 @@ handle("doc-pull", async (_event, { cloudId, suggestedName }) => {
 
 // Open a shared cloud doc with one click: save it to ~/Downloads and open it,
 // no "where do you want to save" dialog. Backs the "Shared with you" list.
-handle("doc-open-shared", async (_event, { cloudId, suggestedName }) => {
+handle("doc-open-shared", async (_event, { cloudId, suggestedName, server }) => {
   const dest = downloadsUniquePath(suggestedName || "Shared document.md");
-  const res = await sync.pull(cloudId, dest);
+  const res = await sync.pull(cloudId, dest, trustedServerArg(server));
   if (res && res.error) return res;
   fileGrants.grantFile(dest);
   openLocalFile(dest);
@@ -1675,6 +2026,7 @@ handle("doc-open-shared", async (_event, { cloudId, suggestedName }) => {
 // rule as the pictures, so a link cannot reach further than an image can, and
 // shell.openPath rather than shell.openExternal because openExternal would
 // honour whatever scheme the string happens to carry.
+const { localOpenAction } = require("./local-open-policy");
 handle("open-local-file", async (_event, { href, docDir } = {}) => {
   if (!docDir) return { ok: false, error: "Save this document first, then the link will work." };
 
@@ -1694,6 +2046,13 @@ handle("open-local-file", async (_event, { href, docDir } = {}) => {
     };
   }
 
+  let isDirectory = false;
+  try { isDirectory = fs.statSync(allowed).isDirectory(); } catch { /* openPath reports a missing file below */ }
+  if (localOpenAction(allowed, isDirectory) === "reveal") {
+    // Scripts, apps and installers are shown, not run: see local-open-policy.js.
+    shell.showItemInFolder(allowed);
+    return { ok: true, revealed: true };
+  }
   const failure = await shell.openPath(allowed);
   // openPath answers with a message on failure and an empty string on success.
   return failure ? { ok: false, error: failure } : { ok: true };
@@ -1744,15 +2103,22 @@ const linkPreviews = createLinkPreviews({
   // refuses by design. Nothing else ever sets this.
   allowPrivate: process.env.MARKIE_E2E === "1",
 });
-handle("link-preview", async (_event, url) => linkPreviews.get(url), {
+handle("link-preview", async (event, url) => currentCloseSender(event) ? linkPreviews.get(url) : null, {
   onFailure: () => null,
 });
 
 // IPC: open an https URL in the system browser (OAuth flows)
-handle("open-external", (_event, target) => {
-  if (/^https?:\/\//i.test(target)) {
-    shell.openExternal(target).catch((err) => logCrash("open-external-failed", err));
+handle("open-external", (event, target) => {
+  if (!currentCloseSender(event)) return;
+  const webTarget = externalWebTarget(target);
+  if (!webTarget) return;
+  if (privateReleaseConfig && !privateRelease.authorized() && (new URL(webTarget).origin !== PRIVATE_AUTH_ORIGIN || !isStableDesktopAuthUrl(webTarget))) return;
+  if (isDesktopPreview && isStableDesktopAuthUrl(webTarget)) {
+    void dialog.showMessageBox(mainWindow, { type: "info", message: "Google sign-in is unavailable in Markie Preview.", detail: "This preview does not use installed Markie's browser callback. Use email sign-in instead." });
+    return;
   }
+  try { shell.openExternal(webTarget).catch(() => logCrash("open-external-failed", "Could not open the external browser.")); }
+  catch { logCrash("open-external-failed", "Could not open the external browser."); }
 });
 
 // ── Browse: device-wide markdown index ──
@@ -1847,6 +2213,7 @@ function mdRefreshMetaSliced(rows) {
 
 // Run a fresh index scan, persist the snapshot, and tell the renderer.
 async function mdRescanAndNotify() {
+  if (!privateRelease.authorized()) return;
   _mdLastScanAt = Date.now();
   try {
     const result = await mdindex.rescan();
@@ -2075,6 +2442,31 @@ handle(
   { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
 );
 
+// Global search: every indexed document plus every Recent file (which can sit
+// outside the walked roots), matched on name, path and extracted body text.
+// Results are paths the app now advertises, so opening one goes through the
+// same grant rule as a Browse click.
+const docText = require("./doc-text");
+const SEARCH_FORMATS = new Set(docText.DOCUMENT_FORMATS);
+handle("doc-search", async (_event, args) => {
+  const query = typeof args?.query === "string" ? args.query.slice(0, 200) : "";
+  const formats = Array.isArray(args?.formats) ? args.formats.filter((f) => SEARCH_FORMATS.has(f)) : [];
+  const limit = Number.isSafeInteger(args?.limit) ? Math.min(Math.max(args.limit, 1), 200) : 60;
+  const rows = new Map();
+  for (const row of mdindex.getCached()?.files || []) rows.set(row.path, { ...row, format: row.format || mdindex.formatOf(row.name) });
+  let recent = [];
+  try { recent = registry.list(); } catch { /* registry unavailable */ }
+  for (const row of recent) {
+    if (!row?.path || rows.has(row.path)) continue;
+    const format = mdindex.formatOf(row.name || row.path);
+    if (!format) continue;
+    let mtimeMs = 0;
+    try { mtimeMs = fs.statSync(row.path).mtimeMs; } catch { continue; }
+    rows.set(row.path, { path: row.path, name: row.name || path.basename(row.path), dir: path.dirname(row.path), mtimeMs, format });
+  }
+  return docText.searchDocuments([...rows.values()], query, { formats, limit });
+}, { onFailure: () => ({ results: [], scanned: 0, total: 0, partial: false, error: "Search failed." }) });
+
 handle("mdindex-stars", () => registry.listStars(), { onFailure: () => [] });
 handle("mdindex-star-toggle", (_e, { path: p, kind }) =>
   registry.toggleStar(p, kind)
@@ -2090,6 +2482,84 @@ handle("mcp-info", () => {
     packaged: app.isPackaged,
   };
 }, { onFailure: (err) => ({ serverPath: "", packaged: false, error: errorMessage(err) }) });
+
+// ── Agent bridge: Markie Cloud for MCP agents ──
+// agent-bridge.js is the socket, agent-cloud.js decides what an agent may do.
+// The consent prompts live here because they need a window to sit on.
+const AGENT_PERMISSIONS_FILE = () => path.join(app.getPath("userData"), "agent-permissions.json");
+const agentPermissions = {
+  get() {
+    try {
+      const v = JSON.parse(fs.readFileSync(AGENT_PERMISSIONS_FILE(), "utf8"));
+      return v && typeof v === "object" ? v : {};
+    } catch {
+      return {};
+    }
+  },
+  set(next) {
+    // App settings, not a user document, so the private-build write lock does not apply.
+    writeAuthorizedFileAtomic(AGENT_PERMISSIONS_FILE(), JSON.stringify({ cloudSync: next.cloudSync === "always" ? "always" : undefined }));
+  },
+};
+
+async function confirmAgentCloud({ kind, name, path: filePath }) {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  if (process.platform === "darwin") app.focus({ steal: true });
+  if (kind === "public") {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      buttons: ["Make Public Link", "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+      message: `An agent wants a public link for \u201c${name}\u201d`,
+      detail: `${filePath}\n\nAnyone with the link can read and download it, without a Markie account. You can revoke the link later.`,
+    });
+    return { allowed: response === 0 };
+  }
+  const { response, checkboxChecked } = await dialog.showMessageBox(mainWindow, {
+    type: "question",
+    buttons: ["Put in Cloud", "Don\u2019t Allow"],
+    defaultId: 0,
+    cancelId: 1,
+    message: `An agent wants to put \u201c${name}\u201d in Markie Cloud`,
+    detail: `${filePath}\n\nIt stays private: only you can open it until you share it.`,
+    checkboxLabel: "Always allow agents to put files in Markie Cloud",
+    checkboxChecked: false,
+  });
+  return { allowed: response === 0, always: response === 0 && checkboxChecked };
+}
+
+let agentBridge = null;
+function startAgentBridge() {
+  if (isDesktopPreview || preflightMode || process.env.MARKIE_E2E === "1" || process.platform === "win32") return;
+  const { createAgentBridge } = require("./agent-bridge");
+  const { createAgentCloud } = require("./agent-cloud");
+  const cloud = createAgentCloud({
+    registry,
+    sync,
+    home: require("os").homedir(),
+    unlocked: () => privateRelease.authorized(),
+    confirm: confirmAgentCloud,
+    permissions: agentPermissions,
+    libraryChanged: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("library-changed"); },
+  });
+  const instance = require("crypto").createHash("sha256").update(app.getPath("userData")).digest("hex").slice(0, 10);
+  agentBridge = createAgentBridge({
+    dir: path.join(require("os").homedir(), ".markie"),
+    instance,
+    info: { app: app.getName(), version: app.getVersion() },
+    handlers: cloud.handlers,
+  });
+  agentBridge.start().catch((err) => { logCrash("agent-bridge-start-failed", err); agentBridge = null; });
+}
+
+handle("agent-permissions", () => ({ cloudSync: agentPermissions.get().cloudSync === "always" }), { onFailure: () => ({ cloudSync: false }) });
+handle("agent-permissions-set", (_event, next) => {
+  agentPermissions.set({ cloudSync: next && next.cloudSync === true ? "always" : undefined });
+  return { cloudSync: agentPermissions.get().cloudSync === "always" };
+}, { onFailure: () => ({ cloudSync: false }) });
 
 // ── Skills: the catalog, and installing out of it ──
 // skill-registry.js owns every decision. main resolves the two things that
@@ -2199,8 +2669,14 @@ async function showUpdateMessage(options) {
 }
 
 async function requestUpdateCheck({ manual = false } = {}) {
+  if (privateReleaseConfig) {
+    const status = await privateRelease.authorize(undefined, { enroll: false });
+    if (!status.authorized) return { ok: false, reason: "private-release-locked" };
+    applyUpdateChannel();
+  }
   const policy = desktopUpdatePolicy({
     isDev,
+    isPreview: isDesktopPreview,
     isPackaged: app.isPackaged,
     platform: process.platform,
   });
@@ -2225,7 +2701,7 @@ async function requestUpdateCheck({ manual = false } = {}) {
         message: "A Markie update is ready to install.",
         detail: "Restart Markie to finish installing the downloaded update.",
       });
-      if (response === 0) autoUpdater.quitAndInstall();
+      if (response === 0 && (!privateReleaseConfig || (await privateRelease.authorize(undefined, { enroll: false })).authorized)) autoUpdater.quitAndInstall();
     }
     return { ok: true, state: updateState };
   }
@@ -2243,7 +2719,8 @@ async function requestUpdateCheck({ manual = false } = {}) {
   manualUpdateCheck = manual;
   updateState = "checking";
   try {
-    await autoUpdater.checkForUpdates();
+    const result = await autoUpdater.checkForUpdates();
+    if (privateReleaseConfig) privateUpdateCancellation = result?.cancellationToken ?? null;
     return { ok: true };
   } catch (err) {
     updateState = "error";
@@ -2252,7 +2729,7 @@ async function requestUpdateCheck({ manual = false } = {}) {
       await showUpdateMessage({
         type: "warning",
         message: "Markie couldn't check for updates.",
-        detail: String(err?.message ?? err ?? "Unknown updater error"),
+        detail: privateReleaseConfig ? "The private update service could not be reached." : String(err?.message ?? err ?? "Unknown updater error"),
       });
     }
     return { ok: false, reason: "error" };
@@ -2260,7 +2737,7 @@ async function requestUpdateCheck({ manual = false } = {}) {
 }
 
 function setupAutoUpdate() {
-  if (!shouldSetupAutoUpdate({ isDev, isPackaged: app.isPackaged, platform: process.platform })) {
+  if (isDesktopPreview || !shouldSetupAutoUpdate({ isDev, isPackaged: app.isPackaged, platform: process.platform })) {
     return;
   }
   // Before anything else: electron-updater logs through console, and a console
@@ -2268,9 +2745,15 @@ function setupAutoUpdate() {
   // quitAndInstall becomes an uncaught exception, which becomes a modal dialog,
   // which stops the app from quitting — so Squirrel waits forever and the
   // update never installs.
-  autoUpdater.logger = guardedLogger(console);
+  autoUpdater.logger = privateReleaseConfig ? null : guardedLogger(console);
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = !privateReleaseConfig;
+  if (privateReleaseConfig) {
+    autoUpdater.netSession.webRequest.onBeforeRequest((details, callback) => {
+      const permitted = privateRelease.authorized() && details.url.startsWith(`${privateReleaseConfig.apiOrigin}/private-releases/super-nightly/`);
+      callback({ cancel: !permitted });
+    });
+  }
   applyUpdateChannel();
 
   autoUpdater.on("checking-for-update", () => {
@@ -2310,13 +2793,13 @@ function setupAutoUpdate() {
   autoUpdater.on("error", (err) => {
     updateState = "error";
     // Don't surface noisy network errors to the user; just log.
-    console.error("auto-update error:", err == null ? "unknown" : String(err));
+    console.error("auto-update error:", privateReleaseConfig ? "Private update request failed." : err == null ? "unknown" : String(err));
     if (manualUpdateCheck) {
       manualUpdateCheck = false;
       showUpdateMessage({
         type: "warning",
         message: "Markie couldn't check for updates.",
-        detail: String(err?.message ?? err ?? "Unknown updater error"),
+        detail: privateReleaseConfig ? "The private update service could not be reached." : String(err?.message ?? err ?? "Unknown updater error"),
       });
     }
   });
@@ -2331,13 +2814,28 @@ function setupAutoUpdate() {
 // again whenever the user flips the Settings toggle, so the change takes effect
 // without a relaunch.
 function applyUpdateChannel() {
-  const optedIn = readBetaOptIn(app.getPath("userData"));
+  if (isDesktopPreview) return { optedIn: false, channel: null, allowDowngrade: false };
+  if (privateReleaseConfig) {
+    if (!privateRelease.authorized()) return { optedIn: false, channel: "super-nightly", allowDowngrade: false };
+    const settings = privateRelease.updaterSettings();
+    autoUpdater.setFeedURL(settings); autoUpdater.requestHeaders = settings.requestHeaders;
+    autoUpdater.disableDifferentialDownload = true;
+    autoUpdater.channel = "super-nightly"; autoUpdater.allowPrerelease = true; autoUpdater.allowDowngrade = false;
+    return { optedIn: false, channel: "super-nightly", allowDowngrade: false };
+  }
+  const userData = app.getPath("userData");
+  const currentVersion = app.getVersion();
+  settleLeftEarly(userData, currentVersion);
+  const { optedIn, leftEarlyFrom } = readChannelPrefs(userData);
   const { channel, allowDowngrade } = updaterSettingsFor({
     optedIn,
-    currentVersion: app.getVersion(),
+    currentVersion,
+    leftEarlyFrom,
   });
+  // The channel setter turns allowDowngrade on inside electron-updater, so the
+  // explicit value has to be assigned after it.
   autoUpdater.channel = channel;
-  // Leaving beta means walking back down to stable; see update-channel.js.
+  // Leaving early access means walking back down to stable; see update-channel.js.
   autoUpdater.allowDowngrade = allowDowngrade;
   return { optedIn, channel, allowDowngrade };
 }
@@ -2349,7 +2847,7 @@ handle("update-status", () => updateState, { onFailure: () => "idle" });
 handle(
   "update-channel-get",
   () => ({
-    optedIn: readBetaOptIn(app.getPath("userData")),
+    optedIn: !privateReleaseConfig && !isDesktopPreview && readBetaOptIn(app.getPath("userData")),
     currentVersion: app.getVersion(),
   }),
   // Stable is the safe answer to "I can't tell", matching readBetaOptIn.
@@ -2358,7 +2856,11 @@ handle(
 handle(
   "update-channel-set",
   async (_e, optedIn) => {
-    const saved = writeBetaOptIn(app.getPath("userData"), optedIn === true);
+    if (privateReleaseConfig) return { ok: false, error: "Private builds cannot switch to stable or beta updates." };
+    if (isDesktopPreview) return { ok: false, error: "Preview builds do not use the stable or beta update channels." };
+    const saved = writeBetaOptIn(app.getPath("userData"), optedIn === true, {
+      currentVersion: app.getVersion(),
+    });
     if (!saved) return { ok: false, error: "Couldn't save that preference." };
     const applied = applyUpdateChannel();
     // Check straight away: opting in should find the beta now, and opting out
@@ -2376,7 +2878,9 @@ handle("check-for-updates", () => requestUpdateCheck({ manual: true }), {
 // Answers the renderer instead of returning nothing, because a failure here is
 // invisible from the other side: the button says "Restarting…" and waits for a
 // quit that is never coming. On success this call does not return at all.
-handle("quit-and-install", () => {
+handle("quit-and-install", async () => {
+  if (isDesktopPreview) return { ok: false, reason: "preview" };
+  if (privateReleaseConfig && !(await privateRelease.authorize(undefined, { enroll: false })).authorized) return { ok: false, reason: "private-release-locked" };
   if (updateState !== "ready") return { ok: false, reason: "not-ready" };
   try {
     autoUpdater.quitAndInstall();
@@ -2386,7 +2890,7 @@ handle("quit-and-install", () => {
     return {
       ok: false,
       reason: "error",
-      error: String(err?.message ?? err ?? "Unknown updater error"),
+      error: privateReleaseConfig ? "The private update could not be installed." : String(err?.message ?? err ?? "Unknown updater error"),
     };
   }
 }, { onFailure: () => null });
@@ -2453,6 +2957,7 @@ function runSwift(src) {
 let _defaultMdStatus = null;
 
 handle("default-md-status", async () => {
+  if (isDesktopPreview) return { supported: false, isDefault: false };
   if (!supportsMarkdownDefaultHandler({ platform: process.platform, isPackaged: app.isPackaged })) {
     return { supported: false, isDefault: false };
   }
@@ -2480,12 +2985,14 @@ handle("default-md-status", async () => {
 }, { onFailure: () => ({ supported: false, isDefault: false }) });
 
 handle("set-default-md", async () => {
+  if (isDesktopPreview) return { ok: false, error: "Markie Preview does not change installed file associations." };
   const unsupported = markdownDefaultHandlerUnavailable({
     platform: process.platform,
     isPackaged: app.isPackaged,
   });
   if (unsupported) return unsupported;
   _defaultMdStatus = null; // whatever it was, this call is about to change it
+  _defaultAppsStatus = null;
   const res = await runSwift(
     [
       "import Foundation",
@@ -2507,9 +3014,91 @@ handle("set-default-md", async () => {
     : { ok: false, error: "LaunchServices rejected the change." };
 });
 
+// IPC: default app per file type, for every format Markie fully edits.
+// One Swift compile answers for all of them; the answer is cached the same way
+// as the Markdown-only status above and cleared by any change made here.
+const defaultApps = require("./default-apps");
+let _defaultAppsStatus = null;
+
+function defaultAppsPayload(formats, supported, error) {
+  return {
+    supported,
+    formats,
+    pending: defaultApps.PENDING_DEFAULT_FORMATS.map(({ id, label, extensions, reason }) => ({ id, label, extensions, reason })),
+    ...(error ? { error } : {}),
+  };
+}
+
+function unsupportedDefaultApps(error) {
+  return defaultAppsPayload(defaultApps.DEFAULT_APP_FORMATS.map(({ id, label, extensions }) => ({ id, label, extensions, isDefault: false })), false, error);
+}
+
+// Vault secrets leave through here so the 30-second clear works after Markie
+// loses focus, and so locking the vault or quitting clears them at once.
+const secretClipboard = require("./secret-clipboard").createSecretClipboard(clipboard);
+handle("secret-clipboard-copy", (event, text) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: "Not available here." };
+  return secretClipboard.copy(text);
+}, { onFailure: () => ({ ok: false, error: "Couldn't copy." }) });
+handle("secret-clipboard-clear", () => ({ ok: true, cleared: secretClipboard.clearNow() }), { onFailure: () => ({ ok: false }) });
+
+// Touch ID unlock for the vault. The device secret is released only to the
+// main window's own app frame, and only after promptTouchID succeeds.
+const vaultTouchId = require("./vault-touch-id").createVaultTouchId({ safeStorage, systemPreferences, userData: app.getPath("userData") });
+// Same sender rule as secret-clipboard-copy, plus the main frame and app URL.
+const fromVaultWindow = (event) => currentCloseSender(event);
+handle("vault-touch-id-available", (event, vaultId) => {
+  if (!fromVaultWindow(event)) return { available: false, enrolled: false };
+  return vaultTouchId.status(vaultId);
+}, { onFailure: () => ({ available: false, enrolled: false }) });
+handle("vault-touch-id-enroll", (event, vaultId, secret) => {
+  if (!fromVaultWindow(event)) return { ok: false, reason: "unavailable" };
+  return vaultTouchId.enroll(vaultId, secret);
+}, { onFailure: () => ({ ok: false, reason: "unavailable" }) });
+handle("vault-touch-id-unlock", (event, vaultId) => {
+  if (!fromVaultWindow(event)) return { ok: false, reason: "unavailable" };
+  return vaultTouchId.unlock(vaultId);
+}, { onFailure: () => ({ ok: false, reason: "unavailable" }) });
+handle("vault-touch-id-remove", (event, vaultId) => {
+  if (!fromVaultWindow(event)) return { ok: false };
+  return vaultTouchId.remove(vaultId);
+}, { onFailure: () => ({ ok: false }) });
+
+handle("default-apps-status", async () => {
+  if (isDesktopPreview) return unsupportedDefaultApps("Markie Preview does not change installed file associations.");
+  const unavailable = markdownDefaultHandlerUnavailable({ platform: process.platform, isPackaged: app.isPackaged });
+  if (unavailable) return unsupportedDefaultApps(unavailable.error);
+  if (_defaultAppsStatus) return _defaultAppsStatus;
+  const utis = defaultApps.DEFAULT_APP_FORMATS.flatMap((format) => format.utis);
+  const res = await runSwift(defaultApps.statusScript(utis));
+  if (res.error) {
+    _defaultAppsStatus = unsupportedDefaultApps(res.error === "swift-missing" ? "Swift isn't installed. Run: xcode-select --install" : "LaunchServices didn't answer.");
+    return _defaultAppsStatus;
+  }
+  _defaultAppsStatus = defaultAppsPayload(defaultApps.parseStatus(res.stdout), true);
+  return _defaultAppsStatus;
+}, { onFailure: () => unsupportedDefaultApps("Couldn't read the default apps.") });
+
+handle("default-apps-set", async (_event, args) => {
+  if (isDesktopPreview) return { ok: false, error: "Markie Preview does not change installed file associations." };
+  const unavailable = markdownDefaultHandlerUnavailable({ platform: process.platform, isPackaged: app.isPackaged });
+  if (unavailable) return unavailable;
+  const ids = Array.isArray(args?.ids) ? args.ids : [];
+  const formats = ids.map((id) => defaultApps.formatById(id)).filter(Boolean);
+  if (!formats.length) return { ok: false, error: "Choose a file type Markie can open by default." };
+  _defaultAppsStatus = null;
+  _defaultMdStatus = null;
+  const res = await runSwift(defaultApps.setScript(formats.flatMap((format) => format.utis)));
+  if (res.error === "swift-missing") return { ok: false, error: "Swift isn't installed. Run: xcode-select --install" };
+  if (res.error === "timeout") return { ok: false, error: "LaunchServices didn't answer in time. Try again." };
+  if (res.error) return { ok: false, error: res.error };
+  return res.code === 0 ? { ok: true } : { ok: false, error: "LaunchServices rejected part of the change." };
+}, { onFailure: () => ({ ok: false, error: "Couldn't change the default apps." }) });
+
 // IPC: renderer signals it has mounted and asks for any queued file
 handle("get-initial-file", () => {
   rendererReady = true;
+  setTimeout(() => { if (nativeDocumentQueued && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("document-file-opened"); }, 0);
   // The packaging gate watches for this. It is written from the handshake the
   // renderer only makes once React has mounted, which is the thing the gate is
   // actually trying to establish — a window whose HTML parsed but whose app
@@ -2568,7 +3157,19 @@ function isAdvertisedPath(p) {
   return !!advertisedPathSet()?.has(p);
 }
 
-handle("open-file-path", async (_event, filePath) => {
+handle("open-file-path", async (event, filePath) => {
+  // Explicit rich-file drops use the existing opaque queue, never the classic
+  // UTF-8 reader. A caller without that exact owner/path drop grant gets null.
+  if (!OPENABLE.test(filePath)) {
+    if (!currentCloseSender(event)) return null;
+    // A drop grant wins when there is one. Otherwise a path Markie itself
+    // listed (a Browse/search row or a Recent entry) opens the way a Finder
+    // double-click does: clicking a DOCX in Browse used to do nothing at all.
+    if (!queueNativeDocumentOpen(filePath, { dropOwner: event.sender.id }) && typeof filePath === "string" && isAdvertisedPath(filePath)) {
+      queueNativeDocumentOpen(filePath);
+    }
+    return null;
+  }
   return readFilePayload(filePath, { grant: isAdvertisedPath(filePath) });
 }, { onFailure: () => null });
 
@@ -2626,6 +3227,12 @@ handle("crash-log-reveal", () => {
 }, { onFailure: () => ({ ok: false }) });
 
 ipcMain.on("grant-file-path", (event, filePath) => {
+  if (!privateRelease.authorized() || privateReleaseConfig && !currentCloseSender(event)) { event.returnValue = false; return; }
+  if (!OPENABLE.test(filePath)) {
+    const result = currentCloseSender(event) ? documentFiles.grantDroppedFile(event.sender.id, filePath) : null;
+    event.returnValue = !!(result?.ok && result.value);
+    return;
+  }
   const grant = fileGrants.grantFile(filePath);
   event.returnValue = grant.ok;
 });
@@ -2637,6 +3244,7 @@ ipcMain.on("grant-file-path", (event, filePath) => {
 // Synchronous to match grant-file-path: the drop handler needs an answer before
 // it decides whether it handled the drop, and the work is a stat.
 ipcMain.on("attach-file-path", (event, filePath) => {
+  if (!privateRelease.authorized() || privateReleaseConfig && !currentCloseSender(event)) { event.returnValue = null; return; }
   const grant = fileGrants.grantAttachment(filePath);
   event.returnValue = grant.ok ? grant.path : null;
 });
@@ -2651,6 +3259,7 @@ const isMac = process.platform === "darwin";
 // Show the crash log so a bug report can carry it. Not an IPC channel: the
 // renderer is exactly the thing that may have just died.
 function revealCrashLog() {
+  if (!privateRelease.authorized()) return;
   try {
     const target = crashLog().path;
     // Creating the file to reveal it hands the user an empty log and makes
@@ -2686,6 +3295,13 @@ const settingsItem = {
   click: () => mainWindow?.webContents.send("menu-settings"),
 };
 
+// Straight to Settings > Files, where Markie sets the Finder default for each
+// format it fully edits. macOS has no system pane to link to instead.
+const defaultAppsItem = {
+  label: "Default Apps for File Types…",
+  click: () => mainWindow?.webContents.send("menu-settings", "files"),
+};
+
 const updatesItem = {
   label: "Check for Updates…",
   click: () => requestUpdateCheck({ manual: true }),
@@ -2700,6 +3316,7 @@ const template = [
             { role: "about" },
             { type: "separator" },
             settingsItem,
+            defaultAppsItem,
             updatesItem,
             { type: "separator" },
             { role: "hide" },
@@ -2730,6 +3347,11 @@ const template = [
         accelerator: "CmdOrCtrl+L",
         click: () => mainWindow?.webContents.send("menu-library"),
       },
+      {
+        label: "Search All Documents…",
+        accelerator: "CmdOrCtrl+Shift+F",
+        click: () => mainWindow?.webContents.send("menu-global-search"),
+      },
       { type: "separator" },
       {
         label: "Save",
@@ -2750,11 +3372,13 @@ const template = [
         click: () => mainWindow?.webContents.send("menu-history"),
       },
       {
+        id: "markdown-fork",
         label: "Duplicate (Fork)",
         accelerator: "CmdOrCtrl+Shift+D",
         click: () => mainWindow?.webContents.send("menu-fork"),
       },
       {
+        id: "markdown-reveal",
         label:
           process.platform === "darwin"
             ? "Reveal in Finder"
@@ -2766,6 +3390,7 @@ const template = [
       },
       { type: "separator" },
       {
+        id: "markdown-print",
         label: "Print…",
         accelerator: "CmdOrCtrl+P",
         click: () => mainWindow?.webContents.send("menu-print"),
@@ -2774,14 +3399,17 @@ const template = [
         label: "Export",
         submenu: [
           {
+            id: "markdown-export-pdf-dark",
             label: "PDF (Dark)…",
             click: () => mainWindow?.webContents.send("menu-export-pdf", "dark"),
           },
           {
+            id: "markdown-export-pdf-light",
             label: "PDF (Light)…",
             click: () => mainWindow?.webContents.send("menu-export-pdf", "light"),
           },
           {
+            id: "markdown-export-html",
             label: "HTML…",
             click: () => mainWindow?.webContents.send("menu-export-html"),
           },
@@ -2837,6 +3465,7 @@ const template = [
       },
       { type: "separator" },
       {
+        id: "markdown-format-tables",
         label: "Format Tables",
         accelerator: "CmdOrCtrl+Alt+T",
         click: () => mainWindow?.webContents.send("menu-format-tables"),
@@ -2847,42 +3476,50 @@ const template = [
     label: "View",
     submenu: [
       {
+        id: "markdown-view-rich",
         label: "Rich Text",
         accelerator: "CmdOrCtrl+1",
         click: () => mainWindow?.webContents.send("set-mode", "preview"),
       },
       {
+        id: "markdown-view-source",
         label: "Markdown Source",
         accelerator: "CmdOrCtrl+2",
         click: () => mainWindow?.webContents.send("set-mode", "edit"),
       },
       {
+        id: "markdown-view-split",
         label: "Split",
         accelerator: "CmdOrCtrl+3",
         click: () => mainWindow?.webContents.send("set-mode", "split"),
       },
       { type: "separator" },
       {
+        id: "markdown-zoom-in",
         label: "Zoom In",
         accelerator: "CmdOrCtrl+=",
         click: () => mainWindow?.webContents.send("menu-zoom", 1),
       },
       {
+        id: "markdown-zoom-out",
         label: "Zoom Out",
         accelerator: "CmdOrCtrl+-",
         click: () => mainWindow?.webContents.send("menu-zoom", -1),
       },
       {
+        id: "markdown-zoom-reset",
         label: "Actual Size",
         accelerator: "CmdOrCtrl+0",
         click: () => mainWindow?.webContents.send("menu-zoom", 0),
       },
       {
+        id: "markdown-page-wider",
         label: "Wider Page",
         accelerator: "Alt+CmdOrCtrl+]",
         click: () => mainWindow?.webContents.send("menu-page-width", 1),
       },
       {
+        id: "markdown-page-narrower",
         label: "Narrower Page",
         accelerator: "Alt+CmdOrCtrl+[",
         click: () => mainWindow?.webContents.send("menu-page-width", -1),
@@ -2903,6 +3540,7 @@ const template = [
         click: () => mainWindow?.webContents.send("menu-shortcuts"),
       },
       {
+        id: "markdown-statistics",
         label: "Statistics",
         accelerator: "CmdOrCtrl+Shift+I",
         click: () => mainWindow?.webContents.send("toggle-stats"),
@@ -2934,7 +3572,7 @@ const template = [
 
 // Deep links (markie://…) — used by the Google OAuth callback.
 // macOS delivers these via the open-url event below.
-if (process.env.MARKIE_E2E !== "1") {
+if (!isDesktopPreview && process.env.MARKIE_E2E !== "1") {
   app.setAsDefaultProtocolClient("markie");
 }
 app.on("open-url", (event, url) => {
@@ -2950,17 +3588,22 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on("second-instance", (_event, argv) => {
+    if (!privateRelease.authorized()) { mainWindow?.show(); return; }
     const link = findDeepLinkArg(argv);
     if (link) {
       deliverDeepLink(link);
       return;
     }
     const file = findOpenableLaunchFile(argv);
+    if (file && documentsWorkspaceActive() && queueNativeDocumentOpen(file, { includeClassic: true })) return;
     if (file && rendererReady && mainWindow && !mainWindow.isDestroyed()) {
       const payload = readFilePayload(file, { grant: true });
       if (payload) mainWindow.webContents.send("file-opened", payload);
     } else if (file) {
       pendingFilePath = file;
+    } else {
+      const nativeFile = findNativeDocumentLaunchFile(argv);
+      if (nativeFile) queueNativeDocumentOpen(nativeFile);
     }
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
@@ -2969,15 +3612,21 @@ if (!gotLock) {
     }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    if (privateReleaseConfig) {
+      await privateRelease.authorize(undefined, { enroll: false });
+      setInterval(() => { void privateRelease.authorize(undefined, { enroll: false }); }, 30_000).unref();
+    }
     registerProtocol();
     registerAssetProtocol();
     setupCSP();
-    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+    Menu.setApplicationMenu(Menu.buildFromTemplate(documentMenu.install(template)));
     // The menu is built after the first file may already have been opened.
     refreshRevertMenuItem();
     createWindow();
     setupAutoUpdate();
+    seedWorkspaceExamples();
+    startAgentBridge();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -2989,6 +3638,11 @@ if (!gotLock) {
 
 // Flush the SQLite registry handle + kill PTYs deterministically before exit.
 app.on("will-quit", () => {
+  try {
+    agentBridge?.stop();
+  } catch {
+    // best effort
+  }
   try {
     require("./terminal").killAll();
   } catch {
@@ -3012,6 +3666,7 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   quitRequested = true;
+  try { secretClipboard.clearNow(); } catch { /* best effort */ }
   stopWatchingOpenFile();
 });
 
@@ -3020,6 +3675,9 @@ app.on("before-quit", () => {
 // the get-initial-file handshake when the renderer mounts.
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
+  if (!privateRelease.authorized()) return;
+  if (!preflightMode && documentsWorkspaceActive() && queueNativeDocumentOpen(filePath, { includeClassic: true })) return;
+  if (!preflightMode && !OPENABLE.test(filePath) && queueNativeDocumentOpen(filePath)) return;
   if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
     const payload = readFilePayload(filePath, { grant: true });
     if (payload) mainWindow.webContents.send("file-opened", payload);

@@ -1,4 +1,4 @@
-// Device-wide markdown scan + exclusion rules for the Markie MCP server.
+// Device-wide document scan + exclusion rules for the Markie MCP server.
 // Ported from electron/mdindex.js as self-contained ESM so the MCP server has
 // NO dependency on ../electron — packaging it as an extraResource must never
 // pull files out of the app's asar (that broke the app once; never again).
@@ -7,8 +7,13 @@
 // electron/mdindex.js" in lib.test.mjs compares both against the original.
 import { promises as fsp } from "node:fs";
 import path from "node:path";
+// Which files count, and as what: the same table the app's index and global
+// search use (mcp/doc-text.cjs is shared with electron/doc-text.js).
+import docText from "./doc-text.cjs";
 
 export const MD_RE = /\.(md|markdown|mdx)$/i;
+export const DOC_RE = docText.DOC_RE;
+const { formatOf } = docText;
 
 // Non-dot directories that are vendored, generated, or system noise.
 export const EXCLUDED_NAMES = new Set([
@@ -109,9 +114,15 @@ function shouldDescend(full, name, home, allow = allowlist(home)) {
 // pathological tree for as long as it took. Hitting a limit returns what was
 // found rather than failing: a partial answer now beats a perfect one in five
 // minutes, as long as the caller is told it is partial.
-export const DEFAULT_BUDGET = { maxFiles: 200000, maxMs: 30000, maxDepth: 24 };
+// maxSnippets budgets body-snippet reads in the app's index; the MCP walk
+// reads no bodies, but the budget object is copied whole so the drift test
+// keeps the two scans costing the same.
+export const DEFAULT_BUDGET = { maxFiles: 200000, maxMs: 30000, maxDepth: 24, maxSnippets: 4000 };
 
-// Recursively collect markdown files under rootDir, pruning excluded dirs.
+// Recursively collect every indexed document under rootDir (markdown, text,
+// data, Word, RTF, OpenDocument, HTML), pruning excluded dirs. Each row carries
+// its format id, as the app's index rows do; tools that only want markdown
+// filter on it.
 //
 // `stats` is an optional caller-owned object the walk fills in with what the
 // budget did ({ files, dirs, ms, truncated, reason }). Returning the plain array
@@ -145,14 +156,14 @@ export async function walk(rootDir, { home, budget = {}, now = Date.now, stats =
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
         if (shouldDescend(full, ent.name, baseHome, allow)) subdirs.push(full);
-      } else if (ent.isFile() && MD_RE.test(ent.name)) {
+      } else if (ent.isFile() && DOC_RE.test(ent.name)) {
         if (out.length >= limits.maxFiles) {
           stopped = "files";
           return;
         }
         let mtimeMs = 0;
         try { mtimeMs = (await fsp.stat(full)).mtimeMs; } catch { /* keep 0 */ }
-        out.push({ path: full, name: ent.name, dir, mtimeMs });
+        out.push({ path: full, name: ent.name, dir, mtimeMs, format: formatOf(ent.name) });
       }
     }
     // Checked per directory rather than per entry: one clock read per readdir.

@@ -86,3 +86,19 @@ export function signInReasonCopy(reason: SignInReason): ReasonCopy {
       };
   }
 }
+
+export const INVITE_ONLY = "This server is invite-only. Ask its owner for an invite.";
+export const SIGNUP_CLOSED = "This server isn't taking new accounts.";
+
+/**
+ * A sign-up the server refused on policy: invite-only, or not taking new
+ * accounts. Both are facts about the server, not a mistake the person made,
+ * so they get their own plain line rather than a generic failure.
+ */
+export function signupRefusal(status: number, data: unknown): string | null {
+  if (status !== 403) return null;
+  const code = (data as { code?: unknown } | null)?.code;
+  if (code === "signup_invite_required") return INVITE_ONLY;
+  if (code === "signup_closed") return SIGNUP_CLOSED;
+  return null;
+}

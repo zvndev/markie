@@ -4,7 +4,7 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth.ts";
-import { docs } from "./docs.ts";
+import { docs, configureDocsCloudAreas } from "./docs.ts";
 import { shares } from "./shares.ts";
 import { comments } from "./comments.ts";
 import { themes } from "./themes.ts";
@@ -12,8 +12,28 @@ import { assetsApi, sweepOrphans } from "./assets.ts";
 import { docLinksApi } from "./doc-links.ts";
 import { publicShare } from "./public.ts";
 import { docView } from "./doc-view.ts";
+import { createWebSignIn } from "./web-signin.ts";
 import { attachCollab } from "./collab.ts";
-import { desktopAuthDeepLink, desktopAuthState } from "./desktop-auth.ts";
+import { desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
+import { applicationOrigins } from "./application-origins.ts";
+import { canonicalHostRedirect } from "./canonical-host.ts";
+import { openDatabase } from "./db.ts";
+import { createDocumentPlatform } from "./document-platform.ts";
+import { createSqliteDocumentPlatformStore } from "./document-platform-store.ts";
+import type Database from "better-sqlite3";
+import { accountIdentitiesEnabled, guardAccountAuthRequest } from "./account-context.ts";
+import { createAccountPlatform } from "./account-platform.ts";
+import { resolveAuthSecret } from "./auth-secret.ts";
+import { resolveVerifiedUserForEmail } from "./account-identities.ts";
+import { API_VERSION, SERVER_VERSION, deployment } from "./deployment.ts";
+import { emailSignInAvailable } from "./email.ts";
+import { quotaRefusal, storageQuotaBytes, storageUsedBytes } from "./quota.ts";
+import {
+  SIGNUP_CLOSED, SIGNUP_INVITE_REQUIRED, adminEmail, adminUserId, allowEmail, allowlist, disallowEmail,
+  signupMode, signupRefusalMessage,
+} from "./signup.ts";
+
+const googleConfigured = !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
 const app = new Hono();
 
@@ -51,7 +71,8 @@ app.use("*", async (c, next) => {
   const h = c.res.headers;
   h.set("X-Content-Type-Options", "nosniff");
   h.set("X-Frame-Options", "DENY");
-  h.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  // Token download routes deliberately use the stricter no-referrer policy.
+  if (!h.has("Referrer-Policy")) h.set("Referrer-Policy", "strict-origin-when-cross-origin");
   h.set("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
   h.set("Strict-Transport-Security", "max-age=63072000");
   if ((h.get("content-type") ?? "").includes("text/html")) {
@@ -88,26 +109,127 @@ const ASSET_UPLOAD = /^\/api\/assets\/[^/]+$/;
 const DOC_TEXT = /^\/api\/docs\/[^/]+$/;
 
 app.use("/api/*", async (c, next) => {
+  // Versioned snapshots have their own authenticated streaming body reader.
+  // Keep the legacy JSON cap unchanged and avoid buffering Office bytes here.
+  if (c.req.path === "/api/document-platform" || c.req.path.startsWith("/api/document-platform/")) return next();
   if (c.req.method !== "POST" && c.req.method !== "PUT") return next();
   if (ASSET_UPLOAD.test(c.req.path)) return next();
   if (DOC_TEXT.test(c.req.path)) return textBodyLimit(c, next);
   return jsonBodyLimit(c, next);
 });
 
-app.use(
-  "*",
-  cors({
-    origin: ["app://markie", "http://localhost:3000"],
-    credentials: true,
-    exposeHeaders: ["set-auth-token"],
-  })
-);
+// Resolved at boot so a misconfigured server (MARKIE_OFFICIAL=2, mail-log mode
+// on the official deployment, a self-host with no BETTER_AUTH_URL) stops here
+// with the reason, not on the first request that happens to read it.
+const DEPLOYMENT = deployment();
+
+// Markie Cloud's browser pages run on one name only, BETTER_AUTH_URL's, so a
+// cookie set on the way in is there on the way back (canonical-host.ts).
+// 308 keeps the method; no-store because which name is canonical flips
+// during the move, and a cached redirect would then point the wrong way.
+app.use("*", async (c, next) => {
+  const target = canonicalHostRedirect(c.req.raw, DEPLOYMENT);
+  if (!target) return next();
+  return new Response(null, { status: 308, headers: { location: target, "cache-control": "no-store" } });
+});
+const EMAIL_SIGN_IN = emailSignInAvailable();
+const SIGNUP = signupMode();
+adminEmail();
+const SERVER_INFO_PATH = "/api/server-info";
+const appCors = cors({
+  origin: applicationOrigins(),
+  credentials: true,
+  exposeHeaders: ["set-auth-token"],
+});
+// Anyone may ask what this server is, from anywhere, without credentials: the
+// desktop asks before it has an account here, and a page that wants to show
+// "this is a Markie server" needs no session. Nothing in the answer is secret.
+const serverInfoCors = cors({ origin: "*", allowMethods: ["GET"], credentials: false });
+app.use("*", (c, next) => (c.req.path === SERVER_INFO_PATH ? serverInfoCors(c, next) : appCors(c, next)));
 
 app.get("/health", (c) =>
   c.json({ ok: true, service: "markie-api", version: "0.1.0" })
 );
 
-app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+// The handshake a desktop app makes before it adds this server. apiVersion is
+// what future apps negotiate on; see deployment.ts for when it changes.
+app.get(SERVER_INFO_PATH, (c) => {
+  c.header("Cache-Control", "public, max-age=60");
+  return c.json({
+    product: "markie-server",
+    apiVersion: API_VERSION,
+    version: SERVER_VERSION,
+    name: DEPLOYMENT.name,
+    origin: DEPLOYMENT.origin,
+    signIn: { email: EMAIL_SIGN_IN, google: googleConfigured, signup: SIGNUP },
+  });
+});
+
+const cloudAreas = configureDocsCloudAreas(accountIdentitiesEnabled);
+// configureDocsCloudAreas retains the installed better-sqlite3 handle. The
+// structural platform type intentionally exposes only its common SQL subset.
+const accountDatabase = cloudAreas?.database as Database.Database | undefined;
+const accountPlatform = accountDatabase && cloudAreas
+  ? createAccountPlatform(accountDatabase, cloudAreas, resolveAuthSecret(process.env)) : undefined;
+const quotaDatabase = accountDatabase ?? openDatabase();
+
+// What this account stores against MARKIE_STORAGE_QUOTA_BYTES. quotaBytes is
+// null when no quota is configured, which is every server today. Registered
+// ahead of the account platform so its sub-app never shadows it.
+app.get("/api/account/usage", async (c) => {
+  c.header("Cache-Control", "private, no-store");
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  if (!session) return c.json({ error: "unauthorized" }, 401);
+  return c.json({ usedBytes: storageUsedBytes(quotaDatabase, session.user.id), quotaBytes: storageQuotaBytes() });
+});
+
+// The sign-up allowlist for MARKIE_SIGNUP=invite, managed by this server's
+// admin (signup.ts adminUserId). Self-hosted servers only: Markie Cloud has
+// no admin account and registers none of these routes.
+if (!DEPLOYMENT.official) {
+  const requireAdmin = async (c: Context): Promise<Response | { id: string }> => {
+    c.header("Cache-Control", "private, no-store");
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) return c.json({ error: "unauthorized" }, 401);
+    if (session.user.id !== adminUserId(quotaDatabase)) return c.json({ error: "admin_required" }, 403);
+    return { id: session.user.id };
+  };
+  app.get("/api/admin/signup-allowlist", async (c) => {
+    const admin = await requireAdmin(c);
+    if (admin instanceof Response) return admin;
+    return c.json({ signup: SIGNUP, emails: allowlist(quotaDatabase) });
+  });
+  app.post("/api/admin/signup-allowlist", async (c) => {
+    const admin = await requireAdmin(c);
+    if (admin instanceof Response) return admin;
+    const body = (await c.req.json().catch(() => null)) as { email?: unknown } | null;
+    if (typeof body?.email !== "string") return c.json({ error: "invalid_email" }, 400);
+    try {
+      return c.json({ ok: true, email: allowEmail(quotaDatabase, body.email, admin.id) });
+    } catch {
+      return c.json({ error: "invalid_email" }, 400);
+    }
+  });
+  app.delete("/api/admin/signup-allowlist/:email", async (c) => {
+    const admin = await requireAdmin(c);
+    if (admin instanceof Response) return admin;
+    return c.json({ ok: true, removed: disallowEmail(quotaDatabase, decodeURIComponent(c.req.param("email"))) });
+  });
+}
+
+if (accountPlatform) {
+  app.route("/api/account", accountPlatform.app);
+  if (accountPlatform.google) {
+    app.get("/account/link-google", () => accountPlatform.google!.browserPage());
+    app.get("/account/google-link/complete", (c) => accountPlatform.google!.complete(c.req.raw));
+  }
+}
+app.on(["GET", "POST"], "/api/auth/*", async (c) => {
+  const denied = await guardAccountAuthRequest(c.req.raw);
+  if (denied) return denied;
+  const run = () => auth.handler(c.req.raw);
+  return accountPlatform?.google ? accountPlatform.google.runAuthRequest(c.req.raw, run) : run();
+});
 
 // Desktop Google sign-in must run entirely in the browser, or better-auth's
 // OAuth `state` cookie (set when the flow starts) won't be present on the
@@ -116,6 +238,11 @@ app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 // and redirect it to Google's consent screen.
 const AUTH_BASE =
   process.env.BETTER_AUTH_URL ?? "http://localhost:8787";
+// Who this server is, on the deep link that hands its token to the app.
+const AUTH_ISSUER = desktopAuthIssuer(AUTH_BASE);
+
+// Signing in from a browser to read a private /d/<id> page (web-signin.ts).
+app.route("/", createWebSignIn({ authBase: AUTH_BASE, google: googleConfigured }));
 
 app.get("/auth/google-start", async (c) => {
   try {
@@ -169,19 +296,48 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
       token ? 200 : 401
     );
   if (!token) {
+    // A first Google sign-in this server's MARKIE_SIGNUP refused. better-auth
+    // sends the hook's code here as ?error=, so say what happened rather than
+    // inviting a retry that will be refused the same way.
+    const error = c.req.query("error");
+    if (error === SIGNUP_INVITE_REQUIRED || error === SIGNUP_CLOSED) {
+      return page(
+        error === SIGNUP_CLOSED ? "No new accounts here" : "This server is invite-only",
+        signupRefusalMessage(error)
+      );
+    }
+    // With linked sign-ins on, Google is never attached to an existing
+    // account just because the addresses match (accountLinking in auth.ts).
+    // Retrying cannot work, so say how to get there.
+    if (error === "account_not_linked") {
+      return page(
+        "Google isn't linked to this account yet",
+        "This email already has a Markie account. Sign in with an email code, then link Google in Settings, Account, Manage linked sign-ins."
+      );
+    }
     return page("Sign-in didn't complete", "Head back to Markie and try again.");
   }
   // Carry the app's nonce back so it can verify this deep link is the answer to
-  // a sign-in it started. Without it the app rejects the token.
+  // a sign-in it started, and say which server this token is from, so it is
+  // never filed under another one. Without the nonce the app rejects it.
   const state = desktopAuthState(c.req.query("state"));
   return page(
     "You're signed in",
     "Returning you to Markie…",
-    desktopAuthDeepLink(token, state)
+    desktopAuthDeepLink(token, state, AUTH_ISSUER)
   );
 });
 
 app.route("/api/docs", docs);
+app.route("/api/document-platform", createDocumentPlatform({
+  store: createSqliteDocumentPlatformStore(quotaDatabase, {
+    ...(cloudAreas && accountDatabase ? {
+      cloudAreas, verifiedUserForEmail: (email: string) => resolveVerifiedUserForEmail(accountDatabase, email),
+    } : {}),
+    storageQuota: (ownerId, growthBytes) => quotaRefusal(quotaDatabase, ownerId, growthBytes),
+  }),
+  resolveUser: async (request) => (await auth.api.getSession({ headers: request.headers }))?.user ?? null,
+}));
 app.route("/api/docs", shares);
 app.route("/api/docs", comments);
 app.route("/api", themes);

@@ -161,13 +161,10 @@ async function setViewport(cdp, width, height) {
   });
 }
 
-async function clickMode(cdp, label) {
-  await cdp.ev(`(() => {
-    const button = [...document.querySelectorAll('button')]
-      .find((node) => (node.getAttribute('aria-label') || node.textContent || '').includes(${JSON.stringify(label)}));
-    button?.click();
-    return !!button;
-  })()`);
+async function chooseMode(cdp, key) {
+  const modifiers = process.platform === "darwin" ? 4 : 2;
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key, code: `Digit${key}`, modifiers });
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code: `Digit${key}`, modifiers });
 }
 
 async function collectMetrics(cdp, label) {
@@ -268,7 +265,7 @@ async function main() {
   screenshots.previewNormal = await capture(cdp, "01-preview-normal");
   metrics.push(await collectMetrics(cdp, "preview normal"));
 
-  await clickMode(cdp, "Split mode");
+  await chooseMode(cdp, "3");
   await waitFor("split mode", () => cdp.ev("!!document.querySelector('[data-markie-source-pane]') && !!document.querySelector('[data-markie-rich-pane]')"));
   screenshots.splitNormal = await capture(cdp, "02-split-normal");
   metrics.push(await collectMetrics(cdp, "split normal"));
@@ -277,12 +274,12 @@ async function main() {
   screenshots.splitCompact = await capture(cdp, "03-split-compact");
   metrics.push(await collectMetrics(cdp, "split compact"));
 
-  await clickMode(cdp, "Edit mode");
+  await chooseMode(cdp, "2");
   await waitFor("edit mode", () => cdp.ev("!!document.querySelector('[data-markie-source-pane]') && !document.querySelector('[data-markie-rich-pane]')"));
   screenshots.editCompact = await capture(cdp, "04-edit-compact");
   metrics.push(await collectMetrics(cdp, "edit compact"));
 
-  await clickMode(cdp, "View");
+  await chooseMode(cdp, "1");
   await waitFor("view mode", () => cdp.ev("!!document.querySelector('[data-markie-rich-pane]') && !document.querySelector('[data-markie-source-pane]')"));
   await cdp.ev("window.__markieEditor.commands.clearContent()");
   await waitFor("empty placeholder", () => cdp.ev("!!document.querySelector('.ProseMirror p.is-editor-empty:first-child')"));

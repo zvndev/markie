@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
+const OPENABLE = /\.(md|markdown|mdx|txt|text|log|csv)$/i;
 
 function defaultRealpath(target) {
   return fs.realpathSync.native(target);

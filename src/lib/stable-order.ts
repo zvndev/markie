@@ -9,10 +9,16 @@
 // one) still go to the front, because that is new information rather than a
 // reaction to your own click.
 
+//
+// With `compare`, a file the panel has not seen goes where that order puts it
+// among the rows already showing, instead of to the front. A file opened just
+// now still lands first; a shared file the server reported a moment after the
+// first rows does not jump above everything you opened since.
 export function stableOrder<T>(
   items: T[],
   keyOf: (item: T) => string,
-  remembered: readonly string[]
+  remembered: readonly string[],
+  compare?: (a: T, b: T) => number
 ): T[] {
   if (remembered.length === 0) return items;
 
@@ -27,7 +33,14 @@ export function stableOrder<T>(
 
   known.sort((a, b) => rank.get(keyOf(a))! - rank.get(keyOf(b))!);
   // Anything the panel has not seen before leads, in the order it arrived.
-  return [...fresh, ...known];
+  if (!compare) return [...fresh, ...known];
+  const pending = [...fresh].sort(compare);
+  const merged: T[] = [];
+  for (const item of known) {
+    while (pending.length && compare(pending[0], item) <= 0) merged.push(pending.shift()!);
+    merged.push(item);
+  }
+  return [...merged, ...pending];
 }
 
 // Case-insensitive match on a file's name or its path, so "plan" finds

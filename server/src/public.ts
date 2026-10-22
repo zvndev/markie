@@ -17,15 +17,17 @@ import {
   downloadPlatforms,
   feedForPlatform,
   findDownloadPlatform,
-  markieSiteUrl,
   parseArtifactName,
   parseFeedVersion,
   primaryDownloadPlatform,
   type DownloadPlatform,
 } from "./downloads.ts";
 
+import { deployment } from "./deployment.ts";
+
 const db = openDatabase();
-const MARKIE_SITE = markieSiteUrl();
+const DEPLOYMENT = deployment();
+const MARKIE_SITE = DEPLOYMENT.siteUrl;
 
 // Cache resolved artifact URLs so a "Get Markie" click does not hit B2 every time.
 type ResolvedRelease = {
@@ -78,6 +80,21 @@ function docForToken(
 }
 
 export const publicShare = new Hono();
+
+// A self-hosted server is not a release channel. Its copy of the manifest is
+// whatever was in the repository when it was built, so serving downloads from
+// it would hand out stale builds under somebody else's domain. Every download
+// route answers with the official page instead (or the official manifest, for
+// the one JSON route), registered ahead of the real handlers so they are never
+// reached. The official deployment registers nothing here.
+if (!DEPLOYMENT.official) {
+  const officialDownloads = `${DEPLOYMENT.downloadSiteUrl}/download`;
+  publicShare.get(downloadManifest.latestManifestRoute, (c) =>
+    c.redirect(`${DEPLOYMENT.downloadSiteUrl}${downloadManifest.latestManifestRoute}`, 302)
+  );
+  publicShare.get("/download", (c) => c.redirect(officialDownloads, 302));
+  publicShare.get("/download/*", (c) => c.redirect(officialDownloads, 302));
+}
 
 publicShare.get("/download", (c) => {
   return c.html(renderDownloadPage({ siteUrl: MARKIE_SITE }));

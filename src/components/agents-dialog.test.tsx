@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { installBridge } from "@/test/mock-bridge";
 import type { ElectronAPI } from "@/lib/electron";
@@ -78,6 +78,28 @@ describe("AgentsDialog", () => {
     expect(dialog.textContent).toMatch(/Claude\s+Code, Codex, and any other MCP client/);
   });
 
+  it("lists the document tools and keeps the markdown originals", async () => {
+    renderDialog();
+    const dialog = screen.getAllByRole("dialog")[0];
+    for (const tool of [
+      "markie_find_documents",
+      "markie_search_documents",
+      "markie_read_document",
+      "markie_write_document",
+      "markie_open_in_markie",
+      "markie_*_md",
+    ]) {
+      expect(within(dialog).getByText(tool)).toBeTruthy();
+    }
+    expect(dialog.textContent).toMatch(/Word, RTF and\s+OpenDocument files/);
+  });
+
+  it("says that Word, RTF, OpenDocument and HTML stay read-only to agents", async () => {
+    renderDialog();
+    const dialog = screen.getAllByRole("dialog")[0];
+    expect(dialog.textContent).toMatch(/Word, RTF, OpenDocument and HTML files stay read-only to agents/);
+  });
+
   it("writes no em-dashes into the user's copy", async () => {
     renderDialog();
     await waitFor(() => expect(block("claude mcp add markie")).toBeTruthy());
@@ -93,5 +115,22 @@ describe("AgentsDialog", () => {
     expect(
       screen.getByText(/Open this from the Markie desktop app/)
     ).toBeTruthy();
+  });
+
+  it("lets the user turn agent Cloud uploads on and off, and says public links are always confirmed", async () => {
+    const bridge = {
+      agentPermissions: vi.fn(async () => ({ cloudSync: false })),
+      setAgentPermissions: vi.fn(async (next: { cloudSync: boolean }) => ({ cloudSync: next.cloudSync })),
+    };
+    renderDialog(bridge);
+    const box = screen.getByRole("checkbox", { name: "Let agents put files in Markie Cloud without asking" }) as HTMLInputElement;
+    await waitFor(() => expect(bridge.agentPermissions).toHaveBeenCalled());
+    expect(box.checked).toBe(false);
+    fireEvent.click(box);
+    await waitFor(() => expect(box.checked).toBe(true));
+    expect(bridge.setAgentPermissions).toHaveBeenCalledWith({ cloudSync: true });
+    const dialog = screen.getAllByRole("dialog")[0];
+    expect(dialog.textContent).toMatch(/confirms it with you every time/);
+    expect(within(dialog).getByText("markie_cloud_sync")).toBeTruthy();
   });
 });

@@ -1,0 +1,34 @@
+# Markie super-nightly gateway on Fly.io: serves the private update feed and
+# artifacts to the owner's authorized builds. Moved off Railway after its
+# 2026-10-21 breach. Secret: PRIVATE_RELEASE_PUBLISH_KEY.
+app = "markie-nightly"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.private-release"
+
+[deploy]
+  strategy = "immediate"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8787"
+  PRIVATE_RELEASE_ENABLED = "true"
+  PRIVATE_RELEASE_OWNER_ID = "aplyrFYqdEagsM9A3oL84QFbRqBnwYHl"
+  PRIVATE_RELEASE_ROOT = "/data/super-nightly"
+  PRIVATE_RELEASE_AUTH_ORIGIN = "https://api.markiedocs.com"
+
+[[mounts]]
+  source = "nightly_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -1,22 +1,38 @@
 ---
 name: markie-conventions
-description: How to write markdown for Markie through its MCP server. Covers where a document is filed (project, block) and what Markie actually renders: pictures, video, audio, where those files have to live, and the inline HTML that survives a save. Use whenever writing documents for the user via markie_write_md, or when the user asks to organize, file, or find their markdown.
+description: How to find, read and write documents for Markie through its MCP server. Covers which document types each tool handles (markdown, text, CSV, JSON, YAML, XML, Word, RTF, OpenDocument, HTML), where a document is filed (project, block), and what Markie actually renders: pictures, video, audio, where those files have to live, and the inline HTML that survives a save. Use whenever writing documents for the user via markie_write_document or markie_write_md, or when the user asks to organize, file, search, or find their documents.
 ---
 
 # Markie conventions
 
-Markie is the user's local markdown workspace. It organizes files into projects
-(a repo or a product) containing blocks (units of work). Files never move on
-disk; organization is metadata.
+Markie is the user's local document workspace: markdown first, and also plain
+text, CSV, JSON, YAML, XML, Darkmown, Word, RTF, OpenDocument and HTML. It
+organizes files into projects (a repo or a product) containing blocks (units of
+work). Files never move on disk; organization is metadata.
+
+## Finding and reading documents
+
+- `markie_find_documents` finds documents by name or path, newest first, and
+  says each one's format. Pass `formats` (for example `["docx", "odt"]`) to
+  narrow it. `markie_find_md` is the same search for markdown only.
+- `markie_search_documents` finds documents by what they say. It reads inside
+  markdown, text, data files, Word, OpenDocument, RTF and HTML, exactly as
+  Markie's own global search does, and returns an excerpt around each hit.
+- `markie_read_document` reads any of them. Text formats come back as written.
+  Word, OpenDocument, RTF and HTML come back as extracted text, labelled
+  read-only. A legacy `.doc` cannot be read this way: open it in Markie.
 
 ## Writing documents
 
-1. Search before you write: `markie_find_md` with a few keywords. Update the
-   document that already exists instead of creating `plan-v2-final.md` beside
-   it. If the search says it was truncated, it did not see the whole disk, so
-   do not read a miss as proof the document is new.
-2. Declare where the document belongs. Either pass `project` and `block` to
-   `markie_write_md`, or write the front matter yourself:
+1. Search before you write: `markie_find_documents` or `markie_find_md` with a
+   few keywords, or `markie_search_documents` when you remember what the
+   document says rather than what it is called. Update the document that
+   already exists instead of creating `plan-v2-final.md` beside it. If the
+   search says it was truncated, it did not see the whole disk, so do not read
+   a miss as proof the document is new.
+2. Declare where a markdown document belongs. Either pass `project` and `block`
+   to `markie_write_document` or `markie_write_md`, or write the front matter
+   yourself:
 
    ```yaml
    ---
@@ -36,6 +52,12 @@ disk; organization is metadata.
 6. Project, then block, then file is the whole tree. Do not invent deeper
    levels, and do not move, rename, or restructure files on disk to organize
    them. Declaring the project and block is the organizing.
+7. `markie_write_document` also writes plain text, CSV, JSON, YAML, XML and
+   Darkmown. JSON is checked before anything is written. It never writes Word,
+   OpenDocument, RTF, legacy `.doc` or HTML, because plain text written over
+   one of those destroys it. To change one, open it with
+   `markie_open_in_markie` for the user, or write your changes into a new
+   markdown document.
 
 ## Checking a document
 
@@ -54,7 +76,8 @@ nothing anywhere says why.
 ## Showing results
 
 When the user asked for a document, finish with `markie_open_in_markie` on the
-file you wrote, so it renders in front of them.
+file you wrote, so it renders in front of them. It opens every type listed
+above, not only markdown.
 
 <!-- markdown-guide:start (one source: mcp/markdown-guide.mjs; lib.test.mjs fails when this drifts) -->
 
@@ -299,5 +322,40 @@ A claim that needs a source[^1]
 
 [^1]: The source.
 ```
+
+## Other document types
+
+Markie opens more than markdown, and the tools follow it. Each type has a
+format id, which is what the formats filter of `markie_find_documents` and
+`markie_search_documents` takes.
+
+| Format id | Files | Search reads its text | `markie_read_document` | `markie_write_document` |
+| --- | --- | --- | --- | --- |
+| `markdown` | `.md` `.markdown` `.mdx` | yes | as written | yes |
+| `darkmown` | `.wd` | yes | as written | yes |
+| `text` | `.txt` `.text` `.log` | yes | as written | yes |
+| `csv` | `.csv` | yes | as written | yes |
+| `json` | `.json` | yes | as written | yes, valid JSON only |
+| `yaml` | `.yaml` `.yml` | yes | as written | yes |
+| `xml` | `.xml` | yes | as written | yes |
+| `html` | `.html` `.htm` | yes | extracted text | no |
+| `docx` | `.docx` | yes | extracted text | no |
+| `odt` | `.odt` | yes | extracted text | no |
+| `rtf` | `.rtf` | yes | extracted text | no |
+| `doc` | `.doc` | name and path only | no | no |
+
+Extracted text is the words of a document without its formatting, pictures or
+layout. It comes back labelled read-only, because writing plain text over a
+Word, OpenDocument or RTF file would destroy everything else in it. To change
+one of those, open it with `markie_open_in_markie` so the user edits it in
+Markie, or put your changes in a new markdown document. Legacy .doc only gives
+up its text to the reader Markie runs when the document is opened.
+
+A file past its read limit (4 MB for text and HTML, 8 MB for RTF, 32 MB for
+Word and OpenDocument) is still found by name and path, but its text is not
+searched or read.
+
+Everything above this section is about markdown. Pictures, embeds, inline HTML
+and the project and block front matter do not apply to the other types.
 
 <!-- markdown-guide:end -->

@@ -4,10 +4,13 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type DragEvent,
+  type ReactNode,
 } from "react";
-import { matchesFilter, stableOrder } from "@/lib/stable-order";
+import { stableOrder } from "@/lib/stable-order";
 import { getElectronAPI, isTooLarge, type LibraryItem } from "@/lib/electron";
+import { getServerURL } from "@/lib/auth-client";
 import { tooLargeMessage } from "@/lib/doc-tiers";
 import { ProjectsPanelContainer } from "@/components/projects-panel";
 import { BrowseView } from "@/components/browse-view";
@@ -27,17 +30,32 @@ import { LIB_TAB_KEY, initialLibTab, type LibTab } from "@/lib/library-state";
 import {
   cloudCopyOnly,
   libraryItemNeedsAttention,
-  organizeLibraryItems,
+  compareRecent,
+  sortRecentItems,
   summarizeLibrary,
   type LibraryOverview,
 } from "@/lib/library-overview";
 import type { WorkspaceBootstrapResult } from "@/lib/workspace-default";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 import { PanelNotice, type Notice, type NoticeKind } from "@/components/panel-notice";
+import { sameDocumentPath } from "@/lib/path-utils";
+import { classifyDocumentFormat } from "@/lib/document-formats";
+import type { LibraryRecord } from "@/lib/document-library";
+import type { EditableDocumentFormat } from "@/lib/document-session";
+import { DEFAULT_LIBRARY_DOCUMENT_QUERY, libraryDocumentFormat, matchesLibraryDocument, queryLibraryDocuments, type LibraryDocumentMetadata, type LibraryDocumentQuery } from "@/lib/library-document-query";
+import { LibraryDocumentFilters } from "@/components/library-document-filters";
+import { NewDocumentModal } from "@/components/new-document-modal";
+import { FormatBadge, FormatFileIcon, ServerBadge } from "@/components/format-badge";
+import { serverLabel, useTrustedServers } from "@/lib/server-sessions";
+import { DEFAULT_APPS_CHANGED } from "@/components/default-apps-section";
+import { CloudAreaPicker, CloudAreaProvider, CloudAreaScopePicker } from "./cloud-area-picker";
+import { accountScopeKey, confirmedAccountScope, subscribeAccountScope } from "@/lib/account-identities";
 
 interface LibraryProps {
+  retainedDocument?: { name: string; path: string | null; dirty: boolean; selected: boolean; onSelect: () => void };
   // which view the left rail selected (library | browse | cloud | skills)
   view: PanelView;
+  presentation?: "panel" | "workspace";
   onClose: () => void;
   onOpenPath: (path: string) => void;
   onOpenFile: () => void;
@@ -55,13 +73,23 @@ interface LibraryProps {
   accountId: string | null;
   // bump to force a refresh (file opened/saved/sync changed)
   refreshKey: number;
+  // Ordinary recovery records only; protected document metadata stays in the vault.
+  documentRecords?: readonly LibraryRecord[];
+  activeDocumentId?: string;
+  onOpenDocument?: (record: LibraryRecord) => void;
+  onCreateDocument?: (format: EditableDocumentFormat) => void;
+  // Settings > Files, where every fully supported type can be made Markie's.
+  onOpenDefaultApps?: () => void;
+  renderCloudDocuments?: (query: LibraryDocumentQuery, presentation: "panel" | "workspace") => ReactNode;
 }
 
-const OPENABLE = /\.(md|markdown|mdx|txt|csv)$/i;
+
+const NO_DOCUMENT_RECORDS: readonly LibraryRecord[] = [];
 
 // Long enough to read a short sentence, short enough that the panel is not
 // still explaining a copy you made a minute ago.
 const NOTICE_DISMISS_MS = 4000;
+const DEFAULT_APPS_HINT_KEY = "markie.defaultApps.hintDismissed.v1";
 
 // Node hands back "ENOENT: no such file or directory, open '/x/y.md'". The
 // errno is the only part most people can act on, and it is the part they
@@ -95,36 +123,86 @@ const VIEW_TITLE: Record<PanelView, string> = {
 // Local files are identified by path; cloud-only rows have no path yet.
 const itemKey = (i: LibraryItem) => i.path ?? i.cloudId ?? i.name;
 
-const BADGE: Record<LibraryItem["state"], [string, string]> = {
-  "local-only": ["Local", "text-muted border-border"],
-  synced: [
-    "Synced",
-    "text-[var(--status-green)] border-[color:var(--status-green)]",
-  ],
-  unpushed: [
-    "Not backed up",
-    "text-[var(--status-yellow)] border-[color:var(--status-yellow)]",
-  ],
-  paused: [
-    "Paused",
-    "text-[var(--status-yellow)] border-[color:var(--status-yellow)]",
-  ],
-  conflict: [
-    "Conflict",
-    "text-[var(--status-red)] border-[color:var(--status-red)]",
-  ],
-  behind: [
-    "Update",
-    "text-[var(--status-blue)] border-[color:var(--status-blue)]",
-  ],
-  "cloud-only": [
-    "Cloud",
-    "text-[var(--status-blue)] border-[color:var(--status-blue)]",
-  ],
+// Markdown and the plain-text family are what the classic reader and the
+// legacy cloud sync understand. Everything else in Recent (DOCX, RTF, JSON...)
+// opens in the document workspace and must not be offered a UTF-8 copy or a
+// Markdown sync it would mangle.
+const CLASSIC_FILE = /\.(?:md|markdown|mdx|txt|text|log|csv)$/i;
+
+function nativeMetadata(item: LibraryItem): LibraryDocumentMetadata {
+  return { key: `native:${itemKey(item)}`, name: item.name, path: item.path, format: libraryDocumentFormat(item.name), updatedAt: item.lastOpenedAt };
+}
+
+function recoveryMetadata(record: LibraryRecord): LibraryDocumentMetadata {
+  return { key: `recovery:${record.id}`, name: record.name, format: record.format, updatedAt: record.updatedAt, extractedText: record.extractedText, tags: record.tags, collection: record.collection };
+}
+
+// Sync state as a small icon, not a word: the row's eye goes to the name and
+// the type, and the state is there for the moments it matters. Each icon still
+// says what it means on hover and to assistive tech.
+type SyncStatus = LibraryItem["state"] | "shared";
+const SYNC_STATUS: Record<SyncStatus, { label: string; color: string; icon: ReactNode }> = {
+  "local-only": {
+    label: "On this device only",
+    color: "text-muted/70",
+    icon: <><rect x="4" y="5" width="16" height="11" rx="1.5" /><path d="M2.5 19h19" /></>,
+  },
+  synced: {
+    label: "Synced",
+    color: "text-[var(--status-green)]",
+    icon: <><path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z" /><path d="m9.5 13 2 2 3.5-3.5" /></>,
+  },
+  unpushed: {
+    label: "Not backed up",
+    color: "text-[var(--status-yellow)]",
+    icon: <><path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z" /><path d="M12 15.5v-5M9.8 12.6 12 10.4l2.2 2.2" /></>,
+  },
+  paused: {
+    label: "Sync paused",
+    color: "text-[var(--status-yellow)]",
+    icon: <><path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z" /><path d="M10.5 11v4M13.5 11v4" /></>,
+  },
+  conflict: {
+    label: "Conflict: review changes",
+    color: "text-[var(--status-red)]",
+    icon: <><path d="M12 4 2.8 19.5h18.4z" /><path d="M12 10v4M12 16.8v.2" /></>,
+  },
+  behind: {
+    label: "Update available",
+    color: "text-[var(--status-blue)]",
+    icon: <><path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z" /><path d="M12 10v5M9.8 12.8 12 15l2.2-2.2" /></>,
+  },
+  "cloud-only": {
+    label: "In the cloud only",
+    color: "text-[var(--status-blue)]",
+    icon: <path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z" />,
+  },
+  shared: {
+    label: "Shared",
+    color: "text-[var(--status-purple)]",
+    icon: <><circle cx="9" cy="9" r="3" /><path d="M3.5 19a5.5 5.5 0 0 1 11 0" /><circle cx="17" cy="10" r="2.3" /><path d="M16 14.6a4.5 4.5 0 0 1 5 4.4" /></>,
+  },
 };
 
+// A cloud call for a document on a server other than Markie Cloud names it;
+// main checks it is trusted before using it.
+function onServer(item: LibraryItem): { server?: string } {
+  return item.server ? { server: item.server } : {};
+}
+
+function SyncStatusIcon({ status }: { status: SyncStatus }) {
+  const { label, color, icon } = SYNC_STATUS[status];
+  return (
+    <span role="img" aria-label={label} title={label} className={`inline-flex w-4 h-4 items-center justify-center shrink-0 ${color}`}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{icon}</svg>
+    </span>
+  );
+}
+
 export function Library({
+  retainedDocument,
   view,
+  presentation = "panel",
   onClose,
   onOpenPath,
   onOpenFile,
@@ -135,20 +213,39 @@ export function Library({
   activePath,
   accountId,
   refreshKey,
+  documentRecords = NO_DOCUMENT_RECORDS,
+  activeDocumentId,
+  onOpenDocument,
+  onCreateDocument,
+  onOpenDefaultApps,
+  renderCloudDocuments,
 }: LibraryProps) {
+  // Names for the server badge on documents that live off Markie Cloud.
+  const trustedServers = useTrustedServers();
   const [items, setItems] = useState<LibraryItem[]>([]);
+  // Markie Cloud: where "Sync to cloud" sends a file that is on no server yet.
   const [signedIn, setSignedIn] = useState(false);
+  // The other servers with a session. A row on one of them acts with that
+  // server's session, never with Cloud's, and offers nothing without one.
+  const [serverSessions, setServerSessions] = useState<string[]>([]);
+  const signedInFor = (item: LibraryItem) => (item.server ? serverSessions.includes(item.server) : signedIn);
+  // The cloud list covers every server with a session.
+  const anySignedIn = signedIn || serverSessions.length > 0;
+  const scopeKey = useSyncExternalStore(subscribeAccountScope, accountScopeKey, () => "");
+  const [uploadArea, setUploadArea] = useState("");
+  useEffect(() => { setUploadArea(""); }, [scopeKey]);
   // only "loading" when there's actually a main-process library to query
   const [loading, setLoading] = useState(
     () => !!getElectronAPI()?.libraryState
   );
   const [confirmOff, setConfirmOff] = useState<string | null>(null);
+  const [showNewDocument, setShowNewDocument] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   // Kept apart from the notice line above: a listing the server would not hand
   // over is about the cloud, so it belongs on the Cloud page rather than under
   // whichever panel happened to be open when the request failed.
   const [cloudError, setCloudError] = useState<string | null>(null);
-  const [filter, setFilter] = useState("");
+  const [query, setQuery] = useState<LibraryDocumentQuery>(() => ({ ...DEFAULT_LIBRARY_DOCUMENT_QUERY }));
   // Freeze the row order for as long as the panel stays open, so opening a file
   // does not send it to the top and shuffle everything you were reading.
   const [frozenOrder, setFrozenOrder] = useState<string[]>([]);
@@ -250,6 +347,28 @@ export function Library({
     };
   }, []);
 
+  // Formats other than Markdown that Finder still sends to another app. Asked
+  // again whenever Settings > Files changes an association.
+  const [othersElsewhere, setOthersElsewhere] = useState<string[]>([]);
+  const [othersHintDismissed, setOthersHintDismissed] = useState(() => {
+    try { return localStorage.getItem(DEFAULT_APPS_HINT_KEY) === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    const api = getElectronAPI();
+    if (!api?.defaultAppsStatus || !onOpenDefaultApps) return;
+    let alive = true;
+    const load = () => api.defaultAppsStatus!().then((status) => {
+      if (alive) setOthersElsewhere(status.supported ? status.formats.filter((format) => format.id !== "markdown" && !format.isDefault).map((format) => format.label) : []);
+    }).catch(() => {});
+    void load();
+    window.addEventListener(DEFAULT_APPS_CHANGED, load);
+    return () => { alive = false; window.removeEventListener(DEFAULT_APPS_CHANGED, load); };
+  }, [onOpenDefaultApps]);
+  const dismissOthersHint = () => {
+    setOthersHintDismissed(true);
+    try { localStorage.setItem(DEFAULT_APPS_HINT_KEY, "1"); } catch { /* preference only */ }
+  };
+
   const makeDefault = async () => {
     const api = getElectronAPI();
     if (!api?.setDefaultMarkdownApp) return;
@@ -276,9 +395,9 @@ export function Library({
     }
     const paths = Array.from(e.dataTransfer.files)
       .map((f) => api.pathForFile(f))
-      .filter((p): p is string => !!p && OPENABLE.test(p));
+      .filter((p): p is string => !!p && classifyDocumentFormat(p).kind !== "unsupported");
     if (paths.length === 0) {
-      showNotice("Drop Markdown, text, or CSV files here.", "info");
+      showNotice("Drop a supported Word, Markdown, text or document file here.", "info");
       return;
     }
     onAddPaths(paths);
@@ -290,8 +409,9 @@ export function Library({
     return readLibraryStartupSnapshot(api).then((s) => {
       setItems(s.items);
       // First rows to arrive define the order the panel keeps while open.
-      setFrozenOrder((prev) => (prev.length ? prev : s.items.map(itemKey)));
+      setFrozenOrder((prev) => (prev.length ? prev : sortRecentItems(s.items).map(itemKey)));
       setSignedIn(s.signedIn);
+      setServerSessions(s.servers);
       setWorkspace(s.workspace);
       setLoading(false);
       setCloudError(s.cloudError ?? null);
@@ -307,8 +427,9 @@ export function Library({
       if (!alive) return;
       setItems(s.items);
       // First rows to arrive define the order the panel keeps while open.
-      setFrozenOrder((prev) => (prev.length ? prev : s.items.map(itemKey)));
+      setFrozenOrder((prev) => (prev.length ? prev : sortRecentItems(s.items).map(itemKey)));
       setSignedIn(s.signedIn);
+      setServerSessions(s.servers);
       setWorkspace(s.workspace);
       setLoading(false);
       setCloudError(s.cloudError ?? null);
@@ -351,6 +472,19 @@ export function Library({
   };
   const flashError = (msg: string) => flash(msg, "error");
 
+  // The server's own /d/<id> page: it opens for the owner and the people the
+  // document is shared with, after they sign in, on any browser or phone.
+  const copyPrivateLink = async (item: LibraryItem) => {
+    if (!item.cloudId) return;
+    const origin = (item.server ?? getServerURL()).replace(/\/+$/, "");
+    try {
+      await navigator.clipboard.writeText(`${origin}/d/${encodeURIComponent(item.cloudId)}`);
+      flash("Private link copied. It opens for you after signing in, on any device.");
+    } catch {
+      flashError("Couldn't copy the link.");
+    }
+  };
+
   const copyPath = async (path: string) => {
     try {
       await navigator.clipboard.writeText(path);
@@ -380,53 +514,65 @@ export function Library({
       const file = await api.openFilePath(item.path!);
       if (!file) return noticeError(`Can't read ${item.name}`);
       if (isTooLarge(file)) return noticeError(tooLargeMessage(file.size));
+      if (uploadArea && item.cloudId) return noticeError("Existing cloud files keep their area. Move the cloud document separately before changing its destination.");
       const res = await api.docSyncOn({
         path: item.path!,
         name: item.name,
         content: file.content,
+        ...(uploadArea ? { areaId: uploadArea } : {}),
       });
       if (res.error) noticeError(res.error);
     });
 
   const orderedItems = useMemo(
-    () => stableOrder(items, itemKey, frozenOrder),
+    () => stableOrder(items, itemKey, frozenOrder, compareRecent),
     [items, frozenOrder]
   );
 
   const visibleItems = useMemo(
-    () => orderedItems.filter((i) => matchesFilter(i, filter)),
-    [orderedItems, filter]
+    () => queryLibraryDocuments(orderedItems, query, nativeMetadata),
+    [orderedItems, query]
   );
 
-  const { localFiles } = organizeLibraryItems(visibleItems);
+  const localFiles = visibleItems.filter((item) => item.path);
+  const retainedAvailable = !!retainedDocument && (!retainedDocument.path || !items.some((item) => sameDocumentPath(item.path, retainedDocument.path, getElectronAPI()?.platform)));
+  const retainedFormat = retainedDocument ? libraryDocumentFormat(retainedDocument.name) : "markdown";
+  const retainedVisible = retainedAvailable && matchesLibraryDocument({ key: "retained:markdown", name: retainedDocument!.name, path: retainedDocument!.path, format: retainedFormat }, query);
   const overview = summarizeLibrary(items);
+  // Only copies that hold something the file does not: drafts never saved to
+  // a file, and edits not yet written back. A copy that matches its file is
+  // the file, and the file is already listed above.
+  const pendingRecords = useMemo(() => documentRecords.filter((record) => record.exportedRevision !== record.revision), [documentRecords]);
+  const visibleDocuments = useMemo(() => queryLibraryDocuments(pendingRecords, query, recoveryMetadata), [pendingRecords, query]);
+  const queryActive = !!query.search.trim() || query.format !== "all" || query.sort !== "default";
+  const totalDocuments = items.filter((item) => item.path).length + pendingRecords.length + Number(retainedAvailable);
+  const visibleCount = localFiles.length + visibleDocuments.length + Number(retainedVisible);
 
   const fileRow = (item: LibraryItem) => {
-    const [label, badgeClass]: [string, string] = item.shared
-      ? [
-          "Shared",
-          "text-[var(--status-purple)] border-[color:var(--status-purple)]",
-        ]
-      : BADGE[item.state];
+    const status: SyncStatus = item.shared ? "shared" : item.state;
+    // Signed in to the server this row's actions would reach.
+    const rowSignedIn = signedInFor(item);
     const api = getElectronAPI()!;
     const isActive = activePath && item.path === activePath;
     const itemKey = item.path ?? item.cloudId;
+    const classic = CLASSIC_FILE.test(item.name);
+    const format = libraryDocumentFormat(item.name);
     const open = () => {
       setMenuFor(null);
       if (item.path && item.exists) {
         onOpenPath(item.path);
       } else if (item.shared && item.cloudId && api.docOpenShared) {
         // shared with me → just save to Downloads and open it, no save dialog
-        act(() => api.docOpenShared!({ cloudId: item.cloudId!, suggestedName: item.name }));
+        act(() => api.docOpenShared!({ cloudId: item.cloudId!, suggestedName: item.name, ...onServer(item) }));
       } else if (cloudCopyOnly(item)) {
         // The cloud has it and this device does not, whether the file was
         // never here or was deleted: either way the click gets the copy back.
-        act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name }));
+        act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name, ...onServer(item) }));
       }
     };
     return (
       <div
-        key={itemKey}
+        key={`native:${itemKey}`}
         ref={menuFor === itemKey ? menuRootRef : undefined}
         className={`group rounded-md px-2 py-1.5 cursor-pointer ${
           isActive ? "bg-accent" : "hover:bg-accent/40"
@@ -434,13 +580,13 @@ export function Library({
         onClick={open}
       >
         <div className="flex items-center gap-1.5">
-          <FileIcon />
+          <FormatFileIcon format={format} />
           <span className="text-[12.5px] text-foreground truncate flex-1" title={item.path ?? item.name}>
             {item.name}
           </span>
-          <span className={`text-[9px] px-1 py-px rounded border shrink-0 ${badgeClass}`}>
-            {label}
-          </span>
+          <FormatBadge format={format} />
+          {item.server && <ServerBadge origin={item.server} label={serverLabel(item.server, trustedServers)} />}
+          <SyncStatusIcon status={status} />
           {(item.path || item.cloudId) && (
             <button
               onClick={(e) => {
@@ -469,14 +615,17 @@ export function Library({
             {item.path && (
               <button className="text-muted hover:text-foreground" onClick={() => copyPath(item.path!)}>Copy path</button>
             )}
-            {item.path && item.exists && (
+            {item.path && item.exists && classic && (
               <button className="text-muted hover:text-foreground" onClick={() => copyContents(item)}>Copy contents</button>
+            )}
+            {item.cloudId && item.state !== "local-only" && (
+              <button className="text-muted hover:text-foreground" onClick={() => void copyPrivateLink(item)}>Copy private link</button>
             )}
             {/* "Unpushed" means the snapshot never reached the cloud. It had a
                 badge and no way out: the update strip only appears when the
                 server is ahead, which this usually is not, so the only recovery
                 was to open the file and save it again with nothing saying so. */}
-            {signedIn && item.state === "unpushed" && item.exists && item.path && (
+            {rowSignedIn && item.state === "unpushed" && item.exists && item.path && (
               <button
                 className="text-[var(--status-blue)] hover:underline"
                 onClick={() => act(() => api.docRetryPush!({ path: item.path! }))}
@@ -484,23 +633,23 @@ export function Library({
                 Retry backup
               </button>
             )}
-            {signedIn && item.state === "local-only" && item.exists && (
+            {rowSignedIn && item.state === "local-only" && item.exists && classic && (
               <button className="text-muted hover:text-foreground" onClick={() => syncOn(item)}>Sync to cloud</button>
             )}
-            {signedIn && item.state === "paused" && item.exists && (
+            {rowSignedIn && item.state === "paused" && item.exists && classic && (
               <button className="text-muted hover:text-foreground" onClick={() => syncOn(item)}>Resume sync</button>
             )}
-            {signedIn && item.state === "synced" && (
+            {rowSignedIn && item.state === "synced" && (
               <button className="text-muted hover:text-foreground" onClick={() => setConfirmOff(item.path)}>Stop syncing</button>
             )}
-            {signedIn && item.state === "behind" && (
+            {rowSignedIn && item.state === "behind" && (
               <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docResolve({ path: item.path!, strategy: "cloud" }))}>Pull latest</button>
             )}
             {/* "Take cloud" sat here as an unlabelled button that silently
                 destroyed every local line the server never received. Opening
                 the document puts the choice where the counts are, so nobody
                 picks it without being told what it costs. */}
-            {signedIn && item.state === "conflict" && item.path && (
+            {rowSignedIn && item.state === "conflict" && item.path && (
               <button
                 className="text-[var(--status-blue)] hover:underline"
                 onClick={() => onOpenPath(item.path!)}
@@ -508,8 +657,8 @@ export function Library({
                 Review changes…
               </button>
             )}
-            {cloudCopyOnly(item) && signedIn && (
-              <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name }))}>Download…</button>
+            {cloudCopyOnly(item) && rowSignedIn && (
+              <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name, ...onServer(item) }))}>Download…</button>
             )}
           </div>
         )}
@@ -517,14 +666,39 @@ export function Library({
     );
   };
 
+  const recoveryRow = (record: LibraryRecord) => <button
+    key={`recovery:${record.id}`} type="button" onClick={() => onOpenDocument?.(record)} disabled={!onOpenDocument}
+    aria-current={record.id === activeDocumentId ? "true" : undefined}
+    className={`group w-full text-left rounded-md px-2 py-1.5 disabled:opacity-50 ${record.id === activeDocumentId ? "bg-accent" : "hover:bg-accent/40"}`}
+  >
+    <span className="flex items-center gap-1.5"><FormatFileIcon format={record.format} /><span className="text-[12.5px] text-foreground truncate flex-1" title={record.name}>{record.name}</span>{" "}
+      <FormatBadge format={record.format} />
+      <span className="text-[9px] px-1 py-px rounded border shrink-0 text-muted border-border" title={record.exportedRevision === null ? "Kept on this Mac as you type. Open it and use Save file to choose where it goes." : "These edits are kept on this Mac. Open it and use Save file to write them to the file."}>{record.exportedRevision === null ? "Draft" : "Unsaved"}</span></span>
+    {" "}<span className="block pl-5 text-[10px] text-muted">{record.exportedRevision === null ? "Never saved to a file" : "Edits not saved to the file"}</span>
+  </button>;
+  const retainedRow = retainedVisible && retainedDocument ? <button key="retained:markdown" type="button" onClick={retainedDocument.onSelect}
+    aria-current={retainedDocument.selected ? "true" : undefined}
+    className={`group w-full text-left rounded-md px-2 py-1.5 ${retainedDocument.selected ? "bg-accent" : "hover:bg-accent/40"}`}>
+    <span className="flex items-center gap-1.5"><FormatFileIcon format={retainedFormat} /><span className="text-[12.5px] text-foreground truncate flex-1">{retainedDocument.name}</span>{" "}<FormatBadge format={retainedFormat} /><span className="text-[9px] px-1 py-px rounded border shrink-0 text-muted border-border">{retainedDocument.dirty ? "Unsaved" : "Open"}</span></span>
+  </button> : null;
+  // Explicit sorts cross source boundaries, but never convert a recovery or
+  // retained document into a native file or change the callback it opens.
+  const sortedRows = query.sort === "default" ? [] : queryLibraryDocuments([
+    ...localFiles.map((item) => ({ metadata: nativeMetadata(item), node: fileRow(item) })),
+    ...visibleDocuments.map((record) => ({ metadata: recoveryMetadata(record), node: recoveryRow(record) })),
+    ...(retainedVisible && retainedDocument ? [{ metadata: { key: "retained:markdown", name: retainedDocument.name, path: retainedDocument.path, format: retainedFormat }, node: retainedRow }] : []),
+  ], query, ({ metadata }) => metadata);
+  const cloudWorkspace = presentation === "workspace" && view === "cloud";
+
   return (
     <div
-      className={`markie-side-panel relative shrink-0 h-full flex flex-col border-r bg-surface ${
-        dropping ? "border-foreground/40" : "border-border"
-      }`}
-      style={{ width }}
+      data-markie-cloud-workspace={cloudWorkspace ? "true" : undefined}
+      className={cloudWorkspace
+        ? "markie-cloud-workspace relative flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-background"
+        : `markie-side-panel relative shrink-0 h-full flex flex-col border-r bg-surface ${dropping ? "border-foreground/40" : "border-border"}`}
+      style={cloudWorkspace ? undefined : { width }}
       onDragOver={(e) => {
-        if (!getElectronAPI()?.pathForFile) return;
+        if (cloudWorkspace || !getElectronAPI()?.pathForFile) return;
         e.preventDefault();
         e.stopPropagation();
         setDropping(true);
@@ -533,25 +707,42 @@ export function Library({
         e.stopPropagation();
         if (e.relatedTarget === null) setDropping(false);
       }}
-      onDrop={onDrop}
+      onDrop={cloudWorkspace ? undefined : onDrop}
     >
-      {dropping && (
+      {!cloudWorkspace && dropping && (
         <div className="absolute inset-0 z-10 m-1.5 rounded-lg border-2 border-dashed border-foreground/40 bg-surface/80 flex items-center justify-center pointer-events-none">
           <span className="text-[12px] text-foreground/80">Drop to add to your library</span>
         </div>
       )}
-      <PanelResizer width={width} onWidth={setUserWidth} onCommit={commitWidth} />
-      <div className="flex items-center justify-between px-3 h-10 shrink-0 border-b border-border">
-        <span className="text-[11px] uppercase tracking-wide text-muted font-medium">{VIEW_TITLE[view]}</span>
-        <div className="flex items-center gap-1">
-          <button onClick={onOpenFile} title="Open a file from disk (⌘O)" aria-label="Open a file from disk" className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-          </button>
-          <button onClick={onClose} title={`Collapse the ${VIEW_TITLE[view]} panel (⌘L)`} aria-label={`Collapse the ${VIEW_TITLE[view]} panel`} className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
-          </button>
+      {!cloudWorkspace && <PanelResizer width={width} onWidth={setUserWidth} onCommit={commitWidth} />}
+      {cloudWorkspace ? (
+        <div className="flex min-h-16 shrink-0 items-center justify-between gap-4 border-b border-border/70 px-5 py-3 sm:px-7">
+          <div className="flex min-w-0 items-center gap-3">
+            <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] border border-border/80 bg-surface-2/80 text-[var(--status-blue)] shadow-[inset_0_1px_rgba(255,255,255,0.07),0_6px_16px_rgba(0,0,0,0.12)]">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M7 19a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 19z" /></svg>
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-[17px] font-semibold leading-tight tracking-tight text-foreground">Cloud</h2>
+              {signedIn ? <p className="mt-0.5 flex items-center gap-1.5 text-[11px] leading-none text-muted"><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--status-green)]" />Connected</p> : <button type="button" onClick={onSignIn} className="mt-0.5 flex items-center gap-1.5 rounded text-left text-[11px] leading-none text-muted transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]"><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--status-yellow)]" />Sign in</button>}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={onOpenFile} className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[11.5px] text-muted transition hover:bg-accent/40 hover:text-foreground focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]" aria-label="Open a file from disk"><span aria-hidden="true" className="text-sm leading-none">+</span><span className="hidden sm:inline">Open file</span></button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex items-center justify-between px-3 h-10 shrink-0 border-b border-border">
+          <span className="text-[11px] uppercase tracking-wide text-muted font-medium">{VIEW_TITLE[view]}</span>
+          <div className="flex items-center gap-1">
+            <button onClick={onOpenFile} title="Open a file from disk (⌘O)" aria-label="Open a file from disk" className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+            </button>
+            <button onClick={onClose} title={`Collapse the ${VIEW_TITLE[view]} panel (⌘L)`} aria-label={`Collapse the ${VIEW_TITLE[view]} panel`} className="text-muted hover:text-foreground w-6 h-6 flex items-center justify-center rounded hover:bg-accent/40">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* One row of tabs, and only in the Library view. There is no second row
           under it any more: Projects moved to its own rail destination, and a
@@ -559,70 +750,105 @@ export function Library({
           thing the nesting cost. */}
       {view === "library" && (
         <>
-          <div
-            className="flex items-center gap-0.5 px-2 py-1.5 shrink-0 border-b border-border/60"
-            role="group"
-            aria-label="Library sections"
-          >
-            {(
-              [
-                ["recent", "Recent"],
-                ["projects", "Projects"],
-              ] as Array<[LibTab, string]>
-            ).map(([t, label]) => (
-              <button
-                key={t}
-                data-library-tab={t}
-                aria-pressed={libTab === t}
-                onClick={() => pickTab(t)}
-                className={`flex-1 text-[11px] py-1 rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[color:var(--status-blue)] ${
-                  libTab === t
-                    ? "bg-accent text-foreground"
-                    : "text-muted hover:text-foreground hover:bg-accent/40"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="shrink-0 border-b border-border/60 px-2 py-2">
+            <div
+              className="markie-segmented-control flex w-full"
+              role="group"
+              aria-label="Library sections"
+            >
+              {(
+                [
+                  ["recent", "Recent"],
+                  ["projects", "Projects"],
+                ] as Array<[LibTab, string]>
+              ).map(([t, label]) => (
+                <button
+                  key={t}
+                  data-library-tab={t}
+                  aria-pressed={libTab === t}
+                  onClick={() => pickTab(t)}
+                  className="markie-segmented-option flex-1"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
-          {!loading && libTab === "recent" && items.length > 0 && (
-              <div className="px-2 pt-1.5 pb-1.5 shrink-0">
-                <input
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape" && filter) {
-                      e.stopPropagation();
-                      setFilter("");
-                    }
-                  }}
-                  placeholder="Filter by name or folder"
-                  aria-label="Filter documents"
-                  className="markie-overlay-field w-full text-[11.5px] px-2 py-1"
-                />
+          {libTab === "recent" && onCreateDocument && (
+            <div className="px-2 py-1.5 border-b border-border/60" role="group" aria-label="Document actions">
+              <div role="group" aria-label="Create document">
+                <button type="button" onClick={() => setShowNewDocument(true)} className="w-full rounded-md border border-border/70 px-2 py-1.5 text-left text-[11.5px] text-foreground hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-[color:var(--status-blue)]">New document…</button>
               </div>
-            )}
-          {!loading && libTab === "recent" && <LibraryOverviewBand overview={overview} />}
+            </div>
+          )}
+          {!loading && libTab === "recent" && totalDocuments > 0 && <LibraryDocumentFilters query={query} onChange={setQuery} searchTextAvailable={pendingRecords.length > 0} />}
+          {!loading && libTab === "recent" && signedIn ? <div className="px-2 py-1"><CloudAreaPicker label="Upload destination" defaultLabel="Default cloud" value={uploadArea} onChange={setUploadArea} fullWidth /></div> : null}
+          {!loading && libTab === "recent" && <LibraryOverviewBand overview={overview} recoveredCount={pendingRecords.length} />}
+          {!loading && libTab === "recent" && queryActive && <p role="status" className="px-2.5 py-1 text-[10.5px] text-muted tabular-nums">{visibleCount} of {totalDocuments} documents</p>}
         </>
       )}
 
-      <div className="flex-1 overflow-y-auto px-1.5 py-2">
+      {cloudWorkspace ? (
+        <CloudAreaProvider presentation="workspace" showPicker={false}>
+          <div className="shrink-0 border-b border-border/60 px-5 py-4 sm:px-7">
+            <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-3">
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                {signedIn ? <div className="w-full min-w-[220px] sm:w-[300px]"><CloudAreaScopePicker /></div> : null}
+              </div>
+              <LibraryDocumentFilters query={query} onChange={setQuery} layout="workspace" />
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7">
+            {/* One page, no tabs: synced and shared files first, filtered by
+                the toggles above the list, then Word and other document
+                snapshots under their own heading. */}
+            <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-8">
+              <CloudView
+                items={visibleItems}
+                query={query}
+                presentation="workspace"
+                alongsideSnapshots={!!renderCloudDocuments}
+                loading={loading}
+                renderRow={fileRow}
+                signedIn={anySignedIn}
+                accountId={accountId}
+                accountSessionKey={confirmedAccountScope()?.userId === accountId ? scopeKey : ""}
+                onManage={onManageShare}
+                onOpenPath={onOpenPath}
+                cloudError={cloudError}
+                refreshKey={refreshKey}
+              />
+              {renderCloudDocuments?.(query, "workspace")}
+            </div>
+          </div>
+        </CloudAreaProvider>
+      ) : null}
+
+      {view === "cloud" && !cloudWorkspace ? <LibraryDocumentFilters query={query} onChange={setQuery} /> : null}
+
+      {!cloudWorkspace && <div className="flex-1 overflow-y-auto px-1.5 py-2">
         {view === "browse" ? (
           <BrowseView onOpenPath={onOpenPath} activePath={activePath} />
         ) : view === "skills" ? (
           <SkillsView onOpenPath={onOpenPath} activePath={activePath} />
         ) : view === "cloud" ? (
+          <CloudAreaProvider>
           <CloudView
-            items={items}
+            items={visibleItems}
+            query={query}
+            alongsideSnapshots={!!renderCloudDocuments}
             loading={loading}
             renderRow={fileRow}
-            signedIn={signedIn}
+            signedIn={anySignedIn}
             accountId={accountId}
+            accountSessionKey={confirmedAccountScope()?.userId === accountId ? scopeKey : ""}
             onManage={onManageShare}
             onOpenPath={onOpenPath}
             cloudError={cloudError}
             refreshKey={refreshKey}
           />
+          {renderCloudDocuments?.(query, "panel")}
+          </CloudAreaProvider>
         ) : loading ? (
           <LibrarySkeleton />
         ) : libTab === "projects" ? (
@@ -631,7 +857,8 @@ export function Library({
             activePath={activePath}
             onOpenPath={onOpenPath}
           />
-        ) : localFiles.length === 0 ? (
+        ) : localFiles.length === 0 && visibleDocuments.length === 0 && !retainedVisible ? (
+          queryActive && totalDocuments > 0 ? <p className="px-2 py-2 text-[12px] text-muted">No documents match this filter.</p> :
           <RecentEmptyState
             onOpenFile={onOpenFile}
             onShowProjects={() => pickTab("projects")}
@@ -639,13 +866,22 @@ export function Library({
           />
         ) : (
           <>
-            <LibrarySectionHeader label="On this device" items={localFiles} />
-            {localFiles.map(fileRow)}
+            {query.sort !== "default" ? sortedRows.map(({ node }) => node) : <>
+            {retainedRow}
+            {localFiles.length > 0 ? <>
+              <LibrarySectionHeader label="On this device" items={localFiles} />
+              {localFiles.map(fileRow)}
+            </> : null}
+            {visibleDocuments.length > 0 ? <>
+              <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted font-medium">Not saved to a file</div>
+              {visibleDocuments.map(recoveryRow)}
+            </> : null}
+            </>}
           </>
         )}
-      </div>
+      </div>}
 
-      {!signedIn && (
+      {!cloudWorkspace && !signedIn && (
         <button
           onClick={onSignIn}
           className="m-2 text-[11px] text-muted hover:text-foreground border border-border rounded-md py-1.5 px-2 text-left leading-snug"
@@ -656,7 +892,7 @@ export function Library({
       )}
       <PanelNotice notice={notice} />
 
-      {needsDefault && (
+      {!cloudWorkspace && needsDefault && (
         <div className="border-t border-border px-2 py-2">
           <button
             onClick={makeDefault}
@@ -670,6 +906,33 @@ export function Library({
           {defaultMsg && (
             <div className="text-[10.5px] text-muted px-2 pt-1 leading-snug">{defaultMsg}</div>
           )}
+          {onOpenDefaultApps && (
+            <button
+              onClick={onOpenDefaultApps}
+              className="w-full text-[10.5px] text-muted/80 hover:text-foreground rounded-md px-2 pt-0.5 text-left"
+            >
+              Text, CSV, JSON and more…
+            </button>
+          )}
+        </div>
+      )}
+
+      {!cloudWorkspace && needsDefault === false && onOpenDefaultApps && othersElsewhere.length > 0 && !othersHintDismissed && (
+        <div className="group flex items-center border-t border-border px-2 py-1.5">
+          <button
+            onClick={onOpenDefaultApps}
+            title={`Still opening elsewhere: ${othersElsewhere.join(", ")}`}
+            className="min-w-0 flex-1 truncate rounded-md px-2 py-1 text-left text-[11px] text-muted hover:bg-accent/40 hover:text-foreground"
+          >
+            Open text, CSV, JSON and more in Markie…
+          </button>
+          <button
+            onClick={dismissOthersHint}
+            aria-label="Hide default apps suggestion"
+            className="shrink-0 rounded px-1.5 text-[13px] leading-none text-muted/70 opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            ×
+          </button>
         </div>
       )}
 
@@ -692,6 +955,12 @@ export function Library({
             </div>
           </div>
         </div>
+      )}
+      {showNewDocument && onCreateDocument && (
+        <NewDocumentModal
+          onClose={() => setShowNewDocument(false)}
+          onCreate={(format) => { setShowNewDocument(false); onCreateDocument(format); }}
+        />
       )}
     </div>
   );
@@ -743,15 +1012,14 @@ function LibrarySectionHeader({
   );
 }
 
-// The Library counts what is on the disk, and nothing else: the synced, shared
-// and cloud-only figures moved to the Cloud page, where the documents they
-// count now live.
-function LibraryOverviewBand({ overview }: { overview: LibraryOverview }) {
+// File counts and recovery copies stay distinct; a local recovery record does
+// not prove that an external file was saved or synced.
+function LibraryOverviewBand({ overview, recoveredCount = 0 }: { overview: LibraryOverview; recoveredCount?: number }) {
   return (
     <div className="shrink-0 border-b border-border/60 px-2.5 py-2">
       <div className="flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-wide text-muted tabular-nums">
-          {overview.onDevice} on this device
+          {recoveredCount ? `${overview.onDevice} files · ${recoveredCount} unsaved` : `${overview.onDevice} on this device`}
         </span>
         <span
           className={`text-[10.5px] ${
@@ -826,11 +1094,3 @@ function compactWorkspacePath(path: string) {
   return path;
 }
 
-function FileIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="text-muted shrink-0">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-    </svg>
-  );
-}

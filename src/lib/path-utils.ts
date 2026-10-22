@@ -23,3 +23,10 @@ export function compactWorkspacePath(value: string): string {
     ? `~${documentsRoot}`
     : pathBasename(value);
 }
+
+/** Compare already-authorized paths, never grant access based on this result. */
+export function sameDocumentPath(left: string | null, right: string | null, platform?: string): boolean {
+  if (!left || !right) return false;
+  const normalized = (value: string) => platform === "win32" ? value.replace(/\\/g, "/").toLocaleLowerCase("en-US") : value;
+  return normalized(left) === normalized(right);
+}

@@ -4,17 +4,21 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElectronAPI, LibraryItem } from "@/lib/electron";
 import { emit, installBridge } from "@/test/mock-bridge";
+const authState = vi.hoisted(() => ({ user: null as { id: string; name: string; email: string } | null }));
 
 vi.mock("@/lib/auth-client", () => ({
-  authClient: { me: async () => null },
+  authClient: { me: async () => authState.user },
   sharesClient: { access: async () => null, list: async () => null, sharedByMe: async () => [] },
   collabWsBase: () => "ws://localhost",
-  getAuthToken: () => null,
+  getAuthToken: () => authState.user ? "confirmed-session" : null,
+  getServerURL: () => "https://account.example.test",
+  getConfirmedAuthIdentity: () => authState.user ? { userId: authState.user.id, serverURL: "https://account.example.test" } : null,
   adoptAuthToken: () => {},
   pushSyncConfig: () => {},
 }));
 
 import Home from "./page";
+import { authStore } from "@/lib/auth-store";
 
 // The Library is a list the main process owns. Two things used to change that
 // list without the panel hearing about it: a rename (the row kept the old name
@@ -51,8 +55,9 @@ async function boot(overrides: Partial<ElectronAPI> = {}) {
   return api;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   localStorage.clear();
+  authState.user = null; await authStore.refresh();
   localStorage.setItem("markie.libtab.v4", "recent");
 });
 
@@ -95,6 +100,7 @@ describe("the Library staying current", () => {
   });
 
   it("lists a document another machine synced, the next time it looks at the server", async () => {
+    authState.user = { id: "user-a", name: "Writer", email: "writer@example.test" }; await authStore.refresh();
     let items = [local()];
     let listing = "list-1";
     const libraryState = vi.fn(async () => ({ signedIn: true, items }));

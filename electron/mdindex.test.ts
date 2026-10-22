@@ -35,6 +35,8 @@ type SkillRow = {
   name: string;
   dir: string;
   mtimeMs: number;
+  format?: string;
+  snippet?: string;
   skill?: { tool: string | null; description: string | null };
 };
 const skipWith = (opts: {
@@ -152,10 +154,50 @@ describe("walk", () => {
 
     const rows = await walkWith(root, { home: root });
     const rel = rows.map((r) => r.path.slice(root.length + 1)).sort();
-    expect(rel).toEqual([".claude/skills/kirby/skill.md", "a.md", "notes/b.md"].sort());
+    // The index covers every supported document type now, not only Markdown:
+    // Browse is the device-wide document explorer, and a .txt the user can
+    // open must also be a .txt they can find.
+    expect(rel).toEqual([".claude/skills/kirby/skill.md", "a.md", "notes/b.md", "notes/readme.txt"].sort());
     const a = rows.find((r) => r.name === "a.md")!;
     expect(a.dir).toBe(root);
     expect(typeof a.mtimeMs).toBe("number");
+    expect(a.format).toBe("markdown");
+    expect(rows.find((r) => r.name === "readme.txt")!.format).toBe("text");
+  });
+
+  it("indexes office and data documents with their format, and snippets small text files", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "docwalk-"));
+    const mk = (p: string, body = "x") => {
+      fs.mkdirSync(path.dirname(path.join(root, p)), { recursive: true });
+      fs.writeFileSync(path.join(root, p), body);
+    };
+    mk("letter.docx", "PK fake office bytes");
+    mk("memo.rtf", "{\\rtf1 hello}");
+    mk("report.odt", "PK fake odt bytes");
+    mk("legacy.doc", "fake doc bytes");
+    mk("data.csv", "name,value\nalpha,1\n");
+    mk("config.json", "{\"needle\": true}");
+    mk("notes.txt", "the searchable needle lives here");
+    mk("page.html", "<p>hi</p>");
+    mk("script.wd", "# darkmown needle");
+    mk("image.png", "not a document");
+
+    const rows = await walkWith(root, { home: root });
+    const byName = new Map(rows.map((r) => [r.name, r]));
+    expect(byName.get("letter.docx")!.format).toBe("docx");
+    expect(byName.get("memo.rtf")!.format).toBe("rtf");
+    expect(byName.get("report.odt")!.format).toBe("odt");
+    expect(byName.get("legacy.doc")!.format).toBe("doc");
+    expect(byName.get("data.csv")!.format).toBe("csv");
+    expect(byName.get("page.html")!.format).toBe("html");
+    expect(byName.get("script.wd")!.format).toBe("darkmown");
+    expect(byName.has("image.png")).toBe(false);
+    // Text-representation files carry a bounded body snippet so Browse can
+    // search inside them; binary office files never get a fake text snippet.
+    expect(byName.get("notes.txt")!.snippet).toContain("searchable needle");
+    expect(byName.get("config.json")!.snippet).toContain("needle");
+    expect(byName.get("letter.docx")!.snippet).toBeUndefined();
+    expect(byName.get("memo.rtf")!.snippet).toBeUndefined();
   });
 });
 
@@ -524,11 +566,16 @@ describe("a rename Markie made itself", () => {
     expect(rows()[1].dir).toBe("/h/new/deep");
   });
 
-  it("drops a file renamed out of markdown, and says nothing when nothing changed", () => {
+  it("drops a file renamed out of the supported types, and says nothing when nothing changed", () => {
     seedRows("/h/a.md", "/h/b.md");
+    // A rename between two supported types keeps the row and its new format.
     expect(moved("/h/a.md", "/h/a.txt")).not.toBeNull();
+    expect(rows().map((r) => r.path)).toEqual(["/h/a.txt", "/h/b.md"]);
+    expect(rows()[0]).toMatchObject({ name: "a.txt", format: "text" });
+    // Only leaving the supported set drops the row.
+    expect(moved("/h/a.txt", "/h/a.png")).not.toBeNull();
     expect(rows().map((r) => r.path)).toEqual(["/h/b.md"]);
-    expect(moved("/h/nowhere.txt", "/h/elsewhere.txt")).toBeNull();
+    expect(moved("/h/nowhere.png", "/h/elsewhere.png")).toBeNull();
   });
 
   it("adds a file renamed into markdown", () => {
@@ -554,8 +601,9 @@ describe("a file Markie wrote itself", () => {
     expect(noteFile(landed)).not.toBeNull();
     expect(rows().map((r) => r.path)).toEqual(["/h/a.md", landed]);
     expect(rows()[1]).toMatchObject({ name: "from-the-laptop.md", dir });
-    // Once is enough, and a text file is not markdown.
+    // Once is enough. Every supported document type joins; other files do not.
     expect(noteFile(landed)).toBeNull();
-    expect(noteFile(path.join(dir, "notes.txt"))).toBeNull();
+    expect(noteFile(path.join(dir, "notes.txt"))).not.toBeNull();
+    expect(noteFile(path.join(dir, "photo.png"))).toBeNull();
   });
 });

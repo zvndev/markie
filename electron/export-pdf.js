@@ -51,18 +51,32 @@ function withTimeout(promise, ms, message) {
   ]);
 }
 
-// Resolves once web fonts have loaded and two frames have been painted, or
-// after its own timeout — a document that never settles should still export
-// something rather than hang until the outer deadline.
+// Resolves once web fonts and embedded raster images load and two frames paint, or
+// after its own timeout. Fonts retain the existing best-effort deadline, but
+// a missing/undecodable picture aborts output instead of silently disappearing.
 function readyScript(readyTimeoutMs) {
   return `new Promise(function (resolve) {
     var done = false;
-    function finish() { if (!done) { done = true; resolve(true); } }
-    setTimeout(finish, ${Number(readyTimeoutMs) || 0});
+    var pendingImages = (document.images || []).length;
+    var timer;
+    function finish(result) { if (!done) { done = true; if (typeof clearTimeout === "function") clearTimeout(timer); resolve(result || true); } }
+    timer = setTimeout(function () { finish(pendingImages ? { imageError: "A document image took too long to decode. The output was stopped." } : true); }, ${Number(readyTimeoutMs) || 0});
     var fonts = (document.fonts && document.fonts.ready) || Promise.resolve();
-    Promise.resolve(fonts).then(function () {
-      requestAnimationFrame(function () { requestAnimationFrame(finish); });
-    }).catch(finish);
+    var images = Array.from(document.images || []).map(function (image) {
+      var decoded = typeof image.decode === "function"
+        ? Promise.resolve().then(function () { return image.decode(); })
+        : image.complete ? (image.naturalWidth > 0 ? Promise.resolve() : Promise.reject())
+        : new Promise(function (ready, failed) {
+          image.addEventListener("load", ready, { once: true });
+          image.addEventListener("error", failed, { once: true });
+        });
+      return decoded.then(function () { pendingImages--; }, function () {
+        finish({ imageError: "A document image could not be decoded. The output was stopped." });
+      });
+    });
+    Promise.all([Promise.resolve(fonts).catch(function () {})].concat(images)).then(function () {
+      requestAnimationFrame(function () { requestAnimationFrame(function () { finish(true); }); });
+    }).catch(function () { finish(true); });
   })`;
 }
 
@@ -124,11 +138,15 @@ function createPdfExporter(deps) {
   async function settle(win, tmpFile) {
     await win.loadFile(tmpFile);
     if (!alive(win)) throw new Error("The export window closed before it finished.");
+    let readiness;
     try {
-      await win.webContents.executeJavaScript(readyScript(readyTimeoutMs), true);
+      readiness = await win.webContents.executeJavaScript(readyScript(readyTimeoutMs), true);
     } catch {
-      // Best effort. A document that refuses to report readiness still prints.
+      // The probe must run to verify pictures; its own font deadline remains
+      // best effort, but a failed probe cannot establish safe output readiness.
+      throw new Error("The document could not be checked for output readiness. The output was stopped.");
     }
+    if (readiness && typeof readiness.imageError === "string") throw new Error(readiness.imageError);
     if (!alive(win)) throw new Error("The export window closed before it finished.");
   }
 

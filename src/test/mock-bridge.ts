@@ -81,6 +81,12 @@ const noopResult = { ok: true } as const;
 export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
   const bridge = {
     platform: "darwin",
+    privateReleaseAuthOrigin: "",
+    privateReleaseStatus: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api.markiedocs.com" })),
+    privateReleaseSession: vi.fn(async () => ({ token: null })),
+    privateReleaseAuthorize: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api.markiedocs.com" })),
+    privateReleaseLock: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api.markiedocs.com" })),
+    privateReleaseTakeAuthLink: vi.fn(async () => null),
 
     openFile: vi.fn(async () => null),
     openFilePath: vi.fn(async () => null),
@@ -92,6 +98,15 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
       supported: true,
       isDefault: false,
     })),
+    defaultAppsStatus: vi.fn(async () => ({ supported: true, formats: [], pending: [] })),
+    setDefaultApps: vi.fn(async () => ({ ok: true })),
+    copySecret: vi.fn(async () => ({ ok: true, clearsAfterMs: 30_000 })),
+    clearSecretClipboard: vi.fn(async () => ({ ok: true, cleared: false })),
+    vaultTouchIdAvailable: vi.fn(async () => ({ available: false, enrolled: false })),
+    vaultTouchIdEnroll: vi.fn(async () => ({ ok: false as const, reason: "unavailable" as const })),
+    vaultTouchIdUnlock: vi.fn(async () => ({ ok: false as const, reason: "unavailable" as const })),
+    vaultTouchIdRemove: vi.fn(async () => ({ ok: true })),
+    searchDocuments: vi.fn(async () => ({ results: [], scanned: 0, total: 0, partial: false })),
 
     // Workspace / Files view
     wsRoots: vi.fn(async () => [] as string[]),
@@ -119,6 +134,17 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     termOpenExternal: vi.fn(async () => noopResult),
 
     getInitialFile: vi.fn(async () => null),
+    documentFiles: {
+      open: vi.fn(async () => ({ ok: true as const, value: null })),
+      saveAs: vi.fn(async () => ({ ok: true as const, value: null })),
+      read: vi.fn(async () => ({ ok: false as const, error: { code: "unavailable", message: "No synthetic native file was supplied." } })),
+      write: vi.fn(async () => ({ ok: false as const, error: { code: "unavailable", message: "No synthetic native file was supplied." } })),
+      release: vi.fn(async () => ({ ok: true as const, value: null })),
+      takeInitial: vi.fn(async () => ({ ok: true as const, value: null })),
+    },
+    onDocumentFileOpened: vi.fn(subscribe("onDocumentFileOpened")),
+    onDocumentCommand: vi.fn(subscribe("onDocumentCommand")),
+    setDocumentMenuState: vi.fn(async () => noopResult),
     exportPDF: vi.fn(async () => ({ success: true, path: "/tmp/out.pdf" })),
     exportHTML: vi.fn(async () => ({ success: true, path: "/tmp/out.html" })),
     saveFile: vi.fn(async () => ({ success: true, path: "/tmp/doc.md" })),
@@ -149,6 +175,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     onMenuTheme: vi.fn(subscribe("onMenuTheme")),
     onMenuSettings: vi.fn(subscribe("onMenuSettings")),
     onMenuLibrary: vi.fn(subscribe("onMenuLibrary")),
+    onMenuGlobalSearch: vi.fn(subscribe("onMenuGlobalSearch")),
     onDeepLink: vi.fn(subscribe("onDeepLink")),
 
     openExternal: vi.fn(async () => undefined),
@@ -156,6 +183,34 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     resolveDocLinks: vi.fn(async ({ hrefs }: { hrefs: string[] }) => hrefs.map((href) => ({ href, kind: "unknown" as const }))),
     openDocLink: vi.fn(async () => ({ ok: true })),
     syncConfig: vi.fn(async () => undefined),
+    syncSession: vi.fn(async () => ({ ok: true })),
+    serversList: vi.fn(async () => [
+      {
+        origin: "https://api.markiedocs.com",
+        name: "Markie Cloud",
+        isDefault: true,
+        signIn: { email: true, google: true },
+        version: null,
+      },
+    ]),
+    serversProbe: vi.fn(async () => ({ ok: false as const, error: "not mocked" })),
+    serversAdd: vi.fn(async () => ({ ok: false as const, error: "not mocked" })),
+    serversRemove: vi.fn(async () => ({ ok: true })),
+    // Stands in for main: the same request, made with the global fetch a
+    // test stubs, so a test sees exactly what would go on the wire.
+    serverRequest: vi.fn(
+      async (req: { origin: string; path: string; method?: string; body?: string; token?: string | null }) => {
+        const res = await fetch(`${req.origin}${req.path}`, {
+          method: req.method ?? "GET",
+          redirect: "error",
+          credentials: "omit",
+          headers: { "Content-Type": "application/json", ...(req.token ? { Authorization: `Bearer ${req.token}` } : {}) },
+          body: req.method && req.method !== "GET" ? req.body : undefined,
+        });
+        const data = await res.json().catch(() => null);
+        return { ok: res.ok, status: res.status, data, setAuthToken: res.headers?.get?.("set-auth-token") ?? null };
+      }
+    ),
     syncDocRole: vi.fn(async () => undefined),
 
     registryTrack: vi.fn(async () => noopResult),
@@ -163,6 +218,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     registrySetRole: vi.fn(async () => noopResult),
     libraryState: vi.fn(async () => ({
       signedIn: false,
+      servers: [] as string[],
       items: [] as LibraryItem[],
     })),
 
@@ -191,6 +247,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     watchFile: vi.fn(async () => ({ ok: true })),
     onAppWillClose: vi.fn(subscribe("onAppWillClose")),
     appCloseReady: vi.fn(() => undefined),
+    appCloseCancel: vi.fn(() => undefined),
     draftSave: vi.fn(async () => noopResult),
     draftCheck: vi.fn(async () => []),
     draftDiscard: vi.fn(async () => noopResult),
@@ -249,6 +306,8 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
       serverPath: "/tmp/markie-mcp.mjs",
       packaged: false,
     })),
+    agentPermissions: vi.fn(async () => ({ cloudSync: false })),
+    setAgentPermissions: vi.fn(async (next: { cloudSync: boolean }) => ({ cloudSync: next.cloudSync })),
 
     // Skills — empty by default: a test that wants a catalog supplies one, and
     // nothing here ever reaches the network or the user's agent folders.

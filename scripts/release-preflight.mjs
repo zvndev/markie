@@ -315,6 +315,24 @@ export function validateReleaseManifest(rootDir) {
     manifest.betaChannel?.feed?.path !== mac?.feed?.path,
     "beta and stable must not share a feed file"
   );
+  // Promotion re-uses the objects an early publish uploaded, so each early
+  // feed has to sit in its stable feed's directory, under its own name.
+  const windows = manifest.platforms?.find((platform) => platform.id === "windows-x64");
+  assert(
+    manifest.betaChannel?.windowsFeed?.path === "windows/beta.yml",
+    "Windows early feed path must remain canonical"
+  );
+  assert(
+    manifest.betaChannel.windowsFeed.path !== windows?.feed?.path &&
+      path.posix.dirname(manifest.betaChannel.windowsFeed.path) ===
+        path.posix.dirname(windows?.feed?.path ?? ""),
+    "Windows early feed must be a sibling of the stable Windows feed"
+  );
+  const soakDays = manifest.betaChannel?.defaultSoakDays;
+  assert(
+    typeof soakDays === "number" && soakDays >= 0 && soakDays <= 60,
+    "betaChannel.defaultSoakDays must be a number of days between 0 and 60"
+  );
   assert(publish?.provider === manifest.storage.provider, "builder provider must come from the release manifest");
   assert(publish?.bucket === manifest.storage.bucket, "builder bucket must come from the release manifest");
   assert(publish?.endpoint === manifest.storage.endpoint, "builder endpoint must come from the release manifest");

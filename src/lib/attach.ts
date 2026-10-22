@@ -99,7 +99,7 @@ export function attachmentContent(attachment: Attachment): Record<string, unknow
 // app has always meant "open this", and it still does; everything else is an
 // attachment. Mirrors OPENABLE in electron/file-grants.js, which is the side
 // that actually enforces it.
-const OPENS_AS_DOCUMENT = /\.(md|markdown|mdx|txt|csv)$/i;
+const OPENS_AS_DOCUMENT = /\.(md|markdown|mdx|txt|text|log|csv)$/i;
 
 export function opensAsDocument(name: string): boolean {
   return OPENS_AS_DOCUMENT.test(name);

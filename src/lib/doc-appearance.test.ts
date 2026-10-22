@@ -160,8 +160,28 @@ describe("stored settings are never trusted", () => {
 
 describe("what the canvas reads", () => {
   it("multiplies size by zoom so text reflows instead of overflowing", () => {
-    const vars = appearanceVars({ fontFamily: "system", fontSize: 16, zoom: 1.5, width: "default" });
-    expect(vars["--doc-font-size"]).toBe("24.00px");
+    const vars = appearanceVars({ fontFamily: "system", fontSize: 20, zoom: 1.5, width: "default" });
+    expect(vars["--doc-font-size"]).toBe("30.00px");
+  });
+
+  // Source view (and every .txt file) keeps its monospace size but still
+  // follows ⌘+ / ⌘-, so zoom is exposed on its own too.
+  it("exposes zoom for the source editor", () => {
+    expect(appearanceVars({ ...DEFAULT_APPEARANCE, zoom: 1.5 })["--doc-zoom"]).toBe("1.5");
+  });
+
+  // A document nobody resized reads at the style template's size, so a
+  // template (or the Settings slider) can set it. Zoom still multiplies it.
+  it("lets the template's size through at the default size, still zoomed", () => {
+    const vars = appearanceVars({ ...DEFAULT_APPEARANCE, zoom: 1.25 });
+    expect(vars["--doc-font-size"]).toBe("calc(var(--theme-font-size, 16px) * 1.25)");
+  });
+
+  // The default font is the template's body face, not a fixed one, and the
+  // system face stays available as a deliberate choice.
+  it("follows the template's font by default and still offers the system face", () => {
+    expect(appearanceVars(DEFAULT_APPEARANCE)["--doc-font-family"]).toContain("var(--theme-font-family");
+    expect(fontStack("sans")).toBe("var(--font-geist-sans)");
   });
 
   it("names a real font stack", () => {

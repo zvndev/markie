@@ -13,14 +13,25 @@ import { ShareDialog } from "@/components/share-dialog";
 import { SignInForm } from "@/components/sign-in";
 import { getElectronAPI } from "@/lib/electron";
 import { useAuth } from "@/lib/auth-store";
+import { getServerToken, isPrimaryServer } from "@/lib/server-sessions";
+import { CloudAreaPicker } from "./cloud-area-picker";
 
 type Stage =
   | { kind: "loading" }
   | { kind: "unsaved" }
   | { kind: "signed-out" }
   | { kind: "local" }
-  | { kind: "ready"; docId: string }
+  // `server` is the document's server when it is not Markie Cloud.
+  | { kind: "ready"; docId: string; server?: string }
   | { kind: "error"; message: string };
+
+function hostOf(origin: string): string {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return origin;
+  }
+}
 
 interface ShareGateProps {
   filePath: string | null;
@@ -40,9 +51,12 @@ export function ShareGate({
 }: ShareGateProps) {
   // The gate reacts to the session rather than sampling a token once, so
   // signing in below re-resolves it in place instead of leaving a dead dialog.
-  const { status } = useAuth();
+  const { status, user } = useAuth();
   const [stage, setStage] = useState<Stage>({ kind: "loading" });
   const [busy, setBusy] = useState(false);
+  const [areaId, setAreaId] = useState("");
+  useEffect(() => { setAreaId(""); }, [status, user?.id, filePath]);
+  useEffect(() => { const clear = () => setAreaId(""); window.addEventListener("markie:account-session-change", clear); return () => window.removeEventListener("markie:account-session-change", clear); }, []);
   // Guards against a resolve that lands after the dialog closed or the file
   // changed underneath it.
   const run = useRef(0);
@@ -59,7 +73,27 @@ export function ShareGate({
       return;
     }
     if (status === "out") {
-      setStage({ kind: "signed-out" });
+      // Signed out of Markie Cloud says nothing about a document that lives
+      // on another server the user is signed in to.
+      if (!api?.registryGet) {
+        setStage({ kind: "signed-out" });
+        return;
+      }
+      setStage({ kind: "loading" });
+      api
+        .registryGet(filePath)
+        .then((entry) => {
+          if (ticket !== run.current) return;
+          const server = entry?.cloud_origin ?? null;
+          setStage(
+            entry?.cloud_doc_id && server && !isPrimaryServer(server) && getServerToken(server)
+              ? { kind: "ready", docId: entry.cloud_doc_id, server }
+              : { kind: "signed-out" }
+          );
+        })
+        .catch(() => {
+          if (ticket === run.current) setStage({ kind: "signed-out" });
+        });
       return;
     }
     if (!api?.registryGet) {
@@ -71,9 +105,19 @@ export function ShareGate({
       .registryGet(filePath)
       .then((entry) => {
         if (ticket !== run.current) return;
+        const server = entry?.cloud_origin && !isPrimaryServer(entry.cloud_origin) ? entry.cloud_origin : null;
+        // Sharing uses the server the document lives on, with that server's
+        // own account. Not signed in there, there is nobody to share as.
+        if (entry?.cloud_doc_id && server && !getServerToken(server)) {
+          setStage({
+            kind: "error",
+            message: `This document is on ${hostOf(server)}. Sign in to that server in Settings > Advanced > Servers to share it.`,
+          });
+          return;
+        }
         setStage(
           entry?.cloud_doc_id
-            ? { kind: "ready", docId: entry.cloud_doc_id }
+            ? { kind: "ready", docId: entry.cloud_doc_id, ...(server ? { server } : {}) }
             : { kind: "local" }
         );
       })
@@ -114,6 +158,7 @@ export function ShareGate({
         path: filePath,
         name: fileName ?? "untitled.md",
         content,
+        ...(areaId ? { areaId } : {}),
       });
       if (res.error) {
         setStage({ kind: "error", message: res.error });
@@ -129,7 +174,7 @@ export function ShareGate({
     } finally {
       setBusy(false);
     }
-  }, [filePath, fileName, content, onChanged, resolve]);
+  }, [filePath, fileName, content, onChanged, resolve, areaId]);
 
   // Signing in is a prerequisite the gate can clear itself. Sending the user to
   // Settings instead threw away the thing they actually asked for, and they had
@@ -167,6 +212,7 @@ export function ShareGate({
       <ShareDialog
         key={stage.docId}
         docId={stage.docId}
+        server={stage.server}
         fileName={fileName ?? "Untitled"}
         body={content}
         onClose={onClose}
@@ -221,6 +267,7 @@ export function ShareGate({
           </button>
         </div>
         <p className="mt-2 text-[12.5px] leading-relaxed text-muted">{line}</p>
+        {stage.kind === "local" ? <div className="mt-2"><CloudAreaPicker label="Upload destination" defaultLabel="Default cloud" value={areaId} onChange={setAreaId} disabled={busy} /></div> : null}
         {action && (
           <div className="mt-4 flex justify-end">
             <button

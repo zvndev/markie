@@ -1,23 +1,52 @@
 import { betterAuth } from "better-auth";
+import { randomUUID } from "node:crypto";
 import { bearer, emailOTP } from "better-auth/plugins";
+import { createAuthMiddleware } from "better-auth/api";
 import { openDatabase } from "./db.ts";
 import { sendEmail } from "./email.ts";
 import { claimPendingInvites } from "./pending.ts";
 import { resolveAuthSecret } from "./auth-secret.ts";
 import { otpEmail } from "./otp-email.ts";
+import { applicationOrigins } from "./application-origins.ts";
+import { accountContext, accountIdentitiesEnabled, assertNewAccountEmail } from "./account-context.ts";
+import { assertSignupAllowed } from "./signup.ts";
 
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
+const authDatabase = openDatabase();
+
 export const auth = betterAuth({
-  database: openDatabase(),
+  database: authDatabase,
+  hooks: {
+    // The create-user hook below is the gate for every path. Email sign-up
+    // also needs the refusal said out loud: better-auth answers a 403 from a
+    // create hook on that route with a fake success (so a sign-up never shows
+    // which addresses exist), which would leave someone waiting for a code
+    // that never comes. Checked before the route reads the database, so an
+    // existing address and a new one are refused alike.
+    before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path !== "/sign-up/email") return;
+      const email = (ctx.body as { email?: unknown } | undefined)?.email;
+      assertSignupAllowed(authDatabase, typeof email === "string" ? email : "");
+    }),
+  },
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:8787",
   secret: resolveAuthSecret(process.env),
   trustedOrigins: [
-    "app://markie", // packaged desktop app
-    "http://localhost:3000", // dev renderer
+    ...applicationOrigins(),
     "markie://", // desktop deep-link auth bridge target
   ],
+  // Which request header carries the real client address, so rate limits are
+  // per client and not one shared bucket. Only a header the edge in front of
+  // this server sets and overwrites may be named: Fly sets Fly-Client-IP, so
+  // the Fly deployment names it; anywhere else the default is better-auth's
+  // own x-forwarded-for, which a self-hosted proxy (deploy/Caddyfile) sets.
+  advanced: {
+    ipAddress: {
+      ipAddressHeaders: [process.env.MARKIE_CLIENT_IP_HEADER?.trim().toLowerCase() || "x-forwarded-for"],
+    },
+  },
   rateLimit: {
     enabled: true, // better-auth defaults to prod-only; turn it on everywhere
     window: 10,
@@ -43,6 +72,22 @@ export const auth = betterAuth({
     // same class of flaw upstream.
     requireEmailVerification: true,
   },
+  account: {
+    // Google access and refresh tokens are written to the account table
+    // encrypted with BETTER_AUTH_SECRET instead of in the clear, so a copy of
+    // the database (a Litestream replica, a volume snapshot) is not also a set
+    // of live Google credentials. Rows written before this stay plaintext and
+    // still read: better-auth only decrypts values that look like its own
+    // hex ciphertext, which Google's `ya29.` / `1//` tokens never do.
+    // Rotating BETTER_AUTH_SECRET makes encrypted tokens unreadable; Markie
+    // never reads them back (sign-in needs only the identity), and the next
+    // Google sign-in overwrites them.
+    encryptOAuthTokens: true,
+    ...(accountIdentitiesEnabled ? { accountLinking: {
+      enabled: true, disableImplicitLinking: true, requireLocalEmailVerified: true,
+      allowDifferentEmails: true, updateUserInfoOnLink: false, trustedProviders: [],
+    } } : {}),
+  },
   emailVerification: {
     // Proving your own address is not the same event as signing in by code,
     // and the difference is whether the password survives. The email-OTP
@@ -60,15 +105,34 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
+        // MARKIE_SIGNUP (signup.ts). Every way an account comes into being
+        // passes through here: email sign-up, a first email-code sign-in and
+        // a first Google sign-in, so this is the one place it is decided.
+        before: async (user) => {
+          assertSignupAllowed(authDatabase, user.email ?? "");
+          if (user.email) assertNewAccountEmail(user.email);
+          const google = accountContext()?.google;
+          if (google) {
+            // A first Google sign-in creates the user and its provider row in
+            // one transaction, and create.after only runs once that commits:
+            // after the provider row's create.before has already asked whether
+            // this request created the user. Fix the ID here and record it,
+            // or every new Google user is refused.
+            const id = typeof (user as { id?: unknown }).id === "string" && (user as { id: string }).id ? (user as { id: string }).id : randomUUID();
+            google.noteCreatedUser(id);
+            return { data: { ...user, id } };
+          }
+        },
         // Claiming moved out of "an account exists" and into "the address is
         // proven". A Google account, or a first email-OTP sign-in, arrives
         // already verified because the provider or the mailbox proved it, so
         // those still sweep at creation. A password signup does not.
         after: async (user: {
           id: string;
-          email: string;
+          email?: string;
           emailVerified?: boolean;
         }) => {
+          accountContext()?.google?.noteCreatedUser(user.id);
           try {
             if (user.emailVerified && user.email) {
               claimPendingInvites(user.email, user.id);
@@ -86,7 +150,7 @@ export const auth = betterAuth({
         // costs one indexed SELECT and changes nothing.
         after: async (user: {
           id: string;
-          email: string;
+          email?: string;
           emailVerified?: boolean;
         }) => {
           try {
@@ -96,6 +160,30 @@ export const auth = betterAuth({
           } catch (err) {
             console.error("claim-on-verify failed:", err);
           }
+        },
+      },
+    },
+    account: {
+      create: {
+        before: async (account) => {
+          const google = accountContext()?.google;
+          if (account.providerId === "google" && google) {
+            // Upstream assigns an ID after its awaited before hook unless we
+            // supply one. Fence this exact future INSERT, not merely the request.
+            const id = randomUUID();
+            google.authorizeGoogleAccountCreation(account.userId, id);
+            return { data: { ...account, id } };
+          }
+        },
+        after: async (account) => {
+          if (account.providerId === "google") accountContext()?.google?.noteGoogleAccountCreated(account.userId, account.id);
+        },
+      },
+      update: {
+        before: async (account) => {
+          // A known link callback must still hold its initiating session at
+          // the provider-write boundary, even when upstream supplies a patch.
+          accountContext()?.google?.assertGoogleAccountMutation(typeof account.userId === "string" ? account.userId : "");
         },
       },
     },
@@ -127,7 +215,7 @@ export const auth = betterAuth({
         // link: a link needs a hosted page plus a second deep-link hop back
         // into the desktop app, and this plugin already does it in two
         // requests without the user leaving Markie.
-        await sendEmail({ to: email, ...otpEmail(type, otp) });
+        await sendEmail({ to: email, ...otpEmail(type, otp), secret: true });
       },
     }),
   ],

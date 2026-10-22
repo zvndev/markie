@@ -110,13 +110,28 @@ export function sharedPageLinkFor(docId: string, userId: string | null): (ref: s
   };
 }
 
+function liveOwner(docId: string): string | null {
+  const row = db.prepare("SELECT owner_id FROM docs WHERE id = ? AND deleted_at IS NULL").get(docId) as
+    | { owner_id: string }
+    | undefined;
+  return row?.owner_id ?? null;
+}
+
 // The public page's answer: a public page can only lead to another public
 // page, so a target without a live public link is muted.
+//
+// The target must also belong to whoever owns the page. Storing a pointer
+// checks nothing about its target (see the top of this file), so without this
+// anyone who knew another account's document id could link to it from their
+// own public page and publish that account's /s/ token to the world: a token
+// its owner handed to some people became a token everybody could find. Only
+// the owner of both ends may join their public pages together.
 export function publicPageLinkFor(docId: string): (ref: string) => DocLinkAnswer {
   const rows = docLinksFor(docId);
+  const pageOwner = liveOwner(docId);
   // Same per-target memo as sharedPageLinkFor, and worth more here: this path
   // is unauthenticated, so a page with many repeated links is a free way to
-  // run its docExists + getPublicLinkToken lookups over and over.
+  // run its owner + getPublicLinkToken lookups over and over.
   const cache = new Map<string, DocLinkAnswer>();
   return (ref) => {
     const target = rows.get(ref);
@@ -124,7 +139,7 @@ export function publicPageLinkFor(docId: string): (ref: string) => DocLinkAnswer
     const cached = cache.get(target);
     if (cached !== undefined) return cached;
     let answer: DocLinkAnswer;
-    if (!docExists(target)) {
+    if (pageOwner === null || liveOwner(target) !== pageOwner) {
       answer = { muted: true };
     } else {
       const token = getPublicLinkToken(target);

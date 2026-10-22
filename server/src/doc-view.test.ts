@@ -41,6 +41,8 @@ app.route("/api/docs", shares);
 app.route("/api", assetsApi);
 app.route("/api", docLinksApi);
 app.route("/", docView);
+const { createWebSignIn, safeNext, renderWebSignInPage } = await import("./web-signin.ts");
+app.route("/", createWebSignIn({ authBase: "http://localhost:8787", google: false }));
 
 const ORIGIN = { Origin: "http://localhost:3000" };
 const stamp = Date.now();
@@ -281,7 +283,11 @@ test("a bare document id gives an access page that names nothing", async () => {
   // read, so the route cannot be used to enumerate ids.
   const missing = await page(`/d/does-not-exist-${stamp}`);
   assert.equal(missing.status, 403);
-  assert.equal(missing.body.length, bare.body.length);
+  // The only difference is the id the browser itself asked for, echoed in the
+  // sign-in link.
+  const withoutNext = (body: string) => body.replace(/next=[^"&]*/g, "next=");
+  assert.equal(withoutNext(missing.body), withoutNext(bare.body));
+  assert.ok(bare.body.includes(`http://localhost:8787/auth/web-signin?next=${encodeURIComponent(`/d/${docId}`)}`));
 
   const garbage = await page(`/d/${docId}?k=not-a-real-token`);
   assert.equal(garbage.status, 403);
@@ -612,3 +618,38 @@ test("a pending invite's link shows every document link muted", async () => {
   assert.ok(!view.body.includes(`/d/${targetId}`));
   assert.ok(!view.body.includes(`href="/d/${targetId}"`));
 });
+
+test("web sign-in only ever sends a browser on to a /d/ page on this server", async () => {
+  assert.equal(safeNext("/d/abc-123_X"), "/d/abc-123_X");
+  for (const bad of ["https://evil.test/d/x", "//evil.test/d/x", "/d/x/../../admin", "/d/", "/s/token", "/d/a b", "/d/" + "a".repeat(129), undefined, null]) {
+    assert.equal(safeNext(bad as string), "/", String(bad));
+  }
+  const res = await page(`/auth/web-signin?next=${encodeURIComponent("https://evil.test")}`);
+  assert.equal(res.status, 200);
+  assert.ok(res.body.includes('var next = "/";'));
+  assert.equal(res.headers.get("cache-control"), "private, no-store");
+  const ok = await page(`/auth/web-signin?next=${encodeURIComponent("/d/doc-1")}`);
+  assert.ok(ok.body.includes('var next = "/d/doc-1";'));
+  assert.ok(!ok.body.includes("Continue with Google"), "no Google button when Google is not configured");
+  assert.ok(renderWebSignInPage({ next: "/d/x", google: true, failed: true }).includes("/auth/web-google?next=%2Fd%2Fx"));
+});
+
+test("a browser signed in with an emailed code gets a session cookie that opens the owner's private page", async () => {
+  const owner = await signUp("Owner", `dv.cookie.${stamp}@test.local`);
+  const docId = `dv-cookie-${stamp}`;
+  await createDoc(owner.token, docId);
+  // The web page's code form posts here; a password sign-in sets the same
+  // better-auth session cookie and needs no mailbox in a test.
+  const signedIn = await app.request("/api/auth/sign-in/email", {
+    method: "POST",
+    headers: new Headers({ "Content-Type": "application/json", "x-forwarded-for": "127.0.0.1", ...ORIGIN }),
+    body: JSON.stringify({ email: `dv.cookie.${stamp}@test.local`, password: "password-123" }),
+  });
+  assert.equal(signedIn.status, 200);
+  const cookie = signedIn.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  assert.ok(cookie.includes("session_token"));
+  const res = await app.request(`/d/${docId}`, { headers: new Headers({ cookie, "x-forwarded-for": "127.0.0.1" }) });
+  assert.equal(res.status, 200);
+  assert.ok((await res.text()).includes(SECRET_LINE));
+});
+

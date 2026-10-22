@@ -32,8 +32,7 @@ async function boot(overrides: Partial<ElectronAPI> = {}) {
 // The page reads e.metaKey/e.ctrlKey, so a Mac chord is Meta plus the key.
 const chord = (keys: string) => userEvent.keyboard(`{Meta>}${keys}{/Meta}`);
 
-const pressed = (name: string) =>
-  screen.getByRole("button", { name }).getAttribute("aria-pressed");
+const pane = (kind: string) => document.querySelector(`[data-markie-${kind}-pane]`);
 
 beforeEach(() => {
   localStorage.clear();
@@ -66,11 +65,14 @@ describe("page keyboard shortcuts", () => {
   it("⌘1 / ⌘2 / ⌘3 switch view modes", async () => {
     await boot();
     await chord("2");
-    await waitFor(() => expect(pressed("Source mode (⌘2)")).toBe("true"));
+    await waitFor(() => expect(pane("source")).toBeInTheDocument());
+    expect(pane("rich")).not.toBeInTheDocument();
     await chord("3");
-    await waitFor(() => expect(pressed("Split mode (⌘3)")).toBe("true"));
+    await waitFor(() => expect(pane("rich")).toBeInTheDocument());
+    expect(pane("source")).toBeInTheDocument();
     await chord("1");
-    await waitFor(() => expect(pressed("Rich mode (⌘1)")).toBe("true"));
+    await waitFor(() => expect(pane("source")).not.toBeInTheDocument());
+    expect(pane("rich")).toBeInTheDocument();
   });
 
   it("⌘K toggles the command palette", async () => {

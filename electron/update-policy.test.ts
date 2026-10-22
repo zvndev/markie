@@ -18,6 +18,12 @@ const manifest = JSON.parse(
 const platformEntry = (id: string) => manifest.platforms.find((entry) => entry.id === id);
 
 describe("desktop update policy", () => {
+  it.each(["darwin", "win32", "linux"] as const)("keeps packaged %s previews away from stable and beta feeds", (platform) => {
+    const options = { platform, isPackaged: true, isDev: false, isPreview: true };
+    expect(desktopUpdatePolicy(options)).toMatchObject({ supported: false, reason: "preview" });
+    expect(desktopUpdatePolicy(options).detail).toContain("never reads the stable or beta update feeds");
+    expect(shouldSetupAutoUpdate(options)).toBe(false);
+  });
   it("keeps development and unpackaged builds away from update feeds", () => {
     expect(desktopUpdatePolicy({ platform: "darwin", isPackaged: false, isDev: false })).toMatchObject({
       supported: false,

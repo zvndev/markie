@@ -10,7 +10,25 @@ import * as decoding from "lib0/decoding";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-collab-")), "t.db");
 process.env.BETTER_AUTH_SECRET = "markie-collab-test-secret-32-plus-chars";
-const { readAccessControlledSyncMessage } = await import("./collab.ts");
+const { readAccessControlledSyncMessage, roomHasCollabContent } = await import("./collab.ts");
+
+test("a room seeded as plain text counts as holding the document", () => {
+  const empty = new Y.Doc();
+  assert.equal(roomHasCollabContent(empty), false);
+  // Asking must not create the text type in a Markdown room.
+  assert.equal(empty.share.has("content"), false);
+  // A metadata-only stamp is not a document either.
+  empty.getMap("meta").set("schemaVersion", 1);
+  assert.equal(roomHasCollabContent(empty), false);
+
+  const textDoc = new Y.Doc();
+  textDoc.getText("content").insert(0, "plain text body");
+  assert.equal(roomHasCollabContent(textDoc), true);
+
+  const richDoc = new Y.Doc();
+  richDoc.getXmlFragment("default").insert(0, [new Y.XmlText("rich")]);
+  assert.equal(roomHasCollabContent(richDoc), true);
+});
 
 function writeUpdateMessage(update: Uint8Array): Uint8Array {
   const encoder = encoding.createEncoder();

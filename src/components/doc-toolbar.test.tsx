@@ -1,8 +1,11 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { docToolbarState, DocToolbar } from "./doc-toolbar";
+import { docToolbarState, DocToolbar, executeDocToolbarAction, setDocToolbarStyle } from "./doc-toolbar";
 import { DEFAULT_APPEARANCE } from "@/lib/doc-appearance";
 import type { Editor } from "@tiptap/react";
+import { Editor as RichEditor } from "@tiptap/core";
+import StarterKit from "@tiptap/starter-kit";
+import { Color, FontFamily, FontSize, TextStyle } from "@tiptap/extension-text-style";
 
 // The toolbar reads the document through a live TipTap editor. The pane switch
 // destroys that editor while the toolbar still holds the reference, and every
@@ -84,5 +87,66 @@ describe("page width control", () => {
     fireEvent.click(screen.getByRole("button", { name: "Wider" }));
 
     expect(onAppearance).toHaveBeenCalledWith({ ...DEFAULT_APPEARANCE, width: "900" });
+  });
+});
+
+describe("Markdown formatting adapter", () => {
+  it("omits unavailable print instead of exposing a no-op action", () => {
+    render(<DocToolbar editor={null} appearance={DEFAULT_APPEARANCE} onAppearance={vi.fn()} canEdit />);
+    expect(screen.queryByRole("button", { name: "Print" })).not.toBeInTheDocument();
+    expect(screen.getByRole("toolbar", { name: "Document formatting" })).toBeInTheDocument();
+  });
+
+  it("shares real formatting behavior with native menus and refuses read-only or destroyed targets", () => {
+    const editor = new RichEditor({ extensions: [StarterKit], content: "<p>Original text</p>" });
+    try {
+      editor.commands.setTextSelection({ from: 1, to: 9 });
+      executeDocToolbarAction(editor, "bold");
+      expect(editor.isActive("bold")).toBe(true);
+      setDocToolbarStyle(editor, "h3");
+      expect(editor.isActive("heading", { level: 3 })).toBe(true);
+      const before = editor.getHTML();
+      setDocToolbarStyle(editor, "not-a-style");
+      expect(editor.getHTML()).toBe(before);
+      editor.setEditable(false);
+      executeDocToolbarAction(editor, "italic");
+      setDocToolbarStyle(editor, "paragraph");
+      expect(editor.getHTML()).toBe(before);
+    } finally { editor.destroy(); }
+    expect(() => executeDocToolbarAction(editor, "bold")).not.toThrow();
+    expect(() => setDocToolbarStyle(editor, "h1")).not.toThrow();
+  });
+
+  it("keeps viewing font and size changes out of Markdown with no text selected", () => {
+    const editor = new RichEditor({ extensions: [StarterKit, TextStyle, FontFamily, FontSize], content: "<p>Original text</p>" });
+    const onAppearance = vi.fn();
+    const { unmount } = render(<DocToolbar editor={editor} appearance={DEFAULT_APPEARANCE} onAppearance={onAppearance} onPrint={() => {}} canEdit />);
+    try {
+      fireEvent.change(screen.getByRole("combobox", { name: "Font" }), { target: { value: "georgia" } });
+      fireEvent.change(screen.getByRole("spinbutton", { name: "Font size" }), { target: { value: "100" } });
+      expect(onAppearance.mock.calls).toEqual([
+        [{ ...DEFAULT_APPEARANCE, fontFamily: "georgia" }], [{ ...DEFAULT_APPEARANCE, fontSize: 32 }],
+      ]);
+      expect(editor.getHTML()).toBe("<p>Original text</p>");
+    } finally { unmount(); editor.destroy(); }
+  });
+
+  it("routes selected text changes through the real TipTap editor and retains Markdown's serialization warning", () => {
+    const editor = new RichEditor({ extensions: [StarterKit, TextStyle, Color, FontFamily, FontSize], content: "<p>Original text</p>" });
+    const onAppearance = vi.fn();
+    const { unmount } = render(<DocToolbar editor={editor} appearance={DEFAULT_APPEARANCE} onAppearance={onAppearance} onPrint={() => {}} canEdit />);
+    try {
+      act(() => { editor.commands.setTextSelection({ from: 1, to: 9 }); });
+      expect(screen.getByRole("combobox", { name: "Font" }).title).toContain("Saved as HTML in the file");
+      fireEvent.click(screen.getByRole("button", { name: "Bold" }));
+      expect(editor.isActive("bold")).toBe(true);
+      fireEvent.change(screen.getByRole("combobox", { name: "Font" }), { target: { value: "georgia" } });
+      fireEvent.change(screen.getByRole("spinbutton", { name: "Font size" }), { target: { value: "100" } });
+      fireEvent.change(screen.getByRole("combobox", { name: "Text colour" }), { target: { value: "#dc2626" } });
+      expect(editor.getAttributes("textStyle")).toMatchObject({ fontFamily: "Georgia, Charter, serif", fontSize: "32px", color: "#dc2626" });
+      expect(onAppearance).not.toHaveBeenCalled();
+      fireEvent.change(screen.getByRole("combobox", { name: "Paragraph style" }), { target: { value: "h2" } });
+      expect(editor.isActive("heading", { level: 2 })).toBe(true);
+    } finally { unmount(); editor.destroy(); }
   });
 });

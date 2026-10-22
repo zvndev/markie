@@ -23,8 +23,14 @@ export type DocWidth = "default" | "900" | "1040" | "1200" | "full";
 
 // Stacks rather than single names, so a document still renders if the first
 // choice is missing. Serif first: this is a reading app.
+//
+// "system" is the default and has always been stored as such, so it keeps its
+// id but now means "the style template's body font" (which, for the Markie
+// template, is the system face it always was). Picking the system face on
+// purpose, under a serif template, is "sans".
 export const DOC_FONTS: Array<{ id: string; label: string; stack: string }> = [
-  { id: "system", label: "System", stack: "var(--font-geist-sans)" },
+  { id: "system", label: "Theme font", stack: "var(--theme-font-family, var(--font-geist-sans))" },
+  { id: "sans", label: "System", stack: "var(--font-geist-sans)" },
   { id: "charter", label: "Charter", stack: "Charter, Georgia, 'Times New Roman', serif" },
   { id: "georgia", label: "Georgia", stack: "Georgia, Charter, serif" },
   { id: "iowan", label: "Iowan", stack: "'Iowan Old Style', Palatino, Georgia, serif" },
@@ -117,9 +123,16 @@ export function normalizeAppearance(raw: unknown): DocAppearance {
 export function appearanceVars(
   appearance: DocAppearance
 ): Record<string, string> {
+  // At the default size the style template's size shows through, still
+  // scaled by zoom; a size chosen for this document wins over the template.
+  const fontSize =
+    appearance.fontSize === DEFAULT_APPEARANCE.fontSize
+      ? `calc(var(--theme-font-size, ${DEFAULT_APPEARANCE.fontSize}px) * ${appearance.zoom})`
+      : `${(appearance.fontSize * appearance.zoom).toFixed(2)}px`;
   const vars: Record<string, string> = {
     "--doc-font-family": fontStack(appearance.fontFamily),
-    "--doc-font-size": `${(appearance.fontSize * appearance.zoom).toFixed(2)}px`,
+    "--doc-font-size": fontSize,
+    "--doc-zoom": String(appearance.zoom),
   };
   // At "default" the key is left out entirely so the theme's own
   // --doc-width shows through, the same way a document with no override reads

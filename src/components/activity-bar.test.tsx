@@ -32,12 +32,28 @@ beforeEach(() => {
 });
 
 describe("ActivityBar", () => {
+  it("opens the vault from its own lock button and marks it while it is on screen", async () => {
+    const onVault = vi.fn();
+    const { rerender } = render(<ActivityBar {...props({ onVault })} />);
+    const lock = screen.getByRole("button", { name: "Vault: locked files and keys" });
+    await userEvent.click(lock);
+    expect(onVault).toHaveBeenCalledOnce();
+    rerender(<ActivityBar {...props({ onVault, vaultActive: true })} />);
+    expect(screen.getByRole("button", { name: "Vault: locked files and keys" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("offers a distinct entry to Word, text and private documents when provided", async () => {
+    const onDocuments = vi.fn();
+    render(<ActivityBar {...props({ onDocuments })} />);
+    await userEvent.click(screen.getByRole("button", { name: "Documents: Word, text and private files" }));
+    expect(onDocuments).toHaveBeenCalledOnce();
+  });
   it("labels every rail action for screen readers", async () => {
     render(<ActivityBar {...props()} />);
     for (const label of [
       "New file (⌘N)",
       "Library: recent and projects (⌘L)",
-      "Browse all markdown",
+      "Browse all documents",
       "Cloud: synced and shared",
       "Skills & agent files",
       "Formatting tools",
@@ -57,7 +73,7 @@ describe("ActivityBar", () => {
     await user.click(screen.getByRole("button", { name: "New file (⌘N)" }));
     expect(p.onNewFile).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: "Browse all markdown" }));
+    await user.click(screen.getByRole("button", { name: "Browse all documents" }));
     expect(p.onSelectView).toHaveBeenCalledWith("browse");
 
     await user.click(screen.getByRole("button", { name: "Connect an agent (MCP)" }));
@@ -74,22 +90,19 @@ describe("ActivityBar", () => {
     render(<ActivityBar {...props({ activeView: "cloud", panelOpen: true })} />);
     const cloud = screen.getByRole("button", { name: "Cloud: synced and shared" });
     const library = screen.getByRole("button", { name: "Library: recent and projects (⌘L)" });
-    expect(cloud.classList.contains("bg-accent")).toBe(true);
-    expect(library.classList.contains("bg-accent")).toBe(false);
+    expect(cloud).toHaveAttribute("aria-current", "page");
+    expect(cloud.classList.contains("markie-rail-button--active")).toBe(true);
+    expect(library).not.toHaveAttribute("aria-current");
   });
 
   it("shows no panel view as active while the panel is closed", () => {
     render(<ActivityBar {...props({ activeView: "cloud", panelOpen: false })} />);
-    expect(
-      screen.getByRole("button", { name: "Cloud: synced and shared" }).classList.contains("bg-accent")
-    ).toBe(false);
+    expect(screen.getByRole("button", { name: "Cloud: synced and shared" })).not.toHaveAttribute("aria-current");
   });
 
   it("keeps the formatting view active even with the panel closed", () => {
     render(<ActivityBar {...props({ activeView: "edit", panelOpen: false })} />);
-    expect(
-      screen.getByRole("button", { name: "Formatting tools" }).classList.contains("bg-accent")
-    ).toBe(true);
+    expect(screen.getByRole("button", { name: "Formatting tools" })).toHaveAttribute("aria-current", "page");
   });
 
   it("disables formatting when there is no rich editor to act on", async () => {

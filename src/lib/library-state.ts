@@ -3,7 +3,10 @@ import type { ElectronAPI, LibraryItem } from "@/lib/electron";
 type LibraryAPI = Pick<ElectronAPI, "libraryState">;
 
 export interface LibrarySnapshot {
+  // Markie Cloud, where a file that is on no server yet would go.
   signedIn: boolean;
+  // The other servers with a session.
+  servers: string[];
   items: LibraryItem[];
   error: string | null;
   // The rows are real but the cloud half is missing or stale; shown as a
@@ -26,6 +29,7 @@ export async function readLibrarySnapshot(api: LibraryAPI): Promise<LibrarySnaps
     if (!state || state.error || !Array.isArray(state.items)) {
       return {
         signedIn: false,
+        servers: [],
         items: [],
         error: libraryLoadErrorMessage(state?.error ?? "Unknown error"),
         cloudError: null,
@@ -33,12 +37,13 @@ export async function readLibrarySnapshot(api: LibraryAPI): Promise<LibrarySnaps
     }
     return {
       signedIn: state.signedIn,
+      servers: Array.isArray(state.servers) ? state.servers.filter((o) => typeof o === "string") : [],
       items: state.items,
       error: null,
       cloudError: typeof state.cloudError === "string" && state.cloudError ? state.cloudError : null,
     };
   } catch (error) {
-    return { signedIn: false, items: [], error: libraryLoadErrorMessage(error), cloudError: null };
+    return { signedIn: false, servers: [], items: [], error: libraryLoadErrorMessage(error), cloudError: null };
   }
 }
 

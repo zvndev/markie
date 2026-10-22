@@ -80,3 +80,16 @@ describe("signInReasonCopy", () => {
     }
   });
 });
+
+describe("signupRefusal", () => {
+  it("names the server's sign-up policy", async () => {
+    const { signupRefusal } = await import("./auth-errors");
+    expect(signupRefusal(403, { code: "signup_invite_required" })).toBe(
+      "This server is invite-only. Ask its owner for an invite."
+    );
+    expect(signupRefusal(403, { code: "signup_closed" })).toBe("This server isn't taking new accounts.");
+    expect(signupRefusal(403, { code: "EMAIL_NOT_VERIFIED" })).toBeNull();
+    expect(signupRefusal(400, { code: "signup_closed" })).toBeNull();
+    expect(signupRefusal(403, null)).toBeNull();
+  });
+});

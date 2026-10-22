@@ -16,6 +16,12 @@ interface ActivityBarProps {
   onAgents: () => void;
   onShortcuts: () => void;
   onAccount: () => void;
+  onDocuments?: () => void;
+  // Search every document on this Mac, by name and by what it says.
+  onSearch?: () => void;
+  // The encrypted vault is a page of its own, reached from here like the rest.
+  onVault?: () => void;
+  vaultActive?: boolean;
 }
 
 export function ActivityBar({
@@ -27,6 +33,10 @@ export function ActivityBar({
   onAgents,
   onShortcuts,
   onAccount,
+  onDocuments,
+  onSearch,
+  onVault,
+  vaultActive = false,
 }: ActivityBarProps) {
   const { user } = useAuth();
 
@@ -36,7 +46,7 @@ export function ActivityBar({
     v === "edit" ? activeView === v : panelOpen && activeView === v;
 
   return (
-    <div className="markie-activity-bar w-[48px] shrink-0 h-full flex flex-col items-center py-1.5 gap-0.5 border-r border-border bg-surface">
+    <div className="markie-activity-bar w-[52px] shrink-0 h-full flex flex-col items-center py-2 gap-1 border-r border-border bg-surface">
       {/* New file — primary action, set apart by a divider */}
       <NavButton label="New file (⌘N)" onClick={onNewFile}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -44,14 +54,23 @@ export function ActivityBar({
           <path d="M14 3v6h6M12 12v6M9 15h6" />
         </svg>
       </NavButton>
+      {onSearch ? <NavButton label="Search all documents (⇧⌘F)" onClick={onSearch}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.5-3.5" />
+        </svg>
+      </NavButton> : null}
       <div className="w-6 h-px bg-border my-1" />
+      {onDocuments ? <NavButton label="Documents: Word, text and private files" onClick={onDocuments}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3h8l4 4v14H8zM16 3v5h4M4 7v14M11 12h6M11 16h6" /></svg>
+      </NavButton> : null}
 
       <NavButton label="Library: recent and projects (⌘L)" active={isActive("library")} onClick={() => onSelectView("library")}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
         </svg>
       </NavButton>
-      <NavButton label="Browse all markdown" active={isActive("browse")} onClick={() => onSelectView("browse")}>
+      <NavButton label="Browse all documents" active={isActive("browse")} onClick={() => onSelectView("browse")}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="9" />
           <polygon points="15.5 8.5 10.5 10.5 8.5 15.5 13.5 13.5" />
@@ -68,6 +87,12 @@ export function ActivityBar({
           <path d="M19 15l.7 1.8L21.5 17.5l-1.8.7L19 20l-.7-1.8L16.5 17.5l1.8-.7z" />
         </svg>
       </NavButton>
+      {onVault ? <NavButton label="Vault: locked files and keys" active={vaultActive} onClick={onVault}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="4.5" y="10.5" width="15" height="10" rx="2" />
+          <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3M12 14.5v2" />
+        </svg>
+      </NavButton> : null}
       <div className="w-6 h-px bg-border my-1" />
       <NavButton
         label="Formatting tools"
@@ -144,13 +169,14 @@ function NavButton({
         onClick={onClick}
         disabled={disabled}
         aria-label={label}
-        className={`relative w-8 h-8 rounded-md flex items-center justify-center transition-colors ${
+        aria-current={active ? "page" : undefined}
+        className={`markie-rail-button relative flex h-9 w-9 items-center justify-center rounded-[9px] ${
           active
-            ? "bg-accent text-foreground"
+            ? "markie-rail-button--active text-foreground"
             : "text-muted hover:text-foreground hover:bg-accent/40"
         } disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted`}
       >
-        {active && <span className="absolute left-[-6px] top-1.5 bottom-1.5 w-0.5 rounded-full bg-foreground" />}
+        {active && <span className="absolute -left-[7px] bottom-2 top-2 w-[3px] rounded-full bg-[var(--status-blue)] shadow-[0_0_8px_color-mix(in_srgb,var(--status-blue)_55%,transparent)]" />}
         {children}
       </button>
     </RailTip>
@@ -172,7 +198,7 @@ function IconButton({
       <button
         onClick={onClick}
         aria-label={label}
-        className="w-8 h-8 rounded-md flex items-center justify-center transition-colors text-muted hover:text-foreground hover:bg-accent/40"
+        className="markie-rail-button flex h-9 w-9 items-center justify-center rounded-[9px] text-muted hover:text-foreground hover:bg-accent/40"
       >
         {children}
       </button>

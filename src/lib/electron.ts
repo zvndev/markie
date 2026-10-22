@@ -1,5 +1,6 @@
 import type { BlockRecord } from "@/lib/projects/cluster";
 import type { ProjectNameRecord } from "@/lib/projects/taxonomy";
+import type { NativeDocumentFileApi } from "./native-document-files";
 
 export interface FilePayload {
   name: string;
@@ -176,8 +177,24 @@ export interface InstalledSkill {
   installedByMarkie: boolean;
 }
 
+export interface PrivateReleaseStatus { required: boolean; authorized: boolean; channel: string | null; gitCommit: string | null; authOrigin: string }
+
+export type VaultTouchIdFailure = "missing" | "cancelled" | "unavailable" | "busy";
+export type VaultTouchIdResult = { ok: true } | { ok: false; reason: VaultTouchIdFailure };
+
 export interface ElectronAPI {
   platform: string;
+  privateReleaseAuthOrigin?: string;
+  privateReleaseStatus?(): Promise<PrivateReleaseStatus>;
+  privateReleaseSession?(): Promise<{ token: string | null }>;
+  privateReleaseAuthorize?(token: string): Promise<PrivateReleaseStatus>;
+  privateReleaseLock?(): Promise<PrivateReleaseStatus>;
+  /** A Google sign-in hand-back that reached a locked private build, once. */
+  privateReleaseTakeAuthLink?(): Promise<string | null>;
+  documentFiles?: NativeDocumentFileApi;
+  onDocumentFileOpened?(callback: () => void): Unsubscribe;
+  onDocumentCommand?(callback: (command: string) => void): Unsubscribe;
+  setDocumentMenuState?(state: { renderer: "markdown" | "word" | "text" | "none"; enabledCommands: readonly string[] }): Promise<{ ok: boolean; error?: string }>;
   openFile(args?: { near?: string | null }): Promise<OpenResult | null>;
   openFilePath(path: string): Promise<OpenResult | null>;
   // resolve a dropped File to its on-disk path (Electron webUtils)
@@ -189,6 +206,23 @@ export interface ElectronAPI {
   setDefaultMarkdownApp(): Promise<{ ok: boolean; error?: string }>;
   // whether Markie is already the default .md handler (macOS, packaged only)
   defaultMarkdownStatus(): Promise<{ supported: boolean; isDefault: boolean }>;
+  // default app per fully supported file type (macOS, packaged only)
+  defaultAppsStatus?(): Promise<DefaultAppsStatus>;
+  setDefaultApps?(ids: string[]): Promise<{ ok: boolean; error?: string }>;
+  /** Copy a vault secret; the main process clears it after 30s if unchanged. */
+  copySecret?(text: string): Promise<{ ok: boolean; error?: string; clearsAfterMs?: number }>;
+  /** Clear a vault secret from the clipboard now, if it is still there. */
+  clearSecretClipboard?(): Promise<{ ok: boolean; cleared?: boolean }>;
+  /** Whether Touch ID can unlock the vault here, and whether this vault's keychain secret exists. */
+  vaultTouchIdAvailable?(vaultId?: string): Promise<{ available: boolean; enrolled: boolean }>;
+  /** Prompts Touch ID, then keeps the vault's device secret in the keychain. */
+  vaultTouchIdEnroll?(vaultId: string, secret: Uint8Array): Promise<VaultTouchIdResult>;
+  /** Prompts Touch ID, then returns the vault's device secret. The caller zeroes it. */
+  vaultTouchIdUnlock?(vaultId: string): Promise<VaultTouchIdResult & { secret?: Uint8Array }>;
+  /** Deletes the vault's keychain secret. */
+  vaultTouchIdRemove?(vaultId: string): Promise<{ ok: boolean }>;
+  // search every indexed and recent document by name, path and body text
+  searchDocuments?(args: { query: string; formats?: string[]; limit?: number }): Promise<DocumentSearchResponse>;
   // Workspace / Files view
   wsRoots(): Promise<string[]>;
   wsDefaultPath(): Promise<string>;
@@ -279,8 +313,10 @@ export interface ElectronAPI {
   onMenuCommandPalette(cb: () => void): Unsubscribe;
   onMenuShortcuts(cb: () => void): Unsubscribe;
   onMenuTheme(cb: () => void): Unsubscribe;
-  onMenuSettings(cb: () => void): Unsubscribe;
+  /** `section` is set when a menu item asks for one Settings tab. */
+  onMenuSettings(cb: (section?: "files") => void): Unsubscribe;
   onMenuLibrary(cb: () => void): Unsubscribe;
+  onMenuGlobalSearch?(cb: () => void): Unsubscribe;
   onDeepLink(cb: (url: string) => void): Unsubscribe;
   openExternal(url: string): Promise<void>;
   // A link in a document to a file beside it. Resolved and access-checked in
@@ -291,7 +327,7 @@ export interface ElectronAPI {
   openLocalFile(payload: {
     href: string;
     docDir: string | null;
-  }): Promise<{ ok: boolean; error?: string }>;
+  }): Promise<{ ok: boolean; error?: string; revealed?: boolean }>;
   /** What each document link in the open document is: see electron/doc-link-open.js. */
   resolveDocLinks(payload: { docPath: string | null; hrefs: string[] }): Promise<DocLinkAnswer[]>;
   /**
@@ -308,11 +344,38 @@ export interface ElectronAPI {
     // it to know whose persisted roles it is looking at.
     userId?: string | null;
   }): Promise<void>;
+  // The session for one server other than the primary one, leaving every
+  // other server's session alone. Main refuses an origin it does not trust.
+  syncSession?(cfg: {
+    origin: string;
+    token: string | null;
+    userId?: string | null;
+  }): Promise<{ ok?: boolean; error?: string; sessionChanged?: boolean }>;
+  // The trusted servers, Markie Cloud first (Settings > Servers).
+  serversList?(): Promise<MarkieServer[]>;
+  // Step one of adding a server: main checks the address and asks the server
+  // who it is. Nothing is trusted yet.
+  serversProbe?(address: string): Promise<ServerProbe>;
+  // Step two, after the user confirmed what the probe showed. Takes only the
+  // probe's id, so the name and origin added are the ones main fetched.
+  serversAdd?(probeId: string): Promise<{ ok: true; server: MarkieServer } | { ok: false; error: string }>;
+  serversRemove?(origin: string): Promise<{ ok?: boolean; error?: string }>;
+  // A REST call to a trusted server other than Markie Cloud, made by main
+  // (see main.js "server-request").
+  serverRequest?(req: {
+    origin: string;
+    path: string;
+    method?: string;
+    body?: string;
+    token?: string | null;
+  }): Promise<{ ok: boolean; status: number; data: unknown; setAuthToken?: string | null; error?: string }>;
   // Hand the sync engine the share role the renderer resolved for a cloud doc,
   // so a push it cannot land is refused here instead of coming back as a 403.
+  // `server` is the doc's server when it is not the primary one.
   syncDocRole?(args: {
     cloudId: string;
     role: "owner" | "editor" | "viewer";
+    server?: string;
   }): Promise<void>;
   registryTrack(args: {
     path: string;
@@ -329,7 +392,11 @@ export interface ElectronAPI {
   // A failure answers the same shape with an empty list and `error`, so a
   // caller that maps over `items` never meets `undefined`.
   libraryState(): Promise<{
+    // Markie Cloud (the primary server), where a file on no server yet goes.
     signedIn: boolean;
+    // Every other server with a session. A row whose `server` is not here
+    // has no session to act with.
+    servers?: string[];
     items: LibraryItem[];
     error?: string;
     // The local rows loaded but the server's list did not (expired sign-in,
@@ -340,6 +407,11 @@ export interface ElectronAPI {
     path: string;
     name: string;
     content: string;
+    /** New uploads only; existing linked documents move via the placement API. */
+    areaId?: string;
+    // Where a document that is on no server yet should go. Ignored for one
+    // that already lives somewhere.
+    server?: string;
   }): Promise<SyncResult>;
   docSyncOff(args: {
     path: string;
@@ -357,6 +429,8 @@ export interface ElectronAPI {
   docPull(args: {
     cloudId: string;
     suggestedName: string;
+    // The server the document lives on, when it is not the primary one.
+    server?: string;
   }): Promise<SyncResult>;
   // Retry a failed push for a tracked file the renderer has not opened, so
   // "unpushed" is not a state with a badge and no way out.
@@ -389,6 +463,7 @@ export interface ElectronAPI {
   docOpenShared?(args: {
     cloudId: string;
     suggestedName: string;
+    server?: string;
   }): Promise<{ ok?: boolean; path?: string; error?: string }>;
   onSetMode(cb: (mode: ViewMode) => void): Unsubscribe;
   onToggleStats(cb: () => void): Unsubscribe;
@@ -401,10 +476,11 @@ export interface ElectronAPI {
   onFileChangedOnDisk(cb: (data: DiskChangeEvent) => void): Unsubscribe;
   /** Follow this path for external edits (after Save As, or a new document). */
   watchFile(filePath: string | null): Promise<{ ok: boolean } | { error: string } | null>;
-  // Main is holding the window open until the renderer answers appCloseReady,
-  // capped at two seconds. Everything that must land goes in between.
-  onAppWillClose(cb: () => void): Unsubscribe;
-  appCloseReady(): void;
+  // Main holds the window until acknowledgement. Documents uses a ticketed
+  // ready/cancel response and stays open on timeout; classic keeps its fallback.
+  onAppWillClose(cb: (requestId?: number) => void): Unsubscribe;
+  appCloseReady(requestId?: number): void;
+  appCloseCancel?(requestId?: number): void;
   // The crash journal: written ahead of the file debounce, offered back on the
   // next launch. An empty `content` clears the entry, which is how a committed
   // save discards it.
@@ -498,6 +574,9 @@ export interface ElectronAPI {
   }): Promise<ProjectsWriteResult & { path?: string }>;
   // Markie MCP server location, for the Agents setup dialog
   mcpInfo?(): Promise<{ serverPath: string; packaged: boolean; error?: string }>;
+  /** Whether agents may put files in Markie Cloud without asking each time. */
+  agentPermissions?(): Promise<{ cloudSync: boolean }>;
+  setAgentPermissions?(next: { cloudSync: boolean }): Promise<{ cloudSync: boolean }>;
   // Skills — the catalog, and installing out of it. Reading never touches the
   // network; refreshing and searching do.
   skillsCatalogList?(): Promise<Catalog>;
@@ -540,11 +619,59 @@ export interface ElectronAPI {
 
 export type Unsubscribe = (() => void) | undefined;
 
+export interface DefaultAppFormat {
+  id: string;
+  label: string;
+  extensions: string[];
+  /** A caveat shown under the extensions, such as when files open read-only. */
+  note?: string;
+  isDefault: boolean;
+}
+
+export interface DefaultAppsStatus {
+  supported: boolean;
+  formats: DefaultAppFormat[];
+  // Shown but not offered yet, with the reason.
+  pending: Array<{ id: string; label: string; extensions: string[]; reason: string }>;
+  error?: string;
+}
+
+export interface DocumentSearchHit {
+  path: string;
+  name: string;
+  dir: string;
+  format: string;
+  mtimeMs: number;
+  nameHit: boolean;
+  // A window of body text around the first hit, with [start, end) offsets of
+  // every term inside it.
+  excerpt?: string;
+  marks?: Array<[number, number]>;
+}
+
+export interface DocumentSearchResponse {
+  results: DocumentSearchHit[];
+  scanned: number;
+  total: number;
+  // The time budget ran out before every file's body was read.
+  partial: boolean;
+  // A newer search started before this one finished.
+  superseded?: boolean;
+  error?: string;
+}
+
 export interface MdRow {
   path: string;
   name: string;
   dir: string;
   mtimeMs: number;
+  // Document format from the index walk (mirrors classifyDocumentFormat).
+  // Absent on rows seeded from the persisted cache, where the name still
+  // classifies the same way.
+  format?: string;
+  // Bounded body head for text-representation formats, when the walk's
+  // snippet budget reached this file. Never set for binary office formats.
+  snippet?: string;
   // Joined from the main process's md_meta table for the Projects taxonomy.
   // Optional because the metadata pass runs after the index and lags it on a
   // first run: a row without these still renders everywhere it did before.
@@ -657,6 +784,8 @@ export interface RegistryEntry {
   name: string;
   content_hash: string | null;
   cloud_doc_id: string | null;
+  // The server the cloud copy lives on; null for the primary server.
+  cloud_origin?: string | null;
   cloud_version: number | null;
   sync_state: string | null;
   last_opened_at: string | null;
@@ -669,11 +798,39 @@ export interface RegistryEntry {
   share_role_user?: string | null;
 }
 
+// A server this app trusts. Markie Cloud is always one of them.
+// Who may make an account there: anyone, only someone invited, or nobody new.
+export type SignupMode = "open" | "invite" | "closed";
+
+export interface MarkieServer {
+  origin: string;
+  name: string;
+  isDefault: boolean;
+  signIn: { email: boolean; google: boolean; signup?: SignupMode };
+  version: string | null;
+}
+
+export type ServerProbe =
+  | {
+      ok: true;
+      probeId: string;
+      origin: string;
+      host: string;
+      name: string;
+      version: string | null;
+      signIn: { email: boolean; google: boolean; signup?: SignupMode };
+      alreadyAdded: boolean;
+    }
+  | { ok: false; error: string };
+
 export interface LibraryItem {
   kind: "local" | "cloud-only" | "shared";
   path: string | null;
   name: string;
   cloudId: string | null;
+  // The server the document lives on, present only when that is not the
+  // primary server (Markie Cloud).
+  server?: string;
   state:
     | "local-only"
     | "synced"
@@ -731,6 +888,8 @@ export interface LandedDoc {
   path: string;
   name: string;
   cloudId: string;
+  // Present when the document came from a server other than the primary.
+  server?: string;
 }
 
 export interface DocUpdate {
@@ -742,6 +901,7 @@ export interface DocUpdate {
   // "conflict" and "unpushed" mean the file on disk holds changes the server
   // never took. A clean buffer does not make those safe to overwrite.
   syncState: string;
+  server?: string;
 }
 
 // What one pass of electron/reconcile.js did: which rows it pushed text or

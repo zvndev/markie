@@ -26,6 +26,18 @@ function classifyDeepLink(link) {
   return "renderer";
 }
 
+// A Google sign-in handing its session back. The only link a locked private
+// build accepts: it carries a token the renderer checks against the nonce it
+// minted, and it opens no document.
+function isAuthDeepLink(link) {
+  if (classifyDeepLink(link) !== "renderer") return false;
+  try {
+    return new URL(link).host === "auth";
+  } catch {
+    return false;
+  }
+}
+
 function paramsOf(link) {
   try {
     return new URL(link).searchParams;
@@ -49,4 +61,4 @@ function sourceHint(link) {
   return paramsOf(link)?.get("src") ?? null;
 }
 
-module.exports = { classifyDeepLink, cloudDocId, sourceHint };
+module.exports = { classifyDeepLink, cloudDocId, isAuthDeepLink, sourceHint };

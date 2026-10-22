@@ -103,6 +103,7 @@ function docHasContent(docId: string): boolean {
 
 interface Conn {
   userId: string;
+  sessionId: string; // revoke one sign-in factor without removing the person's ACL
   identity: PresenceIdentity; // what this socket is allowed to claim it is
   controlled: Set<number>; // awareness client ids this socket controls
   level: ShareAccessLevel; // last level read for this user on this doc
@@ -128,13 +129,34 @@ interface Room {
 
 const rooms = new Map<string, Room>();
 
+// A room holds a document when either shared shape has content: the rich
+// XmlFragment Markdown seeds, or the Y.Text a plain-text file seeds under
+// the same key the renderer uses (TEXT_COLLAB_KEY in src/lib/text-collab.ts).
+// Checking only the fragment would keep a text room's seed lock closed
+// forever, leaving every editor but the seeder read-only. The text type is
+// read through `share` so merely asking never creates it in a Markdown room.
+export function roomHasCollabContent(ydoc: Y.Doc): boolean {
+  if (ydoc.getXmlFragment("default").length > 0) return true;
+  const text = ydoc.share.get("content");
+  return text instanceof Y.Text && text.length > 0;
+}
+
+function liveSession(userId: string, sessionId: string): boolean {
+  const session = db.prepare('SELECT userId,expiresAt FROM "session" WHERE id=?').get(sessionId) as { userId: string; expiresAt: string | number } | undefined;
+  if (!session || session.userId !== userId) return false;
+  const expiresAt = typeof session.expiresAt === "number" ? session.expiresAt : /^\d+$/.test(session.expiresAt) ? Number(session.expiresAt) : Date.parse(session.expiresAt);
+  return Number.isFinite(expiresAt) && expiresAt > Date.now();
+}
+
 function readLevel(docId: string, conn: Conn): ShareAccessLevel {
-  conn.level = accessLevel(docId, conn.userId);
+  conn.level = liveSession(conn.userId, conn.sessionId) ? accessLevel(docId, conn.userId) : null;
   conn.checkedAt = Date.now();
   return conn.level;
 }
 
 function cachedLevel(docId: string, conn: Conn): ShareAccessLevel {
+  // Membership may be briefly cached; a deleted/expired session never is.
+  if (!liveSession(conn.userId, conn.sessionId)) return null;
   if (Date.now() - conn.checkedAt >= ACCESS_CACHE_MS) return readLevel(docId, conn);
   return conn.level;
 }
@@ -153,10 +175,9 @@ function getRoom(docId: string): Room {
     conns: new Map(),
     // Evaluated once, when the room is born: a non-empty snapshot whose room
     // still renders empty is the only situation that needs seeding at all.
-    // The fragment is checked rather than the update count because a stored
+    // Content is checked rather than the update count because a stored
     // update may carry only metadata (a schema stamp) and no document.
-    seedPending:
-      docHasContent(docId) && ydoc.getXmlFragment("default").length === 0,
+    seedPending: docHasContent(docId) && !roomHasCollabContent(ydoc),
     seeder: null,
   };
   rooms.set(docId, room);
@@ -168,7 +189,7 @@ function getRoom(docId: string): Room {
     // then seed alongside the real one, and a seeder who disconnected after
     // the stamp but before the text would leave the room recorded as seeded
     // while it still shows nothing.
-    if (room!.seedPending && room!.ydoc.getXmlFragment("default").length > 0) {
+    if (room!.seedPending && roomHasCollabContent(room!.ydoc)) {
       room!.seedPending = false;
       room!.seeder = null;
     }
@@ -269,6 +290,15 @@ export function disconnectUser(docId: string, userId: string): void {
   }
 }
 
+/** Call after the identity/session transaction commits, not for an entire UID. */
+export function disconnectSessions(sessionIds: readonly string[]): void {
+  const revoked = new Set(sessionIds);
+  if (!revoked.size) return;
+  for (const room of rooms.values()) for (const [ws, conn] of room.conns) {
+    if (revoked.has(conn.sessionId)) ws.close(CLOSE_ACCESS_REVOKED, "session revoked");
+  }
+}
+
 // A soft-deleted doc revokes access for everyone at once, owner included.
 export function closeRoom(docId: string): void {
   const room = rooms.get(docId);
@@ -346,11 +376,14 @@ function handleConnection(
   conn: WebSocket,
   docId: string,
   user: { id: string; name?: string | null; email?: string | null },
-  level: ShareAccessLevel
+  sessionId: string
 ): void {
+  const level = liveSession(user.id, sessionId) ? accessLevel(docId, user.id) : null;
+  if (!canReadLevel(level)) { conn.close(CLOSE_ACCESS_REVOKED, "access revoked"); return; }
   const room = getRoom(docId);
   const state: Conn = {
     userId: user.id,
+    sessionId,
     identity: presenceIdentity(user),
     controlled: new Set(),
     level,
@@ -359,6 +392,16 @@ function handleConnection(
   room.conns.set(conn, state);
   claimSeeder(room, conn, level);
   conn.binaryType = "arraybuffer";
+
+  // ws reports a bad frame (over COLLAB_MAX_PAYLOAD_BYTES, unmasked, invalid
+  // opcode or UTF-8) as an 'error' event and then closes the socket itself.
+  // An EventEmitter 'error' with no listener is thrown, and thrown here means
+  // an uncaught exception that takes the whole API process down, so one
+  // malformed frame from any signed-in member would end every session on the
+  // server. Log it; the 'close' handler below does the cleanup.
+  conn.on("error", (err: Error) => {
+    console.error(`collab socket error in room ${docId}:`, err.message);
+  });
 
   conn.on("message", (data: ArrayBuffer | Buffer) => {
     try {
@@ -455,10 +498,29 @@ async function sessionFromToken(token: string) {
   });
 }
 
+// The largest single message a collaborator may send. ws defaults to 100 MiB,
+// which lets any signed-in member of any document make the server buffer and
+// then decode 100 MiB per frame.
+//
+// The biggest legitimate frame is the one that carries a whole document: the
+// seeder's first update, or a sync step 2 from a client holding the full state.
+// Live sessions only open for documents under LARGE_DOC_BYTES (1 MB, see
+// electron/doc-tiers.js and refreshCollab in src/app/page.tsx). A 1 MB
+// document of short, densely formatted paragraphs encodes as a 3.8 MB Yjs
+// update; plain text in a Y.Text is about 1:1. 16 MiB is roughly four times
+// that worst case, so an honest client never meets it, and a frame over it is
+// refused by ws (close code 1009) before any Yjs decoding runs.
+export const COLLAB_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
+
 export function attachCollab(server: Server): void {
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: COLLAB_MAX_PAYLOAD_BYTES });
 
   server.on("upgrade", async (req, socket, head) => {
+    // Same reason as the listener in handleConnection: a client that resets
+    // while the session lookup below is awaited must not become an uncaught
+    // exception. ws's own noServer example guards the socket the same way.
+    const onSocketError = () => socket.destroy();
+    socket.on("error", onSocketError);
     try {
       const url = new URL(req.url ?? "", "http://localhost");
       const match = url.pathname.match(/^\/collab\/([^/]+)$/);
@@ -470,14 +532,15 @@ export function attachCollab(server: Server): void {
       const token = url.searchParams.get("token") ?? "";
       const session = await sessionFromToken(token);
       const level = session?.user ? accessLevel(docId, session.user.id) : null;
-      if (!session?.user || !canReadLevel(level)) {
+      if (!session?.user || !session.session?.id || !liveSession(session.user.id, session.session.id) || !canReadLevel(level)) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
       }
       const user = session.user;
+      socket.removeListener("error", onSocketError);
       wss.handleUpgrade(req, socket, head, (conn) => {
-        handleConnection(conn, docId, user, level);
+        handleConnection(conn, docId, user, session.session.id);
       });
     } catch (err) {
       console.error("collab upgrade error:", err);

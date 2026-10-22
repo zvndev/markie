@@ -135,6 +135,19 @@ export function sortLibraryItems(items: LibraryItem[]): LibraryItem[] {
   });
 }
 
+// Recent is a list of what you opened, newest first, and nothing else. Sync
+// state (a shared file someone else edited, a missing file) shows as a badge
+// on the row; it does not lift the row above files opened since.
+export function compareRecent(a: LibraryItem, b: LibraryItem): number {
+  const time = timestamp(b.lastOpenedAt) - timestamp(a.lastOpenedAt);
+  if (time !== 0) return time;
+  return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+}
+
+export function sortRecentItems(items: LibraryItem[]): LibraryItem[] {
+  return [...items].sort(compareRecent);
+}
+
 function attentionRank(item: LibraryItem): number {
   // "unpushed" outranks the rest: it is the only state where an edit exists in
   // exactly one place, so it is the one the user should see first.

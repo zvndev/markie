@@ -13,6 +13,7 @@
 // anywhere a picture could not.
 import { getSafeAPI } from "@/lib/electron";
 import { getAssetBaseDir, getAssetDocPath } from "@/lib/asset-url";
+import { handleExternalLinkClick, isDocumentLinkActive } from "@/lib/external-link";
 
 // Schemes the app already has an answer for. Everything else that carries a
 // scheme is somebody else's problem and is left to the existing handlers.
@@ -42,22 +43,26 @@ function openAsLocalFile(
     .openLocalFile({ href, docDir: getAssetBaseDir() })
     .then((result) => {
       if (result && result.ok === false && result.error) onError(result.error);
+      // Programs and installers are shown in Finder, not run from a link.
+      else if (result?.revealed) onError("Shown in Finder. Markie doesn't run programs or installers from a document link.");
     })
     .catch(() => onError("Markie couldn't open that file."));
 }
 
 /**
  * Handle a click inside a rendered document. Returns true when the click was
- * a local file link and has been taken over.
+ * a web or local file link and has been taken over.
  */
 export function handleDocumentClick(
   event: MouseEvent,
   onError: (message: string) => void
 ): boolean {
+  if (handleExternalLinkClick(event)) return true;
   // A modified click is the user asking their OS for something else; leave it.
   if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey) return false;
   const target = event.target as HTMLElement | null;
   const anchor = target?.closest?.("a") as HTMLAnchorElement | null;
+  if (anchor && !isDocumentLinkActive(anchor)) return false;
   const href = localLinkTarget(anchor);
   if (!href) return false;
 

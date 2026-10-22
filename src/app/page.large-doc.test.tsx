@@ -1,7 +1,7 @@
 // The document size tiers, as the page honours them (src/lib/doc-tiers.ts).
 // Main decides from a stat and the payload carries the decision; this suite
 // pins what the renderer does with it.
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElectronAPI } from "@/lib/electron";
@@ -71,7 +71,16 @@ const largeStrip = () => document.querySelector("[data-markie-large-doc-strip]")
 const refusalStrip = () => document.querySelector("[data-markie-too-large-strip]");
 const richPane = () => document.querySelector("[data-markie-rich-pane]");
 const sourceEditor = () => document.querySelector(".cm-editor");
-const modeButton = (name: RegExp) => screen.getByRole("button", { name }) as HTMLButtonElement;
+async function expectSourceOnly() {
+  await act(async () => { emit("onSetMode", "preview"); emit("onSetMode", "split"); });
+  expect(richPane()).toBeNull();
+  expect(document.querySelector("[data-markie-source-pane]")).toBeInTheDocument();
+}
+async function expectRichAvailable() {
+  await act(async () => { emit("onSetMode", "preview"); });
+  await waitFor(() => expect(richPane()).not.toBeNull());
+  expect(document.querySelector("[data-markie-source-pane]")).not.toBeInTheDocument();
+}
 
 beforeEach(() => {
   localStorage.clear();
@@ -94,19 +103,9 @@ describe("large documents", () => {
     expect(richPane()).toBeNull();
     await waitFor(() => expect(sourceEditor()).not.toBeNull());
 
-    // The strip and the editor can land a render before the mode buttons on a
-    // slow machine, and the buttons are re-rendered when they follow, so they
-    // are looked up afresh each time. The shortcut is refused either way.
-    await waitFor(() => {
-      const rich = modeButton(/rich mode/i);
-      const split = modeButton(/split mode/i);
-      const source = modeButton(/source mode/i);
-      expect(rich.disabled).toBe(true);
-      expect(rich.title).toBe("Too large for rich view");
-      expect(split.disabled).toBe(true);
-      expect(source.disabled).toBe(false);
-      expect(source.getAttribute("aria-pressed")).toBe("true");
-    });
+    // Removing duplicate toolbar controls must not bypass native View safety.
+    expect(screen.queryByRole("group", { name: "Editing mode" })).not.toBeInTheDocument();
+    await expectSourceOnly();
 
     // Main registered the document when it read it; the probe has no rich
     // edits to protect.
@@ -121,13 +120,12 @@ describe("large documents", () => {
 
     fireEvent.keyDown(window, { key: "1", metaKey: true });
     expect(richPane()).toBeNull();
-    expect(modeButton(/source mode/i).getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector("[data-markie-source-pane]")).toBeInTheDocument();
 
     emit("onFileOpened", SMALL);
     await waitFor(() => expect(largeStrip()).toBeNull());
     await waitFor(() => expect(richPane()).not.toBeNull());
-    expect(modeButton(/rich mode/i).disabled).toBe(false);
-    expect(modeButton(/rich mode/i).getAttribute("aria-pressed")).toBe("true");
+    await expectRichAvailable();
     await waitFor(() => expect(probe).toHaveBeenCalled());
   });
 
@@ -162,9 +160,9 @@ describe("large documents", () => {
 
     emit("onMenuNewFile", undefined);
     await waitFor(() => expect(largeStrip()).toBeNull());
-    expect(modeButton(/rich mode/i).disabled).toBe(false);
-    expect(modeButton(/split mode/i).disabled).toBe(false);
+    await act(async () => { emit("onSetMode", "split"); });
     await waitFor(() => expect(richPane()).not.toBeNull());
+    expect(document.querySelector("[data-markie-source-pane]")).toBeInTheDocument();
   });
 
   it("re-settles the tier from the size of a disk change, both ways", async () => {
@@ -179,14 +177,14 @@ describe("large documents", () => {
     await waitFor(() => expect(largeStrip()).not.toBeNull());
     expect(largeStrip()!.textContent).toContain("Large document (2.5 MB)");
     expect(richPane()).toBeNull();
-    expect(modeButton(/rich mode/i).disabled).toBe(true);
+    await expectSourceOnly();
 
     // And shrank back: the mode it displaced returns.
     emit("onFileChangedOnDisk", { path: SMALL.path, content: "# Trimmed\n", size: 10 });
     await userEvent.click(await screen.findByRole("button", { name: /reload/i }));
     await waitFor(() => expect(largeStrip()).toBeNull());
     await waitFor(() => expect(richPane()).not.toBeNull());
-    expect(modeButton(/rich mode/i).disabled).toBe(false);
+    await expectRichAvailable();
   });
 
   it("keeps the open document when the file on disk outgrows the cap", async () => {
@@ -265,12 +263,12 @@ describe("large documents", () => {
     view.dispatch({ changes: { from: 0, insert: pasted } });
     await waitFor(() => expect(largeStrip()).not.toBeNull(), { timeout: 3000 });
     expect(largeStrip()!.textContent).toContain("Large document (2.5 MB)");
-    expect(modeButton(/rich mode/i).disabled).toBe(true);
+    await expectSourceOnly();
 
     // Trimmed back below it: Rich is on offer again.
     view.dispatch({ changes: { from: 0, to: pasted.length, insert: "" } });
     await waitFor(() => expect(largeStrip()).toBeNull(), { timeout: 3000 });
-    expect(modeButton(/rich mode/i).disabled).toBe(false);
+    await expectRichAvailable();
   });
 
   it("keeps saving a document edited past the cap, and the strip says what that means", async () => {
@@ -292,7 +290,7 @@ describe("large documents", () => {
     );
     expect(refusalStrip()).toBeNull();
     expect(richPane()).toBeNull();
-    expect(modeButton(/rich mode/i).disabled).toBe(true);
+    await expectSourceOnly();
 
     emit("onMenuSave", undefined);
     await waitFor(() => expect(saveFile).toHaveBeenCalled());
@@ -301,7 +299,7 @@ describe("large documents", () => {
     // Trimmed back below the line: an ordinary document again.
     view.dispatch({ changes: { from: 0, to: pasted.length, insert: "" } });
     await waitFor(() => expect(largeStrip()).toBeNull(), { timeout: 3000 });
-    expect(modeButton(/rich mode/i).disabled).toBe(false);
+    await expectRichAvailable();
   });
 
   it("tiers a converted file by what was converted, not by the file", async () => {
@@ -325,8 +323,7 @@ describe("large documents", () => {
     await waitFor(() => expect(largeStrip()).not.toBeNull());
     expect(largeStrip()!.textContent).toContain("Large document (1.2 MB)");
     expect(richPane()).toBeNull();
-    expect(modeButton(/source mode/i).getAttribute("aria-pressed")).toBe("true");
-    expect(modeButton(/rich mode/i).disabled).toBe(true);
+    await expectSourceOnly();
     await waitFor(() => expect(sourceEditor()).not.toBeNull());
     // Never offered to the rich pipeline, so nothing was probed; and main read
     // a 600 KB file it did not call large, so the registry row is made here.
@@ -347,7 +344,7 @@ describe("large documents", () => {
     await waitFor(() => expect(largeStrip()).not.toBeNull(), { timeout: 5000 });
     expect(largeStrip()!.textContent).toContain("Large document (1.2 MB)");
     expect(richPane()).toBeNull();
-    expect(modeButton(/rich mode/i).disabled).toBe(true);
+    await expectSourceOnly();
   });
 
   it("keeps the offer of a recovered draft the cap refuses", async () => {

@@ -75,6 +75,46 @@ module.exports = {
     entitlements: "build/entitlements.mac.plist",
     entitlementsInherit: "build/entitlements.mac.plist",
     notarize: true,
+    // Content-type claims, so LaunchServices accepts Markie as the default app
+    // for the formats Settings > Files offers (electron/default-apps.js). The
+    // extension-only fileAssociations below cannot express a UTI. Everything
+    // except Markdown and Darkmown is claimed at Alternate rank: installing
+    // Markie must never quietly take .txt or .docx away from the user's editor;
+    // only an explicit choice in Settings does that.
+    extendInfo: {
+      CFBundleDocumentTypes: [
+        { CFBundleTypeName: "Markdown document", CFBundleTypeRole: "Editor", LSHandlerRank: "Default", LSItemContentTypes: ["net.daringfireball.markdown"] },
+        { CFBundleTypeName: "Darkmown document", CFBundleTypeRole: "Editor", LSHandlerRank: "Owner", LSItemContentTypes: ["com.zvn.markie.darkmown"] },
+        { CFBundleTypeName: "Plain text", CFBundleTypeRole: "Editor", LSHandlerRank: "Alternate", LSItemContentTypes: ["public.plain-text"] },
+        { CFBundleTypeName: "Word document", CFBundleTypeRole: "Editor", LSHandlerRank: "Alternate", LSItemContentTypes: ["org.openxmlformats.wordprocessingml.document"] },
+        { CFBundleTypeName: "Rich Text document", CFBundleTypeRole: "Editor", LSHandlerRank: "Alternate", LSItemContentTypes: ["public.rtf"] },
+        { CFBundleTypeName: "OpenDocument text", CFBundleTypeRole: "Editor", LSHandlerRank: "Alternate", LSItemContentTypes: ["org.oasis-open.opendocument.text"] },
+        { CFBundleTypeName: "Structured text", CFBundleTypeRole: "Editor", LSHandlerRank: "Alternate", LSItemContentTypes: ["public.comma-separated-values-text", "public.json", "public.yaml", "public.xml"] },
+      ],
+      UTImportedTypeDeclarations: [
+        {
+          UTTypeIdentifier: "net.daringfireball.markdown",
+          UTTypeDescription: "Markdown document",
+          UTTypeConformsTo: ["public.plain-text"],
+          UTTypeReferenceURL: "https://daringfireball.net/projects/markdown/",
+          UTTypeTagSpecification: { "public.filename-extension": ["md", "markdown", "mdx"], "public.mime-type": ["text/markdown"] },
+        },
+        {
+          UTTypeIdentifier: "public.yaml",
+          UTTypeDescription: "YAML document",
+          UTTypeConformsTo: ["public.plain-text"],
+          UTTypeTagSpecification: { "public.filename-extension": ["yaml", "yml"], "public.mime-type": ["application/yaml"] },
+        },
+      ],
+      UTExportedTypeDeclarations: [
+        {
+          UTTypeIdentifier: "com.zvn.markie.darkmown",
+          UTTypeDescription: "Darkmown document",
+          UTTypeConformsTo: ["public.plain-text"],
+          UTTypeTagSpecification: { "public.filename-extension": ["wd"] },
+        },
+      ],
+    },
   },
   dmg: {
     sign: true,
@@ -135,6 +175,11 @@ module.exports = {
   files: [
     "electron/**/*",
     "out/**/*",
+    // electron/doc-text.js re-exports this one MCP module so global search and
+    // the MCP's markie_search_documents share one implementation. It is also
+    // copied to Resources/mcp below; the asar needs its own copy because the
+    // main process resolves ../mcp from inside the archive.
+    "mcp/doc-text.cjs",
     "!electron/**/*.test.*",
     "!node_modules/better-sqlite3/deps/**",
     "!node_modules/better-sqlite3/src/**",
@@ -164,8 +209,10 @@ module.exports = {
       // this list is fine in dev and a dead MCP server in the shipped app.
       filter: [
         "agent-classify.mjs",
+        "agent-client.mjs",
         "check-md.mjs",
         "conventions.mjs",
+        "doc-text.cjs",
         "lib.mjs",
         "markdown-guide.mjs",
         "markie-mcp.mjs",
@@ -180,5 +227,15 @@ module.exports = {
     { ext: "markdown", name: "Markdown", role: "Editor" },
     { ext: "mdx", name: "MDX", role: "Editor" },
     { ext: "csv", name: "CSV", role: "Editor" },
+    { ext: "docx", name: "Word document", role: "Editor" },
+    { ext: "doc", name: "Legacy Word document import", role: "Viewer" },
+    { ext: "txt", name: "Plain text", role: "Editor" },
+    { ext: ["text", "log"], name: "Plain text", role: "Editor", rank: "Alternate" },
+    { ext: "wd", name: "Darkmown document", role: "Editor" },
+    { ext: "json", name: "JSON", role: "Editor", rank: "Alternate" },
+    { ext: ["yaml", "yml"], name: "YAML", role: "Editor", rank: "Alternate" },
+    { ext: "xml", name: "XML", role: "Editor", rank: "Alternate" },
+    { ext: "rtf", name: "Rich text import", role: "Viewer" },
+    { ext: "odt", name: "OpenDocument text import", role: "Viewer" },
   ],
 };

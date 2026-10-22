@@ -94,7 +94,12 @@ describe("pushCloudThemes", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(`${SERVER}/api/me/themes`);
     expect(init.method).toBe("PUT");
-    expect(JSON.parse(String(init.body))).toEqual({ store });
+    // The pushed store is the normalized one: the v1 fields as stored, plus the
+    // optional template fields older stores are read with, so another device
+    // paints the same template in either tone.
+    expect(JSON.parse(String(init.body))).toEqual({
+      store: { ...store, templateId: "markie", overrides: {} },
+    });
   });
 
   it("does not throw when the request fails", async () => {

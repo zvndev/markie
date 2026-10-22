@@ -3,6 +3,7 @@
 // process (sync engine) whenever it changes.
 import { getElectronAPI } from "@/lib/electron";
 import { createAuthState } from "@/lib/auth-state";
+import { CLOUD_ALIASES, CLOUD_ORIGIN, canonicalCloudOrigin, isCloudOrigin } from "@/lib/cloud-origin";
 
 export interface MarkieUser {
   id: string;
@@ -11,25 +12,27 @@ export interface MarkieUser {
 }
 
 const SERVER_KEY = "markie.server.v1";
-const DEFAULT_SERVER = "https://api.markiedocs.com";
-// Markie Cloud's old Railway address. A server saved in Settings before the
-// move still names it; it now means Markie Cloud at its new address.
-const RETIRED_SERVER = "https://api-production-602f.up.railway.app";
+// Markie Cloud (electron/cloud-origin.json). Its old Railway address reads
+// as this wherever it was stored.
+export const DEFAULT_SERVER = CLOUD_ORIGIN;
+let sessionEpoch = 0;
+function accountSessionChanged(): void {
+  sessionEpoch++;
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("markie:account-session-change"));
+}
 
 export function getServerURL(): string {
+  const privateOrigin = getElectronAPI()?.privateReleaseAuthOrigin;
+  if (privateOrigin === DEFAULT_SERVER) return DEFAULT_SERVER;
   try {
-    const saved = localStorage.getItem(SERVER_KEY);
-    if (saved && saved.replace(/\/$/, "") === RETIRED_SERVER) {
-      localStorage.setItem(SERVER_KEY, DEFAULT_SERVER);
-      return DEFAULT_SERVER;
-    }
-    return saved ?? DEFAULT_SERVER;
+    return canonicalCloudOrigin(localStorage.getItem(SERVER_KEY)) ?? DEFAULT_SERVER;
   } catch {
     return DEFAULT_SERVER;
   }
 }
 
 export function setServerURL(url: string): void {
+  if (getElectronAPI()?.privateReleaseAuthOrigin === DEFAULT_SERVER) return;
   const before = getServerURL();
   try {
     localStorage.setItem(SERVER_KEY, url.replace(/\/$/, ""));
@@ -38,10 +41,11 @@ export function setServerURL(url: string): void {
   }
   // An account was confirmed by one server; another server has not said
   // whose this token is, so the answer goes with the old address.
-  if (getServerURL() !== before && principal !== null) {
+  if (getServerURL() !== before) {
     principal = null;
     writeBinding(null);
     pushSyncConfig();
+    accountSessionChanged();
   }
 }
 
@@ -51,6 +55,9 @@ export function collabWsBase(): string {
 }
 
 const TOKEN_KEY = "markie.token.v1";
+let privateToken: string | null = null;
+let privateBinding: PrincipalBinding | null = null;
+const usesPrivateCredential = () => getElectronAPI()?.privateReleaseAuthOrigin === DEFAULT_SERVER;
 
 export function getAuthToken(): string | null {
   return getToken();
@@ -62,6 +69,7 @@ export function adoptAuthToken(token: string): void {
 }
 
 function getToken(): string | null {
+  if (usesPrivateCredential()) return privateToken;
   try {
     return localStorage.getItem(TOKEN_KEY);
   } catch {
@@ -71,7 +79,13 @@ function getToken(): string | null {
 
 function setToken(token: string | null): void {
   const before = getToken();
-  try {
+  if (usesPrivateCredential()) {
+    privateToken = token;
+    // This bootstrap IPC remains available after expiry, unlike ordinary sync IPC.
+    // Forget native enrollment even when the server's sign-out request is offline.
+    if (!token) void getElectronAPI()?.privateReleaseLock?.().catch(() => {});
+  }
+  else try {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);
   } catch {
@@ -88,6 +102,7 @@ function setToken(token: string | null): void {
     writeBinding(null);
   }
   pushSyncConfig();
+  if (!token || token !== before) accountSessionChanged();
 }
 
 // The confirmed account, kept beside the token it was confirmed for, so a
@@ -106,15 +121,17 @@ interface PrincipalBinding {
 }
 
 function readBinding(): PrincipalBinding | null {
+  if (usesPrivateCredential()) return privateBinding;
   try {
     const raw = localStorage.getItem(PRINCIPAL_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PrincipalBinding> | null;
+    // A confirmation by Markie Cloud under its old address is Markie Cloud's.
     return parsed &&
       typeof parsed.token === "string" &&
       typeof parsed.serverURL === "string" &&
       typeof parsed.userId === "string"
-      ? { token: parsed.token, serverURL: parsed.serverURL, userId: parsed.userId }
+      ? { token: parsed.token, serverURL: canonicalCloudOrigin(parsed.serverURL), userId: parsed.userId }
       : null;
   } catch {
     return null;
@@ -122,6 +139,7 @@ function readBinding(): PrincipalBinding | null {
 }
 
 function writeBinding(binding: PrincipalBinding | null): void {
+  if (usesPrivateCredential()) { privateBinding = binding; return; }
   try {
     if (binding) localStorage.setItem(PRINCIPAL_KEY, JSON.stringify(binding));
     else localStorage.removeItem(PRINCIPAL_KEY);
@@ -147,7 +165,115 @@ function restorePrincipal(): string | null {
 // because pushSyncConfig is called from places that do not have the user in
 // hand, and main needs the two together: a token with no principal cannot say
 // whose remembered roles it is reading.
+/**
+ * The free-text "Markie server URL" field is gone. What it left behind is
+ * sorted out once, at launch:
+ *  - nothing stored, or Markie Cloud under any of its addresses: the token
+ *    already sits in Markie Cloud's entry, the primary slot, so nothing
+ *    moves and nobody notices.
+ *  - localhost in a dev build: left alone, it is a developer's override.
+ *  - any other address: the token was that server's, never Markie Cloud's,
+ *    so it moves under that server's own key, and the primary slot goes back
+ *    to Markie Cloud. It is used again only once the user adds that server in
+ *    Settings > Servers: an address typed into a text field years ago is not
+ *    something this app now trusts on its own.
+ */
+export function migrateLegacyServer(opts: { allowDev?: boolean } = {}): boolean {
+  if (getElectronAPI()?.privateReleaseAuthOrigin) return false;
+  const read = (key: string) => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  };
+  const write = (key: string, value: string | null) => {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  };
+  const raw = read(SERVER_KEY);
+  if (raw === null) return false;
+  let origin: string | null = null;
+  try {
+    origin = new URL(raw).origin;
+  } catch {
+    origin = null;
+  }
+  if (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) && opts.allowDev) return false;
+  try {
+  if (origin && origin !== "null" && !isCloudOrigin(origin)) {
+    const token = read(TOKEN_KEY);
+    if (token) write(`${TOKEN_KEY}@${origin}`, token);
+    try {
+      const parsed = JSON.parse(read(PRINCIPAL_KEY) ?? "null") as Partial<PrincipalBinding> | null;
+      if (parsed && typeof parsed.token === "string" && typeof parsed.userId === "string") {
+        write(`${PRINCIPAL_KEY}@${origin}`, JSON.stringify({ token: parsed.token, serverURL: origin, userId: parsed.userId }));
+      }
+    } catch {
+      // an unreadable binding is simply not carried over
+    }
+    write(TOKEN_KEY, null);
+    write(PRINCIPAL_KEY, null);
+  }
+  write(SERVER_KEY, null);
+  } catch {
+    // storage unavailable; try again next launch
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Markie Cloud moved from its Railway hostname to api.markiedocs.com. The
+ * primary slot carries no origin, so a Cloud session there is untouched. A
+ * session filed under the old address as a server of its own (a dev build
+ * pointed at localhost keeps Cloud there) moves to the new address once, so
+ * it is found where every lookup now goes. An entry already at the new
+ * address wins; the old one is dropped either way.
+ */
+export function migrateCloudAliasSessions(): boolean {
+  let moved = false;
+  try {
+    for (const alias of CLOUD_ALIASES) {
+      const oldToken = localStorage.getItem(`${TOKEN_KEY}@${alias}`);
+      const oldBinding = localStorage.getItem(`${PRINCIPAL_KEY}@${alias}`);
+      if (oldToken === null && oldBinding === null) continue;
+      const newTokenKey = `${TOKEN_KEY}@${DEFAULT_SERVER}`;
+      const newBindingKey = `${PRINCIPAL_KEY}@${DEFAULT_SERVER}`;
+      if (oldToken && localStorage.getItem(newTokenKey) === null) {
+        localStorage.setItem(newTokenKey, oldToken);
+        try {
+          const parsed = JSON.parse(oldBinding ?? "null") as Partial<PrincipalBinding> | null;
+          if (parsed && parsed.token === oldToken && typeof parsed.userId === "string") {
+            localStorage.setItem(newBindingKey, JSON.stringify({ token: oldToken, serverURL: DEFAULT_SERVER, userId: parsed.userId }));
+          }
+        } catch {
+          // an unreadable binding is simply not carried over
+        }
+      }
+      localStorage.removeItem(`${TOKEN_KEY}@${alias}`);
+      localStorage.removeItem(`${PRINCIPAL_KEY}@${alias}`);
+      moved = true;
+    }
+  } catch {
+    // storage unavailable; try again next launch
+  }
+  return moved;
+}
+
+// Before anything reads the session: a launch after the server field went
+// away must not read the old server's token as Markie Cloud's.
+migrateLegacyServer({ allowDev: import.meta.env?.DEV === true });
+migrateCloudAliasSessions();
+
 let principal: string | null = restorePrincipal();
+
+/** Read-only proof that the current token was confirmed by this exact server. */
+export function getConfirmedAuthIdentity(): { userId: string; serverURL: string } | null {
+  const binding = readBinding();
+  return binding && binding.userId === principal && binding.token === getAuthToken() && binding.serverURL === getServerURL()
+    ? { userId: binding.userId, serverURL: binding.serverURL } : null;
+}
 
 // Set from `me()` below and nowhere else, because that is the one call where
 // the server says who is signed in. A probe that failed says nothing about
@@ -159,6 +285,7 @@ function confirmPrincipal(token: string, serverURL: string, userId: string): voi
   if (principal === userId) return;
   principal = userId;
   pushSyncConfig();
+  accountSessionChanged();
 }
 
 // The token main was last told about in this session. Main refuses a user
@@ -188,7 +315,8 @@ async function api<T>(
 ): Promise<{ ok: boolean; status: number; data: T | null }> {
   try {
     const token = getToken();
-    const res = await fetch(`${getServerURL()}${path}`, {
+    const serverURL = getServerURL(), epoch = sessionEpoch;
+    const res = await fetch(`${serverURL}${path}`, {
       ...init,
       headers: {
         "Content-Type": "application/json",
@@ -196,9 +324,10 @@ async function api<T>(
         ...(init?.headers ?? {}),
       },
     });
+    if (epoch !== sessionEpoch || token !== getToken() || serverURL !== getServerURL()) return { ok: false, status: 0, data: null };
     // better-auth's bearer plugin returns the session token on auth responses
     const newToken = res.headers.get("set-auth-token");
-    if (newToken) setToken(newToken);
+    if (res.ok && newToken && epoch === sessionEpoch && token === getToken() && serverURL === getServerURL()) setToken(newToken);
     const data = (await res.json().catch(() => null)) as T | null;
     return { ok: res.ok, status: res.status, data };
   } catch {
@@ -216,6 +345,28 @@ export interface AuthResult {
 export function authFailureCode(data: unknown): string {
   const code = (data as { code?: unknown } | null)?.code;
   return typeof code === "string" ? code : "";
+}
+
+interface CodeFlow {
+  kind: "legacy" | "identity"; email: string; serverURL: string; token: string | null; epoch: number;
+  challengeId?: string; flowId?: string;
+}
+let codeFlow: CodeFlow | null = null;
+let codeRequest = 0;
+const currentCodeFlow = (flow: CodeFlow) => flow.serverURL === getServerURL() && flow.token === getToken() && flow.epoch === sessionEpoch;
+const codeFailure = (status = 0) => ({ ok: false, status, data: null });
+async function codeJson(response: Response): Promise<Record<string, unknown> | null> {
+  if (Number(response.headers.get("content-length")) > 8192 || !response.body) return null;
+  const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
+  try {
+    for (;;) { const chunk = await reader.read(); if (chunk.done) break; size += chunk.value.length; if (size > 8192) { await reader.cancel(); return null; } chunks.push(chunk.value); }
+    const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+    const parsed: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch { return null; } finally { reader.releaseLock(); }
+}
+function codeFetch(serverURL: string, path: string, data?: unknown): Promise<Response> {
+  return fetch(`${serverURL}${path}`, { method: data === undefined ? "GET" : "POST", credentials: "omit", redirect: "error", cache: "no-store", headers: { "content-type": "application/json" }, ...(data === undefined ? {} : { body: JSON.stringify(data) }) });
 }
 
 export const authClient = {
@@ -261,17 +412,51 @@ export const authClient = {
   // the session is minted, so registering somebody else's address buys nothing
   // once the real owner asks for a code. Use this when the caller is holding
   // nothing but the address.
-  sendOTP: (email: string) =>
-    api<{ success: boolean }>("/api/auth/email-otp/send-verification-otp", {
-      method: "POST",
-      body: JSON.stringify({ email, type: "sign-in" }),
-    }),
+  sendOTP: async (email: string) => {
+    const request = ++codeRequest;
+    codeFlow = null;
+    const flow: CodeFlow = { kind: "identity", email: email.trim().toLowerCase(), serverURL: getServerURL(), token: getToken(), epoch: sessionEpoch };
+    try {
+      const capability = await codeFetch(flow.serverURL, "/api/account/capabilities");
+      if (!currentCodeFlow(flow) || request !== codeRequest) return codeFailure();
+      if (capability.status === 404) {
+        flow.kind = "legacy";
+        const result = await api<{ success: boolean }>("/api/auth/email-otp/send-verification-otp", { method: "POST", body: JSON.stringify({ email, type: "sign-in" }) });
+        if (!currentCodeFlow(flow) || request !== codeRequest) return codeFailure();
+        if (result.ok) codeFlow = flow;
+        return result;
+      }
+      const advertised = await codeJson(capability);
+      if (!capability.ok || advertised?.verifiedIdentities !== true) return codeFailure(capability.ok ? 503 : capability.status);
+      if (!currentCodeFlow(flow) || request !== codeRequest) return codeFailure();
+      const response = await codeFetch(flow.serverURL, "/api/account/identities/sign-in/start", { email: flow.email });
+      const data = await codeJson(response);
+      if (!currentCodeFlow(flow) || request !== codeRequest) return codeFailure();
+      if (!response.ok) return codeFailure(response.status);
+      if (typeof data?.challengeId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(data.challengeId) || typeof data.flowId !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(data.flowId)) return codeFailure(503);
+      codeFlow = { ...flow, challengeId: data.challengeId, flowId: data.flowId };
+      return { ok: true, status: response.status, data: { success: true } };
+    } catch { return codeFailure(); }
+  },
 
-  verifyOTP: (email: string, otp: string) =>
-    api<{ user: MarkieUser }>("/api/auth/sign-in/email-otp", {
-      method: "POST",
-      body: JSON.stringify({ email, otp }),
-    }),
+  verifyOTP: async (email: string, otp: string) => {
+    const flow = codeFlow;
+    if (!flow || flow.email !== email.trim().toLowerCase() || !currentCodeFlow(flow)) return codeFailure(400);
+    if (flow.kind === "legacy") return api<{ user: MarkieUser }>("/api/auth/sign-in/email-otp", { method: "POST", body: JSON.stringify({ email, otp }) });
+    try {
+      const response = await codeFetch(flow.serverURL, "/api/account/identities/sign-in/verify", { challengeId: flow.challengeId, flowId: flow.flowId, code: otp });
+      const data = await codeJson(response);
+      if (codeFlow !== flow || !currentCodeFlow(flow)) return codeFailure();
+      if (!response.ok) return codeFailure(response.status);
+      const token = data?.token;
+      if (typeof token !== "string" || token.length < 1 || token.length > 4096) return codeFailure(503);
+      codeFlow = null;
+      setToken(token);
+      const user = await authClient.me();
+      if (!user || getToken() !== token || getServerURL() !== flow.serverURL) return codeFailure();
+      return { ok: true, status: response.status, data: { user } };
+    } catch { return codeFailure(); }
+  },
 
   // Confirming an address the caller already holds the password for: a fresh
   // signup, or a sign-in the server refused only because the address was never
@@ -308,11 +493,14 @@ export const authClient = {
     }),
 
   signOut: async () => {
-    const res = await api<{ success: boolean }>("/api/auth/sign-out", {
+    const asked = { token: getToken(), serverURL: getServerURL() };
+    const request = api<{ success: boolean }>("/api/auth/sign-out", {
       method: "POST",
       body: "{}",
     });
-    setToken(null);
+    if (usesPrivateCredential()) setToken(null);
+    const res = await request;
+    if (getServerURL() === asked.serverURL && (getToken() === asked.token || usesPrivateCredential() && getToken() === null)) setToken(null);
     return res;
   },
 
@@ -324,10 +512,14 @@ export const authClient = {
   // The `state` nonce rides along so the deep link that comes back can prove it
   // belongs to this sign-in. Returns null when we can't mint one, which the
   // caller must surface rather than starting an unverifiable flow.
+  //
+  // The nonce names the server it was minted for, so the token the deep link
+  // brings back is stored for, and sent to, that server only.
   googleSignInURL: (): string | null => {
-    const state = createAuthState();
+    const origin = getServerURL();
+    const state = createAuthState({ origin });
     if (!state) return null;
-    return `${getServerURL()}/auth/google-start?state=${encodeURIComponent(state)}`;
+    return `${origin}/auth/google-start?state=${encodeURIComponent(state)}`;
   },
 };
 
@@ -358,75 +550,86 @@ export interface SharedByMeDoc {
   pendingCount: number;
 }
 
-export const sharesClient = {
-  access: async (docId: string): Promise<ShareAccess | null> => {
-    const res = await api<{ access: ShareAccess }>(
-      `/api/docs/${encodeURIComponent(docId)}/access`
-    );
-    return res.ok ? res.data?.access ?? null : null;
-  },
+// The calls a share dialog makes, against whichever server `request` talks
+// to. Sharing a document goes to the server the document lives on: the
+// primary server here, any other through src/lib/server-sessions.ts.
+export type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<{ ok: boolean; status: number; data: T | null }>;
 
-  // Owned docs that have at least one collaborator or pending invite.
-  // null means the request failed. An empty array would read as "you have
-  // shared nothing", which is a different and much more alarming statement to
-  // make to someone whose network just blipped.
-  sharedByMe: async (): Promise<SharedByMeDoc[] | null> => {
-    const res = await api<{ docs: SharedByMeDoc[] }>("/api/docs/shared-by-me");
-    return res.ok ? res.data?.docs ?? [] : null;
-  },
+export function makeSharesClient(request: ApiRequest) {
+  return {
+    access: async (docId: string): Promise<ShareAccess | null> => {
+      const res = await request<{ access: ShareAccess }>(
+        `/api/docs/${encodeURIComponent(docId)}/access`
+      );
+      return res.ok ? res.data?.access ?? null : null;
+    },
 
-  list: async (docId: string): Promise<ShareMember[] | null> => {
-    const res = await api<{ shares: ShareMember[] }>(
-      `/api/docs/${encodeURIComponent(docId)}/shares`
-    );
-    return res.ok ? res.data?.shares ?? [] : null;
-  },
+    // Owned docs that have at least one collaborator or pending invite.
+    // null means the request failed. An empty array would read as "you have
+    // shared nothing", which is a different and much more alarming statement to
+    // make to someone whose network just blipped.
+    sharedByMe: async (): Promise<SharedByMeDoc[] | null> => {
+      const res = await request<{ docs: SharedByMeDoc[] }>("/api/docs/shared-by-me");
+      return res.ok ? res.data?.docs ?? [] : null;
+    },
 
-  add: async (
-    docId: string,
-    email: string,
-    role: "viewer" | "editor"
-  ): Promise<{ ok: boolean; status?: "member" | "invited"; error?: string }> => {
-    const res = await api<{ ok?: boolean; status?: "member" | "invited"; error?: string }>(
-      `/api/docs/${encodeURIComponent(docId)}/shares`,
-      { method: "POST", body: JSON.stringify({ email, role }) }
-    );
-    if (res.ok) return { ok: true, status: res.data?.status };
-    return { ok: false, error: res.data?.error ?? "Couldn't share the doc" };
-  },
+    list: async (docId: string): Promise<ShareMember[] | null> => {
+      const res = await request<{ shares: ShareMember[] }>(
+        `/api/docs/${encodeURIComponent(docId)}/shares`
+      );
+      return res.ok ? res.data?.shares ?? [] : null;
+    },
 
-  // idOrEmail: a user id (member) or an email (pending invite)
-  remove: async (docId: string, idOrEmail: string): Promise<boolean> => {
-    const res = await api<{ ok?: boolean }>(
-      `/api/docs/${encodeURIComponent(docId)}/shares/${encodeURIComponent(idOrEmail)}`,
-      { method: "DELETE" }
-    );
-    return res.ok;
-  },
+    add: async (
+      docId: string,
+      email: string,
+      role: "viewer" | "editor"
+    ): Promise<{ ok: boolean; status?: "member" | "invited"; error?: string }> => {
+      const res = await request<{ ok?: boolean; status?: "member" | "invited"; error?: string }>(
+        `/api/docs/${encodeURIComponent(docId)}/shares`,
+        { method: "POST", body: JSON.stringify({ email, role }) }
+      );
+      if (res.ok) return { ok: true, status: res.data?.status };
+      return { ok: false, error: res.data?.error ?? "Couldn't share the doc" };
+    },
 
-  getPublicLink: async (docId: string): Promise<string | null> => {
-    const res = await api<{ url: string | null }>(
-      `/api/docs/${encodeURIComponent(docId)}/public-link`
-    );
-    return res.ok ? res.data?.url ?? null : null;
-  },
+    // idOrEmail: a user id (member) or an email (pending invite)
+    remove: async (docId: string, idOrEmail: string): Promise<boolean> => {
+      const res = await request<{ ok?: boolean }>(
+        `/api/docs/${encodeURIComponent(docId)}/shares/${encodeURIComponent(idOrEmail)}`,
+        { method: "DELETE" }
+      );
+      return res.ok;
+    },
 
-  createPublicLink: async (docId: string): Promise<string | null> => {
-    const res = await api<{ url?: string }>(
-      `/api/docs/${encodeURIComponent(docId)}/public-link`,
-      { method: "POST", body: "{}" }
-    );
-    return res.ok ? res.data?.url ?? null : null;
-  },
+    getPublicLink: async (docId: string): Promise<string | null> => {
+      const res = await request<{ url: string | null }>(
+        `/api/docs/${encodeURIComponent(docId)}/public-link`
+      );
+      return res.ok ? res.data?.url ?? null : null;
+    },
 
-  revokePublicLink: async (docId: string): Promise<boolean> => {
-    const res = await api<{ ok?: boolean }>(
-      `/api/docs/${encodeURIComponent(docId)}/public-link`,
-      { method: "DELETE" }
-    );
-    return res.ok;
-  },
-};
+    createPublicLink: async (docId: string): Promise<string | null> => {
+      const res = await request<{ url?: string }>(
+        `/api/docs/${encodeURIComponent(docId)}/public-link`,
+        { method: "POST", body: "{}" }
+      );
+      return res.ok ? res.data?.url ?? null : null;
+    },
+
+    revokePublicLink: async (docId: string): Promise<boolean> => {
+      const res = await request<{ ok?: boolean }>(
+        `/api/docs/${encodeURIComponent(docId)}/public-link`,
+        { method: "DELETE" }
+      );
+      return res.ok;
+    },
+  };
+}
+
+export type SharesClient = ReturnType<typeof makeSharesClient>;
+
+export const sharesClient: SharesClient = makeSharesClient(api);
 
 const SYNC_KEY = "markie.sync.v1";
 

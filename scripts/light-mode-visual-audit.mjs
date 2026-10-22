@@ -294,12 +294,12 @@ async function main() {
   screenshots.toolbarPdfMenu = await capture(cdp, "02-toolbar-pdf-menu");
 
   await cdp.ev("document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))");
-  await cdp.ev(`document.querySelector('button[aria-label="Split mode"]')?.click()`);
+  await cdp.ev("window.dispatchEvent(new KeyboardEvent('keydown', { key: '3', metaKey: true, bubbles: true }))");
   await waitFor("source editor in split mode", () =>
     cdp.ev("!!document.querySelector('.cm-editor .cm-line') && !!document.querySelector('.markdown-body h1')")
   );
   screenshots.sourceEditor = await capture(cdp, "02b-source-editor-light");
-  await cdp.ev(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'View')?.click()`);
+  await cdp.ev("window.dispatchEvent(new KeyboardEvent('keydown', { key: '1', metaKey: true, bubbles: true }))");
   await waitFor("rich view restored", () =>
     cdp.ev("!!document.querySelector('.markdown-body h1') && !document.querySelector('.cm-editor')")
   );
@@ -551,7 +551,7 @@ async function main() {
   })()`);
   screenshots.gatedSurfaceProbes = await capture(cdp, "06-share-comments-probes");
 
-  await cdp.ev(`document.querySelector('button[aria-label="Split mode"]')?.click()`);
+  await cdp.ev("window.dispatchEvent(new KeyboardEvent('keydown', { key: '3', metaKey: true, bubbles: true }))");
   await waitFor("source editor in split mode", () =>
     cdp.ev("!!document.querySelector('.cm-editor .cm-line') && !!document.querySelector('.markdown-body h1')")
   );

@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { offlineShellPlugin } from "./scripts/lib/offline-shell";
 
 // The renderer is a static bundle that Electron serves over app://markie/
 // from out/ (electron/main.js, registerProtocol). Relative asset URLs keep
@@ -9,7 +10,7 @@ import tailwindcss from "@tailwindcss/vite";
 // named out/ because release-preflight, CI's bundle budget and the Windows
 // smoke workflow all key on that name.
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), offlineShellPlugin()],
   base: "./",
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
@@ -21,7 +22,7 @@ export default defineConfig({
     outDir: "out",
     emptyOutDir: true,
     sourcemap: false,
-    // Electron 41 ships a current Chromium; no down-leveling needed.
-    target: "chrome140",
+    // Shared renderer: do not use Electron's Chromium as the browser contract.
+    target: ["chrome120", "safari17", "firefox122"],
   },
 });

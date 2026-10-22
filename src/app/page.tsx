@@ -1,9 +1,14 @@
-import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { lazy, Suspense, useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import type { DocumentShellState } from "@/lib/document-shell";
+import type { EditableDocumentFormat } from "@/lib/document-session";
+import type { LibraryRecord } from "@/lib/document-library";
+import documentMenuCommands from "../../electron/document-menu-commands.json";
 import { Toolbar } from "@/components/toolbar";
 import { preloadSourceEditor, SourceEditor } from "@/components/source-editor";
 import { RichView, type FlushRich } from "@/components/rich-view";
 import { FormatRail } from "@/components/format-rail";
-import { DocToolbar } from "@/components/doc-toolbar";
+import { DocToolbar, executeDocToolbarAction, setDocToolbarStyle } from "@/components/doc-toolbar";
+import type { FormattingAction } from "@/lib/format-controls";
 import {
   appearanceKey,
   appearanceVars,
@@ -13,14 +18,18 @@ import {
   stepZoom,
   type DocAppearance,
 } from "@/lib/doc-appearance";
+import { createPinchZoom } from "@/lib/document-zoom";
 import { StatsPanel } from "@/components/stats-panel";
 import type { Editor as TipTapEditor } from "@tiptap/react";
 import { formatMarkdownTables } from "@/lib/format-tables";
 import { csvToMarkdownTable, csvDropsContent, markdownTableToCSV } from "@/lib/csv";
+import { classifyDocumentFormat } from "@/lib/document-formats";
 import { CommandPalette } from "@/components/command-palette";
 import { ShortcutsHelp } from "@/components/shortcuts-help";
-import { Settings } from "@/components/settings";
+import { Settings, type SettingsSection } from "@/components/settings";
 import { Library } from "@/components/library";
+import { NewDocumentModal } from "@/components/new-document-modal";
+import { GlobalSearch } from "@/components/global-search";
 import { ActivityBar } from "@/components/activity-bar";
 import { RichPaneError } from "@/components/rich-pane-error";
 import {
@@ -39,6 +48,7 @@ import {
   UpdateStrip,
 } from "@/components/share-banner";
 import { ConflictDialog } from "@/components/conflict-dialog";
+import { TextCollabEditor } from "@/components/text-collab-editor";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
 import { DraftStrip } from "@/components/draft-strip";
 import { LargeDocStrip, TooLargeStrip } from "@/components/large-doc";
@@ -66,7 +76,7 @@ import { TerminalPanel } from "@/components/terminal-panel";
 import { TERMINAL_ENABLED } from "@/lib/features";
 import {
   applyColorMode,
-  colorModeForThemeId,
+  applyTemplate,
   getColorMode,
   watchSystemColorMode,
 } from "@/lib/color-mode";
@@ -74,10 +84,20 @@ import {
   adoptAuthToken,
   collabWsBase,
   getAuthToken,
+  getServerURL,
   pushSyncConfig,
   sharesClient,
 } from "@/lib/auth-client";
-import { consumeAuthState } from "@/lib/auth-state";
+import { resolveAuthDeepLink } from "@/lib/auth-state";
+import {
+  authStoreFor,
+  collabWsBaseFor,
+  getServerToken,
+  isPrimaryServer,
+  pushServerSessions,
+  setServerToken,
+  sharesClientFor,
+} from "@/lib/server-sessions";
 import { authStore, useAuth } from "@/lib/auth-store";
 import { markWelcomeSeen, shouldShowWelcome } from "@/lib/first-run";
 import { WELCOME_DOC } from "@/lib/welcome-doc";
@@ -102,8 +122,7 @@ import {
   applyTheme,
   findTheme,
   loadThemeStore,
-  saveThemeStore,
-  BUILT_IN_THEMES,
+  THEME_TEMPLATES,
 } from "@/lib/theme";
 import {
   getElectronAPI,
@@ -112,7 +131,7 @@ import {
   type FilePayload,
   type SaveResult,
 } from "@/lib/electron";
-import { pathDirname } from "@/lib/path-utils";
+import { pathDirname, sameDocumentPath } from "@/lib/path-utils";
 import { setAssetDocPath } from "@/lib/asset-url";
 import { opensAsDocument } from "@/lib/attach";
 import { useDocument, type EditInput } from "@/lib/use-document";
@@ -122,6 +141,11 @@ import { useDocumentExport } from "@/lib/use-export";
 // How long after the last edit the document's size is measured again (see the
 // re-tiering effect in Home).
 const EDIT_TIER_DELAY_MS = 500;
+const FORMAT_MENU_ACTIONS: Readonly<Record<string, FormattingAction>> = {
+  "format-bold": "bold", "format-italic": "italic", "format-underline": "underline", "format-strike": "strike", "format-clear": "clear",
+  "format-bullets": "bullet", "format-numbering": "ordered", "format-align-left": "align-left", "format-align-center": "align-center", "format-align-right": "align-right",
+};
+const FORMAT_MENU_STYLES: Readonly<Record<string, string>> = { "format-normal": "paragraph", "format-heading-1": "h1", "format-heading-2": "h2", "format-heading-3": "h3" };
 
 // A file converted on the way in (a CSV as a markdown table, every cell
 // gaining its separators) is tiered by the text the pane holds, which
@@ -176,6 +200,7 @@ $E = mc^2$
 type ViewMode = "edit" | "preview" | "split";
 
 const isCSVName = (name: string | null) => !!name && /\.csv$/i.test(name);
+const isPlainTextName = (name: string | null) => !!name && classifyDocumentFormat(name).kind === "text";
 
 // What handleSave returns when a write was refused because the file moved
 // underneath it. Not an error to show: the strip is already saying it.
@@ -196,7 +221,37 @@ const fromDisk = (name: string | null, raw: string) =>
 const toDisk = (name: string | null, md: string) =>
   isCSVName(name) ? markdownTableToCSV(md) : md;
 
-export default function Home() {
+const DocumentEditor = lazy(() => import("@/components/document-workspace-host").then((module) => ({ default: module.DocumentWorkspaceHost })));
+const DocumentCloudLibrary = lazy(() => import("@/components/document-cloud-library").then((module) => ({ default: module.DocumentCloudLibrary })));
+const CLOUD_HANDOFF_ERROR = "Recovery did not finish. The cloud document was not opened.";
+interface CloudHandoff {
+  id: string;
+  source: Pick<DocumentShellState, "selectedId" | "name" | "hasSession">;
+  accountId: string | null;
+  markdown: { path: string | null; name: string | null; content: string };
+  prepared: boolean;
+}
+
+export default function Home({ documentsEnabled = false }: { documentsEnabled?: boolean } = {}) {
+  const [documentsOpen, setDocumentsOpen] = useState(false);
+  const [nativeDocumentRequest, setNativeDocumentRequest] = useState(0);
+  const handledNativeRequest = useRef(0);
+  const requestNativeDocument = useCallback(() => setNativeDocumentRequest((value) => value + 1), []);
+  const [closingWindow, setClosingWindow] = useState(false);
+  const closeGeneration = useRef(0);
+  const documentsOpenRef = useRef(false);
+  const [documentShell, setDocumentShell] = useState<DocumentShellState | null>(null);
+  const documentShellRef = useRef<DocumentShellState | null>(null);
+  const [cloudHandoff, setCloudHandoff] = useState<CloudHandoff | null>(null);
+  const cloudHandoffRef = useRef<CloudHandoff | null>(null);
+  useEffect(() => () => { cloudHandoffRef.current = null; }, []);
+  const updateDocumentShell = useCallback((state: DocumentShellState | null) => { documentShellRef.current = state; setDocumentShell(state); }, []);
+  const leaveDocuments = useCallback(async () => {
+    if (!documentsOpenRef.current) return true;
+    if (!await documentShellRef.current?.prepareLeave()) return false;
+    documentsOpenRef.current = false; setDocumentsOpen(false);
+    return true;
+  }, []);
   // The confirmed account, for the surfaces that keep state per account. The
   // Library's own signedIn only says main holds a token, which stays true
   // when one account's token is replaced by another's.
@@ -213,13 +268,18 @@ export default function Home() {
   const { edit: editDoc, applyExternal: applyExternalDoc, load: loadDoc, reset: resetDoc, markSaved, setLocation } = doc;
   const { latest: latestContent } = doc;
   const [booted, setBooted] = useState(false);
-  const [mode, setMode] = useState<ViewMode>("preview");
+  const [preferredMode, setMode] = useState<ViewMode>("preview");
+  const plainText = isPlainTextName(fileName);
+  const mode: ViewMode = plainText ? "edit" : preferredMode;
   const [isDragging, setIsDragging] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showTheme, setShowTheme] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showNewDocument, setShowNewDocument] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
   // Non-null while a gated surface is asking for a session; the value is what
   // it wants the session for, which is what the dialog puts at the top.
   const [signInReason, setSignInReason] = useState<SignInReason | null>(null);
@@ -291,12 +351,12 @@ export default function Home() {
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
-  // Rich and Split cannot be chosen while a large document is open; the mode
-  // buttons say why. Source is always allowed.
+  // View menu, palette and shortcut requests share the same size/literal-text
+  // guard. The document strip explains source-only limitations.
   const requestMode = useCallback((m: ViewMode) => {
-    if (largeDocRef.current && m !== "edit") return;
+    if ((largeDocRef.current || plainText) && m !== "edit") return;
     setMode(m);
-  }, []);
+  }, [plainText]);
   const [showHistory, setShowHistory] = useState(false);
   const [peers, setPeers] = useState<PeerUser[]>([]);
   const [liveStatus, setLiveStatus] = useState<
@@ -322,10 +382,10 @@ export default function Home() {
 
   // Latest open-doc path + content, read by palette command closures without
   // rebuilding the command list on every keystroke.
-  const docRef = useRef({ filePath, content, isDirty });
+  const docRef = useRef({ filePath, fileName, content, isDirty, savedContent: doc.savedContent });
   useEffect(() => {
-    docRef.current = { filePath, content, isDirty };
-  }, [filePath, content, isDirty]);
+    docRef.current = { filePath, fileName, content, isDirty, savedContent: doc.savedContent };
+  }, [filePath, fileName, content, isDirty, doc.savedContent]);
 
   // Which document is on screen, so `![](demo/shot.png)` resolves against the
   // folder the file came from instead of against the app's origin, and so a
@@ -384,7 +444,10 @@ export default function Home() {
     entryPromise
       .then(async (entry) => {
         const cid = entry?.cloud_doc_id ?? null;
-        const token = getAuthToken();
+        // The document's own server, and that server's session. Markie Cloud
+        // (null) is the primary one.
+        const server = entry?.cloud_origin && !isPrimaryServer(entry.cloud_origin) ? entry.cloud_origin : null;
+        const token = server ? getServerToken(server) : getAuthToken();
         if (superseded()) return;
         setCanShare(!!cid && !!token);
         if (!cid || !token) {
@@ -399,9 +462,10 @@ export default function Home() {
         // this". The document stays read-only until it answers: assuming yes is
         // how a viewer got to type into a doc their edits could never reach.
         setRoleState("checking");
-        const { user: me } = await authStore.ready();
+        const { user: me } = await (server ? authStoreFor(server) : authStore).ready();
+        const shares = server ? sharesClientFor(server) : sharesClient;
         const [access, members] = me
-          ? await Promise.all([sharesClient.access(cid), sharesClient.list(cid)])
+          ? await Promise.all([shares.access(cid), shares.list(cid)])
           : [null, null];
         if (superseded()) return;
         // Owners are deliberately absent from the member list, so ownership
@@ -415,10 +479,11 @@ export default function Home() {
           void api?.registrySetRole?.({ path: filePath, role, userId: me.id });
         // Same answer, same doc: the sync engine can now refuse a push the
         // server would only reject.
-        api?.syncDocRole?.({ cloudId: cid, role });
+        api?.syncDocRole?.({ cloudId: cid, role, ...(server ? { server } : {}) });
         // Members read with the owner's pinned theme when one is set;
-        // the owner always keeps their own live theme
-        if (members?.some((m) => m.user_id === me?.id)) {
+        // the owner always keeps their own live theme. Pinned themes live on
+        // Markie Cloud only.
+        if (!server && members?.some((m) => m.user_id === me?.id)) {
           getDocTheme(cid).then((theme) => {
             if (!superseded()) setEnforcedTheme(theme);
           });
@@ -432,7 +497,7 @@ export default function Home() {
             .then((state) => {
               if (superseded()) return;
               setSharedBy(
-                state.items.find((i) => i.cloudId === cid)?.sharedBy ?? null
+                state.items.find((i) => i.cloudId === cid && (i.server ?? null) === server)?.sharedBy ?? null
               );
             })
             // A missing name costs the banner one clause; it must not cost the
@@ -444,6 +509,8 @@ export default function Home() {
         // No live session for a large document (enterTier): Source is
         // read-only under one, and the rich pane that would carry it never
         // mounts, so a session would only lock the owner out of their file.
+        // Plain text goes live through its own text pane (Y.Text), so it is
+        // no longer excluded here.
         if (largeDocRef.current || liveUnavailableRef.current || !me || !members || members.length === 0) {
           setCollabCfg(null);
           return;
@@ -458,7 +525,7 @@ export default function Home() {
             ? prev
             : {
                 docId: cid,
-                wsBase: collabWsBase(),
+                wsBase: server ? collabWsBaseFor(server) : collabWsBase(),
                 token,
                 user: { name: display, color: colorForName(display) },
                 readonly,
@@ -489,6 +556,7 @@ export default function Home() {
           getElectronAPI()?.syncDocRole?.({
             cloudId: remembered.cloud_doc_id,
             role: trusted,
+            ...(remembered.cloud_origin && !isPrimaryServer(remembered.cloud_origin) ? { server: remembered.cloud_origin } : {}),
           });
         }
         setSharedBy(null);
@@ -793,6 +861,7 @@ export default function Home() {
     setLiveUnavailable(false);
     setShowStats(false);
     setShowPalette(false);
+    setShowSearch(false);
     setShowHelp(false);
     setShowTheme(false);
     setShowSettings(false);
@@ -804,6 +873,8 @@ export default function Home() {
 
   // Start a fresh, unsaved markdown doc.
   const handleNewFile = useCallback(async () => {
+    if (document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
+    if (documentsOpenRef.current) { documentShellRef.current?.create("docx"); return; }
     await settleDocument();
     dismissDocumentUI();
     resetDocAccess();
@@ -811,6 +882,15 @@ export default function Home() {
     setCanShare(false);
     enterTier("", null, 0);
   }, [dismissDocumentUI, resetDocAccess, enterTier, resetDoc, settleDocument]);
+
+  // "New" asks what kind of document to start when the document workspace is
+  // available, instead of silently assuming Markdown (or Word, from inside
+  // the workspace). Without it, New keeps its original blank-Markdown meaning.
+  const requestNewFile = useCallback(async () => {
+    if (!documentsEnabled) { await handleNewFile(); return; }
+    if (document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
+    setShowNewDocument(true);
+  }, [documentsEnabled, handleNewFile]);
 
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
@@ -833,6 +913,7 @@ export default function Home() {
         | { name: string; content: string; path: string | null; unsaved?: boolean; size?: number; large?: boolean }
         | TooLargePayload
     ) => {
+      if (!await leaveDocuments()) return false;
       // Main refused the file for its size before reading it. Nothing about
       // the open document changes; the strip says what happened.
       if (isTooLarge(data)) {
@@ -879,46 +960,61 @@ export default function Home() {
       setLibRefreshKey((k) => k + 1);
       return true;
     },
-    [dismissDocumentUI, resetDocAccess, admitUnderCap, enterTier, loadDoc, settleDocument]
+    [dismissDocumentUI, resetDocAccess, admitUnderCap, enterTier, loadDoc, settleDocument, leaveDocuments]
   );
 
   const openPath = useCallback(
     (p: string) => {
+      if (documentsOpenRef.current && sameDocumentPath(p, docRef.current.filePath, getElectronAPI()?.platform)) { void leaveDocuments(); return; }
       getElectronAPI()
         ?.openFilePath(p)
         .then((file) => {
           if (file) loadFile(file);
         });
     },
-    [loadFile]
+    [loadFile, leaveDocuments]
   );
 
   // Files dropped onto the Library: register each on this device, open the last.
+  const addingPaths = useRef(false);
+  const [addingFiles, setAddingFiles] = useState(false);
   const addPaths = useCallback(
-    (paths: string[]) => {
+    async (paths: string[]) => {
       const api = getElectronAPI();
       if (!api || paths.length === 0) return;
-      Promise.all(paths.map((p) => api.openFilePath(p))).then((files) => {
-        const refused = files.find(isTooLarge);
-        const valid = files.filter(
-          (f): f is FilePayload => f !== null && !isTooLarge(f)
-        );
-        valid.forEach((f, i) => {
-          if (i === valid.length - 1) {
-            loadFile(f); // open + track the last one
-          } else if (!f.large) {
-            // Main registered a large one itself when it read it.
-            api.registryTrack?.({ path: f.path, name: f.name, content: f.content });
+      if (document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
+      if (addingPaths.current || documentShellRef.current?.busy) {
+        setForkError("Those files were not opened while another operation was running. Drop them again when the editor is ready."); return;
+      }
+      addingPaths.current = true;
+      setAddingFiles(true);
+      let lastText: FilePayload | null = null;
+      try {
+        if (documentsEnabled && documentShellRef.current && !await documentShellRef.current.prepareLeave()) return;
+        for (const p of paths) {
+          const file = await api.openFilePath(p);
+          if (isTooLarge(file)) { setRefusedDoc({ name: file.name, size: file.size }); continue; }
+          if (lastText && !lastText.large) {
+            await api.registryTrack?.({ path: lastText.path, name: lastText.name, content: lastText.content });
           }
-        });
-        if (refused) setRefusedDoc({ name: refused.name, size: refused.size });
+          if (file) lastText = file;
+          else if (documentsEnabled && documentShellRef.current?.settleIncomingDocuments) {
+            if (!await documentShellRef.current.settleIncomingDocuments()) {
+              setForkError("Finish the pending document operation before opening the remaining dropped files."); return;
+            }
+            lastText = null;
+          }
+        }
+        if (lastText) await loadFile(lastText);
         setLibRefreshKey((k) => k + 1);
-      });
+      } catch { setForkError("The dropped files could not all be opened. Your current document was kept."); }
+      finally { addingPaths.current = false; setAddingFiles(false); }
     },
-    [loadFile]
+    [loadFile, documentsEnabled]
   );
 
   const handleOpenFile = useCallback(() => {
+    if (document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
     const api = getElectronAPI();
     if (api) {
       // Start the picker beside the document already open.
@@ -928,9 +1024,17 @@ export default function Home() {
       return;
     }
 
+    if (documentsEnabled) {
+      const shell = documentShellRef.current;
+      if (!shell?.ready) { setForkError("Document tools are still loading. Try Open again in a moment."); return; }
+      shell.importFile();
+      documentsOpenRef.current = true; setDocumentsOpen(true);
+      return;
+    }
+
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".md,.markdown,.mdx,.txt,.csv";
+    input.accept = ".md,.markdown,.mdx,.txt,.text,.log,.csv";
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
@@ -938,7 +1042,7 @@ export default function Home() {
       loadFile({ name: file.name, content: text, path: null });
     };
     input.click();
-  }, [loadFile]);
+  }, [loadFile, documentsEnabled]);
 
   // Imported here rather than at the top of the file because unified, remark,
   // rehype-katex, KaTeX and highlight.js are the heaviest thing the renderer
@@ -961,8 +1065,10 @@ export default function Home() {
   // "current" has to mean the last write, not the last render: an autosave
   // fires from a timer and can beat React to it.
   const currentMarkdown = useCallback(
-    (): string => flushRichRef.current?.() ?? latestContent(),
-    [latestContent]
+    (): string => plainText
+      ? latestContent()
+      : flushRichRef.current?.() ?? latestContent(),
+    [latestContent, plainText]
   );
 
   // Paper, PDF, and standalone HTML all render through main's one hidden
@@ -1148,6 +1254,161 @@ export default function Home() {
     saveGuardRef.current = saveGuard;
   }, [saveGuard]);
 
+  const openDocumentsWorkspace = useCallback(async (canActivate?: () => boolean) => {
+    if (canActivate && !canActivate()) return false;
+    if (documentsEnabled && documentsOpenRef.current) return true;
+    currentMarkdown();
+    await settleDocument();
+    if (canActivate && !canActivate()) return false;
+    const md = currentMarkdown();
+    const previousPath = docRef.current.filePath;
+    if (md !== docRef.current.savedContent) {
+      const api = getElectronAPI();
+      if (!api?.draftSave && !documentsEnabled) {
+        setForkError("Save or copy your Markdown changes before opening Documents.");
+        return false;
+      }
+      try {
+        if (api?.draftSave) {
+          const saved = await api.draftSave({ path: previousPath, name: docRef.current.fileName, content: md });
+          if (!saved?.ok) throw new Error("Recovery was not saved.");
+        }
+      } catch {
+        setForkError("Your Markdown recovery copy could not be saved. Keep this window open and save the file first.");
+        return false;
+      }
+    }
+    if (previousPath !== docRef.current.filePath || md !== currentMarkdown()) {
+      setForkError("New Markdown edits arrived while saving recovery. Open Documents again when you are ready.");
+      return false;
+    }
+    if (canActivate && !canActivate()) return false;
+    if (documentsEnabled) { documentsOpenRef.current = true; setDocumentsOpen(true); setShowFind(false); }
+    return true;
+  }, [currentMarkdown, settleDocument, documentsEnabled]);
+  useEffect(() => {
+    if (!booted || (!plainText && mode !== "edit" && largeDocSize === null && !richEditor)
+      || nativeDocumentRequest === handledNativeRequest.current) return;
+    handledNativeRequest.current = nativeDocumentRequest;
+    void openDocumentsWorkspace();
+  }, [booted, plainText, mode, largeDocSize, richEditor, nativeDocumentRequest, openDocumentsWorkspace]);
+  const prepareMarkdownClose = useCallback(async () => {
+    currentMarkdown();
+    await settleDocument();
+    const snapshot = { path: docRef.current.filePath, name: docRef.current.fileName, content: currentMarkdown() };
+    if (snapshot.content === docRef.current.savedContent) return true;
+    try {
+      const saved = await getElectronAPI()?.draftSave?.(snapshot);
+      if (!saved?.ok) throw new Error("Recovery was not saved.");
+      if (snapshot.path !== docRef.current.filePath || snapshot.content !== currentMarkdown()) throw new Error("Newer edits arrived.");
+      return true;
+    } catch {
+      setForkError("Window kept open. Your Markdown recovery could not be confirmed. Save or export it before closing.");
+      return false;
+    }
+  }, [currentMarkdown, settleDocument]);
+  const createDocument = useCallback(async (format: EditableDocumentFormat) => {
+    if (format === "markdown") { if (await leaveDocuments()) await handleNewFile(); return; }
+    if (!documentShellRef.current?.ready) { setForkError("Document tools are still loading. Try again in a moment."); return; }
+    if (await openDocumentsWorkspace()) documentShellRef.current?.create(format);
+  }, [openDocumentsWorkspace, leaveDocuments, handleNewFile]);
+  const openDocument = useCallback(async (record: LibraryRecord) => {
+    if (await openDocumentsWorkspace()) documentShellRef.current?.open(record);
+  }, [openDocumentsWorkspace]);
+  const openCloudDocument = useCallback(async (id: string) => {
+    if (!documentsEnabled || cloudHandoffRef.current || document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
+    const shell = documentShellRef.current;
+    if (!shell?.ready || shell.busy || shell.private || !shell.openCloudDocument) return;
+    setForkError((error) => error === CLOUD_HANDOFF_ERROR ? null : error);
+    const markdown = currentMarkdown();
+    const intent: CloudHandoff = { id, source: { selectedId: shell.selectedId, name: shell.name, hasSession: shell.hasSession }, accountId: account?.id ?? null,
+      markdown: { path: docRef.current.filePath, name: docRef.current.fileName, content: markdown }, prepared: false };
+    cloudHandoffRef.current = intent;
+    setCloudHandoff(intent);
+    let preparedIntent = false;
+    try {
+      if (!await shell.prepareLeave() || cloudHandoffRef.current !== intent) return;
+      if (!await openDocumentsWorkspace(() => cloudHandoffRef.current === intent) || cloudHandoffRef.current !== intent) return;
+      const prepared = { ...intent, prepared: true };
+      preparedIntent = true;
+      cloudHandoffRef.current = prepared;
+      setCloudHandoff(prepared);
+    } catch { if (cloudHandoffRef.current === intent) setForkError(CLOUD_HANDOFF_ERROR); }
+    finally {
+      if (cloudHandoffRef.current === intent) {
+        cloudHandoffRef.current = null;
+        setCloudHandoff(null);
+        // The error and any refusal UI live with the retained document. A
+        // full-page Cloud must step aside when preparation abandons the
+        // handoff, or both would sit hidden behind it.
+        if (!preparedIntent && showLibrary && leftView === "cloud") setShowLibrary(false);
+      }
+    }
+  }, [documentsEnabled, openDocumentsWorkspace, currentMarkdown, account?.id, showLibrary, leftView]);
+  useEffect(() => {
+    if (!cloudHandoff || cloudHandoffRef.current !== cloudHandoff) return;
+    const shell = documentShellRef.current;
+    const cancel = () => { cloudHandoffRef.current = null; setCloudHandoff(null); };
+    if (!documentsEnabled || closingWindow || showSettings || showTheme || showPalette || showSearch || showHelp || showShare || signInReason || showAgents || manageShare
+      || document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]") || !shell || shell.private || shell.commands?.modalOpen
+      || shell.selectedId !== cloudHandoff.source.selectedId || shell.name !== cloudHandoff.source.name || shell.hasSession !== cloudHandoff.source.hasSession
+      || (account?.id ?? null) !== cloudHandoff.accountId || filePath !== cloudHandoff.markdown.path || fileName !== cloudHandoff.markdown.name
+      || currentMarkdown() !== cloudHandoff.markdown.content) { cancel(); return; }
+    if (!cloudHandoff.prepared) return;
+    if (!documentsOpen || !documentsOpenRef.current) { cancel(); return; }
+    // A full-page Cloud stays in place while preparation can still refuse,
+    // so a failed handoff leaves the row available for a safe retry. Only a
+    // prepared intent earns the workspace switch.
+    if (showLibrary && leftView === "cloud") { setShowLibrary(false); return; }
+    // Eager refs and one animation frame do not prove the Host's active/busy
+    // React commit has landed. Retain this intent until its shell publishes it.
+    if (!shell.ready || shell.busy || document.querySelector(".docs-embedded-host")?.closest("[inert]")) return;
+    cancel();
+    shell.openCloudDocument?.(cloudHandoff.id);
+  }, [cloudHandoff, documentsOpen, documentShell, documentsEnabled, closingWindow, showSettings, showTheme, showPalette, showSearch, showHelp, showShare, signInReason, showAgents, manageShare, account?.id, filePath, fileName, content, currentMarkdown, showLibrary, leftView]);
+  const openVault = useCallback(async () => {
+    if (await openDocumentsWorkspace()) documentShellRef.current?.showVault();
+  }, [openDocumentsWorkspace]);
+  const runDocumentCommand = useCallback((command: string) => {
+    if (!documentMenuCommands.some((item) => item.id === command) && !["find", "undo", "redo", "zoom-in", "zoom-out"].includes(command)) return;
+    if (document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
+    if (command === "new-markdown" || command === "new-word" || command === "new-text" || command === "new-darkmown") {
+      void createDocument(command === "new-markdown" ? "markdown" : command === "new-word" ? "docx" : command === "new-darkmown" ? "darkmown" : "text"); return;
+    }
+    if (documentsOpenRef.current) {
+      const shell = documentShellRef.current;
+      if (shell?.private || shell?.busy || shell?.commands?.modalOpen || document.querySelector(".docs-embedded-host")?.closest("[inert]")) return;
+      const target = shell?.commands;
+      if (target?.enabledCommands.includes(command)) target.execute(command);
+      return;
+    }
+    if (!docEditable || mode === "edit" || !richEditor || richEditor.isDestroyed || !richEditor.isEditable) return;
+    const action = FORMAT_MENU_ACTIONS[command], style = FORMAT_MENU_STYLES[command];
+    if (action) executeDocToolbarAction(richEditor, action);
+    else if (style) setDocToolbarStyle(richEditor, style);
+  }, [docEditable, mode, richEditor, createDocument]);
+  const nativeCommandHandler = useRef(runDocumentCommand);
+  const scheduleDocumentCommand = useCallback((command: string) => {
+    setShowPalette(false);
+    requestAnimationFrame(() => nativeCommandHandler.current(command));
+  }, []);
+  useEffect(() => { nativeCommandHandler.current = runDocumentCommand; }, [runDocumentCommand]);
+  useEffect(() => getElectronAPI()?.onDocumentCommand?.((command) => nativeCommandHandler.current(command)), []);
+  const menuSignature = useRef("");
+  useEffect(() => {
+    const api = getElectronAPI();
+    if (!api?.setDocumentMenuState) return;
+    const paused = !booted || closingWindow || showSettings || showTheme || showPalette || showSearch || showHelp || showShare || !!signInReason || showAgents || !!manageShare || documentsOpen && !!documentShell?.commands?.modalOpen;
+    const renderer = paused ? "none" : documentsOpen ? documentShell?.renderer ?? "none" : "markdown";
+    const capable = documentsOpen ? documentShell?.private || documentShell?.busy ? [] : documentShell?.commands?.enabledCommands ?? []
+      : docEditable && mode !== "edit" && richEditor && !richEditor.isDestroyed && richEditor.isEditable ? [...Object.keys(FORMAT_MENU_ACTIONS), ...Object.keys(FORMAT_MENU_STYLES)] : [];
+    const enabledCommands = paused || renderer === "none" ? [] : [...new Set([...(documentsEnabled ? ["new-markdown", ...(documentShell?.ready ? ["new-word", "new-text", "new-darkmown"] : [])] : []), ...capable])].filter((id) => documentMenuCommands.some((item) => item.id === id));
+    const signature = JSON.stringify({ renderer, enabledCommands });
+    if (signature === menuSignature.current) return;
+    menuSignature.current = signature;
+    void api.setDocumentMenuState({ renderer, enabledCommands }).then((result) => { if (!result.ok) menuSignature.current = ""; }).catch(() => { menuSignature.current = ""; });
+  }, [booted, closingWindow, showSettings, showTheme, showPalette, showSearch, showHelp, showShare, signInReason, showAgents, manageShare, documentsOpen, documentShell, docEditable, mode, richEditor, documentsEnabled]);
+
   // The one way a user edit reaches the buffer, and so the only thing that may
   // ever arm a write. Loads, pulls, and reloads go through the document hook's
   // other transitions and must never come through here.
@@ -1243,10 +1504,12 @@ export default function Home() {
 
   // Window title tracks the open file and dirty state
   useEffect(() => {
-    document.title = fileName
-      ? `${isDirty ? "• " : ""}${fileName} — Markie`
+    const name = documentsOpen ? documentShell?.name : fileName;
+    const dirty = documentsOpen ? documentShell?.dirty : isDirty;
+    document.title = name
+      ? `${dirty ? "• " : ""}${name} — Markie`
       : "Markie";
-  }, [fileName, isDirty]);
+  }, [fileName, isDirty, documentsOpen, documentShell?.name, documentShell?.dirty]);
 
   // Drag and drop
   useEffect(() => {
@@ -1311,6 +1574,14 @@ export default function Home() {
         setShowTerminal((v) => !v);
         return;
       }
+      // ⇧⌘F searches every document, from any editor. Checked before the
+      // find-bar branch below, which would otherwise read it as ⌘F.
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.code === "KeyF") {
+        e.preventDefault();
+        if (!document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) setShowSearch(true);
+        return;
+      }
+      if (documentsOpenRef.current && !["k", "l", "/"].includes(e.key.toLowerCase())) return;
       if (e.metaKey || e.ctrlKey) {
         // Matched on e.code, not e.key: holding Option on macOS turns "f" into
         // "ƒ", so ⌥⌘F would never be recognised by name.
@@ -1364,7 +1635,7 @@ export default function Home() {
             break;
           case "n":
             e.preventDefault();
-            handleNewFile();
+            requestNewFile();
             break;
           case "/":
             e.preventDefault();
@@ -1382,6 +1653,7 @@ export default function Home() {
     handleSave,
     handleSaveAs,
     handleNewFile,
+    requestNewFile,
     selectView,
   ]);
 
@@ -1390,11 +1662,13 @@ export default function Home() {
   // history and none can undo the others, so the target is decided from focus.
   const runUndoRedo = useCallback(
     (direction: "undo" | "redo") => {
+      if (document.querySelector(".markie-shell[inert]")) return;
       const target = undoTargetFor(document.activeElement, {
         hasRich: !!richEditor,
         hasSource: !!sourceHandle,
       });
-      if (target === "rich" && richEditor) {
+      if (target !== "native" && (!docEditable || document.querySelector('[role="dialog"][aria-modal="true"]'))) return;
+      if (target === "rich" && richEditor && !richEditor.isDestroyed && richEditor.isEditable) {
         richEditor.chain().focus()[direction]().run();
       } else if (target === "source" && sourceHandle) {
         sourceHandle[direction]();
@@ -1404,7 +1678,7 @@ export default function Home() {
         document.execCommand(direction);
       }
     },
-    [richEditor, sourceHandle]
+    [richEditor, sourceHandle, docEditable]
   );
 
   // The IPC subscriptions below are installed once, so anything they compare
@@ -1476,20 +1750,22 @@ export default function Home() {
     // closures rather than the ones captured on first render.
     handlersRef.current.undoRedo = runUndoRedo;
     handlersRef.current.openFile = handleOpenFile;
-    handlersRef.current.newFile = handleNewFile;
+    handlersRef.current.newFile = requestNewFile;
     handlersRef.current.save = handleSave;
     handlersRef.current.saveAs = handleSaveAs;
     handlersRef.current.fork = handleMakeCopy;
     handlersRef.current.reveal = handleReveal;
-  }, [handleOpenFile, handleNewFile, handleSave, handleSaveAs, handleMakeCopy, handleReveal, runUndoRedo]);
+  }, [handleOpenFile, handleNewFile, requestNewFile, handleSave, handleSaveAs, handleMakeCopy, handleReveal, runUndoRedo]);
 
   // Apply the chosen color mode (system/light/dark) before first paint, and
   // keep "system" tracking the OS preference.
   useEffect(() => {
     applyColorMode(getColorMode());
     const stopWatch = watchSystemColorMode();
-    // hand the stored auth token + server URL to the main-process sync engine
+    // hand the stored auth token + server URL to the main-process sync engine,
+    // then every other server's session
     pushSyncConfig();
+    pushServerSessions();
     // themes follow the account: pull the cloud preset store for availability
     pullCloudThemes().then((pulled) => {
       if (pulled === false) pushCloudThemes();
@@ -1499,14 +1775,14 @@ export default function Home() {
 
   // Owner-pinned themes override the local choice while the doc is open
   useEffect(() => {
-    if (enforcedTheme) {
+    if (enforcedTheme && !documentsOpen) {
       applyTheme(enforcedTheme);
       return () => {
         const store = loadThemeStore();
         applyTheme(findTheme(store, store.activeId).tokens);
       };
     }
-  }, [enforcedTheme]);
+  }, [enforcedTheme, documentsOpen]);
 
   // Boot: decide the first painted document — the OS-opened file, the one-time
   // welcome document, or the sample — before rendering anything, so the wrong
@@ -1553,35 +1829,54 @@ export default function Home() {
   useEffect(() => {
     const api = getElectronAPI();
     if (!api) return;
+    const closeRequests = closeGeneration;
     const offs = [
       api.onMenuOpenFile?.(() => handlersRef.current.openFile()),
       api.onMenuNewFile?.(() => handlersRef.current.newFile()),
-      api.onMenuExportPDF?.((theme) =>
-        handlersRef.current.exportPDF(theme ?? "dark")
-      ),
-      api.onSetMode?.((m) => requestMode(m)),
-      api.onToggleStats?.(() => setShowStats((s) => !s)),
+      api.onMenuExportPDF?.((theme) => {
+        if (documentsOpenRef.current) { if (theme === "light") nativeCommandHandler.current("document-export-pdf"); }
+        else handlersRef.current.exportPDF(theme ?? "dark");
+      }),
+      api.onSetMode?.((m) => { if (!documentsOpenRef.current) requestMode(m); }),
+      api.onToggleStats?.(() => { if (!documentsOpenRef.current) setShowStats((s) => !s); }),
       api.onMenuCommandPalette?.(() => setShowPalette((v) => !v)),
       api.onMenuShortcuts?.(() => setShowHelp((v) => !v)),
       api.onMenuTheme?.(() => setShowTheme((v) => !v)),
-      api.onMenuSettings?.(() => setShowSettings((v) => !v)),
+      api.onMenuSettings?.((section) => {
+        if (section) { setSettingsSection(section); setShowSettings(true); }
+        else setShowSettings((v) => !v);
+      }),
       api.onMenuLibrary?.(() => selectView("library")),
+      api.onMenuGlobalSearch?.(() => { if (!document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) setShowSearch(true); }),
       api.onDeepLink?.((url) => {
-        // markie://auth?token=…&state=… — Google sign-in returning via the
-        // bridge. Anything on the machine can fire this deep link, so the token
-        // is only adopted when it carries the single-use nonce minted when we
-        // opened the browser. See src/lib/auth-state.ts.
+        // markie://auth?token=…&state=…&iss=… — Google sign-in returning via
+        // the bridge. Anything on the machine can fire this deep link, so the
+        // token is only adopted when it carries the single-use nonce minted
+        // when we opened the browser, and when the server that issued it is
+        // the one that sign-in was started against. See src/lib/auth-state.ts.
         try {
           const u = new URL(url);
-          const token = u.searchParams.get("token");
-          if (u.host === "auth" && token) {
-            if (!consumeAuthState(u.searchParams.get("state"))) {
-              console.error("markie://auth rejected: no matching sign-in was pending");
+          if (u.host === "auth" && u.searchParams.get("token")) {
+            // The pending nonce names the server the sign-in was started
+            // against, and `iss` has to agree with it. The token is stored for
+            // that server and only ever sent to it.
+            const link = resolveAuthDeepLink(url, { primaryOrigin: getServerURL() });
+            if (!link.ok) {
+              console.error(
+                link.reason === "issuer-mismatch"
+                  ? "markie://auth rejected: the token is not from the server the sign-in was started on"
+                  : "markie://auth rejected: no matching sign-in was pending"
+              );
               return;
             }
-            adoptAuthToken(token);
+            if (link.origin && !isPrimaryServer(link.origin)) {
+              setServerToken(link.origin, link.token);
+              void authStoreFor(link.origin).refresh();
+            } else {
+              adoptAuthToken(link.token);
+              void authStore.refresh(); // every auth-aware surface updates at once
+            }
             refreshCollabRef.current();
-            void authStore.refresh(); // every auth-aware surface updates at once
             setShowSettings(false); // dismiss the sign-in modal — we're in now
             setLibRefreshKey((k) => k + 1); // Library can show cloud files now
             return;
@@ -1592,42 +1887,58 @@ export default function Home() {
         setShowSettings(true);
       }),
       api.onMenuFormatTables?.(() =>
-        editContent((prev) => formatMarkdownTables(prev))
+        !documentsOpenRef.current && docEditable && !document.querySelector('.markie-shell[inert], [role="dialog"][aria-modal="true"]') && editContent((prev) => formatMarkdownTables(prev))
       ),
       api.onMenuFind?.(() => {
+        if (documentsOpenRef.current) return;
         setFindWithReplace(false);
         setShowFind(true);
       }),
-      api.onMenuPrint?.(() => handlersRef.current.print()),
-      api.onMenuZoom?.((step) => handlersRef.current.zoom(step)),
-      api.onMenuPageWidth?.((step) => handlersRef.current.pageWidth(step)),
-      api.onMenuUndo?.(() => handlersRef.current.undoRedo("undo")),
-      api.onMenuRedo?.(() => handlersRef.current.undoRedo("redo")),
+      api.onMenuPrint?.(() => { if (documentsOpenRef.current) nativeCommandHandler.current("document-print"); else handlersRef.current.print(); }),
+      api.onMenuZoom?.((step) => { if (documentsOpenRef.current) documentShellRef.current?.commands?.execute(step > 0 ? "zoom-in" : step < 0 ? "zoom-out" : "view-zoom-reset"); else handlersRef.current.zoom(step); }),
+      api.onMenuPageWidth?.((step) => { if (!documentsOpenRef.current) handlersRef.current.pageWidth(step); }),
+      api.onMenuUndo?.(() => { if (!documentsOpenRef.current) handlersRef.current.undoRedo("undo"); }),
+      api.onMenuRedo?.(() => { if (!documentsOpenRef.current) handlersRef.current.undoRedo("redo"); }),
       api.onMenuFindReplace?.(() => {
+        if (documentsOpenRef.current) return;
         setFindWithReplace(true);
         setShowFind(true);
       }),
-      api.onMenuHistory?.(() => setShowHistory(true)),
-      api.onMenuSave?.(() => handlersRef.current.save()),
-      api.onMenuSaveAs?.(() => handlersRef.current.saveAs()),
-      api.onMenuFork?.(() => handlersRef.current.fork()),
-      api.onMenuReveal?.(() => handlersRef.current.reveal()),
-      api.onMenuExportHTML?.(() => handlersRef.current.exportHTML()),
+      api.onMenuHistory?.(() => documentsOpenRef.current ? documentShellRef.current?.commands?.execute("document-history") : setShowHistory(true)),
+      api.onMenuSave?.(() => documentsOpenRef.current ? documentShellRef.current?.save() : handlersRef.current.save()),
+      api.onMenuSaveAs?.(() => documentsOpenRef.current ? documentShellRef.current?.save(true) : handlersRef.current.saveAs()),
+      api.onMenuFork?.(() => documentsOpenRef.current ? documentShellRef.current?.save(true) : handlersRef.current.fork()),
+      api.onMenuReveal?.(() => { if (!documentsOpenRef.current) handlersRef.current.reveal(); }),
+      api.onMenuExportHTML?.(() => { if (!documentsOpenRef.current) handlersRef.current.exportHTML(); }),
       api.onFileOpened?.((data) => handlersRef.current.fileOpened(data)),
       // A background reconciliation pass pushed a document's text or media.
       // Nothing else reports that: the pass is fire-and-forget, and the
       // server's own listing does not move when only local media state does.
       api.onLibraryChanged?.(() => setLibRefreshKey((k) => k + 1)),
-      // Main is holding the window open for us. Settle, then answer, and
-      // answer even if settling threw: a renderer that never replies just
-      // makes the user wait out the two second cap.
-      api.onAppWillClose?.(() => {
+      // One ticket covers every retained editor. Block input until recovery
+      // finishes, and cancel rather than acknowledging an unconfirmed save.
+      api.onAppWillClose?.((requestId) => {
+        const generation = ++closeRequests.current;
+        setClosingWindow(true);
+        const current = () => generation === closeRequests.current;
+        const cancel = () => { if (current()) api.appCloseCancel?.(requestId); };
+        const timeout = setTimeout(() => {
+          if (!current()) return;
+          api.appCloseCancel?.(requestId);
+          closeRequests.current++;
+          setClosingWindow(false);
+        }, 2200);
         void (async () => {
           try {
-            await handlersRef.current.settle();
-          } finally {
-            getElectronAPI()?.appCloseReady?.();
-          }
+            if (documentsEnabled && (!documentShellRef.current || !await documentShellRef.current.prepareClose())) {
+              cancel(); return;
+            }
+            if (documentsEnabled) {
+              if (!await prepareMarkdownClose()) { cancel(); return; }
+            } else await handlersRef.current.settle();
+            if (current()) api.appCloseReady?.(requestId);
+          } catch { cancel(); }
+          finally { clearTimeout(timeout); if (current()) setClosingWindow(false); }
         })();
       }),
       api.onFileChangedOnDisk?.((data) => {
@@ -1652,8 +1963,8 @@ export default function Home() {
         setDiskChange({ content: data.content, size: data.size });
       }),
     ];
-    return () => offs.forEach((off) => off?.());
-  }, [requestMode, selectView, editContent]);
+    return () => { closeRequests.current++; offs.forEach((off) => off?.()); };
+  }, [requestMode, selectView, editContent, documentsEnabled, prepareMarkdownClose, docEditable]);
 
   // The source editor's chunk, fetched while idle so the first switch to
   // Source view does not wait on it (src/components/source-editor.tsx).
@@ -1662,11 +1973,19 @@ export default function Home() {
   }, [booted]);
 
   const commands = useMemo<AppCommand[]>(
-    () => [
+    () => ([
       { id: "open", title: "Open File…", group: "File", shortcut: "⌘O", run: handleOpenFile },
-      { id: "save", title: "Save", group: "File", shortcut: "⌘S", run: handleSave },
-      { id: "save-as", title: "Save As…", group: "File", shortcut: "⇧⌘S", run: () => handleSaveAs() },
-      { id: "fork", title: "Duplicate (Fork)", group: "File", shortcut: "⇧⌘D", keywords: "copy fork duplicate", run: handleMakeCopy },
+      ...(documentsEnabled ? [
+        { id: "new-markdown", title: "New Markdown document", group: "File", keywords: "md markdown", run: () => createDocument("markdown") },
+        { id: "new-word", title: "New Word document", group: "File", keywords: "docx office", run: () => createDocument("docx") },
+        { id: "new-text", title: "New text document", group: "File", keywords: "txt plain", run: () => createDocument("text") },
+        { id: "new-darkmown", title: "New Darkmown document", group: "File", keywords: "wd interactive state", run: () => createDocument("darkmown") },
+        { id: "private-vault", title: "Open Vault", group: "File", keywords: "locked private secure passphrase env keys secrets environment", run: openVault },
+      ] as AppCommand[] : []),
+      ...(documentsOpen ? documentMenuCommands.filter((item) => !item.id.startsWith("new-") && item.id !== "document-history" && documentShell?.commands?.enabledCommands.includes(item.id)).map((item): AppCommand => ({ id: item.id, title: `${item.group}: ${item.label}`, group: item.group === "View" ? "View" : item.group === "File" ? "File" : "Format", run: () => scheduleDocumentCommand(item.id) })) : []),
+      { id: "save", title: "Save", group: "File", shortcut: "⌘S", run: () => documentsOpenRef.current ? documentShellRef.current?.save() : handleSave() },
+      { id: "save-as", title: "Save As…", group: "File", shortcut: "⇧⌘S", run: () => documentsOpenRef.current ? documentShellRef.current?.save(true) : handleSaveAs() },
+      { id: "fork", title: "Duplicate (Fork)", group: "File", shortcut: "⇧⌘D", keywords: "copy fork duplicate", run: () => documentsOpenRef.current ? documentShellRef.current?.save(true) : handleMakeCopy() },
       { id: "reveal", title: revealLabel, group: "File", shortcut: "⌥⌘R", keywords: "finder explorer folder show reveal drag locate", run: handleReveal },
       { id: "export-pdf-dark", title: "Export PDF (Dark)", group: "File", shortcut: "⇧⌘E", keywords: "print", run: () => exportPDF("dark") },
       { id: "export-pdf-light", title: "Export PDF (Light)", group: "File", keywords: "print", run: () => exportPDF("light") },
@@ -1681,43 +2000,47 @@ export default function Home() {
       // lands rather than silently changing the view.
       // No longer "Find in Source": find works in whichever pane you are in,
       // so it no longer drags you into Split to reach the source editor.
-      { id: "find", title: "Find…", group: "View", shortcut: "⌘F", keywords: "search find text", run: () => { setFindWithReplace(false); setShowFind(true); } },
-      { id: "find-replace", title: "Find and Replace…", group: "View", shortcut: "⌥⌘F", keywords: "search find replace all substitute", run: () => { setFindWithReplace(true); setShowFind(true); } },
+      { id: "find", title: "Find…", group: "View", shortcut: "⌘F", keywords: "search find text", run: () => { if (documentsOpenRef.current) scheduleDocumentCommand("find"); else { setFindWithReplace(false); setShowFind(true); } } },
+      { id: "find-replace", title: "Find and Replace…", group: "View", shortcut: "⌥⌘F", keywords: "search find replace all substitute", run: () => { if (documentsOpenRef.current) scheduleDocumentCommand("find"); else { setFindWithReplace(true); setShowFind(true); } } },
       ...(TERMINAL_ENABLED ? [{ id: "terminal", title: "Toggle Terminal", group: "View", shortcut: "⌃`", keywords: "shell console zsh bash powershell cmd", run: () => setShowTerminal((v) => !v) }] as AppCommand[] : []),
       { id: "copy-path", title: "Copy File Path", group: "File", keywords: "link location terminal clipboard", run: () => { const p = docRef.current.filePath; if (p) navigator.clipboard.writeText(p); } },
       { id: "copy-content", title: "Copy Document Contents", group: "File", keywords: "clipboard markdown text", run: () => navigator.clipboard.writeText(docRef.current.content) },
-      { id: "format-tables", title: "Format Tables", group: "Format", shortcut: "⌥⌘T", keywords: "align prettify pipes", run: () => editContent((prev) => formatMarkdownTables(prev)) },
-      ...BUILT_IN_THEMES.map((t) => ({
+      { id: "format-tables", title: "Format Tables", group: "Format", shortcut: "⌥⌘T", keywords: "align prettify pipes", run: () => { if (docEditable && !documentsOpenRef.current && !document.querySelector('.markie-shell[inert]')) editContent((prev) => formatMarkdownTables(prev)); } },
+      // One command per style template. Light and dark stay with the color
+      // mode, which paints the chosen template's matching variant.
+      ...THEME_TEMPLATES.map((t) => ({
         id: `theme-${t.id}`,
         title: `Theme: ${t.name}`,
         group: "Theme" as const,
-        keywords: "dark light color style",
+        keywords: `template style color font typography ${t.description}`,
         run: () => {
-          const mode = colorModeForThemeId(t.id);
-          if (mode) {
-            applyColorMode(mode);
-          } else {
-            const store = loadThemeStore();
-            saveThemeStore({ ...store, activeId: t.id });
-            applyTheme(t.tokens);
-          }
+          applyTemplate(t.id);
           pushCloudThemes();
         },
       })),
       { id: "theme-settings", title: "Theme Settings…", group: "Theme", keywords: "color font preset style", run: () => setShowTheme(true) },
       { id: "settings", title: "Settings…", group: "File", shortcut: "⌘,", keywords: "account sign in sync login", run: () => setShowSettings(true) },
+      { id: "agents", title: "Connect an Agent (MCP)…", group: "File", keywords: "mcp claude codex ai agent tools search documents", run: () => setShowAgents(true) },
+      { id: "default-apps", title: "Default Apps for File Types…", group: "File", keywords: "open with finder double click default handler txt json yaml csv xml markdown associate", run: () => { setSettingsSection("files"); setShowSettings(true); } },
+      { id: "global-search", title: "Search All Documents…", group: "File", shortcut: "⇧⌘F", keywords: "find files everywhere full text docx rtf word grep content global", run: () => setShowSearch(true) },
       { id: "library", title: "Library…", group: "File", shortcut: "⌘L", keywords: "documents cloud sync files recent projects organize workspace group", run: () => selectView("library") },
-      { id: "browse", title: "Browse all markdown…", group: "File", keywords: "all files device skills index find", run: () => selectView("browse") },
+      { id: "browse", title: "Browse all documents…", group: "File", keywords: "all files device skills index find", run: () => selectView("browse") },
       { id: "cloud", title: "Cloud…", group: "File", keywords: "synced shared sharing people cloud sync backup invited", run: () => selectView("cloud") },
       { id: "skills", title: "Skills & agent files…", group: "File", keywords: "claude agents codex gemini cursor instructions", run: () => selectView("skills") },
-      { id: "new-file", title: "New file", group: "File", shortcut: "⌘N", keywords: "blank create empty document", run: handleNewFile },
+      { id: "new-file", title: "New file", group: "File", shortcut: "⌘N", keywords: "blank create empty document", run: requestNewFile },
       // Ungated on purpose: this used to vanish from the palette exactly when
       // the user could not work out how to share, which is when they search for
       // it. ShareGate explains whatever is missing.
-      { id: "share", title: "Share…", group: "File", keywords: "collaborate invite live people sync cloud link", run: () => setShowShare(true) },
-      { id: "history", title: "History…", group: "File", keywords: "versions restore snapshot revert previous", run: () => setShowHistory(true) },
+      { id: "share", title: "Share…", group: "File", keywords: "collaborate invite live people sync cloud link", run: () => documentsOpenRef.current ? documentShellRef.current?.share() : setShowShare(true) },
+      { id: "history", title: "History…", group: "File", keywords: "versions restore snapshot revert previous", run: () => documentsOpenRef.current ? scheduleDocumentCommand("document-history") : setShowHistory(true) },
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
-    ],
+    ] satisfies AppCommand[]).filter((command) => {
+      if (command.id === "format-tables" && !docEditable) return false;
+      if (!documentsOpen) return true;
+      if (["find", "find-replace"].includes(command.id)) return !!documentShell?.commands?.enabledCommands.includes("find");
+      if (command.id === "history") return !!documentShell?.commands?.enabledCommands.includes("document-history");
+      return !["reveal", "export-pdf-dark", "export-pdf-light", "export-html", "mode-view", "mode-edit", "mode-split", "stats", "copy-path", "copy-content", "format-tables"].includes(command.id);
+    }),
     [
     requestMode,
       handleOpenFile,
@@ -1728,9 +2051,16 @@ export default function Home() {
       revealLabel,
       exportPDF,
       exportHTML,
-      handleNewFile,
+      requestNewFile,
       selectView,
       editContent,
+      documentsEnabled,
+      documentsOpen,
+      createDocument,
+      openVault,
+      documentShell,
+      scheduleDocumentCommand,
+      docEditable,
     ]
   );
 
@@ -1826,6 +2156,23 @@ export default function Home() {
     handlersRef.current.pageWidth = handlePageWidth;
   }, [handleZoom, handlePageWidth]);
 
+  // A trackpad pinch (or ctrl + scroll) is the same zoom as ⌘+ and ⌘-, for
+  // Markdown and for every document editor. Overlays keep their own scroll.
+  useEffect(() => {
+    const pinch = createPinchZoom((direction) => {
+      if (documentsOpenRef.current) documentShellRef.current?.commands?.execute(direction > 0 ? "zoom-in" : "zoom-out");
+      else handlersRef.current.zoom(direction);
+    });
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      if (document.querySelector('.markie-shell[inert], [role="dialog"][aria-modal="true"]')) return;
+      pinch(event);
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, []);
+
 
   if (!booted) {
     return <div className="h-screen bg-background" />;
@@ -1843,29 +2190,57 @@ export default function Home() {
     richVisible: mode === "preview" || mode === "split",
     canEdit: docEditable,
   };
+  const cloudOpen = showSidePanel(leftState) && leftView === "cloud";
+  const sidePanelOpen = showSidePanel(leftState) && isPanelView(leftView) && !cloudOpen;
+  const renderLibraryPanel = (presentation: "panel" | "workspace") => (
+    <Library
+      key={leftView}
+      view={leftView as typeof leftView & ("library" | "browse" | "cloud" | "skills")}
+      presentation={presentation}
+      onClose={() => setShowLibrary(false)}
+      onOpenPath={presentation === "workspace" ? (path) => { setShowLibrary(false); openPath(path); } : openPath}
+      onOpenFile={presentation === "workspace" ? () => { setShowLibrary(false); handleOpenFile(); } : handleOpenFile}
+      onAddPaths={addPaths}
+      onSignIn={() => setSignInReason("sync")}
+      onManageShare={handleManageShare}
+      onSyncChanged={refreshCollab}
+      activePath={documentsOpen ? null : filePath}
+      accountId={account?.id ?? null}
+      refreshKey={libRefreshKey}
+      documentRecords={documentShell?.records}
+      activeDocumentId={documentsOpen ? documentShell?.selectedId : undefined}
+      onOpenDocument={documentsEnabled ? (record) => { if (presentation === "workspace") setShowLibrary(false); void openDocument(record); } : undefined}
+      onCreateDocument={documentsEnabled ? (format) => { if (presentation === "workspace") setShowLibrary(false); void createDocument(format); } : undefined}
+      onOpenDefaultApps={() => { setSettingsSection("files"); setShowSettings(true); }}
+      renderCloudDocuments={documentsEnabled ? (query, cloudPresentation) => <Suspense fallback={<p role="status" className="px-2 py-2 text-xs text-muted">Loading cloud documents…</p>}><DocumentCloudLibrary query={query} presentation={cloudPresentation} onOpen={(id) => void openCloudDocument(id)} /></Suspense> : undefined}
+      retainedDocument={documentsEnabled ? { name: fileName ?? "Untitled.md", path: filePath, dirty: isDirty, selected: !documentsOpen, onSelect: () => { void leaveDocuments(); } } : undefined}
+    />
+  );
 
   return (
-    <div className="markie-shell h-screen flex flex-col bg-background relative">
+    <div inert={closingWindow} aria-busy={addingFiles || closingWindow} className="markie-shell h-screen flex flex-col bg-background relative">
       <Toolbar
-        mode={mode}
-        onModeChange={requestMode}
-        richUnavailable={largeDocSize !== null}
+        onCommands={documentsEnabled ? () => setShowPalette(true) : undefined}
+        documentMode={documentsOpen}
+        onSave={documentsOpen && documentShell?.hasSession && !documentShell.private ? () => documentShell.save() : undefined}
         onOpenFile={handleOpenFile}
+        openFileDisabled={documentsEnabled && !getElectronAPI() && !documentShell?.ready}
         onExportPDF={exportPDF}
-        onSaveAs={() => handleSaveAs()}
+        onDocumentExportPDF={documentsOpen && !documentShell?.private && !documentShell?.busy && !documentShell?.commands?.modalOpen && documentShell?.commands?.enabledCommands.includes("document-export-pdf") ? () => runDocumentCommand("document-export-pdf") : undefined}
+        onSaveAs={() => documentsOpen ? documentShellRef.current?.save(true) : handleSaveAs()}
         onExportHTML={exportHTML}
-        exporting={exporting}
-        fileName={fileName}
-        isDirty={isDirty}
-        canRename={filePath !== null}
+        exporting={documentsOpen ? !!documentShell?.busy : exporting}
+        fileName={documentsOpen ? documentShell?.name ?? null : fileName}
+        isDirty={documentsOpen ? !!documentShell?.dirty : isDirty}
+        canRename={!documentsOpen && filePath !== null}
         onRename={handleRename}
-        onShare={handleShareClick}
-        canShare={canShare}
+        onShare={() => documentsOpen ? documentShellRef.current?.share() : handleShareClick()}
+        canShare={documentsOpen ? !!documentShell?.hasSession && !documentShell.private : canShare}
         onThemePresets={() => setShowTheme(true)}
-        live={!!collabCfg}
+        live={!documentsOpen && !!collabCfg}
         liveStatus={liveStatus}
-        peers={peers}
-        themeLocked={!!enforcedTheme}
+        peers={documentsOpen ? [] : peers}
+        themeLocked={!documentsOpen && !!enforcedTheme}
       />
 
       <div className="markie-workspace flex-1 flex overflow-hidden">
@@ -1874,34 +2249,25 @@ export default function Home() {
           activeView={leftView}
           panelOpen={showLibrary}
           onSelectView={selectView}
-          canFormat={mode === "preview" || mode === "split"}
-          onNewFile={handleNewFile}
+          canFormat={!documentsOpen && (mode === "preview" || mode === "split")}
+          onNewFile={requestNewFile}
           onAgents={() => setShowAgents(true)}
           onShortcuts={() => setShowHelp((v) => !v)}
           onAccount={() => setShowSettings(true)}
+          onSearch={() => setShowSearch(true)}
+          onVault={documentsEnabled ? () => void openVault() : undefined}
+          vaultActive={documentsOpen && !!documentShell?.private}
         />
 
-        {/* Docked side panel (Library / Browse / Cloud / Skills) */}
-        {showSidePanel(leftState) && isPanelView(leftView) && (
-          <Library
-            key={leftView}
-            view={leftView}
-            onClose={() => setShowLibrary(false)}
-            onOpenPath={openPath}
-            onOpenFile={handleOpenFile}
-            onAddPaths={addPaths}
-            onSignIn={() => setSignInReason("sync")}
-            onManageShare={handleManageShare}
-            onSyncChanged={refreshCollab}
-            activePath={filePath}
-            accountId={account?.id ?? null}
-            refreshKey={libRefreshKey}
-          />
-        )}
+        {/* Docked side panel (Library / Browse / Skills). Cloud now owns the
+            main workspace so snapshots and sync are not squeezed into a
+            file-picker column. */}
+        {sidePanelOpen && renderLibraryPanel("panel")}
+        {cloudOpen && renderLibraryPanel("workspace")}
 
         {/* Document column: the access strip sits above both panes, because it
             explains something about the document, not about one view of it. */}
-        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <div inert={documentsOpen || cloudOpen} style={documentsOpen || cloudOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 flex flex-col overflow-hidden">
           <ShareBanner
             view={shareBanner}
             error={forkError}
@@ -1980,14 +2346,14 @@ export default function Home() {
 
           {/* The formatting row, above the document and below the app chrome,
               where every editor puts it. */}
-          <DocToolbar
+          {!plainText && <DocToolbar
             editor={richEditor}
             appearance={appearance}
             onAppearance={changeAppearance}
             onPrint={printDocument}
             onHistory={filePath ? () => setShowHistory(true) : undefined}
             canEdit={docEditable}
-          />
+          />}
 
           <div
             data-markie-document-area
@@ -2002,10 +2368,12 @@ export default function Home() {
               open={showFind}
               withReplace={findWithReplace}
               target={findTarget}
-              // The source pane is also locked during a live session, because
-              // shared edits have to travel through the rich pane's Yjs doc.
+              // The source pane is also locked during a live Markdown session,
+              // because shared edits have to travel through the rich pane's
+              // Yjs doc. A plain-text live session edits through this pane
+              // itself, so replace stays available there.
               canReplace={
-                docEditable && !(findPane === "source" && !!collabCfg)
+                docEditable && (plainText || !(findPane === "source" && !!collabCfg))
               }
               revision={content}
               onClose={closeFind}
@@ -2020,18 +2388,33 @@ export default function Home() {
                   mode === "split" ? "markie-pane-divider" : ""
                 } markie-source-pane h-full min-w-0 w-full flex-1 overflow-hidden flex flex-col`}
               >
-                {collabCfg && <LiveSourceBanner />}
+                {collabCfg && !plainText && <LiveSourceBanner />}
+                {plainText && canShare && !collabCfg && <p className="px-3 py-2 text-xs text-muted border-b border-border">Plain text syncs as a file until a live session starts.</p>}
                 {liveUnavailable && <LiveUnavailableNote />}
                 <div className="flex-1 min-h-0 overflow-hidden">
-                  <SourceEditor
-                    value={content}
-                    onChange={editContent}
-                    onReady={setSourceHandle}
-                    // Read-only for two separate reasons: the rich pane owns the
-                    // shared document while a session is live, and a viewer may
-                    // not edit at all.
-                    readOnly={!!collabCfg || !docEditable}
-                  />
+                  {plainText && collabCfg ? (
+                    <TextCollabEditor
+                      key={`live-text:${collabCfg.docId}:${collabCfg.readonly}:${tokenTag(collabCfg.token)}`}
+                      value={content}
+                      onChange={editContent}
+                      collab={collabCfg}
+                      readOnly={!docEditable}
+                      onReady={setSourceHandle}
+                      onPeersChange={handlePeersChange}
+                      onCollabStatus={handleCollabStatus}
+                    />
+                  ) : (
+                    <SourceEditor
+                      value={content}
+                      plainText={plainText}
+                      onChange={editContent}
+                      onReady={setSourceHandle}
+                      // Read-only for two separate reasons: the rich pane owns the
+                      // shared document while a session is live, and a viewer may
+                      // not edit at all.
+                      readOnly={!!collabCfg || !docEditable}
+                    />
+                  )}
                 </div>
               </div>
             )}
@@ -2091,6 +2474,12 @@ export default function Home() {
             )}
           </div>
         </div>
+        {documentsEnabled ? <div inert={!documentsOpen || cloudOpen} style={!documentsOpen || cloudOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 min-h-0 overflow-hidden">
+          {documentsOpen && forkError ? <div role="alert" className="px-3 py-2 border-b border-border text-sm text-foreground bg-surface">{forkError}<button type="button" className="ml-3 text-muted" onClick={() => setForkError(null)}>Dismiss</button></div> : null}
+          <Suspense fallback={<p role="status" className="p-4 text-sm text-muted">Loading document tools…</p>}>
+            <DocumentEditor embedded active={documentsOpen && !cloudOpen} onActivate={requestNativeDocument} onShellChange={updateDocumentShell} />
+          </Suspense>
+        </div> : null}
       </div>
 
       {/* Mounted on first open and kept mounted: unmounting the panel kills its
@@ -2116,6 +2505,15 @@ export default function Home() {
       {showPalette && (
         <CommandPalette commands={commands} onClose={() => setShowPalette(false)} />
       )}
+      {showSearch && (
+        <GlobalSearch onOpenPath={openPath} onClose={() => setShowSearch(false)} />
+      )}
+      {showNewDocument && documentsEnabled && (
+        <NewDocumentModal
+          onClose={() => setShowNewDocument(false)}
+          onCreate={(format) => { setShowNewDocument(false); void createDocument(format); }}
+        />
+      )}
       {showHelp && (
         <ShortcutsHelp commands={commands} onClose={() => setShowHelp(false)} />
       )}
@@ -2131,8 +2529,11 @@ export default function Home() {
       )}
       {showSettings && (
         <Settings
+          key={settingsSection ?? "account"}
+          initialSection={settingsSection}
           onClose={() => {
             setShowSettings(false);
+            setSettingsSection(undefined);
             setLibRefreshKey((k) => k + 1);
             refreshCollab(); // sign-in/out changes live eligibility
           }}
@@ -2229,8 +2630,8 @@ export default function Home() {
       {isDragging && (
         <div className="drop-overlay">
           <div className="drop-overlay-inner">
-            <div className="text-2xl mb-2">Drop markdown file</div>
-            <div className="text-sm opacity-60">.md, .markdown, .mdx, .txt</div>
+            <div className="text-2xl mb-2">{documentsEnabled ? "Drop a document" : "Drop markdown file"}</div>
+            <div className="text-sm opacity-60">{documentsEnabled ? "Word, Markdown, text and supported document files" : ".md, .markdown, .mdx, .txt"}</div>
           </div>
         </div>
       )}

@@ -673,6 +673,14 @@ describe("upgrading a populated version 1 database", () => {
     expect(blocks.find((b) => b.block_id === "blk-2")?.merged_into).toBe("blk-1");
     expect(registry.projectsConfigGet("rules-known-good")).toBe("kept");
     expect((registry.get("/v1/notes.md") as { cloud_doc_id: string }).cloud_doc_id).toBe("doc_v1");
+    // Rows from before self-hosted servers live on the primary server: the
+    // new column arrives empty, and an update can name another server.
+    expect((registry.get("/v1/notes.md") as { cloud_origin: string | null }).cloud_origin).toBeNull();
+    registry.update("/v1/notes.md", { cloud_origin: "https://docs.example.com" });
+    expect((registry.get("/v1/notes.md") as { cloud_origin: string | null }).cloud_origin).toBe(
+      "https://docs.example.com"
+    );
+    registry.update("/v1/notes.md", { cloud_origin: null });
 
     // The new table exists on the same open, and the project the pin points at
     // can be renamed without the pin noticing.
@@ -840,5 +848,23 @@ describe("upgrading a populated version 0 database", () => {
     ).toBe("Named by hand");
     expect(registry.get("/legacy/notes.md")).toBeTruthy();
     expect(registry.listRoots()).toEqual(["/legacy/root"]);
+  });
+});
+
+describe.skipIf(!DatabaseSync)("Markie Cloud's old address on a row", () => {
+  it("is rewritten to the current address when the registry opens, and nothing else moves", () => {
+    registry.track("/cloud/old.md", "old.md", "x");
+    registry.update("/cloud/old.md", { cloud_doc_id: "c-old", cloud_origin: "https://api-production-602f.up.railway.app" });
+    registry.track("/cloud/self.md", "self.md", "x");
+    registry.update("/cloud/self.md", { cloud_doc_id: "c-self", cloud_origin: "https://docs.example.com" });
+    registry.track("/cloud/primary.md", "primary.md", "x");
+    registry.update("/cloud/primary.md", { cloud_doc_id: "c-primary" });
+
+    registry.close();
+    const origin = (p: string) => (registry.get(p) as { cloud_origin: string | null }).cloud_origin;
+    expect(origin("/cloud/old.md")).toBe("https://api.markiedocs.com");
+    expect(origin("/cloud/self.md")).toBe("https://docs.example.com");
+    expect(origin("/cloud/primary.md")).toBeNull();
+    expect((registry.get("/cloud/old.md") as { cloud_doc_id: string }).cloud_doc_id).toBe("c-old");
   });
 });

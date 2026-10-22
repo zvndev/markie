@@ -56,6 +56,16 @@ function addDoc(id: string) {
   ).run(id);
 }
 
+// Historical vulnerable rows are audit input, not behavior current claiming
+// should reproduce. Build that old database state directly and retain its token.
+function historicalClaim(docId: string, email: string, userId: string) {
+  db.transaction(() => {
+    db.prepare(`INSERT INTO shares(doc_id,user_id,role,invited_by,created_at,token)
+      SELECT doc_id,?,role,invited_by,created_at,token FROM pending_shares WHERE doc_id=? AND email=?`).run(userId, docId, email);
+    db.prepare("DELETE FROM pending_shares WHERE doc_id=? AND email=?").run(docId, email);
+  })();
+}
+
 // An ordinary share to somebody who already had an account, with the invite
 // email sent. This row HAS a token, which is exactly why "token IS NOT NULL"
 // cannot be the claimed-from-invite signal.
@@ -72,7 +82,8 @@ ensureShareToken("doc-direct", "direct-user");
 addUser("thief", "victim@corp.test", 0, BEFORE);
 addDoc("doc-stolen");
 addPending("doc-stolen", "victim@corp.test", "editor", "owner");
-claimPendingInvites("victim@corp.test", "thief");
+assert.equal(claimPendingInvites("victim@corp.test", "thief"), 0);
+historicalClaim("doc-stolen", "victim@corp.test", "thief");
 
 // The same claim, but by an account that did prove the address. Legitimate.
 addUser("rightful", "rightful@corp.test", 1, BEFORE);
@@ -127,7 +138,7 @@ test("an OAuth account is never flagged: the provider proved the address", () =>
   ).run(BEFORE, BEFORE);
   addDoc("doc-google");
   addPending("doc-google", "googler@corp.test", "viewer", "owner");
-  claimPendingInvites("googler@corp.test", "googler");
+  historicalClaim("doc-google", "googler@corp.test", "googler");
 
   const report = auditVerification(db, CUTOFF);
   assert.equal(

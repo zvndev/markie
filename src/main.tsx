@@ -1,8 +1,20 @@
 import { createRoot } from "react-dom/client";
+import { lazy, Suspense } from "react";
 import "./app/globals.css";
 import "./app/print.css";
 import { CrashProbe, ErrorBoundary } from "@/components/error-boundary";
 import Home from "./app/page";
+import { getElectronAPI } from "./lib/electron";
+import { registerOfflineApp } from "./lib/offline-app";
+import { appRoute } from "./lib/app-route";
+import { PrivateReleaseGate } from "./components/private-release-gate";
+
+const DocumentWorkbench = lazy(() => import("./components/document-workbench").then((module) => ({ default: module.DocumentWorkbench })));
+const route = appRoute(window.location.search, !!getElectronAPI(), import.meta.env.DEV);
+
+if (import.meta.env.PROD) {
+  void registerOfflineApp().then((status) => window.dispatchEvent(new CustomEvent("markie:offline-status", { detail: status })));
+}
 
 // The shell the Next root layout used to own: global styles, the crash probe,
 // and the boundary that turns a renderer exception into a page instead of a
@@ -15,6 +27,8 @@ import Home from "./app/page";
 createRoot(document.getElementById("root")!).render(
   <ErrorBoundary global>
     <CrashProbe />
-    <Home />
+    <PrivateReleaseGate>{route === "workbench"
+      ? <Suspense fallback={<p>Loading document workbench…</p>}><DocumentWorkbench /></Suspense>
+      : <Home documentsEnabled />}</PrivateReleaseGate>
   </ErrorBoundary>
 );

@@ -4,19 +4,28 @@ import { sharesClient, type SharedByMeDoc } from "@/lib/auth-client";
 import { organizeLibraryItems } from "@/lib/library-overview";
 import { shortAgo } from "@/lib/relative-time";
 import { PanelNotice } from "@/components/panel-notice";
+import { DEFAULT_LIBRARY_DOCUMENT_QUERY, libraryDocumentFormat, queryLibraryDocuments, type LibraryDocumentQuery } from "@/lib/library-document-query";
+import { CloudAreaPicker, useCloudAreaScope } from "./cloud-area-picker";
+import type { CloudAreas } from "@/lib/account-identities";
+import "./cloud-view.css";
 
-// Everything the cloud holds for this account, on one page.
+// Everything the cloud holds for this account, as one list.
 //
-// This replaces the Shared panel, whose two tabs were two of the four sections
-// below. The other two used to be the bottom of the Library, which meant "where
-// is my document" had two answers depending on whether the copy on this device
-// still existed. Now the Library is what is on the disk and this page is what
-// is in the cloud.
+// The Library is what is on the disk and this page is what is in the cloud.
+// The cloud used to be four collapsible sections, which meant opening and
+// closing headings to find a document. Now every document is one row in one
+// list, newest first, each row says how it reached you, and a row of toggles
+// above the list narrows it to the ways you care about.
 
 interface CloudViewProps {
-  // Every library item. The page groups them itself, so a caller cannot hand it
-  // a list that disagrees with the counts in the band.
+  // Every library item. The page sorts them into sources itself, so a caller
+  // cannot hand it a list that disagrees with the counts on the toggles.
   items: LibraryItem[];
+  query?: LibraryDocumentQuery;
+  presentation?: "panel" | "workspace";
+  // The ordinary snapshot section owns its own listing and counts. Scope this
+  // legacy service's copy and omit a redundant empty list when shown beside it.
+  alongsideSnapshots?: boolean;
   // The library snapshot has not arrived yet.
   loading: boolean;
   // Reuse the Library's row renderer so open, pull and download behaviour stays
@@ -29,6 +38,8 @@ interface CloudViewProps {
   // expired token for one account followed by a sign-in as another never
   // flips it.
   accountId: string | null;
+  /** Exact confirmed server/UID/bearer scope supplied by the integrated Library. */
+  accountSessionKey?: string;
   // Open the share dialog to manage people on a doc I own.
   onManage: (docId: string, name: string) => void;
   // Open a document that is on this device.
@@ -39,67 +50,32 @@ interface CloudViewProps {
   refreshKey: number;
 }
 
-const OPEN_KEY = "markie.cloud.open.v1";
-const TAB_KEY = "markie.cloudtab.v1";
-// The Shared panel's tab choice. Read exactly once, when TAB_KEY is absent.
-const SHARED_TAB_KEY = "markie.sharedtab.v1";
+// How a document reached this account. Each one is read off data the page
+// already has: ownership on the library rows, and the server's list of my
+// documents other people can open. A public link and a team are not here
+// because nothing this page is given says either about a document; the
+// shared-by-me list counts people and invites only.
+export type CloudSource = "only-me" | "by-me" | "with-me";
 
-type SectionId = "synced" | "cloud" | "with-me" | "by-me";
+export const CLOUD_SOURCES: ReadonlyArray<{ id: CloudSource; label: string; phrase: string }> = [
+  // Mine, and nobody else's: synced from this device or held only in the cloud.
+  { id: "only-me", label: "Only me", phrase: "only you can see" },
+  // Mine, with at least one person on it or invited to it.
+  { id: "by-me", label: "Shared by me", phrase: "you've shared" },
+  // Someone else's, opened to me.
+  { id: "with-me", label: "Shared with me", phrase: "shared with you" },
+];
 
-const SECTION_IDS: SectionId[] = ["synced", "cloud", "with-me", "by-me"];
+const SOURCES_KEY = "markie.cloud.sources.v1";
 
-const SECTION_LABEL: Record<SectionId, string> = {
-  synced: "Synced from this device",
-  cloud: "In your cloud",
-  "with-me": "Shared with me",
-  "by-me": "Shared by me",
-};
-
-// Every section is on the page whatever the account holds, so the page has one
-// shape. A heading that disappears when its list is empty leaves someone
-// hunting for a section with no way to know it exists, so an empty one says so
-// in a line instead. The band is the summary and still leaves zeroes out.
-const SECTION_EMPTY: Record<SectionId, string> = {
-  synced: "Nothing synced from this device yet",
-  cloud: "Nothing in your cloud yet",
-  "with-me": "Nobody has shared a document with you yet",
-  "by-me": "You haven't shared a document yet",
-};
-
-type OpenState = Record<SectionId, boolean>;
-
-// Sections start open: a page whose contents are hidden until you find the
-// triangles is a page that looks empty. The one exception is the pair that used
-// to be tabs, below.
-export function initialCloudOpen(): OpenState {
-  const open: OpenState = { synced: true, cloud: true, "with-me": true, "by-me": true };
-  // A tab is a section with the other one collapsed, so someone who lived in
-  // "Shared by me" lands on "Shared by me" rather than on a page where their
-  // list has moved. Only for someone who actually picked a tab: a new user
-  // never chose to see one list at a time, and gets all four. Carried across
-  // once; after that TAB_KEY exists and the old key is never consulted again.
-  if (readStorage(TAB_KEY) === null) {
-    const carried = readStorage(SHARED_TAB_KEY);
-    if (carried === "with-me" || carried === "by-me") {
-      open["with-me"] = carried === "with-me";
-      open["by-me"] = carried === "by-me";
-    }
-    write(TAB_KEY, carried === "by-me" ? "by-me" : "with-me");
-  }
-  const stored = parseOpen(readStorage(OPEN_KEY));
-  for (const id of SECTION_IDS) {
-    if (typeof stored[id] === "boolean") open[id] = stored[id] as boolean;
-  }
-  return open;
-}
-
-function parseOpen(raw: string | null): Partial<OpenState> {
-  if (!raw) return {};
+function rememberedSources(): CloudSource[] {
   try {
-    const parsed: unknown = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? (parsed as Partial<OpenState>) : {};
+    const parsed: unknown = JSON.parse(readStorage(SOURCES_KEY) ?? "[]");
+    return Array.isArray(parsed)
+      ? CLOUD_SOURCES.map((source) => source.id).filter((id) => parsed.includes(id))
+      : [];
   } catch {
-    return {};
+    return [];
   }
 }
 
@@ -119,58 +95,124 @@ function readStorage(key: string): string | null {
   }
 }
 
-// "3 synced · 1 in your cloud · 2 shared with you · 1 shared by you". A count of
-// zero says nothing worth a segment, so it is left out rather than printed.
+// One row of the list. A document of mine that I have shared is both a
+// library row and an entry in the shared-by-me list, and it is shown once:
+// the library row keeps open, pull and download, and the share adds who can
+// read it and Manage.
+interface CloudEntry {
+  key: string;
+  source: CloudSource;
+  name: string;
+  path: string | null;
+  updatedAt: string | null;
+  // Absent for a document only the server's shared list named.
+  item?: LibraryItem;
+  share?: SharedByMeDoc;
+}
+
+function time(value: string | null): number {
+  const parsed = value ? Date.parse(value) : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function later(a: string | null, b: string | null): string | null {
+  return time(b) > time(a) ? b : a;
+}
+
+// Most recently updated first. Sync state shows as a badge on the row and does
+// not lift it above documents touched since, the same as the Library's Recent.
+function newestFirst(a: CloudEntry, b: CloudEntry): number {
+  return (
+    time(b.updatedAt) - time(a.updatedAt) ||
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
+  );
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+// "5 documents", or "2 of 5 documents" while the toggles hide some.
 //
 // The empty verdict is the one line here that has to be earned. Counting
 // nothing is not the same as knowing there is nothing: two lists feed this
 // band, and while either is still on its way, or has failed outright, "Nothing
 // in the cloud yet" would be the app inventing an answer it does not have.
 export function cloudBandText(
-  counts: Record<SectionId, number>,
+  total: number,
+  shown: number,
   lists: "loading" | "incomplete" | "ready"
 ): string {
-  const parts = [
-    [counts.synced, "synced"],
-    [counts.cloud, "in your cloud"],
-    [counts["with-me"], "shared with you"],
-    [counts["by-me"], "shared by you"],
-  ] as const;
-  const said = parts.filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
-  if (said.length > 0) return said.join(" · ");
+  if (total > 0) return shown === total ? plural(total, "document", "documents") : `${shown} of ${plural(total, "document", "documents")}`;
   if (lists === "loading") return "Checking your cloud…";
   if (lists === "incomplete") return "Some of your cloud didn't load";
   return "Nothing in the cloud yet";
 }
 
-function people(d: SharedByMeDoc): string {
+// "Shared with 2 · 1 invited". Invites count separately because they have not
+// opened anything yet.
+export function shareBadgeText(doc: SharedByMeDoc): string {
   const bits: string[] = [];
-  if (d.memberCount > 0)
-    bits.push(`${d.memberCount} ${d.memberCount === 1 ? "person" : "people"}`);
-  if (d.pendingCount > 0) bits.push(`${d.pendingCount} invited`);
-  const when = shortAgo(Date.parse(d.updated_at));
-  if (when) bits.push(when);
+  if (doc.memberCount > 0) bits.push(`Shared with ${doc.memberCount}`);
+  if (doc.pendingCount > 0) bits.push(`${doc.pendingCount} invited`);
   return bits.join(" · ") || "Shared";
+}
+
+function sourceBadgeText(entry: CloudEntry, shareListKnown: boolean): string {
+  if (entry.share) return shareBadgeText(entry.share);
+  // Who shared it and with what role is already on the Library row itself.
+  if (entry.source === "with-me") return "Shared with you";
+  // "Only you" is a claim about who else can read it, and only the shared list
+  // can back it. Until that list has answered the row says whose it is and no
+  // more.
+  return shareListKnown ? "Only you" : "Yours";
+}
+
+// "No documents you've shared or shared with you yet". The sentence names the
+// toggles that are on, so an empty list never reads as an empty account.
+export function cloudEmptyCopy(sources: CloudSource[], searching: boolean): { title: string; body: string } {
+  const phrases = CLOUD_SOURCES.filter((source) => sources.includes(source.id)).map((source) => source.phrase);
+  const which = phrases.length > 0 ? ` ${phrases.join(" or ")}` : "";
+  if (searching) {
+    return {
+      title: `No documents${which} match this search`,
+      body: phrases.length > 0 ? "Try other words, or turn on more of the buttons above." : "Try other words or another type.",
+    };
+  }
+  if (phrases.length > 0) {
+    return { title: `No documents${which} yet`, body: "Turn on more of the buttons above, or choose All." };
+  }
+  return {
+    title: "Nothing in your cloud yet",
+    body: "Documents you sync, and docs people share with you, show up here.",
+  };
 }
 
 export function CloudView({
   items,
+  query = DEFAULT_LIBRARY_DOCUMENT_QUERY,
+  presentation = "panel",
+  alongsideSnapshots = false,
   loading,
   renderRow,
   signedIn,
   accountId,
+  accountSessionKey,
   onManage,
   onOpenPath,
   cloudError,
   refreshKey,
 }: CloudViewProps) {
-  const [open, setOpen] = useState<OpenState>(initialCloudOpen);
-  const toggle = (id: SectionId) =>
-    setOpen((prev) => {
-      const next = { ...prev, [id]: !prev[id] };
-      write(OPEN_KEY, JSON.stringify(next));
-      return next;
-    });
+  // The toggles that are on. None means every source, the same as All.
+  const [sources, setSources] = useState<CloudSource[]>(rememberedSources);
+  useEffect(() => {
+    write(SOURCES_KEY, JSON.stringify(sources));
+  }, [sources]);
+  const toggleSource = (id: CloudSource) =>
+    setSources((current) => (current.includes(id) ? current.filter((source) => source !== id) : [...current, id]));
+  const includes = (id: CloudSource) => sources.length === 0 || sources.includes(id);
+
+  const sharedArea = useCloudAreaScope();
+  const [localAreaId, setAreaId] = useState(""), [localAreas, setAreas] = useState<CloudAreas | null>(null);
+  const areaId = sharedArea ? sharedArea.areaId : localAreaId, areas = sharedArea ? sharedArea.areas : localAreas;
 
   const [byMe, setByMe] = useState<SharedByMeDoc[] | null>(null);
   const [byMeError, setByMeError] = useState(false);
@@ -185,9 +227,10 @@ export function CloudView({
   // and would leave it there for good if B's request never answered. Only on
   // a change of account: doing it on every refresh would blank the list each
   // time somebody's membership changed.
-  const [byMeFor, setByMeFor] = useState(accountId);
-  if (byMeFor !== accountId) {
-    setByMeFor(accountId);
+  const sessionKey = accountSessionKey ?? accountId;
+  const [byMeFor, setByMeFor] = useState(sessionKey);
+  if (byMeFor !== sessionKey) {
+    setByMeFor(sessionKey);
     setByMe(null);
     setByMeError(false);
   }
@@ -197,6 +240,7 @@ export function CloudView({
   // page already learns about everything else through the same bump.
   useEffect(() => {
     if (!signedIn) return;
+    if (accountSessionKey !== undefined && !accountSessionKey) { setByMeError(true); return; }
     let alive = true;
     sharesClient
       .sharedByMe()
@@ -216,12 +260,7 @@ export function CloudView({
     return () => {
       alive = false;
     };
-  }, [signedIn, accountId, refreshKey, byMeNonce]);
-
-  const { syncedFromDevice, myCloudOnly, sharedItems } = useMemo(
-    () => organizeLibraryItems(items),
-    [items]
-  );
+  }, [signedIn, accountId, accountSessionKey, refreshKey, byMeNonce]);
 
   // Which "shared by me" documents this device also has on disk, so a row can
   // open the document instead of only offering to manage its people.
@@ -233,9 +272,46 @@ export function CloudView({
     return map;
   }, [items]);
 
+  // Every document the text query and area allow, each tagged with its source.
+  // The toggles filter this list afterwards, so their counts say what turning
+  // one on would show.
+  const matched = useMemo(() => {
+    const inArea = (id: string | null) => !areaId || !!areas?.placements.some((placement) => placement.kind === "markdown" && placement.documentId === id && placement.areaId === areaId);
+    const grouped = organizeLibraryItems(items.filter((item) => inArea(item.cloudId)));
+    const unclaimed = new Map((byMe ?? []).filter((doc) => inArea(doc.id)).map((doc) => [doc.id, doc]));
+    const entries: CloudEntry[] = [];
+    const fromItem = (item: LibraryItem, source: CloudSource, share?: SharedByMeDoc): CloudEntry => ({
+      key: `item:${item.cloudId ?? item.path ?? item.name}`, source, name: item.name, path: item.path,
+      updatedAt: share ? later(item.lastOpenedAt, share.updated_at) : item.lastOpenedAt, item, share,
+    });
+    for (const item of [...grouped.syncedFromDevice, ...grouped.myCloudOnly]) {
+      const share = item.cloudId ? unclaimed.get(item.cloudId) : undefined;
+      if (share) unclaimed.delete(share.id);
+      entries.push(fromItem(item, share ? "by-me" : "only-me", share));
+    }
+    for (const item of grouped.sharedItems) entries.push(fromItem(item, "with-me"));
+    // Shared documents with no library row of their own, or one whose owner
+    // this device has not been told yet.
+    for (const doc of unclaimed.values()) {
+      entries.push({ key: `share:${doc.id}`, source: "by-me", name: doc.name, path: localByCloudId.get(doc.id) ?? null, updatedAt: doc.updated_at, share: doc });
+    }
+    entries.sort(newestFirst);
+    return queryLibraryDocuments(entries, query, (entry) => ({
+      key: entry.key, name: entry.name, format: libraryDocumentFormat(entry.name),
+      path: entry.path, updatedAt: entry.updatedAt,
+    }));
+  }, [items, byMe, query, areaId, areas, localByCloudId]);
+
+  const counts = useMemo(() => {
+    const tally: Record<CloudSource, number> = { "only-me": 0, "by-me": 0, "with-me": 0 };
+    for (const entry of matched) tally[entry.source] += 1;
+    return tally;
+  }, [matched]);
+  const shown = sources.length === 0 ? matched : matched.filter((entry) => sources.includes(entry.source));
+
   // Nothing has arrived from the main process yet. The skeleton stands for the
-  // whole page rather than one section: four headings each saying they hold
-  // nothing is a worse answer than "still reading" before we have looked.
+  // whole page: a list saying it holds nothing is a worse answer than "still
+  // reading" before we have looked.
   //
   // This is decided before anything else, because "signed out" is not known
   // yet either. The Library starts every mount with signedIn false and
@@ -256,110 +332,119 @@ export function CloudView({
         ? "loading"
         : "ready";
 
-  const band = cloudBandText(
-    {
-      synced: syncedFromDevice.length,
-      cloud: myCloudOnly.length,
-      "with-me": sharedItems.length,
-      "by-me": byMe?.length ?? 0,
-    },
-    lists
-  );
+  const band = cloudBandText(matched.length, shown.length, lists);
+  const hasFiles = matched.length > 0;
+  const searching = !!query.search.trim() || query.format !== "all";
+  const scopedBand = !alongsideSnapshots || hasFiles ? band
+    : lists === "loading" ? "Checking file sync and sharing…"
+      : lists === "incomplete" ? "Some synced or shared files didn't load"
+        : searching ? "No synced or shared files match these filters." : "No synced or shared files yet.";
+  // Beside the snapshot listing, an account with nothing here is one line in
+  // the band; toggles over an empty list would only repeat it.
+  const condensed = alongsideSnapshots && !hasFiles;
+
+  // The shared-by-me list decides two sources: its own, and which of my
+  // documents are only mine. While it is pending or failed, those toggles
+  // cannot be called empty.
+  const shareListKnown = byMe !== null && !byMeError;
+  const shareListMatters = includes("by-me") || includes("only-me");
+  const settled = !cloudError && (shareListKnown || !shareListMatters);
+  const empty = cloudEmptyCopy(sources, searching);
 
   const notice = cloudError ? { text: cloudError, kind: "error" as const } : null;
+  const workspace = presentation === "workspace";
 
   return (
-    <div className="flex flex-col h-full">
+    <div className={workspace ? "flex min-h-0 flex-col" : alongsideSnapshots ? "mt-2 flex flex-col border-t border-border" : "flex flex-col h-full"}>
+      {alongsideSnapshots ? <h3 className={workspace ? "sr-only" : "px-3 pt-2 text-xs font-medium text-muted"}>File sync &amp; sharing</h3> : null}
+      {signedIn && !sharedArea ? <div className={workspace ? "mb-3 max-w-[300px]" : "px-3 py-1"}><CloudAreaPicker label="File sync cloud area" value={areaId} onChange={setAreaId} onLoaded={setAreas} fullWidth /></div> : null}
       {/* A signed-out account has no counts to summarize, but one we have not
           looked at yet does, so the band stays while the answer is on its way. */}
       {(booting || signedIn) && (
-        <div className="shrink-0 border-b border-border/60 px-2.5 py-2 text-[10.5px] text-muted">
-          {band}
+        <div className={workspace ? "mb-3 shrink-0 rounded-[10px] border border-border/70 bg-background/35 px-3 py-2 text-[11px] tabular-nums text-muted shadow-[inset_0_1px_rgba(255,255,255,0.04)]" : "shrink-0 border-b border-border/60 px-2.5 py-2 text-[10.5px] text-muted"}>
+          {scopedBand}
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
+      {signedIn && !booting && !condensed ? (
+        <div
+          className={`flex shrink-0 flex-wrap items-center gap-1 ${workspace ? "mb-3" : "border-b border-border/60 px-2 py-1.5"}`}
+          role="group"
+          aria-label="Show documents"
+        >
+          <button type="button" aria-pressed={sources.length === 0} onClick={() => setSources([])} className="markie-cloud-chip">
+            All{" "}<span className="markie-cloud-chip-count">{matched.length}</span>
+          </button>
+          {CLOUD_SOURCES.map((source) => (
+            <button
+              key={source.id}
+              type="button"
+              data-cloud-source={source.id}
+              aria-pressed={sources.includes(source.id)}
+              onClick={() => toggleSource(source.id)}
+              className="markie-cloud-chip"
+            >
+              {source.label}{" "}<span className="markie-cloud-chip-count">{counts[source.id]}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <div className={alongsideSnapshots ? "" : "flex-1 overflow-y-auto"}>
         {booting ? (
           <CloudSkeleton label="Loading your cloud documents" />
         ) : !signedIn ? (
           <CloudEmptyState
             icon={<CloudIcon />}
-            title="Sign in to see your cloud"
-            body="Documents you sync, and docs people share with you, show up once you sign in."
+            title={alongsideSnapshots ? "Sign in to see synced and shared files" : "Sign in to see your cloud"}
+            body={workspace ? "" : "Documents you sync, and docs people share with you, show up once you sign in."}
           />
-        ) : (
-          <>
-            <Section
-              id="synced"
-              count={syncedFromDevice.length}
-              open={open.synced}
-              onToggle={toggle}
-            >
-              {syncedFromDevice.length > 0 ? (
-                syncedFromDevice.map((i) => (
-                  <RowWithMediaNote key={i.cloudId ?? i.path ?? i.name} item={i} renderRow={renderRow} />
-                ))
-              ) : (
-                <SectionEmpty id="synced" />
-              )}
-            </Section>
-
-            <Section id="cloud" count={myCloudOnly.length} open={open.cloud} onToggle={toggle}>
-              {myCloudOnly.length > 0 ? (
-                myCloudOnly.map((i) => (
-                  <RowWithMediaNote key={i.cloudId ?? i.path ?? i.name} item={i} renderRow={renderRow} />
-                ))
-              ) : (
-                <SectionEmpty id="cloud" />
-              )}
-            </Section>
-
-            <Section
-              id="with-me"
-              count={sharedItems.length}
-              open={open["with-me"]}
-              onToggle={toggle}
-            >
-              {sharedItems.length > 0 ? (
-                sharedItems.map((i) => (
-                  <RowWithMediaNote key={i.cloudId ?? i.path ?? i.name} item={i} renderRow={renderRow} />
-                ))
-              ) : (
-                <SectionEmpty id="with-me" />
-              )}
-            </Section>
-
-            <Section id="by-me" count={byMe?.length ?? 0} open={open["by-me"]} onToggle={toggle}>
-              {byMeError ? (
-                <CloudEmptyState
-                  icon={<PeopleIcon />}
-                  title="Couldn't load the documents you've shared"
-                  body="The server didn't answer. Your shares are unchanged."
-                  action={{
-                    label: "Try again",
-                    onClick: () => {
-                      setByMeError(false);
-                      setByMeNonce((n) => n + 1);
-                    },
-                  }}
+        ) : condensed && !byMeError && byMe !== null ? null : (
+          <div
+            data-cloud-list
+            className={workspace ? "min-w-0 rounded-xl border border-border/75 bg-surface-2/55 p-2 shadow-[inset_0_1px_rgba(255,255,255,0.04),0_2px_8px_rgba(0,0,0,0.07)]" : "py-1"}
+          >
+            {byMeError && shareListMatters ? (
+              <CloudEmptyState
+                icon={<PeopleIcon />}
+                title="Couldn't load the documents you've shared"
+                body="The server didn't answer. Your shares are unchanged."
+                action={{
+                  label: "Try again",
+                  onClick: () => {
+                    setByMeError(false);
+                    setByMeNonce((n) => n + 1);
+                  },
+                }}
+              />
+            ) : null}
+            {shown.map((entry) =>
+              entry.item ? (
+                <CloudItemRow
+                  key={entry.key}
+                  entry={entry}
+                  item={entry.item}
+                  renderRow={renderRow}
+                  shareListKnown={shareListKnown}
+                  onManage={onManage}
                 />
-              ) : byMe === null ? (
-                <CloudSkeleton label="Loading documents you've shared" />
-              ) : byMe.length > 0 ? (
-                byMe.map((d) => (
-                  <SharedByMeRow
-                    key={d.id}
-                    doc={d}
-                    path={localByCloudId.get(d.id) ?? null}
-                    onOpenPath={onOpenPath}
-                    onManage={onManage}
-                  />
-                ))
               ) : (
-                <SectionEmpty id="by-me" />
-              )}
-            </Section>
-          </>
+                <SharedByMeRow
+                  key={entry.key}
+                  doc={entry.share!}
+                  path={entry.path}
+                  onOpenPath={onOpenPath}
+                  onManage={onManage}
+                />
+              )
+            )}
+            {byMe === null && !byMeError && shareListMatters ? (
+              <CloudSkeleton label="Loading documents you've shared" />
+            ) : null}
+            {shown.length === 0 && settled && !condensed ? (
+              <CloudEmptyState icon={<CloudIcon />} title={empty.title} body={empty.body} />
+            ) : null}
+          </div>
         )}
       </div>
 
@@ -368,20 +453,54 @@ export function CloudView({
   );
 }
 
-// A row plus what reconciliation (electron/reconcile.js) knows about its
-// pictures. The row itself stays the Library's renderer so open, pull and
-// badges live in one place; this only adds a line beneath it.
-function RowWithMediaNote({
+// The small label under a row that says how the document reached you.
+function SourceBadge({ source, text }: { source: CloudSource; text: string }) {
+  return (
+    <span data-cloud-badge={source} className="markie-cloud-source shrink-0">
+      {text}
+    </span>
+  );
+}
+
+// A library row plus a line saying how it reached you and what reconciliation
+// (electron/reconcile.js) knows about its pictures. The row itself stays the
+// Library's renderer so open, pull and badges live in one place. A document
+// I have shared also gets Manage here, which used to live on its own row in a
+// section of its own.
+function CloudItemRow({
+  entry,
   item,
   renderRow,
+  shareListKnown,
+  onManage,
 }: {
+  entry: CloudEntry;
   item: LibraryItem;
   renderRow: (item: LibraryItem) => ReactNode;
+  shareListKnown: boolean;
+  onManage: (docId: string, name: string) => void;
 }) {
+  const share = entry.share;
   return (
-    <div>
+    <div data-cloud-row={entry.source} className="group">
       {renderRow(item)}
-      <MediaNote item={item} />
+      <div className="-mt-1 flex min-w-0 items-center gap-1.5 pb-1 pl-7 pr-2 text-[10px] text-muted">
+        <SourceBadge source={entry.source} text={sourceBadgeText(entry, shareListKnown)} />
+        <MediaNote item={item} />
+        {share ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onManage(share.id, share.name);
+            }}
+            title={`Manage who can access ${share.name}`}
+            className="ml-auto text-[10px] text-muted opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 shrink-0 transition hover:text-foreground focus-visible:opacity-100"
+          >
+            Manage
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -423,53 +542,13 @@ function MediaNote({ item }: { item: LibraryItem }) {
   const wrongType = media.skipped?.find((s) => s.reason === "type");
   if (wrongType) notes.push(`not uploaded: ${wrongType.ref} (type)`);
   if (notes.length === 0) return null;
-  return (
-    <div className="text-[10px] text-muted pl-5 truncate">{notes.join(" · ")}</div>
-  );
+  return <span className="min-w-0 truncate">{notes.join(" · ")}</span>;
 }
 
-function SectionEmpty({ id }: { id: SectionId }) {
-  // Indented to the width of a row's icon, so it reads as the list's first
-  // line rather than as another heading.
-  return <div className="py-1 pr-2 pl-5 text-[11px] text-muted">{SECTION_EMPTY[id]}</div>;
-}
-
-function Section({
-  id,
-  count,
-  open,
-  onToggle,
-  children,
-}: {
-  id: SectionId;
-  count: number;
-  open: boolean;
-  onToggle: (id: SectionId) => void;
-  children: ReactNode;
-}) {
-  return (
-    <div data-cloud-section={id}>
-      <button
-        onClick={() => onToggle(id)}
-        aria-expanded={open}
-        className="flex w-full items-center justify-between gap-2 px-2 pt-3 pb-1 text-left"
-      >
-        <span className="flex items-center gap-1 text-[9px] uppercase tracking-wide text-muted">
-          <Chevron open={open} />
-          {SECTION_LABEL[id]}
-        </span>
-        <span className="rounded border border-border/70 px-1 py-px text-[9px] tabular-nums text-muted">
-          {count}
-        </span>
-      </button>
-      {open && children}
-    </div>
-  );
-}
-
-// A document I own and other people can reach. The row opens it when this
-// device has the file; Manage is always there, because who can read a document
-// is a question you can have about a copy you do not hold.
+// A document I own and other people can reach, which this device's library
+// has no row for. The row opens it when this device has the file; Manage is
+// always there, because who can read a document is a question you can have
+// about a copy you do not hold.
 function SharedByMeRow({
   doc,
   path,
@@ -481,8 +560,10 @@ function SharedByMeRow({
   onOpenPath: (path: string) => void;
   onManage: (docId: string, name: string) => void;
 }) {
+  const when = shortAgo(Date.parse(doc.updated_at));
   return (
     <div
+      data-cloud-row="by-me"
       className={`group rounded-md px-2 py-1.5 ${
         path ? "cursor-pointer hover:bg-accent/40" : ""
       }`}
@@ -503,7 +584,10 @@ function SharedByMeRow({
           Manage
         </button>
       </div>
-      <div className="text-[10px] text-muted pl-5 truncate">{people(doc)}</div>
+      <div className="mt-0.5 flex min-w-0 items-center gap-1.5 pl-5 text-[10px] text-muted">
+        <SourceBadge source="by-me" text={shareBadgeText(doc)} />
+        {when ? <span className="tabular-nums">{when}</span> : null}
+      </div>
     </div>
   );
 }
@@ -547,7 +631,7 @@ function CloudEmptyState({
           <span className="mt-px shrink-0 text-muted">{icon}</span>
           <div>
             <div className="text-[12px] font-medium text-foreground">{title}</div>
-            <div className="mt-0.5 text-[11px] text-muted leading-snug">{body}</div>
+            {body ? <div className="mt-0.5 text-[11px] text-muted leading-snug">{body}</div> : null}
             {action && (
               <button
                 onClick={action.onClick}
@@ -560,25 +644,6 @@ function CloudEmptyState({
         </div>
       </div>
     </div>
-  );
-}
-
-function Chevron({ open }: { open: boolean }) {
-  return (
-    <svg
-      width="9"
-      height="9"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="3"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className={`transition-transform ${open ? "rotate-90" : ""}`}
-    >
-      <path d="M9 18l6-6-6-6" />
-    </svg>
   );
 }
 

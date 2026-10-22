@@ -36,6 +36,8 @@ export interface EditorProps {
   // Live sessions lock the source pane — edits must flow through the
   // collaborative View so they reach the shared Yjs doc
   readOnly?: boolean;
+  /** Plain text must not enable Markdown parsing or formatting behavior. */
+  plainText?: boolean;
   // Hands the page what it needs from this pane (undo, focus, the find
   // target) without handing it the view. Called with null on unmount so
   // nothing holds a destroyed editor.
@@ -64,6 +66,7 @@ export function Editor({
   value,
   onChange,
   readOnly = false,
+  plainText = false,
   onReady,
 }: EditorProps) {
   const [codeTheme, setCodeTheme] = useState<"light" | "dark">(
@@ -101,7 +104,7 @@ export function Editor({
       onCreateEditor={(view) => onReady?.(handleFor(view))}
       extensions={[
         appShortcutGuard,
-        markdown({ base: markdownLanguage, codeLanguages: languages }),
+        ...(plainText ? [] : [markdown({ base: markdownLanguage, codeLanguages: languages })]),
         findHighlightField,
         theme,
         EditorView.lineWrapping,

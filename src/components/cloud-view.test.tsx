@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LibraryItem } from "@/lib/electron";
@@ -69,7 +69,7 @@ function props(over: Partial<React.ComponentProps<typeof CloudView>> = {}) {
   return {
     items: [],
     loading: false,
-    renderRow: (i: LibraryItem) => <div key={i.name}>{i.name}</div>,
+    renderRow: (i: LibraryItem) => <div key={i.name} data-testid="row">{i.name}</div>,
     signedIn: true,
     accountId: "user-a",
     onManage: vi.fn(),
@@ -107,13 +107,21 @@ function renderView(props: Partial<React.ComponentProps<typeof CloudView>> = {})
   return { onManage, onOpenPath, renderRow, view };
 }
 
-const section = (id: string) =>
-  document.querySelector(`[data-cloud-section="${id}"]`) as HTMLElement | null;
-
-const sectionNames = (id: string) =>
-  [...(section(id)?.querySelectorAll("[data-testid='row']") ?? [])].map(
-    (el) => el.textContent
+// Every row's name, top to bottom. A library row is the stub renderer's
+// div; a shared-only row has no library row and leads with its name.
+const rowNames = () =>
+  [...document.querySelectorAll("[data-cloud-row]")].map(
+    (el) => el.querySelector("[data-testid='row'], span")?.textContent
   );
+
+const rowFor = (name: string) =>
+  [...document.querySelectorAll<HTMLElement>("[data-cloud-row]")].find((el) =>
+    el.textContent?.includes(name)
+  ) ?? null;
+
+const badge = (name: string) => rowFor(name)?.querySelector("[data-cloud-badge]")?.textContent;
+
+const chip = (label: string) => screen.getByRole("button", { name: new RegExp(`^${label} \\d+$`) });
 
 beforeEach(() => {
   localStorage.clear();
@@ -121,7 +129,7 @@ beforeEach(() => {
   sharedByMe.mockResolvedValue([]);
 });
 
-describe("the Cloud page's four sections", () => {
+describe("the Cloud page's one list", () => {
   const MIXED = [
     // On this device and unknown to the cloud: belongs to the Library, not here.
     item({ name: "local.md", path: "/notes/local.md", state: "local-only" }),
@@ -130,17 +138,59 @@ describe("the Cloud page's four sections", () => {
     sharedWithMe(),
   ];
 
-  it("puts each kind of document under the heading that explains it", async () => {
+  it("lists every kind of document together, with no sections to open", async () => {
     sharedByMe.mockResolvedValue([doc()]);
     renderView({ items: MIXED });
     await screen.findByText("brief.md");
 
-    expect(sectionNames("synced")).toEqual(["synced.md"]);
-    expect(sectionNames("cloud")).toEqual(["in-my-cloud.md"]);
-    expect(sectionNames("with-me")).toEqual(["from-grace.md"]);
-    expect(within(section("by-me")!).getByText("brief.md")).toBeInTheDocument();
+    expect([...rowNames()].sort()).toEqual(["brief.md", "from-grace.md", "in-my-cloud.md", "synced.md"]);
+    expect(document.querySelectorAll("[data-cloud-section]")).toHaveLength(0);
+    expect(screen.queryByRole("button", { expanded: true })).not.toBeInTheDocument();
     // A file the cloud has never heard of has nothing to say on this page.
     expect(screen.queryByText("local.md")).not.toBeInTheDocument();
+  });
+
+  it("puts the most recently updated document first, whatever its source", async () => {
+    sharedByMe.mockResolvedValue([doc({ id: "d9", name: "brief.md", updated_at: "2026-03-01T00:00:00.000Z" })]);
+    renderView({
+      items: [
+        synced({ lastOpenedAt: "2026-01-01T00:00:00.000Z" }),
+        cloudOnly({ lastOpenedAt: "2026-04-01T00:00:00.000Z" }),
+        sharedWithMe({ lastOpenedAt: "2026-02-01T00:00:00.000Z" }),
+      ],
+    });
+    await screen.findByText("brief.md");
+    expect(rowNames()).toEqual(["in-my-cloud.md", "brief.md", "from-grace.md", "synced.md"]);
+  });
+
+  it("applies the same type and text query to internally fetched shared documents", async () => {
+    sharedByMe.mockResolvedValue([doc({ id: "md", name: "brief.md" }), doc({ id: "txt", name: "summary.txt" })]);
+    const view = render(<CloudView {...props({ items: [synced(), cloudOnly({ name: "summary.txt" })], query: { search: "summary", format: "text", sort: "name" } })} />);
+    await waitFor(() => expect(rowNames()).toEqual(["summary.txt", "summary.txt"]));
+    expect(screen.queryByText("brief.md")).not.toBeInTheDocument();
+    expect(screen.queryByText("synced.md")).not.toBeInTheDocument();
+    view.rerender(<CloudView {...props({ items: [synced()], query: { search: "", format: "all", sort: "default" } })} />);
+    await screen.findByText("brief.md");
+    expect(screen.getByText("synced.md")).toBeInTheDocument();
+  });
+
+  it("honors explicit name sorting across the whole list", async () => {
+    sharedByMe.mockResolvedValue([doc({ id: "z", name: "zebra.md" }), doc({ id: "a", name: "alpha.md" })]);
+    renderView({ items: [synced({ name: "z.md", path: "/z.md", cloudId: "zz" }), synced({ name: "a.md", path: "/a.md", cloudId: "aa" })], query: { search: "", format: "all", sort: "name" } });
+    await screen.findByText("alpha.md");
+    expect(rowNames()).toEqual(["a.md", "alpha.md", "z.md", "zebra.md"]);
+  });
+
+  it("shows a document I have shared once, as its library row with Manage beside it", async () => {
+    // The device has the file and the server's list names it as shared. One
+    // row keeps the Library's open and pull, and adds who can read it.
+    sharedByMe.mockResolvedValue([doc({ id: "c1", name: "brief.md", memberCount: 3 })]);
+    const { onManage, renderRow } = renderView({ items: [synced()] });
+    await waitFor(() => expect(badge("synced.md")).toBe("Shared with 3"));
+    expect(rowNames()).toEqual(["synced.md"]);
+    expect(renderRow.mock.calls.map(([i]) => i.name)).toContain("synced.md");
+    await userEvent.click(screen.getByTitle("Manage who can access brief.md"));
+    expect(onManage).toHaveBeenCalledExactlyOnceWith("c1", "brief.md");
   });
 
   it("hands cloud-only rows to the Library's renderer, which carries Download", () => {
@@ -150,85 +200,215 @@ describe("the Cloud page's four sections", () => {
     expect(rendered).not.toContain("local.md");
   });
 
-  it("files someone else's document under theirs, copy on this device or not", async () => {
-    // Ownership decides the section. A local copy only decides what the row
-    // can do, so listing it as one of mine would say the wrong thing about who
+  it("files someone else's document as shared with me, copy on this device or not", async () => {
+    // Ownership decides the source. A local copy only decides what the row
+    // can do, so calling it one of mine would say the wrong thing about who
     // the document belongs to.
     renderView({
-      items: [
-        synced({
-          name: "theirs.md",
-          cloudId: "c9",
-          owned: false,
-          shared: true,
-          sharedBy: "Grace",
-        }),
-      ],
+      items: [synced({ name: "theirs.md", cloudId: "c9", owned: false, shared: true, sharedBy: "Grace" })],
     });
-    await waitFor(() => expect(sectionNames("with-me")).toEqual(["theirs.md"]));
-    expect(sectionNames("synced")).toEqual([]);
+    await waitFor(() => expect(badge("theirs.md")).toBe("Shared with you"));
+    expect(rowFor("theirs.md")?.dataset.cloudRow).toBe("with-me");
   });
 
-  it("files my document under In your cloud once its file is gone from this device", async () => {
-    // The cloud copy is the only one left. "Synced from this device" would be
-    // describing a file that is not here; the row belongs where the way back
-    // is, beside the other documents this device does not hold.
+  it("keeps my document in the list once its file is gone from this device", async () => {
+    // The cloud copy is the only one left, and the row is where the way back is.
     renderView({ items: [synced({ name: "gone.md", exists: false })] });
-    await waitFor(() => expect(sectionNames("cloud")).toEqual(["gone.md"]));
-    expect(sectionNames("synced")).toEqual([]);
-    expect(await screen.findByText("1 in your cloud")).toBeInTheDocument();
+    await waitFor(() => expect(rowFor("gone.md")?.dataset.cloudRow).toBe("only-me"));
+    expect(await screen.findByText("1 document")).toBeInTheDocument();
   });
 
   it("keeps a document remembered as shared under Shared with me while the server is away", async () => {
     // The list did not load. The row carries the role this account remembers
-    // and no name for who shared it, and it still has a section.
+    // and no name for who shared it, and it is still in the list.
     renderView({
-      items: [
-        synced({
-          name: "theirs.md",
-          cloudId: "c9",
-          owned: false,
-          shared: true,
-          role: "editor",
-          sharedBy: null,
-        }),
-      ],
+      items: [synced({ name: "theirs.md", cloudId: "c9", owned: false, shared: true, role: "editor", sharedBy: null })],
       cloudError: "Couldn't reach the server, so your cloud documents may be out of date.",
     });
-    await waitFor(() => expect(sectionNames("with-me")).toEqual(["theirs.md"]));
-    expect(sectionNames("synced")).toEqual([]);
-    expect(sectionNames("cloud")).toEqual([]);
+    await waitFor(() => expect(badge("theirs.md")).toBe("Shared with you"));
+    expect(rowFor("theirs.md")?.dataset.cloudRow).toBe("with-me");
   });
 
-  it("leaves a row nobody has vouched for out of both ownership sections", async () => {
+  it("leaves a row nobody has vouched for out of the list", async () => {
     // The server did not answer, so this row carries no owner. It is still in
     // the Library's list of what is on this device; it just cannot claim a
-    // section here until somebody says whose it is.
+    // source here until somebody says whose it is.
     renderView({ items: [synced({ name: "unknown.md", owned: null })] });
-    await waitFor(() => expect(section("synced")).not.toBeNull());
-    expect(sectionNames("synced")).toEqual([]);
-    expect(sectionNames("with-me")).toEqual([]);
-  });
-
-  it("keeps every section on the page, so its shape never depends on the account", async () => {
-    renderView({ items: [synced()] });
-    await waitFor(() => expect(section("by-me")).not.toBeNull());
-    for (const id of ["synced", "cloud", "with-me", "by-me"]) {
-      expect(section(id)).not.toBeNull();
-    }
-    // And each empty one says what it would hold, rather than sitting blank.
-    expect(screen.getByText("Nothing in your cloud yet")).toBeInTheDocument();
-    expect(
-      screen.getByText("Nobody has shared a document with you yet")
-    ).toBeInTheDocument();
-    expect(await screen.findByText("You haven't shared a document yet")).toBeInTheDocument();
+    expect(await screen.findByText("Nothing in your cloud yet")).toBeInTheDocument();
+    expect(screen.queryByText("unknown.md")).not.toBeInTheDocument();
   });
 
   it("says the cloud is empty rather than leaving a blank page", async () => {
     renderView();
     expect(await screen.findByText("Nothing in the cloud yet")).toBeInTheDocument();
-    expect(screen.getByText("Nothing synced from this device yet")).toBeInTheDocument();
-    expect(await screen.findByText("You haven't shared a document yet")).toBeInTheDocument();
+    expect(screen.getByText("Nothing in your cloud yet")).toBeInTheDocument();
+  });
+});
+
+describe("how each row says it reached you", () => {
+  it("names the people and invites on a document I shared", async () => {
+    sharedByMe.mockResolvedValue([
+      doc({ id: "a", name: "both.md", memberCount: 2, pendingCount: 1 }),
+      doc({ id: "b", name: "invites.md", memberCount: 0, pendingCount: 2 }),
+      doc({ id: "c", name: "one.md", memberCount: 1, pendingCount: 0 }),
+    ]);
+    renderView();
+    await screen.findByText("both.md");
+    expect(badge("both.md")).toBe("Shared with 2 · 1 invited");
+    expect(badge("invites.md")).toBe("2 invited");
+    expect(badge("one.md")).toBe("Shared with 1");
+  });
+
+  it("names who shared a document with me, or says it was shared when nobody is named", async () => {
+    renderView({ items: [sharedWithMe(), sharedWithMe({ name: "unnamed.md", cloudId: "c4", sharedBy: null })] });
+    await waitFor(() => expect(badge("from-grace.md")).toBe("Shared with you"));
+    expect(badge("unnamed.md")).toBe("Shared with you");
+  });
+
+  it("says only I can see a document once the shared list has answered, and no sooner", async () => {
+    let settle: (docs: SharedByMeDoc[]) => void = () => {};
+    sharedByMe.mockReturnValue(new Promise<SharedByMeDoc[]>((r) => (settle = r)));
+    renderView({ items: [synced()] });
+    // "Only you" is a claim the shared list has to back.
+    expect(badge("synced.md")).toBe("Yours");
+    settle([]);
+    await waitFor(() => expect(badge("synced.md")).toBe("Only you"));
+  });
+
+  it("keeps calling it mine without claiming nobody else can see it when the shared list failed", async () => {
+    sharedByMe.mockResolvedValue(null);
+    renderView({ items: [synced()] });
+    expect(await screen.findByText("Couldn't load the documents you've shared")).toBeInTheDocument();
+    expect(badge("synced.md")).toBe("Yours");
+  });
+});
+
+describe("the source toggles", () => {
+  const ITEMS = [synced(), cloudOnly(), sharedWithMe()];
+  const SHARED = [doc({ id: "d1", name: "brief.md" }), doc({ id: "d2", name: "plan.md" })];
+
+  it("counts each source and the whole list, starting on All", async () => {
+    sharedByMe.mockResolvedValue(SHARED);
+    renderView({ items: ITEMS });
+    await screen.findByText("brief.md");
+    expect(chip("All")).toHaveTextContent("All 5");
+    expect(chip("Only me")).toHaveTextContent("Only me 2");
+    expect(chip("Shared by me")).toHaveTextContent("Shared by me 2");
+    expect(chip("Shared with me")).toHaveTextContent("Shared with me 1");
+    expect(chip("All")).toHaveAttribute("aria-pressed", "true");
+    for (const label of ["Only me", "Shared by me", "Shared with me"]) {
+      expect(chip(label)).toHaveAttribute("aria-pressed", "false");
+    }
+  });
+
+  it("counts only what the text query lets through", async () => {
+    sharedByMe.mockResolvedValue(SHARED);
+    renderView({ items: ITEMS, query: { search: "brief", format: "all", sort: "default" } });
+    await screen.findByText("brief.md");
+    expect(chip("All")).toHaveTextContent("All 1");
+    expect(chip("Shared by me")).toHaveTextContent("Shared by me 1");
+    expect(chip("Only me")).toHaveTextContent("Only me 0");
+  });
+
+  it("shows the union of every toggle that is on, and All again once they are all off", async () => {
+    sharedByMe.mockResolvedValue(SHARED);
+    renderView({ items: ITEMS });
+    await screen.findByText("brief.md");
+
+    await userEvent.click(chip("Shared with me"));
+    expect(rowNames()).toEqual(["from-grace.md"]);
+    expect(chip("All")).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("1 of 5 documents")).toBeInTheDocument();
+
+    await userEvent.click(chip("Shared by me"));
+    expect([...rowNames()].sort()).toEqual(["brief.md", "from-grace.md", "plan.md"]);
+    expect(chip("Shared by me")).toHaveAttribute("aria-pressed", "true");
+    expect(chip("Shared with me")).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.click(chip("Shared with me"));
+    await userEvent.click(chip("Shared by me"));
+    expect(rowNames()).toHaveLength(5);
+    expect(chip("All")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("clears every toggle when All is pressed", async () => {
+    sharedByMe.mockResolvedValue(SHARED);
+    renderView({ items: ITEMS });
+    await screen.findByText("brief.md");
+    await userEvent.click(chip("Only me"));
+    expect([...rowNames()].sort()).toEqual(["in-my-cloud.md", "synced.md"]);
+    await userEvent.click(chip("All"));
+    expect(rowNames()).toHaveLength(5);
+    expect(chip("Only me")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("remembers the toggles across visits, and ignores what it does not recognise", async () => {
+    sharedByMe.mockResolvedValue(SHARED);
+    const { view } = renderView({ items: ITEMS });
+    await screen.findByText("brief.md");
+    await userEvent.click(chip("Shared with me"));
+    await userEvent.click(chip("Only me"));
+    expect(JSON.parse(localStorage.getItem("markie.cloud.sources.v1")!)).toEqual(["with-me", "only-me"]);
+    view.unmount();
+
+    localStorage.setItem("markie.cloud.sources.v1", JSON.stringify(["with-me", "public-link", 7]));
+    renderView({ items: ITEMS });
+    await waitFor(() => expect(rowNames()).toEqual(["from-grace.md"]));
+    expect(chip("Shared with me")).toHaveAttribute("aria-pressed", "true");
+    expect(chip("Only me")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("starts on All when the stored choice is unreadable", async () => {
+    localStorage.setItem("markie.cloud.sources.v1", "{not json");
+    renderView({ items: [synced()] });
+    await screen.findByText("synced.md");
+    expect(chip("All")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("names the toggles that are on when they leave the list empty", async () => {
+    renderView({ items: [synced()] });
+    await screen.findByText("synced.md");
+    await userEvent.click(chip("Shared with me"));
+    expect(screen.getByText("No documents shared with you yet")).toBeInTheDocument();
+    expect(screen.getByText("Turn on more of the buttons above, or choose All.")).toBeInTheDocument();
+
+    await userEvent.click(chip("Shared by me"));
+    expect(screen.getByText("No documents you've shared or shared with you yet")).toBeInTheDocument();
+    // The account is not empty, and the band does not say it is.
+    expect(screen.getByText("0 of 1 document")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing in the cloud yet")).not.toBeInTheDocument();
+  });
+
+  it("says the search found nothing, in the terms of the toggles that are on", async () => {
+    localStorage.setItem("markie.cloud.sources.v1", JSON.stringify(["only-me"]));
+    renderView({ items: [synced(), sharedWithMe()], query: { search: "grace", format: "all", sort: "default" } });
+    expect(await screen.findByText("No documents only you can see match this search")).toBeInTheDocument();
+    expect(screen.getByText("Try other words, or turn on more of the buttons above.")).toBeInTheDocument();
+  });
+
+  it("says the search found nothing at all when no toggle is on", async () => {
+    renderView({ items: [synced()], query: { search: "zzz", format: "all", sort: "default" } });
+    expect(await screen.findByText("No documents match this search")).toBeInTheDocument();
+    expect(screen.getByText("Try other words or another type.")).toBeInTheDocument();
+  });
+
+  it("does not call a toggle empty while the shared list it depends on is still coming", async () => {
+    sharedByMe.mockReturnValue(new Promise<SharedByMeDoc[]>(() => {}));
+    localStorage.setItem("markie.cloud.sources.v1", JSON.stringify(["by-me"]));
+    renderView({ items: [sharedWithMe()] });
+    expect(screen.getByText("Loading documents you've shared")).toBeInTheDocument();
+    expect(screen.queryByText(/No documents/)).not.toBeInTheDocument();
+  });
+
+  it("hides the shared list's loading and failure when only Shared with me is on", async () => {
+    sharedByMe.mockResolvedValue(null);
+    localStorage.setItem("markie.cloud.sources.v1", JSON.stringify(["with-me"]));
+    renderView({ items: [sharedWithMe()] });
+    await waitFor(() => expect(sharedByMe).toHaveBeenCalled());
+    await act(async () => {});
+    expect(rowNames()).toEqual(["from-grace.md"]);
+    expect(screen.queryByText("Loading documents you've shared")).not.toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load the documents you've shared")).not.toBeInTheDocument();
   });
 });
 
@@ -427,6 +607,50 @@ describe("a row's media note", () => {
 });
 
 describe("the Cloud page's header band", () => {
+  it("condenses an empty legacy list beside snapshots without claiming the entire cloud is empty", async () => {
+    renderView({ alongsideSnapshots: true });
+    expect(await screen.findByText("No synced or shared files yet.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "File sync & sharing" })).toBeInTheDocument();
+    expect(document.querySelector("[data-cloud-list]")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Show documents" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing in the cloud yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing in your cloud yet")).not.toBeInTheDocument();
+  });
+
+  it("keeps sync/share rows, toggles, controls and media notes beside snapshots", async () => {
+    sharedByMe.mockResolvedValue([doc()]);
+    const { onManage } = renderView({ alongsideSnapshots: true, items: [synced({ media: { state: "pending", skipped: [] } })] });
+    await screen.findByText("brief.md");
+    expect([...rowNames()].sort()).toEqual(["brief.md", "synced.md"]);
+    expect(screen.getByText("media pending")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Show documents" })).toBeInTheDocument();
+    await userEvent.click(screen.getByTitle("Manage who can access brief.md"));
+    expect(onManage).toHaveBeenCalledExactlyOnceWith("d1", "brief.md");
+    await userEvent.click(chip("Shared by me"));
+    expect(rowNames()).toEqual(["brief.md"]);
+  });
+
+  it("preserves pending and failed shared-list recovery beside snapshots", async () => {
+    let settle: (docs: SharedByMeDoc[] | null) => void = () => {};
+    sharedByMe.mockReturnValue(new Promise<SharedByMeDoc[] | null>((resolve) => { settle = resolve; }));
+    renderView({ alongsideSnapshots: true });
+    expect(screen.getByText("Checking file sync and sharing…")).toBeInTheDocument();
+    expect(screen.getByText("Loading documents you've shared")).toBeInTheDocument();
+    settle(null);
+    expect(await screen.findByText("Some synced or shared files didn't load")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    sharedByMe.mockResolvedValue([doc()]);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("brief.md")).toBeInTheDocument();
+  });
+
+  it("distinguishes filtered legacy results from an empty account beside snapshots", async () => {
+    renderView({ alongsideSnapshots: true, items: [synced()], query: { search: "unmatched", format: "all", sort: "default" } });
+    expect(await screen.findByText("No synced or shared files match these filters.")).toBeInTheDocument();
+    expect(screen.queryByText("No synced or shared files yet.")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-cloud-list]")).toBeNull();
+  });
+
   it("does not call the cloud empty while a list is still on its way", async () => {
     let settle: (docs: SharedByMeDoc[]) => void = () => {};
     sharedByMe.mockReturnValue(new Promise<SharedByMeDoc[]>((r) => (settle = r)));
@@ -435,6 +659,7 @@ describe("the Cloud page's header band", () => {
     // Counting nothing is not the same as knowing there is nothing.
     expect(screen.getByText("Checking your cloud…")).toBeInTheDocument();
     expect(screen.queryByText("Nothing in the cloud yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing in your cloud yet")).not.toBeInTheDocument();
 
     settle([]);
     expect(await screen.findByText("Nothing in the cloud yet")).toBeInTheDocument();
@@ -446,6 +671,7 @@ describe("the Cloud page's header band", () => {
 
     expect(await screen.findByText("Some of your cloud didn't load")).toBeInTheDocument();
     expect(screen.queryByText("Nothing in the cloud yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing in your cloud yet")).not.toBeInTheDocument();
   });
 
   it("does not call the cloud empty when the main listing failed", async () => {
@@ -458,86 +684,13 @@ describe("the Cloud page's header band", () => {
 
     expect(await screen.findByText("Some of your cloud didn't load")).toBeInTheDocument();
     expect(screen.queryByText("Nothing in the cloud yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing in your cloud yet")).not.toBeInTheDocument();
   });
 
-
-  it("counts every section, skipping the ones that hold nothing", async () => {
-    sharedByMe.mockResolvedValue([doc()]);
-    renderView({ items: [synced(), sharedWithMe()] });
-    expect(
-      await screen.findByText("1 synced · 1 shared with you · 1 shared by you")
-    ).toBeInTheDocument();
-  });
-
-  it("names all four when all four have something", async () => {
-    sharedByMe.mockResolvedValue([doc(), doc({ id: "d2", name: "plan.md" })]);
+  it("counts every document once, a shared one of mine included", async () => {
+    sharedByMe.mockResolvedValue([doc({ id: "c1" }), doc({ id: "d2", name: "plan.md" })]);
     renderView({ items: [synced(), cloudOnly(), sharedWithMe()] });
-    expect(
-      await screen.findByText("1 synced · 1 in your cloud · 1 shared with you · 2 shared by you")
-    ).toBeInTheDocument();
-  });
-});
-
-describe("collapsing a section", () => {
-  it("hides its rows and remembers the choice", async () => {
-    const { view } = renderView({ items: [synced()] });
-    await waitFor(() => expect(section("synced")).not.toBeNull());
-    await userEvent.click(screen.getByRole("button", { name: /Synced from this device/ }));
-    expect(sectionNames("synced")).toEqual([]);
-    expect(JSON.parse(localStorage.getItem("markie.cloud.open.v1")!).synced).toBe(false);
-
-    view.unmount();
-    renderView({ items: [synced()] });
-    await waitFor(() => expect(section("synced")).not.toBeNull());
-    expect(sectionNames("synced")).toEqual([]);
-  });
-});
-
-describe("the Shared panel's tab becoming a section", () => {
-  const shared = [sharedWithMe()];
-
-  it("opens the list someone was last living in and collapses the other", async () => {
-    localStorage.setItem("markie.sharedtab.v1", "by-me");
-    sharedByMe.mockResolvedValue([doc()]);
-    renderView({ items: shared });
-
-    expect(await screen.findByText("brief.md")).toBeInTheDocument();
-    expect(sectionNames("with-me")).toEqual([]);
-    expect(localStorage.getItem("markie.cloudtab.v1")).toBe("by-me");
-  });
-
-  it("collapses the other one, whichever tab they were on", async () => {
-    localStorage.setItem("markie.sharedtab.v1", "with-me");
-    sharedByMe.mockResolvedValue([doc()]);
-    renderView({ items: shared });
-
-    // The band counts it either way, so this waits for the fetch rather than
-    // for a row that is deliberately not on screen.
-    expect(await screen.findByText(/1 shared by you/)).toBeInTheDocument();
-    expect(sectionNames("with-me")).toEqual(["from-grace.md"]);
-    expect(screen.queryByText("brief.md")).not.toBeInTheDocument();
-  });
-
-  it("gives a new user all four sections open", async () => {
-    sharedByMe.mockResolvedValue([doc()]);
-    renderView({ items: shared });
-
-    expect(await screen.findByText("brief.md")).toBeInTheDocument();
-    expect(sectionNames("with-me")).toEqual(["from-grace.md"]);
-    expect(localStorage.getItem("markie.cloudtab.v1")).toBe("with-me");
-  });
-
-  it("reads the old key once and never again", async () => {
-    localStorage.setItem("markie.sharedtab.v1", "by-me");
-    const { view } = renderView({ items: shared });
-    await waitFor(() => expect(section("with-me")).not.toBeNull());
-    view.unmount();
-
-    // The Shared panel is gone, but a stale key must not be able to fold a
-    // section away a second time after the user has opened it.
-    localStorage.setItem("markie.cloud.open.v1", JSON.stringify({ "with-me": true }));
-    renderView({ items: shared });
-    await waitFor(() => expect(sectionNames("with-me")).toEqual(["from-grace.md"]));
+    expect(await screen.findByText("4 documents")).toBeInTheDocument();
   });
 });
 
@@ -547,7 +700,8 @@ describe("documents I have shared", () => {
       doc({ memberCount: 2, pendingCount: 1, updated_at: new Date(Date.now() - 3 * 3600_000).toISOString() }),
     ]);
     renderView();
-    expect(await screen.findByText("2 people · 1 invited · 3h")).toBeInTheDocument();
+    expect(await screen.findByText("Shared with 2 · 1 invited")).toBeInTheDocument();
+    expect(within(rowFor("brief.md")!).getByText("3h")).toBeInTheDocument();
   });
 
   it("opens the share dialog from the row's Manage button", async () => {
@@ -560,9 +714,10 @@ describe("documents I have shared", () => {
   it("opens the document itself when this device has the file", async () => {
     sharedByMe.mockResolvedValue([doc()]);
     // Matched by cloud id, not by name: the file on this device may have been
-    // renamed since it was shared.
+    // renamed since it was shared. Nobody has vouched for this copy's owner,
+    // so the server's row stands for it, and opens the file on disk.
     const { onOpenPath, onManage } = renderView({
-      items: [synced({ name: "renamed.md", path: "/notes/brief.md", cloudId: "d1" })],
+      items: [synced({ name: "renamed.md", path: "/notes/brief.md", cloudId: "d1", owned: null })],
     });
     await userEvent.click(await screen.findByText("brief.md"));
     expect(onOpenPath).toHaveBeenCalledExactlyOnceWith("/notes/brief.md");
@@ -648,7 +803,7 @@ describe("changing accounts under an open panel", () => {
     sharedByMe.mockResolvedValue([doc({ name: "alice-brief.md", memberCount: 2 })]);
     const view = render(<CloudView {...props({ accountId: "user-a" })} />);
     expect(await screen.findByText("alice-brief.md")).toBeInTheDocument();
-    expect(screen.getByText(/2 people/)).toBeInTheDocument();
+    expect(screen.getByText(/Shared with 2/)).toBeInTheDocument();
     expect(screen.getByTitle("Manage who can access alice-brief.md")).toBeInTheDocument();
 
     let settle: (docs: SharedByMeDoc[]) => void = () => {};
@@ -656,7 +811,7 @@ describe("changing accounts under an open panel", () => {
     view.rerender(<CloudView {...props({ accountId: "user-b" })} />);
 
     expect(screen.queryByText("alice-brief.md")).not.toBeInTheDocument();
-    expect(screen.queryByText(/2 people/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Shared with 2/)).not.toBeInTheDocument();
     expect(screen.queryByTitle("Manage who can access alice-brief.md")).not.toBeInTheDocument();
     expect(screen.getByText("Checking your cloud…")).toBeInTheDocument();
 
@@ -693,7 +848,8 @@ describe("when the cloud cannot answer", () => {
   it("asks a signed-out user to sign in and makes no request", () => {
     renderView({ signedIn: false, items: [synced()] });
     expect(screen.getByText("Sign in to see your cloud")).toBeInTheDocument();
-    expect(section("synced")).toBeNull();
+    expect(document.querySelector("[data-cloud-list]")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Show documents" })).not.toBeInTheDocument();
     expect(sharedByMe).not.toHaveBeenCalled();
   });
 
@@ -703,7 +859,7 @@ describe("when the cloud cannot answer", () => {
       cloudError: "Couldn't reach the server, so your cloud documents may be out of date.",
     });
     expect(await screen.findByText(/Couldn't reach the server/)).toBeInTheDocument();
-    expect(sectionNames("synced")).toEqual(["synced.md"]);
+    expect(rowNames()).toEqual(["synced.md"]);
   });
 
   it("says so to a signed-out user too, who cannot see any rows at all", () => {

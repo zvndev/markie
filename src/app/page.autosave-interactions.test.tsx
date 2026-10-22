@@ -1,8 +1,9 @@
 // Autosave shares the open document with a disk watcher, a sync engine and a
 // CSV encoder. Each boundary gets a test, so a refactor cannot cross one in
 // silence. A failure here is a real bug, not a stale expectation.
-import { render, screen, waitFor } from "@testing-library/react";
-import { act } from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, useEffect } from "react";
+import type { DocumentShellState } from "@/lib/document-shell";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElectronAPI, SaveResult } from "@/lib/electron";
 import { emit, installBridge } from "@/test/mock-bridge";
@@ -15,6 +16,10 @@ vi.mock("@/lib/auth-client", () => ({
   adoptAuthToken: () => {},
   pushSyncConfig: () => {},
 }));
+vi.mock("@/components/document-workspace-host", () => ({ DocumentWorkspaceHost: ({ active, onShellChange }: { active: boolean; onShellChange: (value: DocumentShellState) => void }) => {
+  useEffect(() => { onShellChange({ name: "Untitled.docx", ready: true, hasSession: true, dirty: false, private: false, busy: false, records: [], create: vi.fn(), open: vi.fn(), importFile: vi.fn(), save: vi.fn(), share: vi.fn(), showVault: vi.fn(), prepareLeave: async () => true, prepareClose: async () => true }); }, [onShellChange]);
+  return active ? <p>Active document renderer</p> : null;
+} }));
 
 import Home from "./page";
 
@@ -45,6 +50,30 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("autosave truce lines", () => {
+  it("keeps the latest dirty Markdown recovery before entering Documents", async () => {
+    const draftSave = vi.fn(async () => ({ ok: true }));
+    installBridge({ getInitialFile: vi.fn(async () => OPEN), saveFile: vi.fn(async () => ({ success: false, canceled: true })), draftSave });
+    render(<Home documentsEnabled />);
+    await waitFor(() => expect(richEditor()?.isEditable).toBe(true));
+    await act(async () => { richEditor().commands.setContent("keep this dirty buffer"); });
+    fireEvent.click(screen.getByRole("button", { name: "Library: recent and projects (⌘L)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New document…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New Word document" }));
+    await screen.findByText("Active document renderer");
+    expect(draftSave).toHaveBeenCalledWith(expect.objectContaining({ path: OPEN.path, name: OPEN.name, content: expect.stringContaining("keep this dirty buffer") }));
+  });
+
+  it("does not leave dirty Markdown when the recovery write fails", async () => {
+    installBridge({ getInitialFile: vi.fn(async () => OPEN), saveFile: vi.fn(async () => ({ success: false, canceled: true })), draftSave: vi.fn(async () => ({ ok: false })) });
+    render(<Home documentsEnabled />);
+    await waitFor(() => expect(richEditor()?.isEditable).toBe(true));
+    await act(async () => { richEditor().commands.setContent("keep this window"); });
+    fireEvent.click(screen.getByRole("button", { name: "Library: recent and projects (⌘L)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New document…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New Word document" }));
+    await screen.findByText(/Markdown recovery copy could not be saved/);
+    expect(screen.queryByText("Active document renderer")).not.toBeInTheDocument();
+  });
   it("keeps writing the CSV encoding to disk, not the markdown it edits", async () => {
     const saveFile = okSave(CSV.path);
     await bootWith(CSV, { saveFile });

@@ -9,7 +9,7 @@ import remarkRehype from "remark-rehype";
 import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import rehypeSanitize, { defaultSchema, type Options as SanitizeSchema } from "rehype-sanitize";
 import { rehypeMedia } from "./rehype-media.ts";
 import { rehypeCloudAssets } from "./rehype-cloud-assets.ts";
 import { rehypeDocLinks } from "./rehype-doc-links.ts";
@@ -22,6 +22,12 @@ import {
   primaryDownloadCta,
   type DownloadPlatform,
 } from "./downloads.ts";
+import { deployment } from "./deployment.ts";
+
+// Where "Get Markie" and "Markie home" point. The official deployment serves
+// its own download routes, so it keeps the site it was handed; a self-hosted
+// server serves none and sends people to the official site instead.
+const markieSite = (siteUrl: string) => (deployment().official ? siteUrl : deployment().downloadSiteUrl);
 
 // rehype-sanitize schema: drops scripts, event handlers, and javascript:/data:
 // hrefs (defaultSchema.protocols) while preserving what rehype-highlight (hljs
@@ -37,7 +43,7 @@ const SVG = ["svg","path","line","g","defs","use","rect","polyline"];
 // clip as a remote or inlined source; a local path was never going to reach
 // the reader anyway.
 const MEDIA = ["video", "audio", "source"];
-const sanitizeSchema = {
+const sanitizeSchema: SanitizeSchema = {
   ...defaultSchema,
   // Kept in step with src/lib/markdown-html.ts. defaultSchema.protocols.src is
   // ["http", "https"], which strips the src off an inlined image and leaves an
@@ -247,7 +253,7 @@ export function renderPublicPage(opts: {
   const { title, markdown, token, siteUrl } = opts;
   const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
   const safeTitle = esc(title);
-  const download = primaryDownloadCta();
+  const download = primaryDownloadCta(markieSite(""));
   return `<!doctype html>
 <html lang="en"><head>
   <meta charset="utf-8">
@@ -267,7 +273,7 @@ export function renderPublicPage(opts: {
   </div>
   <main>${content}</main>
   <div class="cta">
-    These look even better in <a href="${esc(siteUrl)}">Markie</a>. It's free,
+    These look even better in <a href="${esc(markieSite(siteUrl))}">Markie</a>. It's free,
     it's fast, and your markdown will thank you.
   </div>
 </body></html>`;
@@ -348,7 +354,7 @@ export function renderDownloadPage(opts: {
 }
 
 export function renderNotFoundPage(siteUrl: string): string {
-  const download = primaryDownloadCta(siteUrl);
+  const download = primaryDownloadCta(markieSite(siteUrl));
   return `<!doctype html>
 <html lang="en"><head>
   <meta charset="utf-8">
@@ -390,7 +396,7 @@ export function renderSharedDocPage(opts: {
   const { title, markdown, docId, siteUrl, sharedBy, canEdit, invitedEmail } = opts;
   const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
   const safeTitle = esc(title);
-  const download = primaryDownloadCta(siteUrl);
+  const download = primaryDownloadCta(markieSite(siteUrl));
   const openInMarkie = `markie://doc?id=${encodeURIComponent(docId)}&src=${encodeURIComponent(siteUrl)}`;
   return `<!doctype html>
 <html lang="en"><head>
@@ -432,8 +438,8 @@ export function renderSharedDocPage(opts: {
 // document id, or someone whose access was removed. It names no document and
 // does not distinguish "no such document" from "not yours", so the page cannot
 // be used to find out which document ids exist.
-export function renderAccessRequiredPage(siteUrl: string): string {
-  const download = primaryDownloadCta(siteUrl);
+export function renderAccessRequiredPage(siteUrl: string, signInHref: string | null = null): string {
+  const download = primaryDownloadCta(markieSite(siteUrl));
   return `<!doctype html>
 <html lang="en"><head>
   <meta charset="utf-8">
@@ -445,8 +451,9 @@ export function renderAccessRequiredPage(siteUrl: string): string {
   <main style="text-align:center;padding-top:80px">
     <div style="font-size:40px;font-weight:800;color:var(--accent-strong)">M</div>
     <h1>You need access to this document</h1>
-    <p style="color:var(--muted)">Markie documents are never public. Open the link from your invite email, or open the document in Markie with the account it was shared with.</p>
-    <p><a class="btn primary" href="${esc(download.href)}">${esc(download.label)}</a></p>
+    <p style="color:var(--muted)">Markie documents are never public. ${signInHref ? "Sign in with the account it belongs to, or open the link from your invite email." : "Open the link from your invite email, or open the document in Markie with the account it was shared with."}</p>
+    ${signInHref ? `<p><a class="btn primary" href="${esc(signInHref)}">Sign in</a></p>` : ""}
+    <p><a class="btn ${signInHref ? "ghost" : "primary"}" href="${esc(download.href)}">${esc(download.label)}</a></p>
   </main>
 </body></html>`;
 }

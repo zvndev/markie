@@ -11,8 +11,28 @@ function subscribe(channel, callback, map) {
   return () => ipcRenderer.removeListener(channel, handler);
 }
 
-contextBridge.exposeInMainWorld("electronAPI", {
+// No document preview, even a trusted one, receives the desktop capability bridge.
+if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
+  // Markie Cloud (electron/cloud-origin.json). A literal, because a sandboxed
+  // preload cannot require a file; electron/cloud-origin.test.ts checks it.
+  privateReleaseAuthOrigin: process.argv?.includes("--markie-private-release") ? "https://api.markiedocs.com" : undefined,
+  privateReleaseStatus: () => ipcRenderer.invoke("private-release-status"),
+  privateReleaseSession: () => ipcRenderer.invoke("private-release-session"),
+  privateReleaseAuthorize: (token) => ipcRenderer.invoke("private-release-authorize", token),
+  privateReleaseLock: () => ipcRenderer.invoke("private-release-lock"),
+  privateReleaseTakeAuthLink: () => ipcRenderer.invoke("private-release-take-auth-link"),
+  documentFiles: {
+    open: () => ipcRenderer.invoke("document-files:open"),
+    saveAs: (args) => ipcRenderer.invoke("document-files:save-as", args),
+    read: (args) => ipcRenderer.invoke("document-files:read", args),
+    write: (args) => ipcRenderer.invoke("document-files:write", args),
+    release: (args) => ipcRenderer.invoke("document-files:release", args),
+    takeInitial: () => ipcRenderer.invoke("document-files:take-initial"),
+  },
+  onDocumentFileOpened: (callback) => subscribe("document-file-opened", callback),
+  onDocumentCommand: (callback) => subscribe("document-command", callback, (command) => command),
+  setDocumentMenuState: (state) => ipcRenderer.invoke("document-menu-state", state),
   openFile: (args) => ipcRenderer.invoke("open-file", args),
   openFilePath: (path) => ipcRenderer.invoke("open-file-path", path),
   // Electron 32+ removed File.path; resolve a dropped File to its disk path.
@@ -39,6 +59,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   setDefaultMarkdownApp: () => ipcRenderer.invoke("set-default-md"),
   defaultMarkdownStatus: () => ipcRenderer.invoke("default-md-status"),
+  defaultAppsStatus: () => ipcRenderer.invoke("default-apps-status"),
+  setDefaultApps: (ids) => ipcRenderer.invoke("default-apps-set", { ids }),
+  copySecret: (text) => ipcRenderer.invoke("secret-clipboard-copy", text),
+  clearSecretClipboard: () => ipcRenderer.invoke("secret-clipboard-clear"),
+  vaultTouchIdAvailable: (vaultId) => ipcRenderer.invoke("vault-touch-id-available", vaultId),
+  vaultTouchIdEnroll: (vaultId, secret) => ipcRenderer.invoke("vault-touch-id-enroll", vaultId, secret),
+  vaultTouchIdUnlock: (vaultId) => ipcRenderer.invoke("vault-touch-id-unlock", vaultId),
+  vaultTouchIdRemove: (vaultId) => ipcRenderer.invoke("vault-touch-id-remove", vaultId),
+  searchDocuments: (args) => ipcRenderer.invoke("doc-search", args),
   // Workspace / Files view
   wsRoots: () => ipcRenderer.invoke("ws-roots"),
   wsDefaultPath: () => ipcRenderer.invoke("ws-default-path"),
@@ -70,6 +99,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   projectsConfig: () => ipcRenderer.invoke("projects-config"),
   projectsWriteOverview: (args) => ipcRenderer.invoke("projects-write-overview", args),
   mcpInfo: () => ipcRenderer.invoke("mcp-info"),
+  agentPermissions: () => ipcRenderer.invoke("agent-permissions"),
+  setAgentPermissions: (next) => ipcRenderer.invoke("agent-permissions-set", next),
   // Skills — the catalog of installable skills, and what is installed
   skillsCatalogList: () => ipcRenderer.invoke("skills-catalog-list"),
   skillsCatalogRefresh: (source) => ipcRenderer.invoke("skills-catalog-refresh", source),
@@ -117,7 +148,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     subscribe("menu-command-palette", callback),
   onMenuShortcuts: (callback) => subscribe("menu-shortcuts", callback),
   onMenuTheme: (callback) => subscribe("menu-theme", callback),
-  onMenuSettings: (callback) => subscribe("menu-settings", callback),
+  onMenuSettings: (callback) => subscribe("menu-settings", callback, (section) => (section === "files" ? section : undefined)),
   onDeepLink: (callback) => subscribe("deep-link", callback, (url) => url),
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   openLocalFile: (payload) => ipcRenderer.invoke("open-local-file", payload),
@@ -125,6 +156,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openDocLink: (payload) => ipcRenderer.invoke("open-doc-link", payload),
   linkPreview: (url) => ipcRenderer.invoke("link-preview", url),
   syncConfig: (cfg) => ipcRenderer.invoke("sync-config", cfg),
+  syncSession: (cfg) => ipcRenderer.invoke("sync-session", cfg),
+  // Settings > Servers. Adding takes a check main made itself (probeId).
+  serversList: () => ipcRenderer.invoke("servers-list"),
+  serversProbe: (address) => ipcRenderer.invoke("servers-probe", address),
+  serversAdd: (probeId) => ipcRenderer.invoke("servers-add", probeId),
+  serversRemove: (origin) => ipcRenderer.invoke("servers-remove", origin),
+  serverRequest: (req) => ipcRenderer.invoke("server-request", req),
   syncDocRole: (args) => ipcRenderer.invoke("sync-doc-role", args),
   registryTrack: (args) => ipcRenderer.invoke("registry-track", args),
   registryGet: (path) => ipcRenderer.invoke("registry-get", path),
@@ -142,6 +180,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   docPull: (args) => ipcRenderer.invoke("doc-pull", args),
   docOpenShared: (args) => ipcRenderer.invoke("doc-open-shared", args),
   onMenuLibrary: (callback) => subscribe("menu-library", callback),
+  onMenuGlobalSearch: (callback) => subscribe("menu-global-search", callback),
   onSetMode: (callback) => subscribe("set-mode", callback, (mode) => mode),
   onToggleStats: (callback) => subscribe("toggle-stats", callback),
   onFileOpened: (callback) =>
@@ -150,7 +189,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     subscribe("file-changed-on-disk", callback, (data) => data),
   watchFile: (filePath) => ipcRenderer.invoke("watch-file", filePath),
   // The window is closing: settle the document, then answer.
-  onAppWillClose: (callback) => subscribe("app-will-close", callback),
+  onAppWillClose: (callback) => subscribe("app-will-close", callback, (requestId) => requestId),
   // Crash journal
   draftSave: (args) => ipcRenderer.invoke("draft-save", args),
   draftCheck: () => ipcRenderer.invoke("draft-check"),
@@ -162,7 +201,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // A background reconciliation pass changed a document's text or media, so
   // whatever is showing the library should look again.
   onLibraryChanged: (callback) => subscribe("library-changed", callback),
-  appCloseReady: () => ipcRenderer.send("app-close-ready"),
+  appCloseReady: (requestId) => ipcRenderer.send("app-close-ready", requestId),
+  appCloseCancel: (requestId) => ipcRenderer.send("app-close-cancel", requestId),
   crashConsentGet: () => ipcRenderer.invoke("crash-consent-get"),
   crashConsentSet: (enabled) => ipcRenderer.invoke("crash-consent-set", enabled),
   crashLogReveal: () => ipcRenderer.invoke("crash-log-reveal"),

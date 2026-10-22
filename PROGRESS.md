@@ -1321,3 +1321,217 @@
   run with MARKIE_ALLOW_E2E=1; wiring them into CI is a new BACKLOG item. 0.4.1–0.4.3 push +
   rebase from the other Mac and the Windows real-device pass still stand.
 - blockers: Windows signing/publication unchanged.
+
+## 2026-10-14 Original document platform foundation
+
+Kirby authorized a shared web/desktop document platform, an original DOC/DOCX engine, broader plain text and encrypted protected storage. The complete requested plan is saved at docs/superpowers/plans/2026-10-14-document-platform.md; provenance is recorded at docs/decisions/2026-10-14-original-document-engine.md. Circular ENG-6886 through ENG-6889 own the bounded foundation tasks and review evidence.
+
+Implemented dependency-free original ZIP/XML/OOXML package inspection and safe plain-run editing, a bounded original CFB/Word97-2003 text reader, explicit format/browser file utilities, and isolated Web Crypto vault primitives. Plain .txt/.text/.log files now stay literal in the existing app. The development-only ?documents=1 workbench exports copies and never overwrites originals. Independent review findings were fixed with regression tests, including package protection/XML validation, Buffer ownership, directory-name validation, text collaboration gating, drop routing and unsaved-copy replacement.
+
+Verification: 193 test files passed, 2,749 tests passed, one existing skipped test; 72 MCP tests passed; typecheck, lint, build and diff checks passed. A real Chromium workbench flow created/edited/exported DOCX; unzip validation and the independent platform text consumer read the expected Unicode/XML-sensitive text. Desktop/mobile-width browser checks had no framework overlay or console errors. Existing test-environment and large-bundle warnings remain.
+
+This is a verified initial foundation, not completed Word compatibility or a shipped vault. Microsoft Word corpus/fidelity, native/browser trusted unlock, encrypted persistence/search/recovery, Office multiplayer/sharing, full web hosting/offline support and release remain outside this milestone. No dependencies added, no release/deploy performed, and human-maintained VISION.md/CONSTITUTION.md remain unchanged.
+
+## 2026-10-17 — terminal: progressed (Word theme fidelity)
+
+Resolved supported DOCX Latin theme fonts and mapped theme colors through validated internal package relationships, document settings and the existing style cascade. Theme lookup is cached per snapshot. Unsupported script/language contexts, ambiguous dependencies and transformed palette entries stay unresolved instead of guessing. Original theme/settings/styles/unknown parts remain intact; simply viewing or opening the Font dialog does not bake display styles into the file. Explicit formatting still intentionally overrides the selected raw attributes.
+
+The existing Markie shell, shared Font control and native Format menu are unchanged. Added original specification-shaped fixtures, adversarial package/cascade tests and shared-control integration tests; no third-party document engine or dependency was introduced. Independent architecture and adversarial reviewers approved the bounded implementation after script-slot isolation and repeated-lookup performance fixes.
+
+Verification: 3,591 renderer/Electron tests passed with one existing skip; global lint, typecheck and diff checks passed. The packaged Apple Silicon preview exercised theme CSS, the shared font picker, native Font dialog, byte-identical view-only/dialog-neutral exports, explicit override/export/reopen and retained unsaved Markdown in the same shell, with no page errors. Light/dark visual review and clean-commit desktop packaging evidence are attached to Circular ENG-6981 through ENG-6985.
+
+This is a bounded fidelity improvement, not completion of the full roadmap. Full Word pagination/layout, complex-script/font-language inference, exact Word color quantization, legacy DOC writing, broader indexing, Office multiplayer, biometric vault keys, production cloud verification and release remain unclaimed. Windows execution and physical Intel Mac verification require their respective devices; local preview packages are not a public release.
+
+## 2026-10-17 — terminal: progressed (supported Word print/PDF)
+
+Added a bounded model-derived DOCX print projection and routed it through Markie's actual shared Export menu and existing native File Print/PDF commands. The native menu items are merged with their Markdown fallbacks, not duplicated. No new shell, document engine, dependency, persisted model or export IPC payload was introduced. White printed paper retains supported document typography, page geometry, lists, basic tables, raster pictures, links and explicit breaks independently of the app theme. Pending revisions and unsupported/unrepresentable content are rejected; excluded comments and font/printer limitations are disclosed.
+
+Current immutable model capture precedes asynchronous work. Synchronous guards cover overlapping output, IME composition, private/modal/inert scopes, edits, navigation and close; output never clears document dirty/file generations. Hidden-renderer readiness now decodes pictures and aborts visibly on a failed readiness probe instead of printing partial content. Independent architecture and cross-model adversarial reviews approved the repaired implementation. Native PDF probes exposed a lost terminal blank page; a glyph-free terminal fragment fixes it without modifying Word bytes.
+
+Verification: 3,654 renderer/Electron tests passed with one existing skip; typecheck, global lint and diff checks passed. Packaged Apple Silicon QA exercised shared/native Word PDF, native Print cancellation without sending a physical job, immediate unsaved edits, source neutrality, modal/revision guards, retained Markdown and its native PDF fallback. Actual PDFs prove A4 and landscape Letter geometry, all five explicit-break edge cases, complete 50-row and oversized-row table content, embedded decoded pictures and no app chrome. Text bounds remain inside the requested margins across 22 stress/sample pages. Light/dark shell and rendered sample-page visual review passed at 91/100. Circular ENG-6991 through ENG-6995 hold the detailed proof and clean-commit packaging acceptance.
+
+This supports Chromium print fragmentation of the supported view, not Word-equivalent on-screen pagination, mixed-section/merged-table fidelity or physical printer certification. Installed fonts and printer settings can alter output. Windows runtime, physical Intel hardware, non-Chromium browser print, Office multiplayer, native DOC writing, all-files body indexing, OS-protected biometric vault keys and public release remain outside this milestone. Existing installed Markie and user documents were not modified.
+
+## 2026-10-17 — terminal: progressed (native RTF and ODT)
+
+Kirby approved additive local RTF/ODT recovery formats and a private format-aware rich-editor adapter. Implemented separate original codecs and source ownership, preserving record fields/version and the real DOCX engine. Supported native RTF/ODT text, font/color/emphasis and paragraph alignment/spacing now use the existing canvas and actual shared controls; unsupported operations are withheld and rejected rather than converted behind the scenes. Untouched exports are byte-exact. Modified output must reopen faithfully within the codec budgets before returning save bytes. Native file grants retain owner/revision/conflict protection for same-format writes, and Library filters distinguish RTF/ODT. Cloud/server formats remain unchanged; new-format cloud upload is explicitly unavailable.
+
+Architecture and cross-model adversarial reviews found and separate writers repaired Buffer aliasing, empty RTF paragraphs, inherited/default style resets, structural text loss, cumulative ODT expansion limits, mutation/export budget mismatch and foreign-session ownership. Default rebasing is linear and preserves IDs/undo; unsupported source formatting fails on import instead of during an unrelated edit. No other document-engine source, sample reader or dependency was used.
+
+Verification: 3,785 renderer/Electron tests passed with one existing skip; global lint/typecheck and diff checks passed. Independent review ran 204 focused tests and concrete hostile probes. Packaged Apple Silicon flows passed exact view/dialog exports, edited same-format save/reopen, Unicode, retained source metadata/parts, native capability gates, actual format filters, unsupported RTF original export and retained unsaved Markdown in one shell. Settled light/dark visual review passed at 94/100; initial screenshots captured CSS transitions and were replaced with measured settled-state captures, without changing shared styling. An independent platform RTF consumer read the edited Unicode text correctly.
+
+The requested linked local test guide is at docs/document-testing/README.md, with document-type, editing/recovery and pending-connected-document checks. The approved Darkmown direction is genuinely interactive after explicit trust, with media/state controls/API connections; it is not implemented or replaced by a static-only preview in this milestone. Cleaner cloud/people filtering, previous-collaborator autocomplete, in-app cross-format document links, README/text aliases and remaining fidelity/security/release work stay explicitly pending in the guide and Circular. Clean-commit native/package proof is attached to ENG-7000 through ENG-7003 and ENG-7009. No public release, deployment, installed-app replacement or user-source overwrite occurred.
+
+## 2026-10-18 Document finish-out: explorer, cloud, search, new-file modal, dark mode, text multiplayer
+
+Kirby asked to close the gaps Codex left after the document-platform work and cut a new super-nightly. The device index (electron/mdindex.js) now walks every supported document extension with a per-row format and a budget-capped body snippet for text-representation formats, so Browse finds DOCX/DOC/RTF/ODT/TXT/CSV/JSON/YAML/XML/HTML/Darkmown as well as Markdown, filters by each type (persisted), and searches inside small text files. Projects keep their Markdown-only taxonomy (use-projects + mdmeta guards), and the MCP scan budget mirror gained maxSnippets without widening the MCP API. HTML is its own Library/Cloud/Browse filter bucket instead of "other".
+
+Cloud snapshots now accept RTF, ODT, and Darkmown on both the client allowlist and the byte-snapshot server store; the cloud dialog opens RTF/ODT in the existing rich editor and exports through exportRichDocument, keeping the original format and digest checks. New-file creation is a centered modal (Library action, Cmd+N, native menu, command palette) listing all ten creatable types; the documents-disabled fallback still starts blank Markdown directly. The on-screen Word canvas no longer forces white paper in dark mode (theme tokens on screen, white only in docx-print output), with hyperlink color on the status-blue token and a CSS guard test.
+
+Multiplayer: shared plain text (.txt/.text/.log) now enters a live Y.Text session in its own source pane (src/lib/text-collab.ts binding with surrogate-safe single-span diffs, seeded like Markdown, presence names but no remote carets). The server seed lock now recognizes Y.Text content (roomHasCollabContent) so text rooms do not stay locked to the seeder. DOCX/RTF/ODT remain snapshot-shared with version conflicts, not live co-edited; that is still pending and is not claimed here.
+
+Verification: focused suites for every area above; full renderer/Electron run 4,301 passed with 1 existing skip (two timing-bound tests in untouched files flaked once under load and pass standalone); MCP 72 passed; server 387 passed, 1 skipped; lint and typecheck clean; production build clean.
+
+## 2026-10-19 Documents everywhere: search, recents, default apps, style templates, real-world DOCX
+
+Kirby asked for default-app offers for every fully supported type, working type filters, complete recents, a global search with filters, deeper styling with templates, light/dark for text/RTF/DOCX, and a straight answer on whether RTF and DOCX were fixed. Terminal state: shipped as super-nightly 10.
+
+Opens and recents: clicking a DOCX/RTF/ODT/JSON/YAML/XML/Darkmown/HTML row in Browse or Recent did nothing (rich opens required a drag-drop grant); advertised index/registry paths now queue like a Finder open. Every granted document is recorded in the registry (trackOpened keeps any sync hash) and the macOS Recent Documents list; Library rows show a type tag and no longer offer Markdown-only copy/sync on rich files, and the open retained document filters by its real type.
+
+Global search (⇧⌘F, rail button, File menu, palette): main-process doc-text.js extracts bounded body text from Markdown/text/CSV/JSON/YAML/XML, DOCX and ODT (ZIP part with an inflate ceiling), RTF and HTML (legacy DOC stays name-only), caches by path+mtime+size, searches newest first within a time budget, and supersedes stale queries. The modal filters by type (persisted), highlights hits and excerpts, and opens with the keyboard.
+
+Default apps: Settings > Files offers Markdown, plain text (+log), Darkmown, CSV, JSON, YAML and XML individually or all at once through LaunchServices, and lists DOCX/RTF/ODT as not offered yet with reasons. The packaged app now declares those content types (Alternate rank for generic text types so installing never steals them; Darkmown exported and owned); the desktop preview declares none.
+
+Styling: eight style templates (Markie, Paper, Nord, Solarized, Ink, Rosé, Forest, Studio), each with light and dark variants and typography; color mode now picks the template's tone instead of resetting to Markie; custom colors fork a per-tone preset; a redesigned Appearance gallery with typography controls and specimen.
+
+Document theming: authored run colors adapt for display only when they would be unreadable on the current page (neutral to foreground, other hues mirrored to 4.5:1), live on theme change; native controls follow the tone.
+
+DOCX: measured on the owner's real Word files (local, read-only, aggregate only) only 29 of 103 opened editable. Inert parts, external hyperlinks, unknown properties, common page breaks and UTF-16 parts now pass through opaquely with per-run locks for tabs/breaks/fields: 94 of 103 editable, all untouched exports byte-identical, all one-word edits round-trip. Remaining locks: pending tracked changes, protection, OLE, local-file links, nested tables, content controls.
+
+Also fixed: isolated dev Electron profiles were always refused because Chromium applies --user-data-dir before the guard compared against it.
+
+Verification: full renderer/Electron suite, lint, typecheck, build; isolated real-Electron CDP check (temp HOME and profile) passed 8/8: index finds every type, search IPC body hits in DOCX/RTF/MD, type filter, ⇧⌘F modal, result opens editable DOCX, DOCX lands in Recent, indexed RTF opens from a path. LaunchServices status script verified read-only against the real system. Not verified: clicking "Use Markie" in the installed app (changes the owner's real associations; left for Kirby).
+
+## 2026-10-19 Zoom for every text format, and a way to find default apps
+
+Zoom: the classic source editor (every .txt/.log/.csv file and Markdown Source) hard-coded 14px, so ⌘+/⌘- changed nothing visible there; it now scales with the document zoom through --doc-zoom. The documents text editor (CSV/JSON/YAML/XML/Darkmown source) now answers the menu's zoom commands, read-only included, and zooms its CSV table preview. Text, Word, RTF and ODT editors share one remembered zoom (markie.documents.zoom.v1) on the toolbar's steps. A trackpad pinch or ctrl+scroll zooms Markdown and every document editor.
+
+Default apps: Markie menu > Default Apps for File Types… opens Settings > Files directly (Settings remounts on the requested tab). When Markdown is already Markie's, the Library footer now offers "Open text, CSV, JSON and more in Markie…" while any offered type still opens elsewhere; dismissible, and it re-checks when Settings changes an association.
+
+Verification: targeted suites, full suite (one known load-flake in scripts/private-release.test.ts that passes alone and on the clean tree), lint, typecheck, build; isolated real-Electron CDP check: pinch zooms a .txt 14px -> 15.4px and back, and an RTF to 110% with the zoom remembered. Not verified live: the native menu items themselves (CDP cannot click native menus; routing is unit-tested).
+
+## 2026-10-20 Word editor: no paragraph boxes, page setup on the toolbar
+
+The faint blue frame around the paragraph holding the caret (.docs-word-paragraph.is-selected, plus a 2px focus-visible ring that contenteditable always matches) is gone; the caret is the focus indicator, as in every word processor. Page Setup and Paragraph Spacing, previously only in the Layout menu and ⌘K, now have toolbar buttons for DOCX, RTF and ODT. Page Setup is laid out as Paper (current size highlighted, dimensions shown), Orientation and Margins rows.
+
+Verification: full suite 4434 passed, lint, typecheck, build; isolated live Electron DOCX check: focused paragraph computes outline none, the toolbar button opens Page Setup, screenshot reviewed.
+
+## 2026-10-20 Vault in the rail with env keys, one Cloud list, scannable rows, honest save status
+
+Vault: a lock button in the left rail opens the vault page (the Library row, the in-vault "Close vault" button and the Cloud page's "Back to document" button are gone; the rail navigates). The vault page groups Environment keys and Files; .env files open in a structured editor (masked values, per-row reveal and copy with a 30s fingerprint-checked clipboard clear, add/remove, duplicate and key validation, comments, Raw view) over a dotenv parser whose unedited round-trip is byte-identical (33 named cases plus 300 generated files). The vault's import picker accepts any file so .env/.env.local can be imported; .env is still not a document type elsewhere in Markie, on purpose.
+
+Cloud: one list of every cloud file with toggle chips (Only me, Shared by me, Shared with me; counts, multi-select, persisted), no Snapshots/Sync tabs; snapshots follow the list on the same page.
+
+Library rows: a per-type colored page icon and type badge (light and dark tone values) replace the text type tag, and small status icons replace the Local/Synced/... text badges (each labelled for hover and assistive tech). Recent is ordered purely by when files were opened; sync state no longer lifts rows (shared files someone edited were pinned to the top), and rows that arrive after the first snapshot are placed by recency instead of on top.
+
+Save status: the documents footer says "Not saved to a file yet", "Edited" or "Saved" instead of recovery jargon, and the redundant "Recover now" button is gone (recovery already runs 600ms after typing). A recovery copy that matches its file on disk is now marked saved, so the Library lists only real drafts and unsaved edits ("Not saved to a file" section with Draft/Unsaved badges) instead of every opened file as "Recovered". Copies made before this change still show until their file is next edited and saved.
+
+Examples: Markie seeds "Welcome to Darkmown.wd" (counter, slider estimate, form) into ~/Documents/Markie once per install, never overwriting and never re-creating after deletion; the pinned compiler accepts it with no warnings.
+
+Also: palette "Connect an Agent (MCP)…".
+
+Verification: full suite (4528 passed), lint, typecheck, build; live isolated Electron: Library row with CSV icon, badge and status icon; vault created, unlocked, and New environment keys opens the env editor; Darkmown example seeded into the temp workspace.
+
+Held for owner sign-off (CONSTITUTION: MCP tool shape is a human checkpoint): MCP support for every document type (markie_find_documents, markie_search_documents, markie_read_document, markie_write_document; shared search core in mcp/doc-text.cjs) and the matching Connect an agent dialog copy. Uncommitted in the working tree.
+
+## 2026-10-20 Desktop security fixes from the read-only production audit
+
+A read-only audit (no deploys, no variable changes, no database access, no secret values printed) found nothing critical. Fixed on the desktop side here:
+- Vault secrets are copied and cleared by the main process (electron/secret-clipboard.js). The renderer could not read the clipboard back after Markie lost focus, so the 30-second clear never ran in real use. The clear compares a SHA-256 fingerprint, leaves anything copied since alone, and also runs on vault lock and app quit.
+- Document links no longer launch scripts, apps or installers: only documents, PDFs, images, audio and video open; anything else (including bundles such as .app/.pkg) is shown in Finder with a note.
+- The CSP now rides on every app:// response, not only through the webRequest hook; verified live on the page's response headers.
+
+Server findings (public-link token leak via document links, unthrottled share-invite email, unbounded WebSocket payload and history, localhost CORS in production, unencrypted Litestream replica in B2) are being prepared as code for owner review; nothing is deployed. Production api runs a 2026-10-08 CLI upload, so any redeploy also ships every later server change.
+
+## 2026-10-20 Production hardened with owner approval
+
+Approved by Kirby: encrypt the backup, redeploy the api, delete the detached volume, commit the MCP tools (2FA skipped).
+- Litestream replicates age-encrypted to `markie-db-age/`. This was proven locally with v0.3.13 (encrypt, restore, resume after restart). In production the objects carry the age header, and a test restore inside the live container passed integrity with all 43 docs. Every plaintext replica version under `markie-db/` was permanently deleted from B2. A lifecycle rule now purges retired encrypted files a day after they are hidden. The replica key is already scoped to the Markie bucket.
+- The age identity is in Railway variables; its offline copy was handed to Kirby.
+- The api was redeployed from a clean `git archive` of the server directory at d659415, after a snapshot (`/data/pre-deploy-2026-10-20.db`, integrity ok). Before deploying, the migration was rehearsed: the Sep 14 image ran on seeded data, then the new image booted on that same data, carrying over the session, access control, public links, shares and history pruning. Live checks after the deploy passed. There were no errors in the logs.
+- The detached volume `api-volume-a5Kl` was kept. The CLI delete never ran (the account has 2FA), and it may hold original data, so it stays until someone inspects it.
+- Private packaging allowed only `electron/`, `out/` and production `node_modules/`, so the shared `mcp/doc-text.cjs` failed the nightly build. It is now a named exception, and a test pins it.
+
+## 2026-10-20 Vault: Touch ID, real backups, calm copy
+
+Kirby asked to drop the vault's warning paragraphs and make the vault tight with biometrics. He dropped CI/CD secret delivery.
+- **Touch ID as a second key slot.** The passphrase stays the master key. Turning Touch ID on stores the vault key encrypted under a random 32-byte device secret in IndexedDB (AES-GCM, bound to the vault id). The device secret lives in the main process under safeStorage (Keychain) in `userData/vault-touch-id/<vaultId>.bin` (0600). It is released only after `systemPreferences.promptTouchID`. Turning Touch ID off deletes both halves. Vaults without a slot open unchanged.
+- **No Keychain access on open.** Opening the vault no longer touches the Keychain. A live check found that a status query reaching safeStorage could raise a macOS keychain password sheet that froze the main process. Only enroll and unlock use the Keychain now.
+- **Backup and restore.** "Back up vault…" writes one encrypted `.markievault` file holding the header and records, without the device slot. "Restore from backup…" validates the file strictly and writes only after the backup's passphrase unlocks it. `navigator.storage.persist()` runs on every create and unlock.
+- **Passphrase help and copy.** "Suggest a passphrase" picks 6 EFF words through crypto.getRandomValues, and an entropy meter rates it. The warning paragraphs are gone; one line remains on the create screen.
+
+Verification: the full suite passed (4586) along with lint and typecheck. In a live isolated Electron run, the create screen, passphrase suggestion, unlock and settings all render with no main-process stall.
+Not verified: the real Touch ID sheet and Keychain storage in the signed build.
+
+## 2026-10-20 Release pipeline, self-hosting, public repo hardening
+
+Kirby asked for a super nightly, early access, then timed stable pipeline, self-hosted servers that can still share, and a secure public repo.
+- Public repo: gitleaks over all history and the unpushed commits found only fixtures. Actions hold no secrets; Azure signing trusts only `main`. Pinned the signing workflow's actions to SHAs with Dependabot for the pins, turned on Dependabot alerts and security fixes, required CI approval for all outside contributors, and protected `main` (PR plus unit, lint-build, server, mcp, version-consistency; admins can bypass).
+- Release pipeline: `release:publish:early:*`, `release:promote`, `release:promote-due`, `release:hold`/`unhold`, `release:rollback:early`/`:win`. Early builds carry stable numbers and the same files are promoted after a 3-day soak. The CONSTITUTION amendment that lets one "release" approve the timed promotion is drafted for Kirby; nothing schedules `promote-due` yet.
+- Self-hosted server: `/api/server-info`, `MARKIE_OFFICIAL` (unset keeps Markie Cloud's guards), any S3 storage, encrypted backups required, `deploy/init.sh`, invite-only sign-up by default (`MARKIE_SIGNUP`, `MARKIE_ADMIN_EMAIL`), optional quotas, `docs/SELF-HOSTING.md`. Docker end to end with MinIO passed, including restore after losing the volume. Production needs no new variables.
+- Desktop: trusted servers list, a native prompt before opening links from unknown servers, a session per server, per-doc `cloud_origin` registry column, server badges, invite-only messaging. Private builds stay on Markie Cloud.
+- Security review of the multi-server code found a high-severity token mix-up through Google sign-in; fixed with an `iss` on the desktop deep link, plus seven smaller fixes (explicit sync destination, look-alike names, bounded bodies, encoded path checks with origin-bound tokens, loopback, landing extensions, private-build lock).
+- Fixed test flakes: vault clipboard clear race, MCP tests inheriting the developer's CLAUDE_CONFIG_DIR.
+
+Verification: npm test 4789 passed, server 453 passed, MCP 81, lint, typecheck, build. 0.8.1-super-nightly.16 published at d5bd85c; the unauthenticated feed returns 404.
+Not verified: a real self-hosted server on the internet, real Google sign-in against one, live editing across servers, B2 with the new empty `region` line (lands at the next api deploy).
+
+## 2026-10-21 Production: api.markiedocs.com, linked sign-ins, key rotation, nightly.17
+
+Kirby approved the production steps.
+- **Domain.** Railway custom domain `api.markiedocs.com` on service `api`; Vercel DNS `CNAME api -> 3ghxt5sn.up.railway.app`. Certificate was still validating at the time of writing.
+- **API deploy.** `a101c56` from a clean `git archive`, after snapshot `/data/pre-deploy-2026-10-21.db` (integrity ok) and a check that no two accounts' emails differ only by case (18 users, 0 collisions). `/health` 200, `/api/docs` 401, Litestream writing to `markie-db-age`.
+- **Linked sign-ins.** `MARKIE_ACCOUNT_IDENTITIES=1`; `/api/account/identities` answers 401 without a session.
+- **Litestream key rotated.** New age identity in `~/.markie-secrets/litestream-age-identity-2026-10-21.txt`; Railway identity and recipient both match it. A full restore from B2 inside the container decrypted with the new key (18 users, integrity ok).
+- **Nightly.** `0.8.1-super-nightly.17` published at `a101c56` (nightly.16 had already shipped at d5bd85c). Unauthenticated feed 404.
+
+- **Certificate.** Stuck at `VALIDATING_OWNERSHIP` until the `_railway-verify.api` TXT record was added; the CLI never printed it.
+- **Google redirect URI.** Added through Codex computer use in Arc on project `markie-499114`; the Railway callback stays.
+- **Flip.** `BETTER_AUTH_URL=https://api.markiedocs.com`. Both names report that origin in `/api/server-info`; `/auth/google-start` on the Railway name answers 308 to the new name; Google receives `redirect_uri=https://api.markiedocs.com/api/auth/callback/google` and shows its sign-in page with no mismatch.
+
+Not verified: a full Google and email sign-in by a real released app after the flip.
+
+## 2026-10-21 Locked private builds finish Google sign-in (nightly.18, .19)
+
+A real sign-out test on nightly.17 stranded Kirby on the private-build screen: it offered only email codes. Two causes, fixed in turn:
+- **nightly.18 (1a5bb99).** The gate hid Google because main dropped every deep link while locked and only the document shell listened for `markie://auth`. Main now lets `markie://auth` through while locked, and the gate takes it while locked.
+- **nightly.19 (8c025ae).** Google still did not unlock: locking reloads the window and clears `rendererReady`, which only the document shell sets, so main queued the link forever. Main now keeps it as `pendingAuthLink` for the gate to collect, and also sends it live.
+
+Verification: full suite 4826, lint, typecheck. Live, through Codex computer use in Markie and Arc: nightly.19 signed out, Continue with Google, the gate cleared on its own, same account, synced docs and the 9 local drafts intact. Email-code sign-in through `api.markiedocs.com` also passed on nightly.17.
+
+## 2026-10-21 Agent cloud links (nightly.20, a7eec0f)
+
+Kirby asked that an agent can make him "a hosted private Markie" and hand back a link he can open away from the computer; public links only when he says so.
+- **App:** `electron/agent-bridge.js` listens on `~/.markie/agent-<id>.sock` (0600, dir 0700) with a token in `agent-bridge-<id>.json` (0600). `electron/agent-cloud.js` decides: Markdown and text under home only; consent on an agent's first upload with "always allow" (Agents dialog toggle); every public link confirmed; locked private builds refuse.
+- **MCP:** `markie_cloud_status`, `markie_cloud_sync`, `markie_cloud_public_link` (create only when asked), `markie_cloud_revoke_public_link`, via `mcp/agent-client.mjs`. Instructions tell agents to hand back the private link.
+- **Server:** `/auth/web-signin` and `/auth/web-google`, and the `/d/<id>` access page offers Sign in. Not deployed yet: Railway paused builds in all regions during a major outage on 2026-10-21.
+- **Library:** Copy private link.
+
+Verification: app suite 4842, server 480, MCP 85, lint, typecheck. Live on nightly.20: the repo MCP server synced `~/Documents/Markie/agent-cloud-link-test.md` after one consent click (driven through Codex computer use), returned `https://api.markiedocs.com/d/be41f999-…`, which is 403 anonymously, has no public link, and opens in Arc with Kirby's session.
+Not verified: web sign-in on the live server (pending deploy), a public link made live, an agent registered in Claude Code or Codex using the tools on its own.
+
+## 2026-10-22 Markie Cloud moved from Railway to Fly.io
+
+Railway disclosed on 2026-10-21 that customer environment variables may have been read, and paused deploys. Kirby chose to leave Railway.
+- **Secrets rotated in the move:** new Backblaze backup key (`markie-backup-fly-20261022`) and media key (`markie-assets-fly-20261022`), new age identity (saved to `~/.markie-secrets/litestream-age-identity-2026-10-22.txt`), new `BETTER_AUTH_SECRET`. The leaked `Markie-key` and `markie-assets-api` keys are deleted. Google and Resend/justemail secrets still carry the leaked values until Kirby makes new ones.
+- **Cutover (03:27–03:31 UTC):** consistent snapshot of the Railway database (integrity ok, two identical snapshots, so no writes lost), Railway `api` deployment removed at 03:29:12, database seeded onto the Fly volume through a temporary machine (sha256 matched), app started with a new Litestream generation, `api.markiedocs.com` CNAME flipped to Fly at 03:30:35. Certificate was issued before the flip.
+- **Website:** markiedocs.com's `/download`, `/d/` and `/s/` rewrites now proxy to `api.markiedocs.com` (markie-site 723a86b).
+- **Verified on Fly:** 18 users, 45 docs, integrity ok; `/health` 200, `/api/docs` 401, server-info origin `api.markiedocs.com`, Google start uses the `api.markiedocs.com` callback, web sign-in page 200, Litestream writing to `markie-db-age`, new media key lists the bucket.
+- **Consequence:** released v0.8.0 apps call the Railway hostname, which now answers 404, so their Cloud features stop until they update to a build that knows `api.markiedocs.com`.
+
+Still to do: new Google and email secrets; move the super-nightly gateway (still on Railway, publish key leaked) and ship a nightly that points at it; stable v0.8.1; delete the Railway `markie` project (its volume still holds database copies); purge Litestream generations written under the leaked age keys.
+
+## 2026-10-22 Nightly channel on Fly, Railway markie project deleted, 0.8.1 hotfix prepared
+
+- **Lockout found and fixed.** Stopping the Railway API locked the installed nightly: it re-authorizes every 30 s through the gateway, which verified sessions against the dead Railway API, and Railway's paused deploys blocked changing that. The gateway now runs on Fly as `markie-nightly` (`server/fly.nightly.toml`, new publish key in `~/.markie-secrets/fly-2026-10-22/`), `PRIVATE_GATEWAY_ORIGIN` is `https://markie-nightly.fly.dev` (57a8b8b), and `0.8.1-super-nightly.21` was published there and installed by hand into /Applications (signed, notarized, Gatekeeper accepted; nightly.20 kept at /tmp/Markie-nightly20-fallback.app). It opened already unlocked; account, synced docs and the 9 drafts intact (checked through Codex computer use).
+- **Railway `markie` project deleted**, with the stopped API, its volume of database copies, and the old gateway with the leaked publish key. zvndev's Railway workspace is empty.
+- **0.8.1 hotfix** on branch `hotfix/0.8.1-cloud-origin` (worktree `../markie-wt-hotfix-081`, 2427055): v0.8.0 plus the Cloud address change only. Default server `api.markiedocs.com`, the Railway host removed from the allowlist and the CSP, a saved Railway server migrated on read. v0.8.0's own suite on its own lockfile: 2528 passed, lint clean. Who it fixes: every released build; 4 non-ZVN accounts, one active on Oct 20.
+
+## 2026-10-22 Google and email secrets rotated; per-client rate limits on Fly; 0.8.1 prepared
+
+- **JustEmail:** new key `markie-api-fly-2026-10-22b` (id 301480317f6f5efa57f6a8080a1f7fc8, sending only, markiedocs.com only) set on Fly from the clipboard; a sign-in code to kirby@zvndev.com was accepted with no send errors. A first attempt made a key with all domains and an uncopied secret; it was revoked. The old `markie-api` key is still active until Kirby confirms delivery.
+- **Google:** the OAuth client had two secrets (the cap). `yCIl` was unused and deleted; new secret `JxK-` set on Fly; a real web Google sign-in landed on the private test document; the leaked `v_8J` was disabled and is gone. The client now holds only `JxK-`.
+- **Rate limits:** better-auth could not resolve the client IP on Fly and used one shared bucket. `MARKIE_CLIENT_IP_HEADER=fly-client-ip` on Fly only (618ce8a); warning gone after deploy.
+- **0.8.1:** PR #13 merged to main (84cb5a5); `release:prepare:mac` passed (preflight, arm64 and x64 launch smoke, codesign, Gatekeeper, notarization stapled on apps and DMGs). The packaged app names `api.markiedocs.com`; the one Railway string left is the saved-address migration. Preflight needs `CLAUDE_CONFIG_DIR` unset on main until the MCP test isolation fix lands there. Not published: waiting for Kirby.
+
+## 2026-10-22 Markie 0.8.1 published (macOS)
+
+- `release:publish:mac -- --confirm-public-release=0.8.1` at Kirby's "yea publish": zips, DMGs, blockmaps and `latest-mac.yml` uploaded; `release:verify:public --version=0.8.1 --deep` valid with full SHA-512 checks; markiedocs.com/download/latest.json reports 0.8.1.
+- Final human check done through Codex computer use: the real 0.8.0 arm64 zip from markie-releases, run from a test folder, had already downloaded 0.8.1, installed it with Restart & Update, relaunched as 0.8.1, and showed the old stable profile signed in (kirby@zvndev.com) with no Cloud error. Test copy removed; the nightly was quit for the test and relaunched.
+- Tag `v0.8.1` on 84cb5a5 pushed. Windows was not built or published.
+- Main now carries 0.8.1 (hotfix plus #1-#3); `feat/document-platform-foundation` does not have the hotfix commit yet and must take it when it merges.
+
+## 2026-10-22 Markie 0.8.1 for Windows; 0.8.1 merged into the platform branch
+
+- Windows: `windows-release.yml` on main 84cb5a5 with `signing: azure`, `publish_release: true` (run 39729791197, success: Azure Trusted Signing, signature check, install/launch/uninstall on a Windows runner). `release:prepare:win` verified the installer signed by CN=ZVN DEV LLC and every SHA-512; `release:publish:win -- --confirm-public-release=0.8.1` uploaded the installer, blockmap and `windows/latest.yml`; `release:verify:public:win --deep` valid. latest.json: mac-arm64, mac-x64 and windows-x64 all 0.8.1. Not checked: an installed Windows 0.8.0 updating itself.
+- `origin/main` merged into `feat/document-platform-foundation` (89da0cc). The branch's own cloud-origin code won the conflicts, since it already treats Railway as an alias of api.markiedocs.com; main brought 0.8.1, its changelog and #1-#3. App 4842, MCP 85, server 480, lint, typecheck.

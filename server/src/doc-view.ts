@@ -25,12 +25,15 @@ import {
 import { pendingForToken } from "./pending.ts";
 import { sharedPageLinkFor } from "./doc-links.ts";
 import { assetRefsFor, assetVersion, serveAsset } from "./assets.ts";
-import { markieSiteUrl } from "./downloads.ts";
+import { deployment } from "./deployment.ts";
 import { renderAccessRequiredPage, renderSharedDocPage } from "./render.ts";
+import { webSignInHref } from "./web-signin.ts";
 
 const db = openDatabase();
 
-const MARKIE_SITE = markieSiteUrl();
+const MARKIE_SITE = deployment().siteUrl;
+// Web sign-in runs on this server's own origin, where its session cookie lives.
+const AUTH_BASE = process.env.BETTER_AUTH_URL ?? "http://localhost:8787";
 
 export const docView = new Hono();
 
@@ -126,9 +129,12 @@ docView.get("/d/:id", async (c) => {
   );
   // 403 for both "no access" and "no such document": telling them apart would
   // turn this route into a way to enumerate document ids.
-  if (!viewer) return c.html(renderAccessRequiredPage(MARKIE_SITE), 403);
+  // The sign-in link names only the id the browser already asked for, and is
+  // offered whether or not the document exists, so it reveals nothing.
+  const signIn = webSignInHref(AUTH_BASE, docId);
+  if (!viewer) return c.html(renderAccessRequiredPage(MARKIE_SITE, signIn), 403);
   const doc = loadDoc(docId);
-  if (!doc) return c.html(renderAccessRequiredPage(MARKIE_SITE), 403);
+  if (!doc) return c.html(renderAccessRequiredPage(MARKIE_SITE, signIn), 403);
 
   // The link is personal, so keep it out of shared caches and out of the
   // referrer of anything the document links to.

@@ -14,8 +14,10 @@ import {
   type MarkdownSerializerState,
 } from "prosemirror-markdown";
 import { mediaKindOf, resolveAssetSrc } from "@/lib/asset-url";
+import { getElectronAPI } from "@/lib/electron";
 import { normalizeWidth, sizedMediaHtml } from "@/lib/rich-media-html";
 import { EmbedNode } from "@/lib/rich-embed";
+import { requestLocalVideoViewer } from "@/lib/media-viewer-events";
 import { AlignedHeading, AlignedParagraph } from "@/lib/rich-aligned-blocks";
 import { Placeholder } from "@tiptap/extension-placeholder";
 import { Highlight } from "@tiptap/extension-highlight";
@@ -165,7 +167,7 @@ const LocalImage = Image.extend<LocalImageOptions>({
         el.setAttribute("preload", "metadata");
       }
       if (kind === "audio") return { dom: el };
-      return new ResizableNodeView({
+      const view = new ResizableNodeView({
         element: el,
         editor,
         node,
@@ -202,6 +204,32 @@ const LocalImage = Image.extend<LocalImageOptions>({
           },
         },
       });
+      if (kind === "video") {
+        const expand = document.createElement("button");
+        expand.type = "button";
+        expand.setAttribute("contenteditable", "false");
+        expand.dataset.markieVideoExpand = "";
+        expand.setAttribute("aria-label", "Expand video");
+        expand.title = "Expand video";
+        expand.textContent = "Expand";
+        expand.className = "absolute right-2 top-2 rounded-md border border-border bg-background/95 px-2 py-1 text-[11px] font-medium text-foreground shadow-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--blue)]";
+        expand.addEventListener("mousedown", (event) => { event.preventDefault(); event.stopPropagation(); });
+        // Native button activation must not run the editor's Enter/Space map.
+        expand.addEventListener("keydown", (event) => {
+          event.stopPropagation();
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          if (!event.repeat) expand.click();
+        });
+        expand.addEventListener("keyup", (event) => event.stopPropagation());
+        expand.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          requestLocalVideoViewer(expand);
+        });
+        view.dom.querySelector("[data-resize-wrapper]")!.appendChild(expand);
+      }
+      return view;
     };
   },
 });
@@ -216,6 +244,10 @@ export function richBaseExtensions(
     StarterKit.configure({
       paragraph: false,
       heading: false,
+      // TipTap opens on ProseMirror mouseup, before our DOM click owner can
+      // hand the link to the OS. Desktop has exactly one owner; web retains
+      // TipTap's ordinary browser navigation when no desktop bridge exists.
+      link: { openOnClick: !getElectronAPI()?.openExternal },
       ...(opts.collab ? { undoRedo: false } : {}),
     }),
     AlignedParagraph,

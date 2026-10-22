@@ -9,17 +9,15 @@ import {
   type ColorMode,
 } from "@/lib/color-mode";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
-import { RICH_UNAVAILABLE_TITLE } from "@/lib/doc-tiers";
-
-type ViewMode = "edit" | "preview" | "split";
+import { RICH_DOCUMENT_OUTPUT_HELP } from "@/lib/document-output-policy";
 
 interface ToolbarProps {
-  mode: ViewMode;
-  onModeChange: (mode: ViewMode) => void;
-  // The open document is too big for the rich pane (src/lib/doc-tiers.ts):
-  // Rich and Split are shown but cannot be chosen, and say why on hover.
-  richUnavailable?: boolean;
+  documentMode?: boolean;
+  onDocumentExportPDF?: () => void;
+  onSave?: () => void;
+  onCommands?: () => void;
   onOpenFile: () => void;
+  openFileDisabled?: boolean;
   onExportPDF: (theme: PDFTheme) => void;
   // "Save a Copy" writes the markdown itself somewhere else; Export HTML and
   // PDF render it. All three live in the one visible Export menu.
@@ -36,7 +34,7 @@ interface ToolbarProps {
   // shareable and the "sign in / sync first" cases. canShare drives styling.
   onShare: () => void;
   canShare?: boolean;
-  // Open the theme-presets dialog (palette button next to the mode switch).
+  // Open the theme-presets dialog from the appearance controls.
   onThemePresets: () => void;
   live?: boolean;
   liveStatus?: "connecting" | "connected" | "disconnected";
@@ -46,10 +44,12 @@ interface ToolbarProps {
 }
 
 export function Toolbar({
-  mode,
-  onModeChange,
-  richUnavailable = false,
+  documentMode = false,
+  onDocumentExportPDF,
+  onSave,
+  onCommands,
   onOpenFile,
+  openFileDisabled = false,
   onExportPDF,
   onSaveAs,
   onExportHTML,
@@ -99,7 +99,7 @@ export function Toolbar({
   return (
     <div
       data-window-drag-surface
-      className={`markie-toolbar h-10 border-b border-border bg-surface grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 pr-3 sm:pr-4 select-none shrink-0 ${
+      className={`markie-toolbar h-10 border-b border-border bg-surface grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 pr-3 sm:pr-4 select-none shrink-0 ${
         trafficLightPad ? "pl-[82px]" : "pl-3 sm:pl-4"
       }`}
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
@@ -120,7 +120,7 @@ export function Toolbar({
             <circle cx="2" cy="7" r="1" /><circle cx="7" cy="7" r="1" />
             <circle cx="2" cy="12" r="1" /><circle cx="7" cy="12" r="1" />
           </svg>
-          <span className="text-[13px] font-semibold tracking-tight">Markie</span>
+          <span className="hidden sm:inline text-[13px] font-semibold tracking-tight">Markie</span>
         </div>
         <div className="w-px h-4 bg-border" />
         <div
@@ -130,13 +130,16 @@ export function Toolbar({
         >
           <button
             onClick={onOpenFile}
-            className="shrink-0 text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
+            disabled={openFileDisabled}
+            title={openFileDisabled ? "Preparing document tools…" : undefined}
+            aria-label={fileName ? "Open" : "Open file…"}
+            className="markie-toolbar-action flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-muted hover:text-foreground"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
               <polyline points="13 2 13 9 20 9" />
             </svg>
-            {fileName ? "Open" : "Open file…"}
+            <span className="hidden sm:inline">{fileName ? "Open" : "Open file…"}</span>
           </button>
           {fileName &&
             (renaming ? (
@@ -153,7 +156,7 @@ export function Toolbar({
                     setRenaming(false);
                   }
                 }}
-                className="text-[12px] bg-background border border-border rounded px-1.5 py-0.5 w-44 text-foreground outline-none"
+                className="text-[12px] bg-background border border-border rounded px-1.5 py-0.5 w-44 min-w-0 max-w-full text-foreground outline-none"
               />
             ) : (
               <button
@@ -170,11 +173,12 @@ export function Toolbar({
               </button>
             ))}
           <div className="w-px h-4 bg-border shrink-0" />
+          {documentMode && onSave ? <button type="button" onClick={onSave} className="markie-toolbar-action hidden h-7 shrink-0 rounded-md px-2 text-[12px] text-muted hover:text-foreground sm:block">Save file</button> : null}
           <div className="relative" ref={menuRef}>
             <button
               onClick={() => setShowPDFMenu(!showPDFMenu)}
               aria-label="Export menu"
-              className="text-[12px] text-muted hover:text-foreground transition-colors flex items-center gap-1.5"
+              className="markie-toolbar-action flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] text-muted hover:text-foreground"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -182,14 +186,15 @@ export function Toolbar({
                 <line x1="12" y1="18" x2="12" y2="12" />
                 <polyline points="9 15 12 18 15 15" />
               </svg>
-              {exporting ? "Exporting…" : "Export"}
+              <span className="hidden sm:inline">{exporting ? "Exporting…" : "Export"}</span><span className="sm:hidden">More</span>
               <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="6 9 12 15 18 9" />
               </svg>
             </button>
 
             {showPDFMenu && (
-              <div className="markie-menu-panel absolute top-full left-0 mt-1.5 rounded-lg py-1.5 min-w-[152px] z-50">
+              <div className="markie-menu-panel absolute top-full right-0 sm:right-auto sm:left-0 mt-1.5 rounded-lg py-1.5 min-w-[152px] z-50">
+                {documentMode && onSave ? <button type="button" onClick={() => { onSave(); setShowPDFMenu(false); }} className="sm:hidden markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted">Save file</button> : null}
                 <button
                   onClick={() => { onSaveAs(); setShowPDFMenu(false); }}
                   className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2"
@@ -201,7 +206,16 @@ export function Toolbar({
                   </svg>
                   Save a Copy…
                 </button>
-                <button
+                {documentMode && onDocumentExportPDF ? <button
+                  onClick={() => { onDocumentExportPDF(); setShowPDFMenu(false); }}
+                  disabled={exporting}
+                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2 disabled:opacity-40"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+                  Export PDF…
+                </button> : null}
+                {documentMode && onDocumentExportPDF ? <p role="note" aria-label="Document PDF information" className="max-w-[240px] border-t border-border px-3 pt-2 mt-1 text-[11px] leading-relaxed text-muted">{RICH_DOCUMENT_OUTPUT_HELP}</p> : null}
+                {!documentMode ? <><button
                   onClick={() => { onExportHTML(); setShowPDFMenu(false); }}
                   disabled={exporting}
                   className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2 disabled:opacity-40"
@@ -236,62 +250,35 @@ export function Toolbar({
                     <line x1="12" y1="15" x2="12" y2="3" />
                   </svg>
                   PDF (Light)
-                </button>
+                </button></> : null}
+                <div className="sm:hidden">
+                  <div className="h-px bg-border my-1" />
+                  {themeLocked || live || peers.length ? <div className="px-3 py-2 text-[11px] text-muted flex flex-col gap-1" aria-label="Document session status">
+                    {themeLocked ? <span>Owner theme pinned</span> : null}
+                    {live ? <span role="status">Live: {liveStatus}</span> : null}
+                    {peers.length ? <span aria-label="Live collaborators">{peers.slice(0, 4).map((peer) => peer.name).join(", ")}{peers.length > 4 ? ` +${peers.length - 4} more` : ""}</span> : null}
+                  </div> : null}
+                  <button type="button" onClick={() => { onShare(); setShowPDFMenu(false); }} className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted">Share</button>
+                  <button type="button" onClick={() => { onThemePresets(); setShowPDFMenu(false); }} className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted">Theme presets</button>
+                  <div className="h-px bg-border my-1" />
+                  {(["system", "light", "dark"] as const).map((mode) => <button type="button" key={mode} aria-pressed={colorMode === mode} onClick={() => { pickColorMode(mode); setShowPDFMenu(false); }} className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted">{mode === "system" ? "System theme" : mode === "light" ? "Light theme" : "Dark theme"}</button>)}
+                </div>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Center: mode toggle. Three equal labelled segments — the old
-          "View / pencil / split" implied one was a mode and the others were
-          buttons, and called the WYSIWYG editor "View" when it edits. */}
-      <div
-        data-window-control-region="mode"
-        role="group"
-        aria-label="Editing mode"
-        className="w-fit justify-self-center flex items-center bg-background rounded-md p-0.5 gap-0.5"
-        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-      >
-        {(
-          [
-            ["preview", "Rich", "⌘1"],
-            ["edit", "Source", "⌘2"],
-            ["split", "Split", "⌘3"],
-          ] as const
-        ).map(([value, label, shortcut]) => {
-          const unavailable = richUnavailable && value !== "edit";
-          return (
-            <button
-              key={value}
-              onClick={() => onModeChange(value)}
-              disabled={unavailable}
-              title={unavailable ? RICH_UNAVAILABLE_TITLE : `${label} (${shortcut})`}
-              aria-label={`${label} mode (${shortcut})`}
-              aria-pressed={mode === value}
-              className={`px-3 py-1 text-[11px] font-medium rounded transition-all ${
-                mode === value
-                  ? "bg-accent text-foreground"
-                  : unavailable
-                    ? "text-muted/50 cursor-default"
-                    : "text-muted hover:text-foreground"
-              }`}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Right: theme/mode + presence + share */}
+      {/* Right: appearance + presence + share */}
       <div
         data-window-control-region="document"
         className="min-w-0 w-fit max-w-full justify-self-end flex items-center justify-end gap-2"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
+        {onCommands ? <button type="button" onClick={onCommands} aria-label="Commands (⌘K)" title="Commands (⌘K)" className="markie-toolbar-icon flex h-7 w-7 items-center justify-center rounded-md text-muted hover:text-foreground" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m5 7 5 5-5 5M13 17h6" /></svg></button> : null}
         {themeLocked && (
           <div
-            className="flex items-center gap-1 text-muted"
+            className="hidden sm:flex items-center gap-1 text-muted"
             title="The owner pinned their theme to this doc"
           >
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -302,7 +289,7 @@ export function Toolbar({
           </div>
         )}
         {live && (
-          <div className="flex items-center gap-1.5" title={`Live session: ${liveStatus}`}>
+          <div className="hidden sm:flex items-center gap-1.5" title={`Live session: ${liveStatus}`}>
             <span
               className={`w-1.5 h-1.5 rounded-full ${
                 liveStatus === "connected"
@@ -318,7 +305,7 @@ export function Toolbar({
           </div>
         )}
         {peers.length > 0 && (
-          <div className="flex -space-x-1.5">
+          <div className="hidden sm:flex -space-x-1.5">
             {peers.slice(0, 4).map((p, i) => (
               <span
                 key={`${p.name}-${i}`}
@@ -337,7 +324,7 @@ export function Toolbar({
           </div>
         )}
         {/* Color mode: System / Light / Dark */}
-        <div className="flex items-center bg-background rounded-md p-0.5 gap-0.5">
+        <div className="markie-segmented-control hidden sm:inline-flex items-center">
           <ModeBtn label="System theme" active={colorMode === "system"} onClick={() => pickColorMode("system")}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
               <rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" />
@@ -358,19 +345,19 @@ export function Toolbar({
           onClick={onThemePresets}
           title="Theme presets"
           aria-label="Theme presets"
-          className="p-1 rounded text-muted hover:text-foreground transition-colors"
+          className="markie-toolbar-icon hidden h-7 w-7 items-center justify-center rounded-md text-muted hover:text-foreground sm:flex"
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="13.5" cy="6.5" r="1.5" /><circle cx="17.5" cy="10.5" r="1.5" /><circle cx="8.5" cy="7.5" r="1.5" /><circle cx="6.5" cy="12.5" r="1.5" />
             <path d="M12 2a10 10 0 1 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.2 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 22 11c0-4.97-4.48-9-10-9z" />
           </svg>
         </button>
-        <div className="w-px h-4 bg-border" />
+        <div className="hidden sm:block w-px h-4 bg-border" />
         <button
           onClick={onShare}
           title={canShare ? "Share this document" : "Share this document (Markie will walk you through it)"}
-          className={`text-[12px] transition-colors flex items-center gap-1.5 ${
-            canShare ? "text-foreground hover:opacity-80" : "text-muted hover:text-foreground"
+          className={`markie-toolbar-action hidden h-7 items-center gap-1.5 rounded-md px-2 text-[12px] sm:flex ${
+            canShare ? "text-foreground" : "text-muted hover:text-foreground"
           }`}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -403,9 +390,8 @@ function ModeBtn({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`px-1.5 py-1 rounded transition-all ${
-        active ? "bg-accent text-foreground" : "text-muted hover:text-foreground"
-      }`}
+      aria-pressed={active}
+      className="markie-segmented-option flex min-h-6 items-center justify-center px-1.5 py-1"
     >
       {children}
     </button>

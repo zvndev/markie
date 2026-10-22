@@ -1,4 +1,6 @@
-# Replace with your API hostname before deploying.
-api.markie.example.com {
+# Caddy fetches and renews the TLS certificate for MARKIE_DOMAIN on its own.
+# The name comes from .env (written by init.sh), so this file needs no edits.
+# reverse_proxy also carries the live-collaboration websocket.
+{$MARKIE_DOMAIN} {
 	reverse_proxy markie-api:8787
 }

@@ -74,16 +74,43 @@ describe("handleDocumentClick", () => {
     await vi.waitFor(() => expect(onError).toHaveBeenCalledWith("Nope."));
   });
 
-  it("leaves an https link to the handler that already opens the browser", () => {
+  it("says so when a program is shown in Finder instead of run", async () => {
+    const onError = vi.fn();
+    installBridge({ openLocalFile: vi.fn(async () => ({ ok: true, revealed: true })) });
+    const a = anchor("../../secret.pdf");
+    document.body.append(a);
+
+    handleDocumentClick(clickOn(a), onError);
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(expect.stringMatching(/Shown in Finder/)));
+  });
+
+  it("explicitly opens web links in the device browser instead of an editor window", () => {
     const openLocalFile = vi.fn(async () => ({ ok: true }));
-    installBridge({ openLocalFile });
+    const openExternal = vi.fn(async () => {});
+    installBridge({ openLocalFile, openExternal });
     const a = anchor("https://example.com");
     document.body.append(a);
 
     const event = clickOn(a);
-    expect(handleDocumentClick(event, vi.fn())).toBe(false);
-    expect(event.defaultPrevented).toBe(false);
+    expect(handleDocumentClick(event, vi.fn())).toBe(true);
+    expect(event.defaultPrevented).toBe(true);
+    expect(openExternal).toHaveBeenCalledWith("https://example.com/");
     expect(openLocalFile).not.toHaveBeenCalled();
+  });
+
+  it.each([{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { button: 1 }])("keeps modified and middle web clicks in the device browser: %o", (init) => {
+    const openExternal = vi.fn(async () => {});
+    installBridge({ openExternal });
+    const a = anchor("https://example.com/post"); document.body.append(a);
+    expect(handleDocumentClick(clickOn(a, init), vi.fn())).toBe(true);
+    expect(openExternal).toHaveBeenCalledOnce();
+  });
+
+  it("does not open a link inside an inactive retained document", () => {
+    const openExternal = vi.fn(async () => {}); installBridge({ openExternal });
+    const a = anchor("https://example.com/post"), host = document.createElement("div");
+    host.setAttribute("inert", ""); host.append(a); document.body.append(host);
+    handleDocumentClick(clickOn(a), vi.fn()); expect(openExternal).not.toHaveBeenCalled();
   });
 
   it("leaves a modified click to the operating system", () => {

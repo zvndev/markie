@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { desktopAuthDeepLink, desktopAuthState } from "./desktop-auth.ts";
+import { desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
 
 const NONCE = "0123456789abcdef0123456789abcdef";
 
@@ -44,4 +44,21 @@ test("desktopAuthDeepLink carries the nonce back to the app", () => {
 
 test("desktopAuthDeepLink omits state when there is none to carry", () => {
   assert.equal(desktopAuthDeepLink("abc", null), "markie://auth?token=abc");
+});
+
+test("desktopAuthDeepLink names the server that issued the token", () => {
+  assert.equal(
+    desktopAuthDeepLink("abc", NONCE, "https://docs.example.com"),
+    `markie://auth?token=abc&state=${NONCE}&iss=https%3A%2F%2Fdocs.example.com`,
+  );
+  const u = new URL(desktopAuthDeepLink("abc", NONCE, "https://docs.example.com"));
+  assert.equal(u.searchParams.get("iss"), "https://docs.example.com");
+});
+
+test("desktopAuthIssuer is the origin of BETTER_AUTH_URL and nothing else", () => {
+  assert.equal(desktopAuthIssuer("https://Docs.Example.com/base/?x=1"), "https://docs.example.com");
+  assert.equal(desktopAuthIssuer("http://localhost:8787"), "http://localhost:8787");
+  assert.equal(desktopAuthIssuer(""), null);
+  assert.equal(desktopAuthIssuer(undefined), null);
+  assert.equal(desktopAuthIssuer("not a url"), null);
 });

@@ -2,20 +2,33 @@ import { Hono } from "hono";
 import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
 import { sendEmail } from "./email.ts";
-import { addPending, listPendingForDoc, removePending } from "./pending.ts";
+import { createPendingShareStore } from "./pending.ts";
+export { configureShareIdentities } from "./pending.ts";
 import {
   createOrGetPublicLink,
   getPublicLinkToken,
   revokePublicLink,
 } from "./public-links.ts";
-import { markieSiteUrl, primaryDownloadCta } from "./downloads.ts";
+import { primaryDownloadCta } from "./downloads.ts";
+import { deployment } from "./deployment.ts";
 import { disconnectUser } from "./collab.ts";
 import { newLinkToken } from "./link-token.ts";
+import { createInviteLimiter, plainEmailText } from "./invite-guard.ts";
 
 const db = openDatabase();
+const inviteLimiter = createInviteLimiter();
+/** Test seam: suites that invite more than a day's worth start each test clean. */
+export function resetInviteLimitsForTests(): void {
+  inviteLimiter.reset();
+}
+const pendingStore = createPendingShareStore(db);
+const { addPending, listPendingForDoc, removePending } = pendingStore;
 
-// Share emails use the stable release-manifest domain and versionless download routes.
-const MARKIE_SITE = markieSiteUrl();
+// Share emails use the stable release-manifest domain and versionless download
+// routes on the official deployment, and the server's own origin elsewhere,
+// with "Get Markie" still pointing at the official download page.
+const MARKIE_SITE = deployment().siteUrl;
+const DOWNLOAD_SITE = deployment().downloadSiteUrl;
 
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"]/g, (ch) =>
@@ -69,7 +82,7 @@ export function memberForToken(
   const row = db
     .prepare("SELECT doc_id, user_id FROM shares WHERE token = ?")
     .get(token) as { doc_id: string; user_id: string } | undefined;
-  return row ? { docId: row.doc_id, userId: row.user_id } : null;
+  return row ? { docId: row.doc_id, userId: row.user_id } : pendingStore.memberForInviteToken(token);
 }
 
 async function requireUser(c: { req: { raw: Request } }) {
@@ -266,43 +279,46 @@ shares.post("/:id/shares", async (c) => {
     email: string;
     role: "viewer" | "editor";
   };
-  const cleanEmail = (email ?? "").toLowerCase().trim();
+  const cleanEmail = typeof email === "string" ? email.toLowerCase().trim() : "";
   if (!cleanEmail || !["viewer", "editor"].includes(role)) {
     return c.json({ error: "bad request" }, 400);
   }
   if (cleanEmail === (user.email ?? "").toLowerCase()) {
     return c.json({ error: "That's you" }, 400);
   }
+  // Before anything changes: a refused invite must not leave a pending row or
+  // a membership behind any more than it may send mail.
+  const allowed = inviteLimiter.take(user.id, cleanEmail);
+  if (!allowed.ok) {
+    c.header("Retry-After", String(allowed.retryAfterSeconds));
+    return c.json({ error: "Too many invitations right now. Try again later." }, 429);
+  }
   const doc = db
     .prepare("SELECT name FROM docs WHERE id = ?")
     .get(docId) as { name: string };
-  const inviter = user.name || user.email;
+  // Both are typed by the caller and land in mail sent from Markie's domain,
+  // so they lose links and markup first (invite-guard.ts). The email address
+  // fallback is the inviter's own verified address, which is the one thing in
+  // the message that honestly says who sent it.
+  const inviter = plainEmailText(user.name ?? "", 60) || user.email;
+  const docName = plainEmailText(doc.name, 120) || "a document";
 
-  const recipient = db
-    .prepare("SELECT id, email, name FROM user WHERE email = ?")
-    .get(cleanEmail) as
-    | { id: string; email: string; name: string }
-    | undefined;
+  const recipient = pendingStore.shareWithEmail(docId, cleanEmail, role, user.id);
+  if (recipient?.id === user.id) return c.json({ error: "That's you" }, 400);
 
   if (recipient) {
     // Existing user → real member immediately.
-    db.prepare(
-      `INSERT INTO shares (doc_id, user_id, role, invited_by, created_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(doc_id, user_id) DO UPDATE SET role = excluded.role`
-    ).run(docId, recipient.id, role, user.id, new Date().toISOString());
-
     // Their own link to their own copy. Scoped to this person and this
     // document, and re-checked against their share row on every open, so
     // removing them from the document kills it.
     const link = docLink(docId, ensureShareToken(docId, recipient.id));
     await sendEmail({
       to: recipient.email,
-      subject: `${inviter} shared “${doc.name}” with you`,
-      text: `${inviter} shared "${doc.name}" with you on Markie as ${
+      subject: `${inviter} shared “${docName}” with you`,
+      text: `${inviter} shared "${docName}" with you on Markie as ${
         role === "editor" ? "an editor" : "a viewer"
       }.\n\nRead it here: ${link}\n\nOr open it straight in Markie: ${appLink(docId)}\n\nThis link is yours alone and only works for your account.`,
-      html: addedHtml(inviter, doc.name, role, link, appLink(docId)),
+      html: addedHtml(inviter, docName, role, link, appLink(docId)),
     });
     return c.json({ ok: true, status: "member", userId: recipient.id, role });
   }
@@ -316,8 +332,8 @@ shares.post("/:id/shares", async (c) => {
   await sendEmail({
     to: cleanEmail,
     subject: `📄 ${inviter} tossed you a doc`,
-    text: `${inviter} shared "${doc.name}" with you on Markie.\n\nRead it right now (no account needed): ${previewUrl}\n\nReading raw markdown in a browser is a small tragedy, and Markie fixes that. Make an account with this email and "${doc.name}" will be waiting in your Library.\n\nThis link was sent to you alone. Don't forward it.`,
-    html: inviteHtml(inviter, doc.name, previewUrl, docRawLink(docId, inviteToken)),
+    text: `${inviter} shared "${docName}" with you on Markie.\n\nRead it right now (no account needed): ${previewUrl}\n\nReading raw markdown in a browser is a small tragedy, and Markie fixes that. Make an account with this email and "${docName}" will be waiting in your Library.\n\nThis link was sent to you alone. Don't forward it.`,
+    html: inviteHtml(inviter, docName, previewUrl, docRawLink(docId, inviteToken)),
   });
   return c.json({ ok: true, status: "invited", email: cleanEmail, role });
 });
@@ -329,16 +345,16 @@ shares.delete("/:id/shares/:idOrEmail", async (c) => {
   const docId = c.req.param("id");
   if (!canManageLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   const target = decodeURIComponent(c.req.param("idOrEmail"));
-  const removedMember = db
-    .prepare("DELETE FROM shares WHERE doc_id = ? AND user_id = ?")
-    .run(docId, target).changes > 0;
+  const result = db.transaction(() => {
+    const memberId = target.includes("@") ? pendingStore.verifiedUserForEmail(target) : target;
+    const removedMember = memberId ? pendingStore.revokeMember(docId, memberId) : false;
+    const removedPending = target.includes("@") ? removePending(docId, target) : false;
+    return { memberId, removedMember, removedPending };
+  }).immediate();
   // Removing the row is not enough on its own: a live collaboration socket
   // outlives it, so hang up on the socket too.
-  if (removedMember) disconnectUser(docId, target);
-  const removedPending = target.includes("@")
-    ? removePending(docId, target)
-    : false;
-  if (!removedMember && !removedPending) {
+  if (result.removedMember && result.memberId) disconnectUser(docId, result.memberId);
+  if (!result.removedMember && !result.removedPending) {
     return c.json({ error: "not found" }, 404);
   }
   return c.json({ ok: true });
@@ -397,7 +413,7 @@ function inviteHtml(
   previewUrl: string,
   rawUrl: string
 ): string {
-  const download = primaryDownloadCta(MARKIE_SITE);
+  const download = primaryDownloadCta(DOWNLOAD_SITE);
   return `<div style="font-family:system-ui,-apple-system,sans-serif;max-width:460px;margin:0 auto;color:#18181b">
   <div style="font-size:32px;font-weight:800;color:#f59e0b">M</div>
   <h2 style="font-size:19px;margin:8px 0 4px">${escapeHtml(inviter)} tossed you a doc 📄</h2>

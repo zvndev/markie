@@ -12,8 +12,11 @@ import { describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const config = require("../electron-builder.config.cjs") as {
+  files: string[];
   extraResources: { from: string; to: string; filter: string[] }[];
 };
+const RUNTIME_MODULE = /\.(?:mjs|cjs)$/;
+const TEST_MODULE = /\.test\.(?:mjs|cjs)$/;
 
 describe("mcp extraResources filter", () => {
   const mcpResource = config.extraResources.find((r) => r.from === "mcp");
@@ -25,12 +28,37 @@ describe("mcp extraResources filter", () => {
 
   it("names every runtime module in mcp/, and no test file", () => {
     const onDisk = readdirSync(join(REPO_ROOT, "mcp"))
-      .filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"))
+      .filter((f) => RUNTIME_MODULE.test(f) && !TEST_MODULE.test(f))
       .sort();
-    const filtered = mcpResource!.filter.filter((f) => f.endsWith(".mjs")).sort();
+    const filtered = mcpResource!.filter.filter((f) => RUNTIME_MODULE.test(f)).sort();
     expect(filtered).toEqual(onDisk);
     expect(mcpResource!.filter).toContain("package.json");
     expect(mcpResource!.filter.some((f) => f.includes(".test."))).toBe(false);
+  });
+});
+
+// The other direction: the main process may require a module out of mcp/ (the
+// shared document search in mcp/doc-text.cjs), and that resolves inside the
+// asar, where only `files` puts anything. A require the asar cannot satisfy is
+// a main process that dies at launch in the shipped app and works in dev.
+describe("mcp modules the main process requires", () => {
+  const required = readdirSync(join(REPO_ROOT, "electron"))
+    .filter((f) => f.endsWith(".js") || f.endsWith(".cjs"))
+    .flatMap((f) => {
+      const src = readFileSync(join(REPO_ROOT, "electron", f), "utf8");
+      return [...src.matchAll(/require\(\s*["']\.\.\/mcp\/([^"']+)["']\s*\)/g)].map((m) => m[1]);
+    });
+
+  it("are each packaged inside the asar", () => {
+    expect(required).toContain("doc-text.cjs");
+    for (const file of required) expect(config.files).toContain(`mcp/${file}`);
+  });
+
+  it("make electron/doc-text.js the MCP search module itself, not a copy", () => {
+    const app = require("./doc-text.js");
+    const mcp = require("../mcp/doc-text.cjs");
+    expect(app).toBe(mcp);
+    expect(typeof app.searchDocuments).toBe("function");
   });
 });
 

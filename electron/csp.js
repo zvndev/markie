@@ -1,6 +1,8 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { runtimeSha256, bootstrapSha256 } = require("./darkmown-runtime-policy.json");
+const { DEFAULT_SERVER, CLOUD_ALIASES } = require("./share-origin");
 
 // The scheme the viewer serves a document's own pictures over. Named here
 // because the CSP has to allow it and main has to register it, and two string
@@ -9,8 +11,12 @@ const ASSET_SCHEME = "markie-asset";
 
 // Where a video card may load its player from, and nowhere else. Kept in step
 // with the provider list in src/lib/embeds.ts; electron/csp.test.ts holds the
-// two together. Nothing else in the app is ever framed.
+// two together. Darkmown's separate, opaque srcdoc preview is also permitted.
 const EMBED_FRAME_ORIGINS = ["https://www.youtube-nocookie.com", "https://player.vimeo.com"];
+const DARKMOWN_RUNTIME_HASH = `'sha256-${runtimeSha256}'`;
+const DARKMOWN_BOOTSTRAP_HASH = `'sha256-${bootstrapSha256}'`;
+
+const CLOUD_CONNECT_SOURCES = [DEFAULT_SERVER, ...CLOUD_ALIASES].flatMap((origin) => [origin, origin.replace(/^https:/, "wss:")]);
 
 const INLINE_SCRIPT_RE = /<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
 
@@ -56,28 +62,64 @@ function scriptSrcDirective(hashes = []) {
 }
 
 function buildAppCsp(outDir) {
-  const scriptHashes = collectInlineScriptHashes(outDir);
+  // srcdoc inherits this policy in addition to its own restrictive policy.
+  // Author JavaScript is never permitted: this hash names the pinned interpreter.
+  const scriptHashes = [...collectInlineScriptHashes(outDir), DARKMOWN_RUNTIME_HASH, DARKMOWN_BOOTSTRAP_HASH];
   return [
     "default-src 'self'",
     scriptSrcDirective(scriptHashes),
     "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data: https: ${ASSET_SCHEME}:`,
+    // Original DOCX image parts are bounded local blobs, never executable
+    // documents. This permission is deliberately limited to image requests.
+    `img-src 'self' data: blob: https: ${ASSET_SCHEME}:`,
     // Video and audio beside the document, played through the same scheme and
     // the same access rule as the pictures.
     `media-src 'self' data: ${ASSET_SCHEME}:`,
     "font-src 'self' data:",
-    "connect-src 'self' https://api.markiedocs.com wss://api.markiedocs.com",
+    // Markie Cloud under its current name and every old one: a document or
+    // a session recorded under the old address still talks to it.
+    `connect-src 'self' ${CLOUD_CONNECT_SOURCES.join(" ")}`,
     // default-src would otherwise refuse every iframe, which is right for
     // everything but the one player a card opens when it is clicked.
-    `frame-src ${EMBED_FRAME_ORIGINS.join(" ")}`,
+    `frame-src about: ${EMBED_FRAME_ORIGINS.join(" ")}`,
     "base-uri 'none'",
     "object-src 'none'",
     "frame-ancestors 'none'",
   ].join("; ");
 }
 
+// The renderer talks to Markie Cloud and to every server the user added
+// (electron/servers.js), so connect-src carries each trusted origin too, as
+// https and as wss for live collaboration. An origin is written into the
+// policy only when it is exactly a plain https origin: anything else could
+// smuggle a directive in.
+const PLAIN_HTTPS_ORIGIN = /^https:\/\/[a-z0-9.-]+(?::\d{1,5})?$/;
+
+/**
+ * @param {string} csp
+ * @param {unknown[]} [origins]
+ * @returns {string}
+ */
+function withConnectOrigins(csp, origins = []) {
+  const extra = [];
+  for (const origin of origins) {
+    if (typeof origin !== "string" || !PLAIN_HTTPS_ORIGIN.test(origin)) continue;
+    const ws = origin.replace(/^https:/, "wss:");
+    if (!csp.includes(` ${origin}`)) extra.push(origin);
+    if (!csp.includes(` ${ws}`)) extra.push(ws);
+  }
+  if (extra.length === 0) return csp;
+  return csp
+    .split("; ")
+    .map((d) => (d.startsWith("connect-src ") ? `${d} ${[...new Set(extra)].join(" ")}` : d))
+    .join("; ");
+}
+
 module.exports = {
+  withConnectOrigins,
   ASSET_SCHEME,
+  DARKMOWN_RUNTIME_HASH,
+  DARKMOWN_BOOTSTRAP_HASH,
   EMBED_FRAME_ORIGINS,
   buildAppCsp,
   collectInlineScriptHashes,

@@ -1,0 +1,2 @@
+# Preserve exact generated compiler bytes, including whitespace in bundled literals.
+src/lib/darkmown/vendor/compiler-browser.mjs -whitespace

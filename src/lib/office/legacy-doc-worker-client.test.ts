@@ -53,7 +53,7 @@ describe("bounded off-thread original DOC reader", () => {
     const first = fixture(), pending = extractLegacyDocTextOffThread(new Uint8Array(), first);
     first.worker.result({ ...success, rawText: 7 }); await expect(pending).rejects.toThrow("invalid result");
     const second = fixture(), failed = extractLegacyDocTextOffThread(new Uint8Array(), second);
-    second.worker.dispatchEvent(new ErrorEvent("error", { message: "private synthetic payload" }));
+    second.worker.dispatchEvent(Object.assign(new Event("error"), { message: "private synthetic payload" }));
     await expect(failed).rejects.toThrow("local DOC reader failed"); expect(second.worker.terminate).toHaveBeenCalledOnce();
   });
 });

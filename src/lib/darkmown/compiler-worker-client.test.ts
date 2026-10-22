@@ -67,7 +67,7 @@ describe("bounded off-thread Darkmown preview compiler", () => {
     second.worker.result({ ok: false, error: "[WD201] Missing state arguments" });
     await expect(coded).rejects.toThrow("WD201");
     const third = fixture(), failed = compileDarkmownOffThread("# Counter", third);
-    third.worker.dispatchEvent(new ErrorEvent("error", { message: "internal payload" }));
+    third.worker.dispatchEvent(Object.assign(new Event("error"), { message: "internal payload" }));
     await expect(failed).rejects.toThrow("local preview compiler failed");
     expect(third.worker.terminate).toHaveBeenCalledOnce();
   });

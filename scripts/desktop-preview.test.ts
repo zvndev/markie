@@ -9,7 +9,14 @@ import path from "node:path";
 const require = createRequire(import.meta.url);
 describe("desktop-first preview packaging", () => {
   it("separates identity, protocol, outputs, feeds, signing and notarization", () => {
-    const config = require("../electron-builder.preview.cjs");
+    // The preview targets macOS and Windows only, so a Linux CI host names one.
+    const host = { platform: process.env.MARKIE_PREVIEW_PLATFORM, arch: process.env.MARKIE_PREVIEW_ARCH };
+    if (!["darwin", "win32"].includes(process.platform)) { process.env.MARKIE_PREVIEW_PLATFORM = "darwin"; process.env.MARKIE_PREVIEW_ARCH = "arm64"; }
+    let config;
+    try { config = require("../electron-builder.preview.cjs"); } finally {
+      if (host.platform === undefined) delete process.env.MARKIE_PREVIEW_PLATFORM; else process.env.MARKIE_PREVIEW_PLATFORM = host.platform;
+      if (host.arch === undefined) delete process.env.MARKIE_PREVIEW_ARCH; else process.env.MARKIE_PREVIEW_ARCH = host.arch;
+    }
     expect(config.appId).toBe("com.zvn.markie.preview"); expect(config.productName).toBe("Markie Preview");
     expect(config.extraMetadata.name).toBe("markie-preview"); expect(config.extraMetadata.markieDesktopPreview).toBe(true);
     expect(config.publish).toBeNull(); expect(config.win.publish).toBeNull(); expect(config.mac.publish).toBeNull();

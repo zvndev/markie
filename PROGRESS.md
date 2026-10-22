@@ -1499,3 +1499,14 @@ Kirby asked that an agent can make him "a hosted private Markie" and hand back a
 
 Verification: app suite 4842, server 480, MCP 85, lint, typecheck. Live on nightly.20: the repo MCP server synced `~/Documents/Markie/agent-cloud-link-test.md` after one consent click (driven through Codex computer use), returned `https://api.markiedocs.com/d/be41f999-…`, which is 403 anonymously, has no public link, and opens in Arc with Kirby's session.
 Not verified: web sign-in on the live server (pending deploy), a public link made live, an agent registered in Claude Code or Codex using the tools on its own.
+
+## 2026-10-22 Markie Cloud moved from Railway to Fly.io
+
+Railway disclosed on 2026-10-21 that customer environment variables may have been read, and paused deploys. Kirby chose to leave Railway.
+- **Secrets rotated in the move:** new Backblaze backup key (`markie-backup-fly-20261022`) and media key (`markie-assets-fly-20261022`), new age identity (saved to `~/.markie-secrets/litestream-age-identity-2026-10-22.txt`), new `BETTER_AUTH_SECRET`. The leaked `Markie-key` and `markie-assets-api` keys are deleted. Google and Resend/justemail secrets still carry the leaked values until Kirby makes new ones.
+- **Cutover (03:27–03:31 UTC):** consistent snapshot of the Railway database (integrity ok, two identical snapshots, so no writes lost), Railway `api` deployment removed at 03:29:12, database seeded onto the Fly volume through a temporary machine (sha256 matched), app started with a new Litestream generation, `api.markiedocs.com` CNAME flipped to Fly at 03:30:35. Certificate was issued before the flip.
+- **Website:** markiedocs.com's `/download`, `/d/` and `/s/` rewrites now proxy to `api.markiedocs.com` (markie-site 723a86b).
+- **Verified on Fly:** 18 users, 45 docs, integrity ok; `/health` 200, `/api/docs` 401, server-info origin `api.markiedocs.com`, Google start uses the `api.markiedocs.com` callback, web sign-in page 200, Litestream writing to `markie-db-age`, new media key lists the bucket.
+- **Consequence:** released v0.8.0 apps call the Railway hostname, which now answers 404, so their Cloud features stop until they update to a build that knows `api.markiedocs.com`.
+
+Still to do: new Google and email secrets; move the super-nightly gateway (still on Railway, publish key leaked) and ship a nightly that points at it; stable v0.8.1; delete the Railway `markie` project (its volume still holds database copies); purge Litestream generations written under the leaked age keys.

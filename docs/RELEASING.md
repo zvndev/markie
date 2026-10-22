@@ -709,6 +709,14 @@ whether any share was ever claimed without proof.
 
 ## API server deploy and rollback
 
+> **2026-10-22: Markie Cloud runs on Fly.io, app `markie-api` (org `zvn-dev`, region `iad`), not Railway.**
+> Railway disclosed a credential breach on 2026-10-21; every server secret except Google and email was
+> rotated in the move. Deploy from a clean export: `git archive HEAD:server | tar -x -C /tmp/markie-api-fly`,
+> then `cd /tmp/markie-api-fly && fly deploy -a markie-api`. Exactly one machine and one volume
+> (`markie_data` at `/data`); never scale it while the database is SQLite. `api.markiedocs.com` is a
+> CNAME to `5yn0dkw.markie-api.fly.dev`. The Railway sections below are history.
+
+
 The `api` Railway service is deployed by uploading `server/` from the CLI. Production carries no
 commit hash of its own, so every deploy must record one in its message. Released apps going back
 to v0.8.0 call this API. The v0.8.0-era server test suite passes against the current server, apart

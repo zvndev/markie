@@ -18,6 +18,9 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   signing in, syncing and sharing stopped. This update points Markie at the new
   address. Your account, your documents and your sign-in carry over; if Markie
   asks you to sign in again, your documents are all still there.
+- **Markie no longer freezes when it was opened from a terminal that has since
+  closed.** A closed terminal could leave Markie spinning until its window
+  stopped responding.
 
 ## [0.8.0] - 2026-09-14
 

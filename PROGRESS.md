@@ -1530,3 +1530,8 @@ Still to do: new Google and email secrets; move the super-nightly gateway (still
 - Final human check done through Codex computer use: the real 0.8.0 arm64 zip from markie-releases, run from a test folder, had already downloaded 0.8.1, installed it with Restart & Update, relaunched as 0.8.1, and showed the old stable profile signed in (kirby@zvndev.com) with no Cloud error. Test copy removed; the nightly was quit for the test and relaunched.
 - Tag `v0.8.1` on 84cb5a5 pushed. Windows was not built or published.
 - Main now carries 0.8.1 (hotfix plus #1-#3); `feat/document-platform-foundation` does not have the hotfix commit yet and must take it when it merges.
+
+## 2026-10-22 Markie 0.8.1 for Windows; 0.8.1 merged into the platform branch
+
+- Windows: `windows-release.yml` on main 84cb5a5 with `signing: azure`, `publish_release: true` (run 39729791197, success: Azure Trusted Signing, signature check, install/launch/uninstall on a Windows runner). `release:prepare:win` verified the installer signed by CN=ZVN DEV LLC and every SHA-512; `release:publish:win -- --confirm-public-release=0.8.1` uploaded the installer, blockmap and `windows/latest.yml`; `release:verify:public:win --deep` valid. latest.json: mac-arm64, mac-x64 and windows-x64 all 0.8.1. Not checked: an installed Windows 0.8.0 updating itself.
+- `origin/main` merged into `feat/document-platform-foundation` (89da0cc). The branch's own cloud-origin code won the conflicts, since it already treats Railway as an alias of api.markiedocs.com; main brought 0.8.1, its changelog and #1-#3. App 4842, MCP 85, server 480, lint, typecheck.

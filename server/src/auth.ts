@@ -37,6 +37,16 @@ export const auth = betterAuth({
     ...applicationOrigins(),
     "markie://", // desktop deep-link auth bridge target
   ],
+  // Which request header carries the real client address, so rate limits are
+  // per client and not one shared bucket. Only a header the edge in front of
+  // this server sets and overwrites may be named: Fly sets Fly-Client-IP, so
+  // the Fly deployment names it; anywhere else the default is better-auth's
+  // own x-forwarded-for, which a self-hosted proxy (deploy/Caddyfile) sets.
+  advanced: {
+    ipAddress: {
+      ipAddressHeaders: [process.env.MARKIE_CLIENT_IP_HEADER?.trim().toLowerCase() || "x-forwarded-for"],
+    },
+  },
   rateLimit: {
     enabled: true, // better-auth defaults to prod-only; turn it on everywhere
     window: 10,

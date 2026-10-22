@@ -18,6 +18,8 @@ primary_region = "iad"
 [env]
   NODE_ENV = "production"
   PORT = "8787"
+  # Fly's edge sets and overwrites this; clients cannot forge it here.
+  MARKIE_CLIENT_IP_HEADER = "fly-client-ip"
   DB_PATH = "/data/markie.db"
   BETTER_AUTH_URL = "https://api.markiedocs.com"
   MARKIE_SITE_URL = "https://markiedocs.com"

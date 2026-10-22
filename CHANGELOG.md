@@ -8,6 +8,53 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-22
+
+### Added
+
+- **Word, RTF and OpenDocument files open for editing.** Markie edits
+  `.docx`, `.rtf` and `.odt` documents in place and saves them back in their
+  own format, keeping their fonts, colors, page setup and metadata. Word
+  documents print from Markie, and every text format zooms like markdown.
+- **Every document is findable.** Search, Recent and the Library cover every
+  document type Markie opens, templates style new documents, and Markie
+  offers itself as the default app for documents you double-click. It never
+  claims data files.
+- **Your agents can put a file in Markie Cloud and hand you the link.** Ask
+  an agent to make you a hosted copy of a document and it syncs the file and
+  returns a private link you can open in a browser on any device. Markie asks
+  the first time, and you can let agents do this without asking. A public
+  link is made only when you ask for one, and Markie confirms it every time.
+- **Agents work with every document type.** The Markie MCP server finds,
+  searches, reads and safely writes Word, RTF and OpenDocument files as well
+  as markdown.
+- **Open a private link in a browser.** A private Markie Cloud link now has a
+  Sign in button, with Google or an emailed code, so you can read your
+  documents away from your computer.
+- **Sign in with Google or email to the same account.** Settings shows your
+  linked sign-ins. Link another email address or your Google account, and a
+  Google sign-in that matches an existing account tells you how to link it.
+- **Run your own Markie server.** Sign in to your own Markie servers beside
+  Markie Cloud, each with its own session. A self-hosted server is a private
+  document cloud by default, and one command sets up an encrypted,
+  backed-up server.
+- **Unlock the vault with your fingerprint.** The vault has its own place in
+  Markie, keys get their own editor, and Touch ID unlocks it.
+
+### Changed
+
+- **Light mode uses the flat graphite look**, and page setup sits where
+  people look for it.
+
+### Security
+
+- Closed server holes that someone with an account could have used against a
+  server's owner, and hardened the vault, document links and the app shell
+  against hostile documents and servers.
+- A server you add can no longer pass itself off as Markie Cloud or collect
+  another server's sign-in token, and a synced file only goes to the server
+  you chose.
+
 ## [0.8.1] - 2026-10-22
 
 ### Fixed

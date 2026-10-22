@@ -1,0 +1,53 @@
+# Markie Cloud API on Fly.io (moved off Railway after its 2026-10-21 breach).
+#
+# One machine, one volume: the database is SQLite at /data/markie.db, so this
+# app must never run two machines or autostop. Litestream replicates the volume
+# encrypted to Backblaze (see litestream.yml and docker-entrypoint.sh).
+# Secrets (fly secrets): BETTER_AUTH_SECRET, GOOGLE_CLIENT_SECRET, RESEND_API_KEY,
+# B2_KEY_ID, B2_APP_KEY, ASSETS_KEY_ID, ASSETS_APP_KEY, LITESTREAM_AGE_IDENTITY,
+# LITESTREAM_AGE_RECIPIENT.
+app = "markie-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  strategy = "immediate"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8787"
+  DB_PATH = "/data/markie.db"
+  BETTER_AUTH_URL = "https://api.markiedocs.com"
+  MARKIE_SITE_URL = "https://markiedocs.com"
+  MARKIE_ACCOUNT_IDENTITIES = "1"
+  EMAIL_FROM = "Markie <support@markiedocs.com>"
+  RESEND_BASE_URL = "https://api.justemail.tech/compat/resend"
+  GOOGLE_CLIENT_ID = "964692667983-ir7fjubngpoge99uovs3b50ggacap18o.apps.googleusercontent.com"
+  B2_BUCKET = "Markie"
+  B2_ENDPOINT = "https://s3.us-east-005.backblazeb2.com"
+  ASSETS_BUCKET = "markie-assets"
+  ASSETS_ENDPOINT = "https://s3.us-east-005.backblazeb2.com"
+
+[[mounts]]
+  source = "markie_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

@@ -7,8 +7,10 @@ import { VaultRepository } from "@/lib/vault/repository";
 import { installBridge } from "@/test/mock-bridge";
 
 // Every unlock here runs the real key derivation, which takes well over the
-// default one second when the full suite loads the machine.
+// default one second when the full suite loads the machine. A test runs
+// several of them in a row, so it needs more than vitest's five seconds too.
 configure({ asyncUtilTimeout: 5000 });
+vi.setConfig({ testTimeout: 20_000 });
 
 const picker = vi.hoisted(() => ({ pick: vi.fn(), download: vi.fn() }));
 vi.mock("@/lib/web-files", async () => ({ ...await vi.importActual("@/lib/web-files"), pickWebDocument: picker.pick, downloadWebDocument: picker.download }));

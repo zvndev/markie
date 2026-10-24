@@ -18,8 +18,9 @@ const config = require("../electron-builder.config.cjs") as {
 const RUNTIME_MODULE = /\.(?:mjs|cjs)$/;
 const TEST_MODULE = /\.test\.(?:mjs|cjs)$/;
 
+const mcpResource = config.extraResources.find((r) => r.from === "mcp");
+
 describe("mcp extraResources filter", () => {
-  const mcpResource = config.extraResources.find((r) => r.from === "mcp");
 
   it("copies mcp/ into Resources/mcp", () => {
     expect(mcpResource).toBeDefined();
@@ -37,21 +38,40 @@ describe("mcp extraResources filter", () => {
   });
 });
 
-// The other direction: the main process may require a module out of mcp/ (the
-// shared document search in mcp/doc-text.cjs), and that resolves inside the
-// asar, where only `files` puts anything. A require the asar cannot satisfy is
-// a main process that dies at launch in the shipped app and works in dev.
+// The other direction: the main process requires the shared document search
+// out of mcp/. electron-builder drops from the asar every file extraResources
+// also copies, so in the public build that module exists only in
+// Resources/mcp, and a literal require("../mcp/...") is a main process that
+// dies at launch in the shipped app and works in dev. That shipped as a
+// release candidate once and only the launch smoke caught it.
 describe("mcp modules the main process requires", () => {
-  const required = readdirSync(join(REPO_ROOT, "electron"))
-    .filter((f) => f.endsWith(".js") || f.endsWith(".cjs"))
-    .flatMap((f) => {
-      const src = readFileSync(join(REPO_ROOT, "electron", f), "utf8");
-      return [...src.matchAll(/require\(\s*["']\.\.\/mcp\/([^"']+)["']\s*\)/g)].map((m) => m[1]);
-    });
+  const { resolveDocText } = require("./doc-text-path.js") as {
+    resolveDocText: (dir?: string, resourcesPath?: string, exists?: (p: string) => boolean) => string;
+  };
 
-  it("are each packaged inside the asar", () => {
-    expect(required).toContain("doc-text.cjs");
-    for (const file of required) expect(config.files).toContain(`mcp/${file}`);
+  it("never reach into ../mcp with a literal require the public asar cannot satisfy", () => {
+    const literal = readdirSync(join(REPO_ROOT, "electron"))
+      .filter((f) => (f.endsWith(".js") || f.endsWith(".cjs")) && !TEST_MODULE.test(f))
+      .flatMap((f) => {
+        const src = readFileSync(join(REPO_ROOT, "electron", f), "utf8");
+        return [...src.matchAll(/require\(\s*["']\.\.\/mcp\/([^"']+)["']\s*\)/g)].map((m) => `${f}: ${m[1]}`);
+      });
+    expect(literal).toEqual([]);
+  });
+
+  it("load doc-text from Resources/mcp when the asar has no copy, as in the public build", () => {
+    expect(mcpResource!.filter).toContain("doc-text.cjs");
+    const asar = "/Applications/Markie.app/Contents/Resources/app.asar/electron";
+    const resources = "/Applications/Markie.app/Contents/Resources";
+    expect(resolveDocText(asar, resources, () => false)).toBe(join(resources, "mcp", "doc-text.cjs"));
+  });
+
+  it("prefer the copy beside electron/, as in the repo and the private build", () => {
+    const asar = "/Applications/Markie.app/Contents/Resources/app.asar/electron";
+    expect(resolveDocText(asar, "/Applications/Markie.app/Contents/Resources", () => true)).toBe(
+      join(asar, "..", "mcp", "doc-text.cjs")
+    );
+    expect(resolveDocText(join(REPO_ROOT, "electron"), undefined, () => false)).toBe(join(REPO_ROOT, "mcp", "doc-text.cjs"));
   });
 
   it("make electron/doc-text.js the MCP search module itself, not a copy", () => {

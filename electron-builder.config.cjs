@@ -176,9 +176,10 @@ module.exports = {
     "electron/**/*",
     "out/**/*",
     // electron/doc-text.js re-exports this one MCP module so global search and
-    // the MCP's markie_search_documents share one implementation. It is also
-    // copied to Resources/mcp below; the asar needs its own copy because the
-    // main process resolves ../mcp from inside the archive.
+    // the MCP's markie_search_documents share one implementation. This entry
+    // only lands in the private build: electron-builder drops from the asar
+    // anything extraResources also copies, so here the module ships once, in
+    // Resources/mcp below, and electron/doc-text-path.js loads it from there.
     "mcp/doc-text.cjs",
     "!electron/**/*.test.*",
     "!node_modules/better-sqlite3/deps/**",

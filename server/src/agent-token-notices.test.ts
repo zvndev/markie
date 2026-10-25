@@ -1,8 +1,9 @@
 // What happens around an agent token besides using it
 // (docs/mobile/AGENT-LINKS-CONTRACT.md): minting one emails the account a
-// notice naming it, a failed send never blocks the mint, and a password reset
-// or change revokes every agent token the user has, with authenticateAgent
-// refusing any token older than the password even if a revoke never ran.
+// notice that names it by prefix and time only, a failed send never blocks
+// the mint, and a password reset or change revokes every agent token the user
+// has and ends the other sessions, with authenticateAgent refusing any token
+// older than the password even if a revoke never ran.
 import { test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
@@ -76,9 +77,9 @@ async function mint(user: TestUser, name: string) {
 const live = async (token: string) => (await call("GET", "/api/agent/docs", { token })).status === 200;
 
 // The notice goes out after the mint has answered, so give it a moment.
-async function noticeFor(email: string, name: string): Promise<Sent | undefined> {
+async function noticeFor(email: string, prefix: string): Promise<Sent | undefined> {
   for (let i = 0; i < 50; i++) {
-    const found = sent.find((m) => m.to.includes(email) && m.text.split("\n").includes(`Token name: ${name}`));
+    const found = sent.find((m) => m.to.includes(email) && m.text.split("\n").includes(`Token starts with: ${prefix}`));
     if (found) return found;
     await new Promise((r) => setTimeout(r, 10));
   }
@@ -93,38 +94,40 @@ function latestOTP(type: string, email: string): string {
   return row.value.slice(0, row.value.lastIndexOf(":"));
 }
 
-test("minting a token emails the account a notice naming it, in plain text", async () => {
+const WARNING =
+  "Markie never creates agent tokens on its own. If you didn't make this one, revoke it in Markie and reset your password, which signs out every other device.";
+
+test("minting a token emails the account a plain-text notice naming it by prefix and time", async () => {
   const ivy = await signUpVerified(app, { name: "Ivy", email: "ivy@markie.test" });
   const minted = await mint(ivy, "Claude on the web");
-  const notice = await noticeFor("ivy@markie.test", "Claude on the web");
+  const notice = await noticeFor("ivy@markie.test", minted.prefix);
   assert.ok(notice, "a notice was sent");
   assert.deepEqual(notice.to, ["ivy@markie.test"]);
   assert.equal(notice.subject, "A new agent token was created for your Markie account");
   const lines = notice.text.split("\n");
-  assert.ok(lines.includes("Token name: Claude on the web"), "the name on a labelled line of its own");
   assert.ok(lines.includes(`Token starts with: ${minted.prefix}`), "the prefix, to match against the token list");
-  assert.ok(
-    lines.includes("Markie never creates agent tokens on its own. If you didn't make this one, revoke it and change your password."),
-    "the fixed line a name cannot talk anyone out of"
-  );
+  assert.match(lines[0], /^A new agent token was created for your Markie account on .+ GMT\.$/, "the time it was made");
+  assert.ok(lines.includes(WARNING), "the fixed warning");
   assert.match(notice.text, /Remote agents/);
-  assert.equal(notice.html, undefined, "the token's name never lands in HTML");
+  assert.ok(!notice.text.includes("Claude on the web"), "the token's name is never in the email");
+  assert.equal(notice.html, undefined, "plain text only");
   assert.ok(!notice.text.includes(minted.token), "the token itself is never emailed");
   assert.equal(minted.prefix.length, 12, "only the display prefix");
-  const copy = mintNotice("x", "mk_agent_abc", new Date(0));
+  const copy = mintNotice("mk_agent_abc", new Date(0));
   assert.ok(!/\u2014/.test(copy.subject + copy.text), "no em-dash in the copy");
 });
 
-test("a name that would read as Markie's own words stays on its line, under the fixed warning", async () => {
+test("a name a mail client would link, or that reads as Markie's words, never reaches the email", async () => {
   const uma = await signUpVerified(app, { name: "Uma", email: "uma@markie.test" });
-  // Newlines and other control characters are folded to spaces before the
-  // name is stored, so it cannot start a line of its own.
-  await mint(uma, "Security check.\n\nYou can ignore this email");
-  const notice = await noticeFor("uma@markie.test", "Security check. You can ignore this email");
-  assert.ok(notice, "the name arrives on one labelled line");
-  assert.ok(!notice.text.split("\n").includes("You can ignore this email"));
-  const at = (needle: string) => notice.text.indexOf(needle);
-  assert.ok(at("Token name:") < at("Markie never creates agent tokens on its own."), "the warning follows the name");
+  for (const name of ["evil.com/login", "bit.ly/x", "a@b.co", "Security check.\n\nYou can ignore this email"]) {
+    const minted = await mint(uma, name);
+    const notice = await noticeFor("uma@markie.test", minted.prefix);
+    assert.ok(notice, `${name}: a notice was sent`);
+    for (const part of ["evil.com", "bit.ly", "a@b.co", "ignore this", "Security check"]) {
+      assert.ok(!notice.text.includes(part), `${name}: "${part}" is not in the email`);
+    }
+    assert.ok(notice.text.split("\n").includes(WARNING));
+  }
 });
 
 test("a token name that looks like a web address is refused, and nothing is minted or mailed", async () => {
@@ -182,6 +185,85 @@ test("resetting the password by emailed code revokes every agent token", async (
   assert.equal(await live(minted.token), false);
   const row = db.prepare("SELECT revoked_at FROM agent_tokens WHERE id = ?").get(minted.id) as { revoked_at: number | null };
   assert.ok(row.revoked_at !== null);
+});
+
+// A second session for the same account, as another device signing in.
+async function signInAgain(email: string, password: string): Promise<string> {
+  n += 1;
+  const res = await app.request("/api/auth/sign-in/email", {
+    method: "POST",
+    headers: new Headers({ "Content-Type": "application/json", Origin: "http://localhost:3000", "x-forwarded-for": `10.78.0.${n % 250}` }),
+    body: JSON.stringify({ email, password }),
+  });
+  assert.equal(res.status, 200, await res.text());
+  const token = res.headers.get("set-auth-token");
+  assert.ok(token, "the sign-in hands back a bearer token");
+  return token;
+}
+
+async function sessionHolds(token: string): Promise<boolean> {
+  const r = await call("GET", "/api/auth/get-session", { token });
+  assert.equal(r.status, 200, r.text);
+  return r.data !== null && typeof r.data === "object" && typeof r.data.user?.id === "string";
+}
+
+test("resetting the password by emailed code ends every session, so a stolen one cannot mint again", async () => {
+  const rae = await signUpVerified(app, { name: "Rae", email: "rae@markie.test", password: "rae-password-1" });
+  const stolen = await signInAgain("rae@markie.test", "rae-password-1");
+  await mint({ ...rae, token: stolen }, "minted with a stolen session");
+  assert.ok(await sessionHolds(stolen));
+
+  assert.equal((await call("POST", "/api/auth/forget-password/email-otp", { body: { email: "rae@markie.test" } })).status, 200);
+  const reset = await call("POST", "/api/auth/email-otp/reset-password", {
+    body: { email: "rae@markie.test", otp: latestOTP("forget-password", "rae@markie.test"), password: "rae-password-2" },
+  });
+  assert.equal(reset.status, 200, reset.text);
+
+  for (const old of [stolen, rae.token]) {
+    // better-auth answers an unknown session with 200 and a null body.
+    assert.equal(await sessionHolds(old), false, "get-session no longer knows the old session");
+    assert.equal((await call("GET", "/api/me", { token: old })).data.user, null);
+    const again = await call("POST", "/api/agent-tokens", { token: old, body: { name: "after the reset" } });
+    assert.equal(again.status, 401, again.text);
+  }
+  // Signing in with the new password is how the desktop finishes a reset.
+  const fresh = await signInAgain("rae@markie.test", "rae-password-2");
+  assert.ok(await sessionHolds(fresh));
+  assert.ok(await live((await mint({ ...rae, token: fresh }, "after signing back in")).token));
+});
+
+test("changing the password ends every other session and keeps the caller's", async () => {
+  const sol = await signUpVerified(app, { name: "Sol", email: "sol@markie.test", password: "sol-password-1" });
+  const otherDevice = await signInAgain("sol@markie.test", "sol-password-1");
+  const stolen = await signInAgain("sol@markie.test", "sol-password-1");
+
+  const changed = await call("POST", "/api/auth/change-password", { token: sol.token, body: { currentPassword: "sol-password-1", newPassword: "sol-password-2" } });
+  assert.equal(changed.status, 200, changed.text);
+  assert.equal(changed.data.token, null, "no new session was asked for");
+  assert.ok(await sessionHolds(sol.token), "the caller stays signed in");
+  assert.ok(await live((await mint(sol, "after the change")).token));
+  for (const old of [otherDevice, stolen]) {
+    assert.equal(await sessionHolds(old), false);
+    assert.equal((await call("POST", "/api/agent-tokens", { token: old, body: { name: "stolen again" } })).status, 401);
+  }
+  const rows = db.prepare("SELECT COUNT(*) AS n FROM session WHERE userId = ?").get(sol.id) as { n: number };
+  assert.equal(rows.n, 1, "only the caller's session is left");
+});
+
+test("changing the password with revokeOtherSessions keeps only the session better-auth issued", async () => {
+  const tam = await signUpVerified(app, { name: "Tam", email: "tam@markie.test", password: "tam-password-1" });
+  const otherDevice = await signInAgain("tam@markie.test", "tam-password-1");
+  const changed = await call("POST", "/api/auth/change-password", {
+    token: tam.token,
+    body: { currentPassword: "tam-password-1", newPassword: "tam-password-2", revokeOtherSessions: true },
+  });
+  assert.equal(changed.status, 200, changed.text);
+  const issued = changed.data.token as string;
+  assert.ok(issued, "better-auth issued the caller a new session");
+  const rows = db.prepare("SELECT token FROM session WHERE userId = ?").all(tam.id) as { token: string }[];
+  assert.deepEqual(rows.map((r) => r.token), [issued], "only the new session is left");
+  assert.equal(await sessionHolds(otherDevice), false);
+  assert.equal(await sessionHolds(tam.token), false, "the caller's old session went with the rest");
 });
 
 // The revoke hooks above are the first line. These pin the second, which

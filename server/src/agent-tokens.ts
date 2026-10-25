@@ -12,16 +12,17 @@
 // the routes here take a signed-in session and refuse an agent token
 // outright, so a leaked token cannot mint itself a successor. Minting one
 // emails the account (at most 5 an hour and 20 a day), and a password reset
-// or change revokes them all (agent-token-store.ts, called from auth.ts),
-// backed by authenticateAgent refusing any token older than the password.
+// or change revokes them all (agent-token-store.ts, called from auth.ts) and
+// ends the other sessions that could mint more, backed by authenticateAgent
+// refusing any token older than the password.
 import { Hono, type Context } from "hono";
 import crypto from "node:crypto";
 import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
 import { sendEmail } from "./email.ts";
 import { cleanAgentName } from "./doc-meta.ts";
-// Creates the agent_tokens table.
-import "./agent-token-store.ts";
+// Importing it creates the agent_tokens table.
+import { onAgentTokensRevokedForUser } from "./agent-token-store.ts";
 
 const db = openDatabase();
 
@@ -132,9 +133,10 @@ export function authenticateAgent(headers: Headers, now = Date.now()): AgentPrin
 // accepted ones. Only content actually written counts against the bytes.
 //
 // The per-user windows remember which token each entry came from, so
-// revoking a token gives its share back (agentTokens.delete below). Only a
-// signed-in session can revoke, so a token holder cannot use that to reset
-// its own limits.
+// revoking a token gives its share back (agentTokens.delete below), and a
+// password reset or change, which revokes them all, empties the user's
+// windows. Only a signed-in session can do either, so a token holder cannot
+// use that to reset its own limits.
 
 export const WRITES_PER_HOUR = 60;
 export const USER_WRITES_PER_HOUR = 200;
@@ -222,6 +224,16 @@ function forgetTokenUsage(userId: string, tokenId: string): void {
   if (bytes) userBytes.set(userId, bytes.filter((w) => w.tokenId !== tokenId));
 }
 
+// A password reset or change revokes every token the user has
+// (agent-token-store.ts), so every entry in the user's windows belonged to a
+// revoked token. All of it goes, or the owner's next token would be refused
+// for up to a day for what the revoked ones spent.
+onAgentTokensRevokedForUser((userId, tokenIds) => {
+  for (const id of tokenIds) tokenWrites.delete(id);
+  userWrites.delete(userId);
+  userBytes.delete(userId);
+});
+
 // ---- mint limit --------------------------------------------------------------
 //
 // The 20-token cap counts only active tokens, so a loop of mint and revoke
@@ -281,39 +293,40 @@ async function requireSessionUser(c: Context): Promise<{ id: string; email: stri
 }
 
 // Minting a token is the moment a stolen session turns into lasting access,
-// so the account hears about every one. The token's name is the only thing
-// from the request in it, on a labelled line of its own in the plain-text
-// body, so it reads as a value and not as Markie's words. The fixed line
-// after it is there so a name like "Markie security check, ignore this"
-// cannot talk the reader out of revoking. A send that fails never undoes or
-// delays the mint: it is logged and dropped.
-export function mintNotice(name: string, prefix: string, createdAt: Date): { subject: string; text: string } {
+// so the account hears about every one. Nothing from the request is in it:
+// the token is named by its prefix and the time it was made, both Markie's
+// own. A name the minter chose, however it is laid out, is text a mail client
+// may turn into a link (evil.com/login, bit.ly/x, a@b.co) sent from Markie's
+// domain, or words that talk the reader out of revoking. A send that fails
+// never undoes or delays the mint: it is logged and dropped.
+export function mintNotice(prefix: string, createdAt: Date): { subject: string; text: string } {
   return {
     subject: "A new agent token was created for your Markie account",
     text: [
       `A new agent token was created for your Markie account on ${createdAt.toUTCString()}.`,
       "",
-      `Token name: ${name}`,
       `Token starts with: ${prefix}`,
       "",
       "An agent holding it can create private documents in your Markie Cloud, and read and update the documents it created. It cannot open anything else.",
       "",
-      "Markie never creates agent tokens on its own. If you didn't make this one, revoke it and change your password.",
+      "Markie never creates agent tokens on its own. If you didn't make this one, revoke it in Markie and reset your password, which signs out every other device.",
       "",
-      "To revoke it, open Markie and go to Remote agents. Changing your password revokes every agent token.",
+      "To revoke it, open Markie and go to Remote agents. Find it by the start of the token and the time it was created. Changing your password revokes every agent token.",
     ].join("\n"),
   };
 }
 
-function sendMintNotice(email: string | null, name: string, prefix: string, createdAt: number): void {
+function sendMintNotice(email: string | null, prefix: string, createdAt: number): void {
   if (!email) return;
-  sendEmail({ to: email, ...mintNotice(name, prefix, new Date(createdAt)) }).catch((err) => {
+  sendEmail({ to: email, ...mintNotice(prefix, new Date(createdAt)) }).catch((err) => {
     console.error("agent token notice failed:", err);
   });
 }
 
-// A name that a mail client would turn into a link has no business in a
-// notice sent from Markie's domain.
+// A name that reads as a web address is refused anyway. It never reaches
+// the notice, but it is shown in Markie's token list and as the fallback
+// author of what the token writes, where it has no business looking like a
+// link either.
 const LINKISH_NAME = /:\/\/|www\./i;
 
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
@@ -362,7 +375,7 @@ agentTokens.post("/", async (c) => {
       409
     );
   }
-  sendMintNotice(user.email, name, prefix, createdAt);
+  sendMintNotice(user.email, prefix, createdAt);
   return c.json({ id, name, token, prefix, createdAt: iso(createdAt) }, 201);
 });
 

@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth";
 import { randomUUID } from "node:crypto";
 import { bearer, emailOTP } from "better-auth/plugins";
-import { createAuthMiddleware } from "better-auth/api";
+import { createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { openDatabase } from "./db.ts";
 import { sendEmail } from "./email.ts";
 import { claimPendingInvites } from "./pending.ts";
@@ -19,15 +19,42 @@ const authDatabase = openDatabase();
 
 // A new password shuts out every agent token too (docs/mobile/AGENT-LINKS-
 // CONTRACT.md): whoever held the old password, or a session made with it,
-// may have minted tokens, and a token outlives the sessions a password
-// change ends. A failure is logged rather than thrown, because the password
-// has already changed by the time this runs and an error would only tell the
-// user it had not.
+// may have minted tokens, and a token is not a session, so ending sessions
+// alone would leave them working. A failure is logged rather than thrown,
+// because the password has already changed by the time this runs and an
+// error would only tell the user it had not.
 function revokeAgentTokensAfterPasswordChange(userId: string, how: string): void {
   try {
     revokeAgentTokensForUser(userId);
   } catch (err) {
     console.error(`revoking agent tokens after ${how} failed:`, err);
+  }
+}
+
+// A new password also ends every session but the one that set it. A reset
+// ends them all (revokeSessionsOnPasswordReset below): whoever resets is
+// signed out, and the sign-in form signs straight back in with the new
+// password. change-password ends them only when the caller asks
+// (revokeOtherSessions), so the after hook does it every time, keeping the
+// caller's session: the one better-auth just issued when it was asked to
+// revoke (the response's token), otherwise the one the request came with.
+// Without this a stolen session outlives the password change and mints a
+// new agent token straight after. Logged rather than thrown, as above.
+async function endOtherSessionsAfterPasswordChange(
+  ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0],
+  userId: string,
+  issued: unknown
+): Promise<void> {
+  try {
+    const keep =
+      typeof issued === "string" && issued
+        ? issued
+        : (ctx.context.session ?? (await getSessionFromCtx(ctx)))?.session.token ?? null;
+    const sessions = await ctx.context.internalAdapter.listSessions(userId);
+    const others = sessions.map((s) => s.token).filter((token) => token !== keep);
+    if (others.length) await ctx.context.internalAdapter.deleteSessions(others);
+  } catch (err) {
+    console.error("ending other sessions after a password change failed:", err);
   }
 }
 
@@ -53,7 +80,9 @@ export const auth = betterAuth({
       const returned = (ctx.context as { returned?: unknown }).returned;
       if (!returned || typeof returned !== "object" || returned instanceof Error) return;
       const userId = (returned as { user?: { id?: unknown } }).user?.id;
-      if (typeof userId === "string" && userId) revokeAgentTokensAfterPasswordChange(userId, "a password change");
+      if (typeof userId !== "string" || !userId) return;
+      revokeAgentTokensAfterPasswordChange(userId, "a password change");
+      await endOtherSessionsAfterPasswordChange(ctx, userId, (returned as { token?: unknown }).token);
     }),
   },
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:8787",
@@ -97,10 +126,12 @@ export const auth = betterAuth({
     // same class of flaw upstream.
     requireEmailVerification: true,
     // Both reset routes, /email-otp/reset-password and /reset-password, call
-    // this once the new password is stored.
+    // this once the new password is stored, and then end every session the
+    // user has, the stolen one included (revokeSessionsOnPasswordReset).
     onPasswordReset: async ({ user }) => {
       revokeAgentTokensAfterPasswordChange(user.id, "a password reset");
     },
+    revokeSessionsOnPasswordReset: true,
   },
   account: {
     // Google access and refresh tokens are written to the account table

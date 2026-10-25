@@ -92,14 +92,20 @@ existing columns.
   - `created_at INTEGER NOT NULL`, `last_used_at INTEGER` and `revoked_at INTEGER`.
 - Token format: `mk_agent_` followed by 32 random bytes in base64url. It's compared by hash with
   `timingSafeEqual`.
-- Minting a token sends the account's email a notice. The token's name sits on its own labelled
-  line, followed by the token's prefix and a fixed line: "Markie never creates agent tokens on its
-  own. If you didn't make this one, revoke it and change your password." A name containing `://`
-  or `www.` is refused with a 400. The notice uses the existing `server/src/email.ts`, and a send
-  failure never blocks the mint.
+- Minting a token sends the account's email a plain-text notice. It names the token by its prefix
+  and the time it was created only; the token's name is never in it, because a mail client may turn
+  a name like `evil.com/login` into a link. It ends with a fixed line: "Markie never creates agent
+  tokens on its own. If you didn't make this one, revoke it in Markie and reset your password,
+  which signs out every other device." A name containing `://` or `www.` is still refused with a
+  400, since names show in the token list. The notice uses the existing `server/src/email.ts`, and
+  a send failure never blocks the mint.
 - A password reset or change revokes all of the user's agent tokens. As a backstop that cannot fail
   open, a token whose `created_at` is earlier than the `updatedAt` of the user's credential account
   row is refused. better-auth stamps that row on every password write and on nothing else.
+- A password reset also ends every session the user has (`revokeSessionsOnPasswordReset`), so a
+  stolen session cannot mint again; the client signs back in with the new password. A password
+  change ends every session except the caller's: the one it came with, or the new one better-auth
+  issues when the caller asks for `revokeOtherSessions`. Other devices sign in again.
 
 ## Server API
 
@@ -183,7 +189,9 @@ through agent tokens of the same user") let any token reach every bridge-synced 
 - **Per-token byte share**: each token can write at most 20 MB of content a day inside the user's
   50 MB. Over that returns 429 with that token's exact `Retry-After`.
 - Revoking a token removes its entries from the user's hourly write and daily byte windows, so the
-  user's other tokens get that share back. Only a signed-in session can revoke.
+  user's other tokens get that share back. A password reset or change, which revokes every token,
+  empties the user's windows, so the first token minted after securing the account has the whole
+  budget. Only a signed-in session can do either.
 - `GET /api/agent/docs/:id` returns content, under the same rule.
 - Rate limit: 60 writes per hour per token, answered with 429 and that token's exact
   `Retry-After`.

@@ -598,6 +598,31 @@ test("revoking a token gives its share of the user's hourly writes and daily byt
   assert.equal((await agentCreate(spent.token, { name: "x.md", content: "x" })).status, 401);
 });
 
+test("a password change empties the user's windows, so the owner's next token is not locked out", async () => {
+  const kai = await signUpVerified(app, { name: "Kai", email: "kai@markie.test" });
+  const spenders = [await mintToken(kai, "one"), await mintToken(kai, "two"), await mintToken(kai, "three")];
+  // Three tokens use the account's whole day (50 MB) and each its whole hour,
+  // which leaves the account 20 writes of its 200.
+  const shares = [TOKEN_BYTES_PER_DAY, TOKEN_BYTES_PER_DAY, USER_BYTES_PER_DAY - 2 * TOKEN_BYTES_PER_DAY];
+  spenders.forEach((t, i) => recordAgentBytes({ tokenId: t.id, userId: kai.id }, shares[i]));
+  for (const t of spenders) for (let i = 0; i < WRITES_PER_HOUR; i++) assert.equal(takeAgentWrite({ tokenId: t.id, userId: kai.id }), null);
+  assert.deepEqual(agentBytesRefusal({ tokenId: "next", userId: kai.id }, 1), { scope: "account", retryAfter: 86400 }, "the day is used up");
+
+  const changed = await call("POST", "/api/auth/change-password", { token: kai.token, body: { currentPassword: "password-123", newPassword: "kai-password-2" } });
+  assert.equal(changed.status, 200, changed.text);
+
+  const fresh = await mintToken(kai, "after securing the account");
+  const big = "x".repeat(1024 * 1024);
+  const wrote = await agentCreate(fresh.token, { name: "fresh.md", content: big });
+  assert.equal(wrote.status, 201, `the new token writes at once: ${wrote.text}`);
+  assert.equal(agentBytesRefusal({ tokenId: fresh.id, userId: kai.id }, TOKEN_BYTES_PER_DAY - Buffer.byteLength(big)), null, "with its whole share");
+  // Two new tokens get their full 60 each, far past the 20 the spenders left.
+  const second = await mintToken(kai, "and another");
+  for (let i = 1; i < WRITES_PER_HOUR; i++) assert.equal(takeAgentWrite({ tokenId: fresh.id, userId: kai.id }), null, `write ${i + 1}`);
+  for (let i = 0; i < WRITES_PER_HOUR; i++) assert.equal(takeAgentWrite({ tokenId: second.id, userId: kai.id }), null, `second token, write ${i + 1}`);
+  for (const t of spenders) assert.equal((await agentCreate(t.token, { name: "x.md", content: "x" })).status, 401, "the old tokens stay revoked");
+});
+
 test("a deleted agent document is gone for the agent too", async () => {
   const made = await agentCreate(aliceAgent.token, { name: "Gone.md", content: "bye" });
   assert.equal((await call("DELETE", `/api/docs/${made.data.id}`, { token: alice.token })).status, 200);

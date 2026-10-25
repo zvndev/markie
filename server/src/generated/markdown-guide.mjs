@@ -1,87 +1,144 @@
 // GENERATED from mcp/markdown-guide.mjs by server/scripts/sync-markdown-guide.mjs.
 // Do not edit. Change the source, then run: (cd server && npm run guide:sync)
 
-// What Markie draws, written for the agent that is about to write a document.
+// How to write a document for Markie, for the agent that is about to write one.
 //
 // The filing conventions in conventions.mjs say where a document belongs. This
-// says what will actually appear when somebody opens it, which is a different
-// question and the one that goes wrong silently. An agent that does not know a
-// picture has to sit beside the document saves a screenshot to /tmp, references
-// it by absolute path, and produces a report with a hole in it and no error
-// anywhere.
+// says what to write and what will actually appear when somebody opens it,
+// which is a different question and the one that goes wrong silently. An agent
+// that does not know a picture has to sit beside the document saves a
+// screenshot to /tmp, references it by absolute path, and produces a report
+// with a hole in it and no error anywhere. An agent that does not know Markie
+// draws tables, task lists and live Darkmown documents writes a wall of
+// plain paragraphs.
 //
-// ONE source, three surfaces: the essentials are folded into the MCP
+// ONE source, four surfaces: the essentials are folded into the MCP
 // initialize instructions (every client hands those to the model), the whole
 // text is served as the markie://guide/markdown resource and by the
-// markie_guide tool, and skills/markie-conventions/SKILL.md embeds it between
-// markers. lib.test.mjs fails if the copy in SKILL.md drifts from this string.
+// markie_guide tool, the plugin skill points here, and the hosted MCP on the
+// Markie server serves a generated copy of this string (server/ has a test
+// that fails when the two differ).
 //
-// Every claim below was measured against the real code, most recently on
-// 2026-09-05 after the resize, embed and alignment work landed, by
-// round-tripping documents through src/lib/rich-extensions.ts (the editor's own
-// extension list) and through src/lib/markdown-html.ts (the export, print, PDF
-// and share renderer). Nothing here is written from memory, and a claim that
-// stops being true is a bug in the guide. Two of them were the opposite of what
-// the code comments said at the time, so re-measure rather than re-read.
-// The "Other document types" table at the end restates what doc-text.cjs and
-// lib.mjs (READ_FORMATS, WRITE_FORMATS) enforce; lib.test.mjs checks each row
-// against them.
+// Every claim below was measured against the real code by running it: the
+// markdown through src/lib/rich-extensions.ts (the editor's own extension
+// list), src/lib/markdown-html.ts (the export, print and PDF renderer) and
+// server/src/render.ts (the renderer behind shared web pages), and every
+// ```wd example through compileDarkmownPreview, the same compile, sanitize and
+// runtime path the app's preview uses. src/lib/agent-guide-markdown.test.tsx,
+// src/lib/darkmown/agent-guide.test.ts and server/src/agent-guide-render.test.ts
+// do that on every test run and fail when an example stops compiling or an
+// element stops rendering. Re-measure rather than re-read: several claims here
+// were the opposite of what the code comments said at the time. The "Other
+// document types" table at the end restates what doc-text.cjs and lib.mjs
+// (READ_FORMATS, WRITE_FORMATS) enforce, and the extensions the "Sending"
+// section lists for markie_cloud_sync must pass the desktop's SYNCABLE and the
+// cloud-tool format guard in markie-mcp.mjs. lib.test.mjs checks both.
+//
+// Prose rules: short sentences, plain labels, examples over adjectives, and no
+// em-dash character anywhere in the text (lib.test.mjs fails on one).
+// Template literal rules: a backtick is written \` and a dollar sign followed
+// by a brace is never written, so Darkmown examples avoid a leading dollar.
 // Self-contained: no imports from outside mcp/ (see the scan.mjs header).
 
-export const MARKDOWN_GUIDE = `# What Markie renders
+export const MARKDOWN_GUIDE = `# Writing documents for Markie
 
-Markie reads ordinary markdown: GFM, plus the HTML every markdown renderer
-already accepts. Write it the way you would write any .md file and it stays
-portable, because nothing here is Markie-only.
+Markie draws much more than plain markdown: tables, task lists, pictures, video, audio and live Darkmown documents. Use them. Every example below is checked against Markie's own renderer when Markie is built.
 
-Two things draw a document and they do not agree about everything, so the rules
-below say both. Rich (Command-1) is the editor Markie opens with, and Source
-(Command-2) is the file's own bytes. Export, print, PDF and a shared link go
-through a second renderer, which parses the document's own HTML and then
-sanitizes it.
+Agents using only the hosted tools can skip: markie_check_md, workspace folders, the Other document types table, front-matter filing.
 
 ## The short version
 
-- A picture, a clip or a recording is all \`![alt](path)\`. Markdown has one
-  embed syntax, and Markie decides by file extension what to draw.
-- The file has to sit beside the document, or inside a folder the user has
-  added to Markie as a workspace. A path anywhere else displays nothing at all,
-  with no error. Never point a document at /tmp.
-- To size a picture, write its tag alone on a line:
-  \`<img src="demo/shot.png" width="240">\`. Width only, never height.
-- To centre a line, write its tag alone on a line:
-  \`<p style="text-align: center;">middle</p>\`, or the same on a heading. What
-  is inside is HTML, not markdown.
-- A YouTube or Vimeo link alone on a line becomes a card. Write the bare
-  address and nothing else.
-- \`<mark>\`, \`<u>\` and \`<span style="color|font-family|font-size">\` are the
-  inline tags Rich keeps exactly as written. Other tags render in exports and
-  shared pages, and Rich rewrites or unwraps them the next time it saves that
-  paragraph.
-- \`<script>\`, \`<iframe>\`, \`<style>\`, \`<object>\`, \`<form>\`, any \`on...=\`
-  handler and a \`javascript:\` link render nowhere at all.
-- Run \`markie_check_md\` on a document before handing it over. It names every
-  target that will not display and every tag that will not render.
+- Pick the format. \`.md\` is for reading. \`.wd\` (Darkmown) is for a document the reader clicks, ticks, slides or calculates with. \`.csv\` is for plain rows. If the reader will mostly open it through a link in a browser, prefer \`.md\`: a \`.wd\` on the web shows its source.
+- Structure it: one \`#\` title, a one or two sentence summary, \`##\` sections, short paragraphs, the answer first. Use a table for items with attributes, a task list for to-dos, a blockquote with a bold label for a note, a fenced block with a language for code.
+- These do not exist: callouts (\`> [!NOTE]\` shows as a plain quote), diagrams (a \`mermaid\` block stays code), emoji shortcodes, and heading anchors (\`[Jump](#section)\` goes nowhere).
+- A picture, clip or recording is \`![alt](path)\`. The file has to sit beside the document, or inside a folder the user added to Markie as a workspace. Any other path displays nothing, with no error. Never point at /tmp.
+- Math and footnotes render in exports and shared web pages, not in the Markie editor. HTML at the start of a line shows as a placeholder token in the editor, and \`<script>\`, \`<iframe>\` and \`<form>\` render nowhere.
+- Darkmown runs \`:state\`, \`:computed\` (\`-\` \`*\` \`/\` \`%\` only, so add with \`a - -b\`), \`:button\`, \`:slider\`, \`:bind\`, bound \`:select\` \`:checkbox\` \`:radio\`, and \`:form into\`. It does not run \`:if\`, loops, includes, \`:store\`, \`persist\`, \`:fetch\`, \`+\` or format pipes. Declare a name before you use it: an undeclared \`{ name }\` prints as \`{ name }\`, and \`:input\` and \`:textarea\` outside a form are disabled silently.
+- Give the user a link: write with \`markie_write_document\`, call \`markie_cloud_sync\`, and paste the \`markdownLink\` it returns. With only the hosted tools, call \`markie_create_document\` and paste its \`markdownLink\`. Leave \`project\` and \`block\` out of a document you send as a link. Make a public link only when the user asked for one.
 
-## Plain markdown
+## Choosing a format
 
-Headings, bold and italic, ordered and unordered lists, blockquotes, inline
-code and fenced code with a language, thematic breaks, and links: all ordinary
-markdown, all rendered in both views. Name a fence's language after its opening
-backticks and exports, PDFs and shared links syntax highlight it.
+| You are writing | Use |
+| --- | --- |
+| A report, plan, spec, notes, README | \`.md\` |
+| A calculator, an estimate, a checklist that counts, a small dashboard, a step-through, a short form | \`.wd\` |
+| Rows and columns of data | \`.csv\` |
+| Literal text, a log | \`.txt\` |
+| Config or data | \`.json\` \`.yaml\` \`.xml\` |
 
-GFM on top of that, in both views: tables (a header row, a \`---\` delimiter
-row, then the rows), task lists (\`- [ ] todo\` and \`- [x] done\`),
-strikethrough (\`~~gone~~\`), and a bare \`https://example.com\`, which becomes a
-link on its own.
+Default to \`.md\`. Write \`.wd\` when the reader would otherwise need a second document to try a number or tick a box. A \`.wd\` is live only in the Markie app. On the web, and in any other editor, it shows its source. A \`.md\` never runs a directive.
 
-Column alignment, the colons in a delimiter row, renders in both views and stays
-in the file. Editing that table in Rich is what drops the colons.
+## Structure
 
-## Pictures, video and audio
+- One \`#\` title, then one or two sentences: what this is, and what the reader should do or decide. Answer first, background after.
+- \`##\` for sections, \`###\` for parts. Stop there. Headings are labels of two to five words.
+- Paragraphs of one to three sentences. Steps in a numbered list, parallel items in a bullet list.
+- No table of contents of \`[Jump](#section)\` links. Headings have no anchors.
 
-One syntax for all three. Markie draws a player for a clip and a picture for a
-picture, by extension:
+A document can start with front matter, which the editor writes back byte for byte. \`markie_write_document\` writes it when you pass \`project\` and \`block\`:
+
+\`\`\`markdown
+---
+markie:
+  project: bevrly
+  block: checkout-redesign
+---
+
+# Checkout redesign
+\`\`\`
+
+Exports print front matter as text at the top. For a document you send as a link or export, leave \`project\` and \`block\` out.
+
+## Elements that render
+
+Rich (Command-1) is the editor, and Source (Command-2) is the file's own bytes. Export, print, PDF and shared web pages use a second renderer. The rules below say where they differ.
+
+### Tables
+
+\`\`\`markdown
+| Option | Cost | Risk |
+| :--- | ---: | --- |
+| Rebuild | 12 days | **High** |
+| Patch | 3 days | Low, see [the notes](notes.md) |
+\`\`\`
+
+Colons in the delimiter row align a column. Cells hold one line of inline markup, never a list. Editing a table in Rich drops the colons.
+
+### Task lists
+
+\`\`\`markdown
+- [x] Draft the plan
+- [ ] Get review
+- [ ] Ship
+\`\`\`
+
+Rich draws checkboxes, and exports and shared pages draw them read-only. A checklist that counts needs Darkmown.
+
+### Notes and warnings
+
+\`\`\`markdown
+> **Note:** The export runs nightly.
+\`\`\`
+
+There are no callout boxes: \`> [!NOTE]\` shows as a quote that starts with the literal text [!NOTE].
+
+### Code
+
+\`\`\`\`markdown
+\`\`\`ts
+const total = items.length;
+\`\`\`
+\`\`\`\`
+
+Exports, PDFs and shared pages syntax highlight it, and the editor shows it plain. A \`mermaid\` block draws no diagram: embed a \`.png\` or \`.svg\`, or describe the flow in a numbered list.
+
+### Links to other documents
+
+\`[the plan](plan.md)\` links to a file beside this document. When both documents are in the user's Markie Cloud and the target ends in \`.md\`, \`.markdown\`, \`.mdx\` or \`.txt\`, readers who may open the target can follow it on the web page, and everyone else sees it muted. Hosted documents have no neighbouring files: link to another document there with its \`markdownLink\`.
+
+### Pictures, video and audio
+
+One syntax for all three. Markie picks the player or picture by extension:
 
 \`\`\`markdown
 ![the dashboard](demo/shot.png)
@@ -90,43 +147,14 @@ picture, by extension:
 \`\`\`
 
 - Pictures: \`.png\` \`.jpg\` \`.jpeg\` \`.gif\` \`.webp\` \`.svg\` \`.avif\` \`.bmp\` \`.ico\`.
-  An animated GIF animates.
-- Video: \`.mp4\` \`.m4v\` \`.webm\` \`.ogv\` \`.mov\`. Deliberately narrower than what
-  a converter accepts, because a player that draws a black rectangle is worse
-  than a link.
+- Video: \`.mp4\` \`.m4v\` \`.webm\` \`.ogv\` \`.mov\`.
 - Audio: \`.mp3\` \`.m4a\` \`.aac\` \`.wav\` \`.flac\` \`.oga\` \`.opus\`.
 
-Anything else is a link, not an embed. \`![](report.pdf)\` displays nothing;
-write \`[the report](report.pdf)\` instead.
+Anything else is a link: \`![](report.pdf)\` displays nothing, so write \`[the report](report.pdf)\`. A picture can be an https address. Video and audio must be local files.
 
-## Choosing how big a picture is
+### Where the file has to live
 
-Markdown has nowhere to put a width, so a sized picture is written as the tag
-itself, which is the one form that renders everywhere, GitHub included:
-
-\`\`\`markdown
-<img src="demo/shot.png" alt="the dashboard" width="240">
-
-<video src="demo/clip.mp4" width="320" controls></video>
-\`\`\`
-
-Alone on its line, with nothing else on that line: that exact shape is the one
-Rich reads back as its own picture, at that width and with drag handles on the
-corners. Exports and shared pages honour the width too. Put words on the same
-line and it stops being a picture to Rich and becomes ordinary raw HTML, held
-aside (see below).
-
-Only the width. A browser scales the height from the picture's own proportions,
-and a stored height goes stale the moment the file behind it is recropped.
-Audio has no width worth choosing, so leave a recording as \`![](memo.mp3)\`.
-
-## Where the file has to live
-
-A document may reach a file inside the folder it was opened from, or inside one
-of the user's Markie workspace folders. Nothing else, ever: this is what stops
-a document somebody sent you from displaying a picture off your disk and then
-carrying it into a copy you send on. The \`src\` of an \`<img>\` or \`<video>\` tag
-is held to exactly the same rule as \`![](...)\`.
+A document may reach a file inside its own folder or one of the user's workspace folders, and nothing else. \`<img>\` and \`<video>\` tags and links such as \`[the spec](spec.pdf)\` follow the same rule. The document must be saved.
 
 \`\`\`markdown
 ![beside the document](shot.png)
@@ -134,61 +162,37 @@ is held to exactly the same rule as \`![](...)\`.
 ![up in a shared folder, only inside a workspace](../assets/logo.png)
 \`\`\`
 
-So, in order of preference:
+Write the file beside the document and reference it relatively. When you sync to Markie Cloud, the pictures, clips and recordings it references go up with it. An absolute path works only inside a workspace, which you cannot see. \`/tmp\` or any other place displays nothing, and nothing says why: move the file first.
 
-1. Write the file beside the document and reference it relatively. A relative
-   pair travels: zip the two up, send them on, and the picture is still there.
-2. An absolute path works only when the file is inside a Markie workspace. The
-   MCP cannot see which folders those are, so it can never promise you this
-   one, and neither should you.
-3. \`/tmp\`, a system temp folder, or anywhere outside both: nothing displays,
-   and nothing says why. Move the file next to the document first.
-
-## A document that has to travel alone
-
-Inline the picture as a data URI and the document carries it in its own text:
+Hosted documents cannot carry a file beside them. Use an https picture address, or inline a small picture as a data URI:
 
 \`\`\`markdown
 ![dot](data:image/png;base64,iVBORw0KGgo=)
 \`\`\`
 
-That renders in Rich and in every export. It is the right answer for a report
-that will be shared as one file, and the wrong answer for a clip: base64 of a
-video makes a file nobody can email. Sharing a document sends only its text, so
-a picture sitting beside it on disk does not go with it.
+That renders in Rich and in every export. It is the wrong answer for a clip.
 
-## Links to files beside the document
+### Sizing a picture
 
-\`[the spec](spec.pdf)\` opens the file in whatever the user's system opens it
-with. The same containment rule as the pictures applies: beside the document,
-or inside a workspace. The document must have been saved, because an unsaved
-document has no folder to be relative to.
+Markdown has no width, so a sized picture is its own tag, alone on its line:
 
-A plain \`https://\` link needs nothing extra. Hovering one shows a preview card
-with the page's title, summary and picture, fetched only on that hover.
+\`\`\`markdown
+<img src="demo/shot.png" alt="the dashboard" width="240">
 
-## A video from YouTube or Vimeo
+<video src="demo/clip.mp4" width="320" controls></video>
+\`\`\`
 
-Put the bare address alone on its line and nothing else:
+Rich reads that exact shape back as a picture with drag handles, and exports and shared pages honour the width. Words on the same line make it raw HTML, held aside. Set only the width.
+
+### A video from YouTube or Vimeo
 
 \`\`\`markdown
 https://youtu.be/dQw4w9WgXcQ
 \`\`\`
 
-Rich draws a card with the thumbnail and the title, and loads the player only
-when somebody clicks it. An export or a shared page draws the thumbnail linked
-to the video (YouTube only, because Vimeo has no thumbnail address that can be
-guessed; a Vimeo link stays a link there). The file keeps the bare URL and
-nothing else, so any other renderer shows an ordinary link.
+The bare address, alone on its line. Rich draws a card and loads the player on click. An export or shared page draws the thumbnail linked to the video, for YouTube only. A Vimeo link stays a link there, and so does a link inside a sentence.
 
-The address has to be the whole paragraph and its own words. A link inside a
-sentence stays a link, and so does \`[watch this](https://youtu.be/...)\`, which
-is somebody choosing words for it.
-
-## Centring a line
-
-Markdown has no alignment, so an aligned block is written as its tag, alone on
-its line, opening and closing:
+### Centring a line
 
 \`\`\`markdown
 <p style="text-align: center;">Signed off by the team</p>
@@ -196,67 +200,17 @@ its line, opening and closing:
 <h2 style="text-align: right;">Appendix</h2>
 \`\`\`
 
-\`center\`, \`right\`, \`justify\` and \`left\` on \`<p>\` and on \`<h1>\` through
-\`<h6>\`. Rich draws these as the paragraph or heading they are, and exports and
-shared pages render them too.
+\`center\`, \`right\`, \`justify\` and \`left\` work on \`<p>\` and \`<h1>\` through \`<h6>\`, in Rich, exports and shared pages. Use double quotes and no other attributes: a \`class\` or single quotes make it raw HTML, which shows a placeholder in Rich. Inside the tag write HTML (\`<strong>\`), because \`**bold**\` shows its asterisks.
 
-Two things to get right. What is inside the tag is HTML, not markdown, because
-the content of an HTML block is not markdown to any renderer: write
-\`<strong>bold</strong>\`, since \`**bold**\` in there shows up as asterisks.
-And write the tag plainly, with double quotes and no other attributes: add a
-\`class\`, or use single quotes, and Markie reads it as ordinary raw HTML
-instead, which still exports but shows a placeholder in Rich.
+### Inline HTML and raw HTML
 
-## The inline HTML, and where it survives
+Kept everywhere: \`<mark>flagged</mark>\`, \`<u>underlined</u>\`, \`<span style="color: #b91c1c">red</span>\`, \`<span style="font-family: Georgia">\` and \`<span style="font-size: 24px">\`. A span's \`background-color\` is dropped in Rich (use \`<mark>\`), \`<kbd>\` \`<sub>\` \`<sup>\` \`<ins>\` lose the tag there, and \`<small>\` and \`<abbr>\` lose it everywhere.
 
-Markdown has no syntax for highlighting, underline, colour, font or size, so
-Markie writes those as inline HTML and reads them back. Rich only rewrites a
-paragraph when that paragraph is edited, so until then the file keeps whatever
-you wrote either way.
+A tag at the start of a line makes an HTML block. Markie keeps the original bytes, and Rich shows a placeholder token where the block was. Exports, PDFs and shared pages render it, sanitized. \`<div>\`, \`<details>\`, \`<summary>\`, \`<table>\`, \`<blockquote>\`, \`<section>\`, \`<pre>\` and lists come out, while \`<figure>\`, \`<figcaption>\`, \`<center>\`, \`<header>\`, \`<footer>\` and \`<aside>\` lose the tag and keep the text. Only the lone picture or clip tag and the aligned \`<p>\` or heading above are drawn properly in Rich, so write other blocks only when the export matters more than the app.
 
-| Written | In Rich | In an export or a shared page |
-| --- | --- | --- |
-| \`<mark>flagged</mark>\` | kept | kept |
-| \`<u>underlined</u>\` | kept | kept |
-| \`<span style="color: #b91c1c">red</span>\` | kept | kept |
-| \`<span style="font-family: Georgia">\` | kept | kept |
-| \`<span style="font-size: 24px">\` | kept | kept |
-| \`<b>\` \`<i>\` \`<del>\` \`<code>\` \`<br>\` \`<a href>\` | rewritten as the markdown that means the same | kept |
-| \`<span style="background-color: ...">\` \`<kbd>\` \`<sub>\` \`<sup>\` \`<ins>\` | tag dropped, text kept | kept |
-| \`<small>\` \`<abbr>\` | tag dropped, text kept | tag dropped, text kept |
+\`<script>\`, \`<iframe>\`, \`<style>\`, \`<object>\`, \`<form>\`, any \`on...=\` handler and a \`javascript:\` link: each renders nowhere, contents included.
 
-Use \`<mark>\` for a background: \`background-color\` on a \`<span>\` is the one
-that does not come back.
-
-## A tag that starts a line
-
-A tag at the start of a line makes an HTML block, and a block is not inline
-markup. Markie lifts the whole block out before the editor sees it and puts the
-original bytes back on save, so the file keeps exactly what you wrote, and Rich
-shows a placeholder token where the block was. Exports, PDFs and shared pages
-render it, sanitized: \`<div>\`, \`<details>\` and \`<summary>\`, \`<table>\`,
-\`<blockquote>\`, \`<section>\`, \`<pre>\`, lists, and the ordinary text tags all
-come out. A few do not, and lose the tag while keeping the text inside it:
-\`<figure>\`, \`<figcaption>\`, \`<center>\`, \`<header>\`, \`<footer>\`, \`<aside>\`.
-
-The two exceptions are the shapes above, which Rich has a node for and draws
-properly: a lone picture or clip tag, and an aligned \`<p>\` or heading. Write
-anything else that starts with \`<\` only when you want it in the export and can
-live with a placeholder in the app.
-
-## What renders nowhere
-
-\`<script>\`, \`<iframe>\`, \`<style>\`, \`<object>\`, \`<form>\`, any \`on...=\` handler
-attribute, and a \`javascript:\` link. The file keeps them and no reader ever
-sees them, in either place, contents included.
-
-## Math and footnotes
-
-Both render in exports, PDFs, printing and shared links. Neither renders in
-Rich, where they stay as the literal text you typed. Write them when the
-document is going to be exported or shared, and expect to see the source in the
-app. Editing a formula's own paragraph in Rich escapes its backslashes, so
-change a formula in Source.
+### Math and footnotes
 
 \`\`\`markdown
 Euler: $e^{i\\pi} + 1 = 0$
@@ -270,11 +224,289 @@ A claim that needs a source[^1]
 [^1]: The source.
 \`\`\`
 
+Both render in exports, PDFs, print and shared web pages. Rich shows the literal text, and editing a formula there escapes its backslashes, so change formulas in Source.
+
+## Darkmown (.wd)
+
+Darkmown is markdown with live state. A line that starts with a colon declares a value or a control, and \`{ name }\` prints a value. Markie runs it in a sandbox with no network, files or accounts.
+
+- The preview starts switched off: controls are disabled and the page shows starting values. The user chooses **Trust this document** to turn them on, and any edit to the source takes the trust away.
+- State is temporary and resets when the document is reopened. Only the source is saved.
+- It is live only in the Markie app, if installed. On the web a \`.wd\` shows its source.
+
+Limits:
+
+- At most 128,000 characters and 5,000 lines (a final newline counts as a line). Past that, Markie saves the file but will not preview it.
+- Source length times the number of \`{\` characters and \`:computed\` lines may not pass 1,000,000.
+- Directives only work at the very start of a line. In a list, a quote, indented text or a code fence they are plain text.
+- Declare before use. A \`:computed\` or bound control that names an undeclared value stops the preview (WD234, WD406, WD450). A plain \`{ name }\` for an undeclared name prints as \`{ name }\`, with no error.
+- A wrong line shows an error such as \`[WD201] Malformed :state\`, and the source is never changed. You cannot run the preview, so copy the shapes below.
+
+### A counter: :state, :computed, :button
+
+\`\`\`wd
+# Water tracker
+
+:state cups = 0
+:computed ounces = cups * 8
+
+Today: { cups } cups, about { ounces } ounces.
+
+:button "Add a cup" -> cups++
+:button "Remove a cup" -> cups--
+:button "Start over" -> cups reset
+\`\`\`
+
+- \`:state name = value\` declares a number, a string in double quotes, \`true\` or \`false\`, or an object such as \`{"count": 0, "total": 0}\`.
+- \`{ name }\` prints it, in a paragraph, heading, list, quote or table cell. \`{ cart.count }\` reaches into an object.
+- \`:computed name = expression\` derives a value from names, numbers, \`-\` \`*\` \`/\` \`%\`, a leading minus and parentheses. It may use another computed value.
+- **There is no \`+\`, but you can add: subtract a negative.** \`total = subtotal - -tax\` and \`total = subtotal - (0 - tax)\` both work and update live. Comparisons, \`sum()\` and the other aggregates are not available.
+- Button actions: \`n++\`, \`n--\`, \`n += 5\`, \`n -= 2\`, \`n = 10\`, \`label = "Done"\`, \`on = true\`, \`on toggle\`, \`n reset\` (back to the \`:state\` value).
+- Chain actions with a semicolon: \`:button "Add" -> cart.count++ ; cart.total += 9\`. Never put one inside a quoted value.
+
+### A calculator: :slider, :computed
+
+\`\`\`wd
+# Project estimate
+
+:slider hours = 20 min=1 max=200 step=1
+:slider rate = 120 min=50 max=300 step=10
+:state discount = 10
+
+:computed subtotal = hours * rate
+:computed saved = subtotal * discount / 100
+:computed total = subtotal - saved
+
+| Item | Amount |
+| --- | --- |
+| Hours | { hours } |
+| Rate | { rate } |
+| Subtotal | { subtotal } |
+| Discount | { saved } |
+| **Total** | **{ total }** |
+\`\`\`
+
+- \`:slider name = start min=.. max=.. step=..\` declares the value and draws a range input. For a value already declared, write \`:slider name min=1 max=40\`.
+- A table cell can hold \`{ name }\`, which builds a small dashboard. Leave alignment colons (\`---:\`) out of a \`.wd\` table: Markie drops them with a notice.
+
+### Text input: :bind
+
+\`\`\`wd
+# Greeting
+
+:state who = ""
+:bind who placeholder="Your name"
+
+Hello { who }.
+\`\`\`
+
+\`:bind name\` draws a text input tied to a declared state. It accepts \`placeholder\` and nothing else. Typed digits work in arithmetic, but \`:slider\` suits numbers better.
+
+### Choices: bound :select, :checkbox, :radio
+
+\`\`\`wd
+# Plan picker
+
+:state seats = 5
+:state plan = "Basic"
+:state region = "Europe"
+:state annual = false
+
+:slider seats min=1 max=50 step=1
+
+:radio plan
+- Basic
+- Pro
+
+:select region
+- Europe
+- Americas
+- Asia
+
+:checkbox annual
+- Pay yearly
+
+Plan: { plan }. Region: { region }. Seats: { seats }. Pay yearly: { annual }.
+\`\`\`
+
+Outside a form, \`:select\`, \`:radio\` and \`:checkbox\` tie to a state of the same name, declared first. A \`:checkbox\` is one true or false value with exactly one \`- Label\` line. A \`:radio\` or \`:select\` holds the chosen option's text.
+
+### Money: numeric choices, adding, rounding
+
+\`\`\`wd
+# Order total
+
+:state qty = 1
+:state price = 12.99
+:state taxrate = 8
+
+:select qty
+- 1
+- 2
+- 5
+
+:radio price
+- 12.99
+- 24.5
+- 40
+
+:computed exact = qty * price * (100 - -taxrate)
+:computed half = exact - -0.5
+:computed cents = half - half % 1
+:computed total = cents / 100
+
+Total with tax: { total } for { qty } at { price } each.
+\`\`\`
+
+- \`:radio\` and \`:select\` options that are numbers feed straight into \`:computed\`, which suits quantity and tier pickers. Declare the state as a number matching one option.
+- \`price * (100 - -taxrate)\` is the price plus tax, in cents.
+- Round with \`%\`: \`x % 1\` is the fractional part, so \`x - x % 1\` drops it. Add one half first (\`x - -0.5\`) to round to the nearest. Round cents, then divide by 100.
+- Numbers print as JavaScript prints them: \`0.1 * 3\` shows \`0.30000000000000004\`, and 70.50 shows \`70.5\`. There are no format pipes.
+
+### A checklist that counts
+
+\`\`\`wd
+# Launch checklist
+
+:state design = false
+:state copy = false
+:state ship = false
+
+:checkbox design
+- Design approved
+
+:checkbox copy
+- Copy written
+
+:checkbox ship
+- Shipped
+
+:computed left = 3 - design - copy - ship
+:computed raw = (3 - left) * 100 / 3
+:computed percent = raw - raw % 1
+
+Left to do: { left } of 3. Progress: { percent }%.
+\`\`\`
+
+A checked box is 1 and an unchecked box is 0, so \`3 - design - copy - ship\` is what is left. One of three is 33.333333333333336 percent, so \`raw - raw % 1\` rounds it down to 33. When the count divides 100 (2, 4, 5, 10), no rounding is needed.
+
+### Toggles and step-throughs
+
+\`\`\`wd
+# Make pasta
+
+:state step = 1
+:state now = "Boil salted water."
+:state hot = false
+
+:button "Step 1" -> step = 1 ; now = "Boil salted water."
+:button "Step 2" -> step = 2 ; now = "Add the pasta and cook for nine minutes."
+:button "Step 3" -> step = 3 ; now = "Drain, and keep a cup of the water."
+:button "Step 4" -> step = 4 ; now = "Toss with the sauce and serve."
+
+**Step { step } of 4:** { now }
+
+:button "Switch the stove" -> hot toggle
+
+Stove on: { hot }
+\`\`\`
+
+There is no \`:if\`, so a step-through sets a text state and prints it, one button per step.
+
+### A form: :form into
+
+\`\`\`wd
+# RSVP
+
+:form into rsvp
+:input name placeholder="Your name"
+:select meal
+- Chicken
+- Fish
+- Vegetarian
+:radio seat
+- Aisle
+- Window
+:textarea note placeholder="Allergies or notes"
+:submit "Send RSVP"
+:endform
+
+Last answer: { rsvp.name } wants the { rsvp.meal }, { rsvp.seat } seat. { rsvp.note }
+\`\`\`
+
+On submit or Enter, a form puts what was typed into the state named after \`into\`. It sends nothing anywhere, and the answers live in the page until it is closed. Inside a form, \`:input\`, \`:textarea\`, \`:select\` and \`:radio\` name their own fields, and \`{ rsvp.name }\` reads one back. A checkbox group in a form is switched off: use a bound \`:checkbox\` outside.
+
+### Grouping: :::
+
+\`\`\`wd
+# Notes
+
+::: summary
+**Heads up:** the totals below update as you move the sliders.
+:::
+\`\`\`
+
+\`::: name\` opens a block and a bare \`:::\` closes it. It is a plain group: classes such as \`.card\` are dropped, so it adds no box or colour.
+
+### What does not work in Darkmown preview
+
+An error stops the preview:
+
+- \`@loop\` and \`@include\`.
+- \`+\` in \`:computed\`. To add numbers, subtract a negative. Text cannot be joined: print the values side by side, \`{ first } { last }\`.
+- Format pipes such as \`{ price | money }\`.
+- A \`:computed\` or bound control naming an undeclared value (WD234, WD406, WD450), a \`:bind\` attribute other than \`placeholder\`, a \`:checkbox\` with several labels, a semicolon inside a quoted action value.
+
+A notice appears in the preview pane and the feature is switched off:
+
+- \`:if\`, \`:else if\`, \`:else\`, \`:endif\`: the branches never switch. Show state with \`{ name }\`.
+- Comparisons, \`sum()\`, \`avg()\` and \`count()\` in \`:computed\`.
+- \`:store\` and \`persist\`: nothing is kept, and \`:store\` loses its starting value. Use \`:state\`.
+- \`:every\`, \`:effect\`, \`:fetch\`, \`:theme\`, \`:carousel\`, \`:video\`, \`:audio\`, \`:embed\`.
+- Button actions that change lists or objects: \`append\`, \`prepend\`, \`remove\`, \`clear\`, \`merge\`, \`delete\`.
+- Links and pictures inside a \`.wd\` (links become plain text, pictures vanish), a checkbox group in a form, and table alignment colons.
+
+Nothing tells you about these:
+
+- \`:input\` and \`:textarea\` outside a form are disabled silently. Use \`:bind\`.
+- \`- [ ]\` task lists show the literal brackets. Use \`:checkbox\`.
+- Subtracting a negative from text, such as \`first - -last\`, prints \`NaN\`.
+- Footnotes, math and raw HTML do not render, and fenced code has no colour.
+
+## Sending the document to the user
+
+When the user wants to read the document away from this computer, or asks for a link, give them a link, not a path.
+
+With the local Markie tools:
+
+1. Write the file with \`markie_write_document\`, under \`~/Documents/Markie/\` when the user did not say where. It writes \`.md\`, \`.txt\`, \`.csv\`, \`.json\`, \`.yaml\`, \`.xml\` and \`.wd\`.
+2. Run \`markie_check_md\` when the document has a picture, a clip or inline HTML, and fix what it reports.
+3. If the user asked to see it now, call \`markie_open_in_markie\`.
+4. For a link, a hosted copy, or reading away from this computer, call \`markie_cloud_sync\` with the file's path. It syncs \`.md\`, \`.markdown\`, \`.mdx\`, \`.txt\`, \`.text\` and \`.wd\`, and the result carries \`markdownLink\`.
+5. Paste \`markdownLink\` into your reply exactly as returned, for example \`[Plan.wd](https://api.markiedocs.com/d/abc123)\`. Do not rebuild it: the name inside is already escaped. \`privateLink\` is the bare address.
+
+Call \`markie_cloud_sync\` again after you change the file, and it pushes the latest text to the same link. \`markie_cloud_status\` returns the links without uploading.
+
+- The Markie app uploads with the user's own sign-in and asks them to allow it the first time, so the call can wait on them. If it fails with "Sign in to Markie Cloud in the Markie app first", tell the user to sign in, then ask again. Do not retry in a loop.
+- The link is private. It opens, after sign-in, for the user and the people they share the document with, in the Markie app if it is installed and in a browser otherwise.
+
+With only the hosted Markie tools (no desktop app on this machine):
+
+1. Call \`markie_create_document\` with \`name\` and \`content\`. Give the name a real extension: \`.md\`, \`.markdown\`, \`.mdx\`, \`.wd\` or \`.txt\`. A \`.wd\` may be up to 128,000 characters, anything else up to 2 MB.
+2. Paste the \`markdownLink\` in the result into your reply, exactly as returned.
+3. To change the document, call \`markie_update_document\` with its \`id\` and the full new \`content\`. The link stays the same. \`markie_list_my_documents\` and \`markie_read_my_document\` find only the documents this token created.
+4. Batch your edits. Writes are rate limited (60 an hour per token, 200 an hour per user, 50 MB a day per user, 20 MB a day per token), so finish the document and write it once.
+5. Once the user shares the document or makes it public, it disappears from \`markie_read_my_document\` and \`markie_list_my_documents\`, and an update fails with \`shared\`. Create a new document with \`markie_create_document\` and give the new link.
+6. No front matter, relative links or pictures beside the document. Use https addresses or data URIs for pictures.
+
+Public links:
+
+- A public link opens for anyone who holds it, with no account. Make one only when the user asked for it in so many words. \`markie_cloud_public_link\` with \`create: true\` makes it for a synced file, and Markie asks the user to confirm each one. \`markie_cloud_revoke_public_link\` turns one off.
+- The hosted tools cannot make a public link.
+
 ## Other document types
 
-Markie opens more than markdown, and the tools follow it. Each type has a
-format id, which is what the formats filter of \`markie_find_documents\` and
-\`markie_search_documents\` takes.
+The format id is what the formats filter of \`markie_find_documents\` and \`markie_search_documents\` takes.
 
 | Format id | Files | Search reads its text | \`markie_read_document\` | \`markie_write_document\` |
 | --- | --- | --- | --- | --- |
@@ -291,19 +523,7 @@ format id, which is what the formats filter of \`markie_find_documents\` and
 | \`rtf\` | \`.rtf\` | yes | extracted text | no |
 | \`doc\` | \`.doc\` | name and path only | no | no |
 
-Extracted text is the words of a document without its formatting, pictures or
-layout. It comes back labelled read-only, because writing plain text over a
-Word, OpenDocument or RTF file would destroy everything else in it. To change
-one of those, open it with \`markie_open_in_markie\` so the user edits it in
-Markie, or put your changes in a new markdown document. Legacy .doc only gives
-up its text to the reader Markie runs when the document is opened.
-
-A file past its read limit (4 MB for text and HTML, 8 MB for RTF, 32 MB for
-Word and OpenDocument) is still found by name and path, but its text is not
-searched or read.
-
-Everything above this section is about markdown. Pictures, embeds, inline HTML
-and the project and block front matter do not apply to the other types.
+Extracted text drops formatting, pictures and layout, and is labelled read-only. To change a Word, OpenDocument or RTF file, open it with \`markie_open_in_markie\`, or put your changes in a new markdown document.
 `;
 
 // The digest that goes into the MCP initialize instructions. Sliced out of the

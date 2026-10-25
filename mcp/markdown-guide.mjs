@@ -492,8 +492,8 @@ With only the hosted Markie tools (no desktop app on this machine):
 1. Call \`markie_create_document\` with \`name\` and \`content\`. Give the name a real extension: \`.md\`, \`.markdown\`, \`.mdx\`, \`.wd\` or \`.txt\`. A \`.wd\` may be up to 128,000 characters, anything else up to 2 MB.
 2. Paste the \`markdownLink\` in the result into your reply, exactly as returned.
 3. To change the document, call \`markie_update_document\` with its \`id\` and the full new \`content\`. The link stays the same. \`markie_list_my_documents\` and \`markie_read_my_document\` find only the documents this token created.
-4. Batch your edits. Writes are rate limited (60 an hour per token, 200 an hour per user, 50 MB a day per user), so finish the document and write it once.
-5. If the user shared the document or made it public, an update fails with \`shared\`. Create a new document with \`markie_create_document\` and give the new link.
+4. Batch your edits. Writes are rate limited (60 an hour per token, 200 an hour per user, 50 MB a day per user, 20 MB a day per token), so finish the document and write it once.
+5. Once the user shares the document or makes it public, it disappears from \`markie_read_my_document\` and \`markie_list_my_documents\`, and an update fails with \`shared\`. Create a new document with \`markie_create_document\` and give the new link.
 6. No front matter, relative links or pictures beside the document. Use https addresses or data URIs for pictures.
 
 Public links:

@@ -1282,7 +1282,8 @@ test("the guide covers shared documents, write limits, hosted-only agents and pu
   assert.match(MARKDOWN_GUIDE, /an update fails with `shared`/);
   assert.match(MARKDOWN_GUIDE, /create a new document/i);
   assert.match(MARKDOWN_GUIDE, /Batch your edits/);
-  assert.match(MARKDOWN_GUIDE, /60 an hour per token, 200 an hour per user, 50 MB a day per user/);
+  assert.match(MARKDOWN_GUIDE, /60 an hour per token, 200 an hour per user, 50 MB a day per user, 20 MB a day per token/);
+  assert.match(MARKDOWN_GUIDE, /it disappears from `markie_read_my_document` and `markie_list_my_documents`/);
   assert.match(MARKDOWN_GUIDE, /Agents using only the hosted tools can skip: markie_check_md, workspace folders, the Other document types table, front-matter filing\./);
   assert.match(MARKDOWN_GUIDE, /The hosted tools cannot make a public link\./);
   assert.match(readSkill(), /The hosted tools\s+cannot make a public link\./);

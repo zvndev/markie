@@ -311,6 +311,10 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   // independent of whichever doc is currently open.
   const [manageShare, setManageShare] = useState<{ docId: string; name: string } | null>(null);
   const [showAgents, setShowAgents] = useState(false);
+  // True while the Agents dialog shows a new agent token that has not been
+  // copied. A document opening (a local agent calling markie_open_in_markie)
+  // must not close the dialog over a secret that cannot be shown again.
+  const agentSecretShownRef = useRef(false);
   const [collabCfg, setCollabCfg] = useState<CollabConfig | null>(null);
   // What the server says this user may do with the open document, plus who
   // shared it. "local" until a cloud copy is found, "checking" until the server
@@ -867,7 +871,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     setShowSettings(false);
     setShowShare(false);
     setManageShare(null);
-    setShowAgents(false);
+    if (!agentSecretShownRef.current) setShowAgents(false);
     setForkError(null);
   }, []);
 
@@ -2622,7 +2626,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         />
       )}
 
-      {showAgents && <AgentsDialog onClose={() => setShowAgents(false)} />}
+      {showAgents && <AgentsDialog onClose={() => setShowAgents(false)} onSecretShownChange={(shown) => { agentSecretShownRef.current = shown; }} />}
 
       <UpdateToast />
 

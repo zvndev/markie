@@ -335,6 +335,50 @@ describe("syncOn", () => {
     expect(calls).toHaveLength(1);
   });
 
+  describe("document origin", () => {
+    const AGENT = { kind: "agent", agent: "Claude Code" };
+
+    it("sends an agent origin on the PUT that creates the document", async () => {
+      const row = seedRow({ path: "/docs/agent-made.wd" });
+      const calls = respondWith({ status: 200, body: { version: 1 } });
+      expect((await sync.syncOn(row.path, row.name, "text", undefined, undefined, AGENT)).ok).toBe(true);
+      expect(calls[0].method).toBe("PUT");
+      expect(calls[0].body).toMatchObject({ name: "agent-made.wd", baseVersion: 0, origin: AGENT });
+    });
+
+    it("sends no origin on a user-initiated sync, whatever else it carries", async () => {
+      const row = seedRow({ path: "/docs/user-made.md" });
+      const calls = respondWith({ status: 200, body: { version: 1 } });
+      await sync.syncOn(row.path, row.name, "text", "selected-area");
+      expect(calls[0].body).not.toHaveProperty("origin");
+    });
+
+    it("never sends it on a later push", async () => {
+      const row = seedRow({ path: "/docs/agent-made.md" });
+      const calls = respondWith({ status: 200, body: { version: 1 } }, { status: 200, body: { version: 2 } });
+      await sync.syncOn(row.path, row.name, "v1", undefined, undefined, AGENT);
+      await sync.push(row.path, row.name, "v2");
+      expect(calls).toHaveLength(2);
+      expect(calls[0].body).toHaveProperty("origin");
+      expect(calls[1].body).toMatchObject({ baseVersion: 1, content: "v2" });
+      expect(calls[1].body).not.toHaveProperty("origin");
+    });
+
+    it("never sends it on a sync of a document already in Cloud", async () => {
+      const row = seedRow({ path: "/docs/linked.md", cloud_doc_id: "already-linked", cloud_version: 3, sync_state: "synced" });
+      const calls = respondWith({ status: 200, body: { version: 4 } });
+      await sync.syncOn(row.path, row.name, "text", undefined, undefined, AGENT);
+      expect(calls[0].body).not.toHaveProperty("origin");
+    });
+
+    it.each([null, {}, { kind: "app" }, { kind: "agent" }, { kind: "agent", agent: "" }, { kind: "agent", agent: 7 }])("drops a malformed origin %j", async (bad) => {
+      const row = seedRow({ path: "/docs/bad-origin.md" });
+      const calls = respondWith({ status: 200, body: { version: 1 } });
+      await sync.syncOn(row.path, row.name, "text", undefined, undefined, bad as never);
+      expect(calls[0].body).not.toHaveProperty("origin");
+    });
+  });
+
   it("rejects existing links, invalid areas and unconfirmed principals without staging or writing", async () => {
     const row = seedRow({ path: "/docs/linked.md", cloud_doc_id: "already-linked", cloud_version: 1 });
     const calls = respondWith(); const stage = vi.fn(); sync.setAssetSync({ stageAssets: stage });
@@ -2211,10 +2255,10 @@ describe("landing", () => {
   // the user's own: only the markdown and plain-text family keeps its
   // extension, the same list a shared link's download uses.
   it("lands only markdown and plain-text extensions as they are", () => {
-    for (const name of ["a.md", "a.MARKDOWN", "a.mdx", "a.txt", "a.text", "a.log", "data.csv"]) {
+    for (const name of ["a.md", "a.MARKDOWN", "a.mdx", "a.txt", "a.text", "a.log", "data.csv", "plan.wd", "Plan.WD"]) {
       expect(sync.landingName(name), name).toBe(name);
     }
-    for (const name of ["run.command", "run.sh", "page.html", "app.app", "x.exe", "doc.svg", "notes.md.command", "a.webloc"]) {
+    for (const name of ["run.command", "run.sh", "page.html", "app.app", "x.exe", "doc.svg", "notes.md.command", "a.webloc", "plan.wd.command", "wd"]) {
       expect(sync.landingName(name), name).toBe(`${name}.md`);
     }
   });

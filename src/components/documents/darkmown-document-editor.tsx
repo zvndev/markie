@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DocumentCommandTarget } from "@/lib/document-commands";
 import type { DocumentSession } from "@/lib/document-session";
 import { compileDarkmownPreview } from "@/lib/darkmown/preview";
+import { darkmownFrameSandbox, projectDarkmownTheme } from "@/lib/darkmown/frame";
 import { editorThemeForTokens, findTheme, loadThemeStore, THEME_APPLIED_EVENT, type ThemeTokens } from "@/lib/theme";
 import { TextDocumentEditor } from "./text-document-editor";
 
@@ -56,7 +57,7 @@ export function DarkmownDocumentEditor({ session, readOnly = false, active = tru
   const current = useRef({ allowed, mode, sourceCommands });
   current.current = { allowed, mode, sourceCommands };
   const projectPreviewTheme = useCallback(() => {
-    if (trusted && currentResult?.srcDoc) previewFrame.current?.contentWindow?.postMessage({ type: "markie:preview-theme", theme: previewTheme }, "*");
+    if (trusted && currentResult?.srcDoc) projectDarkmownTheme(previewFrame.current, previewTheme);
   }, [trusted, currentResult?.srcDoc, previewTheme]);
   useEffect(() => { projectPreviewTheme(); }, [projectPreviewTheme]);
 
@@ -113,7 +114,7 @@ export function DarkmownDocumentEditor({ session, readOnly = false, active = tru
         </header>
         <p className="docs-darkmown-security">Local state only. No network, files, accounts or persistent storage.</p>
         {currentResult?.warnings?.length ? <div className="docs-darkmown-warnings" role="status">{currentResult.warnings.join(" ")}</div> : null}
-        {currentResult?.error ? <div className="docs-error" role="alert"><span>{currentResult.error}</span><button type="button" disabled={!allowed} onClick={() => setReset((value) => value + 1)}>Retry preview</button></div> : currentResult?.srcDoc ? <iframe ref={previewFrame} key={`${session.epoch}-${session.generation}-${trusted}-${reset}-${staticColorScheme ?? "runtime"}`} title="Darkmown document preview" sandbox={trusted ? "allow-scripts" : ""} referrerPolicy="no-referrer" style={{ colorScheme: previewTheme }} onLoad={projectPreviewTheme} srcDoc={currentResult.srcDoc} /> : <p className="docs-loading" role="status">Building document preview…</p>}
+        {currentResult?.error ? <div className="docs-error" role="alert"><span>{currentResult.error}</span><button type="button" disabled={!allowed} onClick={() => setReset((value) => value + 1)}>Retry preview</button></div> : currentResult?.srcDoc ? <iframe ref={previewFrame} key={`${session.epoch}-${session.generation}-${trusted}-${reset}-${staticColorScheme ?? "runtime"}`} title="Darkmown document preview" sandbox={darkmownFrameSandbox(trusted)} referrerPolicy="no-referrer" style={{ colorScheme: previewTheme }} onLoad={projectPreviewTheme} srcDoc={currentResult.srcDoc} /> : <p className="docs-loading" role="status">Building document preview…</p>}
       </section> : null}
     </div>} />
   </div>;

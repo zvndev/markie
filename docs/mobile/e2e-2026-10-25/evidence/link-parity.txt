@@ -1,0 +1,38 @@
+SAME  Checkout options.md (live /mcp result)
+      desktop: [Checkout options.md](http://localhost:8791/d/b4bf4a9e-3dd4-4bb1-b3e6-1d1f46778744)
+      hosted:  [Checkout options.md](http://localhost:8791/d/b4bf4a9e-3dd4-4bb1-b3e6-1d1f46778744)
+SAME  Checkout options.md (server function, same process)
+      desktop: [Checkout options.md](http://localhost:8791/d/b4bf4a9e-3dd4-4bb1-b3e6-1d1f46778744)
+      hosted:  [Checkout options.md](http://localhost:8791/d/b4bf4a9e-3dd4-4bb1-b3e6-1d1f46778744)
+SAME  Order total.wd (live /mcp result)
+      desktop: [Order total.wd](http://localhost:8791/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+      hosted:  [Order total.wd](http://localhost:8791/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+SAME  Order total.wd (server function, same process)
+      desktop: [Order total.wd](http://localhost:8791/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+      hosted:  [Order total.wd](http://localhost:8791/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+SAME  "Order total.wd"
+      desktop: [Order total.wd](https://api.markiedocs.com/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+      hosted:  [Order total.wd](https://api.markiedocs.com/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+SAME  "Plan [draft] <v2> `x`.md"
+      desktop: [Plan \[draft\] \<v2\> \`x\`.md](https://api.markiedocs.com/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+      hosted:  [Plan \[draft\] \<v2\> \`x\`.md](https://api.markiedocs.com/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+SAME  "back\\slash.md"
+      desktop: [back\\slash.md](https://api.markiedocs.com/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+      hosted:  [back\\slash.md](https://api.markiedocs.com/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+SAME  "line\r\nbreak sep para\n\nruns.md"
+      desktop: [line break sep para runs.md](https://api.markiedocs.com/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+      hosted:  [line break sep para runs.md](https://api.markiedocs.com/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+SAME  "parens (in name).md"
+      desktop: [parens (in name).md](https://api.markiedocs.com/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+      hosted:  [parens (in name).md](https://api.markiedocs.com/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+SAME  "emoji 🚀 and ünïcode.md"
+      desktop: [emoji 🚀 and ünïcode.md](https://api.markiedocs.com/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+      hosted:  [emoji 🚀 and ünïcode.md](https://api.markiedocs.com/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5)
+SAME  id with parentheses
+      desktop: [x.md](http://localhost:8791/d/a%28b%29c)
+      hosted:  [x.md](http://localhost:8791/d/a%28b%29c)
+SAME  privateLink for the same id
+      desktop: http://localhost:8791/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5
+      hosted:  http://localhost:8791/d/2e495e31-1e8e-4883-8ee7-5a18c7edcae5
+
+ALL IDENTICAL

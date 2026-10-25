@@ -1,0 +1,10 @@
+[email→console] to=owner@e2e.test subject="A new agent token was created for your Markie account"
+A new agent token was created for your Markie account on Sun, 25 Oct 2026 15:59:03 GMT.
+
+Token starts with: mk_agent_QwJ
+
+An agent holding it can create private documents in your Markie Cloud, and read and update the documents it created. It cannot open anything else.
+
+Markie never creates agent tokens on its own. If you didn't make this one, revoke it in Markie and reset your password, which signs out every other device.
+
+To revoke it, open Markie and go to Remote agents. Find it by the start of the token and the time it was created. Changing your password revokes every agent token.

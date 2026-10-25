@@ -1,0 +1,22 @@
+# Order total
+
+:state qty = 1
+:state price = 12.99
+:state taxrate = 8
+
+:select qty
+- 1
+- 2
+- 5
+
+:radio price
+- 12.99
+- 24.5
+- 40
+
+:computed exact = qty * price * (100 - -taxrate)
+:computed half = exact - -0.5
+:computed cents = half - half % 1
+:computed total = cents / 100
+
+Total with tax: { total } for { qty } at { price } each.

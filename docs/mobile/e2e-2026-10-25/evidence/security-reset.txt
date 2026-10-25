@@ -1,0 +1,15 @@
+## before reset
+token MCP ping: {"jsonrpc":"2.0","id":30,"result":{}}
+curl session GET /api/docs/recent: 200
+sessions in DB: 3
+active agent tokens: 1
+## reset by code
+POST /api/auth/email-otp/reset-password: {"success":true} 200
+## after reset
+token MCP ping: HTTP/1.1 401 Unauthorized www-authenticate: Bearer realm="markie" 
+token REST GET own doc: 401
+curl session GET /api/docs/recent: 401
+sessions in DB: 0
+active agent tokens: 0
+responses|0
+bodies|0

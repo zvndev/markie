@@ -33,7 +33,7 @@ const { setTrustedOrigins, isAllowedServerOrigin, canonicalCloudOrigin, DEFAULT_
 const { fetchSharedDoc } = require("./share-open");
 const { createServerStore } = require("./servers");
 const { serverRequest } = require("./server-request");
-const { withSafeDocExtension } = require("./doc-names");
+const { withSafeDocExtension, SAFE_DOC_EXTENSION } = require("./doc-names");
 const { classifyDeepLink, cloudDocId, isAuthDeepLink, sourceHint } = require("./deep-links");
 const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
@@ -446,15 +446,24 @@ const preflightMode = process.env.MARKIE_PREFLIGHT === "1";
 
 // Open a markdown file that already exists on disk in the editor window,
 // creating/showing the window and bridging cold start via pendingFilePath.
+// Answers whether the file was opened or queued to open, so a caller that
+// reports success to the user (a shared document's one-click open) can tell
+// them when nothing happened.
 function openLocalFile(filePath) {
-  if (!privateRelease.authorized()) return;
+  if (!privateRelease.authorized()) return false;
   // macOS reopens the last document by sending open-file at launch, which is
   // the path that renamed the window during the packaging gate.
-  if (preflightMode) return;
-  if (documentsWorkspaceActive() && queueNativeDocumentOpen(filePath, { includeClassic: true })) return;
+  if (preflightMode) return false;
+  if (documentsWorkspaceActive() && queueNativeDocumentOpen(filePath, { includeClassic: true })) return true;
+  // Darkmown, JSON and the rest of the native formats are not classic text:
+  // readFilePayload would refuse them. They open through the same opaque queue
+  // as a Finder double-click (see the open-file handler).
+  if (!OPENABLE.test(filePath) && queueNativeDocumentOpen(filePath)) return true;
+  let opened = true;
   if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
     const payload = readFilePayload(filePath, { grant: true });
     if (payload) mainWindow.webContents.send("file-opened", payload);
+    else opened = false;
   } else {
     pendingFilePath = filePath;
     if (!mainWindow && app.isReady()) createWindow();
@@ -464,6 +473,7 @@ function openLocalFile(filePath) {
     mainWindow.show();
     mainWindow.focus();
   }
+  return opened;
 }
 
 // markie://open?token=…&src=… — fetch the shared doc from its public link (the
@@ -1989,16 +1999,28 @@ handle("doc-keep-both", async (_event, { path: p, content }) => {
   refreshDiskMemory(p, res);
   return res;
 });
+// The filter matching the suggested name goes first: macOS can hold a save to
+// the first filter's extensions, which would turn Plan.wd into Plan.wd.md.
+function pullSaveFilters(suggestedName) {
+  const filters = [
+    { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
+    { name: "Darkmown", extensions: ["wd"] },
+    { name: "Text", extensions: ["txt", "text", "log"] },
+  ];
+  const ext = (/\.([^./\\]+)$/.exec(suggestedName || "")?.[1] || "").toLowerCase();
+  const first = filters.findIndex((f) => f.extensions.includes(ext));
+  return first > 0 ? [filters[first], ...filters.filter((_, i) => i !== first)] : filters;
+}
+
 handle("doc-pull", async (_event, { cloudId, suggestedName, server }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: suggestedName || "document.md",
-    filters: [
-      { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
-      { name: "Text", extensions: ["txt", "text", "log"] },
-    ],
+    filters: pullSaveFilters(suggestedName),
   });
   if (result.canceled || !result.filePath) return { canceled: true };
-  if (!OPENABLE.test(result.filePath)) return { error: "Unsupported file type" };
+  // The classic set plus Darkmown: a cloud-only .wd must be downloadable.
+  // Same family as a landed cloud document (doc-names.js).
+  if (!SAFE_DOC_EXTENSION.test(result.filePath)) return { error: "Unsupported file type" };
   const pulled = await sync.pull(cloudId, result.filePath, trustedServerArg(server));
   if (pulled?.ok) {
     fileGrants.grantFile(pulled.path);
@@ -2014,7 +2036,9 @@ handle("doc-open-shared", async (_event, { cloudId, suggestedName, server }) => 
   const res = await sync.pull(cloudId, dest, trustedServerArg(server));
   if (res && res.error) return res;
   fileGrants.grantFile(dest);
-  openLocalFile(dest);
+  // The file is on disk either way; say so when it could not be opened rather
+  // than answering ok to a click that showed the user nothing.
+  if (!openLocalFile(dest)) return { error: "Markie saved the document to Downloads but could not open it.", path: dest };
   return { ok: true, path: dest };
 });
 

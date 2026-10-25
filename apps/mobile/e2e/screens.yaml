@@ -1,0 +1,59 @@
+# Walks Recent, the markdown documents (three scroll positions, then the one
+# with a synced picture) and the Darkmown counter against dev/mock-server.mjs,
+# signed in, and screenshots each one. links.yaml takes the error screens,
+# settings.yaml takes Settings and Sign in.
+# Run with: maestro --device <id> test -e OUT=<dir> -e NAME=ios-light e2e/screens.yaml
+appId: com.zvn.markie.mobile
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: ".*Launch brief.*"
+    timeout: 15000
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-2-recent
+- tapOn: ".*Launch brief.*"
+- extendedWaitUntil:
+    visible: "Status"
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-3-markdown
+# The middle: the checklist and the math.
+- scrollUntilVisible:
+    element: "The math behind the estimate"
+    direction: DOWN
+    centerElement: true
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-4-markdown-more
+# The end: the code block, links and the footnote.
+- scrollUntilVisible:
+    element: "Comments on mobile arrive after v1.*"
+    direction: DOWN
+- swipe:
+    direction: UP
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-4-markdown-end
+- tapOn: "Back to Recent"
+- waitForAnimationToEnd
+- tapOn: ".*Weekly reading report.*"
+- extendedWaitUntil:
+    visible: "Thursday.*"
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-11-image
+- tapOn: "Back to Recent"
+- waitForAnimationToEnd
+- tapOn: ".*Counter.*"
+- extendedWaitUntil:
+    visible: "Trust this document"
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-5-darkmown-untrusted
+- tapOn: "Trust this document"
+- extendedWaitUntil:
+    visible: "Revoke"
+    timeout: 10000
+- tapOn: "Add one"
+- tapOn: "Add one"
+- tapOn: "Add one"
+- takeScreenshot: ${OUT}/${NAME}-6-darkmown-trusted

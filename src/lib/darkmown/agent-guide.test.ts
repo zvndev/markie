@@ -268,6 +268,15 @@ describe("the examples do what the guide says they do", () => {
     expect(await rejected(":state a = 1\n:state b = 2\n:computed c = a + b\n\n{ c }\n")).toMatch(/Computed addition/);
   });
 
+  it("does not join text by subtracting a negative: it prints NaN with no warning, as the guide says", async () => {
+    const page = await open(':state first = "Ada"\n:state last = "Lovelace"\n:computed full = first - -last\n\n{ full }\n');
+    expect(page.warnings).toEqual([]);
+    expect(page.text()).toContain("NaN");
+    expect(MARKDOWN_GUIDE).toContain("Text cannot be joined: print the values side by side, `{ first } { last }`.");
+    expect(MARKDOWN_GUIDE).toContain("prints `NaN`");
+    expect(MARKDOWN_GUIDE).not.toMatch(/including string joining\. Subtract a negative/);
+  });
+
   it("rounds with % on a number, to the nearest by adding one half first", async () => {
     const floor = await open(":state x = 7.9\n:computed whole = x - x % 1\n\n{ whole }\n");
     expect(floor.text()).toBe("7");

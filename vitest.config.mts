@@ -20,6 +20,11 @@ export default defineConfig({
     },
   },
   test: {
+    // CI's two-core runner, loaded by the whole suite, has run real-work tests
+    // (key derivation, a 1 MB ODT round trip, lazy editor mounts) past vitest's
+    // five-second default one file at a time, and each one blocked a release.
+    // A hang still fails, at twenty seconds instead of five.
+    testTimeout: 20_000,
     projects: [
       {
         extends: true,

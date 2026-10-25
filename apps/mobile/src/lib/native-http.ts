@@ -16,7 +16,12 @@
 // - Cookies are cleared after every response. Both platforms' stacks keep
 //   Set-Cookie in a shared jar on their own, and better-auth sets its session
 //   cookie on sign-in. A copy of the session in a cookie jar would be a second,
-//   unencrypted credential that outlives "Sign out", so none is ever kept.
+//   unencrypted credential that outlives "Sign out", so none is left behind:
+//   the jar is emptied as each request settles, and nothing persists past it.
+//   It is not empty at every instant. A Set-Cookie on one answer can ride along
+//   on a request that is already in flight to the same server (a picture
+//   loading beside a sign-in), until that answer's own clear runs. The cookie
+//   only ever goes back to the server that set it, and is gone a moment later.
 import { CapacitorCookies, CapacitorHttp } from "@capacitor/core";
 import { bytesFromBase64, lowerCaseHeaders, NetworkError, type HttpRequest, type HttpTransport } from "./http";
 

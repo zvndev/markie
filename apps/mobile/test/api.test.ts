@@ -173,7 +173,41 @@ describe("api client: a document's own pictures", () => {
     const { transport, calls } = fake(() => ({ headers: { "content-type": "image/jpeg" }, bytes: png }));
     await createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN }).asset({ kind: "public", token: "pub_aaaaaaaaaaaaaaaaaaaa" }, "a.jpg");
     expect(calls[0].url).toBe(`${ORIGIN}/s/pub_aaaaaaaaaaaaaaaaaaaa/assets?ref=a.jpg`);
-    expect(calls[0].headers).toEqual({});
+    expect(calls[0].headers).toEqual({ range: "bytes=0-19999999" });
+  });
+
+  it("asks for at most 20 MB of any picture", async () => {
+    const { transport, calls } = fake(() => ({ status: 206, headers: { "content-type": "image/png", "content-range": "bytes 0-3/4" }, bytes: png }));
+    const blob = await createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN }).asset({ kind: "doc", id: "doc-1" }, "a.png");
+    expect(calls[0].headers).toEqual({ authorization: `Bearer ${TOKEN}`, range: "bytes=0-19999999" });
+    expect(blob?.size).toBe(4);
+  });
+
+  it("shows a picture whose whole size is exactly the cap", async () => {
+    const { transport } = fake(() => ({ status: 206, headers: { "content-type": "image/png", "content-range": "bytes 0-19999999/20000000" }, bytes: new Uint8Array(20_000_000) }));
+    expect((await createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN }).asset({ kind: "doc", id: "doc-1" }, "a.png"))?.size).toBe(20_000_000);
+  });
+
+  it("refuses a picture the server says is bigger than the cap, without keeping the slice", async () => {
+    const { transport } = fake(() => ({ status: 206, headers: { "content-type": "image/png", "content-range": "bytes 0-19999999/95000000" }, bytes: new Uint8Array(20_000_000) }));
+    expect(await createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN }).asset({ kind: "doc", id: "doc-1" }, "huge.png")).toBeNull();
+  });
+
+  it("refuses a slice that doesn't say how big the whole is", async () => {
+    const none = fake(() => ({ status: 206, headers: { "content-type": "image/png" }, bytes: png }));
+    expect(await createApiClient({ origin: ORIGIN, transport: none.transport, getToken: () => TOKEN }).asset({ kind: "doc", id: "doc-1" }, "x.png")).toBeNull();
+    const unknown = fake(() => ({ status: 206, headers: { "content-type": "image/png", "content-range": "bytes 0-3/*" }, bytes: png }));
+    expect(await createApiClient({ origin: ORIGIN, transport: unknown.transport, getToken: () => TOKEN }).asset({ kind: "doc", id: "doc-1" }, "x.png")).toBeNull();
+  });
+
+  it("refuses a picture from a server that ignored the range and sent more than the cap", async () => {
+    const { transport } = fake(() => ({ status: 200, headers: { "content-type": "image/png" }, bytes: new Uint8Array(20_000_001) }));
+    expect(await createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN }).asset({ kind: "doc", id: "doc-1" }, "huge.png").catch((error) => error)).toMatchObject({ status: 413 });
+  });
+
+  it("shows a small picture from a server that ignored the range", async () => {
+    const { transport } = fake(() => ({ status: 200, headers: { "content-type": "image/png" }, bytes: png }));
+    expect((await createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN }).asset({ kind: "doc", id: "doc-1" }, "a.png"))?.size).toBe(4);
   });
 
   it("shows nothing for a missing picture, a non-image, or a bad id", async () => {

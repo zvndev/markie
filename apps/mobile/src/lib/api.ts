@@ -21,8 +21,10 @@ import { NetworkError, type HttpResponse, type HttpTransport } from "./http";
 // for the desktop's raw text route). The phone refuses to hold more than this
 // in one answer rather than stall the web view.
 const MAX_RESPONSE_CHARS = 24_000_000;
-// One picture inside a document. The server caps an asset at 50 MB; a phone
-// shows a picture far smaller than that or none at all.
+// One picture inside a document. The server allows an asset up to 100 MB
+// (server/src/assets.ts); a phone shows a picture far smaller than that or none
+// at all. Every picture request asks for only this many bytes, so a larger one
+// costs the first 20 MB at most, never the whole file.
 const MAX_ASSET_BYTES = 20_000_000;
 const ASSET_TIMEOUT_MS = 15_000;
 const MAX_ERROR_CHARS = 512;
@@ -84,7 +86,7 @@ export function createApiClient(options: ApiClientOptions) {
   async function send(
     method: "GET" | "POST",
     path: string,
-    { body, auth = true, timeoutMs, binary = false }: { body?: unknown; auth?: boolean; timeoutMs?: number; binary?: boolean } = {}
+    { body, auth = true, timeoutMs, binary = false, headers: extra }: { body?: unknown; auth?: boolean; timeoutMs?: number; binary?: boolean; headers?: Record<string, string> } = {}
   ): Promise<HttpResponse> {
     const token = auth ? options.getToken?.() ?? null : null;
     let response: HttpResponse;
@@ -92,7 +94,7 @@ export function createApiClient(options: ApiClientOptions) {
       response = await transport({
         method,
         url: `${origin}${path}`,
-        headers: token ? { authorization: `Bearer ${token}` } : {},
+        headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...extra },
         body,
         timeoutMs,
         ...(binary ? { responseType: "binary" as const } : {}),
@@ -240,8 +242,20 @@ export function createApiClient(options: ApiClientOptions) {
         if (!PUBLIC_TOKEN.test(source.token)) return null;
         path = `/s/${encodeURIComponent(source.token)}/assets?${query}`;
       }
-      const response = await send("GET", path, { auth: source.kind === "doc", binary: true, timeoutMs: ASSET_TIMEOUT_MS });
-      if (response.status !== 200 || !response.bytes) return null;
+      const response = await send("GET", path, {
+        auth: source.kind === "doc",
+        binary: true,
+        timeoutMs: ASSET_TIMEOUT_MS,
+        headers: { range: `bytes=0-${MAX_ASSET_BYTES - 1}` },
+      });
+      if ((response.status !== 200 && response.status !== 206) || !response.bytes) return null;
+      // A slice of a bigger picture is half a picture: refuse it. A server
+      // that ignored the range answers 200, and send() has already refused
+      // anything over the cap.
+      if (response.status === 206) {
+        const total = /^bytes \d+-\d+\/(\d+)$/.exec(response.headers["content-range"] ?? "")?.[1];
+        if (!total || Number(total) > MAX_ASSET_BYTES) return null;
+      }
       const type = (response.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
       if (!/^image\/[a-z0-9.+-]+$/.test(type)) return null;
       return new Blob([response.bytes as BlobPart], { type });

@@ -68,6 +68,19 @@ describe("against the mock server", () => {
     expect((await api.asset({ kind: "public", token: "pub_reading_report_demo_token" }, "charts/opened-per-day.png"))?.size).toBe(chart!.size);
     expect(await api.asset({ kind: "doc", id: "reading-report" }, "charts/missing.png")).toBeNull();
 
+    // A 95 MB picture: the app asks for the first 20 MB, sees the whole is
+    // bigger, and shows "not available". The mock answers a range like the
+    // real server does, so the transfer is the slice and not the file.
+    expect(await api.asset({ kind: "doc", id: "edge-cases" }, "charts/huge.png")).toBeNull();
+    const url = `${origin}/api/docs/edge-cases/assets/file?ref=charts%2Fhuge.png`;
+    const sliced = await fetch(url, { headers: { authorization: `Bearer ${token}`, range: "bytes=0-19999999" } });
+    expect(sliced.status).toBe(206);
+    expect(sliced.headers.get("content-range")).toBe("bytes 0-19999999/95000000");
+    expect((await sliced.arrayBuffer()).byteLength).toBe(20_000_000);
+    const tail = await fetch(url, { headers: { authorization: `Bearer ${token}`, range: "bytes=-10" } });
+    expect(tail.headers.get("content-range")).toBe("bytes 94999990-94999999/95000000");
+    expect((await fetch(url, { headers: { authorization: `Bearer ${token}`, range: "bytes=95000000-" } })).status).toBe(416);
+
     await api.signOut();
     await expect(api.recent()).rejects.toMatchObject({ status: 401 });
   });

@@ -95,7 +95,57 @@ describe("the article a document is shown in", () => {
     expect(rule).toMatch(/contain:\s*paint/);
     expect(rule).toMatch(/isolation:\s*isolate/);
     expect(rule).toMatch(/position:\s*relative/);
-    expect(rule).toMatch(/overflow:\s*hidden/);
+    // clip, not hidden: hidden makes the article a scroll container, and an
+    // in-page link to a target past its edge scrolled the document out of view.
+    expect(rule).toMatch(/overflow:\s*clip/);
+    expect(rule).not.toMatch(/overflow:\s*(hidden|auto|scroll)/);
+  });
+
+  it("styles every highlight token for the light page, and keeps the picture placeholder calm", () => {
+    const css = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../src/styles.css"), "utf8");
+    // Every token github-dark colors, that the light block must repaint.
+    const dark = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../../node_modules/highlight.js/styles/github-dark.css"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    const colored = new Set<string>();
+    for (const [, selectors, body] of dark.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+      if (!/color:/.test(body) || selectors.includes("pre code") || /^\s*code\.hljs/.test(selectors) || /^\s*\.hljs\s*$/.test(selectors)) continue;
+      for (const selector of selectors.split(",")) {
+        const last = selector.trim().replace(/^.*\s/, "");
+        if (last.startsWith(".hljs-")) colored.add(last.replace(/\.inherited__$/, ""));
+      }
+    }
+    const light = css.split("\n").filter((line) => line.startsWith(':root[data-theme-tone="light"] .m-markdown .hljs-')).join("\n");
+    for (const token of colored) expect(light, token).toContain(`.m-markdown ${token}`);
+    expect(light).toMatch(/\.hljs-subst[^{]*\{[^}]*#1f2328/);
+
+    const placeholder = /\.m-markdown img\[data-markie-asset-state="loading"\] \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(placeholder).toMatch(/color:\s*transparent/);
+    expect(placeholder).toMatch(/border:\s*0/);
+  });
+
+  it("loads at most three pictures at once", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: () => "blob:test/x", revokeObjectURL: vi.fn() }));
+    let inFlight = 0;
+    let peak = 0;
+    const loadAsset = vi.fn(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return null;
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(createElement(MarkdownView, { content: Array.from({ length: 9 }, (_, i) => `![p${i}](p${i}.png)`).join("\n\n"), onLink: () => undefined, loadAsset }));
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
+    expect(loadAsset).toHaveBeenCalledTimes(9);
+    expect(peak).toBe(3);
+    act(() => root.unmount());
+    vi.unstubAllGlobals();
   });
 
   it("renders a hostile document inside that article, without the app's classes, and loads its pictures as blob URLs", async () => {

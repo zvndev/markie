@@ -10,7 +10,7 @@
 //   GET  /api/docs/recent?limit=&before=            {docs:[recent item]}
 //   GET  /api/docs/:id                              {doc:{..., format, origin}}
 //   GET  /api/docs/:id/links                        {links:[{ref, target}]}
-//   GET  /api/docs/:id/assets/file?ref=             a picture the document names
+//   GET  /api/docs/:id/assets/file?ref=             a picture the document names (Range honored)
 //   GET  /s/:token/raw                              a public share's markdown
 //   GET  /s/:token/assets?ref=                      a public share's picture
 //
@@ -202,7 +202,7 @@ const FILLER = [
 ];
 
 const docs = new Map();
-function seed({ id, name, content, updatedAgo, createdAgo = updatedAgo, agent = null, shared = false, sharedBy = null, role = "owner" }) {
+function seed({ id, name, content, updatedAgo, createdAgo = updatedAgo, agent = null, shared = false, sharedBy = null, role = "owner", unlisted = false }) {
   const format = /\.wd$/i.test(name) ? "darkmown" : /\.(txt|text|log)$/i.test(name) ? "text" : "markdown";
   docs.set(id, {
     id, name, content, format,
@@ -211,12 +211,30 @@ function seed({ id, name, content, updatedAgo, createdAgo = updatedAgo, agent = 
     createdAt: ago(createdAgo),
     updatedAt: ago(updatedAgo),
     origin: agent ? { kind: "agent", agent } : { kind: "app", agent: null },
-    shared, sharedBy, role,
+    shared, sharedBy, role, unlisted,
   });
 }
 
 seed({ id: "agent-brief", name: "Launch brief.md", content: LAUNCH_BRIEF, updatedAgo: 12 * MIN, agent: "Claude Code" });
 seed({ id: "reading-report", name: "Weekly reading report.md", content: READING_REPORT, updatedAgo: 25 * MIN, agent: "Claude Code" });
+// Opened only by link (markie-mobile://d/edge-cases): the hostile cases, kept out of Recent.
+const EDGE_CASES = [
+  "# Edge cases",
+  "",
+  "Two pictures the server holds at 95 MB each. The app refuses both after reading 20 MB of each.",
+  "",
+  "![first](charts/huge.png)",
+  "",
+  "![second](charts/huge-2.png)",
+  "",
+  "[Jump to a target past the right edge](#far-away)",
+  "",
+  '<div style="margin-left:900px"><h2 id="far-away">Far away</h2></div>',
+  "",
+  "The end of the edge cases.",
+  "",
+].join("\n");
+seed({ id: "edge-cases", name: "Edge cases.md", content: EDGE_CASES, updatedAgo: 90 * DAY, unlisted: true });
 seed({ id: "counter-wd", name: "Counter.wd", content: sample("Counter.wd"), updatedAgo: 40 * MIN, agent: "Codex" });
 seed({ id: "expense-form-wd", name: "Expense check.wd", content: sample("Local-form.wd"), updatedAgo: 5 * HOUR, agent: "Claude Code" });
 seed({ id: "reading-list", name: "Reading list.md", content: READING_LIST, updatedAgo: DAY + 3 * HOUR });
@@ -229,15 +247,46 @@ FILLER.forEach(([name, content], index) =>
 const docLinks = new Map([["agent-brief", [{ ref: "Counter.wd", target: "counter-wd" }]]]);
 const publicShares = new Map([["pub_launch_brief_demo_token", "agent-brief"], ["pub_reading_report_demo_token", "reading-report"]]);
 // The files a document names beside itself, as the desktop syncs them.
-const docAssets = new Map([["reading-report", new Map([["charts/opened-per-day.png", { mime: "image/png", bytes: chartPng() }]])]]);
+// The edge-cases document's pictures are 95 MB of zeros, made only for the
+// bytes a Range asks for, so the app's picture cap can be tested.
+const HUGE_BYTES = 95_000_000;
+const HUGE = { mime: "image/png", size: HUGE_BYTES, slice: (start, end) => Buffer.alloc(end - start + 1) };
+const CHART = chartPng();
+const docAssets = new Map([
+  ["reading-report", new Map([["charts/opened-per-day.png", { mime: "image/png", size: CHART.length, slice: (start, end) => CHART.subarray(start, end + 1) }]])],
+  ["edge-cases", new Map([["charts/huge.png", HUGE], ["charts/huge-2.png", HUGE]])],
+]);
 
-function sendAsset(res, log, docId, ref) {
+// MARKIE_MOCK_ASSET_DELAY_MS=4000 holds every picture back, to look at the loading state.
+const ASSET_DELAY_MS = Number(process.env.MARKIE_MOCK_ASSET_DELAY_MS) || 0;
+
+function sendAsset(req, res, log, docId, ref) {
+  if (ASSET_DELAY_MS) return void setTimeout(() => sendAssetNow(req, res, log, docId, ref), ASSET_DELAY_MS);
+  sendAssetNow(req, res, log, docId, ref);
+}
+
+function sendAssetNow(req, res, log, docId, ref) {
   const asset = docAssets.get(docId)?.get(ref ?? "");
   if (!asset) { log(404); res.writeHead(404, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" }); res.end("Not found"); return; }
+  // The real server's asset policy (server/src/assets.ts serveAsset), range
+  // handling included: bytes=a-b, bytes=a-, bytes=-n; the end is clamped.
+  const headers = { "content-type": asset.mime, "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff", "accept-ranges": "bytes" };
+  const m = /^bytes=(\d*)-(\d*)$/.exec((req.headers.range ?? "").trim());
+  if (req.headers.range && (!m || (!m[1] && !m[2]))) { log(416); res.writeHead(416, { "content-type": "text/plain; charset=utf-8" }); res.end("Range Not Satisfiable"); return; }
+  if (m && !(!m[1] && Number(m[2]) >= asset.size)) {
+    const start = m[1] ? Number(m[1]) : asset.size - Number(m[2]);
+    const end = Math.min(m[1] && m[2] ? Number(m[2]) : asset.size - 1, asset.size - 1);
+    if (start > end) { log(416); res.writeHead(416, { "content-type": "text/plain; charset=utf-8" }); res.end("Range Not Satisfiable"); return; }
+    const body = asset.slice(start, end);
+    log(206);
+    res.writeHead(206, { ...headers, "content-length": body.length, "content-range": `bytes ${start}-${end}/${asset.size}` });
+    res.end(body);
+    return;
+  }
+  const body = asset.slice(0, asset.size - 1);
   log(200);
-  // The real server's asset policy (server/src/assets.ts serveAsset).
-  res.writeHead(200, { "content-type": asset.mime, "content-length": asset.bytes.length, "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" });
-  res.end(asset.bytes);
+  res.writeHead(200, { ...headers, "content-length": body.length });
+  res.end(body);
 }
 // A document that exists but belongs to someone else, for the "no access" state.
 const FORBIDDEN_ID = "someone-elses-doc";
@@ -348,7 +397,7 @@ const server = createServer(async (req, res) => {
 
   const publicAsset = /^\/s\/([^/]+)\/assets$/.exec(path);
   if (req.method === "GET" && publicAsset) {
-    return sendAsset(res, log, publicShares.get(decodeURIComponent(publicAsset[1])) ?? "", url.searchParams.get("ref"));
+    return sendAsset(req, res, log, publicShares.get(decodeURIComponent(publicAsset[1])) ?? "", url.searchParams.get("ref"));
   }
 
   // The web fallback when the app is not installed.
@@ -368,7 +417,7 @@ const server = createServer(async (req, res) => {
       const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 50));
       const before = url.searchParams.get("before");
       const items = [...docs.values()]
-        .filter((doc) => !before || doc.updatedAt < before)
+        .filter((doc) => !doc.unlisted && (!before || doc.updatedAt < before))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
         .slice(0, limit)
         .map((doc) => recentItem(doc, originOf(req)));
@@ -384,7 +433,7 @@ const server = createServer(async (req, res) => {
 
     const asset = /^\/api\/docs\/([^/]+)\/assets\/file$/.exec(path);
     if (req.method === "GET" && asset) {
-      return sendAsset(res, log, decodeURIComponent(asset[1]), url.searchParams.get("ref"));
+      return sendAsset(req, res, log, decodeURIComponent(asset[1]), url.searchParams.get("ref"));
     }
 
     const one = /^\/api\/docs\/([^/]+)$/.exec(path);

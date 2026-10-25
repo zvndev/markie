@@ -246,16 +246,20 @@ input {
 }
 
 /* Android's web view draws an overlay scrollbar, and its track sits over the
-   nav bar's right edge. Neither platform's own lists show one at rest. */
+   nav bar's right edge. Neither platform's own lists show one at rest.
+   A highlighted code block scrolls in its own `code.hljs` (display: block,
+   overflow-x: auto), not only in the `pre`, so that one needs it too. */
 .m-screen-body,
 .m-markdown .m-table-scroll,
-.m-markdown pre {
+.m-markdown pre,
+.m-markdown pre code {
   scrollbar-width: none;
 }
 
 .m-screen-body::-webkit-scrollbar,
 .m-markdown .m-table-scroll::-webkit-scrollbar,
-.m-markdown pre::-webkit-scrollbar {
+.m-markdown pre::-webkit-scrollbar,
+.m-markdown pre code::-webkit-scrollbar {
   display: none;
 }
 
@@ -1100,7 +1104,9 @@ input {
   position: relative;
   isolation: isolate;
   contain: paint;
-  overflow: hidden;
+  /* clip, not hidden: hidden makes the article a scroll container, and an
+     in-page link to a target past its edge scrolled the article sideways. */
+  overflow: clip;
 }
 
 .m-markdown h1 {
@@ -1146,13 +1152,21 @@ input {
   font-size: 0.92em;
 }
 
-/* A synced picture while it loads, and the alt text if it can't. */
+/* A synced picture while it loads: a calm block, with no alt text and no
+   broken-image border. The picture takes its own size once it arrives. */
 .m-markdown img[data-markie-asset-state="loading"] {
   display: block;
   width: 100%;
   aspect-ratio: 16 / 9;
+  border: 0;
   border-radius: 8px;
   background: var(--m-field-bg);
+  color: transparent;
+  font-size: 0;
+  overflow: hidden;
+  /* An img with no src draws a broken-image icon on Android. Replacing its
+     content with an empty image leaves only the block. */
+  content: linear-gradient(transparent, transparent);
 }
 
 .m-markdown .m-asset-missing {
@@ -1182,8 +1196,10 @@ input {
 
 /* github-dark's token colors are made for a dark page. On the light page
    they take github's own light palette, so code stays legible. */
+:root[data-theme-tone="light"] .m-markdown .hljs-doctag,
 :root[data-theme-tone="light"] .m-markdown .hljs-keyword,
 :root[data-theme-tone="light"] .m-markdown .hljs-meta .hljs-keyword,
+:root[data-theme-tone="light"] .m-markdown .hljs-template-variable,
 :root[data-theme-tone="light"] .m-markdown .hljs-template-tag,
 :root[data-theme-tone="light"] .m-markdown .hljs-type,
 :root[data-theme-tone="light"] .m-markdown .hljs-variable.language_ { color: #cf222e; }
@@ -1212,6 +1228,9 @@ input {
 :root[data-theme-tone="light"] .m-markdown .hljs-quote,
 :root[data-theme-tone="light"] .m-markdown .hljs-selector-tag,
 :root[data-theme-tone="light"] .m-markdown .hljs-selector-pseudo { color: #116329; }
+:root[data-theme-tone="light"] .m-markdown .hljs-subst,
+:root[data-theme-tone="light"] .m-markdown .hljs-emphasis,
+:root[data-theme-tone="light"] .m-markdown .hljs-strong { color: #1f2328; }
 :root[data-theme-tone="light"] .m-markdown .hljs-section { color: #0550ae; font-weight: 700; }
 :root[data-theme-tone="light"] .m-markdown .hljs-bullet { color: #953800; }
 :root[data-theme-tone="light"] .m-markdown .hljs-addition { color: #116329; background-color: #dafbe1; }

@@ -9,7 +9,8 @@ import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { splitFrontMatter } from "@/lib/front-matter";
 import { ASSET_ATTR, ASSET_STATE_ATTR, markAssetMissing, prepareDocumentHtml } from "../lib/document-html";
 
-const ASSET_CONCURRENCY = 4;
+// A few at a time: each answer is held in memory until its picture decodes.
+const ASSET_CONCURRENCY = 3;
 
 interface MarkdownViewProps {
   content: string;

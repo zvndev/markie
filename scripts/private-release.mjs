@@ -170,11 +170,31 @@ export function privateUpdateConfig(settings) {
   return { provider: "generic", url: settings.apiOrigin + PRIVATE_PREFIX, channel: "super-nightly", updaterCacheDirName: "markie-super-nightly-updater" };
 }
 
+// @electron/asar reads a packed file with a single readSync and ignores the
+// byte count, and both of its writers resolve on out.end() before the stream
+// has flushed. A short archive therefore reads back as zero-filled bytes that
+// no forbidden-value scan can match, so refuse any archive shorter than its
+// own header says it is.
+export function assertArchiveComplete(archive, asar) {
+  const { header, headerSize } = asar.getRawHeader(archive);
+  let extent = 0;
+  const visit = (node) => {
+    for (const entry of Object.values(node.files ?? {})) {
+      if (entry.files) visit(entry);
+      else if (!entry.unpacked && !entry.link) extent = Math.max(extent, Number(entry.offset) + entry.size);
+    }
+  };
+  visit(header);
+  const expected = 8 + headerSize + extent, actual = statSync(archive).size;
+  assert(actual >= expected, `Private application archive is incomplete: ${actual} of ${expected} bytes.`);
+}
+
 export function verifyPrivateBundle(appPath, settings, options = {}) {
   const resources = path.join(appPath, "Contents", "Resources"), archive = path.join(resources, "app.asar");
   const asar = require("@electron/asar");
   const productionNames = options.productionNames ?? productionPackageNames(options.root);
   assert(existsSync(archive), "Private application archive is missing.");
+  assertArchiveComplete(archive, asar);
   const unpacked = new Set();
   const entries = asar.listPackage(archive).flatMap((rawName) => {
     const name = rawName.replace(/^\//, ""), info = asar.statFile(archive, name, false);

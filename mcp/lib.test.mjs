@@ -1735,7 +1735,7 @@ test("the cloud tools reach the app with a fenced path and return its answer", a
     const ok = await client.callTool("markie_cloud_sync", { path: "~/Documents/Markie/plan.md" });
     assert.equal(ok.result.isError, undefined);
     assert.match(ok.result.content[0].text, /api\.markiedocs\.com\/d\/doc-1/);
-    assert.deepEqual(seen[0], { token: "tok", method: "cloud_sync", params: { path: doc } });
+    assert.deepEqual(seen[0], { token: "tok", method: "cloud_sync", params: { path: doc, agent: "t" } });
     const no = await client.callTool("markie_cloud_public_link", { path: doc, create: true });
     assert.equal(no.result.isError, true);
     assert.match(no.result.content[0].text, /declined/);
@@ -1743,6 +1743,51 @@ test("the cloud tools reach the app with a fenced path and return its answer", a
     const fenced = await client.callTool("markie_cloud_sync", { path: "/etc/hosts" });
     assert.equal(fenced.result.isError, true);
     assert.equal(seen.length, 2);
+  } finally {
+    client.close();
+    server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("cloud_sync tells the app which agent asked, takes .wd, and only cloud_sync does", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "mcpw-")));
+  const { server, seen } = await fakeBridge(pjoin(home, ".markie"), () => ({ ok: true, result: { synced: true } }));
+  const client = startMcpClient(home);
+  try {
+    await client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "Claude Code", version: "2" } });
+    const wd = pjoin(home, "Documents", "Markie", "budget.wd");
+    mkdirSync(pdirname(wd), { recursive: true });
+    writeFileSync(wd, "<Counter />\n");
+    assert.equal((await client.callTool("markie_cloud_sync", { path: wd })).result.isError, undefined);
+    assert.deepEqual(seen[0].params, { path: wd, agent: "Claude Code" });
+    // Status, public links and revokes are not creations: they carry no agent.
+    await client.callTool("markie_cloud_status", { path: wd });
+    assert.deepEqual(seen[1].params, { path: wd });
+    // Other Markie formats stay fenced out of Cloud sync.
+    const csv = pjoin(home, "Documents", "Markie", "t.csv");
+    writeFileSync(csv, "a,b\n");
+    const refused = await client.callTool("markie_cloud_sync", { path: csv });
+    assert.equal(refused.result.isError, true);
+    assert.equal(seen.length, 2);
+  } finally {
+    client.close();
+    server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a client that sends no name is still synced, with no agent for the app to record", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "mcpn-")));
+  const { server, seen } = await fakeBridge(pjoin(home, ".markie"), () => ({ ok: true, result: { synced: true } }));
+  const client = startMcpClient(home);
+  try {
+    await client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {} });
+    const doc = pjoin(home, "Documents", "Markie", "plan.md");
+    mkdirSync(pdirname(doc), { recursive: true });
+    writeFileSync(doc, "# Plan\n");
+    await client.callTool("markie_cloud_sync", { path: doc });
+    assert.deepEqual(seen[0].params, { path: doc });
   } finally {
     client.close();
     server.close();

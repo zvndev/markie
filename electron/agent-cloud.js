@@ -18,11 +18,32 @@
 const nodeFs = require("fs");
 const nodePath = require("path");
 
-const SYNCABLE = /\.(md|markdown|mdx|txt|text)$/i;
+const SYNCABLE = /\.(md|markdown|mdx|txt|text|wd)$/i;
 const MAX_SYNC_BYTES = 10 * 1024 * 1024;
+
+const AGENT_NAME_MAX = 64;
+const DEFAULT_AGENT_NAME = "an agent";
+
+// The name the server shows beside a document an agent made. It comes from the
+// MCP client's own `initialize` message, so it is whatever the client chose to
+// call itself: reduced here to one printable line of at most 64 characters, and
+// "an agent" when nothing usable is left.
+function sanitizeAgentName(raw) {
+  if (typeof raw !== "string") return DEFAULT_AGENT_NAME;
+  const line = raw.replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}]/gu, " ").replace(/\s+/g, " ").trim();
+  const clipped = Array.from(line).slice(0, AGENT_NAME_MAX).join("").trim();
+  return clipped || DEFAULT_AGENT_NAME;
+}
 
 function privateLinkFor(origin, cloudId) {
   return `${origin}/d/${encodeURIComponent(cloudId)}`;
+}
+
+// `[<file name>](<privateLink>)`, ready to paste into chat. A bracket or
+// backslash in the name is escaped so it cannot end the link text early.
+function markdownLinkFor(name, privateLink) {
+  if (!privateLink) return null;
+  return `[${String(name).replace(/([\\[\]])/g, "\\$1")}](${privateLink})`;
 }
 
 /**
@@ -46,7 +67,7 @@ function createAgentCloud({ registry, sync, home, unlocked, confirm, permissions
     try { real = fs.realpathSync(expanded); } catch { throw new Error(`No such file: ${expanded}`); }
     const rel = nodePath.relative(realHome, real);
     if (!rel || rel.startsWith("..") || nodePath.isAbsolute(rel)) throw new Error("Only files in your home folder can go to Markie Cloud.");
-    if (!SYNCABLE.test(real)) throw new Error("Agents can sync Markdown and plain text files to Markie Cloud. Open other documents in Markie to share them.");
+    if (!SYNCABLE.test(real)) throw new Error("Agents can sync Markdown, Darkmown and plain text files to Markie Cloud. Open other documents in Markie to share them.");
     const st = fs.statSync(real);
     if (!st.isFile()) throw new Error(`Not a file: ${real}`);
     return { path: real, name: nodePath.basename(real), size: st.size };
@@ -60,13 +81,15 @@ function createAgentCloud({ registry, sync, home, unlocked, confirm, permissions
     const row = registry.get(doc.path);
     const cloudId = row && row.cloud_doc_id ? row.cloud_doc_id : null;
     const server = cloudId ? sync.originOfRow(row) : null;
+    const privateLink = cloudId ? privateLinkFor(server, cloudId) : null;
     return {
       path: doc.path,
       name: doc.name,
       synced: !!cloudId && (row.sync_state === "synced" || row.sync_state === "unpushed"),
       syncState: cloudId ? row.sync_state || "unknown" : "local",
       server,
-      privateLink: cloudId ? privateLinkFor(server, cloudId) : null,
+      privateLink,
+      markdownLink: markdownLinkFor(doc.name, privateLink),
       role: row && row.share_role ? row.share_role : null,
     };
   }
@@ -82,7 +105,7 @@ function createAgentCloud({ registry, sync, home, unlocked, confirm, permissions
     return describe(resolveDoc(p));
   }
 
-  async function syncDoc({ path: p }) {
+  async function syncDoc({ path: p, agent }) {
     requireUnlocked();
     const doc = resolveDoc(p);
     if (doc.size > MAX_SYNC_BYTES) throw new Error(`${doc.name} is too large to sync.`);
@@ -99,7 +122,9 @@ function createAgentCloud({ registry, sync, home, unlocked, confirm, permissions
       if (res && res.skipped === "not synced") throw new Error(`${doc.name} has a sync conflict. Open it in Markie to resolve it.`);
     } else {
       registry.track(doc.path, doc.name, content);
-      res = await sync.syncOn(doc.path, doc.name, content);
+      // Who made it is recorded once, on the PUT that creates the document. A
+      // file already in Cloud takes the push above, which sends no origin.
+      res = await sync.syncOn(doc.path, doc.name, content, undefined, undefined, { kind: "agent", agent: sanitizeAgentName(agent) });
     }
     libraryChanged();
     if (res && res.conflict) throw new Error(`${doc.name} changed in Markie Cloud and here. Open it in Markie to resolve it.`);
@@ -148,4 +173,4 @@ function createAgentCloud({ registry, sync, home, unlocked, confirm, permissions
   };
 }
 
-module.exports = { createAgentCloud, privateLinkFor, SYNCABLE };
+module.exports = { createAgentCloud, privateLinkFor, markdownLinkFor, sanitizeAgentName, SYNCABLE };

@@ -1,0 +1,29 @@
+# Deep links while signed in: a document on someone else's account (403) and
+# one that doesn't exist (404). Both offer the way back, not a retry.
+# Run with: maestro --device <id> test -e OUT=<dir> -e NAME=ios-light e2e/links.yaml
+appId: com.zvn.markie.mobile
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: ".*Launch brief.*"
+    timeout: 15000
+- openLink: "markie-mobile://d/someone-elses-doc"
+- extendedWaitUntil:
+    visible: "You don't have access"
+    timeout: 10000
+- assertVisible: "Back to Recent"
+- assertNotVisible: "Try again"
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-9-link-403
+- tapOn:
+    text: "Back to Recent"
+    index: 1
+- waitForAnimationToEnd
+- openLink: "markie-mobile://d/no-such-doc"
+- extendedWaitUntil:
+    visible: "Document not found"
+    timeout: 10000
+- assertNotVisible: "Try again"
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-10-link-404

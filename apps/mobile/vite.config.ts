@@ -54,10 +54,17 @@ function contentSecurityPolicy(): Plugin {
   };
 }
 
-export default defineConfig({
+// `vite build --mode dev` (npm run build:dev) is the build for an emulator
+// against dev/mock-server.mjs: the only build whose sign-in accepts plain http
+// to 10.0.2.2, the Android emulator's name for the development machine. Every
+// other build, the one that ships included, refuses it (src/lib/server-origin.ts).
+export default defineConfig(({ command, mode }) => ({
   plugins: [react(), tailwindcss(), contentSecurityPolicy()],
   base: "./",
-  define: { __MARKIE_MOBILE_VERSION__: JSON.stringify(pkg.version) },
+  define: {
+    __MARKIE_MOBILE_VERSION__: JSON.stringify(pkg.version),
+    __MARKIE_MOBILE_DEV_SERVERS__: JSON.stringify(command === "serve" || mode === "dev"),
+  },
   resolve: {
     alias: { "@": fileURLToPath(new URL("../../src", import.meta.url)) },
     dedupe: ["react", "react-dom"],
@@ -76,4 +83,4 @@ export default defineConfig({
     target: ["safari17", "chrome120"],
     chunkSizeWarningLimit: 2500,
   },
-});
+}));

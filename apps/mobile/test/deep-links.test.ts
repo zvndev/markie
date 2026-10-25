@@ -3,6 +3,7 @@ import {
   appLinkFor,
   classifyDocumentLink,
   hasPendingLink,
+  isMarkieWebLink,
   parseMarkieLink,
   rememberPendingLink,
   resolveForSession,
@@ -131,5 +132,19 @@ describe("links inside a document", () => {
     expect(classifyDocumentLink("file:///etc/passwd", CLOUD)).toEqual({ kind: "none" });
     expect(classifyDocumentLink("notes/other.md", CLOUD)).toEqual({ kind: "none" });
     expect(classifyDocumentLink(null, CLOUD)).toEqual({ kind: "none" });
+  });
+});
+
+describe("URLs other apps send", () => {
+  it("passes on only Markie's own web links, never an arbitrary URL", () => {
+    expect(isMarkieWebLink("https://api.markiedocs.com/d/abc/raw")).toBe(true);
+    expect(isMarkieWebLink("https://markiedocs.com/download")).toBe(true);
+    expect(isMarkieWebLink("https://markie.example.com/d/abc/raw", "https://markie.example.com")).toBe(true);
+    expect(isMarkieWebLink("https://evil.example/phish")).toBe(false);
+    expect(isMarkieWebLink("https://markie.example.com/x")).toBe(false);
+    expect(isMarkieWebLink("https://api.markiedocs.com.evil.example/d/abc")).toBe(false);
+    expect(isMarkieWebLink("https://user:pw@api.markiedocs.com/d/abc/raw")).toBe(false);
+    expect(isMarkieWebLink("http://api.markiedocs.com/d/abc/raw")).toBe(false);
+    expect(isMarkieWebLink("javascript:alert(1)")).toBe(false);
   });
 });

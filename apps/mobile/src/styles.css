@@ -245,6 +245,20 @@ input {
   padding-bottom: calc(24px + var(--sab));
 }
 
+/* Android's web view draws an overlay scrollbar, and its track sits over the
+   nav bar's right edge. Neither platform's own lists show one at rest. */
+.m-screen-body,
+.m-markdown .m-table-scroll,
+.m-markdown pre {
+  scrollbar-width: none;
+}
+
+.m-screen-body::-webkit-scrollbar,
+.m-markdown .m-table-scroll::-webkit-scrollbar,
+.m-markdown pre::-webkit-scrollbar {
+  display: none;
+}
+
 .m-screen-body.is-refreshable {
   overscroll-behavior-y: none;
 }
@@ -315,7 +329,7 @@ input {
   gap: 6px;
   height: 38px;
   padding: 0 8px 0 10px;
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--m-field-bg);
   color: var(--muted);
 }
@@ -352,7 +366,7 @@ input {
 .m-segmented {
   display: flex;
   padding: 2px;
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--m-field-bg);
 }
 
@@ -361,7 +375,7 @@ input {
   min-height: 30px;
   padding: 4px 10px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--foreground);
   font-size: 13px;
@@ -710,7 +724,7 @@ input {
 .m-button-small {
   min-height: 36px;
   padding: 0 14px;
-  border-radius: 10px;
+  border-radius: 8px;
   font-size: 15px;
 }
 
@@ -1056,15 +1070,6 @@ input {
   min-width: 0;
 }
 
-.m-doc-meta-name {
-  overflow: hidden;
-  color: var(--foreground);
-  font-size: 15px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .m-doc-meta-line {
   display: flex;
   flex-wrap: wrap;
@@ -1087,6 +1092,15 @@ input {
   padding: 18px var(--m-gutter) 40px;
   font-size: 17px;
   line-height: 1.6;
+  /* A document's HTML keeps inline style on some blocks (the shared
+     sanitizer, src/lib/markdown-html.ts). This box is where all of it ends:
+     paint is clipped to the article, a position: fixed or absolute element
+     is placed against the article rather than the screen, and no z-index
+     inside can climb above the nav bar or a toast. */
+  position: relative;
+  isolation: isolate;
+  contain: paint;
+  overflow: hidden;
 }
 
 .m-markdown h1 {
@@ -1104,18 +1118,52 @@ input {
   font-size: 1.15em;
 }
 
-.m-markdown table {
-  display: block;
-  max-width: 100%;
+/* Each table sits in a scroller (document-html.ts wraps it), so the table
+   itself stays a table: it spans the column, its header band runs the full
+   width, and a table wider than the phone scrolls sideways inside it. */
+.m-markdown .m-table-scroll {
+  margin: 1em 0;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+.m-markdown .m-table-scroll > table {
+  display: table;
+  width: 100%;
+  max-width: none;
+  margin: 0;
   font-size: 0.88em;
 }
 
+.m-markdown th,
+.m-markdown td {
+  overflow-wrap: normal;
+}
+
 .m-markdown pre {
-  margin-left: calc(-1 * var(--m-gutter) + 8px);
-  margin-right: calc(-1 * var(--m-gutter) + 8px);
+  margin-left: 0;
+  margin-right: 0;
   font-size: 0.92em;
+}
+
+/* A synced picture while it loads, and the alt text if it can't. */
+.m-markdown img[data-markie-asset-state="loading"] {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  background: var(--m-field-bg);
+}
+
+.m-markdown .m-asset-missing {
+  display: block;
+  margin: 1em 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--m-field-bg);
+  color: var(--muted);
+  font-size: 0.82em;
+  line-height: 1.4;
 }
 
 .m-markdown .katex-display {
@@ -1185,7 +1233,7 @@ input {
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  padding: 12px 12px calc(12px + var(--sab));
+  padding: 12px var(--m-gutter) calc(12px + var(--sab));
   gap: 10px;
 }
 
@@ -1250,14 +1298,29 @@ input {
   line-height: 1.4;
 }
 
+/* As tall as the document (darkmown-view.tsx sets the height once it is
+   measured), never shorter than a useful frame, never taller than the screen:
+   a long one shrinks to fit and scrolls inside itself. */
 .m-wd-frame-wrap {
+  position: relative;
   display: flex;
-  flex: 1;
-  min-height: 260px;
+  flex: 1 1 auto;
+  min-height: 200px;
   overflow: hidden;
   border-radius: 12px;
   box-shadow: 0 0 0 0.5px var(--m-separator);
   background: light-dark(#fff, #18181b);
+}
+
+.m-wd-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  border: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .m-wd-frame {

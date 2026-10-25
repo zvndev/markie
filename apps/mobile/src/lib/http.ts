@@ -8,14 +8,20 @@ export interface HttpRequest {
   headers?: Record<string, string>;
   /** Serialized as JSON when present. */
   body?: unknown;
+  /** "binary" for an image: the answer arrives in `bytes`, not `text`. */
+  responseType?: "text" | "binary";
+  /** Gives up after this long. The transport's own limit when absent. */
+  timeoutMs?: number;
 }
 
 export interface HttpResponse {
   status: number;
   /** Lower-cased header names. */
   headers: Record<string, string>;
-  /** The raw response text. Parsing is the client's job, with its own limits. */
+  /** The raw response text. Parsing is the client's job, with its own limits. Empty for a binary answer. */
   text: string;
+  /** The body of a successful binary request. */
+  bytes?: Uint8Array;
 }
 
 export type HttpTransport = (request: HttpRequest) => Promise<HttpResponse>;
@@ -54,12 +60,24 @@ export function fetchTransport(fetchImpl: typeof fetch = fetch): HttpTransport {
         credentials: "omit",
         redirect: "error",
         cache: "no-store",
+        signal: request.timeoutMs ? AbortSignal.timeout(request.timeoutMs) : undefined,
       });
     } catch {
       throw new NetworkError();
     }
     const headers: Record<string, string> = {};
     response.headers.forEach((value, name) => { headers[name.toLowerCase()] = value; });
+    if (request.responseType === "binary" && response.ok) {
+      return { status: response.status, headers, text: "", bytes: new Uint8Array(await response.arrayBuffer()) };
+    }
     return { status: response.status, headers, text: await response.text() };
   };
+}
+
+/** Capacitor hands binary answers back as base64. */
+export function bytesFromBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
+  return out;
 }

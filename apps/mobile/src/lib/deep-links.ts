@@ -60,6 +60,25 @@ export function parseMarkieLink(input: string, serverOrigin: string | null = nul
   return null;
 }
 
+/**
+ * An https link on a Markie host (or the signed-in server) that isn't a
+ * document the app opens: a raw download, an asset. The only kind of URL the
+ * app hands on to the browser when another app sends it one.
+ */
+export function isMarkieWebLink(input: string, serverOrigin: string | null = null): boolean {
+  if (typeof input !== "string" || input.length > 4096) return false;
+  let url: URL;
+  try {
+    url = new URL(input.trim());
+  } catch {
+    return false;
+  }
+  if (url.username || url.password) return false;
+  if (url.protocol === "https:" && !url.port && CLAIMED_HOSTS.includes(url.hostname)) return true;
+  // The signed-in origin already passed normalizeServerOrigin's rules.
+  return !!serverOrigin && url.origin === serverOrigin;
+}
+
 export type ResolvedLink = { ok: true; target: LinkTarget } | { ok: false; message: string };
 
 /**

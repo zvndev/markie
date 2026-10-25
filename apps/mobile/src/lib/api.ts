@@ -21,6 +21,10 @@ import { NetworkError, type HttpResponse, type HttpTransport } from "./http";
 // for the desktop's raw text route). The phone refuses to hold more than this
 // in one answer rather than stall the web view.
 const MAX_RESPONSE_CHARS = 24_000_000;
+// One picture inside a document. The server caps an asset at 50 MB; a phone
+// shows a picture far smaller than that or none at all.
+const MAX_ASSET_BYTES = 20_000_000;
+const ASSET_TIMEOUT_MS = 15_000;
 const MAX_ERROR_CHARS = 512;
 
 export interface ApiUser {
@@ -80,7 +84,7 @@ export function createApiClient(options: ApiClientOptions) {
   async function send(
     method: "GET" | "POST",
     path: string,
-    { body, auth = true }: { body?: unknown; auth?: boolean } = {}
+    { body, auth = true, timeoutMs, binary = false }: { body?: unknown; auth?: boolean; timeoutMs?: number; binary?: boolean } = {}
   ): Promise<HttpResponse> {
     const token = auth ? options.getToken?.() ?? null : null;
     let response: HttpResponse;
@@ -90,11 +94,14 @@ export function createApiClient(options: ApiClientOptions) {
         url: `${origin}${path}`,
         headers: token ? { authorization: `Bearer ${token}` } : {},
         body,
+        timeoutMs,
+        ...(binary ? { responseType: "binary" as const } : {}),
       });
     } catch (error) {
       if (error instanceof NetworkError) throw new ApiError(0, error.message);
       throw new ApiError(0, "Can't reach the server. Check your connection.");
     }
+    if ((response.bytes?.length ?? 0) > MAX_ASSET_BYTES) throw new ApiError(413, "This picture is too large to show on a phone.");
     if (response.text.length > MAX_RESPONSE_CHARS) throw new ApiError(413, "This document is too large to open on a phone.");
     const rotated = response.headers["set-auth-token"];
     if (token && rotated && rotated !== token && TOKEN_SHAPE.test(rotated) && response.status < 400) {
@@ -103,7 +110,7 @@ export function createApiClient(options: ApiClientOptions) {
     return response;
   }
 
-  async function json(method: "GET" | "POST", path: string, init: { body?: unknown; auth?: boolean } = {}): Promise<{ response: HttpResponse; data: unknown }> {
+  async function json(method: "GET" | "POST", path: string, init: { body?: unknown; auth?: boolean; timeoutMs?: number } = {}): Promise<{ response: HttpResponse; data: unknown }> {
     const response = await send(method, path, init);
     const data = parseJson(response.text);
     if (response.status >= 200 && response.status < 300) return { response, data };
@@ -151,8 +158,8 @@ export function createApiClient(options: ApiClientOptions) {
     },
 
     /** Ends the session on the server. Signing out locally never waits on this succeeding. */
-    async signOut(): Promise<void> {
-      await json("POST", "/api/auth/sign-out", { body: {} });
+    async signOut({ timeoutMs }: { timeoutMs?: number } = {}): Promise<void> {
+      await json("POST", "/api/auth/sign-out", { body: {}, timeoutMs });
     },
 
     async recent({ limit = 50, before }: { limit?: number; before?: string | null } = {}): Promise<RecentDoc[]> {
@@ -216,11 +223,38 @@ export function createApiClient(options: ApiClientOptions) {
       };
     },
 
+    /**
+     * One picture a document names by a relative ref, from the same routes the
+     * server's own web pages use: the signed-in reader's asset route for a
+     * private document, the share's for a public one. Null when the document
+     * has no such picture, or it isn't an image.
+     */
+    async asset(source: AssetSource, ref: string): Promise<Blob | null> {
+      if (!ref || ref.length > 2048) return null;
+      const query = `ref=${encodeURIComponent(ref)}`;
+      let path: string;
+      if (source.kind === "doc") {
+        if (!DOC_ID.test(source.id)) return null;
+        path = `/api/docs/${encodeURIComponent(source.id)}/assets/file?${query}`;
+      } else {
+        if (!PUBLIC_TOKEN.test(source.token)) return null;
+        path = `/s/${encodeURIComponent(source.token)}/assets?${query}`;
+      }
+      const response = await send("GET", path, { auth: source.kind === "doc", binary: true, timeoutMs: ASSET_TIMEOUT_MS });
+      if (response.status !== 200 || !response.bytes) return null;
+      const type = (response.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
+      if (!/^image\/[a-z0-9.+-]+$/.test(type)) return null;
+      return new Blob([response.bytes as BlobPart], { type });
+    },
+
     privateLinkFor: (id: string) => privateLinkFor(origin, id),
   };
 }
 
 export type ApiClient = ReturnType<typeof createApiClient>;
+
+/** Whose pictures: a private document read with the session, or a public share. */
+export type AssetSource = { kind: "doc"; id: string } | { kind: "public"; token: string };
 
 function parseUser(value: unknown): ApiUser | null {
   if (!value || typeof value !== "object") return null;
@@ -234,14 +268,28 @@ function parseUser(value: unknown): ApiUser | null {
 }
 
 /** What the Document screen says when a document can't be shown. */
-export function documentErrorCopy(error: unknown): { title: string; body: string; detail: string | null; signIn: boolean } {
+export interface DocumentErrorCopy {
+  title: string;
+  body: string;
+  detail: string | null;
+  /** Offer "Sign in" instead of any other action. */
+  signIn: boolean;
+  /** Trying again could work. When it can't (403, 404), offer the way back instead. */
+  retry: boolean;
+}
+
+/**
+ * @param server What to call the server in a sentence: "Markie Cloud", or a
+ *   self-hosted server's host (serverLabel).
+ */
+export function documentErrorCopy(error: unknown, server = "this server"): DocumentErrorCopy {
   if (error instanceof ApiError) {
     const detail = error.serverMessage ? `The server said: "${error.serverMessage}" (${error.status})` : error.status ? `Status ${error.status}` : null;
-    if (error.status === 0) return { title: "You're offline", body: error.message, detail: null, signIn: false };
-    if (error.status === 401) return { title: "Sign in again", body: "Your session has ended. Sign in and the document opens right after.", detail, signIn: true };
-    if (error.status === 403) return { title: "You don't have access", body: "This document belongs to someone else's Markie Cloud, and it hasn't been shared with this account.", detail, signIn: false };
-    if (error.status === 404) return { title: "Document not found", body: "It may have been deleted, or it hasn't been shared with this account.", detail, signIn: false };
-    return { title: "Couldn't open this document", body: error.message, detail, signIn: false };
+    if (error.status === 0) return { title: "You're offline", body: error.message, detail: null, signIn: false, retry: true };
+    if (error.status === 401) return { title: "Sign in again", body: "Your session has ended. Sign in and the document opens right after.", detail, signIn: true, retry: false };
+    if (error.status === 403) return { title: "You don't have access", body: `This document belongs to someone else on ${server}, and it hasn't been shared with this account.`, detail, signIn: false, retry: false };
+    if (error.status === 404) return { title: "Document not found", body: "It may have been deleted, or it hasn't been shared with this account.", detail, signIn: false, retry: false };
+    return { title: "Couldn't open this document", body: error.message, detail, signIn: false, retry: true };
   }
-  return { title: "Couldn't open this document", body: error instanceof Error ? error.message : "Something went wrong.", detail: null, signIn: false };
+  return { title: "Couldn't open this document", body: error instanceof Error ? error.message : "Something went wrong.", detail: null, signIn: false, retry: true };
 }

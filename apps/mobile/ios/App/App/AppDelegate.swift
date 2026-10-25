@@ -7,8 +7,30 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        Self.forgetSessionFromAnEarlierInstall()
         return true
+    }
+
+    /// Deleting the app removes its files and its UserDefaults, but iOS keeps
+    /// its Keychain items. Without this a reinstall would come back signed in
+    /// with the old session. The marker lives in UserDefaults precisely
+    /// because uninstalling removes it: no marker means a fresh install, and
+    /// everything this app ever put in the Keychain goes before the web view
+    /// can read any of it.
+    private static func forgetSessionFromAnEarlierInstall() {
+        let marker = "markie.mobile.installed.v1"
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: marker) else { return }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        // Mark the install only once the Keychain is known to be clear, so a
+        // locked device at first launch tries again next time.
+        if status == errSecSuccess || status == errSecItemNotFound {
+            defaults.set(true, forKey: marker)
+        }
     }
 
     func applicationWillResignActive(_ application: UIApplication) {

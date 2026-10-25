@@ -5,8 +5,14 @@ It follows `docs/mobile/AGENT-LINKS-CONTRACT.md` ("Mobile app" and "Link contrac
 
 - Bundle ID and Android package: `com.zvn.markie.mobile`. Display name: Markie. Apple team: `3VU8SG5TD9`.
 - Screens: Sign in (email code), Recent, Document (markdown, text, Darkmown), Settings.
-- The session token lives only in the iOS Keychain or the Android Keystore
-  (`@aparajita/capacitor-secure-storage`, wrapped by `src/lib/secure-store.ts`). Signing out clears it.
+- The session token is stored in the iOS Keychain or, on Android, encrypted with an Android Keystore key
+  (`@aparajita/capacitor-secure-storage`, wrapped by `src/lib/secure-store.ts`). It is never written to
+  `localStorage`, Preferences or a cookie jar, and no response is kept in an HTTP cache: requests send
+  `Cache-Control: no-store`, the server answers API calls with it, and iOS's URLSession cache has no
+  capacity (`ios/App/App/MarkieBridgeViewController.swift`). Capacitor's plugin logging is off, so it
+  never reaches a device log either. Signing out clears it at once; the server is told afterwards.
+- The iOS Keychain outlives an uninstall. On the first launch after an install the app clears what an
+  earlier install left there (`ios/App/App/AppDelegate.swift`), so a reinstall starts signed out.
 
 ## How the renderer is shared
 
@@ -38,7 +44,9 @@ On a device, requests go through Capacitor's native HTTP stack, because the serv
 On the Sign in screen, open "Advanced" and set the server:
 
 - iOS Simulator: `http://localhost:8790`
-- Android emulator: `http://10.0.2.2:8790` (debug builds allow plain http to localhost, 127.0.0.1 and 10.0.2.2 only)
+- Android emulator: `http://10.0.2.2:8790`. Only a development web build (`npm run build:dev` or
+  `npm run sync:dev`) accepts that address; `npm run build`, the one that ships, refuses it. The Android
+  debug network config also allows plain http to localhost, 127.0.0.1 and 10.0.2.2 only.
 
 The default server is `https://api.markiedocs.com`.
 
@@ -53,6 +61,7 @@ Needs Xcode 26 with an iOS 26 simulator runtime, the Android SDK, and JDK 21 (Ca
 
 ```sh
 npm run sync                # web build, then cap sync into ios/ and android/
+npm run sync:dev            # the same, accepting the emulator's http://10.0.2.2 (development only)
 npm run ios                 # build and run on a simulator or device
 npm run android             # build and run on an emulator or device
 
@@ -80,7 +89,8 @@ That builds both apps, signs in on each, walks every screen in light and dark, a
 
 ## Deep links
 
-The mock server seeds a markdown document and a Darkmown counter. Their ids are printed at startup.
+The mock server seeds markdown documents (one with a synced picture), Darkmown documents and a text file.
+Their ids are printed at startup.
 
 ```sh
 xcrun simctl openurl booted markie-mobile://d/<id>
@@ -95,8 +105,17 @@ Accepted links:
 - `/d` and `/s` links on the server the user signed in to
 
 A link that arrives before sign-in is remembered and opens after sign-in.
-A document the user cannot read shows the server's message.
-Any other https link the app receives opens in the system browser.
+A document the user cannot read shows the server's message and a way back to Recent.
+An https link on a Markie host that the app cannot route (a raw download) opens in the default browser.
+Any other URL another app sends is ignored.
+
+## Links and pictures inside a document
+
+- Markie document links open in the app. Other web links open in the device's default browser, not an
+  in-app browser sheet (DESIGN.md: "Ordinary HTTP(S) links use the device's default browser").
+- A picture the author's Markie synced (`![](shots/a.png)`) is fetched from the document's asset route
+  with the session token, never cached, and shown as a `blob:` URL. A public share's pictures come from
+  the share's own asset route. Video and audio beside the document are not fetched on a phone.
 
 ## Ship checklist (owner)
 

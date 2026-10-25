@@ -4,10 +4,11 @@
 // documents and in the browser when they are anything else.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DocumentFormatMark } from "@/components/document-format-mark";
-import { ApiError, documentErrorCopy, type ApiClient } from "../lib/api";
+import { ApiError, documentErrorCopy, type ApiClient, type AssetSource } from "../lib/api";
 import { classifyDocumentLink, type LinkTarget } from "../lib/deep-links";
 import { originLabel, type CloudDoc } from "../lib/docs";
 import { openExternal, openSystemUrl, shareLink } from "../lib/native";
+import { serverLabel } from "../lib/server-origin";
 import { displayName, timeLabel } from "../lib/recent";
 import type { Tone } from "../lib/theme-mode";
 import { Screen } from "../components/screen";
@@ -23,6 +24,8 @@ interface DocumentProps {
   backLabel: string;
   tone: Tone;
   onBack: () => void;
+  /** Back to the list, past any documents in between. */
+  onRecent: () => void;
   onOpen: (target: LinkTarget) => void;
   onUnauthorized: () => void;
 }
@@ -32,7 +35,7 @@ type State =
   | { status: "ready"; doc: CloudDoc }
   | { status: "error"; error: unknown };
 
-export function DocumentScreen({ api, target, initialName, backLabel, tone, onBack, onOpen, onUnauthorized }: DocumentProps) {
+export function DocumentScreen({ api, target, initialName, backLabel, tone, onBack, onRecent, onOpen, onUnauthorized }: DocumentProps) {
   const [state, setState] = useState<State>({ status: "loading" });
   const [related, setRelated] = useState<Map<string, string>>(new Map());
   const [notice, setNotice] = useState<string | null>(null);
@@ -88,6 +91,10 @@ export function DocumentScreen({ api, target, initialName, backLabel, tone, onBa
   ) : null;
 
   const isWd = doc?.format === "darkmown";
+  const loadAsset = useCallback((ref: string) => {
+    const source: AssetSource = target.kind === "doc" ? { kind: "doc", id: target.id } : { kind: "public", token: target.token };
+    return api.asset(source, ref).catch(() => null);
+  }, [api, target]);
 
   return (
     <Screen
@@ -99,11 +106,11 @@ export function DocumentScreen({ api, target, initialName, backLabel, tone, onBa
       className="m-document"
     >
       {state.status === "loading" ? <DocSkeleton /> : null}
-      {state.status === "error" ? <DocError error={state.error} onRetry={() => { setState({ status: "loading" }); void load(); }} onSignIn={onUnauthorized} /> : null}
+      {state.status === "error" ? <DocError error={state.error} server={serverLabel(api.origin)} onRetry={() => { setState({ status: "loading" }); void load(); }} onRecent={onRecent} onSignIn={onUnauthorized} /> : null}
       {doc ? (
         <>
           <DocMeta doc={doc} />
-          {doc.format === "markdown" ? <MarkdownView content={doc.content} onLink={onLink} /> : null}
+          {doc.format === "markdown" ? <MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} /> : null}
           {doc.format === "text" ? <pre className="m-text-doc">{doc.content}</pre> : null}
           {doc.format === "darkmown" ? <DarkmownView docKey={docKey} source={doc.content} tone={tone} /> : null}
         </>
@@ -113,13 +120,16 @@ export function DocumentScreen({ api, target, initialName, backLabel, tone, onBa
   );
 }
 
+// The nav bar names the document and its own first heading usually does too,
+// so this line is only what neither says: its format, who made it, who can
+// read it, and when it last changed. The file name is there for VoiceOver.
 function DocMeta({ doc }: { doc: CloudDoc }) {
   const from = originLabel(doc.origin);
   return (
     <div className="m-doc-meta">
       <DocumentFormatMark format={doc.format} size="sm" />
       <div className="m-doc-meta-text">
-        <span className="m-doc-meta-name">{doc.name}</span>
+        <span className="m-visually-hidden">{doc.name}</span>
         <span className="m-doc-meta-line">
           {from ? <span className="m-badge m-badge-agent"><SparkleIcon size={11} />{from}</span> : null}
           {doc.publicToken ? <span className="m-badge">Public link</span> : <span className="m-doc-private"><LockIcon size={12} />Private</span>}
@@ -130,8 +140,8 @@ function DocMeta({ doc }: { doc: CloudDoc }) {
   );
 }
 
-function DocError({ error, onRetry, onSignIn }: { error: unknown; onRetry: () => void; onSignIn: () => void }) {
-  const copy = documentErrorCopy(error);
+function DocError({ error, server, onRetry, onRecent, onSignIn }: { error: unknown; server: string; onRetry: () => void; onRecent: () => void; onSignIn: () => void }) {
+  const copy = documentErrorCopy(error, server);
   return (
     <div className="m-empty" role="alert">
       <AlertIcon size={30} />
@@ -140,7 +150,9 @@ function DocError({ error, onRetry, onSignIn }: { error: unknown; onRetry: () =>
       {copy.detail ? <p className="m-empty-detail">{copy.detail}</p> : null}
       {copy.signIn
         ? <button type="button" className="m-button m-button-primary" onClick={onSignIn}>Sign in</button>
-        : <button type="button" className="m-button m-button-secondary" onClick={onRetry}>Try again</button>}
+        : copy.retry
+          ? <button type="button" className="m-button m-button-secondary" onClick={onRetry}>Try again</button>
+          : <button type="button" className="m-button m-button-secondary" onClick={onRecent}>Back to Recent</button>}
     </div>
   );
 }

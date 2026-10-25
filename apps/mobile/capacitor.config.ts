@@ -6,6 +6,10 @@ const config: CapacitorConfig = {
   webDir: "dist",
   // Markie's dark background, so a cold start never flashes white.
   backgroundColor: "#09090b",
+  // Capacitor's default logs every plugin call and its result in debug
+  // builds: the session read from the Keychain, the Authorization header of
+  // every request. None of that belongs in a device log, debug or not.
+  loggingBehavior: "none",
   ios: {
     // The page draws under the bars itself and pads with env(safe-area-inset-*).
     contentInset: "never",

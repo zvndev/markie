@@ -8,6 +8,7 @@ import type { HttpTransport } from "./lib/http";
 import {
   clearPendingLink,
   hasPendingLink,
+  isMarkieWebLink,
   parseMarkieLink,
   rememberPendingLink,
   resolveForSession,
@@ -30,6 +31,7 @@ type Route =
   | { key: string; kind: "doc"; target: LinkTarget; name?: string };
 
 const ROOT: Route = { key: "recent", kind: "recent" };
+const SERVER_SIGN_OUT_TIMEOUT_MS = 3_000;
 let routeSeq = 0;
 const nextKey = (prefix: string) => `${prefix}-${++routeSeq}`;
 
@@ -140,8 +142,11 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     const target = parseMarkieLink(url, sessionRef.current?.origin ?? null);
     if (!target) {
       // Android app links can only claim path prefixes, so a /d/<id>/raw or
-      // download link lands here too. The browser is where it belongs.
-      if (/^https:/i.test(url)) { void openExternal(url).catch(() => undefined); return; }
+      // download link on a Markie host lands here too, and the browser is
+      // where it belongs. Any other URL is not passed on: the activity that
+      // takes links is exported, and Markie is not a way for another app to
+      // open whatever it likes.
+      if (isMarkieWebLink(url, sessionRef.current?.origin ?? null)) { void openExternal(url).catch(() => undefined); return; }
       showToast("That link isn't a Markie document link.");
       return;
     }
@@ -203,13 +208,18 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   }, [endSession]);
 
   const signOut = useCallback(async () => {
-    // Ending it on the server is a courtesy; the local session goes regardless.
-    await api?.signOut().catch(() => undefined);
+    // The phone forgets the session first, so "Sign out" is instant even
+    // offline. Ending it on the server is a courtesy that follows, with the
+    // token held only by this one request, capped at a few seconds.
+    const ending = sessionRef.current;
     const storage = pendingStorage();
     if (storage) clearPendingLink(storage);
     setHasPending(false);
     await endSession(null);
-  }, [api, endSession]);
+    if (!ending) return;
+    const courtesy = createApiClient({ origin: ending.origin, transport, getToken: () => ending.token });
+    void courtesy.signOut({ timeoutMs: SERVER_SIGN_OUT_TIMEOUT_MS }).catch(() => undefined);
+  }, [endSession, transport]);
 
   const signedIn = useCallback(async ({ origin, token, user }: { origin: string; token: string; user: ApiUser }) => {
     const next: StoredSession = { origin, token, email: user.email, name: user.name, userId: user.id };
@@ -280,6 +290,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
           backLabel={backLabel}
           tone={tone}
           onBack={pop}
+          onRecent={() => setRoutes([ROOT])}
           onOpen={(target) => openTarget(target)}
           onUnauthorized={onUnauthorized}
         />

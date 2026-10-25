@@ -10,7 +10,7 @@ function fake(handler: (req: HttpRequest) => Partial<HttpResponse> & { json?: un
   const transport: HttpTransport = async (req) => {
     calls.push(req);
     const out = handler(req);
-    return { status: out.status ?? 200, headers: out.headers ?? {}, text: out.text ?? (out.json === undefined ? "" : JSON.stringify(out.json)) };
+    return { status: out.status ?? 200, headers: out.headers ?? {}, text: out.text ?? (out.json === undefined ? "" : JSON.stringify(out.json)), ...(out.bytes ? { bytes: out.bytes } : {}) };
   };
   return { transport, calls };
 }
@@ -107,6 +107,24 @@ describe("api client: documents", () => {
     expect(documentErrorCopy(new ApiError(401, "x"))).toMatchObject({ signIn: true });
   });
 
+  it("offers the way back, not a retry, when trying again can't work, and names the server", () => {
+    const forbidden = documentErrorCopy(new ApiError(403, "forbidden"), "markie.example.com");
+    expect(forbidden).toMatchObject({ retry: false, signIn: false });
+    expect(forbidden.body).toContain("markie.example.com");
+    expect(forbidden.body).not.toContain("Markie Cloud");
+    expect(documentErrorCopy(new ApiError(403, "forbidden")).body).toContain("this server");
+    expect(documentErrorCopy(new ApiError(404, "gone"))).toMatchObject({ retry: false });
+    expect(documentErrorCopy(new ApiError(0, "offline"))).toMatchObject({ retry: true });
+    expect(documentErrorCopy(new ApiError(503, "down"))).toMatchObject({ retry: true });
+  });
+
+  it("caps the server sign-out at the time it is given", async () => {
+    const { transport, calls } = fake(() => ({ json: { success: true } }));
+    await createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN }).signOut({ timeoutMs: 3000 });
+    expect(calls[0]).toMatchObject({ method: "POST", url: `${ORIGIN}/api/auth/sign-out`, timeoutMs: 3000 });
+    expect(calls[0].headers?.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
   it("treats a redirect as an error rather than following it with the token", async () => {
     const { transport } = fake(() => ({ status: 302, headers: { location: "https://evil.example/steal" } }));
     await expect(createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN }).recent()).rejects.toMatchObject({ status: 302 });
@@ -136,5 +154,35 @@ describe("api client: documents", () => {
     const { transport } = fake(() => ({ json: { links: [{ ref: "plan.md", target: "doc-2" }, { ref: "x.md" }, { ref: "y.md", target: "../bad" }] } }));
     const links = await createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN }).docLinks("doc-1");
     expect([...links]).toEqual([["plan.md", "doc-2"]]);
+  });
+});
+
+describe("api client: a document's own pictures", () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+  it("reads a private document's picture from its asset route, with the token, as binary", async () => {
+    const { transport, calls } = fake(() => ({ headers: { "content-type": "image/png" }, bytes: png }));
+    const blob = await createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN }).asset({ kind: "doc", id: "doc-1" }, "shots/a b.png");
+    expect(calls[0]).toMatchObject({ method: "GET", url: `${ORIGIN}/api/docs/doc-1/assets/file?ref=shots%2Fa%20b.png`, responseType: "binary" });
+    expect(calls[0].headers?.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(blob?.type).toBe("image/png");
+    expect(blob?.size).toBe(4);
+  });
+
+  it("reads a public share's picture from the share's route, with no token", async () => {
+    const { transport, calls } = fake(() => ({ headers: { "content-type": "image/jpeg" }, bytes: png }));
+    await createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN }).asset({ kind: "public", token: "pub_aaaaaaaaaaaaaaaaaaaa" }, "a.jpg");
+    expect(calls[0].url).toBe(`${ORIGIN}/s/pub_aaaaaaaaaaaaaaaaaaaa/assets?ref=a.jpg`);
+    expect(calls[0].headers).toEqual({});
+  });
+
+  it("shows nothing for a missing picture, a non-image, or a bad id", async () => {
+    const missing = fake(() => ({ status: 404, text: "Not found" }));
+    expect(await createApiClient({ origin: ORIGIN, transport: missing.transport, getToken: () => TOKEN }).asset({ kind: "doc", id: "doc-1" }, "x.png")).toBeNull();
+    const html = fake(() => ({ headers: { "content-type": "text/html" }, bytes: png }));
+    expect(await createApiClient({ origin: ORIGIN, transport: html.transport, getToken: () => TOKEN }).asset({ kind: "doc", id: "doc-1" }, "x.png")).toBeNull();
+    const never = fake(() => ({ headers: { "content-type": "image/png" }, bytes: png }));
+    expect(await createApiClient({ origin: ORIGIN, transport: never.transport, getToken: () => TOKEN }).asset({ kind: "doc", id: "../etc" }, "x.png")).toBeNull();
+    expect(never.calls).toHaveLength(0);
   });
 });

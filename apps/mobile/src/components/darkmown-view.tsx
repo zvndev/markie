@@ -6,6 +6,12 @@
 //
 // Trust is for this source, in this viewing, only. A reload that brings
 // different text, leaving the document, or "Revoke" ends it.
+//
+// The frame is as tall as the document, not the screen. The running frame
+// has no channel back to say how tall it is (frame.ts), so the height comes
+// from the static preview: the same scriptless srcdoc, laid out once in a
+// hidden frame at the same width and measured. With no script in it and no
+// way to run one, reading its layout is all that frame is for.
 import { useEffect, useRef, useState } from "react";
 import { compileDarkmownPreview } from "@/lib/darkmown/preview";
 import { darkmownFrameSandbox, projectDarkmownTheme } from "@/lib/darkmown/frame";
@@ -28,11 +34,18 @@ interface Built {
   error?: string;
 }
 
+// The empty sandbox plus same-origin: still no script, forms, popups or
+// navigation, and the host can read the layout.
+const MEASURE_SANDBOX = "allow-same-origin";
+
 export function DarkmownView({ docKey, source, tone }: DarkmownViewProps) {
   const [grant, setGrant] = useState<{ docKey: string; source: string } | null>(null);
   const [reset, setReset] = useState(0);
   const [built, setBuilt] = useState<Built | null>(null);
   const frame = useRef<HTMLIFrameElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  const [measured, setMeasured] = useState<{ source: string; width: number; height: number } | null>(null);
   const trusted = grant?.docKey === docKey && grant.source === source;
   // A static preview bakes its color scheme in; a running one is told by message.
   const scheme = trusted ? null : tone;
@@ -57,6 +70,17 @@ export function DarkmownView({ docKey, source, tone }: DarkmownViewProps) {
     if (trusted && current?.srcDoc) projectDarkmownTheme(frame.current, tone);
   }, [trusted, current?.srcDoc, tone]);
 
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setWidth(Math.round(el.clientWidth)));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const height = measured?.source === source ? measured.height : null;
+  const measureDoc = !trusted && current?.srcDoc && width > 0 && !(measured?.source === source && measured.width === width) ? current.srcDoc : null;
+
   return (
     <div className="m-wd">
       {trusted ? (
@@ -76,7 +100,23 @@ export function DarkmownView({ docKey, source, tone }: DarkmownViewProps) {
         </div>
       )}
       {current?.warnings?.length ? <p className="m-wd-warning" role="status">{current.warnings.join(" ")}</p> : null}
-      <div className="m-wd-frame-wrap">
+      <div ref={wrap} className="m-wd-frame-wrap" style={height ? { flexGrow: 0, height } : undefined}>
+        {measureDoc ? (
+          <iframe
+            key={`measure-${width}`}
+            className="m-wd-measure"
+            title=""
+            aria-hidden="true"
+            tabIndex={-1}
+            sandbox={MEASURE_SANDBOX}
+            referrerPolicy="no-referrer"
+            srcDoc={measureDoc}
+            onLoad={(event) => {
+              const root = event.currentTarget.contentDocument?.documentElement;
+              if (root?.scrollHeight) setMeasured({ source, width, height: Math.ceil(root.scrollHeight) });
+            }}
+          />
+        ) : null}
         {current?.error ? (
           <div className="m-empty m-empty-compact" role="alert">
             <AlertIcon size={26} />

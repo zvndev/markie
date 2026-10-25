@@ -10,13 +10,17 @@ import { CLOUD_ORIGIN, canonicalCloudOrigin, isCloudOrigin } from "@/lib/cloud-o
 
 export const DEFAULT_SERVER_ORIGIN = CLOUD_ORIGIN;
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 // 10.0.2.2 is the Android emulator's name for the host machine, which is where
-// the mock server runs during development.
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "10.0.2.2"]);
+// the mock server runs during development. On a phone it is just an address
+// on whatever network the phone is on, so only a development build
+// (vite.config.ts, `npm run build:dev`) lets a token go there in the clear.
+const EMULATOR_HOST = "10.0.2.2";
+const DEV_SERVERS = typeof __MARKIE_MOBILE_DEV_SERVERS__ !== "undefined" && __MARKIE_MOBILE_DEV_SERVERS__ === true;
 
 export type OriginResult = { ok: true; origin: string } | { ok: false; error: string };
 
-export function normalizeServerOrigin(input: string): OriginResult {
+export function normalizeServerOrigin(input: string, { devServers = DEV_SERVERS }: { devServers?: boolean } = {}): OriginResult {
   const raw = String(input ?? "").trim();
   if (!raw) return { ok: false, error: "Enter a server address." };
   if (raw.length > 512) return { ok: false, error: "That server address is too long." };
@@ -32,7 +36,8 @@ export function normalizeServerOrigin(input: string): OriginResult {
     return { ok: false, error: "Use just the server's address, like https://markie.example.com." };
   }
   if (url.protocol === "http:") {
-    if (!LOOPBACK_HOSTS.has(url.hostname)) return { ok: false, error: "The server must use https." };
+    const allowed = LOOPBACK_HOSTS.has(url.hostname) || (devServers && url.hostname === EMULATOR_HOST);
+    if (!allowed) return { ok: false, error: "The server must use https." };
   } else if (url.protocol !== "https:") {
     return { ok: false, error: "The server must use https." };
   }

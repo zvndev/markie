@@ -14,7 +14,6 @@ describe("server origin", () => {
     [" https://markie.example.com/ ", "https://markie.example.com"],
     ["https://markie.example.com:8443", "https://markie.example.com:8443"],
     ["http://localhost:8790", "http://localhost:8790"],
-    ["http://10.0.2.2:8790", "http://10.0.2.2:8790"],
     ["https://api-production-602f.up.railway.app", "https://api.markiedocs.com"],
   ])("accepts %s", (input, origin) => {
     expect(normalizeServerOrigin(input)).toEqual({ ok: true, origin });
@@ -30,6 +29,13 @@ describe("server origin", () => {
     "javascript:alert(1)",
   ])("rejects %s", (input) => {
     expect(normalizeServerOrigin(input).ok).toBe(false);
+  });
+
+  it("takes plain http to the Android emulator's host only in a development build", () => {
+    expect(normalizeServerOrigin("http://10.0.2.2:8790").ok).toBe(false);
+    expect(normalizeServerOrigin("http://10.0.2.2:8790", { devServers: false }).ok).toBe(false);
+    expect(normalizeServerOrigin("http://10.0.2.2:8790", { devServers: true })).toEqual({ ok: true, origin: "http://10.0.2.2:8790" });
+    expect(normalizeServerOrigin("http://10.0.2.3:8790", { devServers: true }).ok).toBe(false);
   });
 
   it("names the server plainly", () => {

@@ -58,6 +58,16 @@ describe("against the mock server", () => {
     const shared = await api.publicDoc("pub_launch_brief_demo_token");
     expect(shared).toMatchObject({ name: "Launch brief.md", format: "markdown" });
 
+    // A picture synced beside the document, read with the session, and the
+    // same picture through the document's public share, read without one.
+    const report = await api.doc("reading-report");
+    expect(report.content).toContain("](charts/opened-per-day.png)");
+    const chart = await api.asset({ kind: "doc", id: "reading-report" }, "charts/opened-per-day.png");
+    expect(chart?.type).toBe("image/png");
+    expect(Array.from(new Uint8Array(await chart!.arrayBuffer()).slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect((await api.asset({ kind: "public", token: "pub_reading_report_demo_token" }, "charts/opened-per-day.png"))?.size).toBe(chart!.size);
+    expect(await api.asset({ kind: "doc", id: "reading-report" }, "charts/missing.png")).toBeNull();
+
     await api.signOut();
     await expect(api.recent()).rejects.toMatchObject({ status: 401 });
   });

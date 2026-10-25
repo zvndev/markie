@@ -7,10 +7,12 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "build:dev": "tsc --noEmit -p tsconfig.json && vite build --mode dev",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "mock": "node dev/mock-server.mjs",
     "sync": "npm run build && cap sync",
+    "sync:dev": "npm run build:dev && cap sync",
     "ios": "npm run sync && cap run ios",
     "android": "npm run sync && cap run android"
   },
@@ -18,7 +20,6 @@
     "@aparajita/capacitor-secure-storage": "8.0.1",
     "@capacitor/android": "8.5.3",
     "@capacitor/app": "8.1.2",
-    "@capacitor/browser": "8.0.5",
     "@capacitor/core": "8.5.3",
     "@capacitor/haptics": "8.0.2",
     "@capacitor/ios": "8.5.3",

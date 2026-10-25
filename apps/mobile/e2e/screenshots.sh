@@ -17,7 +17,7 @@ export JAVA_HOME=${JAVA_HOME:-/opt/homebrew/opt/openjdk@21}
 DERIVED=${DERIVED:-/tmp/markie-mobile-dd}
 
 mkdir -p "$OUT"
-npm run build
+npm run build:dev
 npx cap sync
 
 xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
@@ -39,6 +39,7 @@ shoot() { # platform device tone
   # Signed out at the end of the previous pass, or on first run: sign in.
   maestro --device "$device" test "e2e/sign-in-$platform.yaml" || { sleep 3; maestro --device "$device" test "e2e/sign-in-$platform.yaml" || true; }
   maestro --device "$device" test -e OUT="$OUT" -e NAME="$platform-$tone" e2e/screens.yaml
+  maestro --device "$device" test -e OUT="$OUT" -e NAME="$platform-$tone" e2e/links.yaml
   maestro --device "$device" test -e OUT="$OUT" -e NAME="$platform-$tone" e2e/settings.yaml
 }
 

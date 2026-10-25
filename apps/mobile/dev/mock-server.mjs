@@ -10,13 +10,16 @@
 //   GET  /api/docs/recent?limit=&before=            {docs:[recent item]}
 //   GET  /api/docs/:id                              {doc:{..., format, origin}}
 //   GET  /api/docs/:id/links                        {links:[{ref, target}]}
+//   GET  /api/docs/:id/assets/file?ref=             a picture the document names
 //   GET  /s/:token/raw                              a public share's markdown
+//   GET  /s/:token/assets?ref=                      a public share's picture
 //
 // Usage: node dev/mock-server.mjs [--port 8790] [--host 127.0.0.1]
 // Every sign-in code is 123456 (or $MOCK_OTP). Nothing is persisted.
 import { createServer } from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { crc32, deflateSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
@@ -123,6 +126,73 @@ const DEPLOY_NOTES = `Deploy notes, staging
 Nothing to follow up.
 `;
 
+const READING_REPORT = `# Weekly reading report
+
+Markie readers opened **1,284 documents** this week, up 18% on last week. Most of the growth came from links agents sent.
+
+![Documents opened per day, Monday to Sunday](charts/opened-per-day.png)
+
+Thursday's peak is the launch brief going out to the whole team. The weekend dip is normal.
+
+## What to watch
+
+- Links opened on phones are now a third of all opens.
+- Darkmown documents get opened twice as often as plain ones.
+`;
+
+// A real PNG for the report's chart, drawn here so the mock stays
+// dependency-free: a bar chart on a white card, no text.
+function chartPng() {
+  const width = 1200;
+  const height = 675;
+  const rows = Buffer.alloc((width * 3 + 1) * height);
+  const bars = [0.42, 0.55, 0.61, 0.93, 0.7, 0.33, 0.28];
+  const plot = { left: 90, right: width - 70, top: 70, bottom: height - 80 };
+  const slot = (plot.right - plot.left) / bars.length;
+  for (let y = 0; y < height; y += 1) {
+    const row = y * (width * 3 + 1);
+    rows[row] = 0;
+    for (let x = 0; x < width; x += 1) {
+      let rgb = [255, 255, 255];
+      const gridline = y > plot.top && y < plot.bottom && (plot.bottom - y) % 120 === 0;
+      if (gridline && x > plot.left && x < plot.right) rgb = [228, 228, 231];
+      if (y === plot.bottom && x > plot.left - 10 && x < plot.right) rgb = [161, 161, 170];
+      const index = Math.floor((x - plot.left) / slot);
+      if (index >= 0 && index < bars.length) {
+        const inset = slot * 0.22;
+        const x0 = plot.left + index * slot + inset;
+        const x1 = plot.left + (index + 1) * slot - inset;
+        const top = plot.bottom - bars[index] * (plot.bottom - plot.top);
+        if (x >= x0 && x < x1 && y >= top && y < plot.bottom) {
+          // Markie violet, the peak in blue, a soft fade toward the base.
+          const fade = (y - top) / (plot.bottom - top);
+          const base = index === 3 ? [37, 99, 235] : [139, 92, 246];
+          rgb = base.map((c) => Math.round(c + (255 - c) * fade * 0.35));
+        }
+      }
+      rows.set(rgb, row + 1 + x * 3);
+    }
+  }
+  const chunk = (type, data) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body) >>> 0);
+    return Buffer.concat([length, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(rows)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
 const FILLER = [
   ["Standup notes.md", "# Standup notes\n\n- Mobile screenshots done\n- Contract frozen\n"],
   ["Ideas.md", "# Ideas\n\n- Offline reading for opened documents\n- Widgets for recent agent documents\n"],
@@ -146,6 +216,7 @@ function seed({ id, name, content, updatedAgo, createdAgo = updatedAgo, agent = 
 }
 
 seed({ id: "agent-brief", name: "Launch brief.md", content: LAUNCH_BRIEF, updatedAgo: 12 * MIN, agent: "Claude Code" });
+seed({ id: "reading-report", name: "Weekly reading report.md", content: READING_REPORT, updatedAgo: 25 * MIN, agent: "Claude Code" });
 seed({ id: "counter-wd", name: "Counter.wd", content: sample("Counter.wd"), updatedAgo: 40 * MIN, agent: "Codex" });
 seed({ id: "expense-form-wd", name: "Expense check.wd", content: sample("Local-form.wd"), updatedAgo: 5 * HOUR, agent: "Claude Code" });
 seed({ id: "reading-list", name: "Reading list.md", content: READING_LIST, updatedAgo: DAY + 3 * HOUR });
@@ -156,7 +227,18 @@ FILLER.forEach(([name, content], index) =>
 );
 
 const docLinks = new Map([["agent-brief", [{ ref: "Counter.wd", target: "counter-wd" }]]]);
-const publicShares = new Map([["pub_launch_brief_demo_token", "agent-brief"]]);
+const publicShares = new Map([["pub_launch_brief_demo_token", "agent-brief"], ["pub_reading_report_demo_token", "reading-report"]]);
+// The files a document names beside itself, as the desktop syncs them.
+const docAssets = new Map([["reading-report", new Map([["charts/opened-per-day.png", { mime: "image/png", bytes: chartPng() }]])]]);
+
+function sendAsset(res, log, docId, ref) {
+  const asset = docAssets.get(docId)?.get(ref ?? "");
+  if (!asset) { log(404); res.writeHead(404, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" }); res.end("Not found"); return; }
+  log(200);
+  // The real server's asset policy (server/src/assets.ts serveAsset).
+  res.writeHead(200, { "content-type": asset.mime, "content-length": asset.bytes.length, "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" });
+  res.end(asset.bytes);
+}
 // A document that exists but belongs to someone else, for the "no access" state.
 const FORBIDDEN_ID = "someone-elses-doc";
 
@@ -264,6 +346,11 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  const publicAsset = /^\/s\/([^/]+)\/assets$/.exec(path);
+  if (req.method === "GET" && publicAsset) {
+    return sendAsset(res, log, publicShares.get(decodeURIComponent(publicAsset[1])) ?? "", url.searchParams.get("ref"));
+  }
+
   // The web fallback when the app is not installed.
   const page = /^\/([ds])\/([^/]+)$/.exec(path);
   if (req.method === "GET" && page) {
@@ -293,6 +380,11 @@ const server = createServer(async (req, res) => {
       const id = decodeURIComponent(links[1]);
       if (!docs.has(id)) return reply(404, { error: "not found" });
       return reply(200, { links: docLinks.get(id) ?? [] });
+    }
+
+    const asset = /^\/api\/docs\/([^/]+)\/assets\/file$/.exec(path);
+    if (req.method === "GET" && asset) {
+      return sendAsset(res, log, decodeURIComponent(asset[1]), url.searchParams.get("ref"));
     }
 
     const one = /^\/api\/docs\/([^/]+)$/.exec(path);

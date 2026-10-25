@@ -101,7 +101,7 @@ describe("Download… of a cloud document", () => {
     let call: (event: unknown, args: Record<string, unknown>) => Promise<unknown> = async () => undefined;
     const showSaveDialog = vi.fn(async (_w: unknown, _o: unknown) => (filePath ? { canceled: false, filePath } : { canceled: true }));
     const pull = vi.fn(async (_id: string, p: string) => ({ ok: true, path: p }));
-    runInNewContext(slice('handle("doc-pull"', "// Open a shared cloud doc"), {
+    runInNewContext(slice("function pullSaveFilters(", "// Open a shared cloud doc"), {
       handle: (_c: string, fn: typeof call) => { call = fn; },
       dialog: { showSaveDialog }, mainWindow: {}, SAFE_DOC_EXTENSION, OPENABLE,
       sync: { pull }, trustedServerArg: (s: unknown) => s, fileGrants: { grantFile: vi.fn() }, refreshDiskMemory: vi.fn(),
@@ -144,5 +144,22 @@ describe("doc-sync-on from the app", () => {
     // The sixth argument is the origin. Only the agent bridge may set it.
     expect(args.length).toBeLessThanOrEqual(5);
     expect(JSON.stringify(args)).not.toContain("Mallory");
+  });
+});
+
+describe("the Download save dialog for a cloud document", () => {
+  const ctx: Record<string, unknown> = {};
+  runInNewContext(`${slice("function pullSaveFilters(", 'handle("doc-pull"')}\nthis.pullSaveFilters = pullSaveFilters;`, ctx);
+  const filters = ctx.pullSaveFilters as (name?: string) => { name: string }[];
+
+  it("lists the filter matching the suggested name first, so macOS keeps Plan.wd as Plan.wd", () => {
+    expect(filters("Plan.wd")[0].name).toBe("Darkmown");
+    expect(filters("notes.TXT")[0].name).toBe("Text");
+    expect(filters("Plan.md")[0].name).toBe("Markdown");
+  });
+
+  it("keeps every filter and the default order when the name says nothing", () => {
+    expect(filters(undefined).map((f) => f.name)).toEqual(["Markdown", "Darkmown", "Text"]);
+    expect(filters("Plan.wd").map((f) => f.name).sort()).toEqual(["Darkmown", "Markdown", "Text"]);
   });
 });

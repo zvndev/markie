@@ -1999,14 +1999,23 @@ handle("doc-keep-both", async (_event, { path: p, content }) => {
   refreshDiskMemory(p, res);
   return res;
 });
+// The filter matching the suggested name goes first: macOS can hold a save to
+// the first filter's extensions, which would turn Plan.wd into Plan.wd.md.
+function pullSaveFilters(suggestedName) {
+  const filters = [
+    { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
+    { name: "Darkmown", extensions: ["wd"] },
+    { name: "Text", extensions: ["txt", "text", "log"] },
+  ];
+  const ext = (/\.([^./\\]+)$/.exec(suggestedName || "")?.[1] || "").toLowerCase();
+  const first = filters.findIndex((f) => f.extensions.includes(ext));
+  return first > 0 ? [filters[first], ...filters.filter((_, i) => i !== first)] : filters;
+}
+
 handle("doc-pull", async (_event, { cloudId, suggestedName, server }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: suggestedName || "document.md",
-    filters: [
-      { name: "Markdown", extensions: ["md", "markdown", "mdx"] },
-      { name: "Darkmown", extensions: ["wd"] },
-      { name: "Text", extensions: ["txt", "text", "log"] },
-    ],
+    filters: pullSaveFilters(suggestedName),
   });
   if (result.canceled || !result.filePath) return { canceled: true };
   // The classic set plus Darkmown: a cloud-only .wd must be downloadable.

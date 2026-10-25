@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-store";
 import { getServerURL } from "@/lib/auth-client";
 import {
@@ -116,10 +116,23 @@ export function RemoteAgentsPanel({ onClose, onSecretShownChange }: RemoteAgents
   // Tell the app while a token that has not been copied is on screen.
   const reportSecret = useRef(onSecretShownChange);
   reportSecret.current = onSecretShownChange;
-  useEffect(() => {
+  // A layout effect, so the app knows before the next document open can read
+  // the guard: a passive effect ran a task after the token painted.
+  useLayoutEffect(() => {
     reportSecret.current?.(fresh !== null);
   }, [fresh]);
   useEffect(() => () => reportSecret.current?.(false), []);
+
+  // Focus that lands outside the panel (a removed button, a click behind the
+  // scrim) comes back, so the app behind it never takes keyboard input.
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      const panel = dialog.current;
+      if (panel && e.target instanceof Node && !panel.contains(e.target)) panel.focus();
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
 
   // Focus moves into the panel when it opens and goes back to whatever opened
   // it when it closes.
@@ -180,6 +193,8 @@ export function RemoteAgentsPanel({ onClose, onSecretShownChange }: RemoteAgents
     }
     setTokens((prev) => (prev ? prev.filter((t) => t.id !== token.id) : prev));
     setFresh((prev) => (prev && prev.id === token.id ? null : prev));
+    // The focused Revoke button is gone; keep focus inside the panel.
+    dialog.current?.focus();
   };
 
   const url = hostedMcpUrl(getServerURL());
@@ -189,7 +204,8 @@ export function RemoteAgentsPanel({ onClose, onSecretShownChange }: RemoteAgents
     <div
       className="markie-scrim fixed inset-0 z-[110] flex items-center justify-center"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        // A stray click must not throw away a token that cannot be shown again.
+        if (e.target === e.currentTarget && !fresh) onClose();
       }}
     >
       <div
@@ -229,7 +245,7 @@ export function RemoteAgentsPanel({ onClose, onSecretShownChange }: RemoteAgents
           For an agent that does not run on this computer, such as Claude on your phone or in the cloud. It connects to
           Markie Cloud with a token you make here. A token can create documents, and it can read and edit only the
           documents that same token created. It cannot reach your other documents, the ones another token made, or the
-          ones an agent on this computer put in your Cloud. They stay private to you and open in the Markie app.
+          ones an agent on this computer put in your Cloud. The documents a token makes stay private to you and open in the Markie app.
         </p>
 
         {auth.status === "checking" ? (

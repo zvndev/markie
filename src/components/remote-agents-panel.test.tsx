@@ -396,6 +396,36 @@ describe("RemoteAgentsPanel", () => {
     });
   });
 
+  it("ignores a backdrop click while a token that cannot be shown again is on screen", async () => {
+    mockServer();
+    const onClose = vi.fn();
+    render(<RemoteAgentsPanel onClose={onClose} />);
+    await screen.findByText("Cursor");
+    fireEvent.change(screen.getByLabelText("Token name"), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+    await screen.findByText(SECRET);
+    const scrim = screen.getByRole("dialog", { name: "Remote agents" }).parentElement!;
+    fireEvent.mouseDown(scrim);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "I have copied it" }));
+    fireEvent.mouseDown(scrim);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("pulls focus that leaves the panel back into it", async () => {
+    mockServer();
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    try {
+      render(<RemoteAgentsPanel onClose={vi.fn()} />);
+      await screen.findByText("Cursor");
+      act(() => outside.focus());
+      expect(screen.getByRole("dialog", { name: "Remote agents" }).contains(document.activeElement)).toBe(true);
+    } finally {
+      outside.remove();
+    }
+  });
+
   it("reports whether a token that has not been copied is on screen", async () => {
     mockServer();
     const shown = vi.fn();
@@ -405,7 +435,7 @@ describe("RemoteAgentsPanel", () => {
     fireEvent.change(screen.getByLabelText("Token name"), { target: { value: "x" } });
     fireEvent.click(screen.getByRole("button", { name: "Create token" }));
     await screen.findByText(SECRET);
-    expect(shown).toHaveBeenLastCalledWith(true);
+    await waitFor(() => expect(shown).toHaveBeenLastCalledWith(true));
     fireEvent.click(screen.getByRole("button", { name: "I have copied it" }));
     expect(shown).toHaveBeenLastCalledWith(false);
     fireEvent.change(screen.getByLabelText("Token name"), { target: { value: "y" } });

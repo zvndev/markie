@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentFormatMark } from "@/components/document-format-mark";
 import { ApiError, type ApiClient } from "../lib/api";
+import { isMarkieCloud } from "../lib/server-origin";
 import type { RecentDoc } from "../lib/docs";
 import { haptics } from "../lib/native";
 import {
@@ -150,7 +151,7 @@ export function RecentScreen({ api, onOpen, onSettings, onUnauthorized, refreshK
         <div className="m-empty">
           <SparkleIcon size={30} />
           <h2>No documents yet</h2>
-          <p>Documents you save to Markie Cloud, and the ones your agents make for you, show up here.</p>
+          <p>Documents you save to {isMarkieCloud(api.origin) ? "Markie Cloud" : "this server"}, and the ones your agents make for you, show up here.</p>
         </div>
       ) : null}
       {docs.length > 0 && visible.length === 0 ? (

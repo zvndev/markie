@@ -86,7 +86,7 @@ export function SettingsScreen({ session, themeMode, onThemeMode, onSignOut, onB
       <div className="m-group m-group-spaced">
         {confirming ? (
           <div className="m-confirm">
-            <p>Sign out of {session.email}? Your documents stay in Markie Cloud.</p>
+            <p>Sign out of {session.email}? Your documents stay {isMarkieCloud(session.origin) ? "in Markie Cloud" : `on ${serverLabel(session.origin)}`}.</p>
             <div className="m-confirm-actions">
               <button type="button" className="m-button m-button-secondary" disabled={signingOut} onClick={() => setConfirming(false)}>Cancel</button>
               <button

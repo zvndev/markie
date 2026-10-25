@@ -26,6 +26,7 @@ import { homedir, tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { dirname as pdirname, join as pjoin, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const HOME = "/home/u";
 const MCP_DIR = pdirname(fileURLToPath(import.meta.url));
@@ -1136,15 +1137,32 @@ test("a broken Darkmown example would fail the same check", () => {
   assert.throws(() => compileFromMemory({ "site/pages/document.wd": ":state\n" }, "site/pages/document.wd", { cwd: "/" }), /WD201/);
 });
 
+// The hosted tools are whatever the contract's "Tools:" list under "Hosted MCP"
+// says, so a tool the server adds or renames is a test failure here and not a
+// guide that names something that is not there.
+const CONTRACT_PATH = pjoin(MCP_DIR, "..", "docs", "mobile", "AGENT-LINKS-CONTRACT.md");
+function hostedToolNames() {
+  const contract = readFileSync(CONTRACT_PATH, "utf8");
+  const section = contract.slice(contract.indexOf("### Hosted MCP"));
+  const lines = section.slice(section.indexOf("- Tools:")).split("\n").slice(1);
+  const names = new Set();
+  for (const line of lines) {
+    const m = /^ {2}- `(markie_[a-z_]+)/.exec(line);
+    if (!m) break;
+    names.add(m[1]);
+  }
+  return names;
+}
+
 test("every markie_ tool the guide, the skill and the handshake name exists", async () => {
   const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
   const client = startMcpClient(home);
   try {
     await client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "markie-test", version: "0.0.0" } });
     const local = new Set((await client.request("tools/list")).result.tools.map((t) => t.name));
-    // The hosted endpoint's tools (docs/mobile/AGENT-LINKS-CONTRACT.md), which
-    // an agent reaches without this server.
-    const hosted = new Set(["markie_create_document", "markie_update_document", "markie_list_my_documents", "markie_read_my_document", "markie_guide"]);
+    // The hosted endpoint's tools, which an agent reaches without this server.
+    const hosted = hostedToolNames();
+    assert.ok(hosted.size >= 4, `parsed only ${hosted.size} hosted tools from the contract`);
     for (const [name, text] of [["guide", MARKDOWN_GUIDE], ["skill", readSkill()], ["instructions", INSTRUCTIONS]]) {
       for (const tool of new Set(text.match(/\bmarkie_[a-z_]+\b/g))) {
         assert.ok(local.has(tool) || hosted.has(tool), `${name} names ${tool}, which is not a tool`);
@@ -1185,6 +1203,14 @@ test("the cloud, write and guide tool descriptions tell agents to paste markdown
     // The public-link rule is unchanged.
     assert.match(description("markie_cloud_public_link"), /only set create when the user explicitly asked/i);
 
+    // The link opens in the app only if it is installed; no description promises a phone.
+    for (const name of ["markie_cloud_sync", "markie_cloud_status"]) {
+      assert.match(description(name), /if it is installed/, `${name} overstates where the link opens`);
+      assert.doesNotMatch(description(name), /on (a|their|the user's) phone/i, `${name} promises a phone`);
+    }
+    // The filing arguments are not for a document that goes out as a link.
+    assert.match(description("markie_write_document"), /left out of a document you will send as a link/);
+
     // Prose the model reads: no em-dash anywhere in a description.
     for (const t of tools) assert.doesNotMatch(t.description, /—/, `${t.name} holds an em-dash`);
 
@@ -1194,6 +1220,91 @@ test("the cloud, write and guide tool descriptions tell agents to paste markdown
     client.close();
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+// ---- What the guide, the skill and the handshake teach, pinned to the facts ----
+//
+// The facts themselves are measured by src/lib/darkmown/agent-guide.test.ts and
+// src/lib/agent-guide-markdown.test.tsx. These tests make sure the three texts
+// an agent reads still say them, and say the same thing as each other.
+
+const LEAVE_OUT = /leave\s+`?project`?\s+and\s+`?block`?\s+out/i;
+
+test("the handshake, the short version, the guide and the skill all say to leave project and block out of a link-first document", () => {
+  // A client that sees only the handshake (Codex, Cursor) used to be told to
+  // always declare them, then synced the file and got front matter on its page.
+  for (const [name, text] of [
+    ["handshake", INSTRUCTIONS],
+    ["short version", guideEssentials()],
+    ["guide", MARKDOWN_GUIDE],
+    ["skill", readSkill()],
+  ]) {
+    assert.match(text, LEAVE_OUT, `${name} never says to leave project and block out`);
+  }
+  assert.match(INSTRUCTIONS, /markie_cloud_sync or markie_create_document\) or export/);
+});
+
+test("markie_check_md advice is the same sentence in the guide, the skill and the handshake", () => {
+  const advice = /when the document has a picture, a clip or inline HTML/i;
+  for (const [name, text] of [["guide", MARKDOWN_GUIDE], ["skill", readSkill()], ["handshake", INSTRUCTIONS]]) {
+    assert.match(text, advice, `${name} gives different markie_check_md advice`);
+  }
+  // None of them tells an agent to run it on every document.
+  assert.doesNotMatch(MARKDOWN_GUIDE, /markie_check_md[^.\n]*before handing/i);
+  assert.doesNotMatch(readSkill(), /markie_check_md[^.\n]*(every|each|all) /i);
+});
+
+test("the guide and the skill teach addition by subtracting a negative, and rounding with %", () => {
+  for (const [name, text] of [["guide", MARKDOWN_GUIDE], ["skill", readSkill()]]) {
+    assert.match(text, /subtract a negative/i, `${name} never teaches addition`);
+    assert.ok(text.includes("subtotal - -tax"), `${name} never shows total = subtotal - -tax`);
+    assert.ok(text.includes("raw - raw % 1"), `${name} never shows rounding with %`);
+    // Addition is not described as impossible.
+    assert.doesNotMatch(text, /\bno addition\b|cannot add|can't add|addition is not available/i, `${name} says addition is impossible`);
+  }
+  assert.ok(MARKDOWN_GUIDE.includes("(0 - tax)"), "the guide never shows the parenthesised form");
+  assert.ok(MARKDOWN_GUIDE.includes(":computed raw = (3 - left) * 100 / 3"));
+  assert.ok(MARKDOWN_GUIDE.includes(":computed cents = half - half % 1"));
+  assert.match(MARKDOWN_GUIDE, /33\.333333333333336/);
+  assert.match(MARKDOWN_GUIDE, /feed straight into `:computed`/);
+});
+
+test("the guide says which Darkmown mistakes are silent, and to declare before use", () => {
+  assert.match(MARKDOWN_GUIDE, /`:input` and `:textarea` outside a form are disabled silently/);
+  assert.match(MARKDOWN_GUIDE, /`- \[ \]` task lists show the literal brackets/);
+  assert.match(MARKDOWN_GUIDE, /WD234/);
+  assert.match(MARKDOWN_GUIDE, /prints as `\{ name \}`/);
+  assert.match(MARKDOWN_GUIDE, /Declare before use/);
+  assert.match(guideEssentials(), /prints as `\{ name \}`/);
+});
+
+test("the guide covers shared documents, write limits, hosted-only agents and public links", () => {
+  assert.match(MARKDOWN_GUIDE, /an update fails with `shared`/);
+  assert.match(MARKDOWN_GUIDE, /create a new document/i);
+  assert.match(MARKDOWN_GUIDE, /Batch your edits/);
+  assert.match(MARKDOWN_GUIDE, /60 an hour per token, 200 an hour per user, 50 MB a day per user/);
+  assert.match(MARKDOWN_GUIDE, /Agents using only the hosted tools can skip: markie_check_md, workspace folders, the Other document types table, front-matter filing\./);
+  assert.match(MARKDOWN_GUIDE, /The hosted tools cannot make a public link\./);
+  assert.match(readSkill(), /The hosted tools\s+cannot make a public link\./);
+  assert.match(readSkill(), /`shared`/);
+});
+
+test("nothing promises a phone, and a .wd is said to show its source on the web", () => {
+  const dir = "markie_cloud_sync";
+  for (const [name, text] of [["guide", MARKDOWN_GUIDE], ["skill", readSkill()], ["handshake", INSTRUCTIONS]]) {
+    assert.doesNotMatch(text, /on (a|their|the user's) phone/i, `${name} promises a phone`);
+    assert.doesNotMatch(text, /any browser or phone/i, `${name} promises a phone`);
+  }
+  assert.match(MARKDOWN_GUIDE, /opens in the Markie app if it is installed|in the Markie app if it is installed/);
+  assert.match(MARKDOWN_GUIDE, /a `\.wd` on the web shows its source/);
+  assert.match(MARKDOWN_GUIDE, /prefer `\.md`/);
+  assert.match(readSkill(), /a `\.wd` on the web shows its source/);
+  assert.ok(dir);
+});
+
+test("the guide stays about 20k characters", () => {
+  // It was 29.0k. Agents read all of it; every sentence has to earn its place.
+  assert.ok(MARKDOWN_GUIDE.length < 23_000, `the guide is ${MARKDOWN_GUIDE.length} characters; cut rationale before adding more`);
 });
 
 // ---- markie_check_md (mcp/check-md.mjs) ----
@@ -1919,6 +2030,42 @@ test("the cloud tools reach the app with a fenced path and return its answer", a
     const fenced = await client.callTool("markie_cloud_sync", { path: "/etc/hosts" });
     assert.equal(fenced.result.isError, true);
     assert.equal(seen.length, 2);
+  } finally {
+    client.close();
+    server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// The guide tells an agent which files markie_cloud_sync takes. Two other places
+// decide that for real: SYNCABLE in the desktop app (electron/agent-cloud.js),
+// which the app checks again before it uploads anything, and the format guard on
+// the cloud tools in markie-mcp.mjs, which refuses before the app is asked.
+// Both have to accept every extension the guide lists, or an agent follows the
+// guide and is turned away. This fails until the desktop change that adds .wd
+// to both is on the branch, and it must not be weakened to wait for it.
+test("every extension the guide lists for markie_cloud_sync passes SYNCABLE and the cloud-tool format guard", async () => {
+  const require = createRequire(import.meta.url);
+  const { SYNCABLE } = require("../electron/agent-cloud.js");
+  const listed = /It syncs ((?:`\.[a-z]+`(?:, | and )?)+)/.exec(MARKDOWN_GUIDE);
+  assert.ok(listed, "the guide no longer lists what markie_cloud_sync syncs");
+  const exts = [...listed[1].matchAll(/`(\.[a-z]+)`/g)].map((m) => m[1]);
+  assert.ok(exts.includes(".md") && exts.includes(".wd"), `the guide lists ${exts.join(" ")}`);
+
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "mcpc-")));
+  const { server, seen } = await fakeBridge(pjoin(home, ".markie"), () => ({ ok: true, result: { synced: true } }));
+  const client = startMcpClient(home);
+  try {
+    await client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } });
+    mkdirSync(pjoin(home, "Documents", "Markie"), { recursive: true });
+    for (const ext of exts) {
+      assert.ok(SYNCABLE.test(`plan${ext}`), `the guide says markie_cloud_sync syncs ${ext}, but SYNCABLE in electron/agent-cloud.js refuses it`);
+      const file = pjoin(home, "Documents", "Markie", `plan${ext}`);
+      writeFileSync(file, "# Plan\n");
+      const res = await client.callTool("markie_cloud_sync", { path: file });
+      assert.equal(res.result.isError, undefined, `the guide says markie_cloud_sync syncs ${ext}, but markie-mcp.mjs refuses it: ${res.result.content?.[0]?.text}`);
+    }
+    assert.equal(seen.length, exts.length, "every listed extension should have reached the app");
   } finally {
     client.close();
     server.close();

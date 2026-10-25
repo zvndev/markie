@@ -139,7 +139,7 @@ const TOOLS = [
   {
     name: "markie_write_document",
     description:
-      "Create or overwrite a text document: markdown (.md/.markdown/.mdx), plain text (.txt/.text/.log), .csv, .json, .yaml/.yml, .xml or Darkmown (.wd, markdown with live state: counters, calculators, checklists that count, forms). Write rich documents: tables, task lists, pictures, and a .wd when the reader should click, tick or calculate. Call markie_guide first for what renders. Same fences as markie_write_md: under your home folder only, never inside excluded dirs (node_modules, tmp, hidden dirs) or the agent/skill folders. JSON is checked before anything is written. Word, RTF, OpenDocument, legacy .doc and HTML are never written here; open those in Markie for the user to edit. project and block apply to markdown only. To give the user a link, follow with markie_cloud_sync and paste its markdownLink into your reply.",
+      "Create or overwrite a text document: markdown (.md/.markdown/.mdx), plain text (.txt/.text/.log), .csv, .json, .yaml/.yml, .xml or Darkmown (.wd, markdown with live state: counters, calculators, checklists that count, forms). Write rich documents: tables, task lists, pictures, and a .wd when the reader should click, tick or calculate. Call markie_guide first for what renders. Same fences as markie_write_md: under your home folder only, never inside excluded dirs (node_modules, tmp, hidden dirs) or the agent/skill folders. JSON is checked before anything is written. Word, RTF, OpenDocument, legacy .doc and HTML are never written here; open those in Markie for the user to edit. project and block apply to markdown only, and are best left out of a document you will send as a link. To give the user a link, follow with markie_cloud_sync and paste its markdownLink into your reply.",
     inputSchema: {
       type: "object",
       properties: {
@@ -227,7 +227,7 @@ const TOOLS = [
   {
     name: "markie_cloud_status",
     description:
-      "Is this file in the user's Markie Cloud, and what are its links? Asks the running Markie app. Returns synced, syncState, server, privateLink and markdownLink (both null until synced). markdownLink is the private link as a ready-made markdown link: paste it into your reply. The private link opens only for the user and people they shared it with, after signing in, in the Markie app on a phone or in any browser.",
+      "Is this file in the user's Markie Cloud, and what are its links? Asks the running Markie app. Returns synced, syncState, server, privateLink and markdownLink (both null until synced). markdownLink is the private link as a ready-made markdown link: paste it into your reply. The private link opens only for the user and people they shared it with, after signing in. It opens in the Markie app if it is installed, or in a browser.",
     inputSchema: {
       type: "object",
       properties: { path: { type: "string", description: "Absolute path, ~ allowed" } },
@@ -238,7 +238,7 @@ const TOOLS = [
   {
     name: "markie_cloud_sync",
     description:
-      "Put a Markdown, plain text or Darkmown (.wd) file in the user's Markie Cloud, or push its latest text if it is already there, and return its links. The result carries markdownLink: paste it into your reply exactly as returned, so the user can tap it and read the document in the Markie app on their phone or in a browser. privateLink is the same address bare. The Markie app does the upload with the user's own sign-in, and asks the user to allow it the first time unless they chose to always allow it, so this call can wait on them. The file stays private: only the user can open the link until they share it. Use it when the user asks for a hosted, synced, cloud, or private Markie copy, or a link they can open away from this computer. Write the file first with markie_write_document, as a rich document (tables, task lists, pictures, or a .wd for live state; see markie_guide). Call it again after an edit to update the same link.",
+      "Put a Markdown, plain text or Darkmown (.wd) file in the user's Markie Cloud, or push its latest text if it is already there, and return its links. The result carries markdownLink: paste it into your reply exactly as returned, so the user can open it in the Markie app if it is installed, or in a browser after signing in. privateLink is the same address bare. The Markie app does the upload with the user's own sign-in, and asks the user to allow it the first time unless they chose to always allow it, so this call can wait on them. The file stays private: only the user can open the link until they share it. Use it when the user asks for a hosted, synced, cloud, or private Markie copy, or a link they can open away from this computer. Write the file first with markie_write_document, as a rich document (tables, task lists, pictures, or a .wd for live state; see markie_guide). Call it again after an edit to update the same link.",
     inputSchema: {
       type: "object",
       properties: { path: { type: "string", description: "Absolute path, ~ allowed" } },

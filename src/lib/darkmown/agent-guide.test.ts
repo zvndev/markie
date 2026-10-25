@@ -46,6 +46,12 @@ const example = (title: string) => {
   return hit.source;
 };
 
+/** The error message a source is refused with, or "" when it compiles. */
+const rejected = async (source: string) => {
+  try { await compileDarkmownPreview(source, true); } catch (error) { return error instanceof Error ? error.message : String(error); }
+  return "";
+};
+
 const tick = (win: Window) => new Promise<void>((resolve) => win.requestAnimationFrame(() => resolve()));
 
 /** A document in the same sandbox shape as the app's preview iframe. */
@@ -124,6 +130,7 @@ describe("every Darkmown example the guide shows", () => {
       "Project estimate",
       "Greeting",
       "Plan picker",
+      "Order total",
       "Launch checklist",
       "Make pasta",
       "RSVP",
@@ -165,7 +172,7 @@ describe("the .wd samples shipped with the test guide", () => {
   const samples = readdirSync(SAMPLES_DIR).filter((name) => name.endsWith(".wd"));
 
   it("include the originals and the agent-guide ones", () => {
-    expect(samples).toEqual(expect.arrayContaining(["Counter.wd", "Local-form.wd", "Launch-checklist.wd", "Estimate.wd", "Step-through.wd"]));
+    expect(samples).toEqual(expect.arrayContaining(["Counter.wd", "Local-form.wd", "Launch-checklist.wd", "Estimate.wd", "Step-through.wd", "Order-total.wd"]));
   });
 
   for (const name of samples) {
@@ -228,17 +235,70 @@ describe("the examples do what the guide says they do", () => {
     expect(page.text()).toContain("Plan: Pro. Region: Asia. Seats: 12. Pay yearly: true.");
   });
 
-  it("counts ticked boxes by subtraction (a checklist that counts)", async () => {
+  it("counts ticked boxes by subtraction and rounds the percentage with % (a checklist that counts)", async () => {
     const page = await open(example("Launch checklist"));
-    expect(page.text()).toContain("Left to do: 4 of 4. Progress: 0%.");
+    expect(page.text()).toContain("Left to do: 3 of 3. Progress: 0%.");
     await page.toggleBox("Design approved");
-    await page.toggleBox("Shipped");
-    expect(page.text()).toContain("Left to do: 2 of 4. Progress: 50%.");
+    expect(page.text()).toContain("Left to do: 2 of 3. Progress: 33%.");
     await page.toggleBox("Copy written");
-    await page.toggleBox("Review done");
-    expect(page.text()).toContain("Left to do: 0 of 4. Progress: 100%.");
+    expect(page.text()).toContain("Left to do: 1 of 3. Progress: 66%.");
     await page.toggleBox("Shipped");
-    expect(page.text()).toContain("Left to do: 1 of 4. Progress: 75%.");
+    expect(page.text()).toContain("Left to do: 0 of 3. Progress: 100%.");
+    await page.toggleBox("Shipped");
+    expect(page.text()).toContain("Left to do: 1 of 3. Progress: 66%.");
+  });
+
+  it("would print 33.333333333333336 for one of three without the rounding the guide teaches", async () => {
+    expect(MARKDOWN_GUIDE).toContain("33.333333333333336");
+    const raw = await open(":state done = 1\n:computed raw = done * 100 / 3\n\n{ raw }\n");
+    expect(raw.text()).toBe("33.333333333333336");
+    const rounded = await open(":state done = 1\n:computed raw = done * 100 / 3\n:computed percent = raw - raw % 1\n\n{ percent }\n");
+    expect(rounded.text()).toBe("33");
+  });
+
+  it("adds by subtracting a negative, with a name or with parentheses, and both update live", async () => {
+    const page = await open(':state a = 4\n:state b = 3\n:computed s = a - -b\n:computed t = a - (0 - b)\n:button "Up" -> a++\n\n{ s } { t }\n');
+    expect(page.warnings).toEqual([]);
+    expect(page.text()).toContain("7 7");
+    await page.click("Up");
+    expect(page.text()).toContain("8 8");
+    // The exact sentence the guide and the skill teach.
+    expect(MARKDOWN_GUIDE).toContain("total = subtotal - -tax");
+    expect(SKILL).toContain("total = subtotal - -tax");
+    expect(await rejected(":state a = 1\n:state b = 2\n:computed c = a + b\n\n{ c }\n")).toMatch(/Computed addition/);
+  });
+
+  it("rounds with % on a number, to the nearest by adding one half first", async () => {
+    const floor = await open(":state x = 7.9\n:computed whole = x - x % 1\n\n{ whole }\n");
+    expect(floor.text()).toBe("7");
+    const nearest = await open(":state x = 7.9\n:computed half = x - -0.5\n:computed whole = half - half % 1\n\n{ whole }\n");
+    expect(nearest.text()).toBe("8");
+  });
+
+  it("feeds numeric radio and select options straight into :computed, and rounds money to the nearest cent", async () => {
+    const page = await open(example("Order total"));
+    expect(page.warnings).toEqual([]);
+    // 12.99 plus 8% tax is 14.0292, which rounds to 14.03. A floor would say 14.02.
+    expect(page.text()).toContain("Total with tax: 14.03 for 1 at 12.99 each.");
+    await page.setBound("qty", "5");
+    expect(page.text()).toContain("Total with tax: 70.15 for 5 at 12.99 each.");
+    await page.pickRadio("40");
+    expect(page.text()).toContain("Total with tax: 216 for 5 at 40 each.");
+    await page.pickRadio("24.5");
+    await page.setBound("qty", "2");
+    expect(page.text()).toContain("Total with tax: 52.92 for 2 at 24.5 each.");
+    // Trailing zeros are not printed, and the guide says so.
+    await page.pickRadio("40");
+    await page.setBound("qty", "1");
+    expect(page.text()).toContain("Total with tax: 43.2 for 1 at 40 each.");
+    expect(MARKDOWN_GUIDE).toContain("70.50 shows `70.5`");
+  });
+
+  it("adds two numeric choices with a subtracted negative", async () => {
+    const page = await open(":state qty = 1\n:state tier = 10\n:radio tier\n- 10\n- 25\n:select qty\n- 1\n- 5\n:computed s = qty - -tier\n\nSum { s }\n");
+    await page.pickRadio("25");
+    await page.setBound("qty", "5");
+    expect(page.text()).toContain("Sum 30");
   });
 
   it("steps through text by setting state, and toggles a flag", async () => {
@@ -335,11 +395,6 @@ describe("the examples do what the guide says they do", () => {
 });
 
 describe("what the guide says does not work in Darkmown preview", () => {
-  const rejected = async (source: string) => {
-    let message = "";
-    try { await compileDarkmownPreview(source, true); } catch (error) { message = error instanceof Error ? error.message : String(error); }
-    return message;
-  };
   const switchedOff = async (source: string) => (await compileDarkmownPreview(source, true)).warnings.length > 0;
 
   it(":if never switches, so its text is never shown by a click", async () => {
@@ -406,9 +461,41 @@ describe("what the guide says does not work in Darkmown preview", () => {
     }
   });
 
-  it("disables an :input outside a form and says :bind is the way", async () => {
-    const page = await open(":state qty = 2\n:input qty type=number\n\nQty: { qty }\n");
-    expect(page.doc.querySelector("input")?.disabled).toBe(true);
+  it("disables an :input and a :textarea outside a form without a notice, and says :bind is the way", async () => {
+    const input = ":state qty = 2\n:input qty type=number\n\nQty: { qty }\n";
+    const textarea = ':state note = ""\n:textarea note placeholder="Notes"\n\n{ note }\n';
+    const a = await open(input);
+    expect(a.doc.querySelector("input")?.disabled).toBe(true);
+    expect(a.warnings).toEqual([]);
+    const b = await open(textarea);
+    expect(b.doc.querySelector("textarea")?.disabled).toBe(true);
+    expect(b.warnings).toEqual([]);
+    expect(MARKDOWN_GUIDE).toContain("`:input` and `:textarea` outside a form are disabled silently");
+  });
+
+  it("raises no notice for a - [ ] task list, footnotes, math or raw HTML, which is why the guide says so", async () => {
+    for (const source of ["- [ ] one\n- [x] two\n", "Note[^1]\n\n[^1]: the note\n", "$x^2$\n", "<mark>marked</mark>\n"]) {
+      expect((await compileDarkmownPreview(source, true)).warnings, source).toEqual([]);
+    }
+    expect(MARKDOWN_GUIDE).toContain("`- [ ]` task lists show the literal brackets");
+  });
+
+  it("raises a notice for links and pictures, an :if and a right-aligned table", async () => {
+    for (const source of ["[Docs](https://example.com)\n", "![pic](x.png)\n", ":state o = false\n:if o\nX\n:endif\n", "| A |\n| ---: |\n| 1 |\n"]) {
+      expect((await compileDarkmownPreview(source, true)).warnings.length, source).toBeGreaterThan(0);
+    }
+  });
+
+  it("stops with WD234 when :computed names something declared later or never, and prints an undeclared { name } as itself", async () => {
+    expect(await rejected(":state a = 1\n:computed b = a * missing\n\n{ b }\n")).toMatch(/WD234/);
+    expect(await rejected(":computed b = a * 2\n:state a = 1\n\n{ b }\n")).toMatch(/WD234/);
+    const before = await open("Hello { a }\n\n:state a = 1\n");
+    expect(before.warnings).toEqual([]);
+    expect(before.text()).toContain("Hello { a }");
+    const never = await open(":state a = 1\n\nHello { missing } and { a }\n");
+    expect(never.text()).toContain("Hello { missing } and 1");
+    expect(MARKDOWN_GUIDE).toContain("prints as `{ name }`");
+    expect(MARKDOWN_GUIDE).toContain("WD234");
   });
 
   it("switches off a checkbox group inside a form", async () => {
@@ -463,17 +550,23 @@ describe("what the guide says does not work in Darkmown preview", () => {
 });
 
 describe("the limits the guide states", () => {
-  const rejected = async (source: string) => {
-    try { await compileDarkmownPreview(source, true); } catch (error) { return error instanceof Error ? error.message : String(error); }
-    return "";
-  };
-
-  it("previews at most 128,000 characters", async () => {
+  it("previews at most 128,000 characters, and exactly 128,000 is accepted", async () => {
+    expect(await rejected("a".repeat(128_000))).toBe("");
+    expect(await rejected("a".repeat(128_001))).toMatch(/128,000 characters and 5,000 lines/);
     expect(await rejected(`# Big\n\n${"a".repeat(128_000)}`)).toMatch(/128,000 characters and 5,000 lines/);
   });
 
-  it("previews at most 5,000 lines", async () => {
+  it("previews at most 5,000 lines, and exactly 5,000 is accepted", async () => {
+    expect(await rejected(Array.from({ length: 5_000 }, () => "a").join("\n"))).toBe("");
+    expect(await rejected(Array.from({ length: 5_001 }, () => "a").join("\n"))).toMatch(/5,000 lines/);
     expect(await rejected("a\n".repeat(5_001))).toMatch(/5,000 lines/);
+  });
+
+  it("counts the empty line after a final newline, as the guide says", async () => {
+    // 5,000 lines that each end in a newline are 5,001 once split.
+    expect(await rejected("a\n".repeat(5_000))).toMatch(/5,000 lines/);
+    expect(await rejected("a\n".repeat(4_999))).toBe("");
+    expect(MARKDOWN_GUIDE).toContain("(a final newline counts as a line)");
   });
 
   it("holds length times (braces plus :computed lines) to 1,000,000", async () => {

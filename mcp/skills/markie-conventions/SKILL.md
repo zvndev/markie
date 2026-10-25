@@ -18,6 +18,8 @@ the `markie://guide/markdown` resource.
 - `.wd` when the reader should click, tick, slide or calculate: a calculator, an
   estimate, a checklist that counts, a small dashboard, a step-through, a short
   form. A `.md` never runs directives.
+- If the reader will mostly open it through a link in a browser, prefer `.md`:
+  a `.wd` on the web shows its source.
 - `.csv` for plain rows and columns. `.txt` for literal text.
 - Word, RTF, OpenDocument and HTML are never written by the tools. Write a new
   `.md` instead, or open the file with `markie_open_in_markie`.
@@ -35,7 +37,7 @@ the `markie://guide/markdown` resource.
   shows their source.
 - These do not exist, so do not write them: `> [!NOTE]` callouts, `mermaid`
   diagrams, `:emoji:` shortcodes, `[Jump](#section)` anchor links.
-- Run `markie_check_md` on a `.md` with a picture, a clip or inline HTML in it.
+- Run `markie_check_md` when the document has a picture, a clip or inline HTML.
 
 ## Darkmown in one screen
 
@@ -59,11 +61,19 @@ Left to do: { left } of 2.
 - Works: `:state`, `:computed` (with `-` `*` `/` `%` only), `:button`
   (`n++`, `n--`, `n += 5`, `n = 10`, `x = "text"`, `flag toggle`, `n reset`),
   `:slider`, `:bind`, bound `:select` `:checkbox` `:radio`, and `:form into`.
+- There is no `+`. To add, subtract a negative: `total = subtotal - -tax`.
+- Round with `%`: `percent = raw - raw % 1` drops the fraction (a checklist of
+  3 otherwise prints 33.333333333333336). Radio and select options that are
+  numbers feed straight into `:computed`. `markie_guide` has money and
+  checklist examples.
 - Does not work in the preview: `:if`, `@loop`, `@include`, `:store`,
   `persist`, `:fetch`, `+`, format pipes, links, pictures and `- [ ]` lists
-  inside a `.wd`.
-- The user must choose Trust this document before the controls turn on. State
-  is not saved. A `.wd` stays under 128,000 characters and 5,000 lines.
+  inside a `.wd`. `:input` and `:textarea` outside a form are disabled with no
+  notice.
+- Declare a name before you use it: an undeclared `{ name }` prints as itself.
+- The user must choose Trust this document before the controls turn on, and an
+  edit takes the trust away. State is not saved. A `.wd` stays under 128,000
+  characters and 5,000 lines.
 - Copy the shapes in `markie_guide`. You cannot run the preview yourself.
 
 ## Give the user the document
@@ -71,13 +81,17 @@ Left to do: { left } of 2.
 1. Write it with `markie_write_document` (under `~/Documents/Markie/` when the
    user did not say where).
 2. If they asked to see it, call `markie_open_in_markie`.
-3. If they want a link, a hosted copy, or to read it on their phone, call
-   `markie_cloud_sync` and paste the `markdownLink` from the result into your
-   reply. Call it again after edits to update the same link.
+3. If they want a link, a hosted copy, or to read it away from this computer,
+   call `markie_cloud_sync` and paste the `markdownLink` from the result into
+   your reply. It opens in the Markie app if it is installed, and in a browser
+   after sign-in otherwise. Call it again after edits to update the same link.
 4. With only the hosted tools, call `markie_create_document` and paste its
-   `markdownLink`.
+   `markdownLink`. Batch edits, because writes are rate limited. If the user
+   shared the document or made it public, an update fails with `shared`:
+   create a new document and give the new link.
 5. Make a public link only when the user asked for one in so many words.
-   `markie_cloud_public_link` confirms each one with them.
+   `markie_cloud_public_link` confirms each one with them. The hosted tools
+   cannot make a public link.
 
 ## Finding and reading documents
 
@@ -109,8 +123,8 @@ Left to do: { left } of 2.
    ---
    ```
 
-   Exports and the web page print front matter as text. When the document is
-   mainly to be read through a link, leave `project` and `block` out.
+   Exports print front matter as text. For a document you send as a link or
+   export, leave `project` and `block` out.
 
 3. One block per unit of work: a feature, an investigation, a report series.
    Reuse the block name across every document from that work.

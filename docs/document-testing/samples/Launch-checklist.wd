@@ -8,7 +8,6 @@ Tick each item. The count and the percentage follow your boxes. Trust this docum
 
 :state design = false
 :state copy = false
-:state review = false
 :state ship = false
 
 :checkbox design
@@ -17,15 +16,13 @@ Tick each item. The count and the percentage follow your boxes. Trust this docum
 :checkbox copy
 - Copy written
 
-:checkbox review
-- Review done
-
 :checkbox ship
 - Shipped
 
-:computed left = 4 - design - copy - review - ship
-:computed percent = (4 - left) * 25
+:computed left = 3 - design - copy - ship
+:computed raw = (3 - left) * 100 / 3
+:computed percent = raw - raw % 1
 
-Left to do: { left } of 4. Progress: { percent }%.
+Left to do: { left } of 3. Progress: { percent }%.
 
 Ticks are temporary preview state. Saving the document saves the source, not your ticks.

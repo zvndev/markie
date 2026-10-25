@@ -739,6 +739,19 @@ test("/d/:id shows a Darkmown document as escaped source, never as running scrip
   assert.equal(stranger.status, 403, "the private rule is unchanged");
 });
 
+test("/s/:token/raw downloads a Darkmown document as the .wd it is, and markdown as .md", async () => {
+  for (const [name, expected] of [["Tally.wd", "Tally.wd"], ["Notes.md", "Notes.md"], ["Plain.txt", "Plain.txt.md"]]) {
+    const id = await appDoc(alice, name, "::state n = 0\n");
+    const published = await call("POST", `/api/docs/${id}/public-link`, { token: alice.token, body: {} });
+    assert.equal(published.status, 200);
+    const token = new URL(published.data.url).pathname.split("/")[2];
+    const raw = await app.request(`/s/${token}/raw`);
+    assert.equal(raw.status, 200, name);
+    assert.match(raw.headers.get("content-disposition") ?? "", new RegExp(`filename="${expected.replace(".", "\\.")}"`), name);
+    assert.equal(await raw.text(), "::state n = 0\n");
+  }
+});
+
 // ---- links ------------------------------------------------------------------
 
 test("privateLink is this server's own origin, and api.markiedocs.com on Markie Cloud", () => {

@@ -16,8 +16,23 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // The Play upload key lives outside the repo (~/.markie-mobile-keys) with its
+    // password in the macOS Keychain; scripts/build-android-release.sh passes both
+    // in. Without them a release build stays unsigned, so debug and CI are unaffected.
+    signingConfigs {
+        upload {
+            def storeFilePath = System.getenv("MARKIE_UPLOAD_STORE_FILE")
+            if (storeFilePath) {
+                storeFile file(storeFilePath)
+                storePassword System.getenv("MARKIE_UPLOAD_STORE_PASSWORD")
+                keyAlias System.getenv("MARKIE_UPLOAD_KEY_ALIAS") ?: "markie-upload"
+                keyPassword System.getenv("MARKIE_UPLOAD_STORE_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
+            if (System.getenv("MARKIE_UPLOAD_STORE_FILE")) signingConfig signingConfigs.upload
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

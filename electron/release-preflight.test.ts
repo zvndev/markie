@@ -13,6 +13,7 @@ import {
   validateRuntimeDependencies,
   validateShippedFileGlobs,
   validateWindowsLaunchWorkflow,
+  validateMacLaunchWorkflow,
 } from "../scripts/release-preflight.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -127,6 +128,12 @@ describe("release preflight", () => {
     );
   });
 
+  it("runs the public Mac package launch on every PR, with no path filter", () => {
+    expect(validateMacLaunchWorkflow(rootDir).snippets).toEqual(
+      expect.arrayContaining(["pull_request:", "macos-latest", "npm run electron:smoke:mac:launch"])
+    );
+  });
+
   it("keeps the Windows launch workflow dispatchable and automatic on main", () => {
     expect(validateWindowsLaunchWorkflow(rootDir)).toEqual({
       snippets: expect.arrayContaining([
@@ -138,14 +145,6 @@ describe("release preflight", () => {
         "npm run electron:smoke:win",
         "npm run electron:smoke:win:launch",
         ".autoloop/runs/windows-launch-smoke-*/screenshot.png",
-      ]),
-      paths: expect.arrayContaining([
-        ".github/workflows/windows-launch-smoke.yml",
-        "electron/**",
-        "scripts/**",
-        "src/**",
-        "package.json",
-        "package-lock.json",
       ]),
     });
   });

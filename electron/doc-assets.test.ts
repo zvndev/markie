@@ -118,7 +118,9 @@ describe("extraction cannot be made expensive", () => {
     const payload = `![](real.png)\n${"![](a".repeat(50_000)}\n![](other.png)\n`;
     const started = Date.now();
     expect(extractRefs(payload)).toEqual(["real.png", "other.png"]);
-    expect(Date.now() - started).toBeLessThan(1000);
+    // 250 KB of openers: quadratic backtracking is over ten seconds here, linear is
+    // well under one, but a loaded CI runner has measured 1.18 s. Same bound as above.
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 
   it("takes no reference at all out of a document over 4 MB", () => {

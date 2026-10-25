@@ -1,0 +1,52 @@
+name: Mac launch smoke
+
+# Packages the public macOS app exactly as a release does, minus signing, and
+# launches it. Until this existed the release gate was the first thing that ever
+# opened the public Mac build, and 0.9.0 reached it with a module missing from
+# the asar. No path filter: it is a required check, and a required check that
+# does not run on a PR leaves that PR waiting forever.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: mac-launch-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mac-launch-smoke:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22.13.1"
+          cache: npm
+      - run: npm ci
+      - name: Package the public Mac app (unsigned)
+        # The afterPack window gate asks System Events about windows, which needs
+        # an Accessibility grant a runner does not have; the next step proves the
+        # same handshake without it. local-electron-builder strips signing input.
+        env:
+          MARKIE_SKIP_PREFLIGHT: "1"
+        run: npm run build && node scripts/local-electron-builder.mjs --config electron-builder.config.cjs --mac --arm64 --dir --publish never -c.mac.notarize=false
+      - name: Verify the package structure
+        run: npm run electron:smoke:mac:arm64
+      - name: Launch it
+        run: npm run electron:smoke:mac:launch
+        env:
+          # A throwaway runner, not a developer's Mac: consent is implied.
+          MARKIE_ALLOW_E2E: "1"
+      - name: Upload launch smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: mac-launch-smoke
+          path: .autoloop/runs/desktop-launch-smoke-*/
+          if-no-files-found: ignore

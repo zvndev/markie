@@ -2,32 +2,12 @@ name: Windows launch smoke
 
 on:
   workflow_dispatch:
+  # No path filter: this is a required check, and a required check that does
+  # not run on a PR leaves that PR waiting forever.
   push:
     branches:
       - main
-    paths:
-      - ".github/workflows/windows-launch-smoke.yml"
-      - "build/**"
-      - "electron/**"
-      - "mcp/**"
-      - "out/**"
-      - "public/**"
-      - "scripts/**"
-      - "src/**"
-      - "package.json"
-      - "package-lock.json"
   pull_request:
-    paths:
-      - ".github/workflows/windows-launch-smoke.yml"
-      - "build/**"
-      - "electron/**"
-      - "mcp/**"
-      - "out/**"
-      - "public/**"
-      - "scripts/**"
-      - "src/**"
-      - "package.json"
-      - "package-lock.json"
 
 jobs:
   launch-smoke:

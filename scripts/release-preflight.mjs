@@ -41,6 +41,8 @@ const REQUIRED_FILES = [
   "scripts/windows-launch-smoke.mjs",
   "scripts/release.mjs",
   ".github/workflows/windows-launch-smoke.yml",
+  ".github/workflows/mac-launch-smoke.yml",
+  "build/launch-errors.cjs",
   "electron/csp.js",
   "electron/main.js",
   "electron/update-policy.js",
@@ -101,17 +103,17 @@ const REQUIRED_WINDOWS_WORKFLOW_SNIPPETS = [
   ".autoloop/runs/windows-launch-smoke-*/screenshot.png",
 ];
 
-const REQUIRED_WINDOWS_WORKFLOW_PATHS = [
-  ".github/workflows/windows-launch-smoke.yml",
-  "build/**",
-  "electron/**",
-  "mcp/**",
-  "out/**",
-  "public/**",
-  "scripts/**",
-  "src/**",
-  "package.json",
-  "package-lock.json",
+// Both launch smokes are required checks on main, so neither may carry a path
+// filter: a required check that does not run leaves the PR waiting forever.
+const REQUIRED_MAC_WORKFLOW_SNIPPETS = [
+  "push:",
+  "pull_request:",
+  "macos-latest",
+  "npm ci",
+  "MARKIE_SKIP_PREFLIGHT",
+  "--mac --arm64 --dir --publish never",
+  "npm run electron:smoke:mac:launch",
+  'MARKIE_ALLOW_E2E: "1"',
 ];
 
 const REQUIRED_ELECTRON_MAIN_SNIPPETS = [
@@ -550,30 +552,30 @@ export function validateRequiredFiles(rootDir, files = REQUIRED_FILES) {
   return files;
 }
 
-export function validateWindowsLaunchWorkflow(
-  rootDir,
-  snippets = REQUIRED_WINDOWS_WORKFLOW_SNIPPETS,
-  paths = REQUIRED_WINDOWS_WORKFLOW_PATHS
-) {
-  const workflow = readFileSync(
-    path.join(rootDir, ".github/workflows/windows-launch-smoke.yml"),
-    "utf8"
-  );
+function validateLaunchWorkflow(rootDir, file, label, snippets) {
+  const workflow = readFileSync(path.join(rootDir, file), "utf8");
   const missingSnippets = snippets.filter((snippet) => !workflow.includes(snippet));
   assert(
     missingSnippets.length === 0,
-    `Windows launch workflow missing required snippets: ${missingSnippets.join(", ")}`
+    `${label} launch workflow missing required snippets: ${missingSnippets.join(", ")}`
   );
-  const missingPaths = paths.filter((snippet) => !workflow.includes(`- "${snippet}"`));
   assert(
-    missingPaths.length === 0,
-    `Windows launch workflow missing required path filters: ${missingPaths.join(", ")}`
+    !/^\s+paths(?:-ignore)?:/m.test(workflow),
+    `${label} launch workflow must run on every PR (it is a required check), so it may not filter paths`
   );
   assert(
     workflow.indexOf("push:") < workflow.indexOf("pull_request:"),
-    "Windows launch workflow must keep a push trigger before pull_request for main-branch evidence"
+    `${label} launch workflow must keep a push trigger before pull_request for main-branch evidence`
   );
-  return { snippets, paths };
+  return { snippets };
+}
+
+export function validateWindowsLaunchWorkflow(rootDir, snippets = REQUIRED_WINDOWS_WORKFLOW_SNIPPETS) {
+  return validateLaunchWorkflow(rootDir, ".github/workflows/windows-launch-smoke.yml", "Windows", snippets);
+}
+
+export function validateMacLaunchWorkflow(rootDir, snippets = REQUIRED_MAC_WORKFLOW_SNIPPETS) {
+  return validateLaunchWorkflow(rootDir, ".github/workflows/mac-launch-smoke.yml", "Mac", snippets);
 }
 
 export function validateElectronMainDesktopSupport(
@@ -632,6 +634,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   const packagedSize = validatePackagedAppSize(resolvedRoot);
   const matrix = validatePackagingMatrix(resolvedRoot);
   const windowsWorkflow = validateWindowsLaunchWorkflow(resolvedRoot);
+  validateMacLaunchWorkflow(resolvedRoot);
   const electronMain = validateElectronMainDesktopSupport(resolvedRoot);
   const docs = validateReleaseDocs(resolvedRoot);
   const inspected = assertLocalOnlyChecks(resolvedRoot);
@@ -661,7 +664,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
     `[release:preflight] packaging matrix ok: mac=${matrix.mac.length} win=${matrix.win.length} linux=${matrix.linux.length}`
   );
   console.log(
-    `[release:preflight] Windows launch workflow ok: ${windowsWorkflow.paths.length} watched paths`
+    `[release:preflight] launch workflows ok: Windows and Mac run on every PR`
   );
   console.log(`[release:preflight] Electron desktop support ok: ${electronMain.length} snippets`);
   console.log(`[release:preflight] release docs ok: ${docs.length} snippets`);

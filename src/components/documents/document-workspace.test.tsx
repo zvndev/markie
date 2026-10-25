@@ -138,7 +138,7 @@ describe("actual shared document workspace", () => {
     view.rerender(<DocumentWorkspace embedded library={library} onShellChange={onShellChange} incomingDocument={incoming} onIncomingDocumentHandled={handled} active />);
     fireEvent.click(screen.getByRole("button", { name: "Open requested file" }));
     expect(await screen.findByRole("textbox", { name: "Document text" })).toHaveValue("Queued native document");
-    expect(handled).toHaveBeenCalledWith(incoming.requestId, true); expect(privateScope.cleanup).toHaveBeenCalledOnce();
+    await waitFor(() => { expect(handled).toHaveBeenCalledWith(incoming.requestId, true); expect(privateScope.cleanup).toHaveBeenCalledOnce(); });
   });
 
   it("embeds only format-specific content in Markie and exposes actions to the existing shell", async () => {

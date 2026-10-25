@@ -42,13 +42,14 @@ interface DocRow {
   name: string;
   content: string;
   owner_id: string;
+  format: string;
 }
 
 function loadDoc(docId: string): DocRow | null {
   return (
     (db
       .prepare(
-        "SELECT id, name, content, owner_id FROM docs WHERE id = ? AND deleted_at IS NULL"
+        "SELECT id, name, content, owner_id, format FROM docs WHERE id = ? AND deleted_at IS NULL"
       )
       .get(docId) as DocRow | undefined) ?? null
   );
@@ -169,6 +170,8 @@ docView.get("/d/:id", async (c) => {
       invitedEmail: viewer.invitedEmail ?? null,
       assetUrlFor,
       docLinkFor: sharedPageLinkFor(docId, viewer.userId ?? null),
+      // A Darkmown document never runs on the web: render.ts shows its source.
+      format: doc.format,
     })
   );
 });
@@ -185,9 +188,11 @@ docView.get("/d/:id/raw", async (c) => {
   if (!doc) return c.text("Not found", 403);
 
   const cleaned = doc.name.replace(/[\r\n"\\]/g, "").trim() || "document";
-  const filename = cleaned.toLowerCase().endsWith(".md")
+  // A Darkmown document downloads as the .wd it is, so it opens interactive.
+  const extension = doc.format === "darkmown" ? ".wd" : ".md";
+  const filename = cleaned.toLowerCase().endsWith(extension)
     ? cleaned
-    : `${cleaned}.md`;
+    : `${cleaned}${extension}`;
   const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_");
   c.header("Content-Type", "text/markdown; charset=utf-8");
   c.header("Cache-Control", "private, no-store");

@@ -54,7 +54,9 @@ renders, and Darkmown (`.wd`) for documents that benefit from live state.
   - Android: intent filters with `android:autoVerify="true"` for both hosts.
 - The server serves, with `Content-Type: application/json`, no redirect and no auth:
   - `GET /.well-known/apple-app-site-association`: `applinks.details` for appID
-    `3VU8SG5TD9.com.zvn.markie.mobile`, components `/d/*` and `/s/*`.
+    `3VU8SG5TD9.com.zvn.markie.mobile`. Components, in order: exclude `/d/*/*`, exclude `/s/*/*`,
+    then include `/d/*` and `/s/*`. Apple's `*` also matches `/`, so without the excludes the app
+    would also claim raw, asset and download paths.
   - `GET /.well-known/assetlinks.json`: package `com.zvn.markie.mobile`, fingerprints from env
     `ANDROID_APP_CERT_SHA256` (comma-separated). An empty array when unset.
   - `markiedocs.com` is a separate website that proxies `/d`, `/s` and `/download` to this server.
@@ -80,7 +82,8 @@ existing columns.
   `POST /api/agent/docs` and the hosted MCP's create tool, and it's NULL for everything else,
   including documents a local agent synced through the desktop bridge. It never changes after
   creation, and it's never returned to clients.
-- `docs.created_at TEXT`, backfilled from `updated_at` for existing rows.
+- `docs.created_at TEXT`, set on new rows only. It's read as `updated_at` when NULL. No migration
+  may rewrite every row: backfill `format` only for names ending `.wd`, `.txt`, `.text` or `.log`.
 - New table `agent_tokens`:
   - `id TEXT PRIMARY KEY`, `user_id TEXT NOT NULL` and `name TEXT NOT NULL` (at most 64 characters).
   - `token_hash TEXT UNIQUE NOT NULL`: the SHA-256 hex of the full token. The token itself is
@@ -89,6 +92,9 @@ existing columns.
   - `created_at INTEGER NOT NULL`, `last_used_at INTEGER` and `revoked_at INTEGER`.
 - Token format: `mk_agent_` followed by 32 random bytes in base64url. It's compared by hash with
   `timingSafeEqual`.
+- Minting a token sends the account's email a notice naming the token. That uses the existing
+  `server/src/email.ts`, and a send failure never blocks the mint. A password reset or change
+  revokes all of the user's agent tokens.
 
 ## Server API
 
@@ -114,6 +120,10 @@ list in this build.
 
 Existing `GET /api/docs/:id` returns content for the viewer. Add `format` and `origin` to its
 response.
+
+`GET /api/docs` reports `sharedOut: true` for every document with an `origin_token_id`, as well as
+for shared ones. The desktop treats that text as written by someone else, so it never pulls local
+files that the text references into the cloud (`electron/asset-sync.js`).
 
 The desktop's `PUT /api/docs/:id` accepts an optional body field
 `origin: { "kind": "agent", "agent": "<name>" }`. It's honored only when the request creates the
@@ -151,6 +161,12 @@ through agent tokens of the same user") let any token reach every bridge-synced 
   `{id, version, privateLink, markdownLink}`. It returns 409 on a version conflict, and 404 for
   any document outside the rule above. That 404 looks exactly like "no such document".
 - `GET /api/agent/docs?limit=` returns metadata for this token's documents, newest first.
+- **Shared or public documents are frozen to tokens.** A `PUT` from a token on a document that has
+  any share, pending invite or public link returns 409 `{error: "shared"}`, with a message telling
+  the agent to create a new document instead. Reads still work.
+- **Per-user budget for agent writes**, across all of the user's tokens: 200 writes an hour and
+  50 MB of written content a day. Over budget returns 429. Quota errors never reveal the account's
+  total usage to a token holder.
 - `GET /api/agent/docs/:id` returns content, under the same rule.
 - Rate limit: 60 writes per hour per token, answered with 429.
 - `last_used_at` is updated at most once a minute.
@@ -160,7 +176,9 @@ through agent tokens of the same user") let any token reach every bridge-synced 
 - Streamable HTTP, JSON-RPC 2.0, protocol version `2025-06-18`. It answers with
   `application/json`; no SSE stream is needed. `GET /mcp` and `DELETE /mcp` return 405.
 - Auth: `Authorization: Bearer mk_agent_…`. Without it, the answer is 401 with
-  `WWW-Authenticate: Bearer realm="markie"`.
+  `WWW-Authenticate: Bearer realm="markie"`. On `/mcp` and `/api/agent/*`, the token is checked
+  before any request body is read, including chunked bodies with no `Content-Length`.
+- Protocol version `2025-06-18` only. Batches and `id: null` are rejected.
 - It implements `initialize`, `notifications/initialized`, `tools/list`, `tools/call` and `ping`.
 - Tools:
   - `markie_create_document {name, content}`

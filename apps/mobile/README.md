@@ -42,6 +42,11 @@ On the Sign in screen, open "Advanced" and set the server:
 
 The default server is `https://api.markiedocs.com`.
 
+To try the real server instead of the mock, run it locally on a throwaway database
+(`server/src/migrate.ts` once, then `server/src/index.ts` with `DB_PATH`, `PORT` and
+`BETTER_AUTH_URL` set). Outside production it prints sign-in codes to its console.
+Seed documents with an agent token through `POST /api/agent/docs`.
+
 ## Build
 
 Needs Xcode 26 with an iOS 26 simulator runtime, the Android SDK, and JDK 21 (Capacitor 8's Android build requires it).

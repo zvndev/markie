@@ -716,8 +716,9 @@ With the local Markie tools:
    \`.md\`, \`.markdown\`, \`.mdx\`, \`.txt\`, \`.text\` and \`.wd\`. The result
    carries \`markdownLink\`.
 5. Paste \`markdownLink\` into your reply exactly as returned. It looks like
-   \`[Plan.wd](https://api.markiedocs.com/d/abc123)\`. It also carries
-   \`privateLink\`, the bare address.
+   \`[Plan.wd](https://api.markiedocs.com/d/abc123)\`. Do not rebuild it from
+   the name and the address: the name inside is already escaped. The result
+   also carries \`privateLink\`, the bare address.
 
 Call \`markie_cloud_sync\` again after you change the file. It pushes the latest
 text to the same link. \`markie_cloud_status\` reports whether a file is synced
@@ -738,10 +739,11 @@ With only the hosted Markie tools (no desktop app on this machine):
 1. Call \`markie_create_document\` with \`name\` and \`content\`. Give the name a
    real extension: \`.md\`, \`.markdown\`, \`.mdx\`, \`.wd\` or \`.txt\`. A \`.wd\` may be
    up to 128,000 characters. Anything else may be up to 2 MB.
-2. Paste the \`markdownLink\` in the result into your reply.
+2. Paste the \`markdownLink\` in the result into your reply, exactly as returned.
 3. To change the document, call \`markie_update_document\` with its \`id\` and the
-   full new \`content\`. The link stays the same. \`markie_read_my_document\` and
-   \`markie_list_my_documents\` find earlier documents.
+   full new \`content\`. The link stays the same. \`markie_list_my_documents\` and
+   \`markie_read_my_document\` find the documents this token created, and
+   nothing else the user owns.
 4. Do not add front matter, relative links, or pictures that sit beside the
    document. Use https addresses or data URIs for pictures.
 

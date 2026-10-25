@@ -39,11 +39,17 @@ function privateLinkFor(origin, cloudId) {
   return `${origin}/d/${encodeURIComponent(cloudId)}`;
 }
 
-// `[<file name>](<privateLink>)`, ready to paste into chat. A bracket or
-// backslash in the name is escaped so it cannot end the link text early.
+// `[<file name>](<privateLink>)`, ready to paste into chat. The escaping is the
+// one pinned in docs/mobile/AGENT-LINKS-CONTRACT.md, and the server must produce
+// the same bytes: a run of line breaks in the name becomes one space, a
+// backslash, bracket, angle bracket or backtick in it gets a backslash before
+// it, and a parenthesis in the URL becomes %28 or %29 so it cannot close the
+// link early.
 function markdownLinkFor(name, privateLink) {
   if (!privateLink) return null;
-  return `[${String(name).replace(/([\\[\]])/g, "\\$1")}](${privateLink})`;
+  const text = String(name).replace(/[\r\n\u2028\u2029]+/g, " ").replace(/[\\[\]<>`]/g, "\\$&");
+  const url = String(privateLink).replace(/\(/g, "%28").replace(/\)/g, "%29");
+  return `[${text}](${url})`;
 }
 
 /**

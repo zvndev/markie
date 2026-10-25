@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({ serverFetch: vi.fn(), origin: "https://api.mar
 vi.mock("@/lib/auth-client", () => ({ getServerURL: () => mocks.origin }));
 vi.mock("@/lib/server-sessions", () => ({ serverFetch: mocks.serverFetch }));
 
-import { claudeCodeSetupCommand, createAgentToken, genericMcpConfig, hostedMcpUrl, listAgentTokens, revokeAgentToken } from "./agent-tokens";
+import { claudeCodeSetupCommand, createAgentToken, genericMcpConfig, hostedMcpUrl, listAgentTokens, offersNoAgentTokens, revokeAgentToken } from "./agent-tokens";
 
 const reply = (status: number, body: unknown = null) => ({ ok: status < 300, status, json: async () => body }) as Response;
 
@@ -63,5 +63,30 @@ describe("agent token client", () => {
     expect(await createAgentToken("n")).toMatchObject({ ok: false, message: "Markie Cloud refused (400)." });
     mocks.serverFetch.mockResolvedValueOnce(reply(409, { error: "You already have 20 active tokens." }));
     expect(await createAgentToken("n")).toMatchObject({ ok: false, message: "You already have 20 active tokens." });
+  });
+
+  it("reads a 404 on revoke as already gone, and 204 as revoked", async () => {
+    mocks.serverFetch.mockResolvedValueOnce(reply(404, { error: "not found" }));
+    expect(await revokeAgentToken("a")).toEqual({ ok: true, data: true });
+    mocks.serverFetch.mockResolvedValueOnce(reply(204));
+    expect(await revokeAgentToken("a")).toEqual({ ok: true, data: true });
+  });
+
+  it("still reports the other failures of a revoke", async () => {
+    mocks.serverFetch.mockResolvedValueOnce(reply(401, null));
+    expect(await revokeAgentToken("a")).toMatchObject({ ok: false, status: 401 });
+    mocks.serverFetch.mockResolvedValueOnce(reply(500, null));
+    expect(await revokeAgentToken("a")).toMatchObject({ ok: false, message: "Markie Cloud refused (500)." });
+    mocks.serverFetch.mockRejectedValueOnce(new Error("net"));
+    expect(await revokeAgentToken("a")).toMatchObject({ ok: false, status: 0 });
+  });
+
+  it("keeps 'does not offer agent tokens' for the list and create routes", async () => {
+    mocks.serverFetch.mockResolvedValueOnce(reply(404, null));
+    expect(await listAgentTokens()).toMatchObject({ ok: false, status: 404, message: "This server does not offer agent tokens." });
+    mocks.serverFetch.mockResolvedValueOnce(reply(405, null));
+    expect(await createAgentToken("n")).toMatchObject({ ok: false, message: "This server does not offer agent tokens." });
+    expect([404, 405, 501].every(offersNoAgentTokens)).toBe(true);
+    expect([200, 204, 400, 401, 429, 500].some(offersNoAgentTokens)).toBe(false);
   });
 });

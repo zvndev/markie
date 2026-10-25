@@ -170,6 +170,30 @@ describe("agent cloud: markdownLink", () => {
     expect(markdownLinkFor("a [draft] b.md", "https://x/d/1")).toBe("[a \\[draft\\] b.md](https://x/d/1)");
     expect(markdownLinkFor("a.md", null)).toBeNull();
   });
+
+  // The contract's exact rule, which the server must match byte for byte.
+  describe("escaping, as pinned in the contract", () => {
+    const URL = "https://x/d/1";
+    it("escapes a backslash, so it cannot escape the next character", () => {
+      expect(markdownLinkFor("a\\b.md", URL)).toBe("[a\\\\b.md](https://x/d/1)");
+      expect(markdownLinkFor("end\\", URL)).toBe("[end\\\\](https://x/d/1)");
+    });
+    it("escapes angle brackets and the backtick", () => {
+      expect(markdownLinkFor("<b>x</b>`y`.md", URL)).toBe("[\\<b\\>x\\</b\\>\\`y\\`.md](https://x/d/1)");
+    });
+    it("escapes square brackets", () => {
+      expect(markdownLinkFor("[a]", URL)).toBe("[\\[a\\]](https://x/d/1)");
+    });
+    it("turns each run of CR, LF, U+2028 and U+2029 into one space", () => {
+      expect(markdownLinkFor("a\nb\r\nc\u2028\u2029d\n\n\n\re.md", URL)).toBe("[a b c d e.md](https://x/d/1)");
+    });
+    it("encodes parentheses in the URL, and leaves them alone in the name", () => {
+      expect(markdownLinkFor("plan (v2).md", "https://x/d/a(b)c")).toBe("[plan (v2).md](https://x/d/a%28b%29c)");
+    });
+    it("does not escape the characters the rule leaves out", () => {
+      expect(markdownLinkFor("*a* _b_ #c !d | e.md", URL)).toBe("[*a* _b_ #c !d | e.md](https://x/d/1)");
+    });
+  });
 });
 
 describe("agent cloud: status", () => {
@@ -206,6 +230,28 @@ describe("agent cloud: public links", () => {
     expect((await t.cloud.cloud_public_link({ path: p, create: true })).publicLink).toBe("https://markiedocs.com/s/new");
     expect(t.confirm).toHaveBeenLastCalledWith({ kind: "public", name: "a.md", path: p });
     expect(api).toHaveBeenCalledWith("POST", "/api/docs/doc-1/public-link");
+  });
+
+  it("asks for a .wd public link every time, even with 'always allow' on", async () => {
+    let live: string | null = null;
+    const api = vi.fn(async (method: string) => {
+      if (method === "GET") return { status: 200, data: { url: live } };
+      if (method === "POST") { live = "https://markiedocs.com/s/wd1"; return { status: 200, data: { url: live } }; }
+      live = null;
+      return { status: 200, data: { ok: true } };
+    });
+    const t = setup({ api, perms: { cloudSync: "always" }, answers: [{ allowed: true, always: true }, { allowed: true }] });
+    const p = t.file("Plan.wd", "<Counter />\n");
+    t.rows.set(p, { cloud_doc_id: "doc-1", sync_state: "synced" });
+    expect((await t.cloud.cloud_public_link({ path: p, create: true })).publicLink).toBe("https://markiedocs.com/s/wd1");
+    await t.cloud.cloud_revoke_public_link({ path: p });
+    expect((await t.cloud.cloud_public_link({ path: p, create: true })).publicLink).toBe("https://markiedocs.com/s/wd1");
+    expect(t.confirm).toHaveBeenCalledTimes(2);
+    expect(t.confirm).toHaveBeenNthCalledWith(1, { kind: "public", name: "Plan.wd", path: p });
+    expect(t.confirm).toHaveBeenNthCalledWith(2, { kind: "public", name: "Plan.wd", path: p });
+    // The first answer said "always", and that never carried over to a sync permission change.
+    expect(t.permissions.get().cloudSync).toBe("always");
+    expect(t.permissions.set).not.toHaveBeenCalled();
   });
 
   it("needs the file in Cloud first, and revokes without asking", async () => {

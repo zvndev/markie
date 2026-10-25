@@ -47,10 +47,19 @@ export function genericMcpConfig(url: string, token: string): string {
   );
 }
 
+/**
+ * The server answered the list or create route with "no such route": it is an
+ * older build, or a self-hosted one, without agent tokens. Never true of a
+ * DELETE, where a 404 means the token is already gone.
+ */
+export function offersNoAgentTokens(status: number): boolean {
+  return status === 404 || status === 405 || status === 501;
+}
+
 function refusal(status: number, body: unknown): string {
   if (status === 0) return "Markie Cloud could not be reached. Check your connection and try again.";
   if (status === 401) return "Your Markie Cloud sign-in has expired. Sign in again to manage agent tokens.";
-  if (status === 404 || status === 405 || status === 501) return "This server does not offer agent tokens.";
+  if (offersNoAgentTokens(status)) return "This server does not offer agent tokens.";
   if (status === 429) return "Too many requests. Wait a moment and try again.";
   // The server's own words for a rule the user can act on (a name that is too
   // long, the limit of active tokens). Never a body that might echo a secret.
@@ -99,6 +108,13 @@ export function createAgentToken(name: string): Promise<TokenResult<CreatedAgent
   });
 }
 
-export function revokeAgentToken(id: string): Promise<TokenResult<true>> {
-  return call(`/api/agent-tokens/${encodeURIComponent(id)}`, { method: "DELETE" }, () => true);
+// The contract answers 204 for a revoke, also for a token that was already
+// revoked, and 404 only for an id that never belonged to this user. Either way
+// the token is not one this account holds any more, so the row goes: a 404
+// here is "gone", never "this server has no agent tokens" (that reading is for
+// the list and create routes, where the route itself is missing).
+export async function revokeAgentToken(id: string): Promise<TokenResult<true>> {
+  const res = await call(`/api/agent-tokens/${encodeURIComponent(id)}`, { method: "DELETE" }, () => true as const);
+  if (!res.ok && res.status === 404) return { ok: true, data: true };
+  return res;
 }

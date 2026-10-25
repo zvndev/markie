@@ -41,7 +41,7 @@ function mockServer(initial: Row[] = ROWS) {
     const del = /^\/api\/agent-tokens\/(.+)$/.exec(path);
     if (del && method === "DELETE") {
       rows = rows.filter((r) => r.id !== decodeURIComponent(del[1]));
-      return reply(200, { ok: true });
+      return reply(204);
     }
     return reply(404, { error: "not found" });
   });
@@ -227,6 +227,194 @@ describe("RemoteAgentsPanel", () => {
     expect(text()).toMatch(/need a Markie Cloud sign-in/);
   });
 
+  it("says a token reaches only the documents it made itself", async () => {
+    mockServer();
+    render(<RemoteAgentsPanel onClose={vi.fn()} />);
+    await screen.findByText("Cursor");
+    expect(text()).toMatch(/read and edit only the documents that same token created/);
+    expect(text()).toMatch(/another token made/);
+    expect(text()).toMatch(/on this computer/);
+    expect(text()).not.toMatch(/never the rest of your Cloud/);
+  });
+
+  it("tells the revoker that the token's documents stay", async () => {
+    mockServer();
+    render(<RemoteAgentsPanel onClose={vi.fn()} />);
+    await screen.findByText("Cursor");
+    fireEvent.click(screen.getByRole("button", { name: "Revoke Cursor" }));
+    expect(window.confirm).toHaveBeenLastCalledWith(expect.stringContaining("documents it made stay in your Cloud"));
+  });
+
+  describe("an answer that arrives after the account changed", () => {
+    function deferred() {
+      let resolve!: (r: Response) => void;
+      const promise = new Promise<Response>((r) => { resolve = r; });
+      return { promise, resolve };
+    }
+    const switchTo = async (view: ReturnType<typeof render>, id: string | null) => {
+      state.auth = id ? { user: { id, email: `${id}@example.test`, name: id }, status: "in" } : { user: null, status: "out" };
+      await act(async () => { view.rerender(<RemoteAgentsPanel onClose={vi.fn()} />); });
+    };
+
+    it("never shows account A's new token to account B", async () => {
+      mockServer();
+      const impl = state.serverFetch.getMockImplementation()!;
+      const post = deferred();
+      state.serverFetch.mockImplementation(async (origin: string, path: string, init?: RequestInit) =>
+        path === "/api/agent-tokens" && init?.method === "POST" ? post.promise : impl(origin, path, init));
+      const view = render(<RemoteAgentsPanel onClose={vi.fn()} />);
+      await screen.findByText("Cursor");
+      fireEvent.change(screen.getByLabelText("Token name"), { target: { value: "A's agent" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+      await switchTo(view, "u2");
+      await screen.findByText("Cursor");
+      await act(async () => { post.resolve(reply(201, { id: "t9", name: "A's agent", token: SECRET, prefix: SECRET.slice(0, 12), createdAt: "2026-10-25T12:00:00.000Z" })); });
+      expect(document.body.textContent).not.toContain(SECRET);
+      expect(screen.queryByRole("group", { name: "New token" })).toBeNull();
+      expect(screen.queryByText("A's agent")).toBeNull();
+      expect(pres().join("\n")).not.toContain(SECRET);
+      // B is not left stuck on a "Creating…" button either.
+      expect((screen.getByRole("button", { name: "Create token" }) as HTMLButtonElement).textContent).toBe("Create token");
+    });
+
+    it("does not leave a token hidden in state after a sign-out, to appear on the next sign-in", async () => {
+      mockServer();
+      const impl = state.serverFetch.getMockImplementation()!;
+      const post = deferred();
+      state.serverFetch.mockImplementation(async (origin: string, path: string, init?: RequestInit) =>
+        path === "/api/agent-tokens" && init?.method === "POST" ? post.promise : impl(origin, path, init));
+      const view = render(<RemoteAgentsPanel onClose={vi.fn()} />);
+      await screen.findByText("Cursor");
+      fireEvent.change(screen.getByLabelText("Token name"), { target: { value: "A's agent" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+      await switchTo(view, null);
+      await act(async () => { post.resolve(reply(201, { id: "t9", name: "A's agent", token: SECRET, prefix: SECRET.slice(0, 12), createdAt: "2026-10-25T12:00:00.000Z" })); });
+      await switchTo(view, "u2");
+      await screen.findByText("Cursor");
+      expect(document.body.textContent).not.toContain(SECRET);
+    });
+
+    it("does not show account A's failed revoke on account B", async () => {
+      mockServer();
+      const impl = state.serverFetch.getMockImplementation()!;
+      const del = deferred();
+      state.serverFetch.mockImplementation(async (origin: string, path: string, init?: RequestInit) =>
+        init?.method === "DELETE" ? del.promise : impl(origin, path, init));
+      const view = render(<RemoteAgentsPanel onClose={vi.fn()} />);
+      await screen.findByText("Cursor");
+      fireEvent.click(screen.getByRole("button", { name: "Revoke Cursor" }));
+      await switchTo(view, "u2");
+      await screen.findByText("Cursor");
+      await act(async () => { del.resolve(reply(500, { error: "boom" })); });
+      expect(screen.queryByText("Markie Cloud refused (500).")).toBeNull();
+      expect(screen.getByText("Cursor")).toBeTruthy();
+      expect((screen.getByRole("button", { name: "Revoke Cursor" }) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("does not drop a row of account B because account A's revoke finished", async () => {
+      mockServer();
+      const impl = state.serverFetch.getMockImplementation()!;
+      const del = deferred();
+      state.serverFetch.mockImplementation(async (origin: string, path: string, init?: RequestInit) =>
+        init?.method === "DELETE" ? del.promise : impl(origin, path, init));
+      const view = render(<RemoteAgentsPanel onClose={vi.fn()} />);
+      await screen.findByText("Cursor");
+      fireEvent.click(screen.getByRole("button", { name: "Revoke Cursor" }));
+      await switchTo(view, "u2");
+      await screen.findByText("Cursor");
+      await act(async () => { del.resolve(reply(204)); });
+      expect(screen.getByText("Cursor")).toBeTruthy();
+    });
+  });
+
+  it("treats a 404 on revoke as already gone and drops the row", async () => {
+    mockServer();
+    render(<RemoteAgentsPanel onClose={vi.fn()} />);
+    await screen.findByText("Cursor");
+    const impl = state.serverFetch.getMockImplementation()!;
+    state.serverFetch.mockImplementation(async (origin: string, path: string, init?: RequestInit) =>
+      init?.method === "DELETE" ? reply(404, { error: "not found" }) : impl(origin, path, init));
+    fireEvent.click(screen.getByRole("button", { name: "Revoke Cursor" }));
+    await waitFor(() => expect(screen.queryByText("Cursor")).toBeNull());
+    expect(text()).not.toMatch(/does not offer agent tokens/);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  describe("a server without agent tokens", () => {
+    it("says so and hides the URL, the token form and the setup blocks", async () => {
+      state.serverFetch.mockImplementation(async () => reply(404, { error: "not found" }));
+      render(<RemoteAgentsPanel onClose={vi.fn()} />);
+      expect(await screen.findByText("This server does not offer agent tokens.")).toBeTruthy();
+      expect(pres()).toEqual([]);
+      expect(screen.queryByLabelText("Token name")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Create token" })).toBeNull();
+      expect(text()).not.toMatch(/Set up your agent/);
+      expect(text()).not.toContain("claude mcp add");
+    });
+
+    it("keeps showing the setup when only a revoke answers 404", async () => {
+      mockServer();
+      render(<RemoteAgentsPanel onClose={vi.fn()} />);
+      await screen.findByText("Cursor");
+      const impl = state.serverFetch.getMockImplementation()!;
+      state.serverFetch.mockImplementation(async (origin: string, path: string, init?: RequestInit) =>
+        init?.method === "DELETE" ? reply(404, null) : impl(origin, path, init));
+      fireEvent.click(screen.getByRole("button", { name: "Revoke Cursor" }));
+      await waitFor(() => expect(screen.queryByText("Cursor")).toBeNull());
+      expect(pres()).toContain(URL_);
+    });
+  });
+
+  describe("focus", () => {
+    it("moves into the panel on open and back to the opener on close", async () => {
+      mockServer();
+      const opener = document.createElement("button");
+      opener.textContent = "open";
+      document.body.append(opener);
+      opener.focus();
+      const view = render(<RemoteAgentsPanel onClose={vi.fn()} />);
+      await screen.findByText("Cursor");
+      expect(document.activeElement).toBe(dialog());
+      view.unmount();
+      await waitFor(() => expect(document.activeElement).toBe(opener));
+      opener.remove();
+    });
+
+    it("keeps Tab inside the panel, wrapping at both ends", async () => {
+      mockServer();
+      render(<RemoteAgentsPanel onClose={vi.fn()} />);
+      await screen.findByText("Cursor");
+      const buttons = [...dialog().querySelectorAll<HTMLElement>("button,input")].filter((el) => !(el as HTMLButtonElement).disabled);
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      last.focus();
+      fireEvent.keyDown(last, { key: "Tab" });
+      expect(document.activeElement).toBe(first);
+      first.focus();
+      fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+      expect(document.activeElement).toBe(last);
+    });
+  });
+
+  it("reports whether a token that has not been copied is on screen", async () => {
+    mockServer();
+    const shown = vi.fn();
+    const view = render(<RemoteAgentsPanel onClose={vi.fn()} onSecretShownChange={shown} />);
+    await screen.findByText("Cursor");
+    expect(shown).toHaveBeenLastCalledWith(false);
+    fireEvent.change(screen.getByLabelText("Token name"), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+    await screen.findByText(SECRET);
+    expect(shown).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole("button", { name: "I have copied it" }));
+    expect(shown).toHaveBeenLastCalledWith(false);
+    fireEvent.change(screen.getByLabelText("Token name"), { target: { value: "y" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+    await screen.findByText(SECRET);
+    view.unmount();
+    expect(shown).toHaveBeenLastCalledWith(false);
+  });
+
   it("closes on Escape and on the close button", async () => {
     mockServer();
     const onClose = vi.fn();
@@ -258,5 +446,20 @@ describe("AgentsDialog entry point", () => {
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("makes the dialog behind the panel inert while it is open, and live again after", async () => {
+    mockServer();
+    installBridge({ mcpInfo: vi.fn(async () => ({ serverPath: "/x/markie-mcp.mjs", packaged: true })) });
+    render(<AgentsDialog onClose={vi.fn()} />);
+    const agents = () => screen.getByRole("dialog", { name: "Connect an agent to Markie", hidden: true });
+    const open = screen.getByRole("button", { name: /Remote agents/ });
+    open.focus();
+    fireEvent.click(open);
+    await screen.findByText("Cursor");
+    expect(agents().hasAttribute("inert")).toBe(true);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(agents().hasAttribute("inert")).toBe(false);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: /Remote agents/ })));
   });
 });

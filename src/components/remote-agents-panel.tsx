@@ -8,6 +8,7 @@ import {
   genericMcpConfig,
   hostedMcpUrl,
   listAgentTokens,
+  offersNoAgentTokens,
   revokeAgentToken,
   type AgentToken,
   type CreatedAgentToken,
@@ -16,7 +17,16 @@ import { CopyBlock } from "@/components/copy-block";
 
 interface RemoteAgentsPanelProps {
   onClose: () => void;
+  /**
+   * Told whenever a token that has not been copied yet is on screen (and false
+   * when it goes, or the panel does), so the app does not close the dialog
+   * over a secret the user cannot get back.
+   */
+  onSecretShownChange?: (shown: boolean) => void;
 }
+
+// What a dialog can be tabbed to.
+const FOCUSABLE = 'button,input,textarea,select,a[href],[tabindex="0"]';
 
 // Stands in for the token in the setup commands until one has been created.
 const TOKEN_PLACEHOLDER = "<token>";
@@ -34,7 +44,7 @@ function formatWhen(value: string | number | null): string {
  * token is held in this component's state alone: it is shown once, never
  * stored or logged, and gone when the panel closes or the account changes.
  */
-export function RemoteAgentsPanel({ onClose }: RemoteAgentsPanelProps) {
+export function RemoteAgentsPanel({ onClose, onSecretShownChange }: RemoteAgentsPanelProps) {
   const auth = useAuth();
   const userId = auth.user?.id ?? null;
   const signedIn = auth.status === "in" && !!userId;
@@ -47,39 +57,81 @@ export function RemoteAgentsPanel({ onClose }: RemoteAgentsPanelProps) {
   const [fresh, setFresh] = useState<CreatedAgentToken | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [revokeError, setRevokeError] = useState<string | null>(null);
+  // The server answered "no such route" to the list or create call.
+  const [unavailable, setUnavailable] = useState(false);
   // Only the newest list request may write, so an account switch cannot land
   // another account's tokens on screen.
   const ticket = useRef(0);
   const invalidate = useCallback(() => {
     ticket.current++;
   }, []);
+  // One ticket per signed-in session of this panel. A create or revoke takes it
+  // before it awaits and drops its answer if it moved: a sign-out, an account
+  // switch or the panel closing all move it (the same guard auth-client's api()
+  // keeps with its session epoch). Separate from the list ticket, which a plain
+  // "Try again" is allowed to bump.
+  const session = useRef(0);
+  const endSession = useCallback(() => {
+    session.current++;
+  }, []);
+  const dialog = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     const mine = ++ticket.current;
     setLoadError(null);
     const res = await listAgentTokens();
     if (mine !== ticket.current) return;
-    if (res.ok) setTokens(res.data);
-    else {
+    if (res.ok) {
+      setTokens(res.data);
+      setUnavailable(false);
+    } else {
       setTokens(null);
       setLoadError(res.message);
+      setUnavailable(offersNoAgentTokens(res.status));
     }
   }, []);
 
   useEffect(() => {
+    endSession();
     // A different account, or none, never inherits what the last one made.
     setFresh(null);
     setTokens(null);
     setLoadError(null);
     setCreateError(null);
     setRevokeError(null);
+    setUnavailable(false);
+    setCreating(false);
+    setRevoking(null);
     if (!signedIn) {
       invalidate();
       return;
     }
     void load();
-    return invalidate;
-  }, [signedIn, userId, load, invalidate]);
+    return () => {
+      endSession();
+      invalidate();
+    };
+  }, [signedIn, userId, load, invalidate, endSession]);
+
+  // Tell the app while a token that has not been copied is on screen.
+  const reportSecret = useRef(onSecretShownChange);
+  reportSecret.current = onSecretShownChange;
+  useEffect(() => {
+    reportSecret.current?.(fresh !== null);
+  }, [fresh]);
+  useEffect(() => () => reportSecret.current?.(false), []);
+
+  // Focus moves into the panel when it opens and goes back to whatever opened
+  // it when it closes.
+  useEffect(() => {
+    const opener = document.activeElement;
+    dialog.current?.focus();
+    return () => {
+      requestAnimationFrame(() => {
+        if (opener instanceof HTMLElement && opener.isConnected && !opener.closest("[inert]")) opener.focus();
+      });
+    };
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -93,12 +145,17 @@ export function RemoteAgentsPanel({ onClose }: RemoteAgentsPanelProps) {
     e.preventDefault();
     const trimmed = name.trim();
     if (!trimmed || creating) return;
+    const mine = session.current;
     setCreating(true);
     setCreateError(null);
     const res = await createAgentToken(trimmed);
+    // Answered for an account that is no longer here: show it to nobody. The
+    // token it made stays on that account's list, where it can be revoked.
+    if (mine !== session.current) return;
     setCreating(false);
     if (!res.ok) {
       setCreateError(res.message);
+      if (offersNoAgentTokens(res.status)) setUnavailable(true);
       return;
     }
     setFresh(res.data);
@@ -110,10 +167,12 @@ export function RemoteAgentsPanel({ onClose }: RemoteAgentsPanelProps) {
   };
 
   const revoke = async (token: AgentToken) => {
-    if (!window.confirm(`Revoke “${token.name}”? Any agent using it stops working right away. This cannot be undone.`)) return;
+    if (!window.confirm(`Revoke “${token.name}”? Any agent using it stops working right away. The documents it made stay in your Cloud. This cannot be undone.`)) return;
+    const mine = session.current;
     setRevoking(token.id);
     setRevokeError(null);
     const res = await revokeAgentToken(token.id);
+    if (mine !== session.current) return;
     setRevoking(null);
     if (!res.ok) {
       setRevokeError(res.message);
@@ -134,10 +193,29 @@ export function RemoteAgentsPanel({ onClose }: RemoteAgentsPanelProps) {
       }}
     >
       <div
-        className="markie-overlay-panel w-[520px] max-w-[94vw] max-h-[86vh] overflow-y-auto rounded-xl p-5"
+        ref={dialog}
+        tabIndex={-1}
+        className="markie-overlay-panel w-[520px] max-w-[94vw] max-h-[86vh] overflow-y-auto rounded-xl p-5 outline-none"
         role="dialog"
         aria-modal="true"
         aria-labelledby="markie-remote-agents-title"
+        onKeyDown={(e) => {
+          // Tab stays inside the panel, wrapping at both ends.
+          if (e.key !== "Tab") return;
+          const controls = [...e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+            (el) => !el.hasAttribute("disabled") && !el.hidden && !el.closest("[inert]")
+          );
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          const focused = document.activeElement;
+          if (e.shiftKey && (focused === first || focused === e.currentTarget)) {
+            e.preventDefault();
+            last?.focus();
+          } else if (!e.shiftKey && (focused === last || focused === e.currentTarget)) {
+            e.preventDefault();
+            first?.focus();
+          }
+        }}
       >
         <div className="flex items-center justify-between mb-1">
           <h2 id="markie-remote-agents-title" className="text-[14px] font-semibold text-foreground">
@@ -149,8 +227,9 @@ export function RemoteAgentsPanel({ onClose }: RemoteAgentsPanelProps) {
         </div>
         <p className="text-[12px] text-muted leading-relaxed mb-4">
           For an agent that does not run on this computer, such as Claude on your phone or in the cloud. It connects to
-          Markie Cloud with a token you make here, and can create documents there. It can read and edit only the
-          documents it made, never the rest of your Cloud. They stay private to you and open in the Markie app.
+          Markie Cloud with a token you make here. A token can create documents, and it can read and edit only the
+          documents that same token created. It cannot reach your other documents, the ones another token made, or the
+          ones an agent on this computer put in your Cloud. They stay private to you and open in the Markie app.
         </p>
 
         {auth.status === "checking" ? (
@@ -165,6 +244,13 @@ export function RemoteAgentsPanel({ onClose }: RemoteAgentsPanelProps) {
               Cloud from Settings, then open this panel again.
             </p>
           </div>
+        ) : unavailable ? (
+          // No tokens here, so there is nothing to set up: a URL and a command
+          // for a route that does not exist would only send the user off to
+          // paste something that cannot work.
+          <p role="alert" className="text-[12px] text-[var(--status-red)] leading-relaxed">
+            {loadError ?? createError ?? "This server does not offer agent tokens."}
+          </p>
         ) : (
           <>
             <CopyBlock label="MCP URL" hint="the hosted Markie server" text={url} />

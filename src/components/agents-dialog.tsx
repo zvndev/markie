@@ -5,6 +5,8 @@ import { RemoteAgentsPanel } from "@/components/remote-agents-panel";
 
 interface AgentsDialogProps {
   onClose: () => void;
+  /** Passed to the Remote agents panel: true while a new token has not been copied. */
+  onSecretShownChange?: (shown: boolean) => void;
 }
 
 // Mirrors TOOLS in mcp/markie-mcp.mjs. The markdown-only originals stay in the
@@ -34,7 +36,7 @@ markie:
 const FALLBACK_PATH =
   "/Applications/Markie.app/Contents/Resources/mcp/markie-mcp.mjs";
 
-export function AgentsDialog({ onClose }: AgentsDialogProps) {
+export function AgentsDialog({ onClose, onSecretShownChange }: AgentsDialogProps) {
   const [serverPath, setServerPath] = useState<string | null>(null);
   const [cloudAlways, setCloudAlways] = useState(false);
   const [showRemote, setShowRemote] = useState(false);
@@ -83,6 +85,9 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="markie-agents-title"
+        // The Remote agents panel is modal over this one: nothing here can be
+        // tabbed to, clicked or read out while it is open.
+        inert={showRemote}
       >
         <div className="flex items-center justify-between mb-1">
           <h2 id="markie-agents-title" className="text-[14px] font-semibold text-foreground">
@@ -205,7 +210,7 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
           )}
         </p>
       </div>
-      {showRemote && <RemoteAgentsPanel onClose={() => setShowRemote(false)} />}
+      {showRemote && <RemoteAgentsPanel onClose={() => setShowRemote(false)} onSecretShownChange={onSecretShownChange} />}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -486,11 +487,27 @@ function builderBin() {
   return local;
 }
 
-function appBuilderBin() {
-  const name = process.arch === "arm64" ? "app-builder_arm64" : "app-builder_amd64";
-  const local = path.join(rootDir, "node_modules/app-builder-bin/mac", name);
-  assert(existsSync(local), "app-builder is not installed; run npm ci");
-  return local;
+// electron-builder 26.15 dropped the app-builder binary and builds blockmaps in
+// JavaScript. This is the call it makes for its own DMG blockmaps, gzip and all,
+// so a stapled DMG gets the same blockmap the builder would have written.
+function blockMapBuilder() {
+  try {
+    return createRequire(import.meta.url)("app-builder-lib/out/targets/blockmap/blockmap").buildBlockMap;
+  } catch (error) {
+    throw new Error(`electron-builder's blockmap builder is missing (${error.message}); run npm ci`);
+  }
+}
+
+function buildBlockMap(file, output) {
+  return blockMapBuilder()(file, "gzip", output);
+}
+
+// Everything prepare needs after the forty-minute build, resolved before it.
+// 0.9.0's first prepare built, signed and notarized both DMGs, then died on a
+// blockmap tool an electron-builder upgrade had removed.
+function assertMacReleaseToolchain() {
+  builderBin();
+  assert(typeof blockMapBuilder() === "function", "electron-builder's blockmap builder is not a function");
 }
 
 async function notarizeMacDiskImages(version) {
@@ -504,7 +521,7 @@ async function notarizeMacDiskImages(version) {
     run("spctl", ["-a", "-vv", "-t", "open", "--context", "context:primary-signature", file]);
     const blockmap = `${file}.blockmap`;
     rmSync(blockmap, { force: true });
-    run(appBuilderBin(), ["blockmap", "--input", file, "--output", blockmap], { capture: true });
+    await buildBlockMap(file, blockmap);
   }
   await refreshMacFeedIntegrity(version);
 }
@@ -513,6 +530,7 @@ async function prepareMac() {
   assert(process.platform === "darwin", "macOS releases must be prepared on macOS");
   const commit = assertReleaseGitState();
   assertMacReleaseCredentials();
+  assertMacReleaseToolchain();
   run("npm", ["run", "release:preflight"]);
   rmSync(path.join(rootDir, "dist"), { recursive: true, force: true });
   try {

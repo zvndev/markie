@@ -22,6 +22,9 @@ export default defineConfig([
     // this version. Same reason as electron/ above, different folder.
     "scripts/**/*.cjs",
     "dist/**",
+    // The mobile app (apps/mobile) has its own package, tsconfig and test
+    // command, and its own copies of Capacitor's generated native projects.
+    "apps/**",
   ]),
   ...tseslint.configs.recommended,
   {

@@ -308,6 +308,9 @@ docs.get("/recent", async (c) => {
 
 // Fetch one doc with content
 docs.get("/:id", async (c) => {
+  // The document's full text, read by the desktop and the phone. Never stored
+  // by any cache, on the device or between.
+  c.header("Cache-Control", "private, no-store");
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");

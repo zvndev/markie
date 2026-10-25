@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Markie</string>
+    <string name="title_activity_main">Markie</string>
+    <string name="package_name">com.zvn.markie.mobile</string>
+    <string name="custom_url_scheme">markie-mobile</string>
+</resources>

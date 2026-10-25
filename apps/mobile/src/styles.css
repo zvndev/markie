@@ -1,0 +1,1380 @@
+/* The desktop's own stylesheet first: its tokens (painted by applyTheme), its
+   `.markdown-body` document typography, KaTeX and highlight.js. Everything
+   below is the phone's chrome, built from those same tokens. */
+@import "../../../src/app/globals.css";
+/* The one desktop component that renders here and uses utility classes. */
+@source "../../../src/components/document-format-mark.tsx";
+
+:root {
+  --sat: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --sab: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --sal: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --sar: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --m-nav-height: 44px;
+  --m-gutter: 20px;
+  --m-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --m-row-hover: color-mix(in srgb, var(--foreground) 6%, transparent);
+  --m-field-bg: color-mix(in srgb, var(--surface-2) 88%, var(--foreground) 4%);
+  --m-separator: color-mix(in srgb, var(--border) 80%, transparent);
+  --m-agent: var(--status-purple);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+:root[data-theme-tone="light"] {
+  --m-field-bg: color-mix(in srgb, var(--surface-2) 70%, var(--background));
+  --m-separator: color-mix(in srgb, var(--border) 85%, var(--background));
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overscroll-behavior: none;
+}
+
+body {
+  height: 100%;
+  font-family: var(--font-geist-sans), Roboto, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Reading and copying a document's text is the point, so it stays selectable. */
+.markdown-body,
+.m-text-doc,
+.m-selectable {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+input {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.m-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.m-boot {
+  height: 100%;
+  background: var(--background);
+}
+
+/* ── Stack and screens ─────────────────────────────────────────────────── */
+
+.m-stack {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--background);
+}
+
+.m-stack-item {
+  position: absolute;
+  inset: 0;
+  background: var(--background);
+  transition: transform 340ms var(--m-ease);
+  will-change: transform;
+}
+
+.m-stack-item:focus {
+  outline: none;
+}
+
+.m-stack-item.is-pushed {
+  box-shadow: -10px 0 30px rgb(0 0 0 / 0.16);
+  animation: m-push-in 340ms var(--m-ease) both;
+}
+
+.m-stack-item.is-under {
+  transform: translate3d(-30%, 0, 0);
+}
+
+.m-stack-item.is-under::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 0.14);
+  pointer-events: none;
+}
+
+.m-stack-item.is-leaving {
+  animation: m-push-out 280ms var(--m-ease) both;
+  z-index: 2;
+}
+
+.m-stack-item.is-hidden {
+  visibility: hidden;
+}
+
+@keyframes m-push-in {
+  from { transform: translate3d(100%, 0, 0); }
+  to { transform: translate3d(0, 0, 0); }
+}
+
+@keyframes m-push-out {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(100%, 0, 0); }
+}
+
+.m-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.m-navbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: minmax(88px, 1fr) auto minmax(88px, 1fr);
+  align-items: center;
+  height: calc(var(--m-nav-height) + var(--sat));
+  padding: var(--sat) calc(8px + var(--sar)) 0 calc(8px + var(--sal));
+  background: color-mix(in srgb, var(--background) 78%, transparent);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: 0 0.5px 0 transparent;
+  transition: box-shadow 200ms ease;
+}
+
+.m-navbar.is-scrolled {
+  box-shadow: 0 0.5px 0 var(--m-separator);
+}
+
+.m-navbar-side {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.m-navbar-trailing {
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.m-navbar-title {
+  min-width: 0;
+  max-width: 62vw;
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.m-navbar-title.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+.m-nav-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0 8px 0 0;
+  margin-left: -2px;
+  border: 0;
+  background: none;
+  color: var(--blue);
+  font-size: 17px;
+  white-space: nowrap;
+}
+
+.m-nav-back span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.m-nav-back:active,
+.m-nav-icon:active {
+  opacity: 0.45;
+}
+
+.m-nav-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: none;
+  color: var(--blue);
+}
+
+.m-screen-body {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  padding-top: calc(var(--m-nav-height) + var(--sat));
+  padding-bottom: calc(24px + var(--sab));
+}
+
+/* Android's web view draws an overlay scrollbar, and its track sits over the
+   nav bar's right edge. Neither platform's own lists show one at rest.
+   A highlighted code block scrolls in its own `code.hljs` (display: block,
+   overflow-x: auto), not only in the `pre`, so that one needs it too. */
+.m-screen-body,
+.m-markdown .m-table-scroll,
+.m-markdown pre,
+.m-markdown pre code {
+  scrollbar-width: none;
+}
+
+.m-screen-body::-webkit-scrollbar,
+.m-markdown .m-table-scroll::-webkit-scrollbar,
+.m-markdown pre::-webkit-scrollbar,
+.m-markdown pre code::-webkit-scrollbar {
+  display: none;
+}
+
+.m-screen-body.is-refreshable {
+  overscroll-behavior-y: none;
+}
+
+.m-screen-body.is-fill {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.m-screen-body.is-fill > .m-screen-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.m-screen-content {
+  padding-left: var(--sal);
+  padding-right: var(--sar);
+}
+
+.m-large-title {
+  margin: 2px 0 0;
+  padding: 0 var(--m-gutter) 8px;
+  font-size: 34px;
+  line-height: 41px;
+  font-weight: 700;
+  letter-spacing: -0.012em;
+}
+
+/* ── Pull to refresh ───────────────────────────────────────────────────── */
+
+.m-refresh {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: hidden;
+  color: var(--muted);
+  transition: height 260ms var(--m-ease);
+}
+
+.m-refresh svg {
+  margin-bottom: 14px;
+  transition: opacity 120ms linear;
+}
+
+.m-refresh.is-refreshing .m-refresh-spinner {
+  animation: m-spin 800ms linear infinite;
+}
+
+@keyframes m-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Recent list ───────────────────────────────────────────────────────── */
+
+.m-list-tools {
+  display: grid;
+  gap: 10px;
+  padding: 2px var(--m-gutter) 6px;
+}
+
+.m-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 8px 0 10px;
+  border-radius: 8px;
+  background: var(--m-field-bg);
+  color: var(--muted);
+}
+
+.m-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 17px;
+}
+
+.m-search input::placeholder {
+  color: var(--muted);
+}
+
+.m-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.m-search-clear {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+}
+
+.m-segmented {
+  display: flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--m-field-bg);
+}
+
+.m-segmented button {
+  flex: 1;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.m-segmented button.is-selected {
+  background: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
+}
+
+:root[data-theme-tone="light"] .m-segmented button.is-selected {
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(15 23 42 / 0.12), 0 0 0 0.5px rgb(15 23 42 / 0.06);
+}
+
+.m-segmented-full button {
+  min-height: 34px;
+  font-size: 14px;
+}
+
+.m-list-section {
+  margin-top: 14px;
+}
+
+.m-list-heading {
+  margin: 0;
+  padding: 6px var(--m-gutter) 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.m-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.m-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  min-height: 68px;
+  padding: 10px 12px 10px var(--m-gutter);
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.m-row::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--m-gutter) + 42px);
+  right: 0;
+  bottom: 0;
+  height: 0.5px;
+  background: var(--m-separator);
+}
+
+.m-list li:last-child .m-row::after {
+  display: none;
+}
+
+.m-row:active {
+  background: var(--m-row-hover);
+}
+
+.m-row-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.m-row-title {
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 22px;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.m-row-shared {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.m-row-time {
+  align-self: flex-start;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.m-row-chevron {
+  flex: none;
+  color: color-mix(in srgb, var(--muted) 65%, transparent);
+}
+
+.m-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  max-width: 100%;
+  padding: 1px 7px 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.m-badge-agent {
+  background: color-mix(in srgb, var(--m-agent) 15%, transparent);
+  color: var(--m-agent);
+}
+
+.m-list-more {
+  display: flex;
+  justify-content: center;
+  padding: 18px 0;
+}
+
+/* ── Empty, error and loading ──────────────────────────────────────────── */
+
+.m-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 340px;
+  margin: 56px auto 0;
+  padding: 0 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.m-empty-compact {
+  margin-top: 36px;
+}
+
+.m-empty h2 {
+  margin: 6px 0 0;
+  color: var(--foreground);
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.m-empty p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.m-empty .m-empty-detail {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.m-empty .m-button {
+  margin-top: 14px;
+}
+
+.m-inline-error {
+  margin: 8px var(--m-gutter) 0;
+  color: var(--status-red);
+  font-size: 13px;
+}
+
+.m-skeleton {
+  padding: 14px 0;
+}
+
+.m-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  height: 68px;
+  padding: 0 var(--m-gutter);
+}
+
+.m-skeleton-icon,
+.m-skeleton-lines span,
+.m-skeleton-block {
+  display: block;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%);
+  background-size: 200% 100%;
+  animation: m-shimmer 1.4s ease-in-out infinite;
+}
+
+.m-skeleton-icon {
+  width: 29px;
+  height: 35px;
+}
+
+.m-skeleton-lines {
+  display: grid;
+  flex: 1;
+  gap: 8px;
+}
+
+.m-skeleton-lines span {
+  height: 12px;
+}
+
+.m-doc-skeleton {
+  display: grid;
+  gap: 12px;
+  padding: 16px var(--m-gutter);
+}
+
+.m-skeleton-block {
+  height: 14px;
+}
+
+.m-skeleton-gap {
+  height: 10px;
+}
+
+@keyframes m-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+.m-spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: m-spin 700ms linear infinite;
+}
+
+.m-loading-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 40px 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.m-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(20px + var(--sab));
+  z-index: 50;
+  width: max-content;
+  max-width: calc(100% - 40px);
+  padding: 11px 16px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-2) 94%, var(--foreground) 6%);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.25), 0 0 0 0.5px var(--border);
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+  transform: translateX(-50%);
+  animation: m-toast-in 260ms var(--m-ease) both;
+}
+
+@keyframes m-toast-in {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ── Buttons and fields ────────────────────────────────────────────────── */
+
+.m-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 50px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 12px;
+  font-size: 17px;
+  font-weight: 600;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.m-button:active:not(:disabled) {
+  transform: scale(0.985);
+  opacity: 0.85;
+}
+
+.m-button:disabled {
+  opacity: 0.45;
+}
+
+.m-button-primary {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+.m-button-secondary {
+  background: var(--m-field-bg);
+  color: var(--foreground);
+}
+
+.m-button-destructive {
+  background: var(--status-red);
+  color: #fff;
+}
+
+:root:not([data-theme-tone="light"]) .m-button-destructive {
+  background: #dc2626;
+}
+
+.m-button-small {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+.m-link-button {
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--blue);
+  font-size: 15px;
+}
+
+.m-link-button:disabled {
+  opacity: 0.45;
+}
+
+.m-chip-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--foreground) 9%, transparent);
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.m-field {
+  display: grid;
+  gap: 6px;
+}
+
+.m-field-label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.m-field input {
+  width: 100%;
+  min-height: 50px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--foreground);
+  font-size: 17px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.m-field input:focus {
+  border-color: color-mix(in srgb, var(--blue) 70%, var(--border));
+  outline: 3px solid color-mix(in srgb, var(--blue) 22%, transparent);
+  outline-offset: 0;
+}
+
+.m-field-compact input {
+  min-height: 44px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 15px;
+}
+
+.m-field-hint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.m-code-input {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 28px !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.42em;
+  text-align: center;
+}
+
+.m-form {
+  display: grid;
+  gap: 14px;
+}
+
+.m-form-error {
+  margin: -4px 0 0;
+  color: var(--status-red);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.m-form-info {
+  margin: -4px 0 0;
+  color: var(--status-green);
+  font-size: 14px;
+}
+
+.m-form-row {
+  display: flex;
+  justify-content: space-between;
+}
+
+/* ── Sign in ───────────────────────────────────────────────────────────── */
+
+.m-signin-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: calc(56px + var(--sat)) calc(24px + var(--sar)) calc(32px + var(--sab)) calc(24px + var(--sal));
+}
+
+.m-signin-scroll > * {
+  max-width: 420px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.m-signin-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 28px;
+  text-align: center;
+}
+
+.m-signin-hero h1 {
+  margin: 22px 0 8px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.m-signin-hero p {
+  max-width: 320px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+.m-signin-hero strong {
+  color: var(--foreground);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.m-mark {
+  display: inline-block;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.22), 0 0 0 0.5px rgb(255 255 255 / 0.06) inset;
+}
+
+.m-mark svg {
+  display: block;
+}
+
+.m-callout {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.m-callout svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--blue);
+}
+
+.m-advanced {
+  margin-top: 10px;
+  border-top: 0.5px solid var(--m-separator);
+}
+
+.m-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  font-size: 15px;
+}
+
+.m-advanced-value {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.m-advanced-chevron {
+  color: var(--muted);
+  transition: transform 200ms var(--m-ease);
+}
+
+.m-advanced-toggle[aria-expanded="true"] .m-advanced-chevron {
+  transform: rotate(90deg);
+}
+
+/* ── Settings ──────────────────────────────────────────────────────────── */
+
+.m-settings .m-screen-content {
+  padding-left: calc(16px + var(--sal));
+  padding-right: calc(16px + var(--sar));
+}
+
+.m-settings .m-large-title {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.m-group-heading {
+  margin: 22px 0 7px;
+  padding: 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.m-group {
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+:root[data-theme-tone="light"] .m-group {
+  background: #fff;
+  box-shadow: 0 0 0 0.5px var(--m-separator);
+}
+
+.m-group-padded {
+  padding: 8px;
+}
+
+.m-group-spaced {
+  margin-top: 32px;
+}
+
+.m-group-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 48px;
+  padding: 10px 16px;
+  font-size: 17px;
+}
+
+.m-group-row + .m-group-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  height: 0.5px;
+  background: var(--m-separator);
+}
+
+.m-group-label {
+  flex: none;
+}
+
+.m-group-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-mono {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 15px;
+}
+
+.m-group-footer {
+  margin: 8px 16px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.m-group-action {
+  width: 100%;
+  min-height: 50px;
+  border: 0;
+  background: none;
+  font-size: 17px;
+}
+
+.m-group-action:active {
+  background: var(--m-row-hover);
+}
+
+.m-destructive {
+  color: var(--status-red);
+}
+
+.m-confirm {
+  padding: 16px;
+}
+
+.m-confirm p {
+  margin: 0 0 14px;
+  font-size: 15px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.m-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* ── Document ──────────────────────────────────────────────────────────── */
+
+.m-doc-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px var(--m-gutter) 4px;
+  padding-bottom: 14px;
+  border-bottom: 0.5px solid var(--m-separator);
+}
+
+.m-doc-meta-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.m-doc-meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.m-doc-private {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* The desktop's document typography, set for a phone: a size and measure
+   for reading at arm's length, and wide content (tables, code, equations)
+   scrolling sideways inside the page instead of widening it. */
+.m-markdown {
+  padding: 18px var(--m-gutter) 40px;
+  font-size: 17px;
+  line-height: 1.6;
+  /* A document's HTML keeps inline style on some blocks (the shared
+     sanitizer, src/lib/markdown-html.ts). This box is where all of it ends:
+     paint is clipped to the article, a position: fixed or absolute element
+     is placed against the article rather than the screen, and no z-index
+     inside can climb above the nav bar or a toast. */
+  position: relative;
+  isolation: isolate;
+  contain: paint;
+  /* clip, not hidden: hidden makes the article a scroll container, and an
+     in-page link to a target past its edge scrolled the article sideways. */
+  overflow: clip;
+}
+
+.m-markdown h1 {
+  font-size: 1.7em;
+  line-height: 1.2;
+  margin-top: 0.4em;
+}
+
+.m-markdown h2 {
+  font-size: 1.35em;
+  line-height: 1.25;
+}
+
+.m-markdown h3 {
+  font-size: 1.15em;
+}
+
+/* Each table sits in a scroller (document-html.ts wraps it), so the table
+   itself stays a table: it spans the column, its header band runs the full
+   width, and a table wider than the phone scrolls sideways inside it. */
+.m-markdown .m-table-scroll {
+  margin: 1em 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.m-markdown .m-table-scroll > table {
+  display: table;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  font-size: 0.88em;
+}
+
+.m-markdown th,
+.m-markdown td {
+  overflow-wrap: normal;
+}
+
+.m-markdown pre {
+  margin-left: 0;
+  margin-right: 0;
+  font-size: 0.92em;
+}
+
+/* A synced picture while it loads: a calm block, with no alt text and no
+   broken-image border. The picture takes its own size once it arrives. */
+.m-markdown img[data-markie-asset-state="loading"] {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: 8px;
+  background: var(--m-field-bg);
+  color: transparent;
+  font-size: 0;
+  overflow: hidden;
+  /* An img with no src draws a broken-image icon on Android. Replacing its
+     content with an empty image leaves only the block. */
+  content: linear-gradient(transparent, transparent);
+}
+
+.m-markdown .m-asset-missing {
+  display: block;
+  margin: 1em 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--m-field-bg);
+  color: var(--muted);
+  font-size: 0.82em;
+  line-height: 1.4;
+}
+
+.m-markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+
+.m-markdown img {
+  height: auto;
+}
+
+.m-markdown a {
+  -webkit-touch-callout: default;
+}
+
+/* github-dark's token colors are made for a dark page. On the light page
+   they take github's own light palette, so code stays legible. */
+:root[data-theme-tone="light"] .m-markdown .hljs-doctag,
+:root[data-theme-tone="light"] .m-markdown .hljs-keyword,
+:root[data-theme-tone="light"] .m-markdown .hljs-meta .hljs-keyword,
+:root[data-theme-tone="light"] .m-markdown .hljs-template-variable,
+:root[data-theme-tone="light"] .m-markdown .hljs-template-tag,
+:root[data-theme-tone="light"] .m-markdown .hljs-type,
+:root[data-theme-tone="light"] .m-markdown .hljs-variable.language_ { color: #cf222e; }
+:root[data-theme-tone="light"] .m-markdown .hljs-title,
+:root[data-theme-tone="light"] .m-markdown .hljs-title.class_,
+:root[data-theme-tone="light"] .m-markdown .hljs-title.function_ { color: #8250df; }
+:root[data-theme-tone="light"] .m-markdown .hljs-attr,
+:root[data-theme-tone="light"] .m-markdown .hljs-attribute,
+:root[data-theme-tone="light"] .m-markdown .hljs-literal,
+:root[data-theme-tone="light"] .m-markdown .hljs-meta,
+:root[data-theme-tone="light"] .m-markdown .hljs-number,
+:root[data-theme-tone="light"] .m-markdown .hljs-operator,
+:root[data-theme-tone="light"] .m-markdown .hljs-selector-attr,
+:root[data-theme-tone="light"] .m-markdown .hljs-selector-class,
+:root[data-theme-tone="light"] .m-markdown .hljs-selector-id,
+:root[data-theme-tone="light"] .m-markdown .hljs-variable { color: #0550ae; }
+:root[data-theme-tone="light"] .m-markdown .hljs-string,
+:root[data-theme-tone="light"] .m-markdown .hljs-regexp,
+:root[data-theme-tone="light"] .m-markdown .hljs-meta .hljs-string { color: #0a3069; }
+:root[data-theme-tone="light"] .m-markdown .hljs-built_in,
+:root[data-theme-tone="light"] .m-markdown .hljs-symbol { color: #953800; }
+:root[data-theme-tone="light"] .m-markdown .hljs-comment,
+:root[data-theme-tone="light"] .m-markdown .hljs-code,
+:root[data-theme-tone="light"] .m-markdown .hljs-formula { color: #57606a; }
+:root[data-theme-tone="light"] .m-markdown .hljs-name,
+:root[data-theme-tone="light"] .m-markdown .hljs-quote,
+:root[data-theme-tone="light"] .m-markdown .hljs-selector-tag,
+:root[data-theme-tone="light"] .m-markdown .hljs-selector-pseudo { color: #116329; }
+:root[data-theme-tone="light"] .m-markdown .hljs-subst,
+:root[data-theme-tone="light"] .m-markdown .hljs-emphasis,
+:root[data-theme-tone="light"] .m-markdown .hljs-strong { color: #1f2328; }
+:root[data-theme-tone="light"] .m-markdown .hljs-section { color: #0550ae; font-weight: 700; }
+:root[data-theme-tone="light"] .m-markdown .hljs-bullet { color: #953800; }
+:root[data-theme-tone="light"] .m-markdown .hljs-addition { color: #116329; background-color: #dafbe1; }
+:root[data-theme-tone="light"] .m-markdown .hljs-deletion { color: #82071e; background-color: #ffebe9; }
+
+.m-text-doc {
+  margin: 0;
+  padding: 18px var(--m-gutter) 40px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Darkmown: the trust choice above a frame that scrolls itself. */
+.m-wd {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px var(--m-gutter) calc(12px + var(--sab));
+  gap: 10px;
+}
+
+.m-wd-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 0 0 0.5px var(--m-separator);
+}
+
+.m-wd-card-text {
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.m-wd-card-text strong {
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.m-wd-card .m-button {
+  justify-self: start;
+}
+
+.m-wd-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--status-green) 12%, transparent);
+  color: var(--status-green);
+}
+
+.m-wd-bar-text {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  min-width: 0;
+  color: var(--foreground);
+  font-size: 14px;
+}
+
+.m-wd-bar-text strong {
+  color: var(--status-green);
+}
+
+.m-wd-warning {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--status-yellow) 12%, transparent);
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* As tall as the document (darkmown-view.tsx sets the height once it is
+   measured), never shorter than a useful frame, never taller than the screen:
+   a long one shrinks to fit and scrolls inside itself. */
+.m-wd-frame-wrap {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 200px;
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: 0 0 0 0.5px var(--m-separator);
+  background: light-dark(#fff, #18181b);
+}
+
+.m-wd-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  border: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.m-wd-frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m-stack-item,
+  .m-stack-item.is-pushed,
+  .m-stack-item.is-leaving,
+  .m-navbar-title,
+  .m-refresh,
+  .m-toast {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .m-skeleton-icon,
+  .m-skeleton-lines span,
+  .m-skeleton-block {
+    animation: none;
+  }
+}
+
+/* GFM's footnote back link is "↩", which iOS draws as a color emoji. */
+.m-markdown .data-footnote-backref {
+  font-size: 0;
+  border: 0;
+}
+
+.m-markdown .data-footnote-backref::after {
+  content: "↑";
+  font-size: 15px;
+  font-weight: 600;
+}

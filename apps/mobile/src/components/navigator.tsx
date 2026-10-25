@@ -84,11 +84,23 @@ export function Navigator({ entries, onPop }: NavigatorProps) {
     }
   }
 
+  // Focus follows the top screen. The screen underneath turns inert, and a
+  // focused control inside it would otherwise leave screen readers (and
+  // Android's WebView accessibility tree) pointing at nothing.
+  const stackRef = useRef<HTMLDivElement>(null);
+  const topKey = entries[entries.length - 1]?.key;
+  const firstTop = useRef(true);
+  useEffect(() => {
+    if (firstTop.current) { firstTop.current = false; return; }
+    const items = stackRef.current?.querySelectorAll<HTMLElement>(":scope > .m-stack-item:not([inert])");
+    items?.[items.length - 1]?.focus({ preventScroll: true });
+  }, [topKey]);
+
   const shown = leaving ? [...entries, leaving] : entries;
   const topIndex = shown.length - 1;
 
   return (
-    <div className="m-stack" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={() => { gesture.current = null; setDrag(null); }}>
+    <div ref={stackRef} className="m-stack" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={() => { gesture.current = null; setDrag(null); }}>
       {shown.map((entry, index) => {
         const isTop = index === topIndex;
         const isUnder = index === topIndex - 1;
@@ -112,6 +124,7 @@ export function Navigator({ entries, onPop }: NavigatorProps) {
             style={style}
             aria-hidden={!isTop || isLeaving ? true : undefined}
             inert={!isTop || isLeaving ? true : undefined}
+            tabIndex={-1}
           >
             {entry.node}
           </div>

@@ -147,7 +147,8 @@ export function SignInScreen({ transport, initialOrigin, pendingLink, notice, on
                     value={originDraft}
                     onChange={(e) => setOriginDraft(e.target.value)}
                     // An address is replaced far more often than edited.
-                    onFocus={(e) => e.currentTarget.select()}
+                    // Deferred: Android places the caret after focus, which would undo it.
+                    onFocus={(e) => { const field = e.currentTarget; setTimeout(() => field.select(), 60); }}
                     onBlur={() => { if (originDraft.trim()) commitOrigin(); }}
                     disabled={busy}
                   />

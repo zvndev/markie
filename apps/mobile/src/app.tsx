@@ -17,7 +17,7 @@ import {
 import { createSessionStore, type SecureKeyValue, type StoredSession } from "./lib/session";
 import { loadPreferredOrigin, savePreferredOrigin } from "./lib/server-origin";
 import { loadThemeMode, paintTone, resolveTone, saveThemeMode, systemPrefersDark, type ThemeMode } from "./lib/theme-mode";
-import { setSystemBars } from "./lib/native";
+import { openExternal, setSystemBars } from "./lib/native";
 import { Navigator, type StackEntry } from "./components/navigator";
 import { SignInScreen } from "./screens/sign-in";
 import { clearRecentCache, RecentScreen } from "./screens/recent";
@@ -138,7 +138,13 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     if (lastUrl.current && lastUrl.current.url === url && now - lastUrl.current.at < 3000) return;
     lastUrl.current = { url, at: now };
     const target = parseMarkieLink(url, sessionRef.current?.origin ?? null);
-    if (!target) { showToast("That link isn't a Markie document link."); return; }
+    if (!target) {
+      // Android app links can only claim path prefixes, so a /d/<id>/raw or
+      // download link lands here too. The browser is where it belongs.
+      if (/^https:/i.test(url)) { void openExternal(url).catch(() => undefined); return; }
+      showToast("That link isn't a Markie document link.");
+      return;
+    }
     if (!sessionRef.current) {
       const storage = pendingStorage();
       if (storage) rememberPendingLink(target, storage);

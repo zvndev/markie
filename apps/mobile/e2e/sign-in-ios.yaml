@@ -1,0 +1,18 @@
+# Signs in against dev/mock-server.mjs on port 8790 (code 123456).
+appId: com.zvn.markie.mobile
+---
+- launchApp:
+    stopApp: true
+- tapOn: "you@example.com"
+- inputText: "kirby@example.com"
+- tapOn: "Sign in to Markie"
+- tapOn: "Advanced.*"
+- tapOn: "https?://.*"
+- inputText: "http://localhost:8790"
+- tapOn: "Send code"
+- assertVisible: "Check your email"
+- inputText: "123456"
+- tapOn: "Sign in"
+- extendedWaitUntil:
+    visible: ".*Launch brief.*"
+    timeout: 10000

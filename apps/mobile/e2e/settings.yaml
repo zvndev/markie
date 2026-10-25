@@ -1,0 +1,25 @@
+# Screenshots Settings, signs out, and screenshots Sign in. A fresh launch,
+# because after a document screen is popped, Android's WebView can hand Maestro
+# a stale accessibility tree until the next touch.
+# Run with: maestro --device <id> test -e OUT=<dir> -e NAME=ios-light e2e/settings.yaml
+appId: com.zvn.markie.mobile
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: ".*Launch brief.*"
+    timeout: 15000
+- tapOn: "Settings"
+- extendedWaitUntil:
+    visible: "Sign out"
+    timeout: 10000
+# Follow the device's appearance, which screenshots.sh sets per pass.
+- tapOn: "System"
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-7-settings
+- tapOn: "Sign out"
+- tapOn: "Sign out"
+- extendedWaitUntil:
+    visible: "Sign in to Markie"
+    timeout: 10000
+- takeScreenshot: ${OUT}/${NAME}-1-sign-in

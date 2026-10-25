@@ -1,0 +1,22 @@
+# Signs in against dev/mock-server.mjs on port 8790 (code 123456). 10.0.2.2 is the emulator's name for the host.
+appId: com.zvn.markie.mobile
+---
+- launchApp:
+    stopApp: true
+- tapOn:
+    text: "Email"
+    index: 1
+- inputText: "kirby@example.com"
+- tapOn: "Sign in to Markie"
+- tapOn: "Advanced.*"
+- tapOn: "https?://.*"
+- inputText: "http://10.0.2.2:8790"
+- tapOn: "Send code"
+- extendedWaitUntil:
+    visible: "Check your email"
+    timeout: 10000
+- inputText: "123456"
+- tapOn: "Sign in"
+- extendedWaitUntil:
+    visible: ".*Launch brief.*"
+    timeout: 10000

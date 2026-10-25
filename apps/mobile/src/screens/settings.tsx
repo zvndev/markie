@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import type { StoredSession } from "../lib/session";
-import { serverLabel } from "../lib/server-origin";
+import { isMarkieCloud, serverLabel } from "../lib/server-origin";
 import { haptics } from "../lib/native";
 import type { ThemeMode } from "../lib/theme-mode";
 import { Screen } from "../components/screen";
@@ -51,7 +51,7 @@ export function SettingsScreen({ session, themeMode, onThemeMode, onSignOut, onB
       <h2 className="m-group-heading">Server</h2>
       <div className="m-group">
         <div className="m-group-row">
-          <span className="m-group-label">{serverLabel(session.origin)}</span>
+          <span className="m-group-label">{isMarkieCloud(session.origin) ? serverLabel(session.origin) : "Your server"}</span>
           <span className="m-group-value m-selectable m-mono">{new URL(session.origin).host}</span>
         </div>
       </div>

@@ -97,6 +97,10 @@ input {
   will-change: transform;
 }
 
+.m-stack-item:focus {
+  outline: none;
+}
+
 .m-stack-item.is-pushed {
   box-shadow: -10px 0 30px rgb(0 0 0 / 0.16);
   animation: m-push-in 340ms var(--m-ease) both;
@@ -1279,4 +1283,16 @@ input {
   .m-skeleton-block {
     animation: none;
   }
+}
+
+/* GFM's footnote back link is "↩", which iOS draws as a color emoji. */
+.m-markdown .data-footnote-backref {
+  font-size: 0;
+  border: 0;
+}
+
+.m-markdown .data-footnote-backref::after {
+  content: "↑";
+  font-size: 15px;
+  font-weight: 600;
 }

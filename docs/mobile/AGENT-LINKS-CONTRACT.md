@@ -92,9 +92,20 @@ existing columns.
   - `created_at INTEGER NOT NULL`, `last_used_at INTEGER` and `revoked_at INTEGER`.
 - Token format: `mk_agent_` followed by 32 random bytes in base64url. It's compared by hash with
   `timingSafeEqual`.
-- Minting a token sends the account's email a notice naming the token. That uses the existing
-  `server/src/email.ts`, and a send failure never blocks the mint. A password reset or change
-  revokes all of the user's agent tokens.
+- Minting a token sends the account's email a plain-text notice. It names the token by its prefix
+  and the time it was created only; the token's name is never in it, because a mail client may turn
+  a name like `evil.com/login` into a link. It ends with a fixed line: "Markie never creates agent
+  tokens on its own. If you didn't make this one, revoke it in Markie and reset your password,
+  which signs out every other device." A name containing `://` or `www.` is still refused with a
+  400, since names show in the token list. The notice uses the existing `server/src/email.ts`, and
+  a send failure never blocks the mint.
+- A password reset or change revokes all of the user's agent tokens. As a backstop that cannot fail
+  open, a token whose `created_at` is earlier than the `updatedAt` of the user's credential account
+  row is refused. better-auth stamps that row on every password write and on nothing else.
+- A password reset also ends every session the user has (`revokeSessionsOnPasswordReset`), so a
+  stolen session cannot mint again; the client signs back in with the new password. A password
+  change ends every session except the caller's: the one it came with, or the new one better-auth
+  issues when the caller asks for `revokeOtherSessions`. Other devices sign in again.
 
 ## Server API
 
@@ -133,6 +144,8 @@ document. It's ignored on every later version.
 
 - `POST /api/agent-tokens {name}` returns `201 {id, name, token, prefix, createdAt}`. The token is
   shown exactly once. A user can have at most 20 active tokens.
+- A user can mint at most 5 tokens an hour and 20 a day, revoked ones included, because each mint
+  sends an email. Over that returns 429 with `Retry-After`, checked before anything is inserted.
 - `GET /api/agent-tokens` returns `{tokens: [{id, name, prefix, createdAt, lastUsedAt}]}`, never
   the token itself.
 - `DELETE /api/agent-tokens/:id` revokes immediately. It returns 204, and also returns 204 for a
@@ -144,8 +157,9 @@ An agent token can create documents, and read and update **only the documents th
 created** (`origin_token_id` equals the token's id, the owner matches, and the document isn't
 deleted). It can't reach documents made by the user's other tokens, documents a local agent synced
 through the desktop (which carry `origin_kind='agent'` for the badge, but no `origin_token_id`), or
-anything else. A leaked token exposes only what it wrote itself. Revoking a token leaves its
-documents in place, owned by the user, and unreachable by any token.
+anything else. A leaked token exposes the documents it created, and edits the owner makes to them
+while they stay private. Nothing shared, and nothing synced from the Mac. Revoking a token leaves
+its documents in place, owned by the user, and unreachable by any token.
 
 This was ruled on 2026-10-25, after review found that the earlier wording ("documents created
 through agent tokens of the same user") let any token reach every bridge-synced document.
@@ -160,15 +174,27 @@ through agent tokens of the same user") let any token reach every bridge-synced 
 - `PUT /api/agent/docs/:id {content, name?, baseVersion?}` returns
   `{id, version, privateLink, markdownLink}`. It returns 409 on a version conflict, and 404 for
   any document outside the rule above. That 404 looks exactly like "no such document".
-- `GET /api/agent/docs?limit=` returns metadata for this token's documents, newest first.
-- **Shared or public documents are frozen to tokens.** A `PUT` from a token on a document that has
-  any share, pending invite or public link returns 409 `{error: "shared"}`, with a message telling
-  the agent to create a new document instead. Reads still work.
+- `GET /api/agent/docs?limit=` returns metadata for this token's documents that it can still read,
+  newest first. A document with an audience (below) is left out of the list entirely.
+- **Shared or public documents are closed to tokens.** Once a document has any share, pending
+  invite or public link, a `PUT` from a token returns 409 `{error: "shared"}`, with a message
+  telling the agent to create a new document instead. `GET /api/agent/docs/:id` returns the same
+  404 as an unreachable document, and the list leaves it out. While a document has no audience,
+  the token reads it in full, including edits the owner made; annotating for the agent is the
+  intended workflow. Removing the last share or link makes it readable again.
 - **Per-user budget for agent writes**, across all of the user's tokens: 200 writes an hour and
-  50 MB of written content a day. Over budget returns 429. Quota errors never reveal the account's
-  total usage to a token holder.
+  50 MB of written content a day. Over budget returns 429 with a constant `Retry-After`: 3600 for
+  the hourly writes, 86400 for the bytes, never the exact moment other tokens' usage ages out.
+  Quota errors never reveal the account's total usage to a token holder.
+- **Per-token byte share**: each token can write at most 20 MB of content a day inside the user's
+  50 MB. Over that returns 429 with that token's exact `Retry-After`.
+- Revoking a token removes its entries from the user's hourly write and daily byte windows, so the
+  user's other tokens get that share back. A password reset or change, which revokes every token,
+  empties the user's windows, so the first token minted after securing the account has the whole
+  budget. Only a signed-in session can do either.
 - `GET /api/agent/docs/:id` returns content, under the same rule.
-- Rate limit: 60 writes per hour per token, answered with 429.
+- Rate limit: 60 writes per hour per token, answered with 429 and that token's exact
+  `Retry-After`.
 - `last_used_at` is updated at most once a minute.
 
 ### Hosted MCP: `POST /mcp`

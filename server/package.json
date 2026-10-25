@@ -10,6 +10,7 @@
     "dev": "node --watch --experimental-strip-types src/index.ts",
     "start": "node --experimental-strip-types src/index.ts",
     "migrate": "npx @better-auth/cli@latest migrate --config src/auth.ts -y",
+    "guide:sync": "node scripts/sync-markdown-guide.mjs",
     "test": "node --experimental-strip-types --test \"src/**/*.test.ts\""
   },
   "dependencies": {

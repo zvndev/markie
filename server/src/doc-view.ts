@@ -28,6 +28,7 @@ import { assetRefsFor, assetVersion, serveAsset } from "./assets.ts";
 import { deployment } from "./deployment.ts";
 import { renderAccessRequiredPage, renderSharedDocPage } from "./render.ts";
 import { webSignInHref } from "./web-signin.ts";
+import { downloadFilename } from "./doc-meta.ts";
 
 const db = openDatabase();
 
@@ -42,13 +43,14 @@ interface DocRow {
   name: string;
   content: string;
   owner_id: string;
+  format: string;
 }
 
 function loadDoc(docId: string): DocRow | null {
   return (
     (db
       .prepare(
-        "SELECT id, name, content, owner_id FROM docs WHERE id = ? AND deleted_at IS NULL"
+        "SELECT id, name, content, owner_id, format FROM docs WHERE id = ? AND deleted_at IS NULL"
       )
       .get(docId) as DocRow | undefined) ?? null
   );
@@ -169,6 +171,8 @@ docView.get("/d/:id", async (c) => {
       invitedEmail: viewer.invitedEmail ?? null,
       assetUrlFor,
       docLinkFor: sharedPageLinkFor(docId, viewer.userId ?? null),
+      // A Darkmown document never runs on the web: render.ts shows its source.
+      format: doc.format,
     })
   );
 });
@@ -184,10 +188,7 @@ docView.get("/d/:id/raw", async (c) => {
   const doc = loadDoc(docId);
   if (!doc) return c.text("Not found", 403);
 
-  const cleaned = doc.name.replace(/[\r\n"\\]/g, "").trim() || "document";
-  const filename = cleaned.toLowerCase().endsWith(".md")
-    ? cleaned
-    : `${cleaned}.md`;
+  const filename = downloadFilename(doc.name, doc.format);
   const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_");
   c.header("Content-Type", "text/markdown; charset=utf-8");
   c.header("Cache-Control", "private, no-store");

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Markie's light and dark backgrounds (src/lib/theme.ts), so launch never flashes. -->
+    <color name="markie_background">#F8FAFC</color>
+</resources>

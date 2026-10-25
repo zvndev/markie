@@ -1,7 +1,7 @@
 // The document size tiers, as the page honours them (src/lib/doc-tiers.ts).
 // Main decides from a stat and the payload carries the decision; this suite
 // pins what the renderer does with it.
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, configure, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElectronAPI } from "@/lib/electron";
@@ -37,6 +37,12 @@ vi.mock("@/lib/doc-tiers", async (importOriginal) => {
 
 import { clearReconstructionCache, startReconstructionJob } from "@/lib/rich-safety";
 import Home from "./page";
+
+// The rich editor mounts lazily, and on a loaded CI runner that has taken past
+// waitFor's default one second (line 127 of the Rich-shortcut test). Each test
+// waits on several mounts in a row, so it needs more than vitest's five too.
+configure({ asyncUtilTimeout: 5000 });
+vi.setConfig({ testTimeout: 20_000 });
 
 const probe = vi.mocked(startReconstructionJob);
 

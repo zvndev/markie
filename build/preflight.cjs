@@ -17,6 +17,7 @@ const { existsSync, mkdtempSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { launchErrors, describeLaunchErrors } = require("./launch-errors.cjs");
 
 const WINDOW_TIMEOUT_MS = 40000;
 // An Intel build on an Apple Silicon host runs under Rosetta, and the first
@@ -172,7 +173,19 @@ async function afterPack(context) {
   }
 
   try { process.kill(-child.pid, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch {} }
+  // Read before the profile goes: main.js logs a startup throw there and keeps
+  // running, so without this a missing module reads as "no window within 40s".
+  const startupErrors = launchErrors(profileDir);
   rmSync(profileDir, { recursive: true, force: true });
+
+  if (startupErrors.length) {
+    throw new Error(
+      `[preflight] HARD STOP — release aborted.\n` +
+        `  ${appName}'s main process threw while starting${ok ? " (the window still came up)" : ""}:\n` +
+        `${describeLaunchErrors(startupErrors)}\n` +
+        `  Fix and re-run the release; nothing was published.`
+    );
+  }
 
   if (!ok) {
     throw new Error(

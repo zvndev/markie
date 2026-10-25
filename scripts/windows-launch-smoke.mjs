@@ -7,6 +7,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
+import { createRequire } from "node:module";
+
+const { launchErrors, describeLaunchErrors } = createRequire(import.meta.url)("../build/launch-errors.cjs");
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("windows-launch-smoke", import.meta.url);
@@ -360,6 +363,12 @@ export async function runWindowsLaunchSmoke({
     );
     cdp = connected.cdp;
     const renderer = await probeRenderer(cdp, timeoutMs);
+    // main.js logs a startup throw and keeps going, so a window can come up on a
+    // main process that never finished loading. That is a failed launch.
+    const startupErrors = launchErrors(tempUserDataDir);
+    if (startupErrors.length) {
+      throw new Error(`the main process threw while starting:\n${describeLaunchErrors(startupErrors)}`);
+    }
     const screenshotPng = await capturePageScreenshot(cdp);
     const artifact = buildWindowsLaunchSmokeArtifact({
       baseDir,
@@ -377,6 +386,12 @@ export async function runWindowsLaunchSmoke({
       },
     });
     return await writeArtifact(baseDir, artifact, screenshotPng);
+  } catch (error) {
+    const startupErrors = launchErrors(tempUserDataDir);
+    if (startupErrors.length && !String(error.message).includes("threw while starting")) {
+      error.message += `\nthe main process threw while starting:\n${describeLaunchErrors(startupErrors)}`;
+    }
+    throw error;
   } finally {
     cdp?.close();
     killWindowsProcessTree(child.pid);

@@ -369,6 +369,13 @@ This command:
    acceptance, DMG stapling, sizes, updater-feed contents, blockmaps, and SHA-512 hashes;
 6. writes ignored evidence to `.release/<version>/local.json` for the exact commit.
 
+The launch smoke fails on a main-process throw even when a window comes up. `main.js` logs
+`uncaughtException` and `unhandledRejection` to `markie-crash.log` and keeps running, so every launch
+gate reads that log from its throwaway profile and prints the error. The same launch runs on every
+PR as the required `mac-launch-smoke` and `launch-smoke` (Windows) checks. A packaging bug therefore
+fails the PR that causes it, not the release. 0.9.0 reached this gate with a module missing from the
+public asar because nothing had launched the public Mac build before it.
+
 Passing `release:preflight` alone does **not** mean an artifact is signed, notarized, published,
 uploaded, deployed, or approved. `release:prepare:mac` is the complete local gate.
 

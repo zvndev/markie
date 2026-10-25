@@ -8,15 +8,16 @@
 // every request. Written in the style of the dependency-free mcp/markie-mcp.mjs.
 //
 // Every tool goes through agent-docs.ts, the same functions the REST routes
-// use, so the one rule holds here too: a token reaches only documents agents
-// of its own user created.
+// use, so the one rule holds here too: a token reaches only the documents it
+// created itself.
 import { Hono, type Context } from "hono";
-import { authenticateAgent, type AgentPrincipal } from "./agent-tokens.ts";
+import { type AgentPrincipal } from "./agent-tokens.ts";
 import {
   AGENT_LIST_MAX,
   PASTE_INSTRUCTION,
-  UNAUTHORIZED_CHALLENGE,
+  agentAuth,
   chargeAgentWrite,
+  type AgentEnv,
   createAgentDoc,
   listAgentDocs,
   readAgentDoc,
@@ -28,10 +29,11 @@ import { SERVER_VERSION } from "./deployment.ts";
 // the server's build context does not include mcp/.
 import { MARKDOWN_GUIDE } from "./generated/markdown-guide.mjs";
 
+// The one protocol version this endpoint speaks. initialize always answers
+// with it, which per the MCP handshake tells a client asking for another one
+// to disconnect, and a request whose MCP-Protocol-Version header names any
+// other version is refused.
 export const PROTOCOL_VERSION = "2025-06-18";
-// Versions this endpoint can speak. A client asking for one of these gets it
-// back; anything else is offered PROTOCOL_VERSION, per the MCP handshake.
-const SUPPORTED_VERSIONS = new Set([PROTOCOL_VERSION, "2025-03-26"]);
 
 const INSTRUCTIONS = [
   "Markie Cloud: write documents into the user's private Markie Cloud and hand them a link.",
@@ -59,7 +61,7 @@ const TOOLS = [
   {
     name: "markie_update_document",
     description:
-      "Replace the full text of a document you created with markie_create_document (any agent using this account's agent tokens). Other documents in the user's Markie Cloud are not reachable and answer not found. " +
+      "Replace the full text of a document this agent token created with markie_create_document. Other documents in the user's Markie Cloud are not reachable and answer not found. A document the user has shared can no longer be changed: create a new one instead. " +
       PASTE_INSTRUCTION,
     inputSchema: {
       type: "object",
@@ -74,7 +76,7 @@ const TOOLS = [
   {
     name: "markie_list_my_documents",
     description:
-      "List documents agents created in this user's Markie Cloud, newest first, with privateLink and markdownLink for each. Documents the user made in the app are not listed.",
+      "List the documents this agent token created in the user's Markie Cloud, newest first, with privateLink and markdownLink for each. Nothing else in the user's Markie Cloud is listed.",
     inputSchema: {
       type: "object",
       properties: { limit: { type: "number", description: `Max results (default 50, max ${AGENT_LIST_MAX})` } },
@@ -83,7 +85,7 @@ const TOOLS = [
   },
   {
     name: "markie_read_my_document",
-    description: "Read the full text of a document an agent created, by id.",
+    description: "Read the full text of a document this agent token created, by id.",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string", description: "The document id" } },
@@ -116,11 +118,16 @@ class RpcError extends Error {
 
 const toolError = (text: string): ToolOutcome => ({ content: [{ type: "text", text }], isError: true });
 
-// A refusal from agent-docs.ts as a tool error the model can act on.
+// A refusal from agent-docs.ts as a tool error the model can act on: the
+// sentence as text, and the same body the REST route answers with (for
+// example {error: "shared", message}) as structured content.
 function fromResult<T extends object>(result: AgentResult<T>, links: boolean): ToolOutcome {
   if (!result.ok) {
     const { error, message } = result.body;
-    return toolError(`Error: ${message ?? error}${result.status === 404 ? " (no such document among the ones agents created)" : ""}`);
+    return {
+      ...toolError(`Error: ${message ?? error}${result.status === 404 ? " (no such document among the ones this agent token created)" : ""}`),
+      structuredContent: { ...result.body },
+    };
   }
   const data = result.data as Record<string, unknown>;
   const text = JSON.stringify(data, null, 2) + (links ? `\n\n${PASTE_INSTRUCTION}` : "");
@@ -156,9 +163,8 @@ function runTool(agent: AgentPrincipal, name: unknown, args: Record<string, unkn
 function handle(agent: AgentPrincipal, method: string, params: unknown): unknown {
   switch (method) {
     case "initialize": {
-      const asked = isObject(params) ? params.protocolVersion : undefined;
       return {
-        protocolVersion: typeof asked === "string" && SUPPORTED_VERSIONS.has(asked) ? asked : PROTOCOL_VERSION,
+        protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "markie-cloud", title: "Markie Cloud", version: SERVER_VERSION },
         instructions: INSTRUCTIONS,
@@ -181,26 +187,26 @@ function handle(agent: AgentPrincipal, method: string, params: unknown): unknown
 
 const rpcError = (id: JsonRpcId, code: number, message: string) => ({ jsonrpc: "2.0", id, error: { code, message } });
 
-export const mcpApi = new Hono();
+// The token check, answering in JSON-RPC's shape. index.ts runs it ahead of
+// the body limit on POST /mcp, so a caller without a live token is answered
+// from its headers alone and no body is read on its behalf, chunked bodies
+// included; the router runs it again for when it is mounted on its own.
+export const mcpAuth = agentAuth((c) => c.json(rpcError(null, -32001, "Unauthorized: send Authorization: Bearer mk_agent_..."), 401));
+
+export const mcpApi = new Hono<AgentEnv>();
 
 mcpApi.use("*", async (c, next) => {
   c.header("Cache-Control", "private, no-store");
   await next();
 });
 
-function unauthorized(c: Context): Response {
-  c.header("WWW-Authenticate", UNAUTHORIZED_CHALLENGE);
-  return c.json(rpcError(null, -32001, "Unauthorized: send Authorization: Bearer mk_agent_..."), 401);
-}
+mcpApi.post("/", mcpAuth, async (c) => {
+  const agent = c.get("agent")!;
 
-mcpApi.post("/", async (c) => {
-  // The token is checked before the body is read, so an anonymous caller
-  // never has a body buffered on its behalf.
-  const agent = authenticateAgent(c.req.raw.headers);
-  if (!agent) return unauthorized(c);
-
+  // Absent is allowed: a client sends the header only after initialize, and
+  // there is no session here to remember what initialize agreed.
   const version = c.req.header("mcp-protocol-version");
-  if (version !== undefined && !SUPPORTED_VERSIONS.has(version)) {
+  if (version !== undefined && version !== PROTOCOL_VERSION) {
     return c.json(rpcError(null, -32600, `Unsupported MCP-Protocol-Version: ${version.slice(0, 40)}`), 400);
   }
 
@@ -213,10 +219,11 @@ mcpApi.post("/", async (c) => {
   // Batches left JSON-RPC over MCP in 2025-06-18.
   if (!isObject(message) || message.jsonrpc !== "2.0") return c.json(rpcError(null, -32600, "Invalid Request"), 400);
 
+  // MCP requests carry a string or number id, never null.
   const hasId = "id" in message;
   const id = message.id as unknown;
-  if (hasId && id !== null && typeof id !== "string" && typeof id !== "number") {
-    return c.json(rpcError(null, -32600, "Invalid Request"), 400);
+  if (hasId && typeof id !== "string" && typeof id !== "number") {
+    return c.json(rpcError(null, -32600, "Invalid Request: id must be a string or a number"), 400);
   }
   // A notification or a response from the client: accepted, nothing to say.
   if (!hasId || typeof message.method !== "string") {

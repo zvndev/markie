@@ -1,8 +1,8 @@
 // Agent tokens and the documents they reach (docs/mobile/AGENT-LINKS-CONTRACT.md),
 // through the whole app so the body limits, mounting and headers are the
 // production ones. The rule under test above all: an agent token reads and
-// updates only agent-made documents of its own user, and every other id
-// answers a 404 that cannot be told apart from "no such document".
+// updates only the documents it created itself, and every other id answers a
+// 404 that cannot be told apart from "no such document".
 import { test, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -18,15 +18,25 @@ process.env.BETTER_AUTH_URL = "http://localhost:8787";
 process.env.BETTER_AUTH_SECRET = "markie-agent-links-test-secret-32-plus-chars";
 process.env.MARKIE_SITE_URL = "https://markie.test";
 process.env.MARKIE_NO_LISTEN = "1";
+process.env.ASSETS_DIR = join(mkdtempSync(join(tmpdir(), "markie-agent-links-assets-")), "store");
 
 const { auth } = await import("./auth.ts");
 const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.options);
 if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 const { app } = await import("./index.ts");
-const { resetAgentWriteLimitsForTests, authenticateAgent, WRITES_PER_HOUR } = await import("./agent-tokens.ts");
+const {
+  resetAgentWriteLimitsForTests,
+  authenticateAgent,
+  takeAgentWrite,
+  recordAgentBytes,
+  WRITES_PER_HOUR,
+  USER_WRITES_PER_HOUR,
+  USER_BYTES_PER_DAY,
+} = await import("./agent-tokens.ts");
 const { setStorageQuotaForTests } = await import("./quota.ts");
 const { resetInviteLimitsForTests } = await import("./shares.ts");
-const { privateLinkOrigin, markdownLinkFor, cleanAgentName } = await import("./doc-meta.ts");
+const { privateLinkOrigin, markdownLink, markdownLinkFor, cleanAgentName } = await import("./doc-meta.ts");
+const { writeDocVersion } = await import("./docs.ts");
 
 const db = new Database(process.env.DB_PATH!);
 const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
@@ -123,7 +133,7 @@ test("an account holds at most 20 active tokens, and revoking frees a place", as
   const refused = await call("POST", "/api/agent-tokens", { token: carol.token, body: { name: "one too many" } });
   assert.equal(refused.status, 409);
   assert.equal(refused.data.error, "token limit");
-  assert.equal((await call("DELETE", `/api/agent-tokens/${ids[0]}`, { token: carol.token })).status, 200);
+  assert.equal((await call("DELETE", `/api/agent-tokens/${ids[0]}`, { token: carol.token })).status, 204);
   await mintToken(carol, "fits again");
 });
 
@@ -140,17 +150,21 @@ test("token routes need a session and refuse an agent token, its own included", 
   assert.equal((await call("GET", "/api/agent/docs", { token: aliceAgent.token })).status, 200, "still live");
 });
 
-test("revoking is immediate, and another account's token answers 404", async () => {
+test("revoking is immediate and repeatable, and another account's token answers 404", async () => {
   const minted = await mintToken(alice, "short-lived");
   assert.equal((await call("GET", "/api/agent/docs", { token: minted.token })).status, 200);
   assert.equal((await call("DELETE", `/api/agent-tokens/${minted.id}`, { token: bob.token })).status, 404);
   assert.equal((await call("GET", "/api/agent/docs", { token: minted.token })).status, 200, "bob could not revoke it");
-  assert.equal((await call("DELETE", `/api/agent-tokens/${minted.id}`, { token: alice.token })).status, 200);
+  const revoked = await call("DELETE", `/api/agent-tokens/${minted.id}`, { token: alice.token });
+  assert.equal(revoked.status, 204);
+  assert.equal(revoked.text, "");
   const after = await call("GET", "/api/agent/docs", { token: minted.token });
   assert.equal(after.status, 401);
   assert.equal(after.headers.get("www-authenticate"), 'Bearer realm="markie"');
   assert.equal((await agentCreate(minted.token, { name: "a.md", content: "x" })).status, 401);
-  assert.equal((await call("DELETE", `/api/agent-tokens/${minted.id}`, { token: alice.token })).status, 404, "already revoked");
+  assert.equal((await call("DELETE", `/api/agent-tokens/${minted.id}`, { token: alice.token })).status, 204, "already revoked is still 204");
+  assert.equal((await call("DELETE", `/api/agent-tokens/${minted.id}`, { token: bob.token })).status, 404, "never bob's");
+  assert.equal((await call("DELETE", `/api/agent-tokens/${crypto.randomUUID()}`, { token: alice.token })).status, 404, "never anyone's");
   const listed = await call("GET", "/api/agent-tokens", { token: alice.token });
   assert.ok(!listed.data.tokens.some((t: { id: string }) => t.id === minted.id));
 });
@@ -258,11 +272,39 @@ test("a body past the agent route's limit is refused before anything reads it", 
   assert.equal(r.status, 413);
 });
 
+test("without a live token, a chunked body with no Content-Length is not read at all", async () => {
+  const offered = 4 * 1024 * 1024;
+  const chunk = new TextEncoder().encode("a".repeat(64 * 1024));
+  const unknown = "mk_agent_" + "D".repeat(43);
+  for (const [method, path] of [["POST", "/api/agent/docs"], ["PUT", `/api/agent/docs/${crypto.randomUUID()}`]]) {
+    for (const token of [undefined, alice.token, unknown]) {
+      let pulled = 0;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            if (pulled >= offered) return controller.close();
+            pulled += chunk.byteLength;
+            controller.enqueue(chunk);
+          },
+        },
+        { highWaterMark: 0 }
+      );
+      const headers = new Headers({ "Content-Type": "application/json" });
+      if (token) headers.set("Authorization", `Bearer ${token}`);
+      const res = await app.request(path, { method, headers, body, duplex: "half" } as RequestInit);
+      assert.equal(res.status, 401, `${method} ${String(token)}`);
+      assert.equal(res.headers.get("www-authenticate"), 'Bearer realm="markie"');
+      assert.ok(pulled <= chunk.byteLength, `${method}: read ${pulled} bytes before answering 401`);
+    }
+  }
+});
+
 test("agent documents count against the storage quota", async () => {
   setStorageQuotaForTests(1);
   const r = await agentCreate(aliceAgent.token, { name: "q.md", content: "too much" });
   assert.equal(r.status, 413);
   assert.equal(r.data.error, "storage_quota_exceeded");
+  assert.deepEqual(Object.keys(r.data).sort(), ["error", "message"], "a token holder never learns the account's usage or quota");
   setStorageQuotaForTests(null);
   const made = await agentCreate(aliceAgent.token, { name: "q.md", content: "fits" });
   assert.equal(made.status, 201);
@@ -313,13 +355,147 @@ test("an agent token cannot reach another user's documents, agent-made or shared
   assert.equal((db.prepare("SELECT content FROM docs WHERE id = ?").get(bobs.data.id) as { content: string }).content, "bob");
 });
 
-test("every agent token of the same user reaches that user's agent documents", async () => {
+test("a token reaches only the documents it created, not those of the user's other tokens", async () => {
   const second = await mintToken(alice, "second agent");
-  const made = await agentCreate(aliceAgent.token, { name: "Shared.md", content: "one" });
-  const read = await call("GET", `/api/agent/docs/${made.data.id}`, { token: second.token });
-  assert.equal(read.status, 200);
-  assert.equal(read.data.content, "one");
+  const mine = await agentCreate(aliceAgent.token, { name: "Mine.md", content: "one" });
+  const theirs = await agentCreate(second.token, { name: "Theirs.md", content: "two" });
+  const missing = crypto.randomUUID();
+  for (const [token, id] of [[second.token, mine.data.id], [aliceAgent.token, theirs.data.id]] as const) {
+    const read = await call("GET", `/api/agent/docs/${id}`, { token });
+    const readMissing = await call("GET", `/api/agent/docs/${missing}`, { token });
+    assert.equal(read.status, 404);
+    assert.equal(read.text, readMissing.text);
+    const put = await call("PUT", `/api/agent/docs/${id}`, { token, body: { content: "pwned" } });
+    const putMissing = await call("PUT", `/api/agent/docs/${missing}`, { token, body: { content: "pwned" } });
+    assert.equal(put.status, 404);
+    assert.equal(put.text, putMissing.text);
+  }
+  const listed = (token: string) => call("GET", "/api/agent/docs?limit=100", { token }).then((r) => r.data.docs.map((d: { id: string }) => d.id));
+  assert.ok((await listed(aliceAgent.token)).includes(mine.data.id));
+  assert.ok(!(await listed(aliceAgent.token)).includes(theirs.data.id));
+  assert.deepEqual(await listed(second.token), [theirs.data.id]);
+  assert.equal((db.prepare("SELECT content FROM docs WHERE id = ?").get(mine.data.id) as { content: string }).content, "one");
   await call("DELETE", `/api/agent-tokens/${second.id}`, { token: alice.token });
+});
+
+test("a revoked token's documents stay the user's and no token reaches them", async () => {
+  const shortLived = await mintToken(alice, "short-lived writer");
+  const made = await agentCreate(shortLived.token, { name: "Left.md", content: "kept" });
+  assert.equal((await call("DELETE", `/api/agent-tokens/${shortLived.id}`, { token: alice.token })).status, 204);
+  const row = db.prepare("SELECT owner_id, deleted_at, origin_token_id FROM docs WHERE id = ?").get(made.data.id) as Record<string, unknown>;
+  assert.deepEqual({ ...row }, { owner_id: alice.id, deleted_at: null, origin_token_id: shortLived.id }, "unchanged by revoking");
+  const owner = await call("GET", `/api/docs/${made.data.id}`, { token: alice.token });
+  assert.equal(owner.status, 200);
+  assert.equal(owner.data.doc.content, "kept");
+  assert.equal((await call("GET", `/api/agent/docs/${made.data.id}`, { token: shortLived.token })).status, 401);
+  assert.equal((await call("GET", `/api/agent/docs/${made.data.id}`, { token: aliceAgent.token })).status, 404);
+});
+
+test("origin_token_id is set by token creates only, never changes, and is never returned", async () => {
+  const made = await agentCreate(aliceAgent.token, { name: "Tracked.md", content: "v1" });
+  const tokenOf = (id: string) => (db.prepare("SELECT origin_token_id FROM docs WHERE id = ?").get(id) as { origin_token_id: string | null }).origin_token_id;
+  assert.equal(tokenOf(made.data.id), aliceAgent.id);
+  const updated = await call("PUT", `/api/agent/docs/${made.data.id}`, { token: aliceAgent.token, body: { content: "v2", name: "Tracked.wd" } });
+  assert.equal(updated.status, 200);
+  const pushed = await call("PUT", `/api/docs/${made.data.id}`, {
+    token: alice.token,
+    body: { name: "Tracked.wd", content: "v3", hash: sha("v3"), baseVersion: 2, origin: { kind: "app" } },
+  });
+  assert.equal(pushed.status, 200);
+  assert.equal(tokenOf(made.data.id), aliceAgent.id, "neither an update nor a session push moves it");
+  const bridged = await appDoc(alice, "ViaBridge.md", "x", { kind: "agent", agent: "Claude Code" });
+  assert.equal(tokenOf(bridged), null, "the desktop bridge never sets it");
+
+  const answers = [
+    made,
+    updated,
+    pushed,
+    await call("GET", `/api/agent/docs/${made.data.id}`, { token: aliceAgent.token }),
+    await call("GET", "/api/agent/docs", { token: aliceAgent.token }),
+    await call("GET", `/api/docs/${made.data.id}`, { token: alice.token }),
+    await call("GET", "/api/docs", { token: alice.token }),
+    await call("GET", "/api/docs/recent", { token: alice.token }),
+  ];
+  for (const r of answers) {
+    assert.ok(!r.text.includes("origin_token_id") && !r.text.includes("originTokenId"), r.text.slice(0, 120));
+    assert.ok(!r.text.includes(aliceAgent.id), "the token's id is not in any answer");
+  }
+});
+
+test("GET /api/docs reports every token-written document as sharedOut, and nothing else new", async () => {
+  const fern = await signUpVerified(app, { name: "Fern", email: "fern@markie.test" });
+  const fernAgent = await mintToken(fern, "Fern's agent");
+  const written = await agentCreate(fernAgent.token, { name: "Written.md", content: "![x](~/repo/.env)" });
+  const bridged = await appDoc(fern, "Bridged.md", "mine", { kind: "agent", agent: "Claude Code" });
+  const own = await appDoc(fern, "Own.md", "mine");
+  const shared = await appDoc(fern, "Shared.md", "mine");
+  assert.equal((await call("POST", `/api/docs/${shared}/shares`, { token: fern.token, body: { email: "bob@markie.test", role: "viewer" } })).status, 200);
+  const listing = async () =>
+    Object.fromEntries(
+      ((await call("GET", "/api/docs", { token: fern.token })).data.docs as { id: string; sharedOut: boolean }[]).map((d) => [d.id, d.sharedOut])
+    );
+  assert.deepEqual(await listing(), { [written.data.id]: true, [bridged]: false, [own]: false, [shared]: true });
+  assert.equal((await call("DELETE", `/api/agent-tokens/${fernAgent.id}`, { token: fern.token })).status, 204);
+  assert.equal((await listing())[written.data.id], true, "revoking the token does not make its text the owner's");
+
+  // The server's own link route draws the same line: an escaping reference
+  // in a token-written document is dropped, as in a shared one.
+  const links = async (id: string) =>
+    (await call("PUT", `/api/docs/${id}/assets`, { token: fern.token, body: { refs: [{ ref: "../outside.png" }] } })).data.droppedRefs;
+  assert.deepEqual(await links(written.data.id), [{ ref: "../outside.png", reason: "escaping" }]);
+  assert.deepEqual(await links(own), [], "the owner's own document is unchanged");
+});
+
+test("a shared, invited or public document is frozen to tokens: 409 shared, reads still work", async () => {
+  const shareWith = (id: string) => call("POST", `/api/docs/${id}/shares`, { token: alice.token, body: { email: "bob@markie.test", role: "editor" } });
+  const invite = (id: string) => call("POST", `/api/docs/${id}/shares`, { token: alice.token, body: { email: "nobody-yet@markie.test", role: "viewer" } });
+  const publish = (id: string) => call("POST", `/api/docs/${id}/public-link`, { token: alice.token, body: {} });
+  for (const [how, open] of [["member", shareWith], ["pending invite", invite], ["public link", publish]] as const) {
+    const made = await agentCreate(aliceAgent.token, { name: `Frozen ${how}.md`, content: "as shared" });
+    const opened = await open(made.data.id);
+    assert.ok(opened.status === 200 || opened.status === 201, `${how}: ${opened.status} ${opened.text}`);
+    const put = await call("PUT", `/api/agent/docs/${made.data.id}`, { token: aliceAgent.token, body: { content: "changed under them" } });
+    assert.equal(put.status, 409, how);
+    assert.equal(put.data.error, "shared", how);
+    assert.match(put.data.message, /Create a new document instead/, how);
+    const read = await call("GET", `/api/agent/docs/${made.data.id}`, { token: aliceAgent.token });
+    assert.equal(read.status, 200, how);
+    assert.equal(read.data.content, "as shared");
+    const row = db.prepare("SELECT content, version FROM docs WHERE id = ?").get(made.data.id) as { content: string; version: number };
+    assert.deepEqual({ ...row }, { content: "as shared", version: 1 }, how);
+  }
+});
+
+test("200 writes an hour per user across all tokens, then 429 that reveals no usage", async () => {
+  const gwen = await signUpVerified(app, { name: "Gwen", email: "gwen@markie.test" });
+  const gwenAgent = await mintToken(gwen, "Gwen's agent");
+  const fresh = await mintToken(gwen, "Gwen's fresh agent");
+  // Other tokens of hers used the budget; none of them is over its own 60.
+  for (let i = 0; i < USER_WRITES_PER_HOUR; i++) assert.equal(takeAgentWrite({ tokenId: `other-${i % 4}`, userId: gwen.id }), null);
+  const over = await agentCreate(fresh.token, { name: "over.md", content: "x" });
+  assert.equal(over.status, 429);
+  assert.equal(over.headers.get("retry-after"), null, "when other agents' writes age out is theirs");
+  assert.deepEqual(Object.keys(over.data).sort(), ["error", "message"]);
+  assert.equal(over.data.error, "rate limited");
+  assert.deepEqual(over.data.message.match(/\d+/g), [String(USER_WRITES_PER_HOUR)], "the public limit, and no count");
+  assert.equal((await agentCreate(gwenAgent.token, { name: "also.md", content: "x" })).status, 429, "every token of hers");
+  assert.equal((await call("GET", "/api/agent/docs", { token: fresh.token })).status, 200, "reads are not limited");
+  assert.equal((await agentCreate(aliceAgent.token, { name: "alice.md", content: "x" })).status, 201, "per user");
+});
+
+test("50 MB of written content a day per user across all tokens, then 429 that reveals no usage", async () => {
+  const hal = await signUpVerified(app, { name: "Hal", email: "hal@markie.test" });
+  const halAgent = await mintToken(hal, "Hal's agent");
+  recordAgentBytes(hal.id, USER_BYTES_PER_DAY - 10);
+  const fits = await agentCreate(halAgent.token, { name: "fits.md", content: "0123456789" });
+  assert.equal(fits.status, 201, "exactly at the budget");
+  const over = await agentCreate(halAgent.token, { name: "over.md", content: "x" });
+  assert.equal(over.status, 429);
+  assert.deepEqual(Object.keys(over.data).sort(), ["error", "message"]);
+  assert.deepEqual(over.data.message.match(/\d+/g), ["50"], "the public limit, and no usage");
+  const update = await call("PUT", `/api/agent/docs/${fits.data.id}`, { token: halAgent.token, body: { content: "y" } });
+  assert.equal(update.status, 429, "an update writes content too");
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM docs WHERE owner_id = ?").get(hal.id) as { n: number }).n, 1);
 });
 
 test("a deleted agent document is gone for the agent too", async () => {
@@ -373,9 +549,9 @@ test("read, list and update an agent document", async () => {
 
 test("origin is honoured when a session push creates a document, and ignored afterwards", async () => {
   const bridged = await appDoc(alice, "Bridged.md", "from the desktop bridge", { kind: "agent", agent: "Claude Code" });
-  const read = await call("GET", `/api/agent/docs/${bridged}`, { token: aliceAgent.token });
-  assert.equal(read.status, 200, "a desktop-bridge document is an agent document");
-  assert.deepEqual(read.data.origin, { kind: "agent", agent: "Claude Code" });
+  const asOwner = await call("GET", `/api/docs/${bridged}`, { token: alice.token });
+  assert.deepEqual(asOwner.data.doc.origin, { kind: "agent", agent: "Claude Code" }, "a desktop-bridge document carries the agent badge");
+  assert.equal((await call("GET", `/api/agent/docs/${bridged}`, { token: aliceAgent.token })).status, 404, "and no token reaches it");
 
   const plain = await appDoc(alice, "Plain.md", "mine");
   const push = await call("PUT", `/api/docs/${plain}`, { token: alice.token, body: { name: "Plain.md", content: "mine 2", hash: sha("mine 2"), baseVersion: 1, origin: { kind: "agent", agent: "Sneaky" } } });
@@ -394,12 +570,56 @@ test("origin is honoured when a session push creates a document, and ignored aft
   assert.equal((db.prepare("SELECT origin_agent FROM docs WHERE id = ?").get(nameless) as { origin_agent: string }).origin_agent, "an agent");
 });
 
-test("a deleted document's id coming back starts a new origin", async () => {
+test("a deleted document's id coming back starts a new origin, with no token", async () => {
   const id = await appDoc(alice, "Phoenix.md", "x", { kind: "agent", agent: "First" });
   assert.equal((await call("DELETE", `/api/docs/${id}`, { token: alice.token })).status, 200);
   const back = await call("PUT", `/api/docs/${id}`, { token: alice.token, body: { name: "Phoenix.md", content: "y", hash: sha("y"), baseVersion: 0 } });
   assert.equal(back.status, 200);
   assert.equal((await call("GET", `/api/agent/docs/${id}`, { token: aliceAgent.token })).status, 404);
+
+  const made = await agentCreate(aliceAgent.token, { name: "Phoenix2.md", content: "agent" });
+  assert.equal((await call("DELETE", `/api/docs/${made.data.id}`, { token: alice.token })).status, 200);
+  const revived = await call("PUT", `/api/docs/${made.data.id}`, { token: alice.token, body: { name: "Phoenix2.md", content: "mine now", hash: sha("mine now"), baseVersion: 0 } });
+  assert.equal(revived.status, 200);
+  const row = db.prepare("SELECT origin_kind, origin_token_id FROM docs WHERE id = ?").get(made.data.id) as Record<string, unknown>;
+  assert.deepEqual({ ...row }, { origin_kind: "app", origin_token_id: null });
+  assert.equal((await call("GET", `/api/agent/docs/${made.data.id}`, { token: aliceAgent.token })).status, 404, "the token lost it with the delete");
+});
+
+test("an editor's origin on someone else's document is ignored", async () => {
+  const bobsDoc = await appDoc(bob, "BobsPlan.md", "bob v1");
+  assert.equal((await call("POST", `/api/docs/${bobsDoc}/shares`, { token: bob.token, body: { email: "alice@markie.test", role: "editor" } })).status, 200);
+  const push = await call("PUT", `/api/docs/${bobsDoc}`, {
+    token: alice.token,
+    body: { name: "BobsPlan.md", content: "alice edit", hash: sha("alice edit"), baseVersion: 1, origin: { kind: "agent", agent: "Sneaky" } },
+  });
+  assert.equal(push.status, 200);
+  const row = db.prepare("SELECT owner_id, content, origin_kind, origin_agent, origin_token_id FROM docs WHERE id = ?").get(bobsDoc) as Record<string, unknown>;
+  assert.deepEqual({ ...row }, { owner_id: bob.id, content: "alice edit", origin_kind: "app", origin_agent: null, origin_token_id: null });
+});
+
+test("a write that claims to create a live document stops with nothing changed", () => {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  writeDocVersion({ id, ownerId: alice.id, name: "Live.md", content: "first", hash: sha("first"), version: 1, now, origin: { kind: "app", agent: null } });
+  assert.throws(
+    () =>
+      writeDocVersion({
+        id,
+        ownerId: alice.id,
+        name: "Live.md",
+        content: "second",
+        hash: sha("second"),
+        version: 1,
+        now,
+        origin: { kind: "agent", agent: "Hijack" },
+        originTokenId: aliceAgent.id,
+      }),
+    /document already exists/
+  );
+  const row = db.prepare("SELECT content, origin_kind, origin_agent, origin_token_id FROM docs WHERE id = ?").get(id) as Record<string, unknown>;
+  assert.deepEqual({ ...row }, { content: "first", origin_kind: "app", origin_agent: null, origin_token_id: null });
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM doc_history WHERE doc_id = ?").get(id) as { n: number }).n, 1, "the transaction rolled back");
 });
 
 test("GET /api/docs/:id now says the format and origin", async () => {
@@ -529,6 +749,23 @@ test("privateLink is this server's own origin, and api.markiedocs.com on Markie 
   assert.equal(privateLinkOrigin({ official: true, origin: "http://localhost:8787" }), "http://localhost:8787");
 });
 
-test("markdownLink escapes what would break the link text", () => {
-  assert.equal(markdownLinkFor("a]b[c*_`<x>\\.md", "id 1"), `[a\\]b\\[c\\*\\_\\\`\\<x\\>\\\\.md](${ORIGIN}/d/id%201)`);
+// The contract's vectors (docs/mobile/AGENT-LINKS-CONTRACT.md). The desktop
+// runs the same ones, so the two sides cannot drift apart.
+test("markdownLink escapes exactly as the contract says", () => {
+  const link = "https://api.markiedocs.com/d/abc";
+  const vectors: [string, string][] = [
+    ["Plan.md", `[Plan.md](${link})`],
+    ["a[b]c.md", `[a\\[b\\]c.md](${link})`],
+    ["back\\slash.md", `[back\\\\slash.md](${link})`],
+    ["line1\nline2.md", `[line1 line2.md](${link})`],
+    ["<img>.md", `[\\<img\\>.md](${link})`],
+    ["tick`.md", `[tick\\\`.md](${link})`],
+  ];
+  for (const [name, expected] of vectors) assert.equal(markdownLink(name, link), expected, JSON.stringify(name));
+  assert.equal(markdownLink("x.md", "https://h/d/a(x)b"), "[x.md](https://h/d/a%28x%29b)");
+  // A run of CR, LF, U+2028 and U+2029 is one space; other text is left alone.
+  assert.equal(markdownLink("a\r\n\u2028\u2029b.md", link), `[a b.md](${link})`);
+  assert.equal(markdownLink("a\n\nb\rc.md", link), `[a b c.md](${link})`);
+  assert.equal(markdownLink("*bold*_x_ (1).md", link), `[*bold*_x_ (1).md](${link})`);
+  assert.equal(markdownLinkFor("Plan.md", "id 1"), `[Plan.md](${ORIGIN}/d/id%201)`);
 });

@@ -1,20 +1,37 @@
 // Documents an agent token may touch (docs/mobile/AGENT-LINKS-CONTRACT.md).
 //
-// The one rule: a token creates documents, and reads and updates only
-// documents its own user owns that were created by an agent
-// (origin_kind = 'agent'). Every other document id, whether it belongs to
-// the same user, to someone else, was deleted or never existed, answers the
-// same 404 with the same body. A leaked token exposes what agents wrote and
-// nothing else in the drive, and cannot be used to learn which ids exist.
+// The one rule: a token creates documents, and reads and updates only the
+// documents that same token created (docs.origin_token_id is its id, the
+// owner is its user, and the document is not deleted). Every other document
+// id answers the same 404 with the same body: the user's app documents,
+// documents a local agent synced through the desktop bridge (origin_kind is
+// 'agent' for the badge, but origin_token_id is NULL), documents the user's
+// other tokens made, anyone else's, deleted ones and ids that never existed.
+// A leaked token exposes only what it wrote itself, and cannot be used to
+// learn which ids exist. A revoked token's documents stay the user's and no
+// token reaches them again: origin_token_id never changes after creation.
+//
+// A document someone else can read (a member, a pending invite or a public
+// link) is frozen to tokens: reads still work, writes answer 409 "shared".
 //
 // The REST routes here and the hosted MCP tools (mcp-server.ts) share these
 // functions, so the two surfaces cannot drift apart on a check.
-import { Hono, type Context } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import crypto from "node:crypto";
 import { openDatabase } from "./db.ts";
-import { quotaRefusal, storageQuotaBytes, type QuotaRefusal } from "./quota.ts";
+import { quotaRefusal, storageQuotaBytes } from "./quota.ts";
 import { writeDocVersion } from "./docs.ts";
-import { authenticateAgent, takeAgentWrite, type AgentPrincipal } from "./agent-tokens.ts";
+import { hasAudience } from "./shares.ts";
+import {
+  USER_BYTES_PER_DAY,
+  USER_WRITES_PER_HOUR,
+  WRITES_PER_HOUR,
+  agentBytesFit,
+  authenticateAgent,
+  recordAgentBytes,
+  takeAgentWrite,
+  type AgentPrincipal,
+} from "./agent-tokens.ts";
 import {
   AGENT_EXTENSIONS,
   agentExtensionAllowed,
@@ -86,22 +103,46 @@ function checkSize(name: string, content: string): AgentFailure | null {
   return null;
 }
 
+// The storage quota and the daily byte budget, as a token holder hears them:
+// the error and a sentence, never the account's usage or its quota. The
+// session routes still report usedBytes and quotaBytes to the signed-in
+// owner; a token is not the owner.
 function checkQuota(ownerId: string, growth: number): AgentFailure | null {
   if (storageQuotaBytes() === null) return null;
-  const refusal: QuotaRefusal | null = quotaRefusal(db, ownerId, growth);
-  return refusal ? { ok: false, status: 413, body: { ...refusal } } : null;
+  const refusal = quotaRefusal(db, ownerId, growth);
+  return refusal ? fail(413, refusal.error, refusal.message) : null;
+}
+
+function checkByteBudget(userId: string, bytes: number): AgentFailure | null {
+  if (agentBytesFit(userId, bytes)) return null;
+  return fail(
+    429,
+    "rate limited",
+    `This account's agent tokens can write at most ${USER_BYTES_PER_DAY / (1024 * 1024)} MB of documents a day. Try again tomorrow.`
+  );
 }
 
 /**
- * Count one write attempt against the token's hourly budget, or refuse it.
- * Callers charge before they parse or check anything, so a refused write
- * costs the same as an accepted one. The create and update operations below
- * do not charge on their own: each surface charges exactly once per request.
+ * Count one write attempt against the token's hourly limit and the user's
+ * hourly budget across all tokens, or refuse it. Callers charge before they
+ * parse or check anything, so a refused write costs the same as an accepted
+ * one. The create and update operations below do not charge on their own:
+ * each surface charges exactly once per request.
+ *
+ * Only the token's own limit says when to retry: the account's budget is the
+ * sum of other agents' work, and how soon it frees up is theirs to keep.
  */
 export function chargeAgentWrite(agent: AgentPrincipal): AgentFailure | null {
-  const wait = takeAgentWrite(agent.tokenId);
-  if (wait === null) return null;
-  return { ...fail(429, "rate limited", "This agent token has made 60 writes in the last hour. Try again later.", { retryAfter: wait }), retryAfter: wait };
+  const refused = takeAgentWrite(agent);
+  if (refused === null) return null;
+  if (refused.scope === "account") {
+    return fail(429, "rate limited", `This account's agent tokens can make at most ${USER_WRITES_PER_HOUR} writes an hour between them. Try again later.`);
+  }
+  const wait = refused.retryAfter;
+  return {
+    ...fail(429, "rate limited", `This agent token has made ${WRITES_PER_HOUR} writes in the last hour. Try again later.`, { retryAfter: wait }),
+    retryAfter: wait,
+  };
 }
 
 interface AgentDocRow {
@@ -123,9 +164,9 @@ function ownAgentDoc(agent: AgentPrincipal, id: unknown): AgentDocRow | undefine
     .prepare(
       `SELECT id, name, format, version, content, created_at, updated_at, origin_kind, origin_agent
        FROM docs
-       WHERE id = ? AND owner_id = ? AND origin_kind = 'agent' AND deleted_at IS NULL`
+       WHERE id = ? AND owner_id = ? AND origin_token_id = ? AND deleted_at IS NULL`
     )
-    .get(id, agent.userId) as AgentDocRow | undefined;
+    .get(id, agent.userId, agent.tokenId) as AgentDocRow | undefined;
 }
 
 const links = (id: string, name: string) => ({ privateLink: privateLinkFor(id), markdownLink: markdownLinkFor(name, id) });
@@ -143,9 +184,21 @@ function meta(row: Omit<AgentDocRow, "content">) {
   };
 }
 
-function write(args: { id: string; ownerId: string; name: string; content: string; version: number; origin?: DocOrigin }): AgentFailure | null {
+// Everything from the checks to this write is synchronous, and so is SQLite
+// here, so no other request can share, write or delete the document between
+// a check passing and the write landing.
+function write(args: {
+  id: string;
+  ownerId: string;
+  name: string;
+  content: string;
+  version: number;
+  origin?: DocOrigin;
+  originTokenId?: string;
+}): AgentFailure | null {
   try {
     writeDocVersion({ ...args, hash: sha256Hex(args.content), now: new Date().toISOString() });
+    recordAgentBytes(args.ownerId, Buffer.byteLength(args.content, "utf8"));
     return null;
   } catch (err) {
     console.error("agent document write failed:", err);
@@ -161,11 +214,14 @@ export function createAgentDoc(agent: AgentPrincipal, input: { name?: unknown; c
   if (typeof input.content !== "string") return fail(400, "bad request", "content must be a string.");
   const tooLarge = checkSize(named.name, input.content);
   if (tooLarge) return tooLarge;
-  const overQuota = checkQuota(agent.userId, Buffer.byteLength(input.content, "utf8"));
+  const bytes = Buffer.byteLength(input.content, "utf8");
+  const overBudget = checkByteBudget(agent.userId, bytes);
+  if (overBudget) return overBudget;
+  const overQuota = checkQuota(agent.userId, bytes);
   if (overQuota) return overQuota;
   const id = crypto.randomUUID();
   const origin: DocOrigin = { kind: "agent", agent: cleanAgentName(input.agent) ?? agent.name };
-  const failed = write({ id, ownerId: agent.userId, name: named.name, content: input.content, version: 1, origin });
+  const failed = write({ id, ownerId: agent.userId, name: named.name, content: input.content, version: 1, origin, originTokenId: agent.tokenId });
   if (failed) return failed;
   const result: AgentResult<{ id: string; name: string; format: string; version: number; privateLink: string; markdownLink: string }> = {
     ok: true,
@@ -182,6 +238,13 @@ export function updateAgentDoc(
 ) {
   const row = ownAgentDoc(agent, id);
   if (!row) return notFound();
+  if (hasAudience(row.id)) {
+    return fail(
+      409,
+      "shared",
+      "This document is shared, so an agent token can no longer change it. Create a new document instead, and give the user its link."
+    );
+  }
   if (typeof input.content !== "string") return fail(400, "bad request", "content must be a string.");
   if (input.baseVersion !== undefined && input.baseVersion !== null) {
     if (typeof input.baseVersion !== "number" || !Number.isInteger(input.baseVersion)) {
@@ -197,7 +260,10 @@ export function updateAgentDoc(
   }
   const tooLarge = checkSize(name, input.content);
   if (tooLarge) return tooLarge;
-  const overQuota = checkQuota(agent.userId, Buffer.byteLength(input.content, "utf8") - Buffer.byteLength(row.content, "utf8"));
+  const bytes = Buffer.byteLength(input.content, "utf8");
+  const overBudget = checkByteBudget(agent.userId, bytes);
+  if (overBudget) return overBudget;
+  const overQuota = checkQuota(agent.userId, bytes - Buffer.byteLength(row.content, "utf8"));
   if (overQuota) return overQuota;
   const version = row.version + 1;
   const failed = write({ id: row.id, ownerId: agent.userId, name, content: input.content, version });
@@ -222,10 +288,10 @@ export function listAgentDocs(agent: AgentPrincipal, rawLimit: unknown) {
     .prepare(
       `SELECT id, name, format, version, created_at, updated_at, origin_kind, origin_agent
        FROM docs
-       WHERE owner_id = ? AND origin_kind = 'agent' AND deleted_at IS NULL
+       WHERE owner_id = ? AND origin_token_id = ? AND deleted_at IS NULL
        ORDER BY updated_at DESC, id ASC LIMIT ?`
     )
-    .all(agent.userId, limit) as Omit<AgentDocRow, "content">[];
+    .all(agent.userId, agent.tokenId, limit) as Omit<AgentDocRow, "content">[];
   const result: AgentResult<{ docs: ReturnType<typeof meta>[] }> = { ok: true, status: 200, data: { docs: rows.map(meta) } };
   return result;
 }
@@ -240,21 +306,48 @@ export function readAgentDoc(agent: AgentPrincipal, id: unknown) {
 
 // ---- REST routes (Authorization: Bearer mk_agent_…) ------------------------
 
-export const agentDocsApi = new Hono();
+export const UNAUTHORIZED_CHALLENGE = 'Bearer realm="markie"';
+
+export type AgentEnv = { Variables: { agent?: AgentPrincipal } };
+
+/**
+ * Authenticate the agent token, or answer `refuse`. index.ts runs this ahead
+ * of the body limit on /api/agent/* and POST /mcp, so a caller without a live
+ * token is answered from its headers alone and no body is read on its behalf,
+ * chunked bodies with no Content-Length included (bodyLimit buffers those in
+ * full before it can say anything). The routers run it again for when they
+ * are mounted on their own; it does nothing when the token is already known.
+ */
+export function agentAuth(refuse: (c: Context) => Response): MiddlewareHandler {
+  // Untyped env so index.ts can run it on its own app; the routers read the
+  // variable through AgentEnv.
+  return async (c, next) => {
+    const ctx = c as unknown as Context<AgentEnv>;
+    if (ctx.get("agent")) return next();
+    const agent = authenticateAgent(c.req.raw.headers);
+    if (!agent) {
+      c.header("WWW-Authenticate", UNAUTHORIZED_CHALLENGE);
+      return refuse(c);
+    }
+    ctx.set("agent", agent);
+    return next();
+  };
+}
+
+export const restAgentAuth = agentAuth((c) =>
+  c.json({ error: "unauthorized", message: "Send an agent token: Authorization: Bearer mk_agent_..." }, 401)
+);
+
+export const agentDocsApi = new Hono<AgentEnv>();
 
 agentDocsApi.use("*", async (c, next) => {
   c.header("Cache-Control", "private, no-store");
   await next();
 });
+agentDocsApi.use("*", restAgentAuth);
 
-export const UNAUTHORIZED_CHALLENGE = 'Bearer realm="markie"';
-
-function requireAgent(c: Context): AgentPrincipal | Response {
-  const agent = authenticateAgent(c.req.raw.headers);
-  if (agent) return agent;
-  c.header("WWW-Authenticate", UNAUTHORIZED_CHALLENGE);
-  return c.json({ error: "unauthorized", message: "Send an agent token: Authorization: Bearer mk_agent_..." }, 401);
-}
+// Set by restAgentAuth, which answered already when there was no token.
+const agentOf = (c: Context<AgentEnv>): AgentPrincipal => c.get("agent")!;
 
 function answer<T>(c: Context, result: AgentResult<T>): Response {
   if (result.ok) return c.json(result.data as object, result.status);
@@ -262,8 +355,8 @@ function answer<T>(c: Context, result: AgentResult<T>): Response {
   return c.json(result.body, result.status);
 }
 
-// The body is read only after the token checks out, so a caller without one
-// never has a body buffered on its behalf.
+// Reached only with a live token (restAgentAuth), so the body is never read
+// for a caller without one.
 async function jsonBody(c: Context): Promise<Record<string, unknown> | null> {
   const body = (await c.req.json().catch(() => null)) as unknown;
   return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
@@ -272,8 +365,7 @@ async function jsonBody(c: Context): Promise<Record<string, unknown> | null> {
 const badJson = (c: Context) => c.json({ error: "bad request", message: "Send a JSON object." }, 400);
 
 agentDocsApi.post("/docs", async (c) => {
-  const agent = requireAgent(c);
-  if (agent instanceof Response) return agent;
+  const agent = agentOf(c);
   const limited = chargeAgentWrite(agent);
   if (limited) return answer(c, limited);
   const body = await jsonBody(c);
@@ -282,8 +374,7 @@ agentDocsApi.post("/docs", async (c) => {
 });
 
 agentDocsApi.put("/docs/:id", async (c) => {
-  const agent = requireAgent(c);
-  if (agent instanceof Response) return agent;
+  const agent = agentOf(c);
   const limited = chargeAgentWrite(agent);
   if (limited) return answer(c, limited);
   const body = await jsonBody(c);
@@ -292,13 +383,9 @@ agentDocsApi.put("/docs/:id", async (c) => {
 });
 
 agentDocsApi.get("/docs", (c) => {
-  const agent = requireAgent(c);
-  if (agent instanceof Response) return agent;
-  return answer(c, listAgentDocs(agent, c.req.query("limit")));
+  return answer(c, listAgentDocs(agentOf(c), c.req.query("limit")));
 });
 
 agentDocsApi.get("/docs/:id", (c) => {
-  const agent = requireAgent(c);
-  if (agent instanceof Response) return agent;
-  return answer(c, readAgentDoc(agent, c.req.param("id")));
+  return answer(c, readAgentDoc(agentOf(c), c.req.param("id")));
 });

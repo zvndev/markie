@@ -33,7 +33,7 @@ test("this suite really runs on an aliased deployment: browser pages on the othe
   assert.equal(res.status, 308);
 });
 
-test("apple-app-site-association claims /d/* and /s/* for the mobile app, on every name, as JSON", async () => {
+test("apple-app-site-association claims /d/* and /s/* but nothing under them, on every name, as JSON", async () => {
   for (const host of HOSTS) {
     const res = await fetchAs(host, "/.well-known/apple-app-site-association");
     assert.equal(res.status, 200, host);
@@ -43,7 +43,12 @@ test("apple-app-site-association claims /d/* and /s/* for the mobile app, on eve
     assert.deepEqual(await res.json(), {
       applinks: {
         apps: [],
-        details: [{ appIDs: ["3VU8SG5TD9.com.zvn.markie.mobile"], components: [{ "/": "/d/*" }, { "/": "/s/*" }] }],
+        details: [{ appIDs: ["3VU8SG5TD9.com.zvn.markie.mobile"], components: [
+          { "/": "/d/*/*", exclude: true },
+          { "/": "/s/*/*", exclude: true },
+          { "/": "/d/*" },
+          { "/": "/s/*" },
+        ] }],
       },
     });
   }

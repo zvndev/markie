@@ -7,31 +7,22 @@
 // it.
 //
 // What a token can do is deliberately small (agent-docs.ts): create
-// documents, and read and update the documents agent tokens of the same user
-// created. It can never reach the rest of the drive, and it can never manage
-// tokens: the routes here take a signed-in session and refuse an agent token
-// outright, so a leaked token cannot mint itself a successor.
+// documents, and read and update only the documents that same token created.
+// It can never reach the rest of the drive, and it can never manage tokens:
+// the routes here take a signed-in session and refuse an agent token
+// outright, so a leaked token cannot mint itself a successor. Minting one
+// emails the account, and a password reset or change revokes them all
+// (agent-token-store.ts, called from auth.ts).
 import { Hono, type Context } from "hono";
 import crypto from "node:crypto";
 import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
+import { sendEmail } from "./email.ts";
 import { cleanAgentName } from "./doc-meta.ts";
+// Creates the agent_tokens table.
+import "./agent-token-store.ts";
 
 const db = openDatabase();
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS agent_tokens (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    token_hash TEXT UNIQUE NOT NULL,
-    prefix TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    last_used_at INTEGER,
-    revoked_at INTEGER
-  );
-  CREATE INDEX IF NOT EXISTS idx_agent_tokens_user ON agent_tokens(user_id);
-`);
 
 export const AGENT_TOKEN_PREFIX = "mk_agent_";
 // 32 bytes is 43 base64url characters, unpadded.
@@ -100,33 +91,72 @@ export function authenticateAgent(headers: Headers, now = Date.now()): AgentPrin
   return { tokenId: row.id, userId: row.user_id, name: row.name };
 }
 
-// ---- write rate limit ------------------------------------------------------
+// ---- write rate limit and budget -------------------------------------------
 //
-// 60 writes an hour per token, as a sliding window kept in memory. The server
-// is one process on one SQLite file, so memory is the whole picture, and a
-// restart forgiving an hour's count is a cost worth not adding a table for.
-// Every authenticated write attempt counts, accepted or not, so a loop of
-// refused writes is throttled like a loop of accepted ones.
+// Three limits, as sliding windows kept in memory. The server is one process
+// on one SQLite file, so memory is the whole picture, and a restart forgiving
+// a window's count is a cost worth not adding a table for.
+//
+//   60 writes an hour per token.
+//   200 writes an hour per user, across all of that user's tokens, so minting
+//   more tokens buys no more writes.
+//   50 MB of written content a day per user, across all tokens, so a leaked
+//   token cannot grow the account without bound inside the storage quota.
+//
+// Every authenticated write attempt counts against the two write counts,
+// accepted or not, so a loop of refused writes is throttled like a loop of
+// accepted ones. Only content actually written counts against the bytes.
 
 export const WRITES_PER_HOUR = 60;
-const WINDOW_MS = 60 * 60 * 1000;
-const writes = new Map<string, number[]>();
+export const USER_WRITES_PER_HOUR = 200;
+export const USER_BYTES_PER_DAY = 50 * 1024 * 1024;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+const tokenWrites = new Map<string, number[]>();
+const userWrites = new Map<string, number[]>();
+const userBytes = new Map<string, { at: number; bytes: number }[]>();
 
-/** Null when the write may go ahead (and is counted), else the seconds until one may. */
-export function takeAgentWrite(tokenId: string, now = Date.now()): number | null {
-  const recent = (writes.get(tokenId) ?? []).filter((at) => at > now - WINDOW_MS);
-  if (recent.length >= WRITES_PER_HOUR) {
-    writes.set(tokenId, recent);
-    return Math.max(1, Math.ceil((recent[0] + WINDOW_MS - now) / 1000));
+/**
+ * Why a write may not go ahead. `token` is this token's own count, which its
+ * holder may be told about. `account` is the user's budget across every token,
+ * and says nothing more, because the rest of it is other agents' usage.
+ */
+export type WriteRefusal = { scope: "token"; retryAfter: number } | { scope: "account" };
+
+/** Null when the write may go ahead (and is counted), else why not. */
+export function takeAgentWrite(agent: { tokenId: string; userId: string }, now = Date.now()): WriteRefusal | null {
+  const mine = (tokenWrites.get(agent.tokenId) ?? []).filter((at) => at > now - HOUR_MS);
+  const account = (userWrites.get(agent.userId) ?? []).filter((at) => at > now - HOUR_MS);
+  tokenWrites.set(agent.tokenId, mine);
+  userWrites.set(agent.userId, account);
+  if (mine.length >= WRITES_PER_HOUR) {
+    return { scope: "token", retryAfter: Math.max(1, Math.ceil((mine[0] + HOUR_MS - now) / 1000)) };
   }
-  recent.push(now);
-  writes.set(tokenId, recent);
+  if (account.length >= USER_WRITES_PER_HOUR) return { scope: "account" };
+  mine.push(now);
+  account.push(now);
   return null;
+}
+
+/** Whether `bytes` more written content fits the user's daily budget. Nothing is counted. */
+export function agentBytesFit(userId: string, bytes: number, now = Date.now()): boolean {
+  const recent = (userBytes.get(userId) ?? []).filter((w) => w.at > now - DAY_MS);
+  userBytes.set(userId, recent);
+  return recent.reduce((sum, w) => sum + w.bytes, 0) + bytes <= USER_BYTES_PER_DAY;
+}
+
+/** Count content that was written against the user's daily budget. */
+export function recordAgentBytes(userId: string, bytes: number, now = Date.now()): void {
+  const recent = userBytes.get(userId) ?? [];
+  recent.push({ at: now, bytes });
+  userBytes.set(userId, recent);
 }
 
 /** Test seam. */
 export function resetAgentWriteLimitsForTests(): void {
-  writes.clear();
+  tokenWrites.clear();
+  userWrites.clear();
+  userBytes.clear();
 }
 
 // ---- management routes (session only) -------------------------------------
@@ -139,7 +169,7 @@ agentTokens.use("*", async (c, next) => {
   await next();
 });
 
-async function requireSessionUser(c: Context): Promise<{ id: string } | Response> {
+async function requireSessionUser(c: Context): Promise<{ id: string; email: string | null } | Response> {
   // Refused before the session lookup, so it holds whatever else the request
   // carries: an agent token never manages tokens, its own included.
   if (presentsAgentToken(c.req.raw.headers)) {
@@ -147,7 +177,31 @@ async function requireSessionUser(c: Context): Promise<{ id: string } | Response
   }
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   if (!session?.user) return c.json({ error: "unauthorized" }, 401);
-  return { id: session.user.id };
+  return { id: session.user.id, email: session.user.email || null };
+}
+
+// Minting a token is the moment a stolen session turns into lasting access,
+// so the account hears about every one. The token's name is the only thing
+// from the request in it, and it goes in the plain-text body only. A send
+// that fails never undoes or delays the mint: it is logged and dropped.
+export function mintNotice(name: string, createdAt: Date): { subject: string; text: string } {
+  return {
+    subject: "A new agent token was created for your Markie account",
+    text: [
+      `A new agent token named "${name}" was created for your Markie account on ${createdAt.toUTCString()}.`,
+      "",
+      "An agent holding it can create private documents in your Markie Cloud, and read and update the documents it created. It cannot open anything else.",
+      "",
+      "If you made it, there is nothing to do. If you did not, revoke it in Markie under Remote agents, and change your password, which revokes every agent token.",
+    ].join("\n"),
+  };
+}
+
+function sendMintNotice(email: string | null, name: string, createdAt: number): void {
+  if (!email) return;
+  sendEmail({ to: email, ...mintNotice(name, new Date(createdAt)) }).catch((err) => {
+    console.error("agent token notice failed:", err);
+  });
 }
 
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
@@ -180,6 +234,7 @@ agentTokens.post("/", async (c) => {
       409
     );
   }
+  sendMintNotice(user.email, name, createdAt);
   return c.json({ id, name, token, prefix: token.slice(0, DISPLAY_PREFIX_CHARS), createdAt: iso(createdAt) }, 201);
 });
 
@@ -197,16 +252,21 @@ agentTokens.get("/", async (c) => {
 });
 
 // Revoking takes effect on the next request: authenticateAgent reads the row
-// every time. Another account's token, an unknown id and an already revoked
-// one all answer the same 404.
+// every time. Revoking one already revoked answers the same 204, so a retry
+// is harmless; an id that never belonged to this user (another account's
+// token included) answers 404. The token's documents stay the user's, and no
+// token reaches them again (agent-docs.ts).
 agentTokens.delete("/:id", async (c) => {
   const user = await requireSessionUser(c);
   if (user instanceof Response) return user;
   const id = c.req.param("id");
-  const changes = db
-    .prepare("UPDATE agent_tokens SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL")
-    .run(Date.now(), id, user.id).changes;
-  if (changes === 0) return c.json({ error: "not found" }, 404);
-  writes.delete(id);
-  return c.json({ ok: true });
+  const row = db.prepare("SELECT revoked_at FROM agent_tokens WHERE id = ? AND user_id = ?").get(id, user.id) as
+    | { revoked_at: number | null }
+    | undefined;
+  if (!row) return c.json({ error: "not found" }, 404);
+  if (row.revoked_at === null) {
+    db.prepare("UPDATE agent_tokens SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL").run(Date.now(), id, user.id);
+  }
+  tokenWrites.delete(id);
+  return c.body(null, 204);
 });

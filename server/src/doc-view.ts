@@ -28,6 +28,7 @@ import { assetRefsFor, assetVersion, serveAsset } from "./assets.ts";
 import { deployment } from "./deployment.ts";
 import { renderAccessRequiredPage, renderSharedDocPage } from "./render.ts";
 import { webSignInHref } from "./web-signin.ts";
+import { downloadFilename } from "./doc-meta.ts";
 
 const db = openDatabase();
 
@@ -187,12 +188,7 @@ docView.get("/d/:id/raw", async (c) => {
   const doc = loadDoc(docId);
   if (!doc) return c.text("Not found", 403);
 
-  const cleaned = doc.name.replace(/[\r\n"\\]/g, "").trim() || "document";
-  // A Darkmown document downloads as the .wd it is, so it opens interactive.
-  const extension = doc.format === "darkmown" ? ".wd" : ".md";
-  const filename = cleaned.toLowerCase().endsWith(extension)
-    ? cleaned
-    : `${cleaned}${extension}`;
+  const filename = downloadFilename(doc.name, doc.format);
   const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_");
   c.header("Content-Type", "text/markdown; charset=utf-8");
   c.header("Cache-Control", "private, no-store");

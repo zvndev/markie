@@ -13,8 +13,8 @@ import { docLinksApi } from "./doc-links.ts";
 import { publicShare } from "./public.ts";
 import { docView } from "./doc-view.ts";
 import { agentTokens } from "./agent-tokens.ts";
-import { agentDocsApi } from "./agent-docs.ts";
-import { mcpApi } from "./mcp-server.ts";
+import { agentDocsApi, restAgentAuth } from "./agent-docs.ts";
+import { mcpApi, mcpAuth } from "./mcp-server.ts";
 import { createWellKnown } from "./well-known.ts";
 import { createWebSignIn } from "./web-signin.ts";
 import { attachCollab } from "./collab.ts";
@@ -108,7 +108,9 @@ app.use("*", async (c, next) => {
 //   POST/PUT /api/agent/docs and POST /mcp  carry a document of up to 2 MB
 //   (agent-docs.ts AGENT_DOC_MAX_BYTES) inside JSON, where escaping can make
 //   it larger. They get room for that and no more; the document's own size
-//   is checked exactly once the body is read.
+//   is checked exactly once the body is read. Their agent token is checked
+//   before any of this (below), because bodyLimit reads a chunked body with
+//   no Content-Length in full before it can refuse it.
 const JSON_BODY_LIMIT = 2 * 1024 * 1024;
 const TEXT_BODY_LIMIT = 100 * 1024 * 1024 + 1024 * 1024;
 const AGENT_BODY_LIMIT = 5 * 1024 * 1024;
@@ -119,6 +121,12 @@ const agentBodyLimit = bodyLimit({ maxSize: AGENT_BODY_LIMIT, onError: bodyTooLa
 const ASSET_UPLOAD = /^\/api\/assets\/[^/]+$/;
 const DOC_TEXT = /^\/api\/docs\/[^/]+$/;
 const AGENT_DOC = /^\/api\/agent\/docs(?:\/[^/]+)?$/;
+
+// Agent routes answer to an agent token and nothing else, so a caller without
+// a live one is refused from its headers alone, before the body limit below
+// reads a byte of its body (docs/mobile/AGENT-LINKS-CONTRACT.md).
+app.use("/api/agent/*", restAgentAuth);
+app.use("/mcp", async (c, next) => (c.req.method === "POST" ? mcpAuth(c, next) : next()));
 
 app.use("/api/*", async (c, next) => {
   // Versioned snapshots have their own authenticated streaming body reader.

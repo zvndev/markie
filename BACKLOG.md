@@ -4,6 +4,16 @@
 > evidence; do not delete history. Move completed items to Done with the verification record.
 
 ## Open
+- [ ] A Darkmown (.wd) document with a public link renders at `/s/:token` through the markdown
+      pipeline, while `/d/:id` shows it as escaped source under the "interactive in the Markie
+      app" note (`renderDarkmownSource`, server/src/render.ts). Both are sanitized and run no
+      script, so this is consistency, not safety: the public page shows directive syntax as
+      text mixed into rendered markdown. `/s/:token/raw` already downloads it as `.wd`.
+      type: product
+      severity: low
+      acceptance_criteria: `/s/:token` for a darkmown document shows the same static view as
+        `/d/:id`, with a test.
+      source: PR #26 review round 1
 - [ ] The storage quota (MARKIE_STORAGE_QUOTA_BYTES) does not count version history
       (doc_history, dp_history) or the live-collaboration update log (doc_updates). Both are
       bounded today, but a billing plan needs a decision on whether they are charged.

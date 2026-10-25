@@ -18,7 +18,15 @@ export const APPLE_APP_SITE_ASSOCIATION = {
     details: [
       {
         appIDs: [`${APPLE_TEAM_ID}.${MOBILE_APP_ID}`],
-        components: [{ "/": "/d/*" }, { "/": "/s/*" }],
+        // In order: Apple's `*` also matches `/`, so the excludes come first,
+        // or the app would also claim /d/<id>/raw, /s/<token>/assets and
+        // every other path under a document.
+        components: [
+          { "/": "/d/*/*", exclude: true },
+          { "/": "/s/*/*", exclude: true },
+          { "/": "/d/*" },
+          { "/": "/s/*" },
+        ],
       },
     ],
   },

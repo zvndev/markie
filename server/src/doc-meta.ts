@@ -35,6 +35,10 @@ export const FORMAT_FROM_NAME_SQL = `CASE
   WHEN lower(name) LIKE '_%.wd' THEN 'darkmown'
   WHEN lower(name) LIKE '_%.txt' OR lower(name) LIKE '_%.text' OR lower(name) LIKE '_%.log' THEN 'text'
   ELSE 'markdown' END`;
+// The rows FORMAT_FROM_NAME_SQL would give anything but the column's default,
+// so the backfill touches those and no others.
+export const NON_MARKDOWN_NAME_SQL =
+  "(lower(name) LIKE '_%.wd' OR lower(name) LIKE '_%.txt' OR lower(name) LIKE '_%.text' OR lower(name) LIKE '_%.log')";
 
 // Extensions an agent token may create or rename to. Everything an agent can
 // write is something the phone and the web view can show.
@@ -86,11 +90,33 @@ export function privateLinkFor(id: string): string {
   return `${privateLinkOrigin()}/d/${encodeURIComponent(id)}`;
 }
 
-// Characters that would end the link text early or format it.
-const LINK_TEXT_SPECIAL = /[\\[\]*_`<>]/g;
+// docs/mobile/AGENT-LINKS-CONTRACT.md "markdownLink escaping". The desktop
+// builds the same link for markie_cloud_sync, and the two must agree byte for
+// byte, so this follows the contract's three steps exactly and does nothing
+// else: line breaks become one space, the characters that end or format link
+// text get a backslash, and the parentheses that would end the URL are
+// percent-encoded.
+const LINE_BREAKS = /[\r\n\u2028\u2029]+/g;
+const LINK_TEXT_SPECIAL = /[\\[\]<>`]/g;
+
+/** `[name](url)` with the contract's escaping, for any URL. */
+export function markdownLink(name: string, url: string): string {
+  const text = name.replace(LINE_BREAKS, " ").replace(LINK_TEXT_SPECIAL, (ch) => `\\${ch}`);
+  return `[${text}](${url.replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
+}
 
 /** `[name](privateLink)`, ready to paste into a chat. */
 export function markdownLinkFor(name: string, id: string): string {
-  const text = name.replace(LINK_TEXT_SPECIAL, (ch) => `\\${ch}`) || "document";
-  return `[${text}](${privateLinkFor(id)})`;
+  return markdownLink(name, privateLinkFor(id));
+}
+
+/**
+ * The file name a document downloads as from /d/:id/raw and /s/:token/raw: a
+ * Darkmown document as the .wd it is, so it opens interactive and never as
+ * Name.wd.md; everything else as .md, as before formats existed.
+ */
+export function downloadFilename(name: string, format: string): string {
+  const cleaned = name.replace(/[\r\n"\\]/g, "").trim() || "document";
+  const extension = format === "darkmown" ? ".wd" : ".md";
+  return cleaned.toLowerCase().endsWith(extension) ? cleaned : `${cleaned}${extension}`;
 }

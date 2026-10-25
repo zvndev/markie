@@ -10,11 +10,26 @@ import { otpEmail } from "./otp-email.ts";
 import { applicationOrigins } from "./application-origins.ts";
 import { accountContext, accountIdentitiesEnabled, assertNewAccountEmail } from "./account-context.ts";
 import { assertSignupAllowed } from "./signup.ts";
+import { revokeAgentTokensForUser } from "./agent-token-store.ts";
 
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
 const authDatabase = openDatabase();
+
+// A new password shuts out every agent token too (docs/mobile/AGENT-LINKS-
+// CONTRACT.md): whoever held the old password, or a session made with it,
+// may have minted tokens, and a token outlives the sessions a password
+// change ends. A failure is logged rather than thrown, because the password
+// has already changed by the time this runs and an error would only tell the
+// user it had not.
+function revokeAgentTokensAfterPasswordChange(userId: string, how: string): void {
+  try {
+    revokeAgentTokensForUser(userId);
+  } catch (err) {
+    console.error(`revoking agent tokens after ${how} failed:`, err);
+  }
+}
 
 export const auth = betterAuth({
   database: authDatabase,
@@ -29,6 +44,16 @@ export const auth = betterAuth({
       if (ctx.path !== "/sign-up/email") return;
       const email = (ctx.body as { email?: unknown } | undefined)?.email;
       assertSignupAllowed(authDatabase, typeof email === "string" ? email : "");
+    }),
+    // Changing a password while signed in. Resetting one by code or link is
+    // emailAndPassword.onPasswordReset below. change-password answers with the
+    // user only once the new password is stored; a refusal is an APIError.
+    after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path !== "/change-password") return;
+      const returned = (ctx.context as { returned?: unknown }).returned;
+      if (!returned || typeof returned !== "object" || returned instanceof Error) return;
+      const userId = (returned as { user?: { id?: unknown } }).user?.id;
+      if (typeof userId === "string" && userId) revokeAgentTokensAfterPasswordChange(userId, "a password change");
     }),
   },
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:8787",
@@ -71,6 +96,11 @@ export const auth = betterAuth({
     // whoever registered that address first. See GHSA-qq9h-g4jm-xgf3 for the
     // same class of flaw upstream.
     requireEmailVerification: true,
+    // Both reset routes, /email-otp/reset-password and /reset-password, call
+    // this once the new password is stored.
+    onPasswordReset: async ({ user }) => {
+      revokeAgentTokensAfterPasswordChange(user.id, "a password reset");
+    },
   },
   account: {
     // Google access and refresh tokens are written to the account table

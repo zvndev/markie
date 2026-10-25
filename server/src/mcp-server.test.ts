@@ -103,7 +103,7 @@ test("initialize negotiates 2025-06-18 and says what the server is", async () =>
   const newer = await rpc(aliceToken, "initialize", { protocolVersion: "2099-01-01" });
   assert.equal(newer.data.result.protocolVersion, "2025-06-18", "an unknown version is offered ours");
   const older = await rpc(aliceToken, "initialize", { protocolVersion: "2025-03-26" });
-  assert.equal(older.data.result.protocolVersion, "2025-03-26");
+  assert.equal(older.data.result.protocolVersion, "2025-06-18", "2025-06-18 only: an older client is offered ours too");
 });
 
 test("notifications are accepted with 202 and no body; ping answers {}", async () => {
@@ -188,6 +188,52 @@ test("tools cannot read or update app documents or another user's documents", as
   assert.equal(((await diary.json()) as { doc: { content: string } }).doc.content, "dear diary");
 });
 
+test("tools reach only this token's documents: not a sibling token's, not a bridge-synced one", async () => {
+  const sibling = await app.request("/api/agent-tokens", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${alice.token}` },
+    body: JSON.stringify({ name: "sibling" }),
+  });
+  const { id: siblingId, token: siblingToken } = (await sibling.json()) as { id: string; token: string };
+  const theirs = (await callTool(siblingToken, "markie_create_document", { name: "Theirs.md", content: "sibling" })).structuredContent;
+  const bridged = crypto.randomUUID();
+  const put = await app.request(`/api/docs/${bridged}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${alice.token}` },
+    body: JSON.stringify({ name: "Bridged.md", content: "synced", hash: sha("synced"), baseVersion: 0, origin: { kind: "agent", agent: "Claude Code" } }),
+  });
+  assert.equal(put.status, 200);
+  const missing = await callTool(aliceToken, "markie_read_my_document", { id: crypto.randomUUID() });
+  for (const id of [theirs.id, bridged]) {
+    const read = await callTool(aliceToken, "markie_read_my_document", { id });
+    assert.equal(read.isError, true);
+    assert.equal(read.content[0].text, missing.content[0].text);
+    assert.deepEqual(read.structuredContent, { error: "not found" });
+    assert.equal((await callTool(aliceToken, "markie_update_document", { id, content: "x" })).isError, true);
+  }
+  const list = await callTool(aliceToken, "markie_list_my_documents", { limit: 100 });
+  assert.ok(!list.structuredContent.docs.some((d: { id: string }) => d.id === theirs.id || d.id === bridged));
+  await app.request(`/api/agent-tokens/${siblingId}`, { method: "DELETE", headers: { Authorization: `Bearer ${alice.token}` } });
+});
+
+test("a shared document is frozen to the update tool, with the REST route's 409 body as the error", async () => {
+  const doc = (await callTool(aliceToken, "markie_create_document", { name: "Frozen.md", content: "v1" })).structuredContent;
+  const share = await app.request(`/api/docs/${doc.id}/shares`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${alice.token}`, Origin: "http://localhost:3000" },
+    body: JSON.stringify({ email: "bob@markie.test", role: "viewer" }),
+  });
+  assert.equal(share.status, 200);
+  const update = await callTool(aliceToken, "markie_update_document", { id: doc.id, content: "v2" });
+  assert.equal(update.isError, true);
+  assert.equal(update.structuredContent.error, "shared");
+  assert.match(update.structuredContent.message, /Create a new document instead/);
+  assert.match(update.content[0].text, /Create a new document instead/);
+  const read = await callTool(aliceToken, "markie_read_my_document", { id: doc.id });
+  assert.ok(!read.isError, "reads still work");
+  assert.equal(read.structuredContent.content, "v1");
+});
+
 test("markie_guide serves the local MCP's guide text", async () => {
   const r = await callTool(aliceToken, "markie_guide");
   assert.equal(r.content[0].text, MARKDOWN_GUIDE);
@@ -228,9 +274,44 @@ test("protocol errors: unknown tool, unknown method, bad JSON, batches, bad vers
   assert.equal(noVersion.status, 400);
   const badHeader = await post(aliceToken, { jsonrpc: "2.0", id: 1, method: "ping" }, { "MCP-Protocol-Version": "1999-01-01" });
   assert.equal(badHeader.status, 400);
+  const olderHeader = await post(aliceToken, { jsonrpc: "2.0", id: 1, method: "ping" }, { "MCP-Protocol-Version": "2025-03-26" });
+  assert.equal(olderHeader.status, 400, "2025-03-26 is no longer spoken");
   const goodHeader = await post(aliceToken, { jsonrpc: "2.0", id: "s", method: "ping" }, { "MCP-Protocol-Version": "2025-06-18" });
   assert.equal(goodHeader.status, 200);
   assert.equal(goodHeader.data.id, "s");
+  for (const id of [null, true, {}, [1]]) {
+    const bad = await post(aliceToken, { jsonrpc: "2.0", id, method: "ping" });
+    assert.equal(bad.status, 400, JSON.stringify(id));
+    assert.equal(bad.data.error.code, -32600);
+    assert.equal(bad.data.id, null);
+  }
+  const zero = await post(aliceToken, { jsonrpc: "2.0", id: 0, method: "ping" });
+  assert.equal(zero.status, 200, "0 is a valid id");
+  assert.equal(zero.data.id, 0);
+});
+
+test("a chunked body with no Content-Length is not read before the token is refused", async () => {
+  const offered = 4 * 1024 * 1024;
+  const chunk = new TextEncoder().encode("a".repeat(64 * 1024));
+  for (const token of [undefined, alice.token, "mk_agent_" + "C".repeat(43)]) {
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (pulled >= offered) return controller.close();
+          pulled += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+      },
+      { highWaterMark: 0 }
+    );
+    const headers = new Headers({ "Content-Type": "application/json" });
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    const res = await app.request("/mcp", { method: "POST", headers, body, duplex: "half" } as RequestInit);
+    assert.equal(res.status, 401, String(token));
+    assert.equal(((await res.json()) as { error: { code: number } }).error.code, -32001);
+    assert.ok(pulled <= chunk.byteLength, `read ${pulled} bytes before answering 401`);
+  }
 });
 
 test("a body past the agent limit is refused before it is read", async () => {
@@ -244,7 +325,7 @@ test("a body past the agent limit is refused before it is read", async () => {
 
 test("a revoked token is refused on the next request", async () => {
   const res = await app.request(`/api/agent-tokens/${aliceTokenId}`, { method: "DELETE", headers: { Authorization: `Bearer ${alice.token}` } });
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 204);
   const r = await rpc(aliceToken, "ping");
   assert.equal(r.status, 401);
 });

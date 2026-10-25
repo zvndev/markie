@@ -1,7 +1,8 @@
 // The docs columns the mobile and agent work added (format, origin_kind,
-// origin_agent, created_at) arrive on a database that already has documents.
-// Existing rows must keep working and get sensible values; a restart must
-// change nothing.
+// origin_agent, origin_token_id, created_at) arrive on a database that
+// already has documents. Existing rows must keep working and get sensible
+// values, the migration must not rewrite every row (only the names whose
+// format is not markdown), and a restart must change nothing.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
@@ -34,23 +35,34 @@ const rows: [string, string, string][] = [
   ["none", "README", "2026-01-07T00:00:00.000Z"],
 ];
 for (const r of rows) insert.run(...r);
+// Every row the migration writes, recorded as it happens.
+db.exec(`
+  CREATE TABLE touched (id TEXT);
+  CREATE TRIGGER docs_touched AFTER UPDATE ON docs BEGIN INSERT INTO touched (id) VALUES (NEW.id); END;
+`);
 
 await import("./docs.ts");
 
 const read = () =>
   Object.fromEntries(
-    (db.prepare("SELECT id, format, origin_kind, origin_agent, created_at, updated_at FROM docs").all() as Record<string, string>[]).map((r) => [r.id, r])
+    (db.prepare("SELECT id, format, origin_kind, origin_agent, origin_token_id, created_at, updated_at FROM docs").all() as Record<string, string>[]).map((r) => [r.id, r])
   );
 
-test("existing rows are backfilled: format from the name, app origin, created_at from updated_at", () => {
+test("existing rows read sensibly: format from the name, app origin, no token, created_at left NULL", () => {
   const got = read();
   const formats = Object.fromEntries(Object.entries(got).map(([id, r]) => [id, r.format]));
   assert.deepEqual(formats, { md: "markdown", wd: "darkmown", txt: "text", text: "text", log: "text", dotfile: "markdown", none: "markdown" });
   for (const r of Object.values(got)) {
     assert.equal(r.origin_kind, "app");
     assert.equal(r.origin_agent, null);
-    assert.equal(r.created_at, r.updated_at);
+    assert.equal(r.origin_token_id, null);
+    assert.equal(r.created_at, null, "readers take NULL as updated_at; nothing rewrites old rows to say so");
   }
+});
+
+test("the migration writes only the rows whose format is not markdown", () => {
+  const touched = (db.prepare("SELECT id FROM touched ORDER BY id").all() as { id: string }[]).map((r) => r.id);
+  assert.deepEqual(touched, ["log", "text", "txt", "wd"]);
 });
 
 test("the SQL backfill and formatForName agree on every name", async () => {
@@ -61,10 +73,13 @@ test("the SQL backfill and formatForName agree on every name", async () => {
 
 test("a restart rewrites nothing", async () => {
   db.prepare("UPDATE docs SET format = 'text', created_at = '2025-01-01T00:00:00.000Z' WHERE id = 'md'").run();
+  db.exec("DELETE FROM touched");
   await import("./docs.ts?restart");
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM touched").get() as { n: number }).n, 0, "no row written on restart");
   const md = read().md;
   assert.equal(md.format, "text");
   assert.equal(md.created_at, "2025-01-01T00:00:00.000Z");
   const columns = (db.prepare("PRAGMA table_info(docs)").all() as { name: string }[]).map((c) => c.name);
-  assert.deepEqual(columns.filter((c) => ["format", "origin_kind", "origin_agent", "created_at"].includes(c)), ["format", "origin_kind", "origin_agent", "created_at"]);
+  const added = ["format", "origin_kind", "origin_agent", "origin_token_id", "created_at"];
+  assert.deepEqual(columns.filter((c) => added.includes(c)), added);
 });

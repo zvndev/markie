@@ -20,6 +20,7 @@ import { CloudAreaError, createCloudAreas, type CloudAreasStore } from "./cloud-
 import { quotaRefusal, storageQuotaBytes } from "./quota.ts";
 import {
   FORMAT_FROM_NAME_SQL,
+  NON_MARKDOWN_NAME_SQL,
   formatForName,
   originOf,
   privateLinkFor,
@@ -60,29 +61,34 @@ db.exec(`
 
 // What a document is and where it came from (docs/mobile/AGENT-LINKS-CONTRACT.md).
 // Added in place, checked through PRAGMA like every other column this server
-// grew. Each backfill runs only in the branch that adds its column, so a
-// restart never rewrites a value a later write chose.
+// grew. No step here rewrites every row: ADD COLUMN with a constant default
+// leaves existing rows untouched, and the one backfill is limited to the
+// names whose format is not the default. Each backfill runs only in the
+// branch that adds its column, so a restart never rewrites a value a later
+// write chose.
 //
-//   format        markdown | darkmown | text, from the name's extension
-//   origin_kind   app | agent, set on a document's first version only
-//   origin_agent  the agent's display name; NULL for app
-//   created_at    when the first version landed; updated_at for older rows
+//   format           markdown | darkmown | text, from the name's extension
+//   origin_kind      app | agent, set on a document's first version only
+//   origin_agent     the agent's display name; NULL for app
+//   origin_token_id  the agent token that created it; NULL for everything
+//                    else, bridge-synced agent documents included. Set on
+//                    creation only and never returned to a client.
+//   created_at       when the first version landed; NULL on older rows,
+//                    which every reader takes as updated_at
 {
   const columns = new Set((db.prepare("PRAGMA table_info(docs)").all() as { name: string }[]).map((c) => c.name));
   if (!columns.has("format")) {
     db.transaction(() => {
       db.exec("ALTER TABLE docs ADD COLUMN format TEXT NOT NULL DEFAULT 'markdown'");
-      db.exec(`UPDATE docs SET format = ${FORMAT_FROM_NAME_SQL}`);
+      db.exec(`UPDATE docs SET format = ${FORMAT_FROM_NAME_SQL} WHERE ${NON_MARKDOWN_NAME_SQL}`);
     })();
   }
   if (!columns.has("origin_kind")) db.exec("ALTER TABLE docs ADD COLUMN origin_kind TEXT NOT NULL DEFAULT 'app'");
   if (!columns.has("origin_agent")) db.exec("ALTER TABLE docs ADD COLUMN origin_agent TEXT");
-  if (!columns.has("created_at")) {
-    db.transaction(() => {
-      db.exec("ALTER TABLE docs ADD COLUMN created_at TEXT");
-      db.exec("UPDATE docs SET created_at = updated_at WHERE created_at IS NULL");
-    })();
-  }
+  if (!columns.has("origin_token_id")) db.exec("ALTER TABLE docs ADD COLUMN origin_token_id TEXT");
+  if (!columns.has("created_at")) db.exec("ALTER TABLE docs ADD COLUMN created_at TEXT");
+  // Only token-made rows are in it, so it costs nothing for everyone else.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_docs_origin_token ON docs(origin_token_id, updated_at) WHERE origin_token_id IS NOT NULL");
   db.exec("CREATE INDEX IF NOT EXISTS idx_docs_owner_updated ON docs(owner_id, updated_at)");
 }
 
@@ -120,6 +126,8 @@ interface DocWrite {
    * created_at are decided here and never touched again.
    */
   origin?: DocOrigin;
+  /** With `origin` only: the agent token creating the document (agent-docs.ts). */
+  originTokenId?: string;
 }
 
 // One version of a document, its history row and the history trim. Callers
@@ -131,16 +139,16 @@ function upsertDocRow(w: DocWrite): void {
     // means the caller's "this creates it" was wrong, and the write stops
     // rather than handing that document a new origin.
     const changes = db.prepare(
-      `INSERT INTO docs (id, owner_id, name, version, content, hash, updated_at, deleted_at, format, origin_kind, origin_agent, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+      `INSERT INTO docs (id, owner_id, name, version, content, hash, updated_at, deleted_at, format, origin_kind, origin_agent, origin_token_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, version = excluded.version,
          content = excluded.content, hash = excluded.hash,
          updated_at = excluded.updated_at, deleted_at = NULL, format = excluded.format,
          origin_kind = excluded.origin_kind, origin_agent = excluded.origin_agent,
-         created_at = excluded.created_at
+         origin_token_id = excluded.origin_token_id, created_at = excluded.created_at
        WHERE docs.deleted_at IS NOT NULL`
-    ).run(w.id, w.ownerId, w.name, w.version, w.content, w.hash, w.now, format, w.origin.kind, w.origin.agent, w.now).changes;
+    ).run(w.id, w.ownerId, w.name, w.version, w.content, w.hash, w.now, format, w.origin.kind, w.origin.agent, w.originTokenId ?? null, w.now).changes;
     if (changes !== 1) throw new Error("document already exists");
   } else {
     const changes = db.prepare(

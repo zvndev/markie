@@ -176,14 +176,22 @@ export function sharedDocsFor(userId: string) {
 // owned document nobody else can reach is the only place a reference outside
 // the document's own folder still travels; the moment somebody else can read
 // the document, whoever wrote the reference stops being certainly its owner.
+//
+// A document an agent token created counts too, shared or not
+// (docs/mobile/AGENT-LINKS-CONTRACT.md): its text came from a remote party
+// holding the token, and a leaked token writing ![x](~/repo/.env) must not
+// make the desktop upload that file. origin_token_id never changes after
+// creation, so revoking the token does not make its text the owner's.
+const AUDIENCE_SQL = `( EXISTS (SELECT 1 FROM shares s WHERE s.doc_id = d.id)
+            OR EXISTS (SELECT 1 FROM pending_shares p WHERE p.doc_id = d.id)
+            OR EXISTS (SELECT 1 FROM public_links l WHERE l.doc_id = d.id) )`;
+
 export function sharedOutDocIds(userId: string): Set<string> {
   const rows = db
     .prepare(
       `SELECT d.id FROM docs d
        WHERE d.owner_id = ? AND d.deleted_at IS NULL
-         AND ( EXISTS (SELECT 1 FROM shares s WHERE s.doc_id = d.id)
-            OR EXISTS (SELECT 1 FROM pending_shares p WHERE p.doc_id = d.id)
-            OR EXISTS (SELECT 1 FROM public_links l WHERE l.doc_id = d.id) )`
+         AND ( d.origin_token_id IS NOT NULL OR ${AUDIENCE_SQL} )`
     )
     .all(userId) as Array<{ id: string }>;
   return new Set(rows.map((r) => r.id));
@@ -196,11 +204,16 @@ export function isSharedOut(docId: string): boolean {
     .prepare(
       `SELECT 1 FROM docs d
        WHERE d.id = ? AND d.deleted_at IS NULL
-         AND ( EXISTS (SELECT 1 FROM shares s WHERE s.doc_id = d.id)
-            OR EXISTS (SELECT 1 FROM pending_shares p WHERE p.doc_id = d.id)
-            OR EXISTS (SELECT 1 FROM public_links l WHERE l.doc_id = d.id) )`
+         AND ( d.origin_token_id IS NOT NULL OR ${AUDIENCE_SQL} )`
     )
     .get(docId);
+}
+
+// Whether anybody but the owner can read a document: a member, a pending
+// invite or a public link. Agent tokens may not change such a document
+// (agent-docs.ts): what other people already read stays what they read.
+export function hasAudience(docId: string): boolean {
+  return !!db.prepare(`SELECT 1 FROM docs d WHERE d.id = ? AND ${AUDIENCE_SQL}`).get(docId);
 }
 
 // Owned, non-deleted docs that have at least one member or pending invite —

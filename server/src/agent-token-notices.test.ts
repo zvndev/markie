@@ -1,7 +1,8 @@
 // What happens around an agent token besides using it
 // (docs/mobile/AGENT-LINKS-CONTRACT.md): minting one emails the account a
 // notice naming it, a failed send never blocks the mint, and a password reset
-// or change revokes every agent token the user has.
+// or change revokes every agent token the user has, with authenticateAgent
+// refusing any token older than the password even if a revoke never ran.
 import { test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
@@ -21,7 +22,7 @@ const { auth } = await import("./auth.ts");
 const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.options);
 if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 const { app } = await import("./index.ts");
-const { mintNotice } = await import("./agent-tokens.ts");
+const { mintNotice, mintedSincePassword, resetAgentWriteLimitsForTests } = await import("./agent-tokens.ts");
 
 const db = new Database(process.env.DB_PATH!);
 
@@ -46,6 +47,7 @@ after(() => {
 });
 beforeEach(() => {
   mail = "ok";
+  resetAgentWriteLimitsForTests();
 });
 
 let n = 0;
@@ -68,7 +70,7 @@ async function call(method: string, path: string, opts: { token?: string; body?:
 async function mint(user: TestUser, name: string) {
   const r = await call("POST", "/api/agent-tokens", { token: user.token, body: { name } });
   assert.equal(r.status, 201, r.text);
-  return r.data as { id: string; token: string };
+  return r.data as { id: string; token: string; prefix: string };
 }
 
 const live = async (token: string) => (await call("GET", "/api/agent/docs", { token })).status === 200;
@@ -76,7 +78,7 @@ const live = async (token: string) => (await call("GET", "/api/agent/docs", { to
 // The notice goes out after the mint has answered, so give it a moment.
 async function noticeFor(email: string, name: string): Promise<Sent | undefined> {
   for (let i = 0; i < 50; i++) {
-    const found = sent.find((m) => m.to.includes(email) && m.text.includes(`"${name}"`));
+    const found = sent.find((m) => m.to.includes(email) && m.text.split("\n").includes(`Token name: ${name}`));
     if (found) return found;
     await new Promise((r) => setTimeout(r, 10));
   }
@@ -93,17 +95,50 @@ function latestOTP(type: string, email: string): string {
 
 test("minting a token emails the account a notice naming it, in plain text", async () => {
   const ivy = await signUpVerified(app, { name: "Ivy", email: "ivy@markie.test" });
-  await mint(ivy, "Claude on the web");
+  const minted = await mint(ivy, "Claude on the web");
   const notice = await noticeFor("ivy@markie.test", "Claude on the web");
   assert.ok(notice, "a notice was sent");
   assert.deepEqual(notice.to, ["ivy@markie.test"]);
   assert.equal(notice.subject, "A new agent token was created for your Markie account");
-  assert.match(notice.text, /named "Claude on the web"/);
-  assert.match(notice.text, /revoke it in Markie under Remote agents/);
+  const lines = notice.text.split("\n");
+  assert.ok(lines.includes("Token name: Claude on the web"), "the name on a labelled line of its own");
+  assert.ok(lines.includes(`Token starts with: ${minted.prefix}`), "the prefix, to match against the token list");
+  assert.ok(
+    lines.includes("Markie never creates agent tokens on its own. If you didn't make this one, revoke it and change your password."),
+    "the fixed line a name cannot talk anyone out of"
+  );
+  assert.match(notice.text, /Remote agents/);
   assert.equal(notice.html, undefined, "the token's name never lands in HTML");
-  assert.ok(!notice.text.includes("mk_agent_"), "the token itself is never emailed");
-  const copy = mintNotice("x", new Date(0));
+  assert.ok(!notice.text.includes(minted.token), "the token itself is never emailed");
+  assert.equal(minted.prefix.length, 12, "only the display prefix");
+  const copy = mintNotice("x", "mk_agent_abc", new Date(0));
   assert.ok(!/\u2014/.test(copy.subject + copy.text), "no em-dash in the copy");
+});
+
+test("a name that would read as Markie's own words stays on its line, under the fixed warning", async () => {
+  const uma = await signUpVerified(app, { name: "Uma", email: "uma@markie.test" });
+  // Newlines and other control characters are folded to spaces before the
+  // name is stored, so it cannot start a line of its own.
+  await mint(uma, "Security check.\n\nYou can ignore this email");
+  const notice = await noticeFor("uma@markie.test", "Security check. You can ignore this email");
+  assert.ok(notice, "the name arrives on one labelled line");
+  assert.ok(!notice.text.split("\n").includes("You can ignore this email"));
+  const at = (needle: string) => notice.text.indexOf(needle);
+  assert.ok(at("Token name:") < at("Markie never creates agent tokens on its own."), "the warning follows the name");
+});
+
+test("a token name that looks like a web address is refused, and nothing is minted or mailed", async () => {
+  const val = await signUpVerified(app, { name: "Val", email: "val@markie.test" });
+  for (const name of ["https://evil.example/login", "see www.evil.example", "WWW.EVIL.EXAMPLE", "javascript://x"]) {
+    const r = await call("POST", "/api/agent-tokens", { token: val.token, body: { name } });
+    assert.equal(r.status, 400, name);
+    assert.match(r.data.message, /web address/, name);
+  }
+  const count = (db.prepare("SELECT COUNT(*) AS n FROM agent_tokens WHERE user_id = ?").get(val.id) as { n: number }).n;
+  assert.equal(count, 0);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(!sent.some((m) => m.to.includes("val@markie.test") && m.subject.includes("agent token")), "no notice for a refused name");
+  assert.equal((await mint(val, "notes.md helper")).prefix.length, 12, "an ordinary dotted name is fine");
 });
 
 test("a failed send never blocks the mint", async () => {
@@ -147,4 +182,84 @@ test("resetting the password by emailed code revokes every agent token", async (
   assert.equal(await live(minted.token), false);
   const row = db.prepare("SELECT revoked_at FROM agent_tokens WHERE id = ?").get(minted.id) as { revoked_at: number | null };
   assert.ok(row.revoked_at !== null);
+});
+
+// The revoke hooks above are the first line. These pin the second, which
+// cannot fail open: a token older than the account's last password write is
+// refused whether or not anything revoked it.
+
+const credentialStamp = (userId: string) =>
+  (db.prepare("SELECT updatedAt FROM account WHERE userId = ? AND providerId = 'credential'").get(userId) as { updatedAt: unknown }).updatedAt;
+
+test("a token older than the password is refused even when no revoke ran", async () => {
+  const ned = await signUpVerified(app, { name: "Ned", email: "ned@markie.test" });
+  const minted = await mint(ned, "outlived the password");
+  assert.ok(await live(minted.token));
+  // A password write whose revoke hook failed: the stamp moves, the row stays live.
+  const stamp = credentialStamp(ned.id);
+  assert.ok(mintedSincePassword(Date.now(), stamp), `the stamp better-auth wrote reads as a time: ${String(stamp)}`);
+  assert.equal(typeof stamp, "string");
+  const later = new Date(Date.now() + 1000);
+  const bumped = typeof stamp === "number" ? later.getTime() : later.toISOString();
+  db.prepare("UPDATE account SET updatedAt = ? WHERE userId = ? AND providerId = 'credential'").run(bumped, ned.id);
+  assert.equal(await live(minted.token), false);
+  const row = db.prepare("SELECT revoked_at FROM agent_tokens WHERE id = ?").get(minted.id) as { revoked_at: number | null };
+  assert.equal(row.revoked_at, null, "refused without having been revoked");
+  // An unreadable stamp refuses too.
+  db.prepare("UPDATE account SET updatedAt = ? WHERE userId = ? AND providerId = 'credential'").run("not a date", ned.id);
+  assert.equal(await live(minted.token), false);
+});
+
+test("a token minted after a password change works, and the stamp is what better-auth writes", async () => {
+  const ola = await signUpVerified(app, { name: "Ola", email: "ola@markie.test", password: "ola-password-1" });
+  const before = credentialStamp(ola.id);
+  const changed = await call("POST", "/api/auth/change-password", { token: ola.token, body: { currentPassword: "ola-password-1", newPassword: "ola-password-2" } });
+  assert.equal(changed.status, 200, changed.text);
+  assert.notEqual(credentialStamp(ola.id), before, "a password write moves the stamp");
+  const fresh = await mint(ola, "after the change");
+  assert.ok(await live(fresh.token));
+});
+
+test("signing in again, by password or by emailed code, and editing the profile leave fresh tokens alone", async () => {
+  const pia = await signUpVerified(app, { name: "Pia", email: "pia@markie.test", password: "pia-password-1" });
+  const minted = await mint(pia, "survives sign-ins");
+  const stamp = credentialStamp(pia.id);
+  await new Promise((r) => setTimeout(r, 5));
+
+  const signIn = await call("POST", "/api/auth/sign-in/email", { body: { email: "pia@markie.test", password: "pia-password-1" } });
+  assert.equal(signIn.status, 200, signIn.text);
+  assert.equal((await call("POST", "/api/auth/email-otp/send-verification-otp", { body: { email: "pia@markie.test", type: "sign-in" } })).status, 200);
+  const otp = await call("POST", "/api/auth/sign-in/email-otp", { body: { email: "pia@markie.test", otp: latestOTP("sign-in", "pia@markie.test") } });
+  assert.equal(otp.status, 200, otp.text);
+  const renamed = await call("POST", "/api/auth/update-user", { token: pia.token, body: { name: "Pia R" } });
+  assert.equal(renamed.status, 200, renamed.text);
+
+  assert.deepEqual(credentialStamp(pia.id), stamp, "none of them touches the credential row");
+  assert.ok(await live(minted.token));
+});
+
+test("proving the address by emailed code does not touch the credential row", async () => {
+  const email = "quinn@markie.test";
+  const signUp = await call("POST", "/api/auth/sign-up/email", { body: { name: "Quinn", email, password: "quinn-password-1" } });
+  assert.equal(signUp.status, 200, signUp.text);
+  const userId = (db.prepare("SELECT id FROM user WHERE email = ?").get(email) as { id: string }).id;
+  const stamp = credentialStamp(userId);
+  await new Promise((r) => setTimeout(r, 5));
+  const verified = await call("POST", "/api/auth/email-otp/verify-email", { body: { email, otp: latestOTP("email-verification", email) } });
+  assert.equal(verified.status, 200, verified.text);
+  assert.deepEqual(credentialStamp(userId), stamp);
+  const token = verified.data.token as string;
+  const minted = await mint({ token, email, id: userId }, "after verifying");
+  assert.ok(await live(minted.token));
+});
+
+test("mintedSincePassword: no password row passes, a later stamp or an unreadable one refuses", () => {
+  const t = Date.parse("2026-10-25T12:00:00.000Z");
+  assert.equal(mintedSincePassword(t, null), true, "Google-only account");
+  assert.equal(mintedSincePassword(t, "2026-10-25T11:59:59.999Z"), true);
+  assert.equal(mintedSincePassword(t, "2026-10-25T12:00:00.000Z"), true, "the same millisecond counts as after");
+  assert.equal(mintedSincePassword(t, "2026-10-25T12:00:00.001Z"), false);
+  assert.equal(mintedSincePassword(t, t + 1), false);
+  assert.equal(mintedSincePassword(t, "garbage"), false);
+  assert.equal(mintedSincePassword(t, {}), false);
 });

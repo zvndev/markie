@@ -32,6 +32,12 @@ const {
   WRITES_PER_HOUR,
   USER_WRITES_PER_HOUR,
   USER_BYTES_PER_DAY,
+  TOKEN_BYTES_PER_DAY,
+  MINTS_PER_HOUR,
+  MINTS_PER_DAY,
+  mintRefusal,
+  recordMint,
+  agentBytesRefusal,
 } = await import("./agent-tokens.ts");
 const { setStorageQuotaForTests } = await import("./quota.ts");
 const { resetInviteLimitsForTests } = await import("./shares.ts");
@@ -129,12 +135,56 @@ test("a token needs a name of 1 to 64 characters", async () => {
 test("an account holds at most 20 active tokens, and revoking frees a place", async () => {
   const carol = await signUpVerified(app, { name: "Carol", email: "carol@markie.test" });
   const ids: string[] = [];
-  for (let i = 0; i < 20; i++) ids.push((await mintToken(carol, `t${i}`)).id);
+  for (let i = 0; i < 20; i++) {
+    // Past the mint rate limit, which has its own test below.
+    if (i % MINTS_PER_HOUR === 0) resetAgentWriteLimitsForTests();
+    ids.push((await mintToken(carol, `t${i}`)).id);
+  }
+  resetAgentWriteLimitsForTests();
   const refused = await call("POST", "/api/agent-tokens", { token: carol.token, body: { name: "one too many" } });
   assert.equal(refused.status, 409);
   assert.equal(refused.data.error, "token limit");
   assert.equal((await call("DELETE", `/api/agent-tokens/${ids[0]}`, { token: carol.token })).status, 204);
   await mintToken(carol, "fits again");
+});
+
+test("5 mints an hour and 20 a day per user, then 429 with Retry-After; revoking frees no mint", async () => {
+  const dee = await signUpVerified(app, { name: "Dee", email: "dee@markie.test" });
+  const before = (db.prepare("SELECT COUNT(*) AS n FROM agent_tokens WHERE user_id = ?").get(dee.id) as { n: number }).n;
+  // Mint and revoke in a loop, the shape that sent 300 notices in 12 seconds.
+  for (let i = 0; i < MINTS_PER_HOUR; i++) {
+    const minted = await mintToken(dee, `loop ${i}`);
+    assert.equal((await call("DELETE", `/api/agent-tokens/${minted.id}`, { token: dee.token })).status, 204);
+  }
+  const refused = await call("POST", "/api/agent-tokens", { token: dee.token, body: { name: "one more" } });
+  assert.equal(refused.status, 429);
+  assert.equal(refused.data.error, "rate limited");
+  const retry = Number(refused.headers.get("retry-after"));
+  assert.ok(retry > 3500 && retry <= 3600, `Retry-After ${retry}`);
+  assert.ok(!refused.text.includes("mk_agent_"));
+  const after = (db.prepare("SELECT COUNT(*) AS n FROM agent_tokens WHERE user_id = ?").get(dee.id) as { n: number }).n;
+  assert.equal(after - before, MINTS_PER_HOUR, "nothing was inserted for the refused mint");
+  assert.equal((await mintToken(bob, "bob is not limited by dee")).name, "bob is not limited by dee");
+
+  // The windows themselves, on a clock: the hour frees up, the day does not.
+  const t0 = Date.parse("2026-01-01T00:00:00Z");
+  const user = `clock-${crypto.randomUUID()}`;
+  const MIN = 60 * 1000;
+  for (let i = 0; i < MINTS_PER_HOUR; i++) {
+    assert.equal(mintRefusal(user, t0 + i * MIN), null);
+    recordMint(user, t0 + i * MIN);
+  }
+  assert.equal(mintRefusal(user, t0 + 10 * MIN), 50 * 60, "until the oldest of the hour's five ages out");
+  let at = t0 + 61 * MIN;
+  for (let made = MINTS_PER_HOUR; made < MINTS_PER_DAY; made++) {
+    if (mintRefusal(user, at) !== null) at += 61 * MIN;
+    assert.equal(mintRefusal(user, at), null, `mint ${made + 1}`);
+    recordMint(user, at);
+    at += MIN;
+  }
+  const dayWait = mintRefusal(user, at + 2 * 60 * MIN);
+  assert.equal(dayWait, Math.ceil((t0 + 24 * 60 * MIN - (at + 2 * 60 * MIN)) / 1000), "the day's twentieth holds until the first is a day old");
+  assert.equal(mintRefusal(user, t0 + 24 * 60 * MIN + 1), null, "a day on, the first has aged out and the hour is clear");
 });
 
 test("token routes need a session and refuse an agent token, its own included", async () => {
@@ -446,7 +496,7 @@ test("GET /api/docs reports every token-written document as sharedOut, and nothi
   assert.deepEqual(await links(own), [], "the owner's own document is unchanged");
 });
 
-test("a shared, invited or public document is frozen to tokens: 409 shared, reads still work", async () => {
+test("a shared, invited or public document is closed to tokens: 409 shared on write, 404 on read, gone from the list", async () => {
   const shareWith = (id: string) => call("POST", `/api/docs/${id}/shares`, { token: alice.token, body: { email: "bob@markie.test", role: "editor" } });
   const invite = (id: string) => call("POST", `/api/docs/${id}/shares`, { token: alice.token, body: { email: "nobody-yet@markie.test", role: "viewer" } });
   const publish = (id: string) => call("POST", `/api/docs/${id}/public-link`, { token: alice.token, body: {} });
@@ -459,8 +509,11 @@ test("a shared, invited or public document is frozen to tokens: 409 shared, read
     assert.equal(put.data.error, "shared", how);
     assert.match(put.data.message, /Create a new document instead/, how);
     const read = await call("GET", `/api/agent/docs/${made.data.id}`, { token: aliceAgent.token });
-    assert.equal(read.status, 200, how);
-    assert.equal(read.data.content, "as shared");
+    const nothing = await call("GET", `/api/agent/docs/${crypto.randomUUID()}`, { token: aliceAgent.token });
+    assert.equal(read.status, 404, how);
+    assert.equal(read.text, nothing.text, `${how}: the same 404 as an id that never existed`);
+    const listed = await call("GET", "/api/agent/docs?limit=100", { token: aliceAgent.token });
+    assert.ok(!listed.data.docs.some((d: { id: string }) => d.id === made.data.id), `${how}: left out of the list`);
     const row = db.prepare("SELECT content, version FROM docs WHERE id = ?").get(made.data.id) as { content: string; version: number };
     assert.deepEqual({ ...row }, { content: "as shared", version: 1 }, how);
   }
@@ -474,7 +527,7 @@ test("200 writes an hour per user across all tokens, then 429 that reveals no us
   for (let i = 0; i < USER_WRITES_PER_HOUR; i++) assert.equal(takeAgentWrite({ tokenId: `other-${i % 4}`, userId: gwen.id }), null);
   const over = await agentCreate(fresh.token, { name: "over.md", content: "x" });
   assert.equal(over.status, 429);
-  assert.equal(over.headers.get("retry-after"), null, "when other agents' writes age out is theirs");
+  assert.equal(over.headers.get("retry-after"), "3600", "always the whole hour: when other agents' writes age out is theirs");
   assert.deepEqual(Object.keys(over.data).sort(), ["error", "message"]);
   assert.equal(over.data.error, "rate limited");
   assert.deepEqual(over.data.message.match(/\d+/g), [String(USER_WRITES_PER_HOUR)], "the public limit, and no count");
@@ -486,11 +539,17 @@ test("200 writes an hour per user across all tokens, then 429 that reveals no us
 test("50 MB of written content a day per user across all tokens, then 429 that reveals no usage", async () => {
   const hal = await signUpVerified(app, { name: "Hal", email: "hal@markie.test" });
   const halAgent = await mintToken(hal, "Hal's agent");
-  recordAgentBytes(hal.id, USER_BYTES_PER_DAY - 10);
+  // Other tokens of his used the budget, none of them past its own 20 MB.
+  const others = Math.ceil(USER_BYTES_PER_DAY / TOKEN_BYTES_PER_DAY);
+  for (let i = 0; i < others; i++) {
+    const share = Math.floor((USER_BYTES_PER_DAY - 10) / others) + (i === 0 ? (USER_BYTES_PER_DAY - 10) % others : 0);
+    recordAgentBytes({ tokenId: `other-${i}`, userId: hal.id }, share);
+  }
   const fits = await agentCreate(halAgent.token, { name: "fits.md", content: "0123456789" });
   assert.equal(fits.status, 201, "exactly at the budget");
   const over = await agentCreate(halAgent.token, { name: "over.md", content: "x" });
   assert.equal(over.status, 429);
+  assert.equal(over.headers.get("retry-after"), "86400", "always the whole day");
   assert.deepEqual(Object.keys(over.data).sort(), ["error", "message"]);
   assert.deepEqual(over.data.message.match(/\d+/g), ["50"], "the public limit, and no usage");
   const update = await call("PUT", `/api/agent/docs/${fits.data.id}`, { token: halAgent.token, body: { content: "y" } });
@@ -498,11 +557,70 @@ test("50 MB of written content a day per user across all tokens, then 429 that r
   assert.equal((db.prepare("SELECT COUNT(*) AS n FROM docs WHERE owner_id = ?").get(hal.id) as { n: number }).n, 1);
 });
 
+test("20 MB a day per token inside the user's budget, with its own exact Retry-After; other tokens unaffected", async () => {
+  const ida = await signUpVerified(app, { name: "Ida", email: "ida@markie.test" });
+  const greedy = await mintToken(ida, "greedy");
+  const other = await mintToken(ida, "other");
+  recordAgentBytes({ tokenId: greedy.id, userId: ida.id }, TOKEN_BYTES_PER_DAY - 3);
+  assert.equal((await agentCreate(greedy.token, { name: "fits.md", content: "abc" })).status, 201, "exactly at its share");
+  const over = await agentCreate(greedy.token, { name: "over.md", content: "x" });
+  assert.equal(over.status, 429);
+  assert.equal(over.data.error, "rate limited");
+  assert.deepEqual(over.data.message.match(/\d+/g), ["20"], "its own share, and no usage");
+  const retry = Number(over.headers.get("retry-after"));
+  assert.ok(retry > 86000 && retry <= 86400, `Retry-After ${retry}`);
+  assert.equal(over.data.retryAfter, retry);
+  assert.equal((await agentCreate(other.token, { name: "mine.md", content: "x" })).status, 201, "the account's other tokens still write");
+});
+
+test("revoking a token gives its share of the user's hourly writes and daily bytes back", async () => {
+  const jan = await signUpVerified(app, { name: "Jan", email: "jan@markie.test" });
+  const spent = await mintToken(jan, "spent");
+  const keeper = await mintToken(jan, "keeper");
+  // The spent token, with help from tokens of hers long gone, used the
+  // account's hour (200 writes) and its day (50 MB).
+  for (let i = 0; i < USER_WRITES_PER_HOUR; i++) assert.equal(takeAgentWrite({ tokenId: i < WRITES_PER_HOUR ? spent.id : `gone-${i % 3}`, userId: jan.id }), null);
+  recordAgentBytes({ tokenId: spent.id, userId: jan.id }, TOKEN_BYTES_PER_DAY);
+  recordAgentBytes({ tokenId: "gone-0", userId: jan.id }, TOKEN_BYTES_PER_DAY);
+  recordAgentBytes({ tokenId: "gone-1", userId: jan.id }, USER_BYTES_PER_DAY - 2 * TOKEN_BYTES_PER_DAY);
+  const keeperAgent = { tokenId: keeper.id, userId: jan.id };
+  assert.deepEqual(agentBytesRefusal(keeperAgent, 1), { scope: "account", retryAfter: 86400 }, "the day is used up");
+  const blocked = await agentCreate(keeper.token, { name: "blocked.md", content: "x" });
+  assert.equal(blocked.status, 429, "the hour is used up");
+  assert.equal(blocked.headers.get("retry-after"), "3600");
+
+  assert.equal((await call("DELETE", `/api/agent-tokens/${spent.id}`, { token: jan.token })).status, 204);
+  assert.equal(agentBytesRefusal(keeperAgent, TOKEN_BYTES_PER_DAY), null, "the spent token's 20 MB came back");
+  assert.notEqual(agentBytesRefusal(keeperAgent, TOKEN_BYTES_PER_DAY + 1), null, "and no more than that");
+  const freed = await agentCreate(keeper.token, { name: "freed.md", content: "x".repeat(1024) });
+  assert.equal(freed.status, 201, `its writes came back too: ${freed.text}`);
+  // Writes from the revoked token are gone for good: it no longer authenticates.
+  assert.equal((await agentCreate(spent.token, { name: "x.md", content: "x" })).status, 401);
+});
+
 test("a deleted agent document is gone for the agent too", async () => {
   const made = await agentCreate(aliceAgent.token, { name: "Gone.md", content: "bye" });
   assert.equal((await call("DELETE", `/api/docs/${made.data.id}`, { token: alice.token })).status, 200);
   assert.equal((await call("GET", `/api/agent/docs/${made.data.id}`, { token: aliceAgent.token })).status, 404);
   assert.equal((await call("PUT", `/api/agent/docs/${made.data.id}`, { token: aliceAgent.token, body: { content: "back" } })).status, 404);
+});
+
+test("while a document stays private the token reads the owner's edits; sharing ends that, unsharing restores it", async () => {
+  const made = await agentCreate(aliceAgent.token, { name: "Annotated.md", content: "draft" });
+  const base = (db.prepare("SELECT version FROM docs WHERE id = ?").get(made.data.id) as { version: number }).version;
+  const content = "draft\n\n> Owner: tighten the intro";
+  const edit = await call("PUT", `/api/docs/${made.data.id}`, { token: alice.token, body: { name: "Annotated.md", content, hash: sha(content), baseVersion: base } });
+  assert.equal(edit.status, 200, edit.text);
+  const read = await call("GET", `/api/agent/docs/${made.data.id}`, { token: aliceAgent.token });
+  assert.equal(read.status, 200);
+  assert.equal(read.data.content, content, "annotating for the agent is the workflow");
+
+  const link = await call("POST", `/api/docs/${made.data.id}/public-link`, { token: alice.token, body: {} });
+  assert.ok(link.status === 200 || link.status === 201, link.text);
+  assert.equal((await call("GET", `/api/agent/docs/${made.data.id}`, { token: aliceAgent.token })).status, 404);
+  const off = await call("DELETE", `/api/docs/${made.data.id}/public-link`, { token: alice.token });
+  assert.ok(off.status === 200 || off.status === 204, off.text);
+  assert.equal((await call("GET", `/api/agent/docs/${made.data.id}`, { token: aliceAgent.token })).status, 200, "private again");
 });
 
 // ---- reading and updating --------------------------------------------------------

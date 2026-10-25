@@ -85,7 +85,8 @@ const TOOLS = [
   },
   {
     name: "markie_read_my_document",
-    description: "Read the full text of a document this agent token created, by id.",
+    description:
+      "Read the full text of a document this agent token created, by id. Once the user shares a document, it answers not found and leaves markie_list_my_documents.",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string", description: "The document id" } },

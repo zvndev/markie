@@ -182,7 +182,7 @@ export function sharedDocsFor(userId: string) {
 // holding the token, and a leaked token writing ![x](~/repo/.env) must not
 // make the desktop upload that file. origin_token_id never changes after
 // creation, so revoking the token does not make its text the owner's.
-const AUDIENCE_SQL = `( EXISTS (SELECT 1 FROM shares s WHERE s.doc_id = d.id)
+export const AUDIENCE_SQL = `( EXISTS (SELECT 1 FROM shares s WHERE s.doc_id = d.id)
             OR EXISTS (SELECT 1 FROM pending_shares p WHERE p.doc_id = d.id)
             OR EXISTS (SELECT 1 FROM public_links l WHERE l.doc_id = d.id) )`;
 

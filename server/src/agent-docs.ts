@@ -7,12 +7,18 @@
 // documents a local agent synced through the desktop bridge (origin_kind is
 // 'agent' for the badge, but origin_token_id is NULL), documents the user's
 // other tokens made, anyone else's, deleted ones and ids that never existed.
-// A leaked token exposes only what it wrote itself, and cannot be used to
-// learn which ids exist. A revoked token's documents stay the user's and no
+// A leaked token exposes the documents it created, and edits the owner makes
+// to them while they stay private, and cannot be used to learn which ids
+// exist. A revoked token's documents stay the user's and no
 // token reaches them again: origin_token_id never changes after creation.
 //
 // A document someone else can read (a member, a pending invite or a public
-// link) is frozen to tokens: reads still work, writes answer 409 "shared".
+// link) is closed to tokens. Writes answer 409 "shared", so the agent is told
+// to make a new document instead. Reads answer the same 404 as every other
+// unreachable id, and the list leaves it out: once the owner has shared it,
+// what is in it may be other people's words, and a leaked token must not
+// carry them off. While it stays private, the token still reads edits the
+// owner makes, because annotating a document for the agent is the workflow.
 //
 // The REST routes here and the hosted MCP tools (mcp-server.ts) share these
 // functions, so the two surfaces cannot drift apart on a check.
@@ -21,12 +27,13 @@ import crypto from "node:crypto";
 import { openDatabase } from "./db.ts";
 import { quotaRefusal, storageQuotaBytes } from "./quota.ts";
 import { writeDocVersion } from "./docs.ts";
-import { hasAudience } from "./shares.ts";
+import { AUDIENCE_SQL, hasAudience } from "./shares.ts";
 import {
+  TOKEN_BYTES_PER_DAY,
   USER_BYTES_PER_DAY,
   USER_WRITES_PER_HOUR,
   WRITES_PER_HOUR,
-  agentBytesFit,
+  agentBytesRefusal,
   authenticateAgent,
   recordAgentBytes,
   takeAgentWrite,
@@ -113,13 +120,20 @@ function checkQuota(ownerId: string, growth: number): AgentFailure | null {
   return refusal ? fail(413, refusal.error, refusal.message) : null;
 }
 
-function checkByteBudget(userId: string, bytes: number): AgentFailure | null {
-  if (agentBytesFit(userId, bytes)) return null;
-  return fail(
-    429,
-    "rate limited",
-    `This account's agent tokens can write at most ${USER_BYTES_PER_DAY / (1024 * 1024)} MB of documents a day. Try again tomorrow.`
-  );
+const limited = (message: string, retryAfter: number): AgentFailure => ({ ...fail(429, "rate limited", message), retryAfter });
+
+function checkByteBudget(agent: AgentPrincipal, bytes: number): AgentFailure | null {
+  const refused = agentBytesRefusal(agent, bytes);
+  if (refused === null) return null;
+  if (refused.scope === "account") {
+    return limited(`This account's agent tokens can write at most ${USER_BYTES_PER_DAY / (1024 * 1024)} MB of documents a day. Try again tomorrow.`, refused.retryAfter);
+  }
+  // The token's own share, like its own write count, may say exactly when.
+  const wait = refused.retryAfter;
+  return {
+    ...fail(429, "rate limited", `This agent token can write at most ${TOKEN_BYTES_PER_DAY / (1024 * 1024)} MB of documents a day. Try again later.`, { retryAfter: wait }),
+    retryAfter: wait,
+  };
 }
 
 /**
@@ -129,14 +143,15 @@ function checkByteBudget(userId: string, bytes: number): AgentFailure | null {
  * one. The create and update operations below do not charge on their own:
  * each surface charges exactly once per request.
  *
- * Only the token's own limit says when to retry: the account's budget is the
- * sum of other agents' work, and how soon it frees up is theirs to keep.
+ * Only the token's own limit says exactly when to retry. The account's
+ * budget is the sum of other agents' work, and how soon it frees up is
+ * theirs to keep, so its Retry-After is always the whole hour.
  */
 export function chargeAgentWrite(agent: AgentPrincipal): AgentFailure | null {
   const refused = takeAgentWrite(agent);
   if (refused === null) return null;
   if (refused.scope === "account") {
-    return fail(429, "rate limited", `This account's agent tokens can make at most ${USER_WRITES_PER_HOUR} writes an hour between them. Try again later.`);
+    return limited(`This account's agent tokens can make at most ${USER_WRITES_PER_HOUR} writes an hour between them. Try again later.`, refused.retryAfter);
   }
   const wait = refused.retryAfter;
   return {
@@ -157,14 +172,18 @@ interface AgentDocRow {
   origin_agent: string | null;
 }
 
-/** The row, only when it is inside the rule. Every other case is undefined. */
-function ownAgentDoc(agent: AgentPrincipal, id: unknown): AgentDocRow | undefined {
+/**
+ * The row, only when it is inside the rule. Every other case is undefined.
+ * `readable` also leaves out a document with an audience, which a token may
+ * no longer read.
+ */
+function ownAgentDoc(agent: AgentPrincipal, id: unknown, readable = false): AgentDocRow | undefined {
   if (typeof id !== "string" || !id) return undefined;
   return db
     .prepare(
       `SELECT id, name, format, version, content, created_at, updated_at, origin_kind, origin_agent
-       FROM docs
-       WHERE id = ? AND owner_id = ? AND origin_token_id = ? AND deleted_at IS NULL`
+       FROM docs d
+       WHERE id = ? AND owner_id = ? AND origin_token_id = ? AND deleted_at IS NULL${readable ? ` AND NOT ${AUDIENCE_SQL}` : ""}`
     )
     .get(id, agent.userId, agent.tokenId) as AgentDocRow | undefined;
 }
@@ -187,7 +206,7 @@ function meta(row: Omit<AgentDocRow, "content">) {
 // Everything from the checks to this write is synchronous, and so is SQLite
 // here, so no other request can share, write or delete the document between
 // a check passing and the write landing.
-function write(args: {
+function write(agent: AgentPrincipal, args: {
   id: string;
   ownerId: string;
   name: string;
@@ -198,7 +217,7 @@ function write(args: {
 }): AgentFailure | null {
   try {
     writeDocVersion({ ...args, hash: sha256Hex(args.content), now: new Date().toISOString() });
-    recordAgentBytes(args.ownerId, Buffer.byteLength(args.content, "utf8"));
+    recordAgentBytes(agent, Buffer.byteLength(args.content, "utf8"));
     return null;
   } catch (err) {
     console.error("agent document write failed:", err);
@@ -215,13 +234,13 @@ export function createAgentDoc(agent: AgentPrincipal, input: { name?: unknown; c
   const tooLarge = checkSize(named.name, input.content);
   if (tooLarge) return tooLarge;
   const bytes = Buffer.byteLength(input.content, "utf8");
-  const overBudget = checkByteBudget(agent.userId, bytes);
+  const overBudget = checkByteBudget(agent, bytes);
   if (overBudget) return overBudget;
   const overQuota = checkQuota(agent.userId, bytes);
   if (overQuota) return overQuota;
   const id = crypto.randomUUID();
   const origin: DocOrigin = { kind: "agent", agent: cleanAgentName(input.agent) ?? agent.name };
-  const failed = write({ id, ownerId: agent.userId, name: named.name, content: input.content, version: 1, origin, originTokenId: agent.tokenId });
+  const failed = write(agent, { id, ownerId: agent.userId, name: named.name, content: input.content, version: 1, origin, originTokenId: agent.tokenId });
   if (failed) return failed;
   const result: AgentResult<{ id: string; name: string; format: string; version: number; privateLink: string; markdownLink: string }> = {
     ok: true,
@@ -261,12 +280,12 @@ export function updateAgentDoc(
   const tooLarge = checkSize(name, input.content);
   if (tooLarge) return tooLarge;
   const bytes = Buffer.byteLength(input.content, "utf8");
-  const overBudget = checkByteBudget(agent.userId, bytes);
+  const overBudget = checkByteBudget(agent, bytes);
   if (overBudget) return overBudget;
   const overQuota = checkQuota(agent.userId, bytes - Buffer.byteLength(row.content, "utf8"));
   if (overQuota) return overQuota;
   const version = row.version + 1;
-  const failed = write({ id: row.id, ownerId: agent.userId, name, content: input.content, version });
+  const failed = write(agent, { id: row.id, ownerId: agent.userId, name, content: input.content, version });
   if (failed) return failed;
   const result: AgentResult<{ id: string; name: string; format: string; version: number; privateLink: string; markdownLink: string }> = {
     ok: true,
@@ -287,8 +306,8 @@ export function listAgentDocs(agent: AgentPrincipal, rawLimit: unknown) {
   const rows = db
     .prepare(
       `SELECT id, name, format, version, created_at, updated_at, origin_kind, origin_agent
-       FROM docs
-       WHERE owner_id = ? AND origin_token_id = ? AND deleted_at IS NULL
+       FROM docs d
+       WHERE owner_id = ? AND origin_token_id = ? AND deleted_at IS NULL AND NOT ${AUDIENCE_SQL}
        ORDER BY updated_at DESC, id ASC LIMIT ?`
     )
     .all(agent.userId, agent.tokenId, limit) as Omit<AgentDocRow, "content">[];
@@ -297,7 +316,7 @@ export function listAgentDocs(agent: AgentPrincipal, rawLimit: unknown) {
 }
 
 export function readAgentDoc(agent: AgentPrincipal, id: unknown) {
-  const row = ownAgentDoc(agent, id);
+  const row = ownAgentDoc(agent, id, true);
   if (!row) return notFound();
   const { content, ...rest } = row;
   const result: AgentResult<ReturnType<typeof meta> & { content: string }> = { ok: true, status: 200, data: { ...meta(rest), content } };

@@ -4,6 +4,17 @@
 > evidence; do not delete history. Move completed items to Done with the verification record.
 
 ## Open
+- [ ] Every `/api/*` POST and PUT outside the agent routes reads an unauthenticated chunked body
+      before auth runs. The body limit in server/src/index.ts sits in front of the routes, and
+      Hono's bodyLimit buffers a body with no Content-Length in full before it can refuse it, so
+      a caller with no session can make the server read 2 MB per request in general and 101 MB
+      on `PUT /api/docs/:id`. `/api/agent/*` and `POST /mcp` already check the token first.
+      type: security
+      severity: medium
+      acceptance_criteria: A POST or PUT under `/api/*` without a valid session (or the route's
+        own auth) is answered from its headers before any body byte is read, with a test that
+        sends a chunked body with no Content-Length and sees 401 without the body being consumed.
+      source: PR #26 review round 2
 - [ ] A Darkmown (.wd) document with a public link renders at `/s/:token` through the markdown
       pipeline, while `/d/:id` shows it as escaped source under the "interactive in the Markie
       app" note (`renderDarkmownSource`, server/src/render.ts). Both are sanitized and run no

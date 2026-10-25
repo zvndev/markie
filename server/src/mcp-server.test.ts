@@ -216,7 +216,7 @@ test("tools reach only this token's documents: not a sibling token's, not a brid
   await app.request(`/api/agent-tokens/${siblingId}`, { method: "DELETE", headers: { Authorization: `Bearer ${alice.token}` } });
 });
 
-test("a shared document is frozen to the update tool, with the REST route's 409 body as the error", async () => {
+test("a shared document is closed to the tools: update gets the REST route's 409 body, read and list lose it", async () => {
   const doc = (await callTool(aliceToken, "markie_create_document", { name: "Frozen.md", content: "v1" })).structuredContent;
   const share = await app.request(`/api/docs/${doc.id}/shares`, {
     method: "POST",
@@ -230,8 +230,11 @@ test("a shared document is frozen to the update tool, with the REST route's 409 
   assert.match(update.structuredContent.message, /Create a new document instead/);
   assert.match(update.content[0].text, /Create a new document instead/);
   const read = await callTool(aliceToken, "markie_read_my_document", { id: doc.id });
-  assert.ok(!read.isError, "reads still work");
-  assert.equal(read.structuredContent.content, "v1");
+  assert.equal(read.isError, true, "once it has an audience the token cannot read it");
+  assert.deepEqual(read.structuredContent, { error: "not found" });
+  assert.ok(!JSON.stringify(read).includes("v1"));
+  const list = await callTool(aliceToken, "markie_list_my_documents", {});
+  assert.ok(!list.structuredContent.docs.some((d: { id: string }) => d.id === doc.id), "and the list leaves it out");
 });
 
 test("markie_guide serves the local MCP's guide text", async () => {

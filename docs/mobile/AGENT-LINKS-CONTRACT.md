@@ -41,6 +41,13 @@ renders, and Darkmown (`.wd`) for documents that benefit from live state.
 - Every API or tool result that names a document returns both:
   - `privateLink`: the URL above.
   - `markdownLink`: `[<name>](<privateLink>)`, ready to paste into chat.
+- `markdownLink` escaping (desktop and server must produce identical output):
+  - In the name, replace every run of CR, LF, U+2028 and U+2029 with one space.
+  - Then put a backslash before each of these characters in the name: `\`, `[`, `]`, `<`, `>`
+    and the backtick.
+  - In the URL, encode `(` as `%28` and `)` as `%29`.
+- Agent names, document names and server messages are always rendered as plain text, never as
+  markdown or HTML, on desktop, web and mobile.
 - **Universal and app links.** The app claims paths `/d/*` and `/s/*` on `api.markiedocs.com` and
   `markiedocs.com`.
   - iOS: Associated Domains `applinks:api.markiedocs.com` and `applinks:markiedocs.com`.
@@ -69,6 +76,10 @@ existing columns.
   version only and never changes after.
 - `docs.origin_agent TEXT`, a display name for the agent. It's trimmed and limited to 64 printable
   characters. NULL for `app`.
+- `docs.origin_token_id TEXT`: the `agent_tokens.id` that created the document. It's set only by
+  `POST /api/agent/docs` and the hosted MCP's create tool, and it's NULL for everything else,
+  including documents a local agent synced through the desktop bridge. It never changes after
+  creation, and it's never returned to clients.
 - `docs.created_at TEXT`, backfilled from `updated_at` for existing rows.
 - New table `agent_tokens`:
   - `id TEXT PRIMARY KEY`, `user_id TEXT NOT NULL` and `name TEXT NOT NULL` (at most 64 characters).
@@ -114,13 +125,20 @@ document. It's ignored on every later version.
   shown exactly once. A user can have at most 20 active tokens.
 - `GET /api/agent-tokens` returns `{tokens: [{id, name, prefix, createdAt, lastUsedAt}]}`, never
   the token itself.
-- `DELETE /api/agent-tokens/:id` revokes immediately.
+- `DELETE /api/agent-tokens/:id` revokes immediately. It returns 204, and also returns 204 for a
+  token that is already revoked. It returns 404 for an id that never belonged to this user.
 
 ### Agent documents (`Authorization: Bearer mk_agent_…`)
 
-An agent token can create documents, and read and update **only documents created through agent
-tokens of the same user** (`origin_kind='agent'`). A leaked token never exposes the rest of the
-user's drive.
+An agent token can create documents, and read and update **only the documents that same token
+created** (`origin_token_id` equals the token's id, the owner matches, and the document isn't
+deleted). It can't reach documents made by the user's other tokens, documents a local agent synced
+through the desktop (which carry `origin_kind='agent'` for the badge, but no `origin_token_id`), or
+anything else. A leaked token exposes only what it wrote itself. Revoking a token leaves its
+documents in place, owned by the user, and unreachable by any token.
+
+This was ruled on 2026-10-25, after review found that the earlier wording ("documents created
+through agent tokens of the same user") let any token reach every bridge-synced document.
 
 - `POST /api/agent/docs {name, content, agent?}` returns
   `201 {id, name, format, version, privateLink, markdownLink}`.
@@ -132,7 +150,7 @@ user's drive.
 - `PUT /api/agent/docs/:id {content, name?, baseVersion?}` returns
   `{id, version, privateLink, markdownLink}`. It returns 409 on a version conflict, and 404 for
   any document outside the rule above. That 404 looks exactly like "no such document".
-- `GET /api/agent/docs?limit=` returns metadata, newest first.
+- `GET /api/agent/docs?limit=` returns metadata for this token's documents, newest first.
 - `GET /api/agent/docs/:id` returns content, under the same rule.
 - Rate limit: 60 writes per hour per token, answered with 429.
 - `last_used_at` is updated at most once a minute.

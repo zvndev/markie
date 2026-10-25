@@ -74,11 +74,13 @@ nothing moves on disk to make it happen. Claude Code users get the same
 conventions as a plugin skill; every other MCP client receives them through the
 server's `initialize` instructions.
 
-It also hands over what Markie actually renders: how a picture, a clip or a
-recording is written, where those files have to live to display at all, and
-which inline HTML survives a save. `markie_guide` and the
-`markie://guide/markdown` resource serve the whole of it, and `markie_check_md`
-reads a finished document back and names anything in it that will not show up.
+It also teaches the agent to write rich documents: which format to pick
+(markdown, or a Darkmown `.wd` when the reader should click, tick or calculate),
+the elements Markie actually renders, how a picture, a clip or a recording is
+written, where those files have to live to display at all, and which inline HTML
+survives a save. `markie_guide` and the `markie://guide/markdown` resource serve
+the whole of it, and `markie_check_md` reads a finished document back and names
+anything in it that will not show up.
 
 **Claude Code — plugin (easiest):**
 

@@ -18,7 +18,7 @@ This preview includes original-engine RTF and ODT editing with same-format savin
 4. Reopen the copy in Markie. It must still be RTF or ODT with the same text and supported formatting.
 5. Return to an unsaved Markdown draft through Library. Its edits must still be there, without a second app shell or a Return to Markie button.
 
-Next, open `samples/Counter.wd` and follow the [interactive Darkmown checks](darkmown.md). Test [media viewers and default-browser links](media-and-links.md) with the supplied media sample. See [document types](document-types.md), [editing and recovery](editing-and-recovery.md), and [connected documents and pending features](connected-documents.md). These are ordinary portable Markdown links. Complete in-app navigation between every document type is a separate pending feature; use Open if a relative link uses the operating system's default app.
+Next, open `samples/Counter.wd` and follow the [interactive Darkmown checks](darkmown.md). For documents written by AI agents, follow the [agent-written document checks](agent-documents.md) with `samples/Rich-document.md`, `Launch-checklist.wd`, `Estimate.wd`, `Order-total.wd` and `Step-through.wd`. Test [media viewers and default-browser links](media-and-links.md) with the supplied media sample. See [document types](document-types.md), [editing and recovery](editing-and-recovery.md), and [connected documents and pending features](connected-documents.md). These are ordinary portable Markdown links. Complete in-app navigation between every document type is a separate pending feature; use Open if a relative link uses the operating system's default app.
 
 ## What to test now
 

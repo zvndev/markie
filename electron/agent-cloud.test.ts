@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-const { createAgentCloud } = require("./agent-cloud.js");
+const { createAgentCloud, markdownLinkFor, sanitizeAgentName, SYNCABLE } = require("./agent-cloud.js");
 
 const ORIGIN = "https://api.markiedocs.com";
 
@@ -75,7 +75,7 @@ describe("agent cloud: syncing", () => {
   it("refuses files outside home, other formats, missing files, and a locked build", async () => {
     const t = setup({ perms: { cloudSync: "always" } });
     await expect(t.cloud.cloud_sync({ path: "/etc/hosts" })).rejects.toThrow();
-    await expect(t.cloud.cloud_sync({ path: t.file("notes.docx", "x") })).rejects.toThrow("Markdown and plain text");
+    await expect(t.cloud.cloud_sync({ path: t.file("notes.docx", "x") })).rejects.toThrow("Markdown, Darkmown and plain text");
     await expect(t.cloud.cloud_sync({ path: path.join(t.home, "nope.md") })).rejects.toThrow("No such file");
     await expect(t.cloud.cloud_sync({ path: "relative.md" })).rejects.toThrow("absolute path");
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "markie-outside-"));
@@ -85,6 +85,114 @@ describe("agent cloud: syncing", () => {
     const locked = setup({ unlocked: false, perms: { cloudSync: "always" } });
     await expect(locked.cloud.cloud_sync({ path: locked.file("a.md") })).rejects.toThrow("locked");
     expect(t.sync.syncOn).not.toHaveBeenCalled();
+  });
+});
+
+describe("agent cloud: Darkmown", () => {
+  it("syncs a .wd file like any other, with the same consent", async () => {
+    const t = setup({ answers: [{ allowed: true }] });
+    const p = t.file("Documents/Markie/budget.wd", "<Counter />\n");
+    const res = await t.cloud.cloud_sync({ path: p });
+    expect(t.confirm).toHaveBeenCalledWith({ kind: "sync", name: "budget.wd", path: p });
+    expect(t.registry.track).toHaveBeenCalledWith(p, "budget.wd", "<Counter />\n");
+    expect(res).toMatchObject({ synced: true, name: "budget.wd", privateLink: `${ORIGIN}/d/doc-1` });
+  });
+
+  it("asks before the first .wd upload and uploads nothing when declined", async () => {
+    const t = setup({ answers: [{ allowed: false }] });
+    await expect(t.cloud.cloud_sync({ path: t.file("a.wd") })).rejects.toThrow("declined");
+    expect(t.sync.syncOn).not.toHaveBeenCalled();
+  });
+
+  it("accepts .wd in any case and still refuses lookalikes", () => {
+    for (const name of ["a.wd", "A.WD", "notes.md", "t.txt"]) expect(SYNCABLE.test(name), name).toBe(true);
+    for (const name of ["a.wdx", "wd", "a.wd.html", "a.docx", "a.csv"]) expect(SYNCABLE.test(name), name).toBe(false);
+  });
+});
+
+describe("agent cloud: origin", () => {
+  const syncOnArgs = (t: ReturnType<typeof setup>) => t.sync.syncOn.mock.calls[0] as unknown[];
+
+  it("sends the agent's name on the call that creates the document", async () => {
+    const t = setup({ perms: { cloudSync: "always" } });
+    const p = t.file("a.md");
+    await t.cloud.cloud_sync({ path: p, agent: "Claude Code" });
+    expect(syncOnArgs(t)).toEqual([p, "a.md", "# Hi\n", undefined, undefined, { kind: "agent", agent: "Claude Code" }]);
+  });
+
+  it("falls back to 'an agent' when the client gave no usable name", async () => {
+    for (const agent of [undefined, null, 5, "", "   ", "\u0000\u200b\n"]) {
+      const t = setup({ perms: { cloudSync: "always" } });
+      await t.cloud.cloud_sync({ path: t.file("a.md"), agent });
+      expect(syncOnArgs(t)[5], String(agent)).toEqual({ kind: "agent", agent: "an agent" });
+    }
+  });
+
+  it("sends nothing about origin when the file is already in Cloud", async () => {
+    const t = setup({ perms: { cloudSync: "always" } });
+    const p = t.file("a.md");
+    t.rows.set(p, { cloud_doc_id: "doc-9", sync_state: "synced" });
+    await t.cloud.cloud_sync({ path: p, agent: "Claude Code" });
+    expect(t.sync.syncOn).not.toHaveBeenCalled();
+    expect(t.sync.push).toHaveBeenCalledWith(p, "a.md", "# Hi\n");
+  });
+
+  it("sanitizes the name: one printable line, 64 characters at most", () => {
+    expect(sanitizeAgentName("Claude Code")).toBe("Claude Code");
+    expect(sanitizeAgentName("  claude\u0000-code\r\n\t(vs   code)  ")).toBe("claude -code (vs code)");
+    expect(sanitizeAgentName("a\u202eb\u200bc")).toBe("a b c");
+    expect(sanitizeAgentName("x".repeat(200))).toBe("x".repeat(64));
+    const emoji = sanitizeAgentName("\u{1F600}".repeat(100));
+    expect(Array.from(emoji)).toHaveLength(64);
+    expect(emoji.includes("\ufffd")).toBe(false);
+    expect(sanitizeAgentName("  " + "y".repeat(63) + " z")).toBe("y".repeat(63));
+    expect(sanitizeAgentName({} as never)).toBe("an agent");
+  });
+});
+
+describe("agent cloud: markdownLink", () => {
+  it("is [name](privateLink) after a sync", async () => {
+    const t = setup({ perms: { cloudSync: "always" } });
+    const res = await t.cloud.cloud_sync({ path: t.file("plan.md") });
+    expect(res.privateLink).toBe(`${ORIGIN}/d/doc-1`);
+    expect(res.markdownLink).toBe(`[plan.md](${ORIGIN}/d/doc-1)`);
+  });
+
+  it("is on cloud_status too, and null with the privateLink when the file is local", async () => {
+    const t = setup();
+    const p = t.file("a.wd");
+    expect(await t.cloud.cloud_status({ path: p })).toMatchObject({ privateLink: null, markdownLink: null });
+    t.rows.set(p, { cloud_doc_id: "d 2", sync_state: "synced" });
+    expect((await t.cloud.cloud_status({ path: p })).markdownLink).toBe(`[a.wd](${ORIGIN}/d/d%202)`);
+  });
+
+  it("keeps a bracket in the file name from ending the link text", () => {
+    expect(markdownLinkFor("a [draft] b.md", "https://x/d/1")).toBe("[a \\[draft\\] b.md](https://x/d/1)");
+    expect(markdownLinkFor("a.md", null)).toBeNull();
+  });
+
+  // The contract's exact rule, which the server must match byte for byte.
+  describe("escaping, as pinned in the contract", () => {
+    const URL = "https://x/d/1";
+    it("escapes a backslash, so it cannot escape the next character", () => {
+      expect(markdownLinkFor("a\\b.md", URL)).toBe("[a\\\\b.md](https://x/d/1)");
+      expect(markdownLinkFor("end\\", URL)).toBe("[end\\\\](https://x/d/1)");
+    });
+    it("escapes angle brackets and the backtick", () => {
+      expect(markdownLinkFor("<b>x</b>`y`.md", URL)).toBe("[\\<b\\>x\\</b\\>\\`y\\`.md](https://x/d/1)");
+    });
+    it("escapes square brackets", () => {
+      expect(markdownLinkFor("[a]", URL)).toBe("[\\[a\\]](https://x/d/1)");
+    });
+    it("turns each run of CR, LF, U+2028 and U+2029 into one space", () => {
+      expect(markdownLinkFor("a\nb\r\nc\u2028\u2029d\n\n\n\re.md", URL)).toBe("[a b c d e.md](https://x/d/1)");
+    });
+    it("encodes parentheses in the URL, and leaves them alone in the name", () => {
+      expect(markdownLinkFor("plan (v2).md", "https://x/d/a(b)c")).toBe("[plan (v2).md](https://x/d/a%28b%29c)");
+    });
+    it("does not escape the characters the rule leaves out", () => {
+      expect(markdownLinkFor("*a* _b_ #c !d | e.md", URL)).toBe("[*a* _b_ #c !d | e.md](https://x/d/1)");
+    });
   });
 });
 
@@ -122,6 +230,28 @@ describe("agent cloud: public links", () => {
     expect((await t.cloud.cloud_public_link({ path: p, create: true })).publicLink).toBe("https://markiedocs.com/s/new");
     expect(t.confirm).toHaveBeenLastCalledWith({ kind: "public", name: "a.md", path: p });
     expect(api).toHaveBeenCalledWith("POST", "/api/docs/doc-1/public-link");
+  });
+
+  it("asks for a .wd public link every time, even with 'always allow' on", async () => {
+    let live: string | null = null;
+    const api = vi.fn(async (method: string) => {
+      if (method === "GET") return { status: 200, data: { url: live } };
+      if (method === "POST") { live = "https://markiedocs.com/s/wd1"; return { status: 200, data: { url: live } }; }
+      live = null;
+      return { status: 200, data: { ok: true } };
+    });
+    const t = setup({ api, perms: { cloudSync: "always" }, answers: [{ allowed: true, always: true }, { allowed: true }] });
+    const p = t.file("Plan.wd", "<Counter />\n");
+    t.rows.set(p, { cloud_doc_id: "doc-1", sync_state: "synced" });
+    expect((await t.cloud.cloud_public_link({ path: p, create: true })).publicLink).toBe("https://markiedocs.com/s/wd1");
+    await t.cloud.cloud_revoke_public_link({ path: p });
+    expect((await t.cloud.cloud_public_link({ path: p, create: true })).publicLink).toBe("https://markiedocs.com/s/wd1");
+    expect(t.confirm).toHaveBeenCalledTimes(2);
+    expect(t.confirm).toHaveBeenNthCalledWith(1, { kind: "public", name: "Plan.wd", path: p });
+    expect(t.confirm).toHaveBeenNthCalledWith(2, { kind: "public", name: "Plan.wd", path: p });
+    // The first answer said "always", and that never carried over to a sync permission change.
+    expect(t.permissions.get().cloudSync).toBe("always");
+    expect(t.permissions.set).not.toHaveBeenCalled();
   });
 
   it("needs the file in Cloud first, and revokes without asking", async () => {

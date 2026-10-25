@@ -598,7 +598,12 @@ function mediaLeftPending(filePath, staged) {
 // A document already on a server stays on it; a new one goes to `origin`, or
 // to the primary server when none is named, and only with a session there
 // (see pickOrigin).
-async function syncOn(filePath, name, content, areaId, origin) {
+//
+// `docOrigin` says who made the document: {kind: "agent", agent}, from the agent
+// bridge and nowhere else (the doc-sync-on IPC does not forward it). It rides
+// only on the PUT that creates the document; the server keeps the first
+// version's origin and ignores it afterwards, and push() never sends it.
+async function syncOn(filePath, name, content, areaId, origin, docOrigin) {
   const row = registry.get(filePath);
   const server = row?.cloud_doc_id ? originOfRow(row) : pickOrigin(origin);
   if (!isConfigured(server)) return { error: signInFirst(server) };
@@ -611,10 +616,17 @@ async function syncOn(filePath, name, content, areaId, origin) {
   // must still remain unchanged throughout the upload.
   const binding = captureBinding(server);
   if (!currentUpload(binding)) return { error: STALE_UPLOAD };
-  return scope.run(binding, () => syncOnSnapshot(filePath, name, content, areaId, row, binding, server));
+  return scope.run(binding, () => syncOnSnapshot(filePath, name, content, areaId, row, binding, server, docOrigin));
 }
 
-async function syncOnSnapshot(filePath, name, content, areaId, row, binding, server) {
+// The request-body fields for a document origin: nothing, unless it is a well-formed agent one.
+function originBody(docOrigin) {
+  return docOrigin && docOrigin.kind === "agent" && typeof docOrigin.agent === "string" && docOrigin.agent
+    ? { origin: { kind: "agent", agent: docOrigin.agent } }
+    : {};
+}
+
+async function syncOnSnapshot(filePath, name, content, areaId, row, binding, server, docOrigin) {
   const refused = viewerRefusal(filePath, row?.cloud_doc_id);
   if (refused) return refused;
   const linked = row?.cloud_doc_id ?? null;
@@ -635,6 +647,7 @@ async function syncOnSnapshot(filePath, name, content, areaId, row, binding, ser
     hash,
     baseVersion,
     ...(areaId === undefined ? {} : { areaId }),
+    ...(linked ? {} : originBody(docOrigin)),
   });
   if (!currentUpload(binding)) return { error: STALE_UPLOAD };
   if (res.status === 200) {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
+import { finished } from "node:stream/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -17,6 +18,13 @@ const temporaries: string[] = [];
 function temporary() { const directory = realpathSync(mkdtempSync(path.join(tmpdir(), "markie-private-test-"))); temporaries.push(directory); return directory; }
 function settings(directory?: string) { return privateSettings({ ...env, ...(directory ? { MARKIE_PRIVATE_OUTPUT_DIR: directory } : {}) }, root, provenance); }
 function packageEntry(config = settings()) { return { name: "package.json", data: Buffer.from(JSON.stringify({ version: config.version, main: "electron/main.js", markiePrivateRelease: privateMarker(config) })) }; }
+// createPackage resolves with out.end(), before the archive has flushed. Without
+// waiting for the stream, a loaded machine reads zero-filled payload back.
+async function packArchive(source: string, archive: string, options?: { unpack: string }) {
+  const asar = require("@electron/asar");
+  const stream = await (options ? asar.createPackageWithOptions(source, archive, options) : asar.createPackage(source, archive));
+  await finished(stream);
+}
 afterEach(() => { for (const directory of temporaries.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 describe("guarded private Super-nightly packaging", () => {
@@ -112,7 +120,7 @@ describe("guarded private Super-nightly packaging", () => {
     mkdirSync(resources, { recursive: true }); mkdirSync(path.join(source, "electron"), { recursive: true });
     writeFileSync(path.join(source, "package.json"), packageEntry(config).data);
     writeFileSync(path.join(source, "electron", "main.js"), "runtime");
-    await require("@electron/asar").createPackage(source, path.join(resources, "app.asar"));
+    await packArchive(source, path.join(resources, "app.asar"));
     writeFileSync(path.join(resources, "app-update.yml"), JSON.stringify(privateUpdateConfig(config)));
     expect(verifyPrivateBundle(app, config, { root, forbidden: [] }).entries).toBe(2);
     writeFileSync(path.join(resources, "app-update.yml"), JSON.stringify({ provider: "generic", url: "https://markiedocs.com/releases/" }));
@@ -123,12 +131,29 @@ describe("guarded private Super-nightly packaging", () => {
     expect(() => verifyPrivateBundle(app, config, { root, forbidden: [] })).toThrow(/bypass/);
   });
 
+  it("refuses an incomplete ASAR instead of scanning zero-filled payload", async () => {
+    const directory = temporary(), app = path.join(directory, "Markie.app"), resources = path.join(app, "Contents", "Resources"), source = path.join(directory, "source"), config = settings();
+    mkdirSync(resources, { recursive: true }); mkdirSync(path.join(source, "electron"), { recursive: true });
+    writeFileSync(path.join(source, "package.json"), packageEntry(config).data);
+    writeFileSync(path.join(source, "electron", "main.js"), "runtime");
+    const archive = path.join(resources, "app.asar");
+    await packArchive(source, archive);
+    writeFileSync(path.join(resources, "app-update.yml"), JSON.stringify(privateUpdateConfig(config)));
+    expect(verifyPrivateBundle(app, config, { root, forbidden: [] }).entries).toBe(2);
+    // The shape a read taken before the stream flushed sees: header intact, tail missing.
+    truncateSync(archive, statSync(archive).size - 1);
+    require("@electron/asar").uncache(archive);
+    expect(() => verifyPrivateBundle(app, config, { root, forbidden: [] })).toThrow(/archive is incomplete/);
+    truncateSync(archive, 20);
+    expect(() => verifyPrivateBundle(app, config, { root, forbidden: [] })).toThrow();
+  });
+
   it("checks all unpacked files against flagged ASAR entries and rejects unindexed/private siblings", async () => {
     const directory = temporary(), app = path.join(directory, "Markie.app"), resources = path.join(app, "Contents", "Resources"), source = path.join(directory, "source"), config = settings();
     mkdirSync(resources, { recursive: true }); mkdirSync(path.join(source, "electron"), { recursive: true });
     writeFileSync(path.join(source, "package.json"), packageEntry(config).data);
     writeFileSync(path.join(source, "electron", "main.js"), "runtime");
-    await require("@electron/asar").createPackageWithOptions(source, path.join(resources, "app.asar"), { unpack: "**/main.js" });
+    await packArchive(source, path.join(resources, "app.asar"), { unpack: "**/main.js" });
     writeFileSync(path.join(resources, "app-update.yml"), JSON.stringify(privateUpdateConfig(config)));
     expect(verifyPrivateBundle(app, config, { root, forbidden: [] }).entries).toBe(2);
     expect(() => verifyPrivateBundle(app, config, { root, forbidden: ["runtime"] })).toThrow(/Forbidden/);

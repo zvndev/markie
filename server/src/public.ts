@@ -24,6 +24,7 @@ import {
 } from "./downloads.ts";
 
 import { deployment } from "./deployment.ts";
+import { downloadFilename } from "./doc-meta.ts";
 
 const db = openDatabase();
 const DEPLOYMENT = deployment();
@@ -68,14 +69,14 @@ export function clearDownloadCacheForTests() {
 
 function docForToken(
   token: string
-): { doc_id: string; name: string; content: string } | null {
+): { doc_id: string; name: string; content: string; format: string } | null {
   const link = resolvePublicToken(token);
   if (!link) return null;
   const doc = db
     .prepare(
-      "SELECT name, content FROM docs WHERE id = ? AND deleted_at IS NULL"
+      "SELECT name, content, format FROM docs WHERE id = ? AND deleted_at IS NULL"
     )
-    .get(link.doc_id) as { name: string; content: string } | undefined;
+    .get(link.doc_id) as { name: string; content: string; format: string } | undefined;
   return doc ? { doc_id: link.doc_id, ...doc } : null;
 }
 
@@ -169,8 +170,8 @@ publicShare.get("/s/:token/raw", (c) => {
   const token = c.req.param("token");
   const doc = docForToken(token);
   if (!doc) return c.text("Not found", 404);
-  const cleaned = doc.name.replace(/[\r\n"\\]/g, "").trim() || "document";
-  const filename = cleaned.toLowerCase().endsWith(".md") ? cleaned : `${cleaned}.md`;
+  // The same name /d/:id/raw gives it: a Darkmown document stays a .wd.
+  const filename = downloadFilename(doc.name, doc.format);
   const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_");
   c.header("Content-Type", "text/markdown; charset=utf-8");
   c.header(

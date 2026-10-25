@@ -139,7 +139,7 @@ const TOOLS = [
   {
     name: "markie_write_document",
     description:
-      "Create or overwrite a text document: markdown (.md/.markdown/.mdx), plain text (.txt/.text/.log), .csv, .json, .yaml/.yml, .xml or Darkmown (.wd). Same fences as markie_write_md: under your home folder only, never inside excluded dirs (node_modules, tmp, hidden dirs) or the agent/skill folders. JSON is checked before anything is written. Word, RTF, OpenDocument, legacy .doc and HTML are never written here; open those in Markie for the user to edit. project and block apply to markdown only.",
+      "Create or overwrite a text document: markdown (.md/.markdown/.mdx), plain text (.txt/.text/.log), .csv, .json, .yaml/.yml, .xml or Darkmown (.wd, markdown with live state: counters, calculators, checklists that count, forms). Write rich documents: tables, task lists, pictures, and a .wd when the reader should click, tick or calculate. Call markie_guide first for what renders. Same fences as markie_write_md: under your home folder only, never inside excluded dirs (node_modules, tmp, hidden dirs) or the agent/skill folders. JSON is checked before anything is written. Word, RTF, OpenDocument, legacy .doc and HTML are never written here; open those in Markie for the user to edit. project and block apply to markdown only, and are best left out of a document you will send as a link. To give the user a link, follow with markie_cloud_sync and paste its markdownLink into your reply.",
     inputSchema: {
       type: "object",
       properties: {
@@ -227,7 +227,7 @@ const TOOLS = [
   {
     name: "markie_cloud_status",
     description:
-      "Is this file in the user's Markie Cloud, and what is its private link? Asks the running Markie app. Returns synced, syncState, server and privateLink (null until synced). The private link opens only for the user and people they shared it with, after signing in, on any browser or phone.",
+      "Is this file in the user's Markie Cloud, and what are its links? Asks the running Markie app. Returns synced, syncState, server, privateLink and markdownLink (both null until synced). markdownLink is the private link as a ready-made markdown link: paste it into your reply. The private link opens only for the user and people they shared it with, after signing in. It opens in the Markie app if it is installed, or in a browser.",
     inputSchema: {
       type: "object",
       properties: { path: { type: "string", description: "Absolute path, ~ allowed" } },
@@ -238,7 +238,7 @@ const TOOLS = [
   {
     name: "markie_cloud_sync",
     description:
-      "Put a Markdown or plain text file in the user's Markie Cloud, or push its latest text if it is already there, and return its private link. The Markie app does the upload with the user's own sign-in, and asks the user to allow it the first time unless they chose to always allow it, so this call can wait on them. The file stays private: only the user can open the link until they share it. Use it when the user asks for a hosted, synced, cloud, or private Markie copy, or a link they can open away from this computer. Write the file first with markie_write_document.",
+      "Put a Markdown, plain text or Darkmown (.wd) file in the user's Markie Cloud, or push its latest text if it is already there, and return its links. The result carries markdownLink: paste it into your reply exactly as returned, so the user can open it in the Markie app if it is installed, or in a browser after signing in. privateLink is the same address bare. The Markie app does the upload with the user's own sign-in, and asks the user to allow it the first time unless they chose to always allow it, so this call can wait on them. The file stays private: only the user can open the link until they share it. Use it when the user asks for a hosted, synced, cloud, or private Markie copy, or a link they can open away from this computer. Write the file first with markie_write_document, as a rich document (tables, task lists, pictures, or a .wd for live state; see markie_guide). Call it again after an edit to update the same link.",
     inputSchema: {
       type: "object",
       properties: { path: { type: "string", description: "Absolute path, ~ allowed" } },
@@ -285,7 +285,7 @@ const TOOLS = [
   {
     name: "markie_guide",
     description:
-      "What Markie renders, with an example of each: how to size a picture, centre a line, or turn a video address into a card, where a picture has to live to display at all, which inline HTML the editor keeps, and what is dropped silently. Read it before writing a document with pictures, video, audio or formatting in it. Static text, no arguments.",
+      "How to write a document for Markie, with an example of each: which format to pick (.md, or Darkmown .wd when the reader should click, tick, slide or calculate), structure, tables, task lists, notes, code, pictures, video and audio and where those files have to live to display at all, sizing and centring, video cards, which inline HTML the editor keeps, what is dropped silently, every Darkmown directive that works and what it cannot do, and how to hand the user a link (markie_cloud_sync, then paste markdownLink). Read it before writing any document longer than a few paragraphs. Static text, no arguments.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
 ];
@@ -300,7 +300,7 @@ const RESOURCES = [
     uri: GUIDE_URI,
     name: "What Markie renders",
     description:
-      "The markdown and inline HTML Markie displays, where local pictures, video and audio have to live, what is silently dropped, and which other document types the tools read and write.",
+      "How to write rich documents for Markie: format choice, structure, the markdown and inline HTML Markie displays, Darkmown (.wd) directives and limits, where local pictures, video and audio have to live, what is silently dropped, how to hand the user a link, and which other document types the tools read and write.",
     mimeType: "text/markdown",
   },
 ];
@@ -378,6 +378,10 @@ async function readDocument(input) {
   const cut = text.length >= docText.MAX_TEXT_CHARS ? " Only the first part of the text is shown." : "";
   return `[Extracted read-only text from ${FORMAT_LABEL[g.format]}. Formatting, pictures and layout are left out, and this text cannot be written back to the file. To change the document, open it in Markie with markie_open_in_markie.${cut}]\n\n${text}`;
 }
+
+// What the connected MCP client calls itself, from its `initialize` message
+// (clientInfo.name), so a document an agent makes can say which agent made it.
+let clientName = "";
 
 async function runTool(name, args) {
   switch (name) {
@@ -490,10 +494,15 @@ async function runTool(name, args) {
     case "markie_cloud_revoke_public_link": {
       // Fence the path here too, so an agent learns the rule from this server;
       // the app checks again before it touches anything.
-      const g = guardPath(args.path, HOME, { formats: ["markdown", "text"] });
+      const g = guardPath(args.path, HOME, { formats: ["markdown", "darkmown", "text"] });
       if (!g.ok) throw new Error(g.error);
       const method = name.replace(/^markie_/, "");
-      const params = { path: g.path, ...(name === "markie_cloud_public_link" ? { create: args.create === true } : {}) };
+      const params = {
+        path: g.path,
+        ...(name === "markie_cloud_public_link" ? { create: args.create === true } : {}),
+        // The app records who made a document it creates for us. It sanitizes the name.
+        ...(name === "markie_cloud_sync" && clientName ? { agent: clientName } : {}),
+      };
       return await askMarkie(method, params);
     }
     case "markie_check_md": {
@@ -524,6 +533,7 @@ rl.on("line", async (line) => {
   const { id, method, params } = req;
   try {
     if (method === "initialize") {
+      clientName = typeof params?.clientInfo?.name === "string" ? params.clientInfo.name.slice(0, 200) : "";
       send({
         jsonrpc: "2.0",
         id,

@@ -12,6 +12,10 @@ import { assetsApi, sweepOrphans } from "./assets.ts";
 import { docLinksApi } from "./doc-links.ts";
 import { publicShare } from "./public.ts";
 import { docView } from "./doc-view.ts";
+import { agentTokens } from "./agent-tokens.ts";
+import { agentDocsApi, restAgentAuth } from "./agent-docs.ts";
+import { mcpApi, mcpAuth } from "./mcp-server.ts";
+import { createWellKnown } from "./well-known.ts";
 import { createWebSignIn } from "./web-signin.ts";
 import { attachCollab } from "./collab.ts";
 import { desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
@@ -100,13 +104,29 @@ app.use("*", async (c, next) => {
 //   so the JSON limit would refuse documents that sync now. It is bounded
 //   just above the size the app itself refuses, which is loose, and a real
 //   server-side document cap is the thing that would tighten it.
+//
+//   POST/PUT /api/agent/docs and POST /mcp  carry a document of up to 2 MB
+//   (agent-docs.ts AGENT_DOC_MAX_BYTES) inside JSON, where escaping can make
+//   it larger. They get room for that and no more; the document's own size
+//   is checked exactly once the body is read. Their agent token is checked
+//   before any of this (below), because bodyLimit reads a chunked body with
+//   no Content-Length in full before it can refuse it.
 const JSON_BODY_LIMIT = 2 * 1024 * 1024;
 const TEXT_BODY_LIMIT = 100 * 1024 * 1024 + 1024 * 1024;
+const AGENT_BODY_LIMIT = 5 * 1024 * 1024;
 const bodyTooLarge = (c: Context) => c.json({ error: "body too large" }, 413);
 const jsonBodyLimit = bodyLimit({ maxSize: JSON_BODY_LIMIT, onError: bodyTooLarge });
 const textBodyLimit = bodyLimit({ maxSize: TEXT_BODY_LIMIT, onError: bodyTooLarge });
+const agentBodyLimit = bodyLimit({ maxSize: AGENT_BODY_LIMIT, onError: bodyTooLarge });
 const ASSET_UPLOAD = /^\/api\/assets\/[^/]+$/;
 const DOC_TEXT = /^\/api\/docs\/[^/]+$/;
+const AGENT_DOC = /^\/api\/agent\/docs(?:\/[^/]+)?$/;
+
+// Agent routes answer to an agent token and nothing else, so a caller without
+// a live one is refused from its headers alone, before the body limit below
+// reads a byte of its body (docs/mobile/AGENT-LINKS-CONTRACT.md).
+app.use("/api/agent/*", restAgentAuth);
+app.use("/mcp", async (c, next) => (c.req.method === "POST" ? mcpAuth(c, next) : next()));
 
 app.use("/api/*", async (c, next) => {
   // Versioned snapshots have their own authenticated streaming body reader.
@@ -115,8 +135,10 @@ app.use("/api/*", async (c, next) => {
   if (c.req.method !== "POST" && c.req.method !== "PUT") return next();
   if (ASSET_UPLOAD.test(c.req.path)) return next();
   if (DOC_TEXT.test(c.req.path)) return textBodyLimit(c, next);
+  if (AGENT_DOC.test(c.req.path)) return agentBodyLimit(c, next);
   return jsonBodyLimit(c, next);
 });
+app.use("/mcp", async (c, next) => (c.req.method === "POST" ? agentBodyLimit(c, next) : next()));
 
 // Resolved at boot so a misconfigured server (MARKIE_OFFICIAL=2, mail-log mode
 // on the official deployment, a self-host with no BETTER_AUTH_URL) stops here
@@ -345,6 +367,13 @@ app.route("/api", assetsApi);
 app.route("/api", docLinksApi);
 app.route("/", docView);
 app.route("/", publicShare);
+// Remote agents (docs/mobile/AGENT-LINKS-CONTRACT.md): tokens are managed with
+// a session; documents and the hosted MCP answer to agent tokens only.
+app.route("/api/agent-tokens", agentTokens);
+app.route("/api/agent", agentDocsApi);
+app.route("/mcp", mcpApi);
+// Universal and app links for the mobile app. No auth, no redirect.
+app.route("/", createWellKnown());
 
 // Every API route answers in JSON, including its failures. The desktop sync
 // client parses the body of a non-2xx response to decide what to tell the user;

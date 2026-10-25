@@ -207,6 +207,9 @@ const PAGE_CSS = `
   main :not(pre) > code { background: var(--code-bg); padding: 1px 5px; border-radius: 5px;
     font-size: 0.9em; }
   main a { color: var(--accent); }
+  main .darkmown-note { color: var(--muted); font-size: 14px; border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px 14px; background: var(--surface-strong); }
+  main pre.darkmown-source { white-space: pre-wrap; overflow-wrap: anywhere; }
   main a.doc-link-muted { color: var(--muted); text-decoration: underline dotted; cursor: not-allowed; }
   main blockquote { border-left: 3px solid var(--line); margin: 1em 0; padding: 2px 16px;
     color: var(--muted); }
@@ -371,6 +374,24 @@ export function renderNotFoundPage(siteUrl: string): string {
 </body></html>`;
 }
 
+// A Darkmown (.wd) document on the web: its source, escaped into a code block,
+// under a line saying it is interactive in the Markie app.
+//
+// Not a static compile. The Darkmown compiler and runtime live in the
+// renderer (src/lib/darkmown) and are not part of the server, whose build
+// holds server/ alone; and a compiled body with no runtime would draw
+// controls that do nothing when pressed. The source is the honest static
+// view. Every character of it goes through esc(), never through the markdown
+// pipeline, so nothing in a document can become markup here, let alone
+// script, and the page's CSP (default-src 'none', no script-src) would refuse
+// a script even if one did.
+export const DARKMOWN_WEB_NOTE =
+  "This is an interactive Markie document. Open it in the Markie app to use its controls. Here is its source.";
+
+export function renderDarkmownSource(source: string): string {
+  return `<p class="darkmown-note">${esc(DARKMOWN_WEB_NOTE)}</p>\n<pre class="darkmown-source"><code>${esc(source)}</code></pre>`;
+}
+
 // A document rendered for someone who is entitled to read it. Unlike the
 // public page there is no shareable token in the markup: the URL that reached
 // here belongs to one person, so nothing on the page invites passing it on.
@@ -392,9 +413,14 @@ export function renderSharedDocPage(opts: {
   invitedEmail?: string | null;
   assetUrlFor?: (ref: string) => string | null;
   docLinkFor?: (ref: string) => DocLinkAnswer;
+  /** docs.format. A darkmown document is shown as its source (renderDarkmownSource). */
+  format?: string;
 }): string {
   const { title, markdown, docId, siteUrl, sharedBy, canEdit, invitedEmail } = opts;
-  const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
+  const darkmown = opts.format === "darkmown";
+  const content = darkmown
+    ? renderDarkmownSource(markdown)
+    : renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
   const safeTitle = esc(title);
   const download = primaryDownloadCta(markieSite(siteUrl));
   const openInMarkie = `markie://doc?id=${encodeURIComponent(docId)}&src=${encodeURIComponent(siteUrl)}`;
@@ -414,7 +440,7 @@ export function renderSharedDocPage(opts: {
     <span class="title">${safeTitle}</span>
     <a class="btn primary" href="${esc(openInMarkie)}">Open in Markie</a>
     <a class="btn ghost" href="${esc(download.href)}">${esc(download.label)}</a>
-    <a class="btn ghost" href="/d/${esc(docId)}/raw">Download .md</a>
+    <a class="btn ghost" href="/d/${esc(docId)}/raw">Download ${darkmown ? ".wd" : ".md"}</a>
   </div>
   <main>${content}</main>
   <div class="cta">

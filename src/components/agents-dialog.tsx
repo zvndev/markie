@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { getElectronAPI } from "@/lib/electron";
+import { CopyBlock } from "@/components/copy-block";
+import { RemoteAgentsPanel } from "@/components/remote-agents-panel";
 
 interface AgentsDialogProps {
   onClose: () => void;
+  /** Passed to the Remote agents panel: true while a new token has not been copied. */
+  onSecretShownChange?: (shown: boolean) => void;
 }
 
 // Mirrors TOOLS in mcp/markie-mcp.mjs. The markdown-only originals stay in the
@@ -32,9 +36,10 @@ markie:
 const FALLBACK_PATH =
   "/Applications/Markie.app/Contents/Resources/mcp/markie-mcp.mjs";
 
-export function AgentsDialog({ onClose }: AgentsDialogProps) {
+export function AgentsDialog({ onClose, onSecretShownChange }: AgentsDialogProps) {
   const [serverPath, setServerPath] = useState<string | null>(null);
   const [cloudAlways, setCloudAlways] = useState(false);
+  const [showRemote, setShowRemote] = useState(false);
 
   useEffect(() => {
     getElectronAPI()
@@ -50,13 +55,16 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
       .catch(() => setServerPath(null));
   }, []);
 
+  // While the Remote agents panel is open it owns Escape, and closing it
+  // should leave this dialog where it was.
   useEffect(() => {
+    if (showRemote) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, showRemote]);
 
   const p = serverPath ?? FALLBACK_PATH;
   const claudeCmd = useMemo(() => `claude mcp add markie -- node ${p}`, [p]);
@@ -77,6 +85,9 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="markie-agents-title"
+        // The Remote agents panel is modal over this one: nothing here can be
+        // tabbed to, clicked or read out while it is open.
+        inert={showRemote}
       >
         <div className="flex items-center justify-between mb-1">
           <h2 id="markie-agents-title" className="text-[14px] font-semibold text-foreground">
@@ -143,6 +154,21 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
         </label>
 
         <div className="markie-overlay-section mb-1.5">
+          Remote agents
+        </div>
+        <p className="text-[12px] text-muted leading-relaxed mb-2">
+          An agent that is not on this computer, such as Claude on your phone,
+          can make documents in your Cloud with a token. Create and revoke
+          tokens here.
+        </p>
+        <button
+          onClick={() => setShowRemote(true)}
+          className="markie-overlay-button text-[12px] px-3 py-1 rounded-md bg-accent text-foreground hover:opacity-90 mb-4"
+        >
+          Remote agents&hellip;
+        </button>
+
+        <div className="markie-overlay-section mb-1.5">
           It files what it writes
         </div>
         <p className="text-[12px] text-muted leading-relaxed mb-2">
@@ -184,47 +210,7 @@ export function AgentsDialog({ onClose }: AgentsDialogProps) {
           )}
         </p>
       </div>
-    </div>
-  );
-}
-
-function CopyBlock({
-  label,
-  hint,
-  text,
-}: {
-  label: string;
-  hint: string;
-  text: string;
-}) {
-  const [copied, setCopied] = useState(false);
-  const copy = () =>
-    navigator.clipboard.writeText(text).then(
-      () => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      },
-      () => {
-        /* clipboard blocked — user can select manually */
-      }
-    );
-  return (
-    <div className="mb-3">
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-[11px] text-muted">
-          <span className="uppercase tracking-wide font-semibold">{label}</span>{" "}
-          <span>{hint}</span>
-        </span>
-        <button
-          onClick={copy}
-          className="markie-overlay-button text-[11px] px-2 py-0.5 rounded-md bg-accent text-foreground hover:opacity-90"
-        >
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
-      <pre className="text-[11.5px] leading-relaxed bg-background border border-border rounded-md p-2.5 overflow-x-auto text-foreground/90 whitespace-pre-wrap break-all">
-        {text}
-      </pre>
+      {showRemote && <RemoteAgentsPanel onClose={() => setShowRemote(false)} onSecretShownChange={onSecretShownChange} />}
     </div>
   );
 }

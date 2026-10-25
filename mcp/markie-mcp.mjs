@@ -379,6 +379,10 @@ async function readDocument(input) {
   return `[Extracted read-only text from ${FORMAT_LABEL[g.format]}. Formatting, pictures and layout are left out, and this text cannot be written back to the file. To change the document, open it in Markie with markie_open_in_markie.${cut}]\n\n${text}`;
 }
 
+// What the connected MCP client calls itself, from its `initialize` message
+// (clientInfo.name), so a document an agent makes can say which agent made it.
+let clientName = "";
+
 async function runTool(name, args) {
   switch (name) {
     case "markie_find_documents": {
@@ -490,10 +494,15 @@ async function runTool(name, args) {
     case "markie_cloud_revoke_public_link": {
       // Fence the path here too, so an agent learns the rule from this server;
       // the app checks again before it touches anything.
-      const g = guardPath(args.path, HOME, { formats: ["markdown", "text"] });
+      const g = guardPath(args.path, HOME, { formats: ["markdown", "darkmown", "text"] });
       if (!g.ok) throw new Error(g.error);
       const method = name.replace(/^markie_/, "");
-      const params = { path: g.path, ...(name === "markie_cloud_public_link" ? { create: args.create === true } : {}) };
+      const params = {
+        path: g.path,
+        ...(name === "markie_cloud_public_link" ? { create: args.create === true } : {}),
+        // The app records who made a document it creates for us. It sanitizes the name.
+        ...(name === "markie_cloud_sync" && clientName ? { agent: clientName } : {}),
+      };
       return await askMarkie(method, params);
     }
     case "markie_check_md": {
@@ -524,6 +533,7 @@ rl.on("line", async (line) => {
   const { id, method, params } = req;
   try {
     if (method === "initialize") {
+      clientName = typeof params?.clientInfo?.name === "string" ? params.clientInfo.name.slice(0, 200) : "";
       send({
         jsonrpc: "2.0",
         id,

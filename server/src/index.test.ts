@@ -252,3 +252,54 @@ test("an asset upload well over the JSON limit is not refused by it", async () =
   // 503. What matters is that the body limit did not answer first.
   assert.notEqual(res.status, 413);
 });
+
+// The phone's native HTTP stack keeps any response that does not forbid it in
+// an on-disk cache (URLSession's URLCache on iOS). A sign-in answer carries the
+// bearer token and a document answer its full text, so every API answer the
+// app reads must say no-store.
+test("every API answer the phone reads forbids caching", async () => {
+  const email = `nostore-${stamp}@markie.test`;
+  const { token } = await signUpVerified(app, { name: "Cache", email });
+  const auth = { Authorization: `Bearer ${token}` };
+  const { createHash } = await import("node:crypto");
+  const id = crypto.randomUUID();
+  const content = "# Private\n\nNot for a disk cache.\n";
+  const put = await request(`/api/docs/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...auth },
+    body: JSON.stringify({ name: "private.md", content, hash: createHash("sha256").update(content).digest("hex"), baseVersion: 0 }),
+  });
+  assert.equal(put.status, 200);
+
+  const signIn = await request("/api/auth/sign-in/email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-forwarded-for": "10.77.0.1" },
+    body: JSON.stringify({ email, password: "password-123" }),
+  });
+  assert.equal(signIn.status, 200);
+  assert.ok(signIn.headers.get("set-auth-token"));
+  const answers: [string, Response][] = [
+    ["sign-in", signIn],
+    ["me", await request("/api/me", { headers: auth })],
+    ["recent", await request("/api/docs/recent", { headers: auth })],
+    ["doc", await request(`/api/docs/${id}`, { headers: auth })],
+    ["links", await request(`/api/docs/${id}/links`, { headers: auth })],
+    ["missing doc", await request(`/api/docs/never-${stamp}`, { headers: auth })],
+    ["signed out", await request(`/api/docs/${id}`)],
+    ["sign-out", await request("/api/auth/sign-out", { method: "POST", headers: { "Content-Type": "application/json", ...auth }, body: "{}" })],
+  ];
+  for (const [name, res] of answers) {
+    assert.ok(res.status < 500, `${name} answered ${res.status}`);
+    const policy = res.headers.get("cache-control") ?? "";
+    assert.match(policy, /\bno-store\b/, `${name} (${res.status}) has Cache-Control "${policy}"`);
+    assert.match(policy, /\bprivate\b/, `${name} (${res.status}) has Cache-Control "${policy}"`);
+  }
+  assert.equal(answers[3][1].status, 200);
+  assert.equal(answers[4][1].status, 200);
+});
+
+test("a route with its own cache policy keeps it", async () => {
+  const res = await request("/api/server-info");
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("cache-control"), "public, max-age=60");
+});

@@ -79,6 +79,12 @@ app.use("*", async (c, next) => {
   if (!h.has("Referrer-Policy")) h.set("Referrer-Policy", "strict-origin-when-cross-origin");
   h.set("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
   h.set("Strict-Transport-Security", "max-age=63072000");
+  // API answers are per caller, and a sign-in answer carries the session
+  // token in its body. A native HTTP stack (the phone's URLSession) keeps any
+  // response that does not forbid it in an on-disk cache, so a route that sets
+  // no policy of its own gets the strict one. Routes that chose a policy
+  // (an asset's private max-age, server-info's public one) keep theirs.
+  if (c.req.path.startsWith("/api/") && !h.has("Cache-Control")) h.set("Cache-Control", "private, no-store");
   if ((h.get("content-type") ?? "").includes("text/html")) {
     h.set("Content-Security-Policy", CONTENT_SECURITY_POLICY);
   }

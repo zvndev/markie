@@ -193,6 +193,7 @@ docLinksApi.put("/docs/:id/links", async (c) => {
 });
 
 docLinksApi.get("/docs/:id/links", async (c) => {
+  c.header("Cache-Control", "private, no-store");
   const docId = c.req.param("id");
   const gate = await requireReader(c, docId);
   if ("error" in gate) return gate.error;

@@ -8,6 +8,33 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-25
+
+### Added
+
+- **Remote agents can hand you documents too.** The Agents dialog has a
+  Remote agents panel that makes a token for an agent running somewhere
+  else, such as a cloud agent or a chat app. That agent can save private
+  documents to your Markie Cloud and reply with a link. Each token only sees
+  the documents it wrote, has a size budget, and you can revoke it at any
+  time. Markie emails you when a token is made.
+- **Agents write richer documents.** The Markie agent guide now teaches
+  agents to use tables, task lists, pictures and media, and to build
+  interactive Darkmown documents with live state and buttons.
+- **Darkmown documents sync to Markie Cloud** and open on the web, ready
+  for the Markie phone app that is in testing now.
+
+### Changed
+
+- **Documents an agent wrote are marked** with where they came from.
+
+### Security
+
+- **Changing your password signs out every other session** and revokes the
+  agent tokens you had made.
+- A document you share publicly can no longer be read or changed by an
+  agent token.
+
 ## [0.9.0] - 2026-10-22
 
 ### Added

@@ -310,32 +310,11 @@ does not catch this, so check it by hand whenever `server/src/desktop-auth.ts`,
 `src/lib/auth-state.ts`, or the bridge routes in `server/src/index.ts` have changed since the last
 deploy.
 
-**Set the assets bucket before the deploy that ships cloud media.** `ASSETS_BUCKET`,
-`ASSETS_ENDPOINT`, `ASSETS_KEY_ID`, and `ASSETS_APP_KEY` must already be set on the Railway `api`
-service before that deploy goes out; see `deploy/DEPLOY.md`, Assets bucket, for creating the bucket
-and the scoped key. Until all four are set the asset routes answer 503 and Markie shows "media pending"
-rather than a failure, so this is a one-time setup step, not a per-release check.
-
-The service has no GitHub connection, so nothing deploys on push. Compare the last successful
-deployment against the server commits, and deploy if anything is behind:
-
-```sh
-railway status                                   # expect project markie / production / api
-railway deployment list | head -3                # last SUCCESS date
-git log --oneline --since=<that date> -- server/ # anything here is not deployed
-railway up server --path-as-root --service api --environment production --ci
-```
-
-`--path-as-root` is required: the service builds with `dockerfilePath: /Dockerfile` and no root
-directory set, so the archive root must be `server/` or the build cannot find the Dockerfile. The
-upload honours `.gitignore`, which is what keeps `server/node_modules` and the local `markie.db` out
-of it.
-
-Then confirm the running container, not just the build. `railway logs --deployment` should show
-`database already exists, skipping` (the volume survived), `auth schema up to date` (the migration on
-boot is idempotent), Litestream replicating, and `markie-api listening`. `curl <api>/health` should
-return 200. Schema changes deserve a closer look: the entrypoint migrates on every boot, so a bad
-migration takes the service down at start rather than failing loudly beforehand.
+The hosted server's env, secrets, and deploys are managed in the private `ZVN-DEV/zvn-infra` repo
+(Kamal app `markie-api`), not here. See `kamal/apps/markie-api/` and `docs/migrations/markie-api.md`
+there. Compare what is deployed against `git log -- server/` and deploy anything behind before
+publishing. Then check that `https://api.markiedocs.com/health` returns 200. The entrypoint migrates
+the schema on every boot, so a bad migration takes the service down at start.
 
 ### 2. Set the version once
 
@@ -567,275 +546,27 @@ npm run release:rollback:win -- --confirm-rollback="$MARKIE_RELEASE_VERSION"
 `.release/<version>/previous-latest.yml` before replacing it. The rollback republishes that exact
 file and verifies the public Windows feed. Versioned artifacts stay in storage either way.
 
-## 0.5.0 server deploy: email verification and the pending-invite backfill
-
-0.5.0 closes a live authorization flaw. Before it, a document shared to an address that had no
-Markie account yet became a `pending_shares` row, and whoever registered that address first
-inherited the document. Nothing proved they owned the address. From 0.5.0 the server requires proof
-of email ownership, and no pending invite is claimed by an account that has not proven it.
-
-This is a production change with a data migration. It is a human checkpoint from start to finish.
-
-### Blocker: the client release ships first, then the server deploy
-
-**Order matters, and getting it wrong breaks signups in the field.** Publish the 0.5.0 desktop
-release, and only then deploy the server. There is no version negotiation between the two: the
-server changes what it answers, and only a client that knows the new answers can finish a signup.
-
-What the server starts doing:
-
-- a password signup returns no session, because the address is not proven yet;
-- a password sign-in on an unproven account is refused with 403 `EMAIL_NOT_VERIFIED`;
-- signup mails a one-time code with type `email-verification`.
-
-What the 0.5.0 client does about it: both of those answers route into the existing code view, and it
-confirms the address through `POST /api/auth/email-otp/verify-email` rather than the email-OTP
-**sign-in** route. That distinction is load bearing. Signing in by code revokes everything an
-unproven account accrued, which is how the real owner of an address reclaims an account a squatter
-registered, and it is exactly wrong for someone finishing their own signup: it deletes the password
-they just chose. Confirming the address proves the same thing and leaves the account alone. Both
-behaviors are pinned together in `server/src/claim-verified.test.ts`.
-
-Consequences to expect and to put in the release notes:
-
-- **Users on an older build cannot complete a new signup** once the server is deployed, until they
-  update. An older client sends the code to the sign-in route, which is the flow that used to cost
-  people their password, and on a shipped build older than 0.5.0 it never routes there at all.
-- **Existing accounts are unaffected**, because the backfill below grandfathers every account
-  created before the deploy.
-- Anyone whose password was already revoked by the old flow sets a new one from **Forgot?** in the
-  sign-in dialog. The reset route creates a credential where there is none, so "forgot my password"
-  covers "never had one".
-
-### 1. Dry run BEFORE deploying, so review does not become downtime
-
-Between the deploy and step 6, every pre-existing account is unverified and therefore cannot sign
-in with its password. That window has to be minutes, not hours, so do the human part first: run
-step 4's dry run against a **copy** of the production database, read the report, and resolve
-anything flagged (step 5) before the deploy exists. Then the sequence on the live database is
-deploy, dry run to confirm, commit, all back to back.
-
-If a flagged row turns up on the live run that the rehearsal did not show, roll the server back
-rather than leaving users locked out while it is investigated.
-
-### 2. Deploy the server
-
-Deploy `server/` as normal. Nothing is required in the database for the new code to run: every claim
-path simply checks `emailVerified` first. Record the deploy time in UTC ISO form, for example
-`2026-09-01T14:32:00.000Z`. That timestamp is the migration cutoff. Everything created before it is
-an account that predates verification; everything after it proves its address the normal way.
-
-### 3. Back up, then check the column names
-
-Take a database backup first. Litestream replication is not a substitute for a snapshot taken
-immediately before a schema-touching run.
-
-better-auth has changed column casing between versions, so confirm the live schema matches what the
-migration reads:
-
-```sql
-PRAGMA table_info(user);     -- expect id, name, email, emailVerified, image, createdAt, updatedAt
-PRAGMA table_info(account);  -- expect providerId and userId
-```
-
-`emailVerified` is an INTEGER 0 or 1, and `createdAt` is an ISO-8601 UTC string, which is why the
-cutoff comparison is a plain string comparison. If either has changed shape, stop and fix the
-migration before running it.
-
-### 4. Dry run the migration and read the report
-
-```bash
-cd server
-DB_PATH=/path/to/markie.db node --experimental-strip-types src/migrate-verified.ts \
-  2026-09-01T14:32:00.000Z
-```
-
-It writes nothing. It prints:
-
-```
-migrate-verified audit (cutoff 2026-09-01T14:32:00.000Z)
-  accounts to grandfather: 128 (created 2026-02-11T09:03:11.000Z .. 2026-08-30T22:14:02.000Z)
-  invites already claimed into shares: 34
-  invites still pending (protected from now on): 6
-  FLAGGED claimed shares by never-verified accounts: 0
-dry run: nothing written. Re-run with --commit to grandfather.
-```
-
-Check the account count and date range against expectations. The range should start at the oldest
-account and end just before the deploy; an account dated after the cutoff appearing here means the
-wrong cutoff was passed.
-
-### 5. If the flagged count is not zero, stop
-
-Zero is the expected result, and it is worth confirming rather than assuming. A flagged row is an
-already-claimed share held by an account that never proved the address and has no OAuth account.
-That is the signature of the flaw having actually been exercised.
-
-The script exits 2 and **refuses to write in either mode** while any row is flagged, because
-grandfathering such an account would turn a stolen claim into a legitimate-looking one. Do not work
-around it. Instead:
-
-1. take the flagged list to the owner, with the document, the claiming account, and the address;
-2. contact the real owner of each address;
-3. revoke the stolen shares (`DELETE FROM shares WHERE doc_id = ? AND user_id = ?`) and consider
-   disabling the claiming accounts;
-4. re-run the dry run and confirm the count is now zero.
-
-### 6. Commit the backfill
-
-```bash
-DB_PATH=/path/to/markie.db node --experimental-strip-types src/migrate-verified.ts \
-  2026-09-01T14:32:00.000Z --commit
-```
-
-It re-prints the same audit and then reports how many accounts it verified. Exit code 0 means the
-write happened; 2 means a flagged row appeared between runs and nothing was written.
-
-### 7. Smoke checks
-
-- An account that existed before the deploy signs in with its password, unchanged.
-- A brand new signup receives a code by email, cannot sign in until the code is entered, and can
-  sign in immediately afterwards.
-- That same brand new account can then sign in **with the password it was created with**. If it
-  cannot, the client confirmed the address through the sign-in route instead of the verification
-  route and the password was revoked; stop and fix the client before telling anyone to sign up.
-- A Google sign-in still works and still picks up documents shared to that address, because the
-  provider proved the address.
-- The takeover scenario, run by hand against staging if one exists: share a document to an address
-  with no account, register that address, list documents, and confirm the document does **not**
-  appear. Then verify the address and confirm it does.
-- An invite link already sitting in someone's inbox still opens the document for a recipient with
-  no account. That path is unchanged on purpose: holding the token is itself evidence of receiving
-  mail at the address, and it never converts the invite into an account share.
-
-### 8. Afterwards
-
-The migration is one-time. Once every pre-deploy account is verified, a second run reports zero
-accounts to grandfather. Leave the script in the tree: its audit query is the standing way to ask
-whether any share was ever claimed without proof.
-
 ## API server deploy and rollback
 
 > **2026-10-27: Markie Cloud runs on ZVN's own boxes, not Fly.** `markie-api` is a Kamal app on
 > `zvn-apps-a`, with `zvn-apps-b` as standby, behind Cloudflare for SaaS. Its config, deploy, failover
 > and rollback live in the private `ZVN-DEV/zvn-infra` repo: `kamal/apps/markie-api/` and
 > `docs/migrations/markie-api.md`. The Fly app is parked (`sleep infinity`) as the undo until it is
-> scaled down. Fly's failing health check is expected and is not an outage. Check
-> `https://api.markiedocs.com/health` instead. The Fly notes below are history.
+> deleted. Fly's failing health check is expected and is not an outage. Check
+> `https://api.markiedocs.com/health` instead.
 >
 > The zvndev.com zone's WAF rules apply to `api.markiedocs.com`. A client blocked there gets
 > Cloudflare's 403 and the box never sees the request.
 
-> **2026-10-22: Markie Cloud runs on Fly.io, app `markie-api` (org `zvn-dev`, region `iad`), not Railway.**
-> Railway disclosed a credential breach on 2026-10-21; every server secret except Google and email was
-> rotated in the move. Deploy from a clean export: `git archive HEAD:server | tar -x -C /tmp/markie-api-fly`,
-> then `cd /tmp/markie-api-fly && fly deploy -a markie-api`. Exactly one machine and one volume
-> (`markie_data` at `/data`); never scale it while the database is SQLite. `api.markiedocs.com` is a
-> CNAME to `5yn0dkw.markie-api.fly.dev`. The Railway sections below are history.
+The database is SQLite at `DB_PATH`, replicated by Litestream. Backups, restores, and data rollback
+are in zvn-infra. Deploy the server before any client release that depends on it. Released apps
+going back to v0.8.0 call this API, so treat any change that breaks the v0.8.0-era server tests as
+a client-breaking change.
 
+## Cloud hostname
 
-The `api` Railway service is deployed by uploading `server/` from the CLI. Production carries no
-commit hash of its own, so every deploy must record one in its message. Released apps going back
-to v0.8.0 call this API. The v0.8.0-era server test suite passes against the current server, apart
-from a one-time admin script, so treat any change that breaks those tests as a client-breaking
-change.
-
-### Deploy
-
-1. Commit everything. Upload only committed code, from a clean export:
-   `git archive HEAD:server | tar -x -C /tmp/markie-api` followed by
-   `railway up /tmp/markie-api --path-as-root --service api --environment production --ci -m "<what> (<short sha>)"`.
-   Never upload the working tree: `server/` holds an untracked local database and env files.
-2. Take a snapshot on the volume before any deploy that changes the schema. The 2026-10-20 deploy
-   left `/data/pre-deploy-2026-10-20.db`, which holds the full history from before history was
-   capped at 20 versions. Keep it.
-   The 2026-10-21 deploy, which added the document platform and linked sign-in tables, left
-   `/data/pre-deploy-2026-10-21.db` (integrity ok).
-3. After the deploy, check that `/health` returns 200, that `/api/docs` returns 401 without a
-   token, and that the logs show Litestream writing to `markie-db-age`.
-
-### Backups
-
-Litestream replicates age-encrypted to `markie-db-age/` in the B2 bucket `Markie`. The identity
-and the recipient are the `api` variables `LITESTREAM_AGE_IDENTITY` and `LITESTREAM_AGE_RECIPIENT`.
-Kirby holds the offline copy of the identity. The key was rotated on 2026-10-21 after the old
-identity was exposed in an agent session; generations written before 01:37 UTC that day decrypt
-only with the old identity, which Kirby also holds. Always restore with
-`litestream restore -config /etc/litestream.yml`, which reads the identity from the config. A bare
-replica URL cannot decrypt. A lifecycle rule deletes hidden replica files one day after Litestream
-retires them.
-
-### Rollback
-
-- **Code:** redeploy an older commit the same way, from `git archive <sha>:server`. **First copy
-  the current `server/litestream.yml` into that export.** Any commit before d659415 replicates in
-  plaintext to `markie-db/`, which would put an unencrypted copy of every document back in B2.
-- **Data:** the database restores from the encrypted replica, or from a `/data/pre-deploy-*.db`
-  snapshot. With the service stopped, copy the snapshot over `/data/markie.db`, remove the `-wal`
-  and `-shm` files, `touch /data/.litestream-new-generation`, then start the service.
-- **Schema:** the old server ignores the tables newer servers add, so a code rollback needs no
-  database change. Document history pruned to 20 versions per document comes back only from a
-  snapshot.
-- **Volume `api-volume-a5Kl`:** a detached volume created on the service's first day, 2026-06-11.
-  Its contents have not been inspected, so it is kept on purpose. Attach it to a temporary service
-  and compare it with the live database before anyone deletes it.
-
-## Moving the Cloud hostname
-
-Markie Cloud's API is moving from `https://api-production-602f.up.railway.app` to
-`https://api.markiedocs.com`, a name we control, so the backend can change hosts later without an
-app release. The code is ready for it:
-
-- The desktop app names `https://api.markiedocs.com` in `electron/cloud-origin.json`, with the Railway
-  origin as a legacy alias. Sessions, documents, links and the sign-in `iss` recorded under the alias
-  read as Markie Cloud, so nobody is signed out and no document moves.
-- The server (`server/src/official.ts`) answers on both names. `/api/*` is served on both. Browser
-  pages under `/auth/` and `/account/` that arrive on the name that is not `BETTER_AUTH_URL` get a
-  308 to the same path on `BETTER_AUTH_URL`, so Google's state cookie and callback share one host.
-
-Released apps call the Railway hostname for as long as they run. Never remove it from the `api`
-service, and never remove the `api` DNS record once a desktop build that uses it has shipped.
-
-Each step below is a human checkpoint. Do them in order and check each one before the next.
-
-1. **Railway custom domain.** On project `markie`, environment `production`, service `api`, add the
-   custom domain `api.markiedocs.com`. Railway shows a CNAME target, and possibly a TXT record to
-   prove ownership. Note both.
-   `railway domain <name> --json` prints only the CNAME. The ownership TXT record
-   (`_railway-verify.<label>`) shows up only in the dashboard or the GraphQL `customDomain.status`
-   (`verificationDnsHost`, `verificationToken`). Without it the certificate stays at
-   `VALIDATING_OWNERSHIP` indefinitely.
-2. **Vercel DNS.** markiedocs.com's DNS is on Vercel. Add a `CNAME` record `api` pointing at the
-   Railway target from step 1, plus the TXT record if Railway asked for one. Wait until Railway shows
-   the domain as active with a certificate, then check
-   `curl -sS https://api.markiedocs.com/health` returns 200 and
-   `curl -sS https://api.markiedocs.com/api/server-info` names the Railway origin.
-3. **Google OAuth.** In the Google Cloud console, open the OAuth client whose ID is the `api`
-   service's `GOOGLE_CLIENT_ID`. Under Authorized redirect URIs, add
-   `https://api.markiedocs.com/api/auth/callback/google`. Keep the Railway callback URI: a sign-in
-   that started before the flip still returns there.
-4. **Deploy the server** with this change, following "API server deploy and rollback" above.
-   `BETTER_AUTH_URL` still names Railway, so
-   `curl -sSI "https://api.markiedocs.com/auth/google-start?state=0123456789abcdef"` answers 308 to the
-   Railway origin, while `/api/server-info` answers 200 on both names.
-5. **Flip `BETTER_AUTH_URL`** on the `api` service to `https://api.markiedocs.com`. Changing the
-   variable redeploys the service. Then check:
-   - `/api/server-info` names `https://api.markiedocs.com` on both names.
-   - `/auth/google-start` on the Railway name answers 308 to `https://api.markiedocs.com`.
-   - Following it lands at Google with `redirect_uri=https://api.markiedocs.com/api/auth/callback/google`.
-   - A released app still signs in with email and with Google, and still syncs.
-
-   A Google sign-in that was halfway through during the redeploy fails once. Trying again works.
-   To roll back, set `BETTER_AUTH_URL` back to the Railway origin. Both names keep working either way.
-6. **Ship the desktop app** that carries this change, through the normal release above. It reaches
-   Cloud at `https://api.markiedocs.com` and accepts either name as the issuer, so it works on both
-   sides of step 5, but it needs steps 1 and 2 to be live.
-
-Private nightly builds lock to Markie Cloud too. A nightly built from a commit that already checks
-`iss` (8ab7abe onward) but predates this change compares it with the Railway origin, so it refuses
-Google sign-in after step 5. Ship a nightly with this change before flipping. Released 0.8.x apps do
-not check `iss` and are unaffected. Email sign-in is unaffected. The super-nightly gateway's
-`PRIVATE_RELEASE_AUTH_ORIGIN` may stay on the Railway origin, since the same API answers there.
-
-markiedocs.com's own Vercel rewrites for `/s/`, `/d/` and `/download` proxy to the Railway hostname.
-They keep working and can move to `https://api.markiedocs.com` later, in that repository.
+`https://api.markiedocs.com` is the canonical Markie Cloud origin. The old Railway hostname
+`https://api-production-602f.up.railway.app` survives only as a legacy alias in client code
+(`electron/cloud-origin.json`), so sessions, documents and links recorded under it keep resolving.
+markiedocs.com proxies `/download`, `/d`, `/s` and the `.well-known` files to `api.markiedocs.com`
+through `vercel.json` in the markie-site repo.

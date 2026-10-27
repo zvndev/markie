@@ -62,8 +62,7 @@ on demand. Built in layers, each useful on its own:
 
 ## 2. Account-optional sharing — Phase 2 ✅ built
 
-**Status:** Built on branch `feat/sharing-phase2-public-links` (plan:
-`docs/superpowers/plans/2026-06-12-sharing-phase2-public-links.md`). Public
+**Status:** Built on branch `feat/sharing-phase2-public-links`. Public
 `public_links` table + revocable token; `GET /s/:token` renders a hardened
 read-only preview (Markie's existing `unified` renderer + `rehype-sanitize` +
 CSP) with a `Download .md` button and a Markie CTA; `GET /s/:token/raw` streams
@@ -75,7 +74,7 @@ tests pass; reviewed (XSS + filename hardening applied).
 `https://markie.zvndev.com`). Flip the env when a custom domain is live; DNS for
 that domain points at the API host, which serves `/s/:token`.
 
-**Remaining:** redeploy the API to Railway; optional later: per-link analytics,
+**Remaining, optional:** per-link analytics,
 password-protected links, unify the public render on markie-framework.
 
 **Related tickets:** Task #43 (umbrella), Task #50 (Phase 2).

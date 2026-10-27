@@ -1,9 +1,15 @@
 # Markie Mobile: getting onto TestFlight and Play internal testing
 
-Status, 2026-10-25:
+Status, 2026-10-27:
 
-- **iOS:** the App Store Connect record **Markie Docs** exists, with bundle ID `com.zvn.markie.mobile` on team `3VU8SG5TD9`. The name "Markie" was taken. Build 0.1.0 (1) was uploaded from Xcode Organizer on 2026-10-25. The home-screen name is still "Markie".
+- **iOS:** the App Store Connect record **Markie Docs** exists, with bundle ID `com.zvn.markie.mobile` on team `3VU8SG5TD9`. The name "Markie" was taken. Build 0.1.0 (1) is on TestFlight. The home-screen name is still "Markie".
 - **Android:** a signed release bundle is built at `~/Desktop/Markie-mobile-0.1.0-1.aab`. It isn't uploaded yet.
+- **Server:** the app's server is live, and `apple-app-site-association` and `assetlinks.json` are served.
+
+What is left:
+
+1. Upload the Android bundle to Play internal testing. This waits on the Play Console account verification.
+2. Set `ANDROID_APP_CERT_SHA256` on the server to the Play app-signing key's SHA-256, once Play shows it.
 
 ## Apple: Kirby Campbell's App Store Connect
 
@@ -13,13 +19,10 @@ Status, 2026-10-25:
    - Language: English (U.S.)
    - Bundle ID: `com.zvn.markie.mobile` (it's already in the list)
    - SKU: `markie-mobile`
-2. **Give the agent upload access.** Do either one:
+2. **Upload access.** Build 0.1.0 (1) went up from Xcode Organizer. For uploads by an agent later, do either one:
    - **Option A, preferred:** go to Users and Access, then Integrations, then Team Keys, then "+". Name it "Markie mobile CI" with role App Manager, and download the `.p8` into `~/Downloads`. Tell Claude the Key ID and the Issuer ID shown on that page. These are identifiers, not secrets, and Claude moves the file without ever printing it.
-   - **Option B:** open Xcode, go to Settings, then Accounts, choose "+", and add the Apple account kirby@zvndev.com. That's the Kirby Campbell team account. Xcode currently has only kirby@bevrly.com, which is the Bevrly account.
-3. **Claude then:**
-   - uploads the build;
-   - fills in export compliance (the app uses only standard HTTPS);
-   - creates an internal TestFlight group with you in it.
+   - **Option B:** open Xcode, go to Settings, then Accounts, choose "+", and add the Apple account kirby@zvndev.com. That's the Kirby Campbell team account, not kirby@bevrly.com.
+3. **Done: upload the build to TestFlight.** Export compliance: the app uses only standard HTTPS.
 
 ## Google: Jaykasie's Play Console
 
@@ -45,11 +48,7 @@ Status, 2026-10-25:
 
 ## Before testers get a useful app
 
-These are separate approvals, and they aren't done yet:
-
-1. **Merge PR #31 into `main`.**
-2. **Deploy the server to production.** The app signs in and lists documents against it.
-3. **Serve `/.well-known/apple-app-site-association` and `assetlinks.json` on markiedocs.com.** Without them, a tapped `https` link opens the web page instead of the app.
+Done: PR #31 is merged, the server is deployed, and `/.well-known/apple-app-site-association` and `assetlinks.json` are served on markiedocs.com and api.markiedocs.com. Android app links still need `ANDROID_APP_CERT_SHA256` (Google step 3).
 
 ## Keys and where they live
 

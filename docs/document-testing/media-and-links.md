@@ -2,7 +2,7 @@
 
 [Back to the guide](README.md) · [Document types](document-types.md)
 
-Use the supplied `samples/Media-and-links.md`, `scene.png` and `clip.mp4` together. These are synthetic local samples, not private documents.
+Use `samples/Media-and-links.md` with an image and a short video of your own. Copy a non-private picture into `samples/` as `scene.png` and a short clip as `clip.mp4`; they are not tracked in the repository.
 
 ## Images and videos
 

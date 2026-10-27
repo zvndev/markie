@@ -6,7 +6,7 @@ clone to a passing pull request.
 ## Requirements
 
 - **Node 22 or newer** (`.nvmrc` pins the version this repo is developed on)
-- **macOS** for running the desktop app; the tests, lint, and build run anywhere
+- **macOS or Windows** for running the desktop app; the tests, lint, and build run anywhere
 
 ## Setup
 
@@ -33,7 +33,7 @@ Two things to know before the first run:
 - **`electron:dev` waits on port 3000.** If something else is already serving
   that port, Electron will load *that* instead. Free the port first.
 
-The app writes to `~/Library/Application Support/markie`, the same directory the
+On macOS the app writes to `~/Library/Application Support/markie`, the same directory the
 installed Markie uses, so a from-source run shares your real library.
 
 ## Tests
@@ -46,7 +46,8 @@ npm test                        # renderer + Electron (vitest)
 node --test mcp/lib.test.mjs    # MCP server
 (cd server && npm test)         # Hono server
 npm run lint
-npm run build                   # also the only TypeScript check
+npm run typecheck               # tsc, no emit
+npm run build                   # tsc again, then the Vite bundle
 ```
 
 The whole suite takes a few seconds. CI runs the same checks on every pull
@@ -76,8 +77,8 @@ Not-tested: None for this change.
 
 ## Where to start
 
-`BACKLOG.md` holds the open, scoped work items with rationale and acceptance
-criteria. `SPEC.md` describes the canonical user journeys and is the best
+Open work is tracked in Circular. `BACKLOG.md` is a scratch list of scoped
+items with rationale and acceptance criteria. `VISION.md` is the best
 orientation for how the product is meant to behave.
 
 ## Repository layout
@@ -88,15 +89,17 @@ orientation for how the product is meant to behave.
 | `electron/` | Main process, preload, local registry, sync, terminal |
 | `server/` | Hono + better-auth server for sharing, sync, collab, comments |
 | `mcp/` | Dependency-free MCP server and its filesystem guards |
+| `apps/mobile/` | Capacitor iOS and Android app |
+| `deploy/` | Self-hosting kit for the server (see `docs/SELF-HOSTING.md`) |
 | `scripts/` | Release, packaging, and audit tooling |
-| `docs/` | `RELEASING.md` plus historical plans and specs |
+| `docs/` | `RELEASING.md`, mobile store setup, plus historical plans and specs |
 
 ## Notes on some files
 
-`AGENTS.md`, `CONSTITUTION.md`, `PROGRESS.md`, `CURRENT_TASK.md`, and
-`feature_list.json` describe the autonomous agent loop that does much of the
-routine work on this repo. They are context, not rules for human contributors.
-The parts that do apply to everyone are the commit format above and the testing
+`AGENTS.md` and `CONSTITUTION.md` are written for the coding agents that do
+much of the routine work on this repo. `PROGRESS.md` is the release and
+operations log. They are context, not rules for human contributors. The parts
+that do apply to everyone are the commit format above and the testing
 expectations.
 
 ## Security

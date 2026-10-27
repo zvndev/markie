@@ -306,6 +306,32 @@ export function closeRoom(docId: string): void {
   for (const ws of room.conns.keys()) ws.close(CLOSE_ACCESS_REVOKED, "doc deleted");
 }
 
+// 1012 is the standard "service restart" code. It is outside the 4000-4999
+// range the client treats as final, so every editor reconnects on its own and
+// resyncs from the update log once a server is back.
+const CLOSE_SERVICE_RESTART = 1012;
+let acceptingUpgrades = true;
+
+/**
+ * For a stopping server: refuse new sockets and ask every open one to close.
+ * Updates already received are in the update log, since each is appended
+ * before it is fanned out. Returns how many sockets it asked.
+ */
+export function closeAllRooms(): number {
+  acceptingUpgrades = false;
+  let asked = 0;
+  for (const room of rooms.values()) for (const ws of room.conns.keys()) {
+    ws.close(CLOSE_SERVICE_RESTART, "server restarting");
+    asked += 1;
+  }
+  return asked;
+}
+
+/** At the stop deadline: drop any socket that has not finished closing. */
+export function terminateAllRooms(): void {
+  for (const room of rooms.values()) for (const ws of room.conns.keys()) ws.terminate();
+}
+
 export interface PresenceIdentity {
   name: string;
   color: string;
@@ -521,6 +547,10 @@ export function attachCollab(server: Server): void {
     // exception. ws's own noServer example guards the socket the same way.
     const onSocketError = () => socket.destroy();
     socket.on("error", onSocketError);
+    if (!acceptingUpgrades) {
+      socket.destroy();
+      return;
+    }
     try {
       const url = new URL(req.url ?? "", "http://localhost");
       const match = url.pathname.match(/^\/collab\/([^/]+)$/);
@@ -534,6 +564,12 @@ export function attachCollab(server: Server): void {
       const level = session?.user ? accessLevel(docId, session.user.id) : null;
       if (!session?.user || !session.session?.id || !liveSession(session.user.id, session.session.id) || !canReadLevel(level)) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      // The session lookup above is awaited, and the server may have begun
+      // stopping meanwhile.
+      if (!acceptingUpgrades) {
         socket.destroy();
         return;
       }

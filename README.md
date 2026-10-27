@@ -28,19 +28,27 @@ markdown right alongside you.
 
 ## Install
 
-The current public downloads are **Apple Silicon macOS**, **Intel macOS**, and
-**Windows x64**, signed through Azure Trusted Signing. All three update
-themselves from their own signed feed. Linux x64 packaging is configured in the
-source tree but nothing is published for it yet. Server download routes and
-Electron Builder both read `server/download-manifest.json`, so storage, updater
-feeds, and platform status cannot drift apart.
+The current public downloads are **Apple Silicon macOS** and **Intel macOS**
+(signed and notarized) and **Windows x64** (signed through Azure Trusted
+Signing). **Linux x64** ships from the release flow as an AppImage and a `.deb`,
+starting with the first release that promotes it to stable; the download page
+offers it from that moment. Every platform updates itself from its own feed.
+Linux packages are not code-signed, by design: the updater checks each
+package's SHA-512 before installing it, and each release publishes a
+`SHA512SUMS` file. Server download routes and Electron Builder both read
+`server/download-manifest.json`, so storage, updater feeds, and platform status
+cannot drift apart.
 
 ➡️ **[Download the latest Markie](https://markiedocs.com/download)**
 
 Release integrations can read the current stable version and platform URLs from
 [`/download/latest.json`](https://markiedocs.com/download/latest.json).
 
-> Linux downloads are not published yet.
+On Linux, make the AppImage executable and run it
+(`chmod +x Markie-*-x86_64.AppImage && ./Markie-*-x86_64.AppImage`); on its first
+run it adds itself to your applications menu and registers for Markdown files
+and `markie://` links. Or install the `.deb` with
+`sudo apt install ./Markie-*-amd64.deb`.
 
 ## The Markie MCP
 
@@ -122,11 +130,12 @@ npm run electron:smoke:mac:x64
 npm run electron:smoke:win
 npm run electron:smoke:win:launch # Windows host only
 npm run electron:smoke:linux
+npm run electron:smoke:linux:launch # Linux host only, under a display or xvfb-run
 ```
 
 The local pack/build scripts use a certificate-free electron-builder wrapper and
 pass `--publish never`. Signed releases go through the guarded release runner:
-`release:prepare:mac` or `release:prepare:win`, then an early-access publish, then
+`release:prepare:mac`, `release:prepare:win` or `release:prepare:linux`, then an early-access publish, then
 `release:promote` to stable. [docs/RELEASING.md](./docs/RELEASING.md) is the full
 runbook. The Windows unpacked package also installs the matching
 Electron `better-sqlite3` Windows prebuild before `electron:smoke:win` runs.

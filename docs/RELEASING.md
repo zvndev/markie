@@ -46,8 +46,9 @@ requires the exact version in `--confirm-public-release=<version>`.
 
 Kirby saying "release X.Y.Z" is that instruction for the early-access publish of X.Y.Z **and** for
 its timed promotion to stable after the soak, unless he holds it. The promotion itself runs
-unattended through `release:promote-due`. This depends on the CONSTITUTION amendment proposed with
-this pipeline; until Kirby ratifies it, ask before the promotion as well.
+unattended through `release:promote-due`. This depends on the amendment recorded as pending in
+`CONSTITUTION.md` ("Pending amendment: release approval scope"); until Kirby ratifies it, ask before
+the promotion as well.
 
 ## Release stages
 

@@ -716,6 +716,16 @@ whether any share was ever claimed without proof.
 
 ## API server deploy and rollback
 
+> **2026-10-27: Markie Cloud runs on ZVN's own boxes, not Fly.** `markie-api` is a Kamal app on
+> `zvn-apps-a`, with `zvn-apps-b` as standby, behind Cloudflare for SaaS. Its config, deploy, failover
+> and rollback live in the private `ZVN-DEV/zvn-infra` repo: `kamal/apps/markie-api/` and
+> `docs/migrations/markie-api.md`. The Fly app is parked (`sleep infinity`) as the undo until it is
+> scaled down. Fly's failing health check is expected and is not an outage. Check
+> `https://api.markiedocs.com/health` instead. The Fly notes below are history.
+>
+> The zvndev.com zone's WAF rules apply to `api.markiedocs.com`. A client blocked there gets
+> Cloudflare's 403 and the box never sees the request.
+
 > **2026-10-22: Markie Cloud runs on Fly.io, app `markie-api` (org `zvn-dev`, region `iad`), not Railway.**
 > Railway disclosed a credential breach on 2026-10-21; every server secret except Google and email was
 > rotated in the move. Deploy from a clean export: `git archive HEAD:server | tar -x -C /tmp/markie-api-fly`,

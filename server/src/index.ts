@@ -24,6 +24,10 @@ import { canonicalHostRedirect } from "./canonical-host.ts";
 import { closeAllDatabases, openDatabase } from "./db.ts";
 import { installGracefulStop } from "./graceful-stop.ts";
 import { cronsEnabled, releaseCommit } from "./runtime-config.ts";
+import {
+  FAULT_ROUTES, littleFriend, littleFriendFromEnv, reportFault, reportRouteFault, requestTiming, routeTemplate,
+  installLittleFriend,
+} from "./little-friend.ts";
 import { createDocumentPlatform } from "./document-platform.ts";
 import { createSqliteDocumentPlatformStore } from "./document-platform-store.ts";
 import type Database from "better-sqlite3";
@@ -42,6 +46,12 @@ import {
 const googleConfigured = !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
 const app = new Hono();
+
+// Little Friend (little-friend.ts): request timing by route template and
+// server faults with their stacks. Off unless LF_SERVER_KEY is set. First, so
+// it times every request, including the ones a later middleware refuses.
+installLittleFriend(littleFriendFromEnv(process.env));
+app.use("*", requestTiming);
 
 // What a shared document page is allowed to load.
 //
@@ -299,6 +309,7 @@ app.get("/auth/google-start", async (c) => {
     return new Response(null, { status: 302, headers });
   } catch (err) {
     console.error("google-start error:", err);
+    reportFault(err, "/auth/google-start");
     return c.text("Could not start Google sign-in.", 500);
   }
 });
@@ -393,7 +404,10 @@ app.route("/", createWellKnown());
 // The HTML routes (/s/:token, /d/:id, /download*) build their own 403/404
 // responses and never reach these.
 app.onError((err, c) => {
-  console.error(`${c.req.method} ${c.req.path} failed:`, err);
+  // The route template, never c.req.path: a path can carry a share token
+  // (/s/<token>) or a document id.
+  console.error(`${c.req.method} ${routeTemplate(c) ?? "/*"} failed:`, err);
+  reportRouteFault(err, c);
   // A route that threw an HTTPException already decided its own status and
   // body (a 429 from a rate limiter, a 401 from better-auth). Flattening those
   // into a generic 500 loses both the status the client branches on and the
@@ -454,7 +468,10 @@ if (process.env.MARKIE_NO_LISTEN !== "1") {
       .then((swept) => {
         if (swept > 0) console.log(`swept ${swept} orphaned asset${swept === 1 ? "" : "s"}`);
       })
-      .catch((err) => console.error("orphan sweep failed:", err));
+      .catch((err) => {
+        console.error("orphan sweep failed:", err);
+        reportFault(err, FAULT_ROUTES.orphanSweep);
+      });
   };
   // ENABLE_CRONS=false runs a server that answers requests and runs no jobs.
   // Unset, the sweep runs as it always has.
@@ -462,6 +479,11 @@ if (process.env.MARKIE_NO_LISTEN !== "1") {
     ? [setTimeout(runSweep, FIRST_SWEEP_MS).unref(), setInterval(runSweep, ORPHAN_SWEEP_MS).unref()]
     : [];
   if (sweeps.length === 0) console.log("ENABLE_CRONS is off: the orphaned-asset sweep will not run here");
+  // An uncaught exception or unhandled rejection is sent before the process
+  // exits with code 1, as Node would have.
+  const lf = littleFriend();
+  lf?.captureProcessErrors();
+  console.log(lf ? "little friend: on" : "little friend: off (LF_SERVER_KEY is not set)");
   // SIGTERM (docker stop, Kamal) or SIGINT (Fly): stop taking requests and
   // sockets, give requests in flight up to 3 s, then close every database
   // handle and exit (graceful-stop.ts).
@@ -477,6 +499,8 @@ if (process.env.MARKIE_NO_LISTEN !== "1") {
     release: () => {
       closeAllDatabases();
     },
+    // Request stats and faults still in memory, bounded by graceful-stop.
+    ...(lf ? { flush: () => lf.shutdown({ timeout: 1500 }) } : {}),
   });
   console.log(`markie-api listening on :${port}`);
 }

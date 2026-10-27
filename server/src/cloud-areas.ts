@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import type Database from "better-sqlite3";
 import type { PlatformSqliteDatabase } from "./document-platform-store.ts";
+import { reportRouteFault } from "./little-friend.ts";
 
 export type CloudDocumentKind = "markdown" | "snapshot";
 export interface CloudArea { id: string; label: string; identityId?: string }
@@ -131,7 +132,11 @@ export interface CloudAreasApiOptions {
 export function createCloudAreasApi({ store, authenticate, canAccessDocument }: CloudAreasApiOptions): Hono {
   const app = new Hono();
   app.use("*", async (c, next) => { c.header("Cache-Control", "private, no-store"); await next(); });
-  app.onError((error, c) => error instanceof CloudAreaError ? c.json({ error: error.code, message: error.message }, error.status) : c.json({ error: "storage-error" }, 503));
+  app.onError((error, c) => {
+    if (error instanceof CloudAreaError) return c.json({ error: error.code, message: error.message }, error.status);
+    reportRouteFault(error, c);
+    return c.json({ error: "storage-error" }, 503);
+  });
   const user = async (request: Request) => { const account = await authenticate(request); if (!account || !account.id || account.id.length > 128) fail("unauthorized", 401, "Sign in to organize cloud documents."); return account.id; };
   app.get("/cloud-areas", async (c) => {
     const uid = await user(c.req.raw), areas = store.list(uid), placements: CloudPlacement[] = [];

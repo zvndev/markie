@@ -49,6 +49,7 @@ import {
   privateLinkFor,
   type DocOrigin,
 } from "./doc-meta.ts";
+import { FAULT_ROUTES, reportFault } from "./little-friend.ts";
 
 const db = openDatabase();
 
@@ -221,6 +222,7 @@ function write(agent: AgentPrincipal, args: {
     return null;
   } catch (err) {
     console.error("agent document write failed:", err);
+    reportFault(err, FAULT_ROUTES.agentDocWrite);
     return fail(503, "storage-error");
   }
 }

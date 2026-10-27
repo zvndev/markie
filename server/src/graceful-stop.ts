@@ -26,6 +26,14 @@ export interface GracefulStopOptions {
   force?: () => void;
   /** Runs once HTTP is closed, or at the deadline: close databases. */
   release?: () => void;
+  /**
+   * Runs after release, before the exit: send what is still in memory (error
+   * and request reports). Waited on for at most flushTimeoutMs, and its
+   * failure never changes the exit.
+   */
+  flush?: () => Promise<unknown>;
+  /** How long the flush gets. */
+  flushTimeoutMs?: number;
   /** How long requests in flight get. */
   deadlineMs?: number;
   log?: (line: string) => void;
@@ -33,6 +41,7 @@ export interface GracefulStopOptions {
 }
 
 export const STOP_DEADLINE_MS = 3000;
+export const FLUSH_DEADLINE_MS = 2000;
 
 /**
  * Returns the stop itself, which the signals call. A second signal while
@@ -72,9 +81,29 @@ export function gracefulStop(options: GracefulStopOptions): (signal: string) => 
           run("closeAllConnections", () => options.server.closeAllConnections?.());
         }
         run("release", options.release);
-        log(`${options.name}: stopped in ${Date.now() - started} ms${cut ? ", open requests were cut at the deadline" : ""}`);
-        exit(0);
-        resolve();
+        const end = () => {
+          log(`${options.name}: stopped in ${Date.now() - started} ms${cut ? ", open requests were cut at the deadline" : ""}`);
+          exit(0);
+          resolve();
+        };
+        if (!options.flush) return end();
+        let flushTimer: ReturnType<typeof setTimeout> | undefined;
+        const flushed = new Promise<void>((settle) => {
+          flushTimer = setTimeout(settle, options.flushTimeoutMs ?? FLUSH_DEADLINE_MS);
+          try {
+            Promise.resolve(options.flush!()).then(() => settle(), (err: unknown) => {
+              log(`${options.name}: flush failed while stopping: ${err instanceof Error ? err.message : String(err)}`);
+              settle();
+            });
+          } catch (err) {
+            log(`${options.name}: flush failed while stopping: ${err instanceof Error ? err.message : String(err)}`);
+            settle();
+          }
+        });
+        void flushed.then(() => {
+          clearTimeout(flushTimer);
+          end();
+        });
       };
       const timer = setTimeout(() => finish(true), deadlineMs);
       options.server.close(() => finish(false));

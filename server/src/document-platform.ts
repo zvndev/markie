@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { DocumentPlatformError, platformFail, platformObject, platformVersion, type DocumentPlatformStore } from "./document-platform-store.ts";
 import { CloudAreaError } from "./cloud-areas.ts";
+import { reportRouteFault } from "./little-friend.ts";
 
 export interface DocumentPlatformOptions {
   store: DocumentPlatformStore;
@@ -58,6 +59,7 @@ export function createDocumentPlatform({ store, resolveUser }: DocumentPlatformO
     if (error instanceof CloudAreaError) return c.json({ error: error.code, message: error.message }, error.status);
     if (error instanceof DocumentPlatformError) return c.json({ error: error.code, message: error.message, ...(error.serverVersion !== undefined ? { serverVersion: error.serverVersion } : {}) }, error.status);
     // Never serialize database errors, auth internals, snapshot bytes, hashes, or bearer tokens.
+    reportRouteFault(error, c);
     return c.json({ error: "storage-error", message: "Document sharing is temporarily unavailable. No change was acknowledged." }, 503);
   });
   const user = async (request: Request) => {

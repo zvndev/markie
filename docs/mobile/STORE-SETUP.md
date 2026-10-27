@@ -2,8 +2,8 @@
 
 Status, 2026-10-27:
 
-- **iOS:** the App Store Connect record **Markie Docs** exists, with bundle ID `com.zvn.markie.mobile` on team `3VU8SG5TD9`. The name "Markie" was taken. Build 0.1.0 (1) is on TestFlight. The home-screen name is still "Markie".
-- **Android:** a signed release bundle is built at `~/Desktop/Markie-mobile-0.1.0-1.aab`. It isn't uploaded yet.
+- **iOS:** the App Store Connect record **Markie Docs** exists, with bundle ID `com.zvn.markie.mobile` on team `3VU8SG5TD9`. The name "Markie" was taken. Build 0.1.0 (1) is on TestFlight. Build 0.1.0 (2), with the L3 brand icon, was uploaded on 2026-10-27 through Xcode's signed-in account and is processing. The home-screen name is still "Markie".
+- **Android:** a signed release bundle, 0.1.0 (versionCode 2) with the L3 brand icon, is built at `~/Desktop/Markie-mobile-0.1.0-2.aab`. It isn't uploaded yet.
 - **Server:** the app's server is live, and `apple-app-site-association` and `assetlinks.json` are served.
 
 What is left:
@@ -19,10 +19,10 @@ What is left:
    - Language: English (U.S.)
    - Bundle ID: `com.zvn.markie.mobile` (it's already in the list)
    - SKU: `markie-mobile`
-2. **Upload access.** Build 0.1.0 (1) went up from Xcode Organizer. For uploads by an agent later, do either one:
+2. **Upload access.** Build 0.1.0 (1) went up from Xcode Organizer. Build 0.1.0 (2) went up with `xcodebuild -exportArchive` (destination `upload`, `-allowProvisioningUpdates`) on the account Xcode is signed in to. For uploads by an agent later, do either one:
    - **Option A, preferred:** go to Users and Access, then Integrations, then Team Keys, then "+". Name it "Markie mobile CI" with role App Manager, and download the `.p8` into `~/Downloads`. Tell Claude the Key ID and the Issuer ID shown on that page. These are identifiers, not secrets, and Claude moves the file without ever printing it.
    - **Option B:** open Xcode, go to Settings, then Accounts, choose "+", and add the Apple account kirby@zvndev.com. That's the Kirby Campbell team account, not kirby@bevrly.com.
-3. **Done: upload the build to TestFlight.** Export compliance: the app uses only standard HTTPS.
+3. **Done: upload the build to TestFlight.** Export compliance: the app uses only standard HTTPS. `Info.plist` sets `ITSAppUsesNonExemptEncryption` to false, so App Store Connect answers it for every build.
 
 ## Google: Jaykasie's Play Console
 
@@ -34,7 +34,7 @@ What is left:
    - Accept the declarations.
 2. **Upload the first build by hand.** Go to Testing, then Internal testing, then Create new release.
    - Accept Play App Signing.
-   - Upload `Markie-mobile-0.1.0-1.aab`, the file Kirby sends.
+   - Upload `Markie-mobile-0.1.0-2.aab`, the file Kirby sends.
    - Add testers by email list and roll out.
    - Google needs the first upload done in the Console before the API can upload later ones.
 3. **Send Claude the app-signing fingerprint.** Go to Test and release, then App integrity, then App signing, and copy the SHA-256 of the **app signing key**. It goes into the server's `ANDROID_APP_CERT_SHA256`, which makes tapped links open the app.

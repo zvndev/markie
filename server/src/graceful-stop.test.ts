@@ -92,3 +92,34 @@ test("a second signal while stopping changes nothing, and a failing step does no
   assert.deepEqual(exits, [0]);
   assert.ok(lines.some((line) => line.includes("stopAccepting failed while stopping: boom")));
 });
+
+test("the flush runs after release and before the exit, and a slow or failing one is bounded", async () => {
+  for (const flush of [
+    async () => "sent",
+    () => new Promise(() => {}), // never settles: the deadline ends it
+    async () => {
+      throw new Error("collector down");
+    },
+  ]) {
+    const { server } = await listen((_req, res) => res.end());
+    const steps: string[] = [];
+    const exits: number[] = [];
+    const stop = gracefulStop({
+      name: "test", server, log: () => {}, flushTimeoutMs: 100,
+      release: () => steps.push("release"),
+      flush: () => {
+        steps.push("flush");
+        return flush();
+      },
+      exit: (code) => {
+        steps.push("exit");
+        exits.push(code);
+      },
+    });
+    const started = Date.now();
+    await stop("SIGTERM");
+    assert.ok(Date.now() - started < 1000);
+    assert.deepEqual(steps, ["release", "flush", "exit"]);
+    assert.deepEqual(exits, [0]);
+  }
+});

@@ -3,6 +3,7 @@ import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { Hono } from "hono";
 import { IdentityError, type IdentityActor } from "./account-identities.ts";
+import { reportRouteFault } from "./little-friend.ts";
 
 export interface GoogleIdentityLinkOptions {
   db: Database.Database;
@@ -84,7 +85,11 @@ export function createGoogleIdentityLinks(options: GoogleIdentityLinkOptions) {
   const failResponse = () => Response.json({ error: "invalid-google-link" }, { status: 400, headers: { "cache-control": "private, no-store", "referrer-policy": "no-referrer" } });
   const app = new Hono();
   app.use("*", async (c, next) => { c.header("Cache-Control", "private, no-store"); c.header("Referrer-Policy", "no-referrer"); await next(); });
-  app.onError((error, c) => error instanceof IdentityError ? c.json({ error: error.code }, error.status) : c.json({ error: "identity-unavailable" }, 503));
+  app.onError((error, c) => {
+    if (error instanceof IdentityError) return c.json({ error: error.code }, error.status);
+    reportRouteFault(error, c);
+    return c.json({ error: "identity-unavailable" }, 503);
+  });
   async function actor(request: Request) {
     const who = await options.authenticate(request);
     if (!who || who.emailVerified !== true) throw new IdentityError("identity-authentication-required", 401);

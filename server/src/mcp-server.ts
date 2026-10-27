@@ -25,6 +25,7 @@ import {
   type AgentResult,
 } from "./agent-docs.ts";
 import { SERVER_VERSION } from "./deployment.ts";
+import { reportRouteFault } from "./little-friend.ts";
 // A generated copy of mcp/markdown-guide.mjs (scripts/sync-markdown-guide.mjs):
 // the server's build context does not include mcp/.
 import { MARKDOWN_GUIDE } from "./generated/markdown-guide.mjs";
@@ -238,6 +239,7 @@ mcpApi.post("/", mcpAuth, async (c) => {
   } catch (err) {
     if (err instanceof RpcError) return c.json(rpcError(id as JsonRpcId, err.code, err.message));
     console.error("mcp request failed:", err);
+    reportRouteFault(err, c);
     return c.json(rpcError(id as JsonRpcId, -32603, "Internal error"));
   }
 });

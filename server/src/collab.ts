@@ -10,6 +10,7 @@ import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
+import { FAULT_ROUTES, reportFault } from "./little-friend.ts";
 import {
   accessLevel,
   canEditLevel,
@@ -483,6 +484,7 @@ function handleConnection(
       }
     } catch (err) {
       console.error("collab message error:", err);
+      reportFault(err, FAULT_ROUTES.collab);
     }
   });
 
@@ -580,6 +582,7 @@ export function attachCollab(server: Server): void {
       });
     } catch (err) {
       console.error("collab upgrade error:", err);
+      reportFault(err, FAULT_ROUTES.collab);
       socket.destroy();
     }
   });

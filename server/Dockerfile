@@ -22,5 +22,10 @@ RUN chmod +x docker-entrypoint.sh && mkdir -p /data
 
 ENV NODE_ENV=production
 ENV DB_PATH=/data/markie.db
+# The build Little Friend's fault reports name (src/little-friend.ts): the
+# image tag, passed with --build-arg LF_RELEASE=<tag>. Empty falls back to
+# KAMAL_VERSION, which Kamal sets to the same tag.
+ARG LF_RELEASE=""
+ENV LF_RELEASE=${LF_RELEASE}
 EXPOSE 8787
 CMD ["./docker-entrypoint.sh"]

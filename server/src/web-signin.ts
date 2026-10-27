@@ -18,6 +18,7 @@
 // so neither route can be used to bounce a browser somewhere else.
 import { Hono } from "hono";
 import { auth } from "./auth.ts";
+import { reportRouteFault } from "./little-friend.ts";
 
 const NEXT = /^\/d\/[A-Za-z0-9_-]{1,128}$/;
 
@@ -131,6 +132,7 @@ export function createWebSignIn({ authBase, google }: { authBase: string; google
       return new Response(null, { status: 302, headers });
     } catch (err) {
       console.error("web-google error:", err);
+      reportRouteFault(err, c);
       return c.text("Could not start Google sign-in.", 500);
     }
   });

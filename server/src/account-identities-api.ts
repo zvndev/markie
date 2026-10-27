@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { randomBytes } from "node:crypto";
 import { IdentityError, type IdentityActor, type IdentityDelivery, type IdentityScope, type IdentityStore } from "./account-identities.ts";
+import { reportRouteFault } from "./little-friend.ts";
 
 export interface IdentityApiOptions {
   store: IdentityStore;
@@ -49,7 +50,11 @@ function field(input: Record<string, unknown>, key: string, max = 512): string {
 export function createAccountIdentitiesApi(options: IdentityApiOptions): Hono {
   const app = new Hono(), store = options.store;
   app.use("*", async (c, next) => { c.header("Cache-Control", "private, no-store"); c.header("Referrer-Policy", "no-referrer"); await next(); });
-  app.onError((error, c) => error instanceof IdentityError ? c.json({ error: error.code }, error.status) : c.json({ error: "identity-unavailable" }, 503));
+  app.onError((error, c) => {
+    if (error instanceof IdentityError) return c.json({ error: error.code }, error.status);
+    reportRouteFault(error, c);
+    return c.json({ error: "identity-unavailable" }, 503);
+  });
   const actor = async (request: Request) => {
     const result = await options.authenticate(request);
     if (!result || result.emailVerified !== true) throw new IdentityError("identity-authentication-required", 401);

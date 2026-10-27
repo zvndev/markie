@@ -328,3 +328,4 @@ Everything else lives in `.env`.
 | `MARKIE_WEB_ORIGINS` | Extra HTTPS origins allowed to make signed-in requests |
 | `MARKIE_CLIENT_IP_HEADER` or `CLIENT_IP_HEADER` | The header your proxy sets to the client's address, for example `cf-connecting-ip` behind Cloudflare. Only that header is read. Unset uses `x-forwarded-for`, which Caddy sets |
 | `ENABLE_CRONS` | `false` stops this server running its hourly cleanup of unused uploads. Unset runs it |
+| `LF_SERVER_KEY` | A Little Friend secret server key (`lfs_...`). Set, the server reports its errors and request timings by route template to Little Friend. Unset sends nothing |

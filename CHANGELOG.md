@@ -8,6 +8,25 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-27
+
+### Added
+
+- **Markie runs on Linux.** Download it as an AppImage or a .deb for x64
+  from markiedocs.com/download. Both open Markdown files and `markie://`
+  links, and both update themselves. The .deb asks for your password before
+  it installs an update.
+
+### Changed
+
+- **A new look.** Markie has a new logo: the word markie with a red,
+  hand-drawn underline. You see it on the app icon on every platform, in the
+  title bar and on the sign-in screen. Shared documents, sign-in and download
+  pages, and Markie emails use it too.
+- **The public link in the Share dialog reads as a link.** It sits in its own
+  box with a Copy button that turns into Copied, plus a note that readers get
+  a read-only copy.
+
 ## [0.9.1] - 2026-10-25
 
 ### Added

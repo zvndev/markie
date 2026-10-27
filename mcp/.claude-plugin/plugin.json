@@ -1,7 +1,7 @@
 {
   "name": "markie",
   "displayName": "Markie",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Local document workspace for AI agents: find, search, read and write the markdown, text and data files on your machine, and read Word, RTF and OpenDocument files as text. Runs locally, no API key.",
   "author": {
     "name": "ZVN",

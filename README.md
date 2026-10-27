@@ -1,30 +1,35 @@
-# Markie
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/markie-logo-reverse.svg">
+    <img src="docs/brand/markie-logo-primary.svg" alt="markie" width="260">
+  </picture>
+</h1>
 
-**The Google Docs of Markdown — except your files live on your machine.** Native desktop markdown.
+**Write, organize and share Markdown. Your files stay on your machine.**
 
 [![Markie](https://markiedocs.com/markie-demo-poster.jpg)](https://markiedocs.com)
 
 Markie is a desktop markdown app that gets out of your way: a clean editor with
 live preview, a device-wide index of every markdown file you own, painless
 sharing, and a built-in [MCP](https://modelcontextprotocol.io) server so any AI
-agent — Claude Code, Codex, or a local model — can find, read, and write your
+agent (Claude Code, Codex, or a local model) can find, read, and write your
 markdown right alongside you.
 
 ## Features
 
-- **Editor + live preview** — edit, preview, or split view; GitHub-flavored
+- **Editor + live preview**: edit, preview, or split view; GitHub-flavored
   markdown, tables, code highlighting, and KaTeX math.
-- **Pictures, clips and video** — `![](shot.png)` or `![](clip.mp4)` beside the
+- **Pictures, clips and video**: `![](shot.png)` or `![](clip.mp4)` beside the
   document just works; double-click a picture to see it full size, drag a corner to
   resize it, and a YouTube or Vimeo link on its own line becomes a playable card.
   The file stays plain markdown throughout.
-- **Browse** — a device-wide index of every `.md` on your machine, so your notes and
+- **Browse**: a device-wide index of every `.md` on your machine, so your notes and
   docs are one search away.
-- **Agent & skill files** — surfaces `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+- **Agent & skill files**: surfaces `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
   `~/.claude/skills`, `~/.codex`, and Cursor rules, grouped by tool.
-- **Sharing** — share a doc via a public link or by email; recipients open it in
+- **Sharing**: share a doc via a public link or by email; recipients open it in
   one click, no account required.
-- **Markie MCP** — let Claude Code / Codex work with your markdown (see below).
+- **Markie MCP**: let Claude Code / Codex work with your markdown (see below).
 
 ## Install
 

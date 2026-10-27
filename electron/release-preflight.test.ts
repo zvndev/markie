@@ -14,7 +14,10 @@ import {
   validateShippedFileGlobs,
   validateWindowsLaunchWorkflow,
   validateMacLaunchWorkflow,
+  validateLinuxReleaseWorkflow,
 } from "../scripts/release-preflight.mjs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -109,7 +112,8 @@ describe("release preflight", () => {
         "npm run electron:pack:linux",
         "Markie-<version>-arm64.dmg",
         "Markie-<version>-x64.exe",
-        "Markie-<version>-x64.AppImage",
+        "Markie-<version>-x86_64.AppImage",
+        "Markie-<version>-amd64.deb",
         "npm run electron:smoke:mac:launch",
         "npm run electron:smoke:win:launch",
         "screenshot.png",
@@ -122,7 +126,11 @@ describe("release preflight", () => {
         // recurring release runbook now, not a platform waiting for approval.
         "## Windows release runbook",
         "npm run release:publish:win",
-        "Linux update checks stay disabled",
+        // Linux became a release target in 0.9.2, with a runbook of its own
+        // and an honest statement that its packages are not signed.
+        "## Linux release runbook",
+        "npm run release:prepare:linux",
+        "unsigned by design",
         "--publish never",
       ])
     );
@@ -132,6 +140,23 @@ describe("release preflight", () => {
     expect(validateMacLaunchWorkflow(rootDir).snippets).toEqual(
       expect.arrayContaining(["pull_request:", "macos-latest", "npm run electron:smoke:mac:launch"])
     );
+  });
+
+  it("keeps the Linux release workflow building, launching and gated on an explicit publish", () => {
+    expect(validateLinuxReleaseWorkflow(rootDir).snippets).toEqual(
+      expect.arrayContaining(["xvfb-run", "apt-get install", "linux-built", "refs/heads/main", "default: false"])
+    );
+  });
+
+  it("refuses a Linux release workflow that publishes by default", () => {
+    const fake = mkdtempSync(path.join(tmpdir(), "markie-linux-workflow-"));
+    mkdirSync(path.join(fake, ".github/workflows"), { recursive: true });
+    const real = readFileSync(path.join(rootDir, ".github/workflows/linux-release.yml"), "utf8");
+    writeFileSync(
+      path.join(fake, ".github/workflows/linux-release.yml"),
+      real.replace(/(publish_release:[\s\S]*?default:\s*)false/, "$1true")
+    );
+    expect(() => validateLinuxReleaseWorkflow(fake)).toThrow(/default publish_release to false|missing required snippets/);
   });
 
   it("keeps the Windows launch workflow dispatchable and automatic on main", () => {

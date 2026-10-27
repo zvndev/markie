@@ -294,16 +294,23 @@ export function renderPublicPage(opts: {
 // Only says something when there is something to say. A row of chips reading
 // "Published" over every download tells a visitor nothing they cannot see from
 // the button underneath it.
-function platformStatusLabel(platform: DownloadPlatform) {
-  return platform.status === "public" ? null : "Coming soon";
+function platformStatusLabel(available: boolean) {
+  return available ? null : "Coming soon";
 }
 
 export function renderDownloadPage(opts: {
   siteUrl: string;
   selectedPlatform?: DownloadPlatform;
   status?: "missing";
+  // Ids the server resolved as downloadable right now. A "ready" platform is
+  // offered only when it is in here, which is once its first stable release
+  // exists. Public platforms are offered regardless, as they always were.
+  offered?: ReadonlySet<string>;
 }): string {
-  const { siteUrl, selectedPlatform, status } = opts;
+  const { siteUrl, selectedPlatform, status, offered } = opts;
+  const isAvailable = (platform: DownloadPlatform) =>
+    platform.status === "public" || (platform.status === "ready" && offered?.has(platform.id) === true);
+  const selectedUnavailable = selectedPlatform ? !isAvailable(selectedPlatform) : false;
   const primary = primaryDownloadCta();
   const platforms = downloadPlatforms();
   // Written for somebody who wants the app, not for the build system. This
@@ -314,13 +321,13 @@ export function renderDownloadPage(opts: {
   const headline =
     status === "missing"
       ? "Page not found"
-      : selectedPlatform?.status === "planned"
+      : selectedPlatform && selectedUnavailable
         ? `Markie for ${selectedPlatform.label} is coming`
         : "Download Markie";
   const summary =
     status === "missing"
       ? "That link does not go anywhere. The downloads are below."
-      : selectedPlatform?.status === "planned"
+      : selectedPlatform && selectedUnavailable
         ? `It is not ready yet. Markie runs on ${primary.platform.label} today.`
         : "A fast markdown reader and editor for your own files. Free, and it opens what is already on your machine.";
   return `<!doctype html>
@@ -346,8 +353,8 @@ export function renderDownloadPage(opts: {
     <div class="platform-grid">
       ${platforms
         .map((platform) => {
-          const isPublic = platform.status === "public";
-          const badge = platformStatusLabel(platform);
+          const isPublic = isAvailable(platform);
+          const badge = platformStatusLabel(isPublic);
           return `<section class="platform-card">
         ${badge ? `<span class="status">${esc(badge)}</span>` : ""}
         <h2>${esc(platform.label)}</h2>
@@ -361,7 +368,7 @@ export function renderDownloadPage(opts: {
         })
         .join("")}
     </div>
-    <p class="download-note">Every build is signed, and Markie updates itself once installed.</p>
+    <p class="download-note">The macOS and Windows builds are signed. Every build updates itself once installed.</p>
   </main>
 </body></html>`;
 }

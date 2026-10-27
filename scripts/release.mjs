@@ -28,6 +28,15 @@ import {
   resolveSoakDays,
   setHold,
 } from "./lib/early-state.mjs";
+import {
+  expectedLinuxArtifacts,
+  linuxChecksumFile,
+  linuxEvidenceFile,
+  linuxFeedFile,
+  verifyLinuxEvidence,
+} from "./linux-build-evidence.mjs";
+
+export { expectedLinuxArtifacts };
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const builderConfigPath = path.join(rootDir, "electron-builder.config.cjs");
@@ -55,10 +64,18 @@ const io = {
   releaseGitState: () => assertReleaseGitState(),
   promoteGitState: (commit) => assertPromoteGitState(commit),
   publishCredentials: () => assertPublishCredentials(),
-  verifyLocal: (platform) =>
-    platform === "win" ? verifyLocalWindowsArtifacts() : verifyLocalMacArtifacts({ verifyTrust: true }),
+  verifyLocal: (platform, { commit } = {}) =>
+    platform === "win"
+      ? verifyLocalWindowsArtifacts()
+      : platform === "linux"
+        ? verifyLocalLinuxArtifacts({ commit })
+        : verifyLocalMacArtifacts({ verifyTrust: true }),
   publish: (platform, files, version) =>
-    platform === "win" ? publishWindowsFiles(files, version) : publishFiles(files, version),
+    platform === "win"
+      ? publishWindowsFiles(files, version)
+      : platform === "linux"
+        ? publishLinuxFiles(files, version)
+        : publishFiles(files, version),
   log: (line) => console.log(line),
 };
 
@@ -104,6 +121,24 @@ export function artifactPatternRegExp(pattern) {
 // route shipped on the download page from the same manifest, so a release that
 // only verified Apple Silicon could hand Intel users a stale or missing build
 // and nothing in the pipeline would notice.
+/**
+ * The routes of "ready" platforms whose stable feed is in the bucket, i.e. the
+ * ones the server is offering now. Same shape as publicDownloadRoutes.
+ */
+export async function releasedReadyRoutes(manifest = releaseManifest()) {
+  const siteUrl = manifest.siteUrl.replace(/\/+$/, "");
+  const publicBase = manifest.storage.publicBaseUrl.replace(/\/+$/, "");
+  const ready = (manifest.platforms ?? []).filter((entry) => entry.status === "ready" && entry.feed?.path);
+  const feeds = new Map();
+  const routes = [];
+  for (const platform of ready) {
+    if (!feeds.has(platform.feed.path)) feeds.set(platform.feed.path, await fetchFeed(`${publicBase}/${platform.feed.path}`));
+    if (!feeds.get(platform.feed.path)) continue;
+    routes.push({ id: platform.id, url: `${siteUrl}${platform.route}`, artifactPattern: platform.artifactPattern });
+  }
+  return routes;
+}
+
 export function publicDownloadRoutes(manifest = releaseManifest()) {
   const siteUrl = manifest.siteUrl.replace(/\/+$/, "");
   const platforms = (manifest.platforms ?? []).filter((entry) => entry.status === "public");
@@ -605,7 +640,9 @@ async function verifyWebsiteContract({ expectedVersion, expectedArtifactUrl, all
 
   // Every public platform, not only the primary: an Intel user follows
   // /download/mac-intel, and that route has to redirect to an Intel artifact.
-  for (const route of publicDownloadRoutes()) {
+  // A "ready" platform joins the contract the moment its stable feed exists,
+  // because that is the moment the server starts offering it.
+  for (const route of [...publicDownloadRoutes(), ...(await releasedReadyRoutes())]) {
     const listed = body.platforms?.find((platform) => platform.id === route.id);
     assert(listed, `latest release JSON has no ${route.id} platform`);
     assert(
@@ -833,6 +870,11 @@ async function status() {
     const response = await fetch(urls.latestJsonUrl, { cache: "no-store" });
     if (response.ok) result.websiteVersion = (await response.json()).version ?? null;
   } catch {}
+  try {
+    result.linuxFeedVersion = (await fetchFeed(earlyTarget("linux").stableFeedUrl))?.version ?? null;
+  } catch {
+    result.linuxFeedVersion = null;
+  }
   Object.assign(result, await earlyStatus());
   console.log(JSON.stringify(result, null, 2));
 }
@@ -1180,6 +1222,317 @@ export async function verifyPublicWindows({ expectedVersion, deep = false } = {}
   return { version, feedUrl, artifactBaseUrl };
 }
 
+// ---------------------------------------------------------------------------
+// Linux
+//
+// Built in CI like Windows, for a different reason: a Linux package has to be
+// compiled and launched on Linux, and the release machine is a Mac. The local
+// half is the same shape as Windows ("fetch what CI built, prove it is what it
+// claims to be, publish that"), with one difference. Nothing is signed, by
+// design, so there is no signature to prove provenance with. Instead the
+// workflow writes build evidence (exact commit, run, checks passed, SHA-512 of
+// each package) and a SHA512SUMS file next to the packages, and the release
+// machine requires all three of feed, evidence and checksums to agree with the
+// bytes on disk and the evidence's commit to be the commit being released.
+// ---------------------------------------------------------------------------
+
+const LINUX_RELEASE_TAG = "linux-built";
+
+function linuxDistDir(root = io.root) {
+  // Not dist/, for the reason dist-windows is not: prepare:mac deletes dist/.
+  return path.join(root, "dist-linux");
+}
+
+function linuxPlatform(manifest = releaseManifest()) {
+  const platform = manifest.platforms.find((entry) => entry.id === "linux-x64");
+  assert(platform?.feed?.path, "release manifest needs a Linux updater feed path");
+  return platform;
+}
+
+// The routes a Linux release serves: the AppImage and the deb, both resolved
+// from linux/latest-linux.yml by the server.
+function linuxRoutePlatforms(manifest = releaseManifest()) {
+  const feedPath = linuxPlatform(manifest).feed.path;
+  return manifest.platforms.filter((entry) => entry.os === "linux" && entry.feed?.path === feedPath);
+}
+
+/**
+ * Whether the stable Linux feed may legitimately not exist yet. True while the
+ * manifest marks Linux "ready" (built, wired into this flow, not yet released),
+ * which is what lets the very first Linux release go out. Once Linux is flipped
+ * to "public", a missing stable feed is an error again, as it is on macOS and
+ * Windows.
+ */
+export function linuxAwaitsFirstRelease(manifest = releaseManifest()) {
+  return linuxPlatform(manifest).status === "ready";
+}
+
+/** @param {{ root?: string, commit?: string | null }} [options] */
+export async function verifyLocalLinuxArtifacts({ root = io.root, commit = null } = {}) {
+  const version = assertVersion(readJson(path.join(root, "package.json")).version);
+  const dist = linuxDistDir(root);
+  const feedName = linuxFeedFile(version);
+  const feedPath = path.join(dist, feedName);
+  assert(existsSync(feedPath), `missing ${path.relative(root, feedPath)}; run release:prepare:linux first`);
+  const feed = parseElectronBuilderFeed(readFileSync(feedPath, "utf8"));
+  assert(feed.version === version, `Linux feed version ${feed.version ?? "missing"} does not match ${version}`);
+  const feedNames = new Set(feed.files.map((file) => decodeURIComponent(file.url)));
+  for (const name of expectedLinuxArtifacts(version)) {
+    assert(feedNames.has(name), `Linux updater feed is missing ${name}`);
+  }
+
+  const files = [];
+  for (const entry of feed.files) {
+    const name = decodeURIComponent(entry.url);
+    assert(!name.includes("/") && !name.includes(".."), `unsafe artifact name in feed: ${name}`);
+    assert(name.includes(`-${version}-`), `artifact does not contain release version ${version}: ${name}`);
+    const file = path.join(dist, name);
+    assert(existsSync(file), `missing local artifact: ${name}`);
+    const size = statSync(file).size;
+    assert(size === entry.size, `${name} size ${size} does not match feed size ${entry.size}`);
+    const sha512 = await hashFile(file);
+    assert(sha512 === entry.sha512, `${name} SHA-512 does not match ${feedName}`);
+    // An AppImage carries its blockmap inside the file and a deb has none, so
+    // a separate .blockmap is not expected; one that is present still has to
+    // be accounted for, because it would be uploaded.
+    const record = { name, size, sha512 };
+    const blockmap = `${file}.blockmap`;
+    if (existsSync(blockmap)) {
+      record.blockmap = path.basename(blockmap);
+      record.blockmapSize = statSync(blockmap).size;
+      record.blockmapSha512 = await hashFile(blockmap);
+    }
+    files.push(record);
+  }
+  const evidence = verifyLinuxEvidence({ dist, version, commit, files });
+  return {
+    version,
+    files,
+    feedPath,
+    feedName,
+    buildCommit: evidence.commit,
+    buildRunUrl: evidence.runUrl ?? null,
+    buildChecks: evidence.checks,
+    signing: "unsigned-by-design",
+  };
+}
+
+function downloadBuiltLinuxRelease(version) {
+  const dist = linuxDistDir();
+  rmSync(dist, { recursive: true, force: true });
+  mkdirSync(dist, { recursive: true });
+  // Named patterns only, as for Windows: the tag is rolling, and a stale asset
+  // from an earlier version must not ride along into what gets published.
+  const patterns = [
+    ...expectedLinuxArtifacts(version),
+    linuxFeedFile(version),
+    linuxEvidenceFile(version),
+    linuxChecksumFile(version),
+  ];
+  run("gh", [
+    "release",
+    "download",
+    LINUX_RELEASE_TAG,
+    "--repo",
+    "zvndev/markie",
+    "--dir",
+    dist,
+    "--clobber",
+    ...patterns.flatMap((pattern) => ["--pattern", pattern]),
+  ]);
+}
+
+async function prepareLinux() {
+  const commit = assertReleaseGitState();
+  const version = packageJson().version;
+  downloadBuiltLinuxRelease(version);
+  const verified = await verifyLocalLinuxArtifacts({ commit });
+  writeEvidence(verified.version, "local-linux.json", {
+    schemaVersion: 1,
+    version: verified.version,
+    platform: "linux",
+    commit,
+    preparedAt: new Date().toISOString(),
+    signing: verified.signing,
+    buildRunUrl: verified.buildRunUrl,
+    buildChecks: verified.buildChecks,
+    files: verified.files,
+    checks: ["ci-exact-commit", "ci-launch-smoke", "feed-version", "artifact-sha512", "sha512sums", "unsigned-by-design"],
+  });
+  console.log(
+    `[release] fetched and verified Linux packages for Markie ${verified.version}; nothing was uploaded`
+  );
+  console.log(`[release] built at ${verified.buildCommit} by ${verified.buildRunUrl ?? "an unrecorded run"}; unsigned by design`);
+}
+
+function assertLinuxEvidence(version, commit) {
+  const file = evidencePath(version, "local-linux.json");
+  assert(existsSync(file), `missing ${path.relative(io.root, file)}; run release:prepare:linux`);
+  const evidence = readJson(file);
+  assert(evidence.version === version, "local Linux release evidence version is stale");
+  assert(evidence.commit === commit, "local Linux release evidence was produced for a different commit");
+  return evidence;
+}
+
+// Its own generated config for the same reason Windows has one: the builder's
+// top-level publish block points at mac/, and an override typed on a command
+// line is one typo from writing Linux packages over the macOS feed.
+function linuxPublishConfigPath() {
+  const manifest = releaseManifest();
+  const file = path.join(linuxDistDir(), "publish-linux.json");
+  writeJson(file, {
+    appId: "com.zvn.markie",
+    productName: "Markie",
+    publish: [
+      {
+        provider: manifest.storage.provider,
+        bucket: manifest.storage.bucket,
+        endpoint: manifest.storage.endpoint,
+        region: manifest.storage.region,
+        path: path.posix.dirname(linuxPlatform(manifest).feed.path),
+      },
+    ],
+  });
+  return file;
+}
+
+function publishLinuxFiles(files, version) {
+  run(builderBin(), [
+    "publish",
+    "--config",
+    linuxPublishConfigPath(),
+    "--files",
+    ...files,
+    "--version",
+    version,
+    "--policy",
+    "always",
+  ]);
+}
+
+/** Has the deployed server been taught about Linux? Asked before Linux goes stable. */
+async function assertServerKnowsLinux() {
+  const { latestJsonUrl } = releaseUrls();
+  const body = await (await fetchRequired(`${latestJsonUrl}?release-check=${Date.now()}`, { cache: "no-store" })).json();
+  const ids = new Set([...(body.platforms ?? []).map((entry) => entry.id), ...(body.awaitingFirstRelease ?? [])]);
+  const missing = linuxRoutePlatforms().filter((entry) => !ids.has(entry.id)).map((entry) => entry.id);
+  assert(
+    missing.length === 0,
+    `the deployed server does not know ${missing.join(", ")}; deploy the server from this commit before Linux goes stable`
+  );
+}
+
+// The server caches a resolved release for five minutes and a missing feed for
+// one, so the routes can trail the feed by that much.
+async function waitForLinuxRoutes(version, attempts = 72) {
+  const manifest = releaseManifest();
+  const siteUrl = manifest.siteUrl.replace(/\/+$/, "");
+  const publicBase = manifest.storage.publicBaseUrl.replace(/\/+$/, "");
+  const directory = path.posix.dirname(linuxPlatform(manifest).feed.path);
+  for (const entry of linuxRoutePlatforms(manifest)) {
+    const expected = expectedLinuxArtifacts(version).find((name) => artifactPatternRegExp(entry.artifactPattern).test(name));
+    assert(expected, `no ${version} artifact matches ${entry.artifactPattern}`);
+    const expectedUrl = `${publicBase}/${directory}/${encodeURIComponent(expected)}`;
+    let location = null;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        const response = await fetch(`${siteUrl}${entry.route}`, { redirect: "manual" });
+        location = response.headers.get("location");
+        if ([301, 302, 307, 308].includes(response.status) && location === expectedUrl) break;
+      } catch {
+        // Retry below.
+      }
+      location = null;
+      await new Promise((resolve) => setTimeout(resolve, io.pollDelayMs));
+    }
+    assert(location === expectedUrl, `${siteUrl}${entry.route} did not reach ${expected}`);
+  }
+}
+
+export async function verifyPublicLinux({ expectedVersion, deep = false, verifyWebsite = true } = {}) {
+  const version = assertVersion(expectedVersion ?? packageJson().version);
+  const target = earlyTarget("linux");
+  const response = await fetchRequired(`${target.stableFeedUrl}?release-check=${Date.now()}`, { cache: "no-store" });
+  const feed = parseElectronBuilderFeed(await response.text());
+  assert(feed.version === version, `public Linux feed is ${feed.version ?? "missing"}, expected ${version}`);
+  for (const name of expectedLinuxArtifacts(version)) {
+    assert(feed.files.some((file) => decodeURIComponent(file.url) === name), `public Linux feed is missing ${name}`);
+  }
+  for (const entry of feed.files) {
+    await verifyRemoteFile(`${target.artifactBaseUrl}/${encodeURIComponent(decodeURIComponent(entry.url))}`, entry, deep);
+  }
+  if (verifyWebsite) await waitForLinuxRoutes(version);
+  return { version, feedUrl: target.stableFeedUrl, artifactBaseUrl: target.artifactBaseUrl };
+}
+
+/** Direct stable publish, for a release Kirby asked to skip early access. */
+async function publishLinux(confirmVersion) {
+  const version = packageJson().version;
+  assert(confirmVersion === version, `pass --confirm-public-release=${version} to publish production`);
+  const commit = assertReleaseGitState();
+  assertPublishCredentials();
+  const evidence = assertLinuxEvidence(version, commit);
+  const local = await verifyLocalLinuxArtifacts({ commit });
+  assertEvidenceMatchesArtifacts(evidence.files, local.files);
+  const target = earlyTarget("linux");
+
+  const previous = await fetchFeed(target.stableFeedUrl);
+  assert(previous || target.allowsFirstRelease, `the stable Linux feed ${target.stableFeedUrl} is missing`);
+  if (previous) {
+    assertVersion(previous.version);
+    assert(
+      compareVersions(version, previous.version) > 0,
+      `release ${version} must be newer than public Linux feed ${previous.version}`
+    );
+    mkdirSync(evidenceDir(version), { recursive: true });
+    writeFileSync(evidencePath(version, target.previousStableFile), previous.text);
+  }
+  if (target.allowsFirstRelease) await assertServerKnowsLinux();
+
+  await uploadAndVerifyArtifacts("linux", local, target.artifactBaseUrl);
+  // The feed last, as everywhere else.
+  io.publish("linux", [local.feedPath], version);
+  await waitForFeedVersion(target.stableFeedUrl, version);
+  await verifyPublicLinux({ expectedVersion: version, deep: false });
+  writeEvidence(version, target.publicEvidenceFile, {
+    schemaVersion: 1,
+    version,
+    platform: "linux",
+    commit,
+    publishedAt: new Date().toISOString(),
+    feedUrl: target.stableFeedUrl,
+    signing: "unsigned-by-design",
+    files: local.files,
+    checks: ["remote-size", "remote-sha512", "download-routes"],
+  });
+  console.log(`[release] Markie ${version} Linux packages are public at ${target.artifactBaseUrl}`);
+  await mirrorStableAfterPublish("linux", version, local.feedPath);
+}
+
+async function rollbackLinux(confirmVersion) {
+  assert(confirmVersion, `pass --confirm-rollback=<version> to restore the feed saved before that release`);
+  const version = assertVersion(confirmVersion);
+  assertPublishCredentials();
+  const target = earlyTarget("linux");
+  const previous = evidencePath(version, target.previousStableFile);
+  // The first Linux release replaced nothing, so there is nothing to restore.
+  // Withdrawing it means deleting linux/latest-linux.yml from the bucket, which
+  // is a destructive storage operation this runner does not do.
+  assert(
+    existsSync(previous),
+    `missing ${path.relative(io.root, previous)}; if ${version} was the first Linux release there is no earlier feed, ` +
+      `and withdrawing it means deleting ${target.stableFeedUrl} by hand`
+  );
+  const rollbackDir = path.join(evidenceDir(version), "rollback");
+  mkdirSync(rollbackDir, { recursive: true });
+  const rollbackFeed = path.join(rollbackDir, target.stableFeedFile);
+  copyFileSync(previous, rollbackFeed);
+  const previousVersion = assertVersion(parseElectronBuilderFeed(readFileSync(previous, "utf8")).version);
+  io.publish("linux", [rollbackFeed], previousVersion);
+  await waitForFeedVersion(target.stableFeedUrl, previousVersion);
+  await verifyPublicLinux({ expectedVersion: previousVersion, deep: false });
+  console.log(`[release] restored the public Linux updater feed to ${previousVersion}`);
+}
 
 // ---------------------------------------------------------------------------
 // Early access, soak, and promotion
@@ -1210,12 +1563,18 @@ const isStableNumbered = (version) => releaseChannel(version) === "latest";
  * stable users at artifacts that were never uploaded beside their feed.
  */
 export function earlyTarget(platform, manifest = releaseManifest()) {
-  assert(platform === "mac" || platform === "win", `unknown platform: ${platform}`);
+  assert(platform === "mac" || platform === "win" || platform === "linux", `unknown platform: ${platform}`);
   const publicBase = manifest.storage.publicBaseUrl.replace(/\/+$/, "");
-  const stablePath =
-    platform === "win" ? windowsPlatform(manifest).feed.path : publicMacPlatform(manifest).feed.path;
-  const earlyPath =
-    platform === "win" ? manifest.betaChannel?.windowsFeed?.path : manifest.betaChannel?.feed?.path;
+  const stablePath = {
+    mac: () => publicMacPlatform(manifest).feed.path,
+    win: () => windowsPlatform(manifest).feed.path,
+    linux: () => linuxPlatform(manifest).feed.path,
+  }[platform]();
+  const earlyPath = {
+    mac: manifest.betaChannel?.feed?.path,
+    win: manifest.betaChannel?.windowsFeed?.path,
+    linux: manifest.betaChannel?.linuxFeed?.path,
+  }[platform];
   assert(earlyPath, `release manifest has no early feed for ${platform}`);
   const directory = path.posix.dirname(stablePath);
   assert(
@@ -1227,7 +1586,7 @@ export function earlyTarget(platform, manifest = releaseManifest()) {
   assert(stableFeedFile !== earlyFeedFile, "early and stable feeds must be different files");
   return {
     platform,
-    label: platform === "win" ? "Windows" : "macOS",
+    label: { mac: "macOS", win: "Windows", linux: "Linux" }[platform],
     artifactBaseUrl: `${publicBase}/${directory}`,
     stableFeedFile,
     earlyFeedFile,
@@ -1235,8 +1594,10 @@ export function earlyTarget(platform, manifest = releaseManifest()) {
     earlyFeedUrl: `${publicBase}/${earlyPath}`,
     previousStableFile: `previous-${stableFeedFile}`,
     previousEarlyFile: `previous-${earlyFeedFile}`,
-    localEvidenceFile: platform === "win" ? "local-windows.json" : "local.json",
-    publicEvidenceFile: platform === "win" ? "public-windows.json" : "public.json",
+    localEvidenceFile: { mac: "local.json", win: "local-windows.json", linux: "local-linux.json" }[platform],
+    publicEvidenceFile: { mac: "public.json", win: "public-windows.json", linux: "public-linux.json" }[platform],
+    // Only a platform awaiting its first release may have no stable feed yet.
+    allowsFirstRelease: platform === "linux" && linuxAwaitsFirstRelease(manifest),
   };
 }
 
@@ -1331,8 +1692,12 @@ export async function publishEarly(platform, confirmVersion, { soakDays: soakFla
   const commit = io.releaseGitState();
   io.publishCredentials();
   const evidence =
-    platform === "win" ? assertWindowsEvidence(version, commit) : assertLocalEvidence(version, commit);
-  const local = await io.verifyLocal(platform);
+    platform === "win"
+      ? assertWindowsEvidence(version, commit)
+      : platform === "linux"
+        ? assertLinuxEvidence(version, commit)
+        : assertLocalEvidence(version, commit);
+  const local = await io.verifyLocal(platform, { commit });
   assert(local.version === version, `local ${target.label} artifacts are ${local.version}, expected ${version}`);
   assertEvidenceMatchesArtifacts(evidence.files, local.files);
 
@@ -1345,12 +1710,15 @@ export async function publishEarly(platform, confirmVersion, { soakDays: soakFla
 
   if (platform === "mac") await verifyWebsiteContract({ allowVersionMismatch: true });
   const stable = await fetchFeed(target.stableFeedUrl);
-  assert(stable, `the stable ${target.label} feed ${target.stableFeedUrl} is missing`);
-  assertVersion(stable.version);
-  assert(
-    compareVersions(version, stable.version) > 0,
-    `release ${version} must be newer than the stable ${target.label} feed ${stable.version}`
-  );
+  // The first Linux release has no stable feed to be newer than.
+  assert(stable || target.allowsFirstRelease, `the stable ${target.label} feed ${target.stableFeedUrl} is missing`);
+  if (stable) {
+    assertVersion(stable.version);
+    assert(
+      compareVersions(version, stable.version) > 0,
+      `release ${version} must be newer than the stable ${target.label} feed ${stable.version}`
+    );
+  }
   const early = await fetchFeed(target.earlyFeedUrl);
   if (early) {
     assertVersion(early.version);
@@ -1397,8 +1765,9 @@ export async function publishEarly(platform, confirmVersion, { soakDays: soakFla
       stableFeedUrl: target.stableFeedUrl,
       feedSha512: sha512Text(feedText),
       previousEarlyVersion,
-      previousStableVersion: stable.version,
+      previousStableVersion: stable?.version ?? null,
       ...(local.signerSubject ? { signerSubject: local.signerSubject } : {}),
+      ...(local.signing ? { signing: local.signing } : {}),
       files: local.files,
     },
   });
@@ -1477,9 +1846,9 @@ export async function promoteRelease(confirmVersion, { force = false } = {}) {
       }
       assert(sha512Text(early.text) === record.feedSha512, `the early ${target.label} feed for ${version} changed since it was published`);
       const stable = await fetchFeed(target.stableFeedUrl);
-      assert(stable, `the stable ${target.label} feed is missing`);
-      assertVersion(stable.version);
-      const order = compareVersions(version, stable.version);
+      assert(stable || target.allowsFirstRelease, `the stable ${target.label} feed is missing`);
+      if (stable) assertVersion(stable.version);
+      const order = stable ? compareVersions(version, stable.version) : 1;
       if (order < 0) {
         state = markSuperseded(state, io.now(), stable.version);
         writeEarlyState(state);
@@ -1498,11 +1867,16 @@ export async function promoteRelease(confirmVersion, { force = false } = {}) {
     if (plans.some((plan) => plan.platform === "mac" && !plan.alreadyStable)) {
       await verifyWebsiteContract({ allowVersionMismatch: true });
     }
+    // Linux going stable for the first time is the moment the website starts
+    // offering it, so the server that answers has to know Linux exists.
+    if (plans.some((plan) => plan.platform === "linux" && !plan.alreadyStable && plan.target.allowsFirstRelease)) {
+      await assertServerKnowsLinux();
+    }
 
     // Stable feeds last.
     for (const plan of plans) {
       if (plan.alreadyStable) continue;
-      writeFileSync(evidencePath(version, plan.target.previousStableFile), plan.stable.text);
+      if (plan.stable) writeFileSync(evidencePath(version, plan.target.previousStableFile), plan.stable.text);
       const promoteDir = path.join(evidenceDir(version), "promote");
       mkdirSync(promoteDir, { recursive: true });
       const stableFeedPath = path.join(promoteDir, plan.target.stableFeedFile);
@@ -1529,6 +1903,20 @@ export async function promoteRelease(confirmVersion, { force = false } = {}) {
           latestJsonUrl: verified.urls.latestJsonUrl,
           primaryUrl: verified.primaryUrl,
           checks: ["remote-size", "remote-sha512", "stable-download-route", "latest-release-json", "same-bits-as-early"],
+        });
+      } else if (plan.platform === "linux") {
+        const verified = await verifyPublicLinux({ expectedVersion: version, deep: false });
+        writeEvidence(version, plan.target.publicEvidenceFile, {
+          schemaVersion: 1,
+          version,
+          platform: "linux",
+          commit: state.commit,
+          publishedAt: promotedAt,
+          promotedFrom: "early",
+          feedUrl: verified.feedUrl,
+          signing: "unsigned-by-design",
+          files: state.platforms.linux.files,
+          checks: ["remote-size", "remote-sha512", "download-routes", "same-bits-as-early"],
         });
       } else {
         const verified = await verifyPublicWindows({ expectedVersion: version, deep: false });
@@ -1611,7 +1999,7 @@ export async function rollbackEarly(confirmVersion) {
   assert(state, `no early release is recorded for ${version}`);
   assert(
     !state.promotedAt,
-    `${version} is already stable; use release:rollback:mac / release:rollback:win for the stable feed`
+    `${version} is already stable; use release:rollback:mac / release:rollback:win / release:rollback:linux for the stable feed`
   );
   io.publishCredentials();
   for (const platform of Object.keys(state.platforms).sort()) {
@@ -1625,6 +2013,16 @@ export async function rollbackEarly(confirmVersion) {
     const restoreText = existsSync(previousFile)
       ? readFileSync(previousFile, "utf8")
       : (await fetchFeed(target.stableFeedUrl))?.text;
+    if (!restoreText && target.allowsFirstRelease) {
+      // Nothing earlier exists to point early users at, and deleting the feed
+      // is a destructive storage operation this runner does not do. Withdrawn
+      // still means it never promotes; early users keep it until the next one.
+      io.log(
+        `[release] the early ${target.label} feed has no earlier release to return to; ${version} stays there for ` +
+          `early users until the next release, and will not be promoted`
+      );
+      continue;
+    }
     assert(restoreText, `nothing to restore the early ${target.label} feed to`);
     const restoreVersion = assertVersion(parseElectronBuilderFeed(restoreText).version);
     const rollbackDir = path.join(evidenceDir(version), "early-rollback");
@@ -1691,7 +2089,7 @@ function assertPromoteGitState(commit) {
 
 async function earlyStatus() {
   const result = {};
-  for (const platform of ["mac", "win"]) {
+  for (const platform of ["mac", "win", "linux"]) {
     try {
       const target = earlyTarget(platform);
       result[`${platform}EarlyFeedVersion`] = (await fetchFeed(target.earlyFeedUrl))?.version ?? null;
@@ -1737,7 +2135,42 @@ export async function runReleaseCli(args = process.argv.slice(2)) {
     console.log(`[release] set Markie ${version} in ${files.map((file) => path.relative(rootDir, file)).join(", ")}`);
     return;
   }
-  assert(target === "mac" || target === "win", "supported release targets: mac, win");
+  assert(target === "mac" || target === "win" || target === "linux", "supported release targets: mac, win, linux");
+
+  if (target === "linux") {
+    if (command === "prepare") return prepareLinux();
+    if (command === "verify-local") {
+      const verified = await verifyLocalLinuxArtifacts();
+      console.log(
+        `[release] local Markie ${verified.version} Linux packages match the feed, the build evidence and SHA512SUMS (unsigned by design)`
+      );
+      return;
+    }
+    if (command === "publish") {
+      if (flags.includes("--early")) {
+        return publishEarly("linux", flagValue(flags, "confirm-public-release"), {
+          soakDays: flagValue(flags, "soak-days"),
+        });
+      }
+      return publishLinux(flagValue(flags, "confirm-public-release"));
+    }
+    if (command === "rollback") return rollbackLinux(flagValue(flags, "confirm-rollback"));
+    if (command === "verify-public") {
+      const verified = await verifyPublicLinux({
+        expectedVersion: flagValue(flags, "version") ?? packageJson().version,
+        deep: flags.includes("--deep"),
+      });
+      console.log(
+        `[release] public Markie ${verified.version} Linux release is valid${flags.includes("--deep") ? " with full SHA-512 checks" : ""}`
+      );
+      return;
+    }
+    throw new Error(
+      "usage: release.mjs prepare linux | verify-local linux | " +
+        "publish linux [--early [--soak-days=<n>]] --confirm-public-release=<semver> | " +
+        "rollback linux --confirm-rollback=<semver> | verify-public linux [--version=<semver>] [--deep]"
+    );
+  }
 
   if (target === "win") {
     if (command === "prepare") return prepareWindows();
@@ -1803,6 +2236,8 @@ export async function runReleaseCli(args = process.argv.slice(2)) {
       "verify-public mac [--version=<semver>] [--deep] | rollback mac --confirm-rollback=<semver> | " +
       "prepare win | verify-local win | publish win [--early] --confirm-public-release=<semver> | " +
       "rollback win --confirm-rollback=<semver> | verify-public win [--version=<semver>] [--deep] | " +
+      "prepare linux | verify-local linux | publish linux [--early] --confirm-public-release=<semver> | " +
+      "rollback linux --confirm-rollback=<semver> | verify-public linux [--version=<semver>] [--deep] | " +
       "promote --confirm-promote=<semver> [--now] | promote-due | hold --version=<semver> [--reason=<text>] | " +
       "unhold --version=<semver> | rollback-early --confirm-rollback=<semver>"
   );

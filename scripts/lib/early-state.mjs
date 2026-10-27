@@ -13,7 +13,7 @@
 //     version, commit, approval,
 //     soakDays, publishedAt, soakUntil,
 //     held, heldAt, holdReason,
-//     platforms: { mac?: {...}, win?: {...} },
+//     platforms: { mac?: {...}, win?: {...}, linux?: {...} },
 //     promotedAt, withdrawnAt, supersededAt, supersededBy
 //   }
 
@@ -63,7 +63,7 @@ export function soakUntilFrom(isoTime, soakDays) {
 export function recordEarlyPublish(previous, update) {
   const { version, commit, platform, publishedAt, soakDays, platformRecord, approval } = update;
   assert(isStableVersion(version), `early releases carry a stable version, got ${version}`);
-  assert(platform === "mac" || platform === "win", `unknown early platform: ${platform}`);
+  assert(["mac", "win", "linux"].includes(platform), `unknown early platform: ${platform}`);
   if (previous) {
     assert(previous.version === version, `early state for ${previous.version} cannot record ${version}`);
     assert(!previous.promotedAt, `${version} was already promoted to stable at ${previous.promotedAt}`);

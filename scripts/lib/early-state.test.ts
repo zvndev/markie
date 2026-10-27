@@ -70,6 +70,27 @@ describe("recordEarlyPublish", () => {
     expect(Object.keys(both.platforms).sort()).toEqual(["mac", "win"]);
   });
 
+  it("takes Linux as a third platform on the same clock, and nothing else", () => {
+    const three = recordEarlyPublish(published(), {
+      version: "0.9.0",
+      commit: "abc123",
+      platform: "linux",
+      publishedAt: at(T0, 2).toISOString(),
+      platformRecord: { files: [] },
+    });
+    expect(Object.keys(three.platforms).sort()).toEqual(["linux", "mac"]);
+    expect(three.soakUntil).toBe(at(T0, 5).toISOString());
+    expect(() =>
+      recordEarlyPublish(published(), {
+        version: "0.9.0",
+        commit: "abc123",
+        platform: "freebsd",
+        publishedAt: T0,
+        platformRecord: { files: [] },
+      })
+    ).toThrow(/unknown early platform/);
+  });
+
   it("refuses a prerelease, a different commit, and a version already promoted", () => {
     expect(() => published("0.9.0-beta.1")).toThrow(/stable version/);
     expect(() =>

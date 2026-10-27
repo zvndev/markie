@@ -19,6 +19,7 @@ import {
   findDownloadPlatform,
   parseArtifactName,
   parseFeedVersion,
+  platformIdForUserAgent,
   primaryDownloadPlatform,
   type DownloadPlatform,
 } from "./downloads.ts";
@@ -39,15 +40,25 @@ type ResolvedRelease = {
 
 const downloadCache = new Map<string, { release: ResolvedRelease; at: number }>();
 const DMG_TTL_MS = 5 * 60 * 1000;
+// A "ready" platform whose stable feed does not exist yet answers 404 from the
+// bucket on every page view until its first release. Remembering the 404 for a
+// minute keeps the download page from asking Backblaze about it each time,
+// while still noticing the first release within a minute of it landing.
+const missingFeedCache = new Map<string, number>();
+const MISSING_FEED_TTL_MS = 60 * 1000;
 
 async function resolvePlatformRelease(platform: DownloadPlatform): Promise<ResolvedRelease | null> {
   const cached = downloadCache.get(platform.id);
   if (cached && Date.now() - cached.at < DMG_TTL_MS) return cached.release;
   const feed = feedForPlatform(platform);
   if (!feed) return null;
+  const missingAt = missingFeedCache.get(platform.id);
+  if (!cached && missingAt && Date.now() - missingAt < MISSING_FEED_TTL_MS) return null;
   try {
     const res = await fetch(feed.url);
+    if (res.status === 404) missingFeedCache.set(platform.id, Date.now());
     if (!res.ok) throw new Error(`feed ${res.status}`);
+    missingFeedCache.delete(platform.id);
     const feedText = await res.text();
     const version = parseFeedVersion(feedText);
     const artifactName = parseArtifactName(feedText, platform);
@@ -65,6 +76,24 @@ async function resolvePlatformRelease(platform: DownloadPlatform): Promise<Resol
 
 export function clearDownloadCacheForTests() {
   downloadCache.clear();
+  missingFeedCache.clear();
+}
+
+// Every platform a visitor can download right now, with its resolved release.
+// A public platform is always listed (its release may be null while the bucket
+// is unreachable, which latest.json has always reported that way). A ready
+// platform is listed only once its stable feed resolves: that is the moment
+// the release flow published it.
+async function offeredPlatforms(): Promise<
+  { platform: DownloadPlatform; release: ResolvedRelease | null }[]
+> {
+  const candidates = downloadPlatforms().filter(
+    (platform) => platform.status === "public" || platform.status === "ready"
+  );
+  const resolved = await Promise.all(
+    candidates.map(async (platform) => ({ platform, release: await resolvePlatformRelease(platform) }))
+  );
+  return resolved.filter(({ platform, release }) => platform.status === "public" || release !== null);
 }
 
 function docForToken(
@@ -97,15 +126,14 @@ if (!DEPLOYMENT.official) {
   publicShare.get("/download/*", (c) => c.redirect(officialDownloads, 302));
 }
 
-publicShare.get("/download", (c) => {
-  return c.html(renderDownloadPage({ siteUrl: MARKIE_SITE }));
+const offeredIds = async () => new Set((await offeredPlatforms()).map(({ platform }) => platform.id));
+
+publicShare.get("/download", async (c) => {
+  return c.html(renderDownloadPage({ siteUrl: MARKIE_SITE, offered: await offeredIds() }));
 });
 
 publicShare.get(downloadManifest.latestManifestRoute, async (c) => {
-  const platforms = downloadPlatforms().filter((platform) => platform.status === "public");
-  const releases = await Promise.all(
-    platforms.map(async (platform) => ({ platform, release: await resolvePlatformRelease(platform) }))
-  );
+  const releases = await offeredPlatforms();
   const primary = primaryDownloadPlatform();
   const primaryRelease = releases.find(({ platform }) => platform.id === primary.id)?.release ?? null;
   c.header("Cache-Control", "public, max-age=300");
@@ -124,21 +152,46 @@ publicShare.get(downloadManifest.latestManifestRoute, async (c) => {
       downloadUrl: `${MARKIE_SITE}${downloadHref(platform)}`,
       artifactUrl: release?.artifactUrl ?? null,
     })),
+    // Platforms the release flow will publish but has not yet. The release
+    // runner reads this before promoting one, to know this server will offer
+    // it the moment its stable feed lands, rather than finding out afterwards
+    // that the deployed server predates it.
+    awaitingFirstRelease: downloadPlatforms()
+      .filter((platform) => platform.status === "ready" && !releases.some((entry) => entry.platform.id === platform.id))
+      .map((platform) => platform.id),
   });
 });
 
-publicShare.get("/download/latest", (c) => {
-  return c.redirect(downloadHref(primaryDownloadPlatform()), 307);
+// The versionless "get Markie" link: the build for the visitor's OS when it is
+// offered, the primary build otherwise. It varies by user agent, so caches
+// must key on it.
+publicShare.get("/download/latest", async (c) => {
+  c.header("Vary", "User-Agent");
+  const guessId = platformIdForUserAgent(c.req.header("user-agent"));
+  const guess = guessId ? findDownloadPlatform(guessId) : null;
+  const offered =
+    guess?.status === "public" || (guess?.status === "ready" && (await resolvePlatformRelease(guess)) !== null);
+  return c.redirect(downloadHref(offered && guess ? guess : primaryDownloadPlatform()), 307);
 });
 
 publicShare.get("/download/:platform", async (c) => {
   const platform = findDownloadPlatform(c.req.path) ?? findDownloadPlatform(c.req.param("platform"));
   if (!platform) return c.html(renderDownloadPage({ siteUrl: MARKIE_SITE, status: "missing" }), 404);
-  if (platform.status !== "public") {
+  if (platform.status === "planned") {
     return c.html(renderDownloadPage({ siteUrl: MARKIE_SITE, selectedPlatform: platform }), 404);
   }
   const release = await resolvePlatformRelease(platform);
-  if (!release) return c.redirect(`${MARKIE_SITE}/download`, 302); // last-resort if B2 is down
+  if (!release) {
+    // A ready platform with no stable feed has simply not been released yet;
+    // say so on the page rather than bouncing to it with no explanation.
+    if (platform.status === "ready") {
+      return c.html(
+        renderDownloadPage({ siteUrl: MARKIE_SITE, selectedPlatform: platform, offered: await offeredIds() }),
+        404
+      );
+    }
+    return c.redirect(`${MARKIE_SITE}/download`, 302); // last-resort if B2 is down
+  }
   return c.redirect(release.artifactUrl, 302);
 });
 

@@ -29,6 +29,17 @@ if (!winPlatform?.feed?.path) {
 
 const winPublishPath = path.posix.dirname(winPlatform.feed.path);
 
+// Linux follows the Windows pattern: its own directory, declared while the
+// platform is still awaiting its first release, so the first AppImage anyone
+// installs already knows where its updates live.
+const linuxPlatform = releaseManifest.platforms.find((platform) => platform.id === "linux-x64");
+
+if (!linuxPlatform?.feed?.path) {
+  throw new Error("release manifest needs a Linux updater feed path");
+}
+
+const linuxPublishPath = path.posix.dirname(linuxPlatform.feed.path);
+
 // Windows signing is opt-in per build, and deliberately not inferred from
 // whether an Azure variable happens to be set: an unsigned installer and a
 // signed one are different products, and which one a build produces should be
@@ -133,15 +144,64 @@ module.exports = {
     publish: [publishTarget(winPublishPath)],
     ...(windowsSigntoolOptions ? { signtoolOptions: windowsSigntoolOptions } : {}),
   },
+  // Linux ships an AppImage (the download, and the one that updates itself in
+  // place) and a .deb (for people who want it in their package manager; it
+  // updates through electron-updater's DebUpdater, which asks for the admin
+  // password). x64 only: the native modules are compiled on the build runner,
+  // and the release workflow runs on an x64 runner.
+  //
+  // Like Windows, Linux gets its own updater directory, baked into
+  // app-update.yml at pack time from the manifest's linux-x64 feed. Neither
+  // package is code-signed: there is no Linux equivalent of Gatekeeper or
+  // SmartScreen to satisfy, and integrity comes from the SHA-512 in the feed
+  // the updater checks before it installs anything.
   linux: {
     icon: "build/icons",
-    category: "Office",
+    // The desktop entry. Name comes from productName and StartupWMClass from
+    // package.json desktopName (markie.desktop -> "markie"), which is also the
+    // Wayland app_id Electron reports, so the running window groups under the
+    // launcher entry instead of showing a generic icon.
+    // Written verbatim as Categories=. electron-builder sets that key after it
+    // applies desktop.entry, so it has to be spelled here, not there.
+    category: "Office;TextEditor;Utility;",
+    executableName: "markie",
+    syncDesktopName: true,
+    synopsis: "Markdown reader and editor",
+    maintainer: "ZVN DEV LLC <support@markiedocs.com>",
+    vendor: "ZVN DEV LLC",
+    // Markdown only, the same stance as macOS: installing Markie offers it in
+    // "Open With" for .md and does not take plain text or Word files from the
+    // user's editor. x-scheme-handler/markie is added on its own from
+    // `protocols` below, which is what lets the Google sign-in deep link
+    // (markie://auth) reach the app.
+    mimeTypes: ["text/markdown", "text/x-markdown"],
+    desktop: {
+      entry: {
+        Keywords: "markdown;md;notes;editor;",
+      },
+    },
     artifactName: "${productName}-${version}-${arch}.${ext}",
     target: [
       { target: "AppImage", arch: ["x64"] },
       { target: "deb", arch: ["x64"] },
     ],
+    publish: [publishTarget(linuxPublishPath)],
+    // A window icon for the AppImage before its desktop entry exists. The deb
+    // installs a desktop entry, so its windows find the icon through
+    // StartupWMClass either way. electron/linux-desktop.js reads it from here.
+    extraResources: [{ from: "build/icons/512x512.png", to: "icons/markie.png" }],
   },
+  // No `deb.depends`: electron-builder's default list already includes
+  // libsecret-1-0, which is how safeStorage reaches the keyring. Where no
+  // keyring answers, Electron falls back to its unencrypted basic_text store,
+  // and electron/vault-touch-id.js refuses that store rather than treating it
+  // as a keychain.
+  //
+  // The AppImage runtime. The legacy default needs libfuse2, which Ubuntu
+  // stopped installing in 24.04, so a download that "does nothing" on a fresh
+  // Ubuntu was the default outcome. The static runtime carries its own FUSE
+  // support and falls back to extract-and-run where FUSE is missing.
+  toolsets: { appimage: "1.0.3" },
   publish: [publishTarget(publishPath)],
   // Markie is English-only, so the ~50 MB of Chromium locale packs is paid for
   // nothing. The cost is that the handful of strings Chromium owns rather than

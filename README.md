@@ -1,46 +1,59 @@
-# Markie
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/markie-logo-reverse.svg">
+    <img src="docs/brand/markie-logo-primary.svg" alt="markie" width="260">
+  </picture>
+</h1>
 
-**The Google Docs of Markdown — except your files live on your machine.** Native desktop markdown.
+**Write, organize and share Markdown. Your files stay on your machine.**
 
 [![Markie](https://markiedocs.com/markie-demo-poster.jpg)](https://markiedocs.com)
 
 Markie is a desktop markdown app that gets out of your way: a clean editor with
 live preview, a device-wide index of every markdown file you own, painless
 sharing, and a built-in [MCP](https://modelcontextprotocol.io) server so any AI
-agent — Claude Code, Codex, or a local model — can find, read, and write your
+agent (Claude Code, Codex, or a local model) can find, read, and write your
 markdown right alongside you.
 
 ## Features
 
-- **Editor + live preview** — edit, preview, or split view; GitHub-flavored
+- **Editor + live preview**: edit, preview, or split view; GitHub-flavored
   markdown, tables, code highlighting, and KaTeX math.
-- **Pictures, clips and video** — `![](shot.png)` or `![](clip.mp4)` beside the
+- **Pictures, clips and video**: `![](shot.png)` or `![](clip.mp4)` beside the
   document just works; double-click a picture to see it full size, drag a corner to
   resize it, and a YouTube or Vimeo link on its own line becomes a playable card.
   The file stays plain markdown throughout.
-- **Browse** — a device-wide index of every `.md` on your machine, so your notes and
+- **Browse**: a device-wide index of every `.md` on your machine, so your notes and
   docs are one search away.
-- **Agent & skill files** — surfaces `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+- **Agent & skill files**: surfaces `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
   `~/.claude/skills`, `~/.codex`, and Cursor rules, grouped by tool.
-- **Sharing** — share a doc via a public link or by email; recipients open it in
+- **Sharing**: share a doc via a public link or by email; recipients open it in
   one click, no account required.
-- **Markie MCP** — let Claude Code / Codex work with your markdown (see below).
+- **Markie MCP**: let Claude Code / Codex work with your markdown (see below).
 
 ## Install
 
-The current public downloads are **Apple Silicon macOS**, **Intel macOS**, and
-**Windows x64**, signed through Azure Trusted Signing. All three update
-themselves from their own signed feed. Linux x64 packaging is configured in the
-source tree but nothing is published for it yet. Server download routes and
-Electron Builder both read `server/download-manifest.json`, so storage, updater
-feeds, and platform status cannot drift apart.
+The current public downloads are **Apple Silicon macOS** and **Intel macOS**
+(signed and notarized) and **Windows x64** (signed through Azure Trusted
+Signing). **Linux x64** ships from the release flow as an AppImage and a `.deb`,
+starting with the first release that promotes it to stable; the download page
+offers it from that moment. Every platform updates itself from its own feed.
+Linux packages are not code-signed, by design: the updater checks each
+package's SHA-512 before installing it, and each release publishes a
+`SHA512SUMS` file. Server download routes and Electron Builder both read
+`server/download-manifest.json`, so storage, updater feeds, and platform status
+cannot drift apart.
 
 ➡️ **[Download the latest Markie](https://markiedocs.com/download)**
 
 Release integrations can read the current stable version and platform URLs from
 [`/download/latest.json`](https://markiedocs.com/download/latest.json).
 
-> Linux downloads are not published yet.
+On Linux, make the AppImage executable and run it
+(`chmod +x Markie-*-x86_64.AppImage && ./Markie-*-x86_64.AppImage`); on its first
+run it adds itself to your applications menu and registers for Markdown files
+and `markie://` links. Or install the `.deb` with
+`sudo apt install ./Markie-*-amd64.deb`.
 
 ## The Markie MCP
 
@@ -122,11 +135,12 @@ npm run electron:smoke:mac:x64
 npm run electron:smoke:win
 npm run electron:smoke:win:launch # Windows host only
 npm run electron:smoke:linux
+npm run electron:smoke:linux:launch # Linux host only, under a display or xvfb-run
 ```
 
 The local pack/build scripts use a certificate-free electron-builder wrapper and
 pass `--publish never`. Signed releases go through the guarded release runner:
-`release:prepare:mac` or `release:prepare:win`, then an early-access publish, then
+`release:prepare:mac`, `release:prepare:win` or `release:prepare:linux`, then an early-access publish, then
 `release:promote` to stable. [docs/RELEASING.md](./docs/RELEASING.md) is the full
 runbook. The Windows unpacked package also installs the matching
 Electron `better-sqlite3` Windows prebuild before `electron:smoke:win` runs.

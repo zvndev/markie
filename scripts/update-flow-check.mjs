@@ -9,7 +9,8 @@
 //
 // Nothing is stubbed: real artifact, real signature, real feed, real timer.
 //
-// It runs on macOS and on Windows. The assertions are the same on both, because
+// It runs on macOS, Windows and Linux (the AppImage, under xvfb on a runner).
+// The assertions are the same on all three, because
 // they are the same claim; only obtaining the previous release, judging its
 // signature, and reading the version back off disk differ, and those four live
 // in scripts/lib/update-targets.mjs. Windows has no updater hardware of its own
@@ -29,7 +30,7 @@ import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
-import { targetFor } from "./lib/update-targets.mjs";
+import { previousFeedFileFor, targetFor } from "./lib/update-targets.mjs";
 
 // A real window on a real machine is a deliberate act; see the helper.
 requireElectronConsent("update-flow-check", import.meta.url);
@@ -56,6 +57,7 @@ const platform = targetFor(process.platform, {
   run: (...a) => run(...a),
   mkdir,
   mkdtemp,
+  readFile,
   stat,
   tmpdir,
   mounted,
@@ -221,8 +223,7 @@ async function main() {
   // saved feed is named after the platform's own feed file, so a Windows run
   // does not read the macOS one and try to update from a version that never
   // shipped there.
-  const previousFeedName =
-    process.platform === "win32" ? "previous-latest.yml" : "previous-latest-mac.yml";
+  const previousFeedName = previousFeedFileFor(process.platform);
   const previousFeed = path.join(root, ".release", target, previousFeedName);
   const from =
     arg("--from") ??

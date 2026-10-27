@@ -53,6 +53,13 @@ const FEEDS = {
     [STABLE_CHANNEL]: "latest.yml",
     [BETA_CHANNEL]: "beta.yml",
   },
+  // x64 only. electron-updater appends -linux on x64 and -linux-arm64 on arm64,
+  // and Markie ships no arm64 Linux build, so the arm64 names would be feeds
+  // nothing writes.
+  linux: {
+    [STABLE_CHANNEL]: "latest-linux.yml",
+    [BETA_CHANNEL]: "beta-linux.yml",
+  },
 };
 
 /**

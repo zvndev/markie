@@ -1,9 +1,13 @@
 // The feed file electron-updater fetches on each platform. macOS gets the
 // -mac suffix electron-builder writes for its zip target; NSIS on Windows does
-// not. Both names are mirrored in update-channel.js FEEDS, and
+// not; Linux x64 gets -linux (arm64 would be -linux-arm64, which Markie does
+// not build). All three are mirrored in update-channel.js FEEDS, and
 // update-policy.test.ts fails if the two ever disagree.
 const MACOS_UPDATE_FEED = "latest-mac.yml";
 const WINDOWS_UPDATE_FEED = "latest.yml";
+const LINUX_UPDATE_FEED = "latest-linux.yml";
+
+const { linuxPackageKind } = require("./linux-desktop");
 
 function platformLabel(platform = process.platform) {
   if (platform === "darwin") return "macOS";
@@ -17,6 +21,9 @@ function desktopUpdatePolicy({
   isPackaged = false,
   isDev = false,
   isPreview = false,
+  // How a Linux copy was installed. Detected from the running process unless
+  // a test passes it; see linux-desktop.js.
+  linuxPackage = platform === "linux" ? linuxPackageKind({ platform }) : null,
 } = {}) {
   if (isPreview) {
     return {
@@ -58,12 +65,37 @@ function desktopUpdatePolicy({
     };
   }
 
+  // Linux publishes linux/latest-linux.yml (download-manifest.json,
+  // linux-x64). An AppImage replaces itself in place; a .deb is reinstalled
+  // through the package manager, which asks for the admin password, so it is
+  // installed only when the user says so rather than silently on quit.
+  // Neither is code-signed: electron-updater checks the SHA-512 in the feed
+  // before it installs anything, on every platform.
+  if (platform === "linux") {
+    if (linuxPackage === "appimage" || linuxPackage === "deb") {
+      return {
+        supported: true,
+        reason: null,
+        platform: "Linux",
+        feed: LINUX_UPDATE_FEED,
+        packageKind: linuxPackage,
+        installOnQuit: linuxPackage === "appimage",
+      };
+    }
+    return {
+      supported: false,
+      reason: "unsupported-package",
+      message: "This copy of Markie cannot update itself.",
+      detail: "Markie updates itself when it runs as the AppImage or is installed from the .deb. Download the latest version from https://markiedocs.com/download/linux.",
+    };
+  }
+
   const label = platformLabel(platform);
   return {
     supported: false,
     reason: "unsupported-platform",
     message: `Automatic updates are not enabled for ${label} yet.`,
-    detail: "This local package can be smoke-tested, but Markie publishes signed macOS and Windows update feeds only. The Linux feed stays disabled until signing, feed files, and public download URLs are approved.",
+    detail: "Markie publishes update feeds for macOS, Windows and Linux only.",
   };
 }
 
@@ -72,6 +104,7 @@ function shouldSetupAutoUpdate(options = {}) {
 }
 
 module.exports = {
+  LINUX_UPDATE_FEED,
   MACOS_UPDATE_FEED,
   WINDOWS_UPDATE_FEED,
   desktopUpdatePolicy,

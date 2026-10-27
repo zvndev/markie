@@ -87,7 +87,46 @@ releaseDate: '2026-08-15T00:00:00.000Z'
 // The manifest gives macOS and Windows separate feed files, so a stub that
 // answers every URL with the same body tests a world that does not exist.
 const feedFor = async (input: RequestInfo | URL) =>
-  new Response(String(input).includes("/windows/") ? WINDOWS_YML : DUAL_ARCH_YML, { status: 200 });
+  String(input).includes("/linux/")
+    ? new Response("not found", { status: 404 })
+    : new Response(String(input).includes("/windows/") ? WINDOWS_YML : DUAL_ARCH_YML, { status: 200 });
+
+// What electron-builder writes for the Linux targets: one latest-linux.yml for
+// both packages, AppImage first, the AppImage carrying its blockmap inside it.
+const LINUX_YML = `version: 0.9.2
+files:
+  - url: Markie-0.9.2-x86_64.AppImage
+    sha512: ggg==
+    size: 131234567
+    blockMapSize: 140000
+  - url: Markie-0.9.2-amd64.deb
+    sha512: hhh==
+    size: 92345678
+path: Markie-0.9.2-x86_64.AppImage
+sha512: ggg==
+releaseDate: '2026-10-28T00:00:00.000Z'
+`;
+
+// The bucket after the first stable Linux release: every feed answers.
+const feedForWithLinux = async (input: RequestInfo | URL) =>
+  String(input).includes("/linux/") ? new Response(LINUX_YML, { status: 200 }) : feedFor(input);
+
+// A test that never stubs fetch must not reach Backblaze, which it now would
+// for the ready Linux platform. Count the calls so a test can say "none".
+const withFetch = (t: { after: (fn: () => void) => void }, impl: typeof feedFor) => {
+  const previousFetch = globalThis.fetch;
+  const calls: string[] = [];
+  clearDownloadCacheForTests();
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+    clearDownloadCacheForTests();
+  });
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    calls.push(String(input));
+    return impl(input);
+  }) as typeof fetch;
+  return calls;
+};
 
 const DUAL_ARCH_YML = `version: 0.4.0
 files:
@@ -172,7 +211,7 @@ test("download manifest covers public and planned desktop targets", () => {
   const platforms = downloadPlatforms();
   assert.deepEqual(
     platforms.map((platform) => platform.id),
-    ["mac-arm64", "mac-x64", "windows-x64", "linux-x64"]
+    ["mac-arm64", "mac-x64", "windows-x64", "linux-x64", "linux-x64-deb"]
   );
   assert.deepEqual(
     platforms.map((platform) => ({
@@ -208,13 +247,24 @@ test("download manifest covers public and planned desktop targets", () => {
         id: "linux-x64",
         label: "Linux x64",
         route: "/download/linux",
-        status: "planned",
-        artifactPattern: "Markie-*-x64.AppImage",
+        status: "ready",
+        artifactPattern: "Markie-*-x86_64.AppImage",
+      },
+      {
+        id: "linux-x64-deb",
+        label: "Debian and Ubuntu",
+        route: "/download/linux-deb",
+        status: "ready",
+        artifactPattern: "Markie-*-amd64.deb",
       },
     ]
   );
   assert.equal(findDownloadPlatform("/download/windows")?.status, "public");
-  assert.equal(findDownloadPlatform("/download/linux")?.status, "planned");
+  // Ready, not public: the release flow publishes Linux, and the server offers
+  // it once linux/latest-linux.yml exists. Nobody edits this file to ship it.
+  assert.equal(findDownloadPlatform("/download/linux")?.status, "ready");
+  assert.equal(findDownloadPlatform("linux-x64")?.feed?.path, "linux/latest-linux.yml");
+  assert.equal(findDownloadPlatform("linux-x64-deb")?.feed?.path, "linux/latest-linux.yml");
   assert.deepEqual(primaryDownloadCta(), {
     href: "/download/mac",
     label: "Get Markie",
@@ -292,7 +342,40 @@ test("latest release JSON is a stable machine-readable source for sites and emai
           "https://f005.backblazeb2.com/file/markie-releases/windows/Markie-0.4.0-x64.exe",
       },
     ],
+    // Linux is built and wired into the release flow but has no stable feed
+    // yet, so it is not offered; the release runner reads this list to know
+    // the deployed server will offer it once the feed lands.
+    awaitingFirstRelease: ["linux-x64", "linux-x64-deb"],
   });
+});
+
+test("latest release JSON lists Linux once its first stable feed exists", async (t) => {
+  withFetch(t, feedForWithLinux);
+  const body = await (await publicShare.request("/download/latest.json")).json();
+  const linux = body.platforms.filter((platform: { os: string }) => platform.os === "linux");
+  assert.deepEqual(linux, [
+    {
+      id: "linux-x64",
+      label: "Linux x64",
+      os: "linux",
+      arch: "x64",
+      version: "0.9.2",
+      downloadUrl: "https://markiedocs.com/download/linux",
+      artifactUrl: "https://f005.backblazeb2.com/file/markie-releases/linux/Markie-0.9.2-x86_64.AppImage",
+    },
+    {
+      id: "linux-x64-deb",
+      label: "Debian and Ubuntu",
+      os: "linux",
+      arch: "x64",
+      version: "0.9.2",
+      downloadUrl: "https://markiedocs.com/download/linux-deb",
+      artifactUrl: "https://f005.backblazeb2.com/file/markie-releases/linux/Markie-0.9.2-amd64.deb",
+    },
+  ]);
+  assert.deepEqual(body.awaitingFirstRelease, []);
+  // The website's own version stays the primary platform's.
+  assert.equal(body.version, "0.4.0");
 });
 
 test("latest human download route stays versionless", async () => {
@@ -301,15 +384,92 @@ test("latest human download route stays versionless", async () => {
   assert.equal(res.headers.get("location"), "/download/mac");
 });
 
-test("planned download routes render an honest unavailable page", async () => {
-  // Linux, now that Windows ships. The page has to keep refusing to pretend a
-  // platform is ready, which is the whole reason the manifest carries a status.
+const UA = {
+  mac: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+  windows: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+  linux: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+  linuxArm: "Mozilla/5.0 (X11; Linux aarch64; rv:131.0) Gecko/20100101 Firefox/131.0",
+  android: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36",
+  chromeos: "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+};
+
+test("the user agent picks the platform: Windows and Mac", async (t) => {
+  withFetch(t, feedForWithLinux);
+  const go = async (ua: string) =>
+    (await publicShare.request("/download/latest", { headers: { "User-Agent": ua } })).headers.get("location");
+  assert.equal(await go(UA.windows), "/download/windows");
+  assert.equal(await go(UA.mac), "/download/mac");
+  const res = await publicShare.request("/download/latest", { headers: { "User-Agent": UA.windows } });
+  assert.equal(res.headers.get("vary"), "User-Agent");
+});
+
+test("the user agent sends Linux visitors to the AppImage only once it is released", async (t) => {
+  const go = async (ua: string) =>
+    (await publicShare.request("/download/latest", { headers: { "User-Agent": ua } })).headers.get("location");
+
+  withFetch(t, feedFor);
+  assert.equal(await go(UA.linux), "/download/mac", "no Linux feed yet: the primary build, as before");
+
+  clearDownloadCacheForTests();
+  globalThis.fetch = feedForWithLinux as typeof fetch;
+  assert.equal(await go(UA.linux), "/download/linux");
+  // Neither package runs on these, whatever their user agent says.
+  assert.equal(await go(UA.linuxArm), "/download/mac");
+  assert.equal(await go(UA.android), "/download/mac");
+  assert.equal(await go(UA.chromeos), "/download/mac");
+});
+
+test("a ready platform renders an honest unavailable page until its first release", async (t) => {
+  withFetch(t, feedFor);
   const res = await publicShare.request("/download/linux");
   const body = await res.text();
 
   assert.equal(res.status, 404);
   assert.match(body, /Markie for Linux x64 is coming/i);
   assert.match(body, /Markie runs on macOS Apple Silicon today/i);
+});
+
+test("Linux routes redirect to their own package once the stable feed exists", async (t) => {
+  withFetch(t, feedForWithLinux);
+  const appImage = await publicShare.request("/download/linux");
+  assert.equal(appImage.status, 302);
+  assert.equal(
+    appImage.headers.get("location"),
+    "https://f005.backblazeb2.com/file/markie-releases/linux/Markie-0.9.2-x86_64.AppImage"
+  );
+  const deb = await publicShare.request("/download/linux-deb");
+  assert.equal(deb.status, 302);
+  assert.equal(
+    deb.headers.get("location"),
+    "https://f005.backblazeb2.com/file/markie-releases/linux/Markie-0.9.2-amd64.deb"
+  );
+});
+
+test("the download page offers Linux once released, and not before", async (t) => {
+  const card = (page: string, label: string) =>
+    page.slice(
+      page.lastIndexOf('<section class="platform-card">', page.indexOf(`<h2>${label}</h2>`)),
+      page.indexOf("</section>", page.indexOf(`<h2>${label}</h2>`))
+    );
+  withFetch(t, feedFor);
+  const before = await (await publicShare.request("/download")).text();
+  assert.match(card(before, "Linux x64"), /Coming soon/);
+  assert.doesNotMatch(card(before, "Linux x64"), /href="\/download\/linux"/);
+
+  clearDownloadCacheForTests();
+  globalThis.fetch = feedForWithLinux as typeof fetch;
+  const after = await (await publicShare.request("/download")).text();
+  assert.match(card(after, "Linux x64"), /href="\/download\/linux"/);
+  assert.match(card(after, "Debian and Ubuntu"), /href="\/download\/linux-deb"/);
+  assert.doesNotMatch(card(after, "Linux x64"), /Coming soon/);
+});
+
+test("a missing Linux feed is remembered briefly rather than fetched on every view", async (t) => {
+  const calls = withFetch(t, feedFor);
+  await publicShare.request("/download/linux");
+  await publicShare.request("/download/linux");
+  await publicShare.request("/download/linux-deb");
+  assert.equal(calls.filter((url) => url.endsWith("/linux/latest-linux.yml")).length, 2);
 });
 
 test("the Intel download route redirects to the x64 artifact", async (t) => {

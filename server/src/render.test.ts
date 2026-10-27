@@ -92,10 +92,24 @@ test("renderDownloadPage offers every signed build and gates the rest", () => {
   assert.match(card("Windows x64"), /href="\/download\/windows"/);
   assert.match(card("Windows x64"), /Download for Windows/);
 
-  // Linux is still packaging-only, and the page has to keep refusing to offer
-  // a link to something that was never built.
+  // Linux is built and ready, but not offered until the server has seen its
+  // first stable feed. Without that the page keeps refusing to link to it.
   assert.match(card("Linux x64"), /Not yet/);
   assert.match(card("Linux x64"), /Coming soon/);
+  assert.doesNotMatch(card("Linux x64"), /href="\/download\/linux"/);
+});
+
+test("renderDownloadPage offers a ready platform the server says is released", () => {
+  const page = renderDownloadPage({
+    siteUrl: "https://markie.example.com",
+    offered: new Set(["linux-x64", "linux-x64-deb"]),
+  });
+  assert.match(page, /href="\/download\/linux"/);
+  assert.match(page, /Download AppImage/);
+  assert.match(page, /href="\/download\/linux-deb"/);
+  assert.match(page, /Download \.deb/);
+  // Linux packages are not code-signed, so the page no longer says every build is.
+  assert.doesNotMatch(page, /Every build is signed/);
 });
 
 test("renderPublicPage's Open in Markie deep link carries the token + source", () => {

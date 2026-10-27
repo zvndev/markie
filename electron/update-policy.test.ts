@@ -4,7 +4,7 @@ import {
   platformLabel,
   shouldSetupAutoUpdate,
 } from "./update-policy.js";
-import { STABLE_CHANNEL, feedFor } from "./update-channel.js";
+import { BETA_CHANNEL, STABLE_CHANNEL, feedFor } from "./update-channel.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,26 +70,59 @@ describe("desktop update policy", () => {
     ).toBe(false);
   });
 
-  it("still refuses Linux, and says so by name", () => {
-    const policy = desktopUpdatePolicy({ platform: "linux", isPackaged: true, isDev: false });
+  it("updates a Linux AppImage in place and a .deb only when asked", () => {
+    expect(
+      desktopUpdatePolicy({ platform: "linux", isPackaged: true, isDev: false, linuxPackage: "appimage" })
+    ).toEqual({
+      supported: true,
+      reason: null,
+      platform: "Linux",
+      feed: "latest-linux.yml",
+      packageKind: "appimage",
+      installOnQuit: true,
+    });
+    // pkexec asks for the admin password. That prompt turning up after the
+    // window has closed reads as a crash, so a deb installs on the button only.
+    expect(
+      desktopUpdatePolicy({ platform: "linux", isPackaged: true, isDev: false, linuxPackage: "deb" })
+    ).toMatchObject({ supported: true, feed: "latest-linux.yml", packageKind: "deb", installOnQuit: false });
+    expect(
+      shouldSetupAutoUpdate({ platform: "linux", isPackaged: true, isDev: false, linuxPackage: "appimage" })
+    ).toBe(true);
+  });
+
+  it("refuses a Linux copy nothing can replace, and says where to get a new one", () => {
+    for (const linuxPackage of [null, "rpm"]) {
+      const policy = desktopUpdatePolicy({ platform: "linux", isPackaged: true, isDev: false, linuxPackage });
+      expect(policy).toMatchObject({ supported: false, reason: "unsupported-package" });
+      expect(policy.detail).toContain("https://markiedocs.com/download/linux");
+    }
+    // Dev and preview still win over a package kind.
+    expect(
+      desktopUpdatePolicy({ platform: "linux", isPackaged: false, isDev: false, linuxPackage: "appimage" }).reason
+    ).toBe("dev");
+  });
+
+  it("still refuses platforms with no feed, and says so by name", () => {
+    const policy = desktopUpdatePolicy({ platform: "freebsd", isPackaged: true, isDev: false });
     expect(policy).toMatchObject({
       supported: false,
       reason: "unsupported-platform",
-      message: "Automatic updates are not enabled for Linux yet.",
+      message: "Automatic updates are not enabled for this platform yet.",
     });
-    expect(policy.detail).toMatch(/Linux/);
-    expect(shouldSetupAutoUpdate({ platform: "linux", isPackaged: true, isDev: false })).toBe(false);
+    expect(shouldSetupAutoUpdate({ platform: "freebsd", isPackaged: true, isDev: false })).toBe(false);
   });
 
   it("names the same stable feed the channel module would pick", () => {
     // Two modules hold feed names: this one for "may I update", update-channel
     // for "from where". They must not drift, because a policy that reports one
     // feed while the updater fetches another is a bug nobody can see locally.
-    for (const platform of ["darwin", "win32"] as const) {
-      expect(desktopUpdatePolicy({ platform, isPackaged: true, isDev: false }).feed).toBe(
-        feedFor(STABLE_CHANNEL, platform)
-      );
+    for (const platform of ["darwin", "win32", "linux"] as const) {
+      expect(
+        desktopUpdatePolicy({ platform, isPackaged: true, isDev: false, linuxPackage: "appimage" }).feed
+      ).toBe(feedFor(STABLE_CHANNEL, platform));
     }
+    expect(feedFor(BETA_CHANNEL, "linux")).toBe("beta-linux.yml");
   });
 
   it("agrees with the manifest about which platforms publish a feed", () => {
@@ -102,8 +135,10 @@ describe("desktop update policy", () => {
       ["linux-x64", "linux"],
     ] as const) {
       const entry = platformEntry(id);
-      const policy = desktopUpdatePolicy({ platform, isPackaged: true, isDev: false });
-      expect(policy.supported).toBe(entry?.status === "public");
+      const policy = desktopUpdatePolicy({ platform, isPackaged: true, isDev: false, linuxPackage: "appimage" });
+      // "ready" is a platform the release flow publishes and the server offers
+      // once its stable feed exists, so an install of it must already update.
+      expect(policy.supported).toBe(entry?.status === "public" || entry?.status === "ready");
       if (!policy.supported) continue;
       // The feed the policy names must be the file the manifest publishes, so
       // an install cannot be told to fetch something that was never uploaded.

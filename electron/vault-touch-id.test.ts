@@ -102,6 +102,22 @@ describe("vault Touch ID keychain (main process)", () => {
     }
   });
 
+  // A Linux desktop with no keyring daemon is the case that matters here:
+  // Electron falls back to basic_text rather than failing, and a safeStorage
+  // that throws on that path would take the vault page down with it.
+  it("stays quietly unavailable on Linux, keyring or not, and never touches safeStorage", async () => {
+    for (const backend of ["gnome_libsecret", "basic_text"]) {
+      const safe = fakeSafeStorage({ backend });
+      safe.isEncryptionAvailable.mockImplementation(() => { throw new Error("no keyring"); });
+      const { touchId, systemPreferences } = setup({ platform: "linux", safe });
+      expect(touchId.status(VAULT)).toEqual({ available: false, enrolled: false });
+      expect(await touchId.enroll(VAULT, secret())).toEqual({ ok: false, reason: "unavailable" });
+      expect(await touchId.unlock(VAULT)).toEqual({ ok: false, reason: "unavailable" });
+      expect(safe.encryptString).not.toHaveBeenCalled();
+      expect(systemPreferences.promptTouchID).not.toHaveBeenCalled();
+    }
+  });
+
   it("refuses to enroll or unlock without a real keychain, and never prompts for one", async () => {
     for (const safe of [fakeSafeStorage({ ready: false }), fakeSafeStorage({ backend: "basic_text" })]) {
       const { touchId, systemPreferences } = setup({ safe });

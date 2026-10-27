@@ -90,4 +90,28 @@ describe("Markdown default handler support", () => {
     });
     expect(markdownDefaultHandlerUnavailable({ platform: "darwin", isPackaged: true })).toBeNull();
   });
+
+  it("points Linux at the file manager, where the desktop entry already lists Markie", () => {
+    const linux = markdownDefaultHandlerUnavailable({ platform: "linux", isPackaged: true });
+    expect(linux).toMatchObject({ ok: false, error: expect.stringContaining("Open With") });
+    expect(linux?.error).not.toContain("macOS-only");
+  });
+});
+
+describe("Linux launch arguments", () => {
+  it("opens a percent-encoded file:// URI handed over by a file manager", () => {
+    // The desktop entry's Exec ends in %U, so GNOME and KDE pass local files as
+    // file:// URIs, on first launch and to the second-instance handler alike.
+    const file = findOpenableLaunchFile(["/opt/Markie/markie", "file:///home/me/My%20Notes/today.md"], {
+      existsSync: (p: PathLike) => p === "/home/me/My Notes/today.md",
+      resolvePath: (p: string) => p,
+    });
+    expect(file).toBe("/home/me/My Notes/today.md");
+  });
+
+  it("finds a markie:// deep link among the arguments xdg-open passes", () => {
+    expect(findDeepLinkArg(["/opt/Markie/markie", "--no-sandbox", "markie://auth?code=1"])).toBe(
+      "markie://auth?code=1"
+    );
+  });
 });

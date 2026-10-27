@@ -229,8 +229,109 @@ export function windowsTarget(deps) {
   };
 }
 
+// The AppImage magic: ELF, then "AI" and type 2 at offset 8.
+export function isType2AppImage(header) {
+  return (
+    header.length >= 11 &&
+    header[0] === 0x7f && header[1] === 0x45 && header[2] === 0x4c && header[3] === 0x46 &&
+    header[8] === 0x41 && header[9] === 0x49 && header[10] === 0x02
+  );
+}
+
+// The version an AppImage was built as, from the desktop entry inside it.
+export function appImageVersionFromDesktopEntry(text) {
+  return String(text).match(/^X-AppImage-Version=(\S+)\s*$/m)?.[1] ?? null;
+}
+
+/**
+ * The AppImage, which is what /download/linux hands out and the one Linux
+ * package that replaces itself without a password prompt.
+ *
+ * It is staged under a name with no version in it on purpose. electron-updater
+ * overwrites an AppImage in place only when its file name carries no version;
+ * a versioned name gets the new version written beside it and the old one
+ * deleted, and the check would then be reading back a file that is gone.
+ */
+export function linuxTarget(deps) {
+  const { run, mkdir, readFile, tmpdir, mkdtemp } = deps;
+  return {
+    platformId: "linux-x64",
+    artifactUrl: (base, feedPath, from) =>
+      `${base}/${path.posix.dirname(feedPath)}/Markie-${from}-x86_64.AppImage`,
+    artifactLabel: "AppImage",
+    minBytes: 50_000_000,
+
+    async stage({ artifactPath, workDir }) {
+      const appDir = path.join(workDir, "Applications");
+      await mkdir(appDir, { recursive: true });
+      const appPath = path.join(appDir, "Markie.AppImage");
+      await run("cp", [artifactPath, appPath]);
+      await run("chmod", ["+x", appPath]);
+      return { appPath, binary: appPath };
+    },
+
+    // Linux packages are unsigned by design, so there is no OS verdict to ask
+    // for. What can still go wrong is the download not being an AppImage at
+    // all (an HTML error page saved under the right name, say).
+    async trust({ appPath }) {
+      const header = Buffer.from(await readFile(appPath)).subarray(0, 16);
+      return {
+        label: "the previous release is a type 2 AppImage (Linux builds are unsigned by design)",
+        ok: isType2AppImage(header),
+        detail: header.subarray(0, 11).toString("hex"),
+      };
+    },
+
+    async versionOnDisk({ appPath }) {
+      const scratch = await mkdtemp(path.join(tmpdir(), "markie-appimage-version-"));
+      try {
+        await run(appPath, ["--appimage-extract", "*.desktop"], { cwd: scratch });
+        const out = await run("bash", ["-c", 'cat squashfs-root/*.desktop'], { cwd: scratch }).catch(() => "");
+        return appImageVersionFromDesktopEntry(out);
+      } catch {
+        return null;
+      } finally {
+        await run("rm", ["-rf", scratch]).catch(() => {});
+      }
+    },
+
+    async runningPid({ appPath }) {
+      const out = await run("bash", ["-c", `pgrep -f ${JSON.stringify(appPath)} || true`]).catch(() => "");
+      return out.trim() ? out.trim().split(/\s+/)[0] : null;
+    },
+
+    async profileDir() {
+      return mkdtemp(path.join(tmpdir(), "markie-update-profile-"));
+    },
+
+    async killStrays(dirs) {
+      for (const dir of dirs) {
+        const out = await run("bash", ["-c", `pgrep -f ${JSON.stringify(dir)} || true`]).catch(() => "");
+        for (const pid of out.split(/\s+/).filter(Boolean)) {
+          try {
+            process.kill(Number(pid), "SIGKILL");
+          } catch {
+            // Already gone.
+          }
+        }
+      }
+    },
+
+    // The AppImage updater keeps no state outside the file it replaces.
+    installerStatePath: () => null,
+  };
+}
+
 export function targetFor(platform, deps) {
   if (platform === "win32") return windowsTarget(deps);
   if (platform === "darwin") return macTarget(deps);
+  if (platform === "linux") return linuxTarget(deps);
   throw new Error(`the update check has no support for ${platform}`);
+}
+
+/** The feed the release runner saved before replacing it, per platform. */
+export function previousFeedFileFor(platform) {
+  if (platform === "win32") return "previous-latest.yml";
+  if (platform === "linux") return "previous-latest-linux.yml";
+  return "previous-latest-mac.yml";
 }

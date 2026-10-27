@@ -1,13 +1,21 @@
 import { readFileSync } from "node:fs";
 
-export type DownloadStatus = "public" | "planned";
+// "public": offered, and every release gate checks it is.
+// "ready": built and published by the release flow, offered the moment its
+//   stable feed exists. This is how a new platform goes live: the promotion
+//   that writes its first stable feed is the publish, with no manifest edit or
+//   server deploy to time against the upload. Flip it to "public" after the
+//   first stable release so a missing feed fails the gates instead of quietly
+//   hiding the platform.
+// "planned": not built. The route explains that and offers nothing.
+export type DownloadStatus = "public" | "ready" | "planned";
 
 export type DownloadFeed = {
   // electron-updater picks the feed file by platform: latest-mac.yml on macOS,
   // latest.yml on Windows. Naming the type is what keeps a manifest entry from
   // pointing a platform at the other one's feed, which resolves to a 404 that
   // only ever shows up as "no updates available".
-  type: "electron-builder-mac-yml" | "electron-builder-win-yml";
+  type: "electron-builder-mac-yml" | "electron-builder-win-yml" | "electron-builder-linux-yml";
   path: string;
 };
 
@@ -80,8 +88,11 @@ const loadManifest = (): DownloadManifest => {
     if (!platform.artifactPattern) {
       throw new Error(`download platform ${platform.id} needs an artifact pattern`);
     }
-    if (platform.status === "public" && !platform.feed) {
-      throw new Error(`public download platform ${platform.id} needs a feed`);
+    if (!["public", "ready", "planned"].includes(platform.status)) {
+      throw new Error(`download platform ${platform.id} has unknown status ${platform.status}`);
+    }
+    if ((platform.status === "public" || platform.status === "ready") && !platform.feed) {
+      throw new Error(`${platform.status} download platform ${platform.id} needs a feed`);
     }
     if (platform.feed?.path.startsWith("/") || platform.feed?.path.includes("..")) {
       throw new Error(`invalid download feed path: ${platform.feed.path}`);
@@ -202,4 +213,19 @@ export function artifactDownloadUrl(platform: DownloadPlatform, artifactName: st
   const feed = feedForPlatform(platform);
   if (!feed) return null;
   return `${stripTrailingSlash(feed.artifactBaseUrl)}/${encodeURIComponent(artifactName)}`;
+}
+
+// Which platform a visitor is most likely on, for the versionless
+// /download/latest link. Only the OS is read: a Mac's user agent says
+// "Intel Mac OS X" on Apple Silicon too, so the architecture is not knowable
+// from here and macOS gets the primary (Apple Silicon) build, as before.
+// Android and ChromeOS both say "Linux" and run neither package, and an ARM
+// Linux machine cannot run the x64 build.
+export function platformIdForUserAgent(userAgent: string | null | undefined): string | null {
+  const ua = userAgent ?? "";
+  if (/Windows NT/i.test(ua)) return "windows-x64";
+  if (/Android|CrOS/i.test(ua)) return null;
+  if (/Linux/i.test(ua)) return /aarch64|arm64|armv/i.test(ua) ? null : "linux-x64";
+  if (/Mac OS X|Macintosh/i.test(ua)) return downloadManifest.primaryPlatformId;
+  return null;
 }

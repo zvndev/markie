@@ -6,7 +6,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { hostSmokeMode, verifyPackageLayout } from "./package-smoke.mjs";
+import { hostSmokeMode, packageProfile, verifyPackageLayout } from "./package-smoke.mjs";
 import { capturePageScreenshot, selectPageTarget, validateRendererProbe } from "./windows-launch-smoke.mjs";
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
 import { createRequire } from "node:module";
@@ -63,6 +63,23 @@ export function resolveDesktopLaunchApp(
     host: launchMode,
     appDir: path.join(baseDir, layout.profile.appDir),
     executable: path.join(baseDir, layout.executable),
+  };
+}
+
+// A built artifact rather than the unpacked directory: the AppImage itself, or
+// the binary a .deb installed under /opt. These are what a Linux user runs, and
+// each starts through a different launcher (the AppImage runtime and AppRun,
+// or the package's own symlink), so the unpacked smoke does not vouch for them.
+export function explicitLaunchApp(executable, { platform = process.platform, arch = process.arch, productName = DEFAULT_PRODUCT_NAME, distDir = "dist" } = {}) {
+  if (!path.isAbsolute(executable)) throw new Error(`--executable must be an absolute path, got ${executable}`);
+  const profile = packageProfile({ platform, arch, distDir, productName });
+  const host = hostSmokeMode(profile);
+  if (host.mode === "structure-only") throw new Error(`${executable} cannot be launched on this host: ${host.reason}`);
+  return {
+    profile: { ...profile, id: `${profile.id}-${path.basename(executable).replace(/[^A-Za-z0-9._-]/g, "_")}` },
+    host,
+    appDir: path.dirname(executable),
+    executable,
   };
 }
 
@@ -301,8 +318,11 @@ export async function runDesktopLaunchSmoke({
   debugPort,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   userDataDir,
+  executable,
 } = {}) {
-  const app = resolveDesktopLaunchApp(baseDir, { platform, arch, distDir, productName });
+  const app = executable
+    ? explicitLaunchApp(executable, { platform, arch, distDir, productName })
+    : resolveDesktopLaunchApp(baseDir, { platform, arch, distDir, productName });
   const resolvedDebugPort = debugPort || (await pickPort());
   const debugOrigin = `http://127.0.0.1:${resolvedDebugPort}`;
   const tempUserDataDir = userDataDir || (await mkdtemp(path.join(tmpdir(), "markie-desktop-launch-")));
@@ -389,6 +409,7 @@ function parseArgs(argv) {
     else if (arg === "--debug-port") options.debugPort = Number(argv[++i]);
     else if (arg === "--timeout-ms") options.timeoutMs = Number(argv[++i]);
     else if (arg === "--user-data-dir") options.userDataDir = argv[++i];
+    else if (arg === "--executable") options.executable = path.resolve(argv[++i]);
     else if (arg === "--json") options.json = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else throw new Error(`unknown argument: ${arg}`);
@@ -398,10 +419,11 @@ function parseArgs(argv) {
 
 function usage() {
   return [
-    "Usage: node scripts/desktop-launch-smoke.mjs [--platform mac|linux] [--arch arm64|x64] [--dist dist] [--json]",
+    "Usage: node scripts/desktop-launch-smoke.mjs [--platform mac|linux] [--arch arm64|x64] [--dist dist] [--executable <path>] [--json]",
     "",
     "Launches a host-compatible unpacked Electron package, connects over CDP,",
     "and verifies the packaged renderer loads enough real Markie UI to be usable.",
+    "--executable launches a built artifact instead (an AppImage, or a binary a .deb installed).",
   ].join("\n");
 }
 

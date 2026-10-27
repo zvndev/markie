@@ -58,6 +58,15 @@ function supportsMarkdownDefaultHandler({ platform = process.platform, isPackage
 }
 
 function markdownDefaultHandlerUnavailable({ platform = process.platform, isPackaged = false } = {}) {
+  // The Linux packages list Markie for text/markdown in their desktop entry, so
+  // it already appears under Open With. Making it the default is the file
+  // manager's call, and each one puts it somewhere slightly different.
+  if (platform === "linux") {
+    return {
+      ok: false,
+      error: "Markie is listed under Open With for Markdown files. To make it the default, open a .md file's Properties in your file manager and choose Markie under Open With.",
+    };
+  }
   if (platform !== "darwin") {
     return {
       ok: false,

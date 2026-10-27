@@ -1,0 +1,83 @@
+# Does an installed Linux Markie actually receive a release?
+#
+# The Linux leg of `npm run update:check`, on a real Linux runner under a
+# virtual display: download the previous public AppImage from the same URL a
+# user would, run it against the live feed with a clean profile, let it find
+# and download the update on its own, click Restart & update, and confirm the
+# AppImage on disk now reports the new version.
+#
+# A post-publish gate, like the Windows one. It needs a previous Linux release
+# to update from, so it first applies to the second Linux release.
+name: Linux update check
+
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: The Linux version to update from (the runner has no .release/ to read it from).
+        required: true
+        type: string
+      install:
+        description: Click Restart & update and verify the swap, rather than stopping at the notice.
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  update-check:
+    name: Update from the previous public AppImage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.13.1"
+          cache: npm
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth libgbm1 libnss3 libasound2t64 libgtk-3-0t64 libxss1 libsecret-1-0 \
+            libnotify4 libxtst6 fuse3
+
+      # update-flow-check reads ws from server/node_modules, and the app itself
+      # is downloaded, so the root install skips native builds it does not need.
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm ci --prefix server
+
+      - name: Update from the previous public release
+        env:
+          # The check launches a real Markie. A runner is a throwaway machine,
+          # but the consent gate is deliberate everywhere, so it is set here too.
+          MARKIE_ALLOW_E2E: "1"
+          # The AppImage writes its desktop entry under XDG_DATA_HOME on launch;
+          # keep that inside the run.
+          XDG_DATA_HOME: ${{ runner.temp }}/xdg-data
+          # Through the environment, not interpolated into the script.
+          FROM_VERSION: ${{ inputs.from }}
+          INSTALL: ${{ inputs.install }}
+        run: |
+          args=(scripts/update-flow-check.mjs --from "$FROM_VERSION")
+          if [ "$INSTALL" = "true" ]; then args+=(--install); fi
+          echo "node ${args[*]}"
+          xvfb-run -a --server-args="-screen 0 1440x900x24" node "${args[@]}"
+
+      - name: Keep the run's logs
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: linux-update-check-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .autoloop/runs/update-flow-*
+          if-no-files-found: warn
+          retention-days: 14

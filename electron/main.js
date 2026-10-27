@@ -38,6 +38,7 @@ const { classifyDeepLink, cloudDocId, isAuthDeepLink, sourceHint } = require("./
 const { dialogStartDir } = require("./dialog-start");
 const { createFileGrants } = require("./file-grants");
 const { createDocumentFileService, findNativeDocumentLaunchFile, registerDocumentFileIpc, DOCUMENT_EXTENSIONS } = require("./document-files.cjs");
+const { linuxWindowIcon } = require("./linux-desktop");
 const docTiers = require("./doc-tiers");
 const { hasUtf16Bom, needsBytePreservingText } = require("./text-byte-route");
 const { createDiskMemory } = require("./disk-memory");
@@ -819,6 +820,9 @@ function createWindow() {
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 14, y: 14 } }
       : {}),
+    // Linux only: macOS and Windows take the icon from the bundle. An AppImage
+    // window otherwise shows a generic icon until its desktop entry matches.
+    ...(process.platform === "linux" && linuxWindowIcon() ? { icon: linuxWindowIcon() } : {}),
     backgroundColor: "#09090b",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -2771,7 +2775,11 @@ function setupAutoUpdate() {
   // update never installs.
   autoUpdater.logger = privateReleaseConfig ? null : guardedLogger(console);
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = !privateReleaseConfig;
+  // A .deb reinstalls through pkexec, which asks for the admin password; that
+  // prompt appearing after the window has already closed reads as something
+  // gone wrong. Linux packages that need it install on "Restart & Update" only.
+  const updatePolicy = desktopUpdatePolicy({ isDev, isPackaged: app.isPackaged, platform: process.platform });
+  autoUpdater.autoInstallOnAppQuit = !privateReleaseConfig && updatePolicy.installOnQuit !== false;
   if (privateReleaseConfig) {
     autoUpdater.netSession.webRequest.onBeforeRequest((details, callback) => {
       const permitted = privateRelease.authorized() && details.url.startsWith(`${privateReleaseConfig.apiOrigin}/private-releases/super-nightly/`);
@@ -3597,6 +3605,26 @@ const template = [
 // Deep links (markie://…) — used by the Google OAuth callback.
 // macOS delivers these via the open-url event below.
 if (!isDesktopPreview && process.env.MARKIE_E2E !== "1") {
+  // An AppImage has no desktop entry until it writes one, and on Linux
+  // setAsDefaultProtocolClient points markie:// at markie.desktop, so the entry
+  // has to exist first. See linux-desktop.js; the deb installs its own.
+  if (process.platform === "linux" && app.isPackaged && !preflightMode) {
+    try {
+      const { ensureAppImageIntegration } = require("./linux-desktop");
+      ensureAppImageIntegration({
+        version: app.getVersion(),
+        run: (command, args) => {
+          try {
+            require("child_process").spawn(command, args, { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+          } catch {
+            // The tool is missing; the entry is still read on the next scan.
+          }
+        },
+      });
+    } catch (err) {
+      logCrash("linux-desktop-integration-failed", err);
+    }
+  }
   app.setAsDefaultProtocolClient("markie");
 }
 app.on("open-url", (event, url) => {

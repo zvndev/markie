@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   buildDesktopLaunchSmokeArtifact,
+  explicitLaunchApp,
   resolveDesktopLaunchApp,
 } from "../scripts/desktop-launch-smoke.mjs";
 
@@ -177,5 +178,20 @@ describe("desktop launch smoke", () => {
       validation: { ok: true, failures: [] },
       screenshot: { fileName: "screenshot.png", contentType: "image/png", bytes: 4321 },
     });
+  });
+});
+
+describe("launching a built Linux artifact", () => {
+  it("takes an AppImage or an installed binary by absolute path, on a matching host", () => {
+    const app = explicitLaunchApp("/home/runner/dist/Markie-0.9.2-x86_64.AppImage", { platform: process.platform, arch: process.arch });
+    expect(app.executable).toBe("/home/runner/dist/Markie-0.9.2-x86_64.AppImage");
+    expect(app.appDir).toBe("/home/runner/dist");
+    expect(app.profile.id).toMatch(/Markie-0\.9\.2-x86_64\.AppImage$/);
+    expect(() => explicitLaunchApp("relative/markie", { platform: process.platform, arch: process.arch })).toThrow(/absolute/);
+  });
+
+  it("refuses an artifact the host cannot run", () => {
+    const foreign = process.platform === "linux" ? "darwin" : "linux";
+    expect(() => explicitLaunchApp("/opt/Markie/markie", { platform: foreign, arch: "x64" })).toThrow(/cannot be launched/);
   });
 });

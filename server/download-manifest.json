@@ -12,6 +12,10 @@
     "windowsFeed": {
       "type": "electron-builder-win-yml",
       "path": "windows/beta.yml"
+    },
+    "linuxFeed": {
+      "type": "electron-builder-linux-yml",
+      "path": "linux/beta-linux.yml"
     }
   },
   "siteUrl": "https://markiedocs.com",
@@ -78,12 +82,31 @@
       "id": "linux-x64",
       "route": "/download/linux",
       "label": "Linux x64",
-      "ctaLabel": "Download for Linux",
+      "ctaLabel": "Download AppImage",
       "os": "linux",
       "arch": "x64",
-      "status": "planned",
-      "description": "Not ready yet.",
-      "artifactPattern": "Markie-*-x64.AppImage"
+      "status": "ready",
+      "description": "AppImage for 64-bit Linux. Runs on most distributions and updates itself.",
+      "artifactPattern": "Markie-*-x86_64.AppImage",
+      "feed": {
+        "type": "electron-builder-linux-yml",
+        "path": "linux/latest-linux.yml"
+      }
+    },
+    {
+      "id": "linux-x64-deb",
+      "route": "/download/linux-deb",
+      "label": "Debian and Ubuntu",
+      "ctaLabel": "Download .deb",
+      "os": "linux",
+      "arch": "x64",
+      "status": "ready",
+      "description": "A .deb package for 64-bit Debian, Ubuntu and their derivatives.",
+      "artifactPattern": "Markie-*-amd64.deb",
+      "feed": {
+        "type": "electron-builder-linux-yml",
+        "path": "linux/latest-linux.yml"
+      }
     }
   ]
 }

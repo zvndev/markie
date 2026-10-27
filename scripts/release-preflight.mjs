@@ -42,6 +42,9 @@ const REQUIRED_FILES = [
   "scripts/release.mjs",
   ".github/workflows/windows-launch-smoke.yml",
   ".github/workflows/mac-launch-smoke.yml",
+  ".github/workflows/linux-release.yml",
+  "scripts/linux-build-evidence.mjs",
+  "electron/linux-desktop.js",
   "build/launch-errors.cjs",
   "electron/csp.js",
   "electron/main.js",
@@ -116,6 +119,30 @@ const REQUIRED_MAC_WORKFLOW_SNIPPETS = [
   'MARKIE_ALLOW_E2E: "1"',
 ];
 
+// The Linux build has no signature to prove where it came from, so the
+// workflow that builds it is part of the release contract: it must build at the
+// dispatched commit, launch what it built under a virtual display, install the
+// deb, write the evidence release:prepare:linux checks, and upload only when a
+// human asked it to, from main.
+const REQUIRED_LINUX_RELEASE_WORKFLOW_SNIPPETS = [
+  "workflow_dispatch:",
+  "publish_release:",
+  "default: false",
+  "ubuntu-",
+  "npm ci",
+  "--linux --x64 --publish never",
+  "npm run electron:smoke:linux",
+  "xvfb-run",
+  "npm run electron:smoke:linux:launch",
+  "--executable",
+  "apt-get install",
+  "desktop-file-validate",
+  "scripts/linux-build-evidence.mjs",
+  "linux-built",
+  "inputs.publish_release",
+  "refs/heads/main",
+];
+
 const REQUIRED_ELECTRON_MAIN_SNIPPETS = [
   'const { ASSET_SCHEME, buildAppCsp } = require("./csp");',
   'const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");',
@@ -168,7 +195,8 @@ const REQUIRED_RELEASE_DOC_SNIPPETS = [
   "npm run electron:build:linux",
   "Markie-<version>-arm64.dmg",
   "Markie-<version>-x64.exe",
-  "Markie-<version>-x64.AppImage",
+  "Markie-<version>-x86_64.AppImage",
+  "Markie-<version>-amd64.deb",
   "npm run electron:smoke:mac:launch",
   "npm run electron:smoke:win:launch",
   "screenshot.png",
@@ -187,7 +215,10 @@ const REQUIRED_RELEASE_DOC_SNIPPETS = [
   // in, so the two cannot drift apart again.
   "## Windows release runbook",
   "npm run release:publish:win",
-  "Linux update checks stay disabled",
+  "## Linux release runbook",
+  "npm run release:prepare:linux",
+  'npm run release:publish:early:linux -- --confirm-public-release="$MARKIE_RELEASE_VERSION"',
+  "unsigned by design",
   "--publish never",
   "does **not** mean an artifact is signed, notarized, published",
 ];
@@ -329,6 +360,23 @@ export function validateReleaseManifest(rootDir) {
       path.posix.dirname(manifest.betaChannel.windowsFeed.path) ===
         path.posix.dirname(windows?.feed?.path ?? ""),
     "Windows early feed must be a sibling of the stable Windows feed"
+  );
+  // Linux follows Windows: its own directory, its early feed beside its stable
+  // one, and a builder publish block of its own so app-update.yml in a Linux
+  // package points at linux/ rather than mac/.
+  const linux = manifest.platforms?.find((platform) => platform.id === "linux-x64");
+  assert(linux?.feed?.path === "linux/latest-linux.yml", "Linux feed path must remain canonical");
+  assert(
+    ["ready", "public"].includes(linux.status),
+    "Linux must be ready (released by the release flow) or public"
+  );
+  assert(
+    manifest.betaChannel?.linuxFeed?.path === "linux/beta-linux.yml",
+    "Linux early feed path must remain canonical"
+  );
+  assert(
+    builder.linux?.publish?.[0]?.path === path.posix.dirname(linux.feed.path),
+    "builder Linux publish path must match the Linux feed directory"
   );
   const soakDays = manifest.betaChannel?.defaultSoakDays;
   assert(
@@ -578,6 +626,19 @@ export function validateMacLaunchWorkflow(rootDir, snippets = REQUIRED_MAC_WORKF
   return validateLaunchWorkflow(rootDir, ".github/workflows/mac-launch-smoke.yml", "Mac", snippets);
 }
 
+export function validateLinuxReleaseWorkflow(rootDir, snippets = REQUIRED_LINUX_RELEASE_WORKFLOW_SNIPPETS) {
+  const workflow = readFileSync(path.join(rootDir, ".github/workflows/linux-release.yml"), "utf8");
+  const missing = snippets.filter((snippet) => !workflow.includes(snippet));
+  assert(missing.length === 0, `Linux release workflow missing required snippets: ${missing.join(", ")}`);
+  // Publishing defaults off, so dispatching the workflow to try a build can
+  // never replace what the release machine is about to fetch.
+  assert(
+    /publish_release:[\s\S]*?default:\s*false/.test(workflow),
+    "Linux release workflow must default publish_release to false"
+  );
+  return { snippets };
+}
+
 export function validateElectronMainDesktopSupport(
   rootDir,
   snippets = REQUIRED_ELECTRON_MAIN_SNIPPETS
@@ -635,6 +696,7 @@ export function runReleasePreflight({ rootDir, runLocalChecks = true } = {}) {
   const matrix = validatePackagingMatrix(resolvedRoot);
   const windowsWorkflow = validateWindowsLaunchWorkflow(resolvedRoot);
   validateMacLaunchWorkflow(resolvedRoot);
+  validateLinuxReleaseWorkflow(resolvedRoot);
   const electronMain = validateElectronMainDesktopSupport(resolvedRoot);
   const docs = validateReleaseDocs(resolvedRoot);
   const inspected = assertLocalOnlyChecks(resolvedRoot);

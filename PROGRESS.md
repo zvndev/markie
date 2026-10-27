@@ -1558,4 +1558,4 @@ Still to do: new Google and email secrets; move the super-nightly gateway (still
 - Update from 0.9.0: Windows `windows-update-check.yml` run 40553536063 passed 12/12 with install and relaunch. Mac `update:check` passed 9/9.
 - The Mac check fails with `bad option: --remote-debugging-port` if the shell exports `ELECTRON_RUN_AS_NODE`. Run it under `env -u ELECTRON_RUN_AS_NODE`.
 - Tagged `v0.9.1` on 6451801, the release commit, and created the GitHub release.
-- Not verified: the hand-run Mac Restart & Update relaunch.
+- Mac `update:check -- --install` then passed 12/12: Restart & Update replaced the bundle with 0.9.1 and it relaunched on its own.

@@ -118,3 +118,16 @@ Still to do: new Google and email secrets; move the super-nightly gateway (still
 - The Share dialog's public link was restyled to match the website (PR #42).
 - Repo docs were cleaned of Railway, Fly, and the long-agent-loop machinery.
 - 0.9.1 stable itself is recorded in the entry above.
+
+## 2026-10-27 Markie 0.9.2 stable on macOS, Windows and Linux; new brand everywhere
+
+- Kirby asked for the new brand and Linux to ship straight to stable with no nightly round. PR #51 set 0.9.2; release commit `ed94dec`.
+- Brand ("L3 Underline", lowercase wordmark with a red underline): app icons, title bar and sign-in (PR #45), server pages and emails, iOS and Android icons, README (PR #47). markiedocs.com was redesigned in the instinct.com style with a dark mode toggle (markie-site PR #2, Vercel prod).
+- Linux (PR #46): AppImage and .deb for x64 through `linux-release.yml` run 40588266051. Unsigned by design; evidence and SHA512SUMS on the `linux-built` tag. The manifest still lists Linux as `ready`; moving it to `public` needs the release tests rewritten off the live manifest first.
+- Windows run 40588262569 signed by CN=ZVN DEV LLC. Mac arm64 and x64 notarized, stapled, Gatekeeper accepted.
+- Published to early access on all three platforms, then `release:promote -- --confirm-promote=0.9.2 --now`. `release:verify:public --deep` passed on mac, win and linux. Tagged `v0.9.2`, GitHub release created.
+- Server: image `zvn-apps/markie-api:ed94dece7bd3` deployed with Kamal to `zvn-apps-a`. The deploy needs `MARKIE_ENABLE_CRONS=true` (zvn-infra PR #26 documents it).
+- The Mac prepare failed twice before passing. The agent shell's `ELECTRON_RUN_AS_NODE=1` reached the preflight launch, and the release lint scanned `.claude/worktrees`. Run prepare under `env -u ELECTRON_RUN_AS_NODE`; both folders are now ignored.
+- Promotion hit one transient Backblaze 500 ("internal incident") on `windows/latest.yml`. It cleared within minutes and the retry promoted.
+- Mobile: iOS 0.1.0 (2) with the new icons uploaded to App Store Connect from Xcode (PR #48). Android AAB 0.1.0 (2) at `~/Desktop/Markie-mobile-0.1.0-2.aab`.
+- Still open: TestFlight internal group (Kirby in App Store Connect), Play internal testing (account verification), the Play app-signing SHA-256 in `ANDROID_APP_CERT_SHA256`, a hand check of the AppImage and .deb on a real Linux desktop, and the GitHub social preview image (Settings, no API).

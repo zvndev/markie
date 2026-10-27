@@ -1535,3 +1535,18 @@ Still to do: new Google and email secrets; move the super-nightly gateway (still
 
 - Windows: `windows-release.yml` on main 84cb5a5 with `signing: azure`, `publish_release: true` (run 39729791197, success: Azure Trusted Signing, signature check, install/launch/uninstall on a Windows runner). `release:prepare:win` verified the installer signed by CN=ZVN DEV LLC and every SHA-512; `release:publish:win -- --confirm-public-release=0.8.1` uploaded the installer, blockmap and `windows/latest.yml`; `release:verify:public:win --deep` valid. latest.json: mac-arm64, mac-x64 and windows-x64 all 0.8.1. Not checked: an installed Windows 0.8.0 updating itself.
 - `origin/main` merged into `feat/document-platform-foundation` (89da0cc). The branch's own cloud-origin code won the conflicts, since it already treats Railway as an alias of api.markiedocs.com; main brought 0.8.1, its changelog and #1-#3. App 4842, MCP 85, server 480, lint, typecheck.
+
+## 2026-10-25 Markie 0.9.0 stable; mobile app and agent links merged; server deployed
+
+- **0.9.0:** reached the release gate with `mcp/doc-text.cjs` missing from the public asar. Fixed in PR #20, which also made `mac-launch-smoke` and Windows `launch-smoke` run on every PR and read `markie-crash.log`. Published to early access, then promoted to stable at Kirby's request, with the update checks passed.
+- **PR #31 merged** (6f0cfbd): the Capacitor mobile app in `apps/mobile`, remote agent tokens scoped to the documents they write, hosted MCP at `POST /mcp`, Darkmown cloud sync, and the richer agent guide. Contract: `docs/mobile/AGENT-LINKS-CONTRACT.md`.
+- **Server:** Fly `markie-api` release v5, after a better-sqlite3 snapshot at `/data/pre-deploy-2026-10-25.db`. 47 documents intact. AASA and assetlinks live on api.markiedocs.com and markiedocs.com (markie-site 184d1e7).
+- **Mobile stores:** iOS 0.1.0 (1) uploaded to App Store Connect as "Markie Docs" (team 3VU8SG5TD9), not yet in a TestFlight group. Android AAB built and signed with the upload key; Play upload waits on the Play Console account verification.
+
+## 2026-10-27 Markie 0.9.1 on early access (macOS and Windows)
+
+- PR #34 set 0.9.1 with release notes. Built from main 6451801, which also carries the server-only PRs #35 and #36.
+- `release:prepare:mac` passed: preflight, arm64 and x64 launch smoke, signing, notarization and stapling. Windows run 40500533436 signed by Azure; `release:prepare:win` verified CN=ZVN DEV LLC and every SHA-512.
+- `release:publish:early:mac` and `release:publish:early:win` published. `mac/beta-mac.yml` and `windows/beta.yml` report 0.9.1; the stable feeds stay on 0.9.0. Promotion is due 2026-10-30 unless held.
+- Kirby's Mac moved from `0.9.1-super-nightly.1` to the public 0.9.1 build (Gatekeeper accepted, launched).
+- Still open: TestFlight group and export compliance (needs Kirby in App Store Connect), Play internal testing (needs the Play account verified), the Play app-signing SHA-256 in `ANDROID_APP_CERT_SHA256`, and tag `v0.9.1` after promotion.

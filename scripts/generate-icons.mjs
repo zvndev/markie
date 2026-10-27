@@ -9,8 +9,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceIcns = path.join(root, "build", "icon.icns");
 const iconDir = path.join(root, "build", "icons");
 const icoPath = path.join(root, "build", "icon.ico");
-const pngSizes = [16, 32, 48, 64, 128, 256, 512, 1024];
-const icoSizes = [16, 32, 48, 256];
+// The brand pack's favicon drawing: the same underline with its contours
+// optically thickened, because the app icon's stroke fades out below ~32px.
+const microSvg = path.join(root, "build", "icon-micro.svg");
+const MICRO_MAX = 32;
+const pngSizes = [16, 24, 32, 48, 64, 128, 256, 512, 1024];
+const icoSizes = [16, 24, 32, 48, 64, 128, 256];
 
 function runSips(input, output) {
   const result = spawnSync("sips", ["-s", "format", "png", input, "--out", output], {
@@ -60,7 +64,10 @@ try {
 
   for (const size of pngSizes) {
     const output = path.join(iconDir, `${size}x${size}.png`);
-    await sharp(basePng).resize(size, size).png().toFile(output);
+    const source = size <= MICRO_MAX
+      ? sharp(readFileSync(microSvg), { density: Math.ceil((72 * size) / 64) * 4 })
+      : sharp(basePng);
+    await source.resize(size, size).png().toFile(output);
   }
 
   const icoEntries = icoSizes.map((size) => ({

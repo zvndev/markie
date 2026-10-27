@@ -326,3 +326,5 @@ Everything else lives in `.env`.
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in |
 | `MARKIE_STORAGE_QUOTA_BYTES` | Per-account quota in bytes. Unset means unlimited |
 | `MARKIE_WEB_ORIGINS` | Extra HTTPS origins allowed to make signed-in requests |
+| `MARKIE_CLIENT_IP_HEADER` or `CLIENT_IP_HEADER` | The header your proxy sets to the client's address, for example `cf-connecting-ip` behind Cloudflare. Only that header is read. Unset uses `x-forwarded-for`, which Caddy sets |
+| `ENABLE_CRONS` | `false` stops this server running its hourly cleanup of unused uploads. Unset runs it |

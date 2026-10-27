@@ -11,6 +11,7 @@ import { applicationOrigins } from "./application-origins.ts";
 import { accountContext, accountIdentitiesEnabled, assertNewAccountEmail } from "./account-context.ts";
 import { assertSignupAllowed } from "./signup.ts";
 import { revokeAgentTokensForUser } from "./agent-token-store.ts";
+import { clientIpHeader } from "./runtime-config.ts";
 
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
@@ -94,11 +95,12 @@ export const auth = betterAuth({
   // Which request header carries the real client address, so rate limits are
   // per client and not one shared bucket. Only a header the edge in front of
   // this server sets and overwrites may be named: Fly sets Fly-Client-IP, so
-  // the Fly deployment names it; anywhere else the default is better-auth's
-  // own x-forwarded-for, which a self-hosted proxy (deploy/Caddyfile) sets.
+  // the Fly deployment names it; behind Cloudflare it is cf-connecting-ip;
+  // anywhere else the default is better-auth's own x-forwarded-for, which a
+  // self-hosted proxy (deploy/Caddyfile) sets. See runtime-config.ts.
   advanced: {
     ipAddress: {
-      ipAddressHeaders: [process.env.MARKIE_CLIENT_IP_HEADER?.trim().toLowerCase() || "x-forwarded-for"],
+      ipAddressHeaders: [clientIpHeader()],
     },
   },
   rateLimit: {

@@ -17,11 +17,13 @@ import { agentDocsApi, restAgentAuth } from "./agent-docs.ts";
 import { mcpApi, mcpAuth } from "./mcp-server.ts";
 import { createWellKnown } from "./well-known.ts";
 import { createWebSignIn } from "./web-signin.ts";
-import { attachCollab } from "./collab.ts";
+import { attachCollab, closeAllRooms, terminateAllRooms } from "./collab.ts";
 import { desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
 import { applicationOrigins } from "./application-origins.ts";
 import { canonicalHostRedirect } from "./canonical-host.ts";
-import { openDatabase } from "./db.ts";
+import { closeAllDatabases, openDatabase } from "./db.ts";
+import { installGracefulStop } from "./graceful-stop.ts";
+import { cronsEnabled, releaseCommit } from "./runtime-config.ts";
 import { createDocumentPlatform } from "./document-platform.ts";
 import { createSqliteDocumentPlatformStore } from "./document-platform-store.ts";
 import type Database from "better-sqlite3";
@@ -175,8 +177,12 @@ const appCors = cors({
 const serverInfoCors = cors({ origin: "*", allowMethods: ["GET"], credentials: false });
 app.use("*", (c, next) => (c.req.path === SERVER_INFO_PATH ? serverInfoCors(c, next) : appCors(c, next)));
 
+// Health checks and load balancers poll this, so it does no work at all.
+// `commit` names the build when the deployment sets KAMAL_VERSION or GIT_SHA;
+// without either the answer is exactly what it always was.
+const RELEASE_COMMIT = releaseCommit();
 app.get("/health", (c) =>
-  c.json({ ok: true, service: "markie-api", version: "0.1.0" })
+  c.json({ ok: true, service: "markie-api", version: "0.1.0", ...(RELEASE_COMMIT ? { commit: RELEASE_COMMIT } : {}) })
 );
 
 // The handshake a desktop app makes before it adds this server. apiVersion is
@@ -450,7 +456,27 @@ if (process.env.MARKIE_NO_LISTEN !== "1") {
       })
       .catch((err) => console.error("orphan sweep failed:", err));
   };
-  setTimeout(runSweep, FIRST_SWEEP_MS).unref();
-  setInterval(runSweep, ORPHAN_SWEEP_MS).unref();
+  // ENABLE_CRONS=false runs a server that answers requests and runs no jobs.
+  // Unset, the sweep runs as it always has.
+  const sweeps = cronsEnabled()
+    ? [setTimeout(runSweep, FIRST_SWEEP_MS).unref(), setInterval(runSweep, ORPHAN_SWEEP_MS).unref()]
+    : [];
+  if (sweeps.length === 0) console.log("ENABLE_CRONS is off: the orphaned-asset sweep will not run here");
+  // SIGTERM (docker stop, Kamal) or SIGINT (Fly): stop taking requests and
+  // sockets, give requests in flight up to 3 s, then close every database
+  // handle and exit (graceful-stop.ts).
+  installGracefulStop({
+    name: "markie-api",
+    server,
+    stopAccepting: () => {
+      for (const timer of sweeps) clearTimeout(timer);
+      const sockets = closeAllRooms();
+      if (sockets > 0) console.log(`collab: asked ${sockets} socket${sockets === 1 ? "" : "s"} to reconnect later`);
+    },
+    force: terminateAllRooms,
+    release: () => {
+      closeAllDatabases();
+    },
+  });
   console.log(`markie-api listening on :${port}`);
 }

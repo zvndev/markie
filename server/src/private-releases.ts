@@ -5,6 +5,7 @@ import { constants } from "node:fs";
 import { link, lstat, mkdir, open, realpath, rename, unlink, type FileHandle } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { Readable } from "node:stream";
+import { releaseCommit } from "./runtime-config.ts";
 
 export const MAX_PRIVATE_RELEASE_BYTES = 512 * 1024 * 1024;
 const MAX_FEED_BYTES = 64 * 1024, MAX_AUTH_BYTES = 32 * 1024;
@@ -214,7 +215,9 @@ export function createPrivateReleaseGateway(options: Options = privateReleaseCon
   });
   app.notFound((c) => c.text("Not found", 404));
   app.onError((_error, c) => c.text("Not found", 404));
-  app.get("/health", (c) => c.json({ ok: true }));
+  // `commit` only when the deployment sets KAMAL_VERSION or GIT_SHA (runtime-config.ts).
+  const commit = releaseCommit();
+  app.get("/health", (c) => c.json({ ok: true, ...(commit ? { commit } : {}) }));
   app.get("/private-releases/access", async (c) => {
     if (!enabled || !await authorizedOwner(c.req.raw)) return c.notFound();
     return c.json({ channel: "super-nightly", authorized: true, userId: config.ownerId });

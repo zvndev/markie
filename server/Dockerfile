@@ -1,4 +1,6 @@
 FROM node:22-alpine
+# Kamal matches an image to its service by this label.
+LABEL service="markie-api"
 WORKDIR /app
 
 # Litestream (continuous SQLite backup to B2; no-op until B2_* env is set)

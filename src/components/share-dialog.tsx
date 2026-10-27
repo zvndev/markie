@@ -411,27 +411,35 @@ export function ShareDialog({
               )}
 
               {publicUrl && (
-                <div className="mt-2">
-                  <div className="flex items-center gap-2">
+                <div data-markie-public-link className="markie-public-link mt-3">
+                  <div className="markie-public-link-label">Public link</div>
+                  <div className="markie-public-link-box">
                     <input
                       readOnly
-                      value={publicUrl}
+                      value={displayUrl(publicUrl)}
                       onFocus={(e) => e.currentTarget.select()}
                       aria-label="Public link"
-                      className="markie-overlay-field flex-1 text-[12px] px-2 py-1.5 text-muted"
+                      title={publicUrl}
+                      className="markie-public-link-url"
                     />
                     <button
                       onClick={copyLink}
-                      className="markie-overlay-button text-[12px] px-3 py-1.5 rounded-md bg-accent text-foreground hover:opacity-90"
+                      data-copied={copied ? "true" : "false"}
+                      className="markie-overlay-button markie-public-link-copy"
                     >
+                      {copied ? <CheckIcon /> : <CopyIcon />}
                       {copied ? "Copied" : "Copy"}
                     </button>
+                  </div>
+                  <div className="markie-public-link-note">
+                    <ShieldIcon />
+                    Readers get a read-only copy. Nobody can edit your file through it.
                   </div>
                   {/* Reading a URL is not the same as looking at the page.
                       Seeing it is the only way to know what is exposed. */}
                   <button
                     onClick={viewPublicPage}
-                    className="markie-overlay-button text-[12px] mt-2 px-3 py-1.5 rounded-md border border-border text-muted hover:text-foreground"
+                    className="markie-overlay-button markie-public-link-view"
                   >
                     See what a stranger sees ↗
                   </button>
@@ -442,6 +450,29 @@ export function ShareDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+// The scheme is noise when reading a link aloud or at a glance. Copy still
+// copies the full URL.
+function displayUrl(url: string): string {
+  return url.replace(/^https?:\/\//, "");
+}
+
+function CopyIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+    </svg>
+  );
+}
+
+function ShieldIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
   );
 }
 

@@ -200,9 +200,7 @@ describe("ShareDialog", () => {
     await user.click(screen.getByRole("button", { name: "Publish it" }));
     expect(createPublicLink).toHaveBeenCalledWith("doc-1");
 
-    expect(await screen.findByLabelText("Public link")).toHaveValue(
-      "https://markie.app/s/tok"
-    );
+    expect(await screen.findByLabelText("Public link")).toHaveValue("markie.app/s/tok");
     expect(
       screen.getByText(
         "Anyone on the internet with the link can read this document, without signing in."

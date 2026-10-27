@@ -332,6 +332,93 @@ body {
     0 0 0 2px color-mix(in srgb, var(--blue) 52%, transparent);
 }
 
+/* The share dialog's public link, drawn as the website shows it: the URL is
+   the thing, so it reads as a link rather than as form input. */
+.markie-public-link-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+  margin-bottom: 0.5rem;
+}
+
+.markie-public-link-box {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.35rem 0.35rem 0.35rem 0.8rem;
+  background: color-mix(in srgb, var(--background) 82%, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.markie-public-link-box:focus-within {
+  border-color: color-mix(in srgb, var(--blue) 72%, var(--border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 40%, transparent);
+}
+
+.markie-public-link-url {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--blue);
+  text-overflow: ellipsis;
+}
+
+.markie-public-link-copy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.markie-public-link-copy:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--accent) 58%, transparent);
+}
+
+.markie-public-link-copy[data-copied="true"] {
+  color: var(--status-green);
+  background: transparent;
+}
+
+.markie-public-link-note {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.6rem;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.markie-public-link-note svg {
+  flex: none;
+  color: var(--status-green);
+}
+
+.markie-public-link-view {
+  margin-top: 0.6rem;
+  padding: 0.3rem 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.markie-public-link-view:hover {
+  color: var(--foreground);
+}
+
 .markie-command-input {
   background: transparent;
   border-width: 0 0 1px;

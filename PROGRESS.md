@@ -1550,3 +1550,12 @@ Still to do: new Google and email secrets; move the super-nightly gateway (still
 - `release:publish:early:mac` and `release:publish:early:win` published. `mac/beta-mac.yml` and `windows/beta.yml` report 0.9.1; the stable feeds stay on 0.9.0. Promotion is due 2026-10-30 unless held.
 - Kirby's Mac moved from `0.9.1-super-nightly.1` to the public 0.9.1 build (Gatekeeper accepted, launched).
 - Still open: TestFlight group and export compliance (needs Kirby in App Store Connect), Play internal testing (needs the Play account verified), the Play app-signing SHA-256 in `ANDROID_APP_CERT_SHA256`, and tag `v0.9.1` after promotion.
+
+## 2026-10-27 Markie 0.9.1 stable (macOS and Windows)
+
+- Kirby asked for stable the same day, so `release:promote -- --confirm-promote=0.9.1 --now` skipped the soak. It shipped the early build's exact bytes; `latest-mac.yml`, `latest.yml` and `latest.json` report 0.9.1.
+- `release:verify:public --deep` passed on both platforms.
+- Update from 0.9.0: Windows `windows-update-check.yml` run 40553536063 passed 12/12 with install and relaunch. Mac `update:check` passed 9/9.
+- The Mac check fails with `bad option: --remote-debugging-port` if the shell exports `ELECTRON_RUN_AS_NODE`. Run it under `env -u ELECTRON_RUN_AS_NODE`.
+- Tagged `v0.9.1` on 6451801, the release commit, and created the GitHub release.
+- Not verified: the hand-run Mac Restart & Update relaunch.

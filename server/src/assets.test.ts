@@ -345,10 +345,10 @@ test("an in-flight upload's declared bytes count against the account cap", async
   );
   const { real, store, state, open } = blockingStore();
   setAssetStoreForTests(store);
-  const declared = 100 * 1024 * 1024;
+  const declared = MAX_ASSET_BYTES;
   const a = Buffer.from("in-flight-a");
   try {
-    // Declares 100 MB and sends a handful of bytes: the reservation has to
+    // Declares the per-file cap and sends a handful of bytes: the reservation has to
     // work off what the client claims, before the body is read.
     const first = upload(stranger.token, a, sha(a), "image/png", declared);
     await waitFor(() => state.puts === 1, "the first upload to reach the store");

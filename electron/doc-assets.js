@@ -7,7 +7,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const localAssets = require("./local-assets");
 
-const MAX_ASSET_BYTES = 100 * 1024 * 1024;
+// The server's per-file cap (server/src/assets.ts MAX_ASSET_BYTES): 95 MB,
+// under Cloudflare's 100 MB request body limit. A file above it stays local.
+const MAX_ASSET_BYTES = 95_000_000;
 
 // Above this a document is not read for references at all. The renderer
 // already opens a file at 1 MB in Source view only and refuses one at 100 MB

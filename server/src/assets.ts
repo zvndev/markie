@@ -17,7 +17,12 @@ import { assetMimeFor, ASSET_EXTENSIONS } from "./asset-mime.ts";
 import { assetStore, type AssetStore } from "./storage.ts";
 import { quotaRefusal, type QuotaRefusal } from "./quota.ts";
 
-export const MAX_ASSET_BYTES = 100 * 1024 * 1024;
+// One file. Cloudflare, in front of the API on ZVN's own boxes (ENG-7400),
+// refuses any request body over 100 MB (decimal) with its own 413, before it
+// reaches us. 95 MB keeps every upload this server accepts under that, with
+// room to spare. electron/doc-assets.js uses the same number, so the desktop
+// keeps a larger file local instead of sending it to be refused.
+export const MAX_ASSET_BYTES = 95_000_000;
 export const MAX_DOC_ASSET_BYTES = 500 * 1024 * 1024;
 export const MAX_ACCOUNT_ASSET_BYTES = 5 * 1024 * 1024 * 1024;
 export const MAX_CONCURRENT_UPLOADS = 4;

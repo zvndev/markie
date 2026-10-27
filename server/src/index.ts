@@ -17,6 +17,7 @@ import { agentDocsApi, restAgentAuth } from "./agent-docs.ts";
 import { mcpApi, mcpAuth } from "./mcp-server.ts";
 import { createWellKnown } from "./well-known.ts";
 import { createWebSignIn } from "./web-signin.ts";
+import { BRAND_HEAD, brandAssets, brandLogoSvg } from "./brand.ts";
 import { attachCollab, closeAllRooms, terminateAllRooms } from "./collab.ts";
 import { desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
 import { applicationOrigins } from "./application-origins.ts";
@@ -328,13 +329,14 @@ app.get("/auth/desktop-bridge", async (c) => {
   const token = result?.session?.token;
   const page = (heading: string, sub: string, link?: string) =>
     c.html(
-      `<!doctype html><html><head><meta charset="utf-8"><title>Markie</title></head>
-<body style="font-family:system-ui,-apple-system,sans-serif;background:#0c0c10;color:#fafafa;display:grid;place-items:center;height:100vh;margin:0">
+      `<!doctype html><html><head><meta charset="utf-8"><title>Markie</title>
+${BRAND_HEAD}</head>
+<body style="font-family:system-ui,-apple-system,sans-serif;background:#171719;color:#fafafa;display:grid;place-items:center;height:100vh;margin:0">
 <div style="text-align:center;max-width:340px">
-<div style="font-size:34px;font-weight:700;color:#f59e0b;margin-bottom:8px">M</div>
+<div style="color:#ffffff;margin-bottom:12px">${brandLogoSvg(132)}</div>
 <h2 style="font-size:17px;margin:0 0 6px">${heading}</h2>
 <p style="color:#a1a1aa;font-size:13px;margin:0 0 16px">${sub}</p>
-${link ? `<a href="${link}" style="color:#fbbf24;font-size:13px;text-decoration:none">Open Markie →</a>` : ""}
+${link ? `<a href="${link}" style="color:#ffffff;font-size:13px;text-decoration:underline;text-decoration-color:#EC4431;text-decoration-thickness:2px;text-underline-offset:4px">Open Markie →</a>` : ""}
 </div>
 ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},400)</script>` : ""}
 </body></html>`,
@@ -388,6 +390,8 @@ app.route("/api/docs", comments);
 app.route("/api", themes);
 app.route("/api", assetsApi);
 app.route("/api", docLinksApi);
+// Favicons and the email logo (brand.ts), ahead of the page routes.
+app.route("/", brandAssets());
 app.route("/", docView);
 app.route("/", publicShare);
 // Remote agents (docs/mobile/AGENT-LINKS-CONTRACT.md): tokens are managed with

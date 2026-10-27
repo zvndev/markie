@@ -19,6 +19,7 @@
 import { Hono } from "hono";
 import { auth } from "./auth.ts";
 import { reportRouteFault } from "./little-friend.ts";
+import { BRAND_HEAD, brandLogoSvg } from "./brand.ts";
 
 const NEXT = /^\/d\/[A-Za-z0-9_-]{1,128}$/;
 
@@ -42,19 +43,20 @@ export function renderWebSignInPage({ next, google, failed }: { next: string; go
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
   <title>Sign in · Markie</title>
+  ${BRAND_HEAD}
   <style>
-    :root { color-scheme: light dark; --bg:#fbfaf7; --fg:#1c1917; --muted:#6f665d; --line:#e7ded0; --accent:#f59e0b; --field:#fff; }
-    @media (prefers-color-scheme: dark) { :root { --bg:#0a0a0c; --fg:#e4e4e7; --muted:#a1a1aa; --line:#27272a; --field:#131316; } }
+    :root { color-scheme: light dark; --bg:#F6F4EF; --fg:#2C2C2C; --muted:#6f665d; --line:#e7ded0; --logo-ink:#2C2C2C; --accent:#2C2C2C; --accent-text:#fff; --field:#fff; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#171719; --fg:#e4e4e7; --muted:#a1a1aa; --line:#2e2e33; --logo-ink:#fff; --accent:#fff; --accent-text:#171719; --field:#1f1f22; } }
     * { box-sizing: border-box; }
     body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--fg);
       font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; padding:24px; }
     main { width:100%; max-width:340px; text-align:center; }
-    .m { font-size:40px; font-weight:800; color:var(--accent); }
+    .m { color:var(--logo-ink); line-height:0; margin-bottom:8px; }
     h1 { font-size:20px; margin:4px 0 6px; }
     p { color:var(--muted); font-size:14px; margin:0 0 18px; }
     a.btn, button { display:block; width:100%; padding:11px 14px; border-radius:10px; font:600 15px system-ui,sans-serif;
       border:1px solid var(--line); background:var(--field); color:var(--fg); text-decoration:none; cursor:pointer; }
-    a.btn.primary, button.primary { background:var(--accent); color:#111; border-color:var(--accent); }
+    a.btn.primary, button.primary { background:var(--accent); color:var(--accent-text); border-color:var(--accent); }
     input { width:100%; padding:11px 12px; border-radius:10px; border:1px solid var(--line); background:var(--field); color:var(--fg); font-size:16px; margin-bottom:10px; }
     .or { margin:16px 0; font-size:12px; color:var(--muted); }
     .err { color:#dc2626; font-size:13px; min-height:18px; margin-top:10px; }
@@ -62,7 +64,7 @@ export function renderWebSignInPage({ next, google, failed }: { next: string; go
   </style>
 </head><body>
   <main>
-    <div class="m">M</div>
+    <div class="m">${brandLogoSvg(160)}</div>
     <h1>Sign in to Markie</h1>
     <p>Use the account this document belongs to.</p>
     ${google ? `<a class="btn primary" href="${esc(googleHref)}">Continue with Google</a><div class="or">or get a code by email</div>` : ""}

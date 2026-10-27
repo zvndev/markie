@@ -10,6 +10,7 @@ import {
 } from "@/lib/color-mode";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 import { RICH_DOCUMENT_OUTPUT_HELP } from "@/lib/document-output-policy";
+import { MarkieSymbol } from "@/components/markie-logo";
 
 interface ToolbarProps {
   documentMode?: boolean;
@@ -120,6 +121,7 @@ export function Toolbar({
             <circle cx="2" cy="7" r="1" /><circle cx="7" cy="7" r="1" />
             <circle cx="2" cy="12" r="1" /><circle cx="7" cy="12" r="1" />
           </svg>
+          <MarkieSymbol width={20} className="hidden sm:block ml-0.5 mt-1.5" />
           <span className="hidden sm:inline text-[13px] font-semibold tracking-tight">Markie</span>
         </div>
         <div className="w-px h-4 bg-border" />

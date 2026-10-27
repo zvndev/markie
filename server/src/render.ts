@@ -23,6 +23,7 @@ import {
   type DownloadPlatform,
 } from "./downloads.ts";
 import { deployment } from "./deployment.ts";
+import { BRAND_HEAD, brandLogoSvg } from "./brand.ts";
 
 // Where "Get Markie" and "Markie home" point. The official deployment serves
 // its own download routes, so it keeps the site it was handed; a self-hosted
@@ -158,29 +159,33 @@ const HEAD_CSS = `
 const PAGE_CSS = `
   :root {
     color-scheme: light dark;
-    --page-bg: #fbfaf7;
+    /* Brand (brand.ts): paper and ink, the red reserved for the underline. */
+    --brand-red: #EC4431;
+    --logo-ink: #2C2C2C;
+    --page-bg: #F6F4EF;
     --surface: rgba(255, 255, 255, 0.86);
     --surface-strong: #ffffff;
-    --text: #1c1917;
+    --text: #2C2C2C;
     --muted: #6f665d;
     --line: #e7ded0;
-    --accent: #b45309;
-    --accent-strong: #f59e0b;
-    --accent-text: #111111;
-    --code-bg: #f3eee7;
+    --accent: #2C2C2C;
+    --accent-strong: #2C2C2C;
+    --accent-text: #ffffff;
+    --code-bg: #eeeae2;
     --shadow: 0 18px 45px rgba(28, 25, 23, 0.10);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --page-bg: #0a0a0c;
-      --surface: rgba(19, 19, 22, 0.84);
-      --surface-strong: #131316;
+      --logo-ink: #ffffff;
+      --page-bg: #171719;
+      --surface: rgba(23, 23, 25, 0.84);
+      --surface-strong: #1f1f22;
       --text: #e4e4e7;
       --muted: #a1a1aa;
-      --line: #27272a;
-      --accent: #fbbf24;
-      --accent-strong: #f59e0b;
-      --accent-text: #000000;
+      --line: #2e2e33;
+      --accent: #ffffff;
+      --accent-strong: #ffffff;
+      --accent-text: #171719;
       --code-bg: #1f1f23;
       --shadow: 0 18px 45px rgba(0, 0, 0, 0.35);
     }
@@ -191,7 +196,9 @@ const PAGE_CSS = `
   .bar { position: sticky; top: 0; display: flex; align-items: center; gap: 12px;
     padding: 12px 20px; background: var(--surface); backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--line); }
-  .bar .brand { font-weight: 800; color: var(--accent-strong); font-size: 18px; }
+  .bar .brand { display: flex; color: var(--logo-ink); line-height: 0; margin: -6px 0; }
+  .hero-logo { color: var(--logo-ink); line-height: 0; margin-bottom: 4px; }
+  .brand-logo { display: inline-block; }
   .bar .title { font-size: 14px; color: var(--muted); flex: 1;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .btn { text-decoration: none; font-size: 13px; font-weight: 600;
@@ -206,7 +213,8 @@ const PAGE_CSS = `
   main code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   main :not(pre) > code { background: var(--code-bg); padding: 1px 5px; border-radius: 5px;
     font-size: 0.9em; }
-  main a { color: var(--accent); }
+  main a, .cta a { color: var(--accent); text-decoration-color: var(--brand-red);
+    text-decoration-thickness: 2px; text-underline-offset: 3px; }
   main .darkmown-note { color: var(--muted); font-size: 14px; border: 1px solid var(--line);
     border-radius: 8px; padding: 10px 14px; background: var(--surface-strong); }
   main pre.darkmown-source { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -265,10 +273,11 @@ export function renderPublicPage(opts: {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src * data: https:; media-src * data: https:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; base-uri 'none'; form-action 'none'">
   <title>${safeTitle} · Markie</title>
   ${HEAD_CSS}
+  ${BRAND_HEAD}
   <style>${PAGE_CSS}</style>
 </head><body>
   <div class="bar">
-    <span class="brand">M</span>
+    <span class="brand">${brandLogoSvg(120)}</span>
     <span class="title">${safeTitle}</span>
     <a class="btn primary" href="${esc(`markie://open?token=${encodeURIComponent(token)}&src=${encodeURIComponent(siteUrl)}`)}">Open in Markie</a>
     <a class="btn ghost" href="${esc(download.href)}">${esc(download.label)}</a>
@@ -319,13 +328,14 @@ export function renderDownloadPage(opts: {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; base-uri 'none'; form-action 'none'">
   <title>${esc(headline)} · Markie</title>
   ${HEAD_CSS}
+  ${BRAND_HEAD}
   <style>${PAGE_CSS}</style>
 </head><body>
   <div class="bar">
-    <span class="brand">M</span>
+    <span class="brand">${brandLogoSvg(120)}</span>
     <span class="title">Markie downloads</span>
     <a class="btn primary" href="${esc(primary.href)}">${esc(primary.label)}</a>
     <a class="btn ghost" href="${esc(siteUrl)}">Markie home</a>
@@ -363,10 +373,11 @@ export function renderNotFoundPage(siteUrl: string): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Link expired · Markie</title>
+  ${BRAND_HEAD}
   <style>${PAGE_CSS}</style>
 </head><body>
   <main style="text-align:center;padding-top:80px">
-    <div style="font-size:40px;font-weight:800;color:var(--accent-strong)">M</div>
+    <div class="hero-logo">${brandLogoSvg(160)}</div>
     <h1>This link is no longer available</h1>
     <p style="color:var(--muted)">The doc was unshared, or the link expired.</p>
     <p><a class="btn primary" href="${esc(download.href)}">${esc(download.label)}</a></p>
@@ -433,10 +444,11 @@ export function renderSharedDocPage(opts: {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src * data: https:; media-src * data: https:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; base-uri 'none'; form-action 'none'">
   <title>${safeTitle} · Markie</title>
   ${HEAD_CSS}
+  ${BRAND_HEAD}
   <style>${PAGE_CSS}</style>
 </head><body>
   <div class="bar">
-    <span class="brand">M</span>
+    <span class="brand">${brandLogoSvg(120)}</span>
     <span class="title">${safeTitle}</span>
     <a class="btn primary" href="${esc(openInMarkie)}">Open in Markie</a>
     <a class="btn ghost" href="${esc(download.href)}">${esc(download.label)}</a>
@@ -472,10 +484,11 @@ export function renderAccessRequiredPage(siteUrl: string, signInHref: string | n
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
   <title>Sign in to read this · Markie</title>
+  ${BRAND_HEAD}
   <style>${PAGE_CSS}</style>
 </head><body>
   <main style="text-align:center;padding-top:80px">
-    <div style="font-size:40px;font-weight:800;color:var(--accent-strong)">M</div>
+    <div class="hero-logo">${brandLogoSvg(160)}</div>
     <h1>You need access to this document</h1>
     <p style="color:var(--muted)">Markie documents are never public. ${signInHref ? "Sign in with the account it belongs to, or open the link from your invite email." : "Open the link from your invite email, or open the document in Markie with the account it was shared with."}</p>
     ${signInHref ? `<p><a class="btn primary" href="${esc(signInHref)}">Sign in</a></p>` : ""}

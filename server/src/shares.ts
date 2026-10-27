@@ -11,6 +11,7 @@ import {
 } from "./public-links.ts";
 import { primaryDownloadCta } from "./downloads.ts";
 import { deployment } from "./deployment.ts";
+import { brandEmailLogoUrl } from "./brand.ts";
 import { disconnectUser } from "./collab.ts";
 import { newLinkToken } from "./link-token.ts";
 import { createInviteLimiter, plainEmailText } from "./invite-guard.ts";
@@ -34,6 +35,10 @@ const escapeHtml = (s: string) =>
   s.replace(/[&<>"]/g, (ch) =>
     ch === "&" ? "&amp;" : ch === "<" ? "&lt;" : ch === ">" ? "&gt;" : "&quot;"
   );
+
+// The logo in an invite email: a PNG on this server (brand.ts), since mail
+// clients draw no inline SVG. Its alt text stands in when images are off.
+const EMAIL_LOGO = `<img src="${escapeHtml(brandEmailLogoUrl(deployment().origin))}" width="120" height="52" alt="Markie" style="display:block;border:0;outline:none;text-decoration:none">`;
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS shares (
@@ -427,15 +432,15 @@ function inviteHtml(
   rawUrl: string
 ): string {
   const download = primaryDownloadCta(DOWNLOAD_SITE);
-  return `<div style="font-family:system-ui,-apple-system,sans-serif;max-width:460px;margin:0 auto;color:#18181b">
-  <div style="font-size:32px;font-weight:800;color:#f59e0b">M</div>
+  return `<div style="font-family:system-ui,-apple-system,sans-serif;max-width:460px;margin:0 auto;color:#2C2C2C">
+  ${EMAIL_LOGO}
   <h2 style="font-size:19px;margin:8px 0 4px">${escapeHtml(inviter)} tossed you a doc 📄</h2>
   <p style="font-size:14px;line-height:1.5;color:#3f3f46">They shared <strong>${escapeHtml(docName)}</strong> with you on Markie.</p>
   <p style="font-size:14px;line-height:1.5;color:#3f3f46">No account needed to read it. It's right here, rendered nicely:</p>
   <p style="margin:20px 0">
-    <a href="${escapeHtml(previewUrl)}" style="background:#f59e0b;color:#000;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;display:inline-block">Open it →</a>
+    <a href="${escapeHtml(previewUrl)}" style="background:#2C2C2C;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;display:inline-block">Open it →</a>
   </p>
-  <p style="font-size:13px;line-height:1.7;color:#3f3f46">Or get the app: <a href="${escapeHtml(download.href)}" style="color:#b45309;font-weight:600">${escapeHtml(download.label)}</a> · <a href="${escapeHtml(rawUrl)}" style="color:#b45309">Download the .md</a></p>
+  <p style="font-size:13px;line-height:1.7;color:#3f3f46">Or get the app: <a href="${escapeHtml(download.href)}" style="color:#2C2C2C;font-weight:600;text-decoration-color:#EC4431">${escapeHtml(download.label)}</a> · <a href="${escapeHtml(rawUrl)}" style="color:#2C2C2C;text-decoration-color:#EC4431">Download the .md</a></p>
   <p style="font-size:13px;color:#3f3f46">Make an account with this email to keep <strong>${escapeHtml(docName)}</strong> in your Library, and your markdown will thank you.</p>
   <p style="font-size:12px;line-height:1.6;color:#71717a">This link was sent to you alone and opens nothing else. Please don't forward it.</p>
 </div>`;
@@ -448,13 +453,13 @@ function addedHtml(
   webUrl: string,
   appUrl: string
 ): string {
-  return `<div style="font-family:system-ui,-apple-system,sans-serif;max-width:460px;margin:0 auto;color:#18181b">
-  <div style="font-size:32px;font-weight:800;color:#f59e0b">M</div>
+  return `<div style="font-family:system-ui,-apple-system,sans-serif;max-width:460px;margin:0 auto;color:#2C2C2C">
+  ${EMAIL_LOGO}
   <h2 style="font-size:19px;margin:8px 0 4px">${escapeHtml(inviter)} shared ${escapeHtml(docName)} with you</h2>
   <p style="font-size:14px;line-height:1.5;color:#3f3f46">You have ${role === "editor" ? "<strong>edit</strong> access, so you can work on it together, live." : "<strong>view</strong> access."}</p>
   <p style="margin:20px 0">
-    <a href="${escapeHtml(webUrl)}" style="background:#f59e0b;color:#000;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;display:inline-block">Read it →</a>
-    <a href="${escapeHtml(appUrl)}" style="color:#b45309;font-weight:600;font-size:14px;padding:10px 14px;display:inline-block">Open in Markie</a>
+    <a href="${escapeHtml(webUrl)}" style="background:#2C2C2C;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;display:inline-block">Read it →</a>
+    <a href="${escapeHtml(appUrl)}" style="color:#2C2C2C;font-weight:600;font-size:14px;padding:10px 14px;display:inline-block;text-decoration-color:#EC4431">Open in Markie</a>
   </p>
   <p style="font-size:12px;line-height:1.6;color:#71717a">This link is yours alone. It only opens ${escapeHtml(docName)}, and it stops working if your access is removed.</p>
 </div>`;

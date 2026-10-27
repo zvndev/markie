@@ -14,6 +14,7 @@ import { authClient, authFailureCode } from "@/lib/auth-client";
 import { authStore } from "@/lib/auth-store";
 import { authErrorMessage, signInReasonCopy, signupRefusal, type AuthContext, type SignInReason } from "@/lib/auth-errors";
 import { getElectronAPI } from "@/lib/electron";
+import { MarkieLogo } from "@/components/markie-logo";
 
 type View = "choose" | "otp-code" | "password" | "reset-request" | "reset-verify";
 
@@ -407,7 +408,8 @@ export function SignInDialog({ reason, onClose, onDone }: SignInDialogProps) {
         aria-modal="true"
         aria-label="Sign in to Markie"
       >
-        <div className="flex justify-end -mt-1 -mr-1">
+        <div className="flex items-start justify-between -mt-1 -mr-1 mb-3">
+          <MarkieLogo width={120} className="text-foreground" title={null} />
           <button className="markie-overlay-close" onClick={onClose} aria-label="Close">
             ×
           </button>

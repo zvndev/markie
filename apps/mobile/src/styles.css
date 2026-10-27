@@ -878,7 +878,14 @@ input {
 .m-mark {
   display: inline-block;
   overflow: hidden;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.22), 0 0 0 0.5px rgb(255 255 255 / 0.06) inset;
+  /* The app icon's tile: white, or brand dark in the dark theme. */
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12), 0 0 0 0.5px rgb(0 0 0 / 0.08) inset;
+}
+
+:root:not([data-theme-tone="light"]) .m-mark {
+  background: #171719;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.22), 0 0 0 0.5px rgb(255 255 255 / 0.08) inset;
 }
 
 .m-mark svg {

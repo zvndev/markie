@@ -2,7 +2,7 @@
 
 [Back to the test guide](README.md) · [Connected documents](connected-documents.md)
 
-This feature is implemented in the source preview but is **off on the existing cloud service**. Updating the renderer alone does not enable it. It has not replaced the installed Super-nightly app. Use a disposable local database and synthetic files for acceptance testing; do not migrate a production database just to try these checks.
+This feature is controlled by `MARKIE_ACCOUNT_IDENTITIES` on the server. Updating the app alone does not enable it. Use a disposable local database and synthetic files for acceptance testing; do not migrate a production database just to try these checks.
 
 ## Enable a local test server
 

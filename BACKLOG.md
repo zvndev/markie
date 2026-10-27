@@ -1,7 +1,7 @@
 # Backlog — Markie
 
-> Durable, prioritized queue beyond the feature ledger. Highest severity at top. Close items with
-> evidence; do not delete history. Move completed items to Done with the verification record.
+> Open work is tracked in Circular (gocircular.dev). This file is a scratch list of scoped items
+> waiting to be filed or decided. Remove an item when it is done; git history keeps the record.
 
 ## Open
 - [ ] Every `/api/*` POST and PUT outside the agent routes reads an unauthenticated chunked body
@@ -121,157 +121,14 @@
       severity: medium
       rationale: The upcoming terminal plan has a strong direction, but command/tool names are a
         public local API and are listed as a human checkpoint.
-      acceptance_criteria: A human-approved ADR records the initial command/tool surface and the
-        first implementable slice is split into `feature_list.json`.
+      acceptance_criteria: A human-approved decision record in `docs/decisions/` sets the initial
+        command/tool surface, and the first implementable slice is filed in Circular.
       source: long-agent-loop initializer 2026-06-28
-
-## Done
-- [x] A self-hosted server let anyone who could reach it create an account. MARKIE_SIGNUP
-      now decides: open (Markie Cloud's default, unchanged), invite (the self-hosted
-      default: the admin, addresses with a pending invite, and an admin allowlist) or
-      closed. Enforced in better-auth's user-create hook, so email sign-up, a first
-      email-code sign-in and a first Google sign-in are all covered; refusals answer
-      403 `signup_invite_required` / `signup_closed`.
-      type: security
-      severity: medium
-      evidence: server/src/invite-signup.test.ts (first account is admin, invited guest
-        signs up and finds the document, stranger refused by email, by email code and by a
-        real Google callback, allowlist admin-only), signup.test.ts, official-boot.test.ts
-        (Markie Cloud stays open and has no admin routes).
-      closed: 2026-10-20
-- [x] Confirm the Windows update path from a previous public version. Done on a GitHub
-      Windows runner, which is real Windows, rather than by hand: `windows-update-check.yml`
-      runs the same `scripts/update-flow-check.mjs` as macOS. Run 33843439589 on 0.5.3:
-      12/12, including a public 0.5.2 finding 0.5.3 on its own, Authenticode Valid for
-      `CN=ZVN DEV LLC`, Restart & update replacing the executable on disk, and the app
-      relaunching as 0.5.3. Two earlier runs each passed 11/12 with the swap itself fine;
-      the single failure each time was in the check (PowerShell quoting, then
-      powershell.exe under a pwsh step), both fixed and both recorded in memory.
-      closed: 2026-09-04
-<!-- moved here with closing evidence -->
-
-- [x] Surface owner comment-moderation in the UI (delete anybody's comment).
-      type: product
+- [ ] Private builds do not ship the MCP server. `createPrivateBuilderConfig`
+      (scripts/private-release.mjs) sets `extraResources: []`, so `Contents/Resources/mcp/` is
+      missing from super-nightlies and the Agents dialog shows a path that does not exist. Ship
+      `mcp/` in private builds (the bundle scan must allow it), or point the dialog at the repo
+      copy in private builds.
+      type: release
       severity: low
-      evidence: 2026-08-24 — threaded a `canModerate` prop from `page.tsx`
-        (`canModerate={roleState === "owner"}`) through `rich-view.tsx` into `CommentLayer`.
-        The delete gate at `comments.tsx` now shows Delete on any comment when the viewer
-        owns the document, matching the server's existing owner-delete right. Test:
-        "lets the document owner delete anyone's comment" (comments.test.tsx), plus the
-        existing own-comment-only test still holds when `canModerate` is false.
-- [x] Component tests for the page print/export handlers, plus the schemaVersion mismatch path.
-      type: test
-      severity: low
-      evidence: 2026-08-24 — added `src/app/page.export.test.tsx` (8 tests) covering
-        menu-export-pdf argument shape, the dark theme default, the in-flight guard refusing a
-        second export then freeing up, cancelled-sheet-vs-error handling for both export and
-        print, menu-export-html, and menu-print routing through `mode: "print"`. Extracted a
-        pure `shouldWarnSchema(version, alreadyWarned)` helper in `collab.ts` (used by the
-        rich-view meta observer) and covered the warn-once notice path in `collab.test.ts`.
-- [x] Document and enforce the 3-step radius scale and audit remaining one-offs.
-      type: design
-      severity: low
-      evidence: 2026-08-24 — `docs/design/radius-scale.md` records the 6/8/12px scale (cards
-        `rounded-md`, popovers `rounded-lg`, modals `rounded-xl`). Audit found two one-offs,
-        both fixed: `terminal-panel.tsx` dropdown menu (`rounded-md` → `rounded-lg`, it is a
-        popover) and `update-toast.tsx` (`rounded-xl` → `rounded-lg`, it is a popover, not a
-        modal).
-- [x] Update the light-mode visual audit's injected settings mock to the sectioned Settings modal.
-      type: infra
-      severity: low
-      evidence: 2026-08-24 — `scripts/light-mode-visual-audit.mjs` settings mock rewritten to the
-        tabbed Account/Appearance/Advanced layout so its contrast samples track the real surface.
-- [x] Bump GitHub Actions to non-deprecated majors in windows-launch-smoke.yml.
-      type: infra
-      severity: low
-      evidence: 2026-08-24 — `checkout`, `setup-node`, and `upload-artifact` bumped to v5 in
-        `windows-launch-smoke.yml` (and `ci.yml`); the release preflight's required-snippet
-        assertion was updated to `actions/upload-artifact@v5` to match.
-
-- [x] Stop the e2e window-check scripts from killing Finder (second incident).
-      type: infra
-      severity: high
-      evidence: 2026-08-24 — root-caused to `process.kill(-child.pid)` group kills on
-        `detached: true` Electron launches; on macOS the app re-launches via LaunchServices
-        and the recycled launcher pid's group hit session services (uiagent, cli-llm-bridge),
-        taking Finder down. Added `scripts/lib/safe-kill.mjs` (direct-child kill only) and
-        converted crash-check, desktop-launch-smoke, onboarding-check, disk-change-check,
-        ui-check; removed `detached`. Added `scripts/lib/e2e-consent.mjs` — every
-        window-launching check refuses to boot without `MARKIE_ALLOW_E2E=1` (import-safe,
-        CI sets it). The three ported checks now isolate `$HOME` to a temp dir. Verified:
-        the gate exits 2 on direct run, safeKill never issues a negative-pid kill, importing
-        a guarded script does not exit, full suites green.
-
-- [x] Seed a collab room safely when the backing doc has content (was: seed from
-      `docs.content` server-side).
-      type: sync
-      severity: medium
-      evidence: 2026-08-24 sprint shipped a server-side seed lock instead of server-side
-        seeding: `server/src/collab.ts` elects the first editor connection as the sole seeder
-        of an empty room backed by a non-empty doc and drops other editors' updates until the
-        first update persists, with hand-off on disconnect. Client (`rich-view.tsx`) waits for
-        the first sync plus 150 ms and re-checks the fragment before seeding, and writes
-        `schemaVersion` into the ydoc meta map. Server tests cover two-editor race, seeder
-        hand-off, viewer never seeds, non-empty room unaffected. Note: an incompatible schema
-        logs a console warning rather than refusing to bind (softened from the original
-        acceptance criteria); the dropped-update force-resync follow-up is a new Open item.
-- [x] Inline local images in PDF/HTML export and route ⌘P through the PDF pipeline.
-      type: export
-      severity: medium
-      evidence: 2026-08-24 sprint added `electron/inline-images.js` (data-URI rewrite, docDir
-        containment incl. symlink/`..` escapes, 10 MB per image / 30 MB total, 23 tests) wired
-        into `export-pdf.js` and the `export-html` handler; `export-pdf.js` gained
-        `mode: "print"` (hidden window, readiness wait, `webContents.print()` with the system
-        dialog, cancel on dismiss, same busy guard); `page.tsx` handlePrint routes ⌘P through
-        it with `window.print()` as the non-Electron fallback. 28 export-pdf tests pass.
-- [x] Component tests for the files edited in the 2026-08-23 sprint.
-      type: test
-      severity: medium
-      evidence: 2026-08-24 sprint added conflict-dialog, shared-view, library (all 8 item
-        states plus exists:false), browse-view truncated notice, and page save / conflict /
-        menu / shortcuts / drop test files (87 new tests; vitest 1025 across 86 files).
-        page print/export handler tests were deliberately skipped because Track 3 was editing
-        those handlers; new Open item tracks them.
-
-- [x] Replace packaged CSP inline-script allowance.
-      type: security
-      severity: low
-      rationale: Packaged Electron CSP included `script-src 'self' 'unsafe-inline'`, reducing CSP
-        value if a renderer XSS path is introduced later.
-      acceptance_criteria: Inline bootstrap requirements are replaced with hashes/nonces where
-        practical, or the exact required inline script is documented and constrained with a hash.
-      source: product-review security pass 2026-07-03
-      evidence: 2026-07-05 pass added `electron/csp.js` and `electron/csp.test.ts`; packaged app
-        CSP now hashes the exact inline Next static-export bootstrap scripts from built `out/*.html`
-        files and emits `script-src 'self' <sha256...>` without broad script `unsafe-inline`.
-        `npm test -- electron/csp.test.ts electron/release-preflight.test.ts` passed, and
-        `release:preflight` requires the CSP helper/main-process wiring.
-- [x] Harden privileged Electron file IPC with main-owned file grants.
-      type: security
-      severity: medium
-      rationale: `open-file-path`, `save-file`, and `rename-file` trusted renderer-supplied paths.
-        A compromised renderer could read/write/rename arbitrary local files unless main owned a
-        grant list from dialogs, dropped files, and workspace roots.
-      acceptance_criteria: Main process validates open/save/rename paths against user-granted
-        paths or workspace roots, rejects unsafe names/extensions, and focused regressions prove
-        ungranted paths are refused.
-      source: product-review security pass 2026-07-03
-      evidence: 2026-07-04 pass added `electron/file-grants.js` and
-        `electron/file-grants.test.ts`; `npm test -- electron/file-grants.test.ts` passed 7 grant
-        tests; `npm test` passed 15 files / 94 tests; `./init.sh` passed renderer/Electron tests,
-        MCP tests, server tests, lint, and build; `npm run visual:guard:theme` passed with zero
-        findings and wrote `.autoloop/runs/light-mode-audit-20260704165637/audit.json`.
-- [x] Add a release/deploy smoke checklist that can run without production credentials.
-      type: dx
-      severity: medium
-      rationale: Existing release and cloud deployment steps are credential-gated; the unattended
-        loop needs a safe preflight that stops before publishing.
-      acceptance_criteria: A documented command verifies packaging prerequisites and server config
-        shape without signing, notarizing, uploading, or touching production.
-      source: long-agent-loop initializer 2026-06-28
-      evidence: `npm run release:preflight > .autoloop/runs/release-preflight-20260628-035123.log 2>&1`
-        passed and stopped before any signing, notarization, upload, publish, deploy, or
-        credentialed network action; `./init.sh > .autoloop/runs/init-20260628-035139-post-f003.log 2>&1`
-        passed.
-
-- **Private builds do not ship the MCP server.** `createPrivateBuilderConfig` sets `extraResources: []`, so `Contents/Resources/mcp/` is missing from super-nightlies and the Agents dialog shows a path that does not exist. Ship `mcp/` in private builds (the bundle scan must allow it), or point the dialog at the repo copy in private builds. Found 2026-10-21 while testing agent cloud links.
+      source: agent cloud links testing 2026-10-21

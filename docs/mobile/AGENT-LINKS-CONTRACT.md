@@ -17,7 +17,7 @@ renders, and Darkmown (`.wd`) for documents that benefit from live state.
 
 1. **Mobile stack: Capacitor (TypeScript) for iOS and Android.** It renders documents with the
    desktop's own React renderer, Darkmown compiler and runtime, so a document looks the same on
-   every device. This supersedes the fully native proposal in `docs/mobile/MOBILE-PLAN.md` §10.1.
+   every device. This supersedes an earlier proposal for two fully native codebases.
    The app lives in `apps/mobile` with its own `package.json`, outside the root `npm test`, lint,
    tsconfig and electron-builder globs.
 2. **App identity:** bundle ID and Android package `com.zvn.markie.mobile`. Display name "Markie".

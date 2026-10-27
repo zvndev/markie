@@ -16,33 +16,21 @@ For Markdown, choose **View → Rich Text**, **Markdown Source** or **Split** in
 
 Darkmown `.wd` files use their own literal-source renderer and the same source controls. Choose **View → Darkmown Source**, **Darkmown Preview** or **Darkmown Source and Preview**, or use those commands in the palette. **File → New Darkmown Document** creates source without turning ordinary `.md` into a program. The initial preview is inactive; explicit trust enables a pinned, isolated offline runtime for the current source only. Editing source, changing documents or entering a blocked/inactive state removes the running frame. Reset restores authored defaults without changing the source. See [interactive Darkmown testing](document-testing/darkmown.md).
 
-The isolated **Markie Preview** desktop build runs the same Markie shell from bundled assets. It does not need a development server or browser tab. The preview name is for testing isolation, not a separate product: it has a separate app identifier, profile, session and logs, and neither replaces installed Markie nor registers its file associations or `markie://` links. Automatic updates and the production browser OAuth callback are disabled in this preview. Email sign-in can still use the configured service, but new document-platform sharing requires the matching server deployment.
+## Library and recovery
 
-## Testing the desktop preview
-
-On macOS, open `Markie Preview.app`. Apple Silicon and Intel builds are separate; the local build is ad-hoc signed, not Developer ID signed or notarized. It is a development preview, not an installer or public release. On Windows, extract the entire x64 archive and open `Markie Preview.exe` inside its folder. Keep the accompanying DLLs, locales and resources together. The Windows preview is unsigned.
-
-Use copies of documents first. Choose **Open** from Markie's current toolbar or File menu and select a DOCX. Edit a supported paragraph with the shared formatting controls; try a supported native menu action such as **Insert → Link** or **Layout → Page Setup**. Choose **Export → Save a Copy** to make a new Word file without touching the original. Reopen that copy in Markie and Microsoft Word. In Recent, select the retained named or untitled Markdown row and confirm its unsaved text remains, then select the recovered Word row. Neither selection should reload the shell.
-
-The existing Library's Recent section contains recovered document rows plus **New Markdown document**, **New Word document**, **New text document** and **Locked vault** actions. Recovery copies are labeled separately from synced files. Test **Save file** on an expendable TXT copy, including a supported BOM/CRLF fixture. Local recovery and external-file saving have distinct status messages. Supported Word documents now offer **Export PDF…** in the same Export menu and native File menu, plus native **Print…**. Word output stays on light paper with its document colors; app theme changes do not recolor it. Standalone Word HTML export remains unavailable.
-
-The vault is experimental. Use a synthetic note and a new long passphrase to test save, lock, quit, relaunch and unlock. Do not put irreplaceable or sensitive originals into this preview. There is no forgotten-passphrase reset or biometric unlock yet.
-
-For repository development:
-
-```sh
-npm run desktop:preview:mac
-MARKIE_ALLOW_E2E=1 npm run desktop:preview:run
-npm run desktop:preview:windows
-```
-
-The Windows build can be produced on this Mac but must run on Windows. Explicit Intel Mac builds use `node scripts/desktop-preview.mjs build mac-x64`. Each build writes a unique ignored `.desktop-preview/` directory and a target-specific latest receipt. No command installs into Applications or publishes a release. The Codex Run action builds and opens only the preview; it does not force-close existing app windows.
+The Library's Recent section contains recovered document rows plus **New Markdown document**, **New Word document**, **New text document** and **Locked vault** actions. Recovery copies are labeled separately from synced files. Local recovery and external-file saving have distinct status messages. Supported Word documents offer **Export PDF…** in the Export menu and native File menu, plus native **Print…**. Word output stays on light paper with its document colors; app theme changes do not recolor it. Standalone Word HTML export is not available.
 
 Imported files become local recovery records displayed in the existing Library. Recent can filter by document type and sort by name, most recent or type; Clear filters restores the established default order. Search includes recovery names, tags, collection and extracted body text, capped at the first million characters. Native registry rows support available names/paths, not unindexed bodies. Tags and collections belong to local records, not automatically to the original file's metadata. Native files, retained buffers and recovery copies keep distinct identities and save destinations.
 
 Word and other supported files dropped onto the desktop Library use the existing protected native file-opening path, not Markdown's text decoder. Mixed batches wait for each native import and recovery before opening the following file. A failed import or conversion requiring consent stops the batch rather than hiding the problem behind another document; finish that operation and drop the remaining files again. No imported original is overwritten by dropping or recovering it.
 
-The device-wide Browse index remains Markdown-focused. Type filters and recovery-text search are not a claim that every unopened Word file on the machine has been body-indexed. Broad binary indexing still needs its bounded extraction and privacy/performance acceptance work.
+Browse, the device-wide index, finds every supported document type and searches inside small text files. It does not body-index unopened Word files. Broad binary indexing still needs its bounded extraction and privacy/performance acceptance work.
+
+## Testing
+
+Use copies of documents first. Feature-by-feature checks, samples and how to report a problem are in the [desktop test guide](document-testing/README.md).
+
+For repository development, `npm run desktop:preview:mac`, `npm run desktop:preview:windows` and `MARKIE_ALLOW_E2E=1 npm run desktop:preview:run` build and run an isolated **Markie Preview** app. It has its own app identifier, profile, session and logs. It does not replace installed Markie, register file associations or `markie://` links, or update itself. Builds go to the ignored `.desktop-preview/` directory; no command installs into Applications or publishes a release. The Windows build can be produced on a Mac but must run on Windows.
 
 ## Supported formats
 
@@ -96,14 +84,14 @@ The sharing panel can open, edit and save accessible cloud snapshots. Concurrent
 
 This is versioned document collaboration, not live Word co-editing. Existing Markdown multiplayer remains separate. Live Office synchronization, peer cursors and collaborative undo need a further reviewed implementation.
 
-The new service creates additive `dp_*` tables on server startup and leaves legacy Markdown endpoints unchanged. Updated server code must be deployed separately before remote sharing is available. Extra web origins require exact HTTPS entries in `MARKIE_WEB_ORIGINS` (HTTP is limited to loopback development). Local tests do not deploy this service.
+The new service creates additive `dp_*` tables on server startup and leaves legacy Markdown endpoints unchanged. Extra web origins require exact HTTPS entries in `MARKIE_WEB_ORIGINS` (HTTP is limited to loopback development). Local tests do not deploy this service.
 
 ## Protected local vault
 
 The experimental vault has a separate encrypted IndexedDB database, strong-passphrase unlock, encrypted metadata/files, explicit lock, inactivity/hidden-page lock, editing and confirmed decrypted export. It never silently encrypts, deletes or uploads an imported original. Locked titles and bodies do not enter the ordinary library or its search index.
 
-Vault search currently covers decrypted filenames while unlocked. Its encrypted recovery, browser-eviction risks and limits are detailed in [Document vault](security/document-vault.md). There is no short-PIN security claim, Touch ID/passkey unlock, lost-secret reset, encrypted multiplayer or guarantee of forensic memory erasure.
+Vault search currently covers decrypted filenames while unlocked. Its encrypted recovery, browser-eviction risks and limits are detailed in [Document vault](security/document-vault.md). On macOS, Touch ID can be turned on as a convenience unlock; the passphrase stays the master key. There is no short-PIN security claim, passkey unlock, lost-secret reset, encrypted multiplayer or guarantee of forensic memory erasure.
 
 ## Remaining compatibility work
 
-The full [document platform plan](superpowers/plans/2026-10-14-document-platform.md) still includes Word-equivalent automatic layout/pagination, richer print fidelity, sections, headers/footers/page fields, merged/complex tables, advanced review, a native DOC writer, live Office co-editing and platform-protected biometric unlock. A broader sanitized Word-generated corpus, Windows runtime QA, physical Intel Mac QA and release signing/notarization remain release gates. Unsupported features must not be silently flattened to meet a visual approximation.
+The full [document platform plan](superpowers/plans/2026-10-14-document-platform.md) still includes Word-equivalent automatic layout/pagination, richer print fidelity, sections, headers/footers/page fields, merged/complex tables, advanced review, a native DOC writer, live Office co-editing and platform-protected biometric unlock. A broader sanitized Word-generated corpus, Windows runtime QA and physical Intel Mac QA are still open. Unsupported features must not be silently flattened to meet a visual approximation.

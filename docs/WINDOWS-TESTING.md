@@ -1,8 +1,9 @@
 # Windows x64 — build on a Mac, test on a real PC
 
-Markie's Windows build is **unsigned and private** until the gates in `docs/RELEASING.md` are met.
-This page is the practical loop for producing an installer on an Apple Silicon Mac and proving it on
-a real Windows 11 machine.
+Markie for Windows is released and signed through Azure Trusted Signing. 0.9.1 is stable. Public
+installers are built and signed in CI and published through the Windows runbook in
+`docs/RELEASING.md`. This page is the practical loop for producing an unsigned test installer on an
+Apple Silicon Mac and proving it on a real Windows 11 machine.
 
 ## 1. Build on the Mac
 
@@ -28,7 +29,7 @@ Outputs (`dist/`):
 | `Markie-<ver>-x64.exe` | NSIS installer (one-click, per-user, `%LOCALAPPDATA%\Programs\Markie`) |
 | `Markie-<ver>-x64.zip` | portable zip |
 | `win-unpacked/Markie.exe` | unpacked app — what the launch smoke drives |
-| `latest.yml` | generated updater feed — **not published**; Windows updates are disabled in-app |
+| `latest.yml` | generated updater feed for this local build, never published |
 
 ## 2. Get it onto the PC (LAN, no public upload)
 
@@ -73,8 +74,8 @@ gate asks for.
 Ordered so an early failure tells you to stop. Record the result of each.
 
 **Install & launch**
-1. Installer runs. Note the exact SmartScreen wording (expect *Windows protected your PC → More info →
-   Run anyway* — the build is unsigned; this is the evidence for the signing blocker).
+1. Installer runs. A local build is unsigned, so expect *Windows protected your PC → More info →
+   Run anyway*. The signed CI installer should not show this.
 2. Installs to `%LOCALAPPDATA%\Programs\Markie`, auto-launches, window appears within ~10 s;
    Desktop + Start Menu shortcuts exist.
 3. `npm run electron:smoke:win` passes against the copied `dist\win-unpacked`.
@@ -121,21 +122,16 @@ Ordered so an early failure tells you to stop. Record the result of each.
     second `.md` — the existing window focuses and opens it (`second-instance`), no second process.
 21. `Start-Process "markie://test"` from PowerShell with the app running — the window focuses.
     After uninstall, check whether `HKCU\Software\Classes\markie` survives.
-22. Menu → **Check for Updates…** — expect the modal *"Automatic updates are not enabled for Windows
-    yet."* Anything else is a bug.
+22. Menu → **Check for Updates…** runs a real check against the public `windows/latest.yml` feed. An
+    error dialog is a bug. The full update-and-relaunch check is
+    `.github/workflows/windows-update-check.yml` (Windows runbook, step 5).
 23. Uninstall via Settings → Apps; install dir + shortcuts removed; workspace files under Documents
     untouched.
 
 Capture `.autoloop\runs\windows-launch-smoke-*\` and a short screen recording of items 5, 6, 8, 15.
 
-## 4. What still blocks a *public* Windows download
+## 4. Public releases
 
-| Blocker | Where | Unblock |
-|---|---|---|
-| Manifest says `planned`, no feed | `server/download-manifest.json` `windows-x64` | flip to `public` + add `feed` (needs the updater feed below), redeploy server |
-| No Authenticode signing | `scripts/local-electron-builder.mjs` deliberately can't sign | OV/EV cert or Azure Trusted Signing; a separate signed-release wrapper; verify with `Get-AuthenticodeSignature` |
-| No exact-commit native launch evidence | `.github/workflows/windows-launch-smoke.yml` blocked by Actions billing | fix billing and `workflow_dispatch`, **or** run §2 on the PC and archive the evidence |
-| Updater is macOS-only | `electron/update-policy.js`, `electron/main.js` autoUpdater wiring, `scripts/release-preflight.mjs` doc assertion | add `windows-x64.feed.path`, teach update-policy about `latest.yml`, wire `setupAutoUpdate` for win32 |
-| Release runner is macOS-only | `scripts/release.mjs` (`prepare`/`publish`/`verify`/`rollback` assert darwin) | Windows-side equivalent with artifact-first/feed-last ordering and SHA-512 verification |
-| Update-from-previous-version test | release gate | waived for the first Windows release, mandatory from the second |
-| Human release decision | `docs/RELEASING.md` | owner's call |
+Every Windows release follows the Windows runbook in
+`docs/RELEASING.md`: CI build and signing, `release:prepare:win`, an early publish with
+`release:publish:early:win`, then `release:promote` or `release:promote-due`.

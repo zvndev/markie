@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Boot and smoke-test the Markie repo. Run at the start of every long-agent-loop wakeup.
+# Boot and smoke-test the Markie repo. Run it before starting work on a fresh checkout.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -1,5 +1,7 @@
 # Media and web links
 
+Put a picture of your own beside this file as `scene.png`, and a short video as `clip.mp4`. Neither is tracked in the repository.
+
 Double-click this picture in the editable rich view. Click outside it to close.
 
 ![Synthetic landscape](scene.png)

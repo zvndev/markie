@@ -119,7 +119,8 @@ Any other URL another app sends is ignored.
 
 ## Ship checklist (owner)
 
-Nothing here has been done. Each step needs a person with the account.
+Each step needs a person with the account. Current status, and what is still left, is in
+`docs/mobile/STORE-SETUP.md`.
 
 Signing and identity:
 
@@ -146,7 +147,7 @@ Link association:
 
 Store setup:
 
-9. Create the App Store Connect record and the Play Console app (not done by any agent).
+9. Create the App Store Connect record and the Play Console app. See `docs/mobile/STORE-SETUP.md`.
 10. Privacy: the app collects an email address for sign-in and stores a session token on the device.
     It has no analytics and no tracking.
 11. Screenshots for the listings can start from `screenshots/`, retaken on the required device sizes.

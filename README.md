@@ -51,8 +51,11 @@ CSV, JSON, YAML, XML, Darkmown, Word, RTF, OpenDocument and HTML. Its tools are
 the app's ⇧⌘F), `markie_read_document`, `markie_write_document`,
 `markie_check_md`, `markie_list_skills`, `markie_guide`, and
 `markie_open_in_markie`, plus the original markdown-only `markie_find_md`,
-`markie_read_md` and `markie_write_md`. It runs entirely locally, with no cloud
-and no API key. Reads and writes are fenced to your home folder
+`markie_read_md` and `markie_write_md`. It runs locally and needs no API key.
+Four optional tools (`markie_cloud_status`, `markie_cloud_sync`,
+`markie_cloud_public_link`, `markie_cloud_revoke_public_link`) ask the running
+Markie app to put a file in your Markie Cloud and return its link, with your
+sign-in and your approval. Reads and writes are fenced to your home folder
 (symlink-guarded), so an agent can *"find my notes and add a section"* and
 actually do it. Writes are limited to text formats: Word, RTF, OpenDocument and
 HTML come back to an agent as extracted, read-only text, and legacy `.doc` only
@@ -122,8 +125,10 @@ npm run electron:smoke:linux
 ```
 
 The local pack/build scripts use a certificate-free electron-builder wrapper and
-pass `--publish never`; `npm run electron:release` is the only Developer ID
-signing/publishing path. The Windows unpacked package also installs the matching
+pass `--publish never`. Signed releases go through the guarded release runner:
+`release:prepare:mac` or `release:prepare:win`, then an early-access publish, then
+`release:promote` to stable. [docs/RELEASING.md](./docs/RELEASING.md) is the full
+runbook. The Windows unpacked package also installs the matching
 Electron `better-sqlite3` Windows prebuild before `electron:smoke:win` runs.
 Native macOS and Windows launch evidence includes `launch-smoke.json` plus a
 captured `screenshot.png`. Windows launch evidence is handled by

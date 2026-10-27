@@ -1,24 +1,24 @@
 # Markie desktop test guide
 
-This local preview extends the existing Markie app. It is not a public release or the completed document-platform roadmap. Use disposable copies while testing. Keep your installed Markie and important originals separate.
+This guide checks the document features in Markie: Word (DOCX), RTF, ODT and the other text formats, which shipped in 0.9.0. Use disposable copies while testing. Keep your installed Markie and important originals separate.
 
-The full Word-like product and remaining acceptance journeys are defined in the repository's October 18 product contract and tracked under ENG-7025. This preview adds deterministic input, DOCX split/join and cross-paragraph transactions, and shared-control improvements; it is not completion of Word compatibility. The editing surface should no longer show a permanent generic print disclaimer. Open Export or Document details for output information; documents with review comments ask before producing output that excludes them.
+The full Word-like product and remaining acceptance journeys are defined in the repository's October 18 product contract and tracked under ENG-7025. Markie's DOCX support covers deterministic input, DOCX split/join and cross-paragraph transactions, and shared controls; it is not full Word compatibility. The editing surface should no longer show a permanent generic print disclaimer. Open Export or Document details for output information; documents with review comments ask before producing output that excludes them.
 
 Follow the [everyday writing checks](everyday-writing.md) for mixed formatting, input, narrow toolbars and contextual output information.
 
-The source preview also includes opt-in [linked sign-ins and cloud areas](linked-sign-ins.md). These require an enabled test server; they are not yet active on the existing cloud service or installed Super-nightly build.
+Markie also has opt-in [linked sign-ins and cloud areas](linked-sign-ins.md). They are controlled by `MARKIE_ACCOUNT_IDENTITIES` on the server; test them against a local server you control.
 
-This preview includes original-engine RTF and ODT editing with same-format saving, supported native page setup and Print/PDF, plus a first offline interactive Darkmown milestone. Passive RTF information metadata and Word proofing/calculated-page markers have broader editing support. RTF/ODT are not secretly converted into Word files. Complex documents may remain read-only or be refused before they replace the current editor.
+Markie includes original-engine RTF and ODT editing with same-format saving, supported native page setup and Print/PDF, plus a first offline interactive Darkmown milestone. Passive RTF information metadata and Word proofing/calculated-page markers have broader editing support. RTF/ODT are not secretly converted into Word files. Complex documents may remain read-only or be refused before they replace the current editor.
 
 ## Start here
 
-1. Open this guide in the supplied Markie Preview app.
-2. Open the supplied `samples/Editorial.rtf`, then `samples/Editorial.odt`, using Markie's Open button.
+1. Open this guide in Markie.
+2. Open a disposable RTF file, then a disposable ODT file, using Markie's Open button. No RTF or ODT samples ship in this folder; save a short styled document from TextEdit as RTF, or from LibreOffice as ODT.
 3. Change text and its font, bold/italic/underline, color, alignment and spacing. Use Save a Copy first.
 4. Reopen the copy in Markie. It must still be RTF or ODT with the same text and supported formatting.
 5. Return to an unsaved Markdown draft through Library. Its edits must still be there, without a second app shell or a Return to Markie button.
 
-Next, open `samples/Counter.wd` and follow the [interactive Darkmown checks](darkmown.md). For documents written by AI agents, follow the [agent-written document checks](agent-documents.md) with `samples/Rich-document.md`, `Launch-checklist.wd`, `Estimate.wd`, `Order-total.wd` and `Step-through.wd`. Test [media viewers and default-browser links](media-and-links.md) with the supplied media sample. See [document types](document-types.md), [editing and recovery](editing-and-recovery.md), and [connected documents and pending features](connected-documents.md). These are ordinary portable Markdown links. Complete in-app navigation between every document type is a separate pending feature; use Open if a relative link uses the operating system's default app.
+Next, open `samples/Counter.wd` and follow the [interactive Darkmown checks](darkmown.md). For documents written by AI agents, follow the [agent-written document checks](agent-documents.md) with `samples/Rich-document.md`, `Launch-checklist.wd`, `Estimate.wd`, `Order-total.wd` and `Step-through.wd`. Test [media viewers and default-browser links](media-and-links.md) with `samples/Media-and-links.md` and an image and video of your own. See [document types](document-types.md), [editing and recovery](editing-and-recovery.md), and [connected documents and pending features](connected-documents.md). These are ordinary portable Markdown links. Complete in-app navigation between every document type is a separate pending feature; use Open if a relative link uses the operating system's default app.
 
 ## What to test now
 
@@ -37,10 +37,10 @@ Next, open `samples/Counter.wd` and follow the [interactive Darkmown checks](dar
 | DOCX print/PDF | Supported-view output on light paper with document geometry. Comments are omitted; pending revisions block output. |
 | Library | Search available fields, filter by actual format including RTF/ODT/HTML, sort and reset. Browse (the device explorer) finds every supported document type, filters by type, and searches inside small text files. Recovery, native and cloud copies remain distinct. |
 | Cloud snapshots | Markdown, Darkmown, Text, CSV, JSON, YAML, XML, DOCX, DOC, RTF, and ODT snapshots, filterable by format in Cloud. RTF/ODT open in the rich editor from the cloud dialog. Live Office multiplayer and new people features are not enabled; shared plain text (.txt/.text/.log) does go live in its text pane. |
-| Protected vault | Experimental passphrase-based storage. Do not use irreplaceable sensitive originals; biometric keys are not implemented. |
+| Protected vault | Experimental passphrase-based storage with optional Touch ID unlock. Do not use irreplaceable sensitive originals. |
 
 ## Report a problem
 
 Include the file type, exact steps, expected result and actual result. Note whether the document came from local disk, local recovery or cloud, and whether a modal or save was active. Use a synthetic sample rather than sending private document contents. Preserve the original when reporting a fidelity issue.
 
-Missing fonts and platform print settings can change appearance. Windows runtime, physical Intel Mac hardware, physical printers and non-Chromium browser behavior require separate acceptance. Local Mac previews are ad-hoc signed, not notarized releases.
+Missing fonts and platform print settings can change appearance. Windows runtime (see `docs/WINDOWS-TESTING.md`), physical Intel Mac hardware, physical printers and non-Chromium browser behavior require separate acceptance. Released builds are signed and notarized; a local build from source is ad-hoc signed.

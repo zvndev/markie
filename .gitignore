@@ -51,6 +51,10 @@ yarn-error.log*
 # Signed Windows artifacts fetched from CI for publishing. Kept out of dist/
 # because the macOS prepare deletes that directory wholesale.
 dist-windows/
+# Linux packages fetched from CI for publishing (release:prepare:linux).
+dist-linux/
+# Agent worktrees.
+/.claude/worktrees/
 *.dmg
 /.release/
 

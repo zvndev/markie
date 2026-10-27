@@ -25,6 +25,11 @@ export default defineConfig([
     // The mobile app (apps/mobile) has its own package, tsconfig and test
     // command, and its own copies of Capacitor's generated native projects.
     "apps/**",
+    // Agent worktrees are whole checkouts of the repo; linting them from here
+    // fails a release on code that is not part of it.
+    ".claude/**",
+    "dist-windows/**",
+    "dist-linux/**",
   ]),
   ...tseslint.configs.recommended,
   {

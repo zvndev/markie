@@ -131,3 +131,13 @@ Still to do: new Google and email secrets; move the super-nightly gateway (still
 - Promotion hit one transient Backblaze 500 ("internal incident") on `windows/latest.yml`. It cleared within minutes and the retry promoted.
 - Mobile: iOS 0.1.0 (2) with the new icons uploaded to App Store Connect from Xcode (PR #48). Android AAB 0.1.0 (2) at `~/Desktop/Markie-mobile-0.1.0-2.aab`.
 - Still open: TestFlight internal group (Kirby in App Store Connect), Play internal testing (account verification), the Play app-signing SHA-256 in `ANDROID_APP_CERT_SHA256`, a hand check of the AppImage and .deb on a real Linux desktop, and the GitHub social preview image (Settings, no API).
+
+## 2026-10-28 Markie 0.9.3 stable on macOS, Windows and Linux
+
+- Kirby asked for a full release. Contents: Google Docs-style Share dialog with contact suggestions (#56), Library file menu with Delete and Copy all (#57), per-item Touch ID in the vault (#58), Skills Discover removed (#55), wordmark in the top bar (#54). Release commit `3e3f50c` (#59).
+- Server: `zvn-apps/markie-api:f2780befc13d` deployed to `zvn-apps-a` (adds `GET /api/docs/share-contacts`; `role` on `GET /api/docs/:id` from `c7a344da7530`).
+- Windows run 40615064014 (signed CN=ZVN DEV LLC), Linux run 40615066411. Mac arm64 and x64 notarized and stapled.
+- Early access on all three, then `release:promote -- --confirm-promote=0.9.3 --now`. `release:verify:public --deep` passed on mac, win and linux.
+- Update from 0.9.2: Mac `update:check -- --install` 12/12; Windows run 40616364215 12/12; Linux run 40616370851 12/12. Tagged `v0.9.3`, GitHub release created.
+- CI unit flakes seen this round, each passing on rerun: `page.large-doc` "refuses the Rich shortcut", `private-release-gate` "offers Google", `find-bar` "counts matches".
+- Mobile 0.2.0 (3): editing, new documents and "Open in Markie" (#53); uploaded to App Store Connect; Android AAB at `~/Desktop/Markie-mobile-0.2.0-3.aab`.

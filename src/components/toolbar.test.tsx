@@ -43,7 +43,7 @@ describe("the existing Markie top bar", () => {
       documentMode: true, onSave, fileName: "proposal.docx", isDirty: true,
     });
     expect(document.querySelectorAll(".markie-toolbar")).toHaveLength(1);
-    expect(screen.getByText("Markie")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Markie" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /proposal\.docx/ })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Editing mode" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Theme presets" })).toBeInTheDocument();

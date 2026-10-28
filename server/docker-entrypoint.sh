@@ -131,5 +131,9 @@ if [ -n "$BACKUP" ]; then
     -exec "node --experimental-strip-types src/index.ts"
 fi
 
-echo "starting (no off-site backup configured: the database lives only on this volume)"
+if [ "${LITESTREAM_IN_VM:-}" = "1" ]; then
+  echo "starting (Litestream 0.5 around this process replicates $DB_PATH: LITESTREAM_IN_VM=1)"
+else
+  echo "starting (no off-site backup configured: the database lives only on this volume)"
+fi
 exec node --experimental-strip-types src/index.ts

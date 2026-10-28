@@ -14,6 +14,14 @@
 #   `litestream replicate -exec`. Litestream exits when the app does, and the
 #   container with it.
 #
+# One VM at a time. SQLite's locks do not cross VMs, so two containers on the
+# same file would corrupt it. Kamal starts a new container before it stops the
+# old one; the pre-deploy hook stops the old one first in vm mode, and this is
+# the net under it. While Litestream runs, init writes "<hostname> <time>" to
+# <data dir>/.litestream-vm-alive every 2 s. Another container's heartbeat
+# younger than 10 s makes a new one wait up to 30 s, then refuse. A restart of
+# the same container (same hostname) goes ahead.
+#
 # Signals. Under Kata, `docker stop` sends SIGTERM to every process in the
 # container, and twice to PID 1. A second signal makes Litestream skip its
 # final sync, so under Kata this forwards nothing. Under runc only PID 1 gets
@@ -45,8 +53,34 @@ fi
 LITESTREAM_DB_NAME=$(basename "$LITESTREAM_DB")
 export LITESTREAM_DB_NAME
 
+ALIVE="$(dirname "$LITESTREAM_DB")/.litestream-vm-alive"
+me=$(cat /proc/sys/kernel/hostname)
+waited=0
+while [ -f "$ALIVE" ]; do
+  who=""; at=0
+  read -r who at < "$ALIVE" 2>/dev/null || true
+  [ "$who" = "$me" ] && break
+  case "$at" in ""|*[!0-9]*) at=0 ;; esac
+  [ $(( $(date +%s) - at )) -ge 10 ] && break
+  if [ "$waited" -ge 30 ]; then
+    echo "litestream-init: container $who is still writing $LITESTREAM_DB (heartbeat $at); refusing to start a second writer" >&2
+    exit 75
+  fi
+  sleep 2; waited=$((waited + 2))
+done
+
 # The fence. Nothing has opened the database yet.
 node "$D/lease-check.mjs"
+
+heartbeat() {
+  trap '' TERM INT
+  while :; do
+    printf '%s %s\n' "$me" "$(date +%s)" > "$ALIVE.$me" && mv -f "$ALIVE.$me" "$ALIVE"
+    sleep 2
+  done
+}
+heartbeat &
+hb=$!
 
 # Litestream splits -exec with shell-word rules. Plain words only, so the
 # command it runs is exactly the one given here.
@@ -79,4 +113,7 @@ while kill -0 "$pid" 2>/dev/null; do
 done
 # A signal can interrupt the last wait before the exit status is read.
 if wait "$pid" 2>/dev/null; then rc=0; else r=$?; [ "$r" = 127 ] || rc=$r; fi
+kill -KILL "$hb" 2>/dev/null || true
+who=""; read -r who _ < "$ALIVE" 2>/dev/null || true
+[ "$who" != "$me" ] || rm -f "$ALIVE"
 exit "$rc"

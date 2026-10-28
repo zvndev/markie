@@ -342,6 +342,13 @@ export interface ElectronAPI {
     path: string;
     deleteRemote: boolean;
   }): Promise<SyncResult>;
+  // Move a Library file to the system Trash and forget it. deleteRemote also
+  // deletes the cloud copy first (owner only); a failed cloud delete leaves
+  // the local file untouched.
+  libraryTrashFile?(args: {
+    path: string;
+    deleteRemote: boolean;
+  }): Promise<{ ok?: boolean; trashed?: boolean; deletedRemote?: boolean; error?: string }>;
   docPush(args: {
     path: string;
     name: string;

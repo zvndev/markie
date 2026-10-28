@@ -46,6 +46,20 @@ beforeEach(async () => {
 });
 
 describe("plain text is not Markdown", () => {
+  it("copies the whole file, as stored, from the document corner", async () => {
+    const content = "# literal heading\n\n**not bold**\n";
+    installBridge({
+      getInitialFile: vi.fn(async () => ({ name: "notes.txt", path: "/notes.txt", content })),
+    });
+    const writeText = vi.fn<(text: string) => Promise<void>>(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    render(<Home />);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Source document" })).toHaveValue(content));
+    fireEvent.click(screen.getByRole("button", { name: "Copy all" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith(content));
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+
   it.each(["txt", "text", "log"])("opens .%s literally without a rich editor", async (extension) => {
     const content = "# literal heading\n\n**not bold**\n  indented\n";
     installBridge({

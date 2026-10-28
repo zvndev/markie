@@ -224,6 +224,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
 
     docSyncOn: vi.fn(async () => noopResult),
     docSyncOff: vi.fn(async () => noopResult),
+    libraryTrashFile: vi.fn(async () => ({ ok: true, trashed: true, deletedRemote: false })),
     docPush: vi.fn(async () => ({ ok: true, pushed: true })),
     docResolve: vi.fn(async () => noopResult),
     docPull: vi.fn(async () => noopResult),

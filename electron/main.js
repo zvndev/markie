@@ -1823,6 +1823,12 @@ handle("doc-sync-on", (_event, { path: p, name, content, areaId, server }) =>
 handle("doc-sync-off", (_event, { path: p, deleteRemote }) =>
   sync.syncOff(p, deleteRemote)
 );
+// Library "Delete file": Trash the local file, optionally delete the cloud
+// copy, and drop the registry row. sync.trashFile refuses any path the
+// registry does not already track.
+handle("library-trash-file", (_event, { path: p, deleteRemote } = {}) =>
+  sync.trashFile(p, deleteRemote === true, { trashItem: (target) => shell.trashItem(target) })
+);
 handle("doc-push", (_event, { path: p, name, content }) =>
   sync.push(p, name, content)
 );

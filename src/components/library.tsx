@@ -36,7 +36,7 @@ import {
   type LibraryOverview,
 } from "@/lib/library-overview";
 import type { WorkspaceBootstrapResult } from "@/lib/workspace-default";
-import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
+import { FileMenu, MENU_ICONS, type FileMenuAnchor, type FileMenuEntry } from "@/components/file-menu";
 import { PanelNotice, type Notice, type NoticeKind } from "@/components/panel-notice";
 import { sameDocumentPath } from "@/lib/path-utils";
 import { classifyDocumentFormat } from "@/lib/document-formats";
@@ -250,8 +250,8 @@ export function Library({
   // does not send it to the top and shuffle everything you were reading.
   const [frozenOrder, setFrozenOrder] = useState<string[]>([]);
   const [workspace, setWorkspace] = useState<WorkspaceBootstrapResult | null>(null);
-  const [menuFor, setMenuFor] = useState<string | null>(null);
-  const menuRootRef = useRef<HTMLDivElement>(null);
+  const [menuFor, setMenuFor] = useState<{ key: string; anchor: FileMenuAnchor } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<LibraryItem | null>(null);
   const [dropping, setDropping] = useState(false);
   const [libTab, setLibTab] = useState<LibTab>(() =>
     initialLibTab((k) => localStorage.getItem(k))
@@ -323,8 +323,6 @@ export function Library({
       // storage unavailable
     }
   };
-
-  useDismissibleLayer(menuFor !== null, menuRootRef, () => setMenuFor(null));
 
   const [defaultMsg, setDefaultMsg] = useState<string | null>(null);
   const [settingDefault, setSettingDefault] = useState(false);
@@ -488,23 +486,39 @@ export function Library({
   const copyPath = async (path: string) => {
     try {
       await navigator.clipboard.writeText(path);
-      flash("Path copied — paste it anywhere.");
+      flash("Path copied. Paste it anywhere.");
     } catch {
       flashError("Couldn't copy the path.");
     }
   };
 
-  const copyContents = async (item: LibraryItem) => {
+  // The Trash on macOS and Linux, the Recycle Bin on Windows.
+  const trashName = getElectronAPI()?.platform === "win32" ? "Recycle Bin" : "Trash";
+
+  const deleteFile = async (item: LibraryItem, deleteRemote: boolean) => {
     const api = getElectronAPI();
-    if (!item.path || !api?.openFilePath) return flashError("Nothing to copy.");
-    const file = await api.openFilePath(item.path);
-    if (!file) return flashError(`Couldn't read ${item.name}.`);
-    if (isTooLarge(file)) return flashError(tooLargeMessage(file.size));
+    setConfirmDelete(null);
+    setMenuFor(null);
+    if (!item.path || !api?.libraryTrashFile) return noticeError("Deleting files needs the desktop app.");
     try {
-      await navigator.clipboard.writeText(file.content);
-      flash("Contents copied to clipboard.");
-    } catch {
-      flashError("Couldn't copy the contents.");
+      const res = await api.libraryTrashFile({ path: item.path, deleteRemote });
+      if (res.error) {
+        noticeError(res.error);
+      } else if (!res.trashed) {
+        showNotice(`Removed ${item.name} from your library.`, "info");
+      } else {
+        showNotice(
+          res.deletedRemote
+            ? `Moved ${item.name} to the ${trashName} and deleted the cloud copy.`
+            : `Moved ${item.name} to the ${trashName}.`,
+          "info"
+        );
+      }
+    } catch (err) {
+      noticeError(err instanceof Error && err.message ? err.message : "Couldn't delete the file.");
+    } finally {
+      refresh();
+      onSyncChanged?.();
     }
   };
 
@@ -548,6 +562,64 @@ export function Library({
   const totalDocuments = items.filter((item) => item.path).length + pendingRecords.length + Number(retainedAvailable);
   const visibleCount = localFiles.length + visibleDocuments.length + Number(retainedVisible);
 
+  // Everything a row can do, in the order the menu shows it: copy, then the
+  // sync action this state calls for, then sharing, then deletion at the
+  // bottom on its own.
+  const rowMenuEntries = (item: LibraryItem, rowSignedIn: boolean, classic: boolean): FileMenuEntry[] => {
+    const api = getElectronAPI();
+    if (!api) return [];
+    const entries: FileMenuEntry[] = [];
+    if (item.cloudId && item.state !== "local-only") {
+      entries.push({ key: "copy-link", label: "Copy link", icon: MENU_ICONS.link, onSelect: () => void copyPrivateLink(item) });
+    }
+    if (item.path) {
+      entries.push({ key: "copy-path", label: "Copy path", icon: MENU_ICONS.path, onSelect: () => void copyPath(item.path!) });
+    }
+    const sync: FileMenuEntry[] = [];
+    /* "Unpushed" means the snapshot never reached the cloud. It had a badge
+       and no way out: the update strip only appears when the server is ahead,
+       which this usually is not, so the only recovery was to open the file
+       and save it again with nothing saying so. */
+    if (rowSignedIn && item.state === "unpushed" && item.exists && item.path && api.docRetryPush) {
+      sync.push({ key: "retry", label: "Retry backup", icon: MENU_ICONS.retry, tone: "accent", onSelect: () => act(() => api.docRetryPush!({ path: item.path! })) });
+    }
+    if (rowSignedIn && item.state === "local-only" && item.exists && classic) {
+      sync.push({ key: "sync-on", label: "Sync to cloud", icon: MENU_ICONS.upload, onSelect: () => syncOn(item) });
+    }
+    if (rowSignedIn && item.state === "paused" && item.exists && classic) {
+      sync.push({ key: "resume", label: "Resume sync", icon: MENU_ICONS.upload, onSelect: () => syncOn(item) });
+    }
+    if (rowSignedIn && item.state === "behind" && item.path) {
+      sync.push({ key: "pull", label: "Pull latest", icon: MENU_ICONS.download, tone: "accent", onSelect: () => act(() => api.docResolve({ path: item.path!, strategy: "cloud" })) });
+    }
+    /* "Take cloud" sat here as an unlabelled button that silently destroyed
+       every local line the server never received. Opening the document puts
+       the choice where the counts are, so nobody picks it without being told
+       what it costs. */
+    if (rowSignedIn && item.state === "conflict" && item.path) {
+      sync.push({ key: "review", label: "Review changes…", icon: MENU_ICONS.review, tone: "accent", onSelect: () => onOpenPath(item.path!) });
+    }
+    if (cloudCopyOnly(item) && rowSignedIn) {
+      sync.push({ key: "download", label: "Download…", icon: MENU_ICONS.download, tone: "accent", onSelect: () => act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name, ...onServer(item) })) });
+    }
+    // Removing people is the share dialog's job: it revokes them one at a
+    // time and leaves the cloud copy alone. Only the owner can manage it.
+    if (rowSignedIn && item.cloudId && !item.shared && item.owned !== false && item.state !== "local-only" && item.state !== "cloud-only") {
+      sync.push({ key: "share", label: "Manage sharing…", icon: MENU_ICONS.people, onSelect: () => onManageShare(item.cloudId!, item.name) });
+    }
+    if (rowSignedIn && item.state === "synced" && item.path) {
+      sync.push({ key: "sync-off", label: "Stop syncing to cloud…", icon: MENU_ICONS.cloudOff, onSelect: () => setConfirmOff(item.path) });
+    }
+    if (sync.length && entries.length) sync[0] = { ...sync[0], separated: true };
+    entries.push(...sync);
+    if (item.path && api.libraryTrashFile) {
+      entries.push(item.exists
+        ? { key: "delete", label: "Delete file…", icon: MENU_ICONS.trash, tone: "danger", separated: entries.length > 0, onSelect: () => setConfirmDelete(item) }
+        : { key: "forget", label: "Remove from Library", icon: MENU_ICONS.remove, separated: entries.length > 0, onSelect: () => void deleteFile(item, false) });
+    }
+    return entries;
+  };
+
   const fileRow = (item: LibraryItem) => {
     const status: SyncStatus = item.shared ? "shared" : item.state;
     // Signed in to the server this row's actions would reach.
@@ -570,14 +642,24 @@ export function Library({
         act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name, ...onServer(item) }));
       }
     };
+    const menuOpen = !!itemKey && menuFor?.key === itemKey;
+    const entries = rowMenuEntries(item, rowSignedIn, classic);
+    const openMenuAt = (anchor: FileMenuAnchor) => {
+      if (!itemKey || entries.length === 0) return;
+      setMenuFor({ key: itemKey, anchor });
+    };
     return (
       <div
         key={`native:${itemKey}`}
-        ref={menuFor === itemKey ? menuRootRef : undefined}
         className={`group rounded-md px-2 py-1.5 cursor-pointer ${
-          isActive ? "bg-accent" : "hover:bg-accent/40"
+          isActive ? "bg-accent" : menuOpen ? "bg-accent/40" : "hover:bg-accent/40"
         }`}
         onClick={open}
+        onContextMenu={(e) => {
+          if (!itemKey || entries.length === 0) return;
+          e.preventDefault();
+          openMenuAt({ x: e.clientX, y: e.clientY, returnFocus: null });
+        }}
       >
         <div className="flex items-center gap-1.5">
           <FormatFileIcon format={format} />
@@ -587,14 +669,30 @@ export function Library({
           <FormatBadge format={format} />
           {item.server && <ServerBadge origin={item.server} label={serverLabel(item.server, trustedServers)} />}
           <SyncStatusIcon status={status} />
-          {(item.path || item.cloudId) && (
+          {(item.path || item.cloudId) && entries.length > 0 && (
             <button
+              type="button"
+              // The menu closes itself on any mousedown outside it. Without
+              // this, pressing the trigger of an open menu would close it and
+              // the click that follows would open it again.
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
-                setMenuFor(menuFor === itemKey ? null : itemKey);
+                if (menuOpen) return setMenuFor(null);
+                const box = e.currentTarget.getBoundingClientRect();
+                openMenuAt({ x: box.left, y: box.bottom + 4, returnFocus: e.currentTarget });
               }}
-              className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-muted hover:text-foreground hover:bg-accent/40 shrink-0 transition"
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowDown") return;
+                e.preventDefault();
+                e.stopPropagation();
+                const box = e.currentTarget.getBoundingClientRect();
+                openMenuAt({ x: box.left, y: box.bottom + 4, returnFocus: e.currentTarget });
+              }}
+              className={`w-5 h-5 rounded flex items-center justify-center group-hover:opacity-100 group-focus-within:opacity-100 text-muted hover:text-foreground hover:bg-accent/40 shrink-0 transition ${menuOpen ? "opacity-100 bg-accent/40 text-foreground" : "opacity-0"}`}
               aria-label="Actions"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
             >
               ⋯
             </button>
@@ -610,57 +708,13 @@ export function Library({
           </div>
         )}
 
-        {menuFor === itemKey && (
-          <div className="flex flex-wrap gap-x-3 gap-y-1 pl-5 pt-1.5 text-[11px]" onClick={(e) => e.stopPropagation()}>
-            {item.path && (
-              <button className="text-muted hover:text-foreground" onClick={() => copyPath(item.path!)}>Copy path</button>
-            )}
-            {item.path && item.exists && classic && (
-              <button className="text-muted hover:text-foreground" onClick={() => copyContents(item)}>Copy contents</button>
-            )}
-            {item.cloudId && item.state !== "local-only" && (
-              <button className="text-muted hover:text-foreground" onClick={() => void copyPrivateLink(item)}>Copy private link</button>
-            )}
-            {/* "Unpushed" means the snapshot never reached the cloud. It had a
-                badge and no way out: the update strip only appears when the
-                server is ahead, which this usually is not, so the only recovery
-                was to open the file and save it again with nothing saying so. */}
-            {rowSignedIn && item.state === "unpushed" && item.exists && item.path && (
-              <button
-                className="text-[var(--status-blue)] hover:underline"
-                onClick={() => act(() => api.docRetryPush!({ path: item.path! }))}
-              >
-                Retry backup
-              </button>
-            )}
-            {rowSignedIn && item.state === "local-only" && item.exists && classic && (
-              <button className="text-muted hover:text-foreground" onClick={() => syncOn(item)}>Sync to cloud</button>
-            )}
-            {rowSignedIn && item.state === "paused" && item.exists && classic && (
-              <button className="text-muted hover:text-foreground" onClick={() => syncOn(item)}>Resume sync</button>
-            )}
-            {rowSignedIn && item.state === "synced" && (
-              <button className="text-muted hover:text-foreground" onClick={() => setConfirmOff(item.path)}>Stop syncing</button>
-            )}
-            {rowSignedIn && item.state === "behind" && (
-              <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docResolve({ path: item.path!, strategy: "cloud" }))}>Pull latest</button>
-            )}
-            {/* "Take cloud" sat here as an unlabelled button that silently
-                destroyed every local line the server never received. Opening
-                the document puts the choice where the counts are, so nobody
-                picks it without being told what it costs. */}
-            {rowSignedIn && item.state === "conflict" && item.path && (
-              <button
-                className="text-[var(--status-blue)] hover:underline"
-                onClick={() => onOpenPath(item.path!)}
-              >
-                Review changes…
-              </button>
-            )}
-            {cloudCopyOnly(item) && rowSignedIn && (
-              <button className="text-[var(--status-blue)] hover:underline" onClick={() => act(() => api.docPull({ cloudId: item.cloudId!, suggestedName: item.name, ...onServer(item) }))}>Download…</button>
-            )}
-          </div>
+        {menuOpen && menuFor && (
+          <FileMenu
+            label={`Actions for ${item.name}`}
+            anchor={menuFor.anchor}
+            entries={entries}
+            onClose={() => setMenuFor(null)}
+          />
         )}
       </div>
     );
@@ -939,22 +993,35 @@ export function Library({
       {confirmOff && (
         <div className="markie-scrim-strong fixed inset-0 z-[110] flex items-center justify-center">
           <div className="w-[380px] rounded-xl border border-border shadow-2xl p-4" style={{ background: "var(--surface-2)" }}>
-            <div className="text-[13px] text-foreground mb-1">Stop syncing this document?</div>
+            <div className="text-[13px] text-foreground mb-1">Stop syncing this document to the cloud?</div>
             <div className="text-[12px] text-muted mb-4">
-              A copy currently exists in your cloud. You can keep it there
-              (syncing just pauses) or delete it.
+              The file on this device stays as it is. Choose what happens to
+              the copy in your cloud.
             </div>
             <div className="flex flex-col gap-2">
-              <button className="w-full text-[12px] py-2 rounded-md bg-accent text-foreground" onClick={() => act(async () => { await getElectronAPI()!.docSyncOff({ path: confirmOff, deleteRemote: false }); setConfirmOff(null); })}>
-                Keep cloud copy, pause syncing
+              <button className="w-full text-left text-[12px] px-3 py-2 rounded-md bg-accent text-foreground" onClick={() => act(async () => { const res = await getElectronAPI()!.docSyncOff({ path: confirmOff, deleteRemote: false }); setConfirmOff(null); return res; })}>
+                <span className="block">Pause syncing, keep the cloud copy</span>
+                <span className="block text-[11px] text-muted">People you shared it with can still open the last synced version.</span>
               </button>
-              <button className="w-full text-[12px] py-2 rounded-md border border-[color:var(--status-red)] text-[var(--status-red)] hover:bg-accent/40" onClick={() => act(async () => { await getElectronAPI()!.docSyncOff({ path: confirmOff, deleteRemote: true }); setConfirmOff(null); })}>
-                Delete the cloud copy
+              <button className="w-full text-left text-[12px] px-3 py-2 rounded-md border border-[color:var(--status-red)] text-[var(--status-red)] hover:bg-accent/40" onClick={() => act(async () => { const res = await getElectronAPI()!.docSyncOff({ path: confirmOff, deleteRemote: true }); setConfirmOff(null); return res; })}>
+                <span className="block">Remove from cloud</span>
+                <span className="block text-[11px] text-muted">Deletes the cloud copy. Everyone you shared it with loses access.</span>
               </button>
               <button className="w-full text-[12px] py-1.5 text-muted hover:text-foreground" onClick={() => setConfirmOff(null)}>Cancel</button>
             </div>
           </div>
         </div>
+      )}
+      {confirmDelete && (
+        <DeleteFileDialog
+          item={confirmDelete}
+          trashName={trashName}
+          // Only the owner's cloud copy, and only with a session that can
+          // reach the server it lives on.
+          offerCloud={!!confirmDelete.cloudId && confirmDelete.state !== "local-only" && !confirmDelete.shared && confirmDelete.owned !== false && signedInFor(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={(deleteRemote) => void deleteFile(confirmDelete, deleteRemote)}
+        />
       )}
       {showNewDocument && onCreateDocument && (
         <NewDocumentModal
@@ -962,6 +1029,56 @@ export function Library({
           onCreate={(format) => { setShowNewDocument(false); onCreateDocument(format); }}
         />
       )}
+    </div>
+  );
+}
+
+function DeleteFileDialog({
+  item,
+  trashName,
+  offerCloud,
+  onCancel,
+  onConfirm,
+}: {
+  item: LibraryItem;
+  trashName: string;
+  offerCloud: boolean;
+  onCancel: () => void;
+  onConfirm: (deleteRemote: boolean) => void;
+}) {
+  const [alsoCloud, setAlsoCloud] = useState(false);
+  const cancel = useRef<HTMLButtonElement>(null);
+  const onCancelRef = useRef(onCancel);
+  useEffect(() => { onCancelRef.current = onCancel; }, [onCancel]);
+  useEffect(() => {
+    cancel.current?.focus();
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onCancelRef.current(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  return (
+    <div className="markie-scrim-strong fixed inset-0 z-[110] flex items-center justify-center">
+      <div role="alertdialog" aria-modal="true" aria-labelledby="markie-delete-file-title" className="w-[380px] rounded-xl border border-border shadow-2xl p-4" style={{ background: "var(--surface-2)" }}>
+        <div id="markie-delete-file-title" className="text-[13px] text-foreground mb-1 break-words">Delete “{item.name}”?</div>
+        <div className="text-[12px] text-muted mb-3">
+          The file moves to the {trashName}, so you can still restore it from there. It also leaves your Library.
+        </div>
+        {offerCloud && (
+          <label className="flex items-start gap-2 mb-4 text-[12px] text-foreground cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={alsoCloud} onChange={(e) => setAlsoCloud(e.target.checked)} />
+            <span>
+              <span className="block">Also delete the cloud copy</span>
+              <span className="block text-[11px] text-muted">It disappears from your other devices and everyone you shared it with loses access. This can’t be undone.</span>
+            </span>
+          </label>
+        )}
+        <div className="flex justify-end gap-2">
+          <button ref={cancel} type="button" className="text-[12px] px-3 py-1.5 rounded-md text-muted hover:text-foreground hover:bg-accent/40" onClick={onCancel}>Cancel</button>
+          <button type="button" className="text-[12px] px-3 py-1.5 rounded-md border border-[color:var(--status-red)] text-[var(--status-red)] hover:bg-accent/40" onClick={() => onConfirm(offerCloud && alsoCloud)}>
+            {offerCloud && alsoCloud ? "Delete file and cloud copy" : `Move to ${trashName}`}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

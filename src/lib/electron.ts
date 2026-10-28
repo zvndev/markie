@@ -502,6 +502,9 @@ export interface ElectronAPI {
   /** Whether agents may put files in Markie Cloud without asking each time. */
   agentPermissions?(): Promise<{ cloudSync: boolean }>;
   setAgentPermissions?(next: { cloudSync: boolean }): Promise<{ cloudSync: boolean }>;
+  // Move one installed skill's folder to the Trash. Main refuses any folder
+  // that is not directly inside a tool's skills folder.
+  skillsTrash?(folder: string): Promise<{ ok: true } | { ok: false; error: string }>;
   // Report a renderer crash to the main process's crash log. Fire-and-forget:
   // the caller is an error boundary that has nothing to do with an answer.
   logRendererError?(detail: {

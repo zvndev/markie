@@ -176,6 +176,18 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Trashing a skill changes a folder the index has already walked. The
+  // watcher would catch up on its own; asking makes the row go now.
+  const reindex = useCallback(
+    () =>
+      api?.mdIndexRefresh?.()
+        .then((res) => {
+          if (Array.isArray(res?.files)) setRows(res.files);
+        })
+        .catch(() => {}),
+    [api]
+  );
+
   // Rescan on demand, so an error state is not a dead end.
   const retry = () => {
     if (!api?.mdIndexRefresh) return;
@@ -213,6 +225,7 @@ export function SkillsView({ onOpenPath, activePath }: SkillsViewProps) {
         loading={loading}
         error={error}
         onRetry={retry}
+        onReindex={reindex}
         onOpenPath={onOpenPath}
         activePath={activePath}
       />
@@ -228,6 +241,10 @@ interface SkillRow {
   label: string;
   openPath: string;
   description: string | null;
+  /** The skill's folder as the index spelled it, for the Trash. */
+  folder: string;
+  /** Inside a tool's own skills folder, so main will let it be trashed. */
+  removable: boolean;
 }
 
 interface PlainRow {
@@ -241,6 +258,7 @@ function InstalledSkills({
   loading,
   error,
   onRetry,
+  onReindex,
   onOpenPath,
   activePath,
 }: {
@@ -249,12 +267,15 @@ function InstalledSkills({
   loading: boolean;
   error: string | null;
   onRetry: () => void;
+  onReindex: () => void;
   onOpenPath: (path: string) => void;
   activePath: string | null;
 }) {
   const [stars, setStars] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   // Sections the user has flipped away from their default state.
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const [fullPath, setFullPath] = useState(() => localStorage.getItem(FULL_KEY) === "1");
@@ -300,8 +321,13 @@ function InstalledSkills({
     const out = new Map<SkillGroupId, SkillRow[]>();
     for (const [group, files] of perGroup) {
       for (const { file, label } of collapseSkills(files)) {
+        const folder = skillRootOf(file.path) ?? file.dir;
         const row: SkillRow = {
-          key: canonicalFolder(skillRootOf(file.path) ?? file.dir, api.platform),
+          key: canonicalFolder(folder, api.platform),
+          folder,
+          // main labels a SKILL.md with its tool only when it sits under a
+          // tool's own folder; a project's .claude/skills gets no label.
+          removable: !!file.skill?.tool,
           group,
           label,
           openPath: file.path,
@@ -363,6 +389,23 @@ function InstalledSkills({
         if (res && res.error) setNotice("Couldn't show that folder.");
       })
       .catch(() => setNotice("Couldn't show that folder."));
+
+  const trash = (row: SkillRow) => {
+    if (!api.skillsTrash) return;
+    setConfirming(null);
+    setBusy(row.key);
+    setNotice(null);
+    api.skillsTrash(row.folder)
+      .then((res) => {
+        if (!res?.ok) {
+          setNotice((res && "error" in res && res.error) || "Couldn't move that skill to the Trash.");
+          return;
+        }
+        onReindex();
+      })
+      .catch(() => setNotice("Couldn't move that skill to the Trash."))
+      .finally(() => setBusy(null));
+  };
 
   const word = revealWord(api.platform);
 
@@ -473,6 +516,12 @@ function InstalledSkills({
                               onOpen={() => onOpenPath(row.openPath)}
                               onStar={() => toggleStar(row.openPath)}
                               onReveal={() => reveal(row.openPath)}
+                              canRemove={row.removable && !!api.skillsTrash}
+                              confirming={confirming === row.key}
+                              busy={busy === row.key}
+                              onRemove={() => setConfirming(row.key)}
+                              onConfirm={() => trash(row)}
+                              onCancel={() => setConfirming(null)}
                             />
                           ))
                         : plain.map(({ file, label }) => (
@@ -517,6 +566,12 @@ function InstalledSkillRow({
   onOpen,
   onStar,
   onReveal,
+  canRemove,
+  confirming,
+  busy,
+  onRemove,
+  onConfirm,
+  onCancel,
 }: {
   row: SkillRow;
   active: boolean;
@@ -525,6 +580,12 @@ function InstalledSkillRow({
   onOpen: () => void;
   onStar: () => void;
   onReveal: () => void;
+  canRemove: boolean;
+  confirming: boolean;
+  busy: boolean;
+  onRemove: () => void;
+  onConfirm: () => void;
+  onCancel: () => void;
 }) {
   return (
     <div
@@ -548,6 +609,30 @@ function InstalledSkillRow({
         <LinkButton onClick={onReveal} title={word.label} ariaLabel={`${word.label}: ${row.label}`}>
           {word.label}
         </LinkButton>
+        {/* Throwing a folder away is not the same kind of thing as opening
+            one, so it does not sit in the same run of links. */}
+        {canRemove && (
+          <span className="ml-auto flex items-center gap-2 border-l border-border/70 pl-2">
+            {confirming ? (
+              <>
+                <span className="text-[10.5px] text-muted">Move {row.label} to the Trash?</span>
+                <LinkButton tone="red" onClick={onConfirm} ariaLabel={`Move ${row.label} to the Trash`}>
+                  Move to Trash
+                </LinkButton>
+                <LinkButton onClick={onCancel}>Cancel</LinkButton>
+              </>
+            ) : (
+              <LinkButton
+                tone="red"
+                onClick={onRemove}
+                disabled={busy}
+                ariaLabel={`Remove ${row.label}`}
+              >
+                {busy ? "Removing…" : "Remove"}
+              </LinkButton>
+            )}
+          </span>
+        )}
       </div>
     </div>
   );

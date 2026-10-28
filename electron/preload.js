@@ -101,6 +101,8 @@ if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI",
   mcpInfo: () => ipcRenderer.invoke("mcp-info"),
   agentPermissions: () => ipcRenderer.invoke("agent-permissions"),
   setAgentPermissions: (next) => ipcRenderer.invoke("agent-permissions-set", next),
+  // Moves one installed skill's folder to the Trash; main checks the folder.
+  skillsTrash: (folder) => ipcRenderer.invoke("skills-trash", folder),
   // Fire-and-forget: the error boundary calls this while the renderer is
   // already broken, so there is nothing to wait for and nothing to answer.
   logRendererError: (detail) => ipcRenderer.send("log-renderer-error", detail),

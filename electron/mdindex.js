@@ -563,5 +563,5 @@ function noteFile(filePath) {
 module.exports = {
   isExcludedDir, isBundleDir, EXCLUDED_NAMES, BUNDLE_RE, DEFAULT_BUDGET, registeredRoots,
   shouldDescend, allowlist, icloudDesktopDocuments, skippedDirs, scanTargets, nearestRoot,
-  skillToolFor, walk, rescan, getCached, seed, moved, noteFile, MD_RE, DOC_RE, formatOf,
+  skillToolFor, skillRoots, walk, rescan, getCached, seed, moved, noteFile, MD_RE, DOC_RE, formatOf,
 };

@@ -308,6 +308,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     })),
     agentPermissions: vi.fn(async () => ({ cloudSync: false })),
     setAgentPermissions: vi.fn(async (next: { cloudSync: boolean }) => ({ cloudSync: next.cloudSync })),
+    skillsTrash: vi.fn(async () => ({ ok: true })),
   } as unknown as ElectronAPI;
 
   return Object.assign(bridge, overrides);

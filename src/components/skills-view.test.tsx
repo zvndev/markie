@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElectronAPI, MdRow, MdScanResult } from "@/lib/electron";
@@ -123,5 +123,70 @@ describe("Installed", () => {
     expect(await screen.findByText("pdf")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Discover" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Installed" })).not.toBeInTheDocument();
+  });
+});
+
+describe("moving a skill to the Trash", () => {
+  // main labels a SKILL.md with its tool only inside a tool's own folder.
+  const toolSkill = (path: string): MdRow => ({ ...mdRow(path), skill: { tool: "claude", description: null } });
+  const rows = [
+    toolSkill(`${HOME}/.claude/skills/pdf/SKILL.md`),
+    mdRow(`${HOME}/.claude/skills/pdf/references/forms.md`),
+    // A project's own skills folder: grouped under Claude, but not main's to trash.
+    mdRow(`${HOME}/code/app/.claude/skills/local/SKILL.md`),
+  ];
+
+  it("asks first, naming the skill, and does nothing until confirmed", async () => {
+    const user = userEvent.setup();
+    const skillsTrash = vi.fn(async () => ({ ok: true as const }));
+    renderSkills({ mdIndexScan: vi.fn(async () => scan(rows)), skillsTrash });
+
+    await user.click(await screen.findByRole("button", { name: "Remove pdf" }));
+    expect(screen.getByText("Move pdf to the Trash?")).toBeInTheDocument();
+    expect(skillsTrash).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText("Move pdf to the Trash?")).not.toBeInTheDocument();
+    expect(skillsTrash).not.toHaveBeenCalled();
+  });
+
+  it("trashes the skill's folder once confirmed, then reindexes", async () => {
+    const user = userEvent.setup();
+    const skillsTrash = vi.fn(async () => ({ ok: true as const }));
+    const mdIndexRefresh = vi.fn(async () => scan(rows.slice(2)));
+    renderSkills({ mdIndexScan: vi.fn(async () => scan(rows)), mdIndexRefresh, skillsTrash });
+
+    await user.click(await screen.findByRole("button", { name: "Remove pdf" }));
+    await user.click(screen.getByRole("button", { name: "Move pdf to the Trash" }));
+    expect(skillsTrash).toHaveBeenCalledWith(`${HOME}/.claude/skills/pdf`);
+    await waitFor(() => expect(mdIndexRefresh).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText("pdf")).not.toBeInTheDocument());
+  });
+
+  it("says why main refused, and keeps the row", async () => {
+    const user = userEvent.setup();
+    const mdIndexRefresh = vi.fn(async () => scan(rows));
+    renderSkills({
+      mdIndexScan: vi.fn(async () => scan(rows)),
+      mdIndexRefresh,
+      skillsTrash: vi.fn(async () => ({
+        ok: false as const,
+        error: "Markie only removes skills from your agents' skills folders.",
+      })),
+    });
+    await user.click(await screen.findByRole("button", { name: "Remove pdf" }));
+    await user.click(screen.getByRole("button", { name: "Move pdf to the Trash" }));
+    expect(
+      await screen.findByText("Markie only removes skills from your agents' skills folders.")
+    ).toBeInTheDocument();
+    expect(mdIndexRefresh).not.toHaveBeenCalled();
+    expect(screen.getByText("pdf")).toBeInTheDocument();
+  });
+
+  it("offers Remove only for skills in a tool's own folder", async () => {
+    renderSkills({ mdIndexScan: vi.fn(async () => scan(rows)) });
+    expect(await screen.findByRole("button", { name: "Remove pdf" })).toBeInTheDocument();
+    expect(screen.getByText("local")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove local" })).not.toBeInTheDocument();
   });
 });

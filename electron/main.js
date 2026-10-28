@@ -2589,6 +2589,22 @@ handle("agent-permissions-set", (_event, next) => {
   return { cloudSync: agentPermissions.get().cloudSync === "always" };
 }, { onFailure: () => ({ cloudSync: false }) });
 
+// ── Skills: moving an installed skill to the Trash ──
+// skill-trash.js decides which folders qualify; main only supplies the Trash.
+let skillTrash = null;
+handle(
+  "skills-trash",
+  (_e, folder) => {
+    if (!skillTrash) {
+      skillTrash = require("./skill-trash").createSkillTrash({
+        trashItem: (p) => shell.trashItem(p),
+      });
+    }
+    return skillTrash.trash(folder);
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
+
 // ── Auto-update (electron-updater → the platform's published feed) ──
 // macOS updates from a signed and notarized feed, Windows from the signed NSIS
 // feed the release runbook publishes alongside the installer. Which feed an

@@ -99,83 +99,8 @@ export interface DocLinkAnswer {
   target?: string;
 }
 
-// ── Skills ──
-// A skill is a folder with a SKILL.md, installed by copying it into whichever
-// agent tool's folder the user picks. `{ project }` installs into a workspace
-// root's own `.claude/skills`, and that root is the only path main will accept.
-export type SkillTarget = "claude" | "codex" | "cursor" | "gemini" | "universal" | { project: string };
-
 // The tool a skills folder belongs to. A project folder is not a tool.
 export type SkillTool = "claude" | "codex" | "cursor" | "gemini" | "universal";
-
-export interface SkillSource {
-  id: string;
-  owner: string;
-  repo: string;
-  ref: string | null;
-  commit: string | null;
-  fetchedAt: string | null;
-  /** One of the three sources Markie ships with, which cannot be removed for good. */
-  builtin: boolean;
-  /** Why the last fetch failed, when it did. */
-  error?: string | null;
-}
-
-export interface SkillFile {
-  path: string;
-  size: number;
-  executable: boolean;
-}
-
-export interface CatalogSkill {
-  /** `owner/repo/<skillPath>`, the same id skills.sh uses. */
-  id: string;
-  source: string;
-  skillPath: string;
-  name: string;
-  description: string;
-  license: string | null;
-  compatibility: string | null;
-  allowedTools: string | null;
-  metadata: Record<string, string>;
-  files: SkillFile[];
-  /**
-   * The folder's git tree object id, 40 hex characters. The Vercel CLI records
-   * the same id in ~/.agents/.skill-lock.json and compares it to decide whether
-   * an install is out of date, so the two tools agree.
-   */
-  folderHash: string;
-  installs?: number | null;
-  installedTo: { target: SkillTarget; path: string; upToDate: boolean }[];
-}
-
-export interface Catalog {
-  sources: SkillSource[];
-  skills: CatalogSkill[];
-}
-
-export interface SearchHit {
-  id: string;
-  name: string;
-  source: string;
-  installs: number;
-}
-
-export interface InstalledSkill {
-  name: string;
-  target: SkillTarget;
-  // Every known target whose skills directory resolves to this row's folder.
-  // Two targets can share one folder (CLAUDE_CONFIG_DIR pointed at ~/.agents,
-  // say), and both are then installed here. Absent from rows older than the
-  // field; read it as [target].
-  targets?: SkillTarget[];
-  path: string;
-  description: string | null;
-  source: string | null;
-  folderHash: string | null;
-  updateAvailable: boolean;
-  installedByMarkie: boolean;
-}
 
 export interface PrivateReleaseStatus { required: boolean; authorized: boolean; channel: string | null; gitCommit: string | null; authOrigin: string }
 
@@ -577,36 +502,6 @@ export interface ElectronAPI {
   /** Whether agents may put files in Markie Cloud without asking each time. */
   agentPermissions?(): Promise<{ cloudSync: boolean }>;
   setAgentPermissions?(next: { cloudSync: boolean }): Promise<{ cloudSync: boolean }>;
-  // Skills — the catalog, and installing out of it. Reading never touches the
-  // network; refreshing and searching do.
-  skillsCatalogList?(): Promise<Catalog>;
-  skillsCatalogRefresh?(source?: string): Promise<Catalog>;
-  skillsCatalogAddSource?(ownerRepo: string): Promise<Catalog>;
-  skillsCatalogRemoveSource?(ownerRepo: string): Promise<Catalog>;
-  skillsSearch?(query: string): Promise<SearchHit[]>;
-  skillsRead?(id: string): Promise<{ body: string; files: SkillFile[] }>;
-  // Per target, because installing to four tools can fail for three of them and
-  // the user needs to know which. "exists" means a folder Markie did not write
-  // is already there, and nothing was touched.
-  skillsInstall?(
-    id: string,
-    targets: SkillTarget[]
-  ): Promise<{
-    // One entry per folder written; `targets` names every selected target
-    // that folder serves when two of them resolve to the same place.
-    installed: { target: SkillTarget; targets?: SkillTarget[]; path: string }[];
-    errors: {
-      target: SkillTarget;
-      targets?: SkillTarget[];
-      error: "exists" | "invalid-name" | "no-such-target" | "copy-failed";
-      message: string;
-    }[];
-  }>;
-  skillsRemove?(target: SkillTarget, name: string): Promise<{ ok: boolean; error?: string }>;
-  skillsInstalled?(): Promise<InstalledSkill[]>;
-  // The cached folder of a catalog skill, granted for reading through
-  // markie-asset:// so a SKILL.md preview can show the images beside it.
-  skillsSkillDir?(sourceId: string, skillId: string): Promise<{ dir: string } | { error: string }>;
   // Report a renderer crash to the main process's crash log. Fire-and-forget:
   // the caller is an error boundary that has nothing to do with an answer.
   logRendererError?(detail: {

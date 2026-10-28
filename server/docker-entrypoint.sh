@@ -47,6 +47,20 @@ if [ -n "$B2_BUCKET" ] && [ -n "$B2_KEY_ID" ]; then
   BACKUP=1
 fi
 
+# LITESTREAM_IN_VM=1: Litestream 0.5 already runs around this script
+# (litestream-vm/init) and replicates LITESTREAM_DB. A second Litestream on the
+# same file, or a different file, would be a silent mess. Refuse both.
+if [ "${LITESTREAM_IN_VM:-}" = "1" ] && [ "$1" != "backup" ]; then
+  if [ -n "$BACKUP" ]; then
+    echo "error: LITESTREAM_IN_VM=1 and the B2_*/S3_* backup are both set. Use one." >&2
+    exit 1
+  fi
+  if [ "$LITESTREAM_DB" != "$DB_PATH" ]; then
+    echo "error: LITESTREAM_IN_VM=1 replicates $LITESTREAM_DB, but DB_PATH is $DB_PATH." >&2
+    exit 1
+  fi
+fi
+
 # litestream.yml encrypts every replica with age. Without both halves of the
 # key Litestream would not start, and the container would crash-loop with a
 # parse error that names neither variable. Say what is wrong instead, and never
@@ -104,7 +118,9 @@ fi
 # marker is consumed, so it cannot fire twice.
 LITESTREAM_META="$(dirname "$DB_PATH")/.$(basename "$DB_PATH")-litestream"
 NEW_GENERATION_MARKER="$(dirname "$DB_PATH")/.litestream-new-generation"
-if [ -f "$NEW_GENERATION_MARKER" ]; then
+# Not with LITESTREAM_IN_VM=1: there the same directory is the running
+# Litestream 0.5's own state.
+if [ -f "$NEW_GENERATION_MARKER" ] && [ "${LITESTREAM_IN_VM:-}" != "1" ]; then
   echo "litestream: starting a new generation"
   rm -rf "$LITESTREAM_META" "$NEW_GENERATION_MARKER"
 fi

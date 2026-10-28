@@ -1,0 +1,82 @@
+#!/bin/sh
+# PID 1 for a SQLite app whose Litestream runs inside the app's own container,
+# which under Kata is the app's own VM (zvn-infra docs/kata.md, "SQLite apps").
+#
+# Copied from ZVN-DEV/zvn-infra kamal/sqlite-in-vm/litestream-init. Each
+# app image carries a copy at /opt/litestream-vm/init. Keep them in step.
+#
+#   init <app command and args>
+#
+# LITESTREAM_IN_VM unset: exec the app command and nothing else. The box's
+#   own Litestream (zvn-litestream@<app>) replicates, exactly as before.
+# LITESTREAM_IN_VM=1: refuse unless this box holds the app's lease and its
+#   copy was made for that lease (lease-check.mjs), then run the app under
+#   `litestream replicate -exec`. Litestream exits when the app does, and the
+#   container with it.
+#
+# Signals. Under Kata, `docker stop` sends SIGTERM to every process in the
+# container, and twice to PID 1. A second signal makes Litestream skip its
+# final sync, so under Kata this forwards nothing. Under runc only PID 1 gets
+# the signal, so this forwards the first one to Litestream, which passes it
+# to the app, waits for it, and syncs.
+set -eu
+D=/opt/litestream-vm
+
+case "${LITESTREAM_IN_VM:-}" in
+  "") exec "$@" ;;
+  1) ;;
+  *) echo "litestream-init: LITESTREAM_IN_VM must be 1 or unset, not '${LITESTREAM_IN_VM}'" >&2; exit 64 ;;
+esac
+[ $# -gt 0 ] || { echo "litestream-init: no app command" >&2; exit 64; }
+
+missing=""
+for v in LITESTREAM_APP LITESTREAM_DB LITESTREAM_BUCKET LITESTREAM_PREFIX LITESTREAM_ENDPOINT \
+         LITESTREAM_REGION LITESTREAM_ACCESS_KEY_ID LITESTREAM_SECRET_ACCESS_KEY LITESTREAM_SSE_C_KEY; do
+  eval "val=\${$v:-}"
+  [ -n "$val" ] || missing="$missing $v"
+done
+[ -z "$missing" ] || { echo "litestream-init: LITESTREAM_IN_VM=1 but these are not set:$missing" >&2; exit 64; }
+# Litestream copies LITESTREAM_* keys into AWS_*, and the app's environment
+# drops both below. An app that brings its own AWS_* key would lose it.
+if [ -n "${AWS_ACCESS_KEY_ID:-}${AWS_SECRET_ACCESS_KEY:-}" ]; then
+  echo "litestream-init: AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY is set; the in-VM Litestream reads LITESTREAM_* only" >&2
+  exit 64
+fi
+LITESTREAM_DB_NAME=$(basename "$LITESTREAM_DB")
+export LITESTREAM_DB_NAME
+
+# The fence. Nothing has opened the database yet.
+node "$D/lease-check.mjs"
+
+# Litestream splits -exec with shell-word rules. Plain words only, so the
+# command it runs is exactly the one given here.
+cmd="env -u LITESTREAM_ACCESS_KEY_ID -u LITESTREAM_SECRET_ACCESS_KEY -u LITESTREAM_SSE_C_KEY -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY"
+for a in "$@"; do
+  case "$a" in
+    ""|*[!A-Za-z0-9_./=:@,+%-]*) echo "litestream-init: app argument '$a' is not a plain word" >&2; exit 64 ;;
+  esac
+  cmd="$cmd $a"
+done
+
+kata=0
+grep -q 'kata-containers.target' /proc/cmdline 2>/dev/null && kata=1
+pid=""
+forwarded=0
+# shellcheck disable=SC2329  # run by the trap
+on_signal() {
+  [ "$kata" = 0 ] && [ "$forwarded" = 0 ] && [ -n "$pid" ] || return 0
+  forwarded=1
+  kill -TERM "$pid" 2>/dev/null || true
+}
+trap on_signal TERM INT
+
+echo "litestream-init: replicating $LITESTREAM_DB to $LITESTREAM_PREFIX/$LITESTREAM_APP/$LITESTREAM_DB_NAME (kata=$kata)"
+"$D/litestream" replicate -config "$D/litestream.yml" -exec "$cmd" &
+pid=$!
+rc=0
+while kill -0 "$pid" 2>/dev/null; do
+  if wait "$pid"; then rc=0; else rc=$?; fi
+done
+# A signal can interrupt the last wait before the exit status is read.
+if wait "$pid" 2>/dev/null; then rc=0; else r=$?; [ "$r" = 127 ] || rc=$r; fi
+exit "$rc"

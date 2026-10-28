@@ -8,6 +8,23 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-10-27
+
+### Changed
+
+- **Sharing works like Google Docs.** The Share dialog has one email field that
+  suggests people you have shared with before, a list of who has access, and a
+  General access choice. "Anyone with the link" publishes at once. Copy link is
+  always at the bottom.
+- **The file menu is a real menu.** The "..." on a Library row (or a right-click)
+  opens Copy link, Copy path, Manage sharing, Stop syncing to cloud, and Delete
+  file. Delete moves the file to the Trash and can delete your cloud copy too.
+- **Copy all** sits in the top-right corner of the open document.
+- **The vault asks for Touch ID per item.** Opening an item, revealing a value or
+  copying one asks for Touch ID when it is turned on. Values hide again after a
+  minute.
+- **The top bar shows the Markie wordmark** instead of a drag grip.
+
 ### Removed
 
 - **The Skills panel no longer has a Discover tab.** Markie no longer

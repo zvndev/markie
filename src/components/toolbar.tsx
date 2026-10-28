@@ -10,7 +10,7 @@ import {
 } from "@/lib/color-mode";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 import { RICH_DOCUMENT_OUTPUT_HELP } from "@/lib/document-output-policy";
-import { MarkieSymbol } from "@/components/markie-logo";
+import { MarkieLogo } from "@/components/markie-logo";
 
 interface ToolbarProps {
   documentMode?: boolean;
@@ -112,17 +112,12 @@ export function Toolbar({
       >
         <div
           data-window-drag-handle
-          title="Move window"
           className="h-10 -my-2.5 shrink-0 flex items-center gap-1.5 pr-0.5 text-foreground/90"
           style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
         >
-          <svg width="9" height="14" viewBox="0 0 9 14" fill="currentColor" className="text-muted/60" aria-hidden="true">
-            <circle cx="2" cy="2" r="1" /><circle cx="7" cy="2" r="1" />
-            <circle cx="2" cy="7" r="1" /><circle cx="7" cy="7" r="1" />
-            <circle cx="2" cy="12" r="1" /><circle cx="7" cy="12" r="1" />
-          </svg>
-          <MarkieSymbol width={20} className="hidden sm:block ml-0.5 mt-1.5" />
-          <span className="hidden sm:inline text-[13px] font-semibold tracking-tight">Markie</span>
+          {/* The full lockup, small: lettering follows the theme's text color,
+              the underline stays brand red. The whole bar drags the window. */}
+          <MarkieLogo width={64} className="hidden sm:block mt-1" />
         </div>
         <div className="w-px h-4 bg-border" />
         <div

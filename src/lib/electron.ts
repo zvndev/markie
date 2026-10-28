@@ -105,6 +105,7 @@ export type SkillTool = "claude" | "codex" | "cursor" | "gemini" | "universal";
 export interface PrivateReleaseStatus { required: boolean; authorized: boolean; channel: string | null; gitCommit: string | null; authOrigin: string }
 
 export type VaultTouchIdFailure = "missing" | "cancelled" | "unavailable" | "busy";
+export type VaultRevealAction = "open" | "reveal" | "copy";
 export type VaultTouchIdResult = { ok: true } | { ok: false; reason: VaultTouchIdFailure };
 
 export interface ElectronAPI {
@@ -144,6 +145,8 @@ export interface ElectronAPI {
   vaultTouchIdEnroll?(vaultId: string, secret: Uint8Array): Promise<VaultTouchIdResult>;
   /** Prompts Touch ID, then returns the vault's device secret. The caller zeroes it. */
   vaultTouchIdUnlock?(vaultId: string): Promise<VaultTouchIdResult & { secret?: Uint8Array }>;
+  /** A fresh Touch ID check before one item is opened, revealed or copied. Releases nothing. */
+  vaultTouchIdConfirm?(vaultId: string, action: VaultRevealAction, label: string): Promise<VaultTouchIdResult>;
   /** Deletes the vault's keychain secret. */
   vaultTouchIdRemove?(vaultId: string): Promise<{ ok: boolean }>;
   // search every indexed and recent document by name, path and body text

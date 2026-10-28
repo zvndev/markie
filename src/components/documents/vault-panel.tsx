@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getElectronAPI } from "@/lib/electron";
+import { getElectronAPI, type VaultRevealAction, type VaultTouchIdResult } from "@/lib/electron";
 import { VaultDeviceError, VaultRepository, VaultSaveError, type VaultDeviceKeeper, type VaultEntry, type VaultReadResult } from "@/lib/vault/repository";
 import { IndexedDbVaultStorage, VaultStorageError, requestPersistentStorage, type VaultStorage } from "@/lib/vault/storage";
 import { VAULT_LIMITS, VaultError } from "@/lib/vault";
@@ -33,6 +33,7 @@ type SecureDocument = {
 
 const IDLE_LOCK_MS = 5 * 60 * 1000;
 const CHECKPOINT_MS = 2000;
+const TOUCH_ID_OFFER_KEY = "markie.vault.touchIdOffer";
 const button = "rounded-md border border-border px-3 py-2 text-sm hover:bg-accent disabled:opacity-40";
 const primaryButton = "rounded-md bg-foreground px-3 py-2 text-sm font-medium text-background hover:opacity-90 disabled:opacity-40";
 const quietButton = "text-sm text-muted underline-offset-2 hover:text-foreground hover:underline disabled:opacity-40";
@@ -140,6 +141,13 @@ export function VaultPanel({ storage, onCloseGuard }: VaultPanelProps) {
   const [restoreFile, setRestoreFile] = useState<{ text: string; name: string } | null>(null);
   const [restorePassphrase, setRestorePassphrase] = useState("");
   const [suggested, setSuggested] = useState<string | null>(null);
+  const [offerTouchId, setOfferTouchId] = useState(false);
+  const [gate, setGate] = useState<{ prompt: string } | null>(null);
+  const [gatePassphrase, setGatePassphrase] = useState("");
+  const [gateBusy, setGateBusy] = useState(false);
+  const gateResolve = useRef<((allowed: boolean) => void) | null>(null);
+  const touchIdRef = useRef(touchId);
+  touchIdRef.current = touchId;
   const mounted = useRef(true);
   const operation = useRef(0);
   const invalidateOperations = useCallback(() => { operation.current++; }, []);
@@ -153,9 +161,21 @@ export function VaultPanel({ storage, onCloseGuard }: VaultPanelProps) {
     urls.current.clear();
   }, []);
 
+  /** Settles a pending passphrase check. Locking settles it as refused. */
+  const closeGate = useCallback((allowed: boolean) => {
+    const resolve = gateResolve.current;
+    gateResolve.current = null;
+    resolve?.(allowed);
+    if (!mounted.current) return;
+    setGate(null);
+    setGatePassphrase("");
+    setGateBusy(false);
+  }, []);
+
   const lockNow = useCallback((message: string) => {
     ++operation.current;
     repository.lock();
+    closeGate(false);
     // A key copied out a moment ago should not outlive the vault it came from.
     void getElectronAPI()?.clearSecretClipboard?.().catch(() => undefined);
     openedRef.current?.bytes.fill(0);
@@ -174,12 +194,60 @@ export function VaultPanel({ storage, onCloseGuard }: VaultPanelProps) {
     setRestoreFile(null);
     setRestorePassphrase("");
     setSettingsOpen(false);
+    setOfferTouchId(false);
     setError(null);
     setLocked(true);
     setShielded(false);
     setBusy(false);
     setNotice(message);
-  }, [repository, revokeDownloads]);
+  }, [repository, revokeDownloads, closeGate]);
+
+  /**
+   * With Touch ID on, every open, reveal or copy of one item asks for a fresh
+   * Touch ID check that names it. Cancelling keeps it hidden. When the sensor
+   * cannot be used right now, the passphrase stands in. Without Touch ID an
+   * unlocked vault is revealable, as before.
+   */
+  const confirmItem = useCallback(async (action: VaultRevealAction, label: string): Promise<boolean> => {
+    if (!touchIdRef.current.enrolled) return true;
+    const vaultId = repository.vaultId;
+    const confirmTouchId = getElectronAPI()?.vaultTouchIdConfirm;
+    if (vaultId && confirmTouchId) {
+      let result: VaultTouchIdResult;
+      try { result = await confirmTouchId(vaultId, action, label); }
+      catch { result = { ok: false, reason: "unavailable" }; }
+      if (result.ok) return true;
+      if (result.reason === "cancelled" || result.reason === "busy") {
+        if (mounted.current) setNotice(result.reason === "busy" ? "Touch ID is already waiting for you." : `Touch ID was cancelled. ${label} stays hidden.`);
+        return false;
+      }
+    }
+    if (!mounted.current || !repository.unlocked) return false;
+    gateResolve.current?.(false);
+    return new Promise<boolean>((resolve) => {
+      gateResolve.current = resolve;
+      setGatePassphrase("");
+      setGate({ prompt: `Touch ID is not available right now. Enter your passphrase to ${action} ${label}.` });
+    });
+  }, [repository]);
+
+  function submitGate() {
+    const secret = gatePassphrase;
+    if (!secret || gateBusy) return;
+    setGatePassphrase("");
+    setGateBusy(true);
+    repository.verifyPassphrase(secret).then(() => closeGate(true), (failure) => {
+      if (!mounted.current || !gateResolve.current) return;
+      setGateBusy(false);
+      if (failure instanceof VaultError && (failure.code === "authentication-failed" || failure.code === "invalid-passphrase")) setError("That passphrase is not correct. The item stays hidden.");
+      else closeGate(false);
+    });
+  }
+
+  function dismissTouchIdOffer() {
+    setOfferTouchId(false);
+    try { window.localStorage.setItem(TOUCH_ID_OFFER_KEY, "dismissed"); } catch { /* Offered again next time. */ }
+  }
 
   const requestClose = useCallback(() => {
     if ((openedRef.current?.dirty || repository.hasVolatileRecovery) && !window.confirm("Leave the vault and discard unsaved edits or encrypted memory-only recovery? Save encrypted changes first to keep them.")) return false;
@@ -225,6 +293,8 @@ export function VaultPanel({ storage, onCloseGuard }: VaultPanelProps) {
       mounted.current = false;
       invalidateOperations();
       repository.lock();
+      gateResolve.current?.(false);
+      gateResolve.current = null;
       openedRef.current?.bytes.fill(0);
       openedRef.current = null;
       revokeDownloads();
@@ -275,6 +345,10 @@ export function VaultPanel({ storage, onCloseGuard }: VaultPanelProps) {
       try {
         if (hasVault) await repository.unlock(secret); else await repository.create(secret);
         await enterVault(epoch);
+        // After a passphrase unlock, offer Touch ID once; it shows only where the Mac supports it.
+        let dismissed = false;
+        try { dismissed = window.localStorage.getItem(TOUCH_ID_OFFER_KEY) === "dismissed"; } catch { /* Offer it. */ }
+        if (epoch === operation.current && mounted.current && !dismissed) setOfferTouchId(true);
       } catch (failure) {
         // A valid header with a tampered record must not leave hidden unlocked keys behind.
         repository.lock();
@@ -326,7 +400,8 @@ export function VaultPanel({ storage, onCloseGuard }: VaultPanelProps) {
       }
       if (epoch !== operation.current || !mounted.current) return;
       setEnrolling(false);
-      setNotice("Touch ID unlock is on.");
+      setOfferTouchId(false);
+      setNotice("Touch ID unlock is on. Opening or copying an item asks for Touch ID too.");
       await refreshTouchId();
     });
   }
@@ -434,6 +509,9 @@ export function VaultPanel({ storage, onCloseGuard }: VaultPanelProps) {
     if (!mayDiscard()) return;
     const epoch = operation.current + 1;
     void run(async () => {
+      // An env file opens masked; its editor asks again per value. Anything else shows at once.
+      if (!isEnvFileName(entry.name) && !(await confirmItem("open", entry.name))) return;
+      if (epoch !== operation.current || !mounted.current || shieldRef.current) return;
       const decrypted = await repository.read(entry.id);
       const next = await editableDocument(entry.id, decrypted);
       if (epoch !== operation.current || !mounted.current || shieldRef.current) { next.bytes.fill(0); return; }
@@ -613,6 +691,19 @@ export function VaultPanel({ storage, onCloseGuard }: VaultPanelProps) {
       {!locked && !shielded && <button className={button} type="button" onClick={() => { if (mayDiscard()) lockNow("Vault locked."); }}>Lock vault</button>}
     </header>
     {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-border p-3 text-sm sm:mx-7">{error}</p>}
+    {gate && !locked && !shielded && <form aria-label="Passphrase check" className="mx-5 mt-4 space-y-3 rounded-md border border-border bg-surface p-3 sm:mx-7" onSubmit={(event) => { event.preventDefault(); submitGate(); }}>
+      <p className="text-sm">{gate.prompt}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input type="password" aria-label="Passphrase to reveal" autoComplete="off" autoFocus value={gatePassphrase} maxLength={1024} disabled={gateBusy} onChange={(event) => setGatePassphrase(event.target.value)} className={`${field} min-w-[14rem] flex-1`} />
+        <button type="submit" className={primaryButton} disabled={gateBusy || !gatePassphrase}>{gateBusy ? "Checking…" : "Confirm"}</button>
+        <button type="button" className={button} disabled={gateBusy} onClick={() => closeGate(false)}>Cancel</button>
+      </div>
+    </form>}
+    {offerTouchId && touchId.available && !touchId.enrolled && !locked && !shielded && !settingsOpen && <div role="region" aria-label="Touch ID offer" className="mx-5 mt-4 flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface p-3 sm:mx-7">
+      <p className="min-w-0 flex-1 text-sm">Use Touch ID to unlock this vault and to open or copy its items. Your passphrase still works.</p>
+      <button type="button" className={primaryButton} disabled={busy} onClick={() => { setOfferTouchId(false); setSettingsOpen(true); setEnrolling(true); }}>Use Touch ID…</button>
+      <button type="button" className={quietButton} onClick={dismissTouchIdOffer}>Not now</button>
+    </div>}
     {locked || shielded ? <div className="min-h-0 flex-1 overflow-auto p-5 sm:p-7">
       <div className="mx-auto mt-[6vh] max-w-md space-y-4 rounded-lg border border-border bg-surface p-6">
         <p className="text-xs tracking-widest uppercase text-muted">Private on this device</p>
@@ -672,7 +763,7 @@ export function VaultPanel({ storage, onCloseGuard }: VaultPanelProps) {
         {touchId.available && <div className="space-y-2">
           <h4 className="text-sm font-medium">Touch ID</h4>
           {touchId.enrolled ? <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm text-muted">Touch ID can unlock this vault on this Mac.</p>
+            <p className="text-sm text-muted">Touch ID unlocks this vault on this Mac and is asked again before an item is opened, shown or copied.</p>
             <button type="button" className={button} disabled={busy} onClick={disableTouchId}>Turn off Touch ID</button>
           </div> : enrolling ? <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); enrollTouchId(); }}>
             <label className="block text-sm">Confirm with your passphrase<input type="password" autoComplete="off" value={enrollPassphrase} maxLength={1024} disabled={busy} onChange={(event) => setEnrollPassphrase(event.target.value)} className={`${field} mt-2`} /></label>
@@ -681,7 +772,7 @@ export function VaultPanel({ storage, onCloseGuard }: VaultPanelProps) {
               <button type="button" className={button} disabled={busy} onClick={() => { setEnrolling(false); setEnrollPassphrase(""); }}>Cancel</button>
             </div>
           </form> : <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm text-muted">Unlock with your fingerprint. Your passphrase still works.</p>
+            <p className="text-sm text-muted">Unlock with your fingerprint, and confirm with it before an item is opened, shown or copied. Your passphrase still works.</p>
             <button type="button" className={button} disabled={busy} onClick={() => setEnrolling(true)}>Turn on Touch ID…</button>
           </div>}
         </div>}
@@ -721,7 +812,8 @@ export function VaultPanel({ storage, onCloseGuard }: VaultPanelProps) {
         </div>
         {envOpened ? <VaultEnvEditor key={envOpened.id ?? "unsaved"} text={envOpened.text} newline={envOpened.source.newline} disabled={busy}
           onChange={(text) => setOpened((current) => current?.kind === "text" ? { ...current, text, dirty: true } : current)}
-          onNotice={setNotice} onError={setError} />
+          onNotice={setNotice} onError={setError}
+          confirmReveal={touchId.enrolled ? (action, label) => confirmItem(action, label === null ? envOpened.name : `${label} in ${envOpened.name}`) : undefined} />
         : opened.kind === "text" ? <label className="block text-sm">Private text<textarea aria-label="Private text" className={`${field} mt-2 min-h-80 font-mono text-sm`} value={opened.text} disabled={busy} readOnly={opened.source.newline === "mixed"} onChange={(event) => {
           const text = normalizeTypedNewlines(event.target.value, opened.source.newline);
           setOpened({ ...opened, text, dirty: true });

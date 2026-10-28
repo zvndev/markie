@@ -3,7 +3,7 @@ import { webcrypto } from "node:crypto";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { TextNewline } from "@/lib/document-formats";
-import { CLIPBOARD_CLEAR_MS, normalizeTypedNewlines, VaultEnvEditor } from "./vault-env-editor";
+import { CLIPBOARD_CLEAR_MS, normalizeTypedNewlines, REVEAL_REMASK_MS, VaultEnvEditor } from "./vault-env-editor";
 
 const SOURCE = "# Payments\r\nSTRIPE_KEY=sk_live_123\r\nexport DB_URL=\"postgres://u:p@h/db\" # primary\r\n\r\n# OLD_TOKEN=parked-secret\r\nnot a pair\r\n";
 
@@ -182,5 +182,37 @@ describe("vault environment key editor", () => {
     expect(normalizeTypedNewlines("a\nb", "crlf")).toBe("a\r\nb");
     expect(normalizeTypedNewlines("a\nb", "cr")).toBe("a\rb");
     expect(normalizeTypedNewlines("a\nb", "lf")).toBe("a\nb");
+  });
+});
+
+describe("vault environment reveal rules", () => {
+  it("masks revealed values again a minute after the last reveal", () => {
+    vi.useFakeTimers();
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Reveal STRIPE_KEY" }));
+    expect(screen.getByLabelText("Value of STRIPE_KEY")).toHaveAttribute("type", "text");
+    act(() => { vi.advanceTimersByTime(REVEAL_REMASK_MS - 1); });
+    expect(screen.getByLabelText("Value of STRIPE_KEY")).toHaveAttribute("type", "text");
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(screen.getByLabelText("Value of STRIPE_KEY")).toHaveAttribute("type", "password");
+  });
+
+  it("asks the confirmer before each reveal, copy and raw view, and a refusal changes nothing", async () => {
+    const confirmReveal = vi.fn<(action: "reveal" | "copy", label: string | null) => Promise<boolean>>(async () => false);
+    render(<VaultEnvEditor text={"API_KEY=secret\n"} newline="lf" onChange={() => undefined} onNotice={() => undefined} onError={() => undefined} confirmReveal={confirmReveal} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API_KEY" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy value of API_KEY" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reveal all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy as .env" }));
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    await act(async () => { await Promise.resolve(); });
+    expect(confirmReveal.mock.calls).toEqual([["reveal", "API_KEY"], ["copy", "API_KEY"], ["reveal", null], ["copy", null], ["reveal", null]]);
+    expect(screen.getByLabelText("Value of API_KEY")).toHaveAttribute("type", "password");
+    expect(screen.queryByRole("textbox", { name: "Environment file text" })).toBeNull();
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+    confirmReveal.mockResolvedValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API_KEY" }));
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByLabelText("Value of API_KEY")).toHaveAttribute("type", "text");
   });
 });

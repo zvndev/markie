@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { getElectronAPI } from "@/lib/electron";
 import type { TextNewline } from "@/lib/document-formats";
 import {
@@ -22,9 +22,16 @@ export interface VaultEnvEditorProps {
   onChange: (text: string) => void;
   onNotice: (message: string) => void;
   onError: (message: string) => void;
+  /**
+   * Asked before a value is shown or copied. `label` names one key, or is null
+   * for the whole file. Resolves false to keep it hidden. Absent means allowed.
+   */
+  confirmReveal?: (action: "reveal" | "copy", label: string | null) => Promise<boolean>;
 }
 
 export const CLIPBOARD_CLEAR_MS = 30_000;
+/** Revealed values mask themselves again this long after the last reveal. */
+export const REVEAL_REMASK_MS = 60_000;
 
 const button = "rounded-md border border-border px-2.5 py-1.5 text-xs hover:bg-accent disabled:opacity-40";
 const quietButton = "rounded-md px-2 py-1 text-xs text-muted hover:bg-accent hover:text-foreground disabled:opacity-40";
@@ -93,11 +100,31 @@ function parkedKey(comment: string): string | null {
 }
 
 /** Structured editor for a decrypted .env file. Rendered only inside the vault panel. */
-export function VaultEnvEditor({ text, newline, disabled = false, onChange, onNotice, onError }: VaultEnvEditorProps) {
+export function VaultEnvEditor({ text, newline, disabled = false, onChange, onNotice, onError, confirmReveal }: VaultEnvEditorProps) {
   const [model, setModel] = useState<{ text: string; parsed: DotenvDocument }>(() => ({ text, parsed: parseDotenv(text) }));
   const [raw, setRaw] = useState(false);
   const [revealed, setRevealed] = useState<ReadonlySet<number>>(() => new Set());
+  const [revealedAt, setRevealedAt] = useState(0);
   const [focusId, setFocusId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (revealed.size === 0) return;
+    const timer = setTimeout(() => setRevealed(new Set()), REVEAL_REMASK_MS);
+    return () => clearTimeout(timer);
+  }, [revealed.size, revealedAt]);
+
+  /** Runs `then` once allowed: at once without a confirmer, after it resolves true with one. */
+  function whenAllowed(action: "reveal" | "copy", label: string | null, then: () => void) {
+    if (!confirmReveal) { then(); return; }
+    void confirmReveal(action, label).then((ok) => { if (ok) then(); }, () => undefined);
+  }
+
+  function reveal(ids: number[], label: string | null) {
+    whenAllowed("reveal", label, () => {
+      setRevealed((current) => new Set([...current, ...ids]));
+      setRevealedAt(Date.now());
+    });
+  }
 
   // Keep row identity across structured edits; any outside change re-parses and masks everything again.
   let parsed = model.parsed;
@@ -123,15 +150,20 @@ export function VaultEnvEditor({ text, newline, disabled = false, onChange, onNo
     onChange(nextText);
   }
 
-  function toggle(id: number) {
+  function toggle(id: number, label: string) {
+    if (!revealed.has(id)) { reveal([id], label); return; }
     setRevealed((current) => {
       const next = new Set(current);
-      if (!next.delete(id)) next.add(id);
+      next.delete(id);
       return next;
     });
   }
 
-  async function copy(value: string, message: string) {
+  function copy(value: string, message: string, label: string | null) {
+    whenAllowed("copy", label, () => void copyNow(value, message));
+  }
+
+  async function copyNow(value: string, message: string) {
     try {
       await copyOutsideVault(value);
       onNotice(`${message} ${COPY_NOTE}`);
@@ -144,13 +176,13 @@ export function VaultEnvEditor({ text, newline, disabled = false, onChange, onNo
     <div className="flex flex-wrap items-center gap-2">
       <div role="group" aria-label="Environment view" className="inline-flex rounded-md border border-border p-0.5">
         <button type="button" aria-pressed={!raw} className={`rounded px-2.5 py-1 text-xs ${raw ? "text-muted hover:text-foreground" : "bg-accent text-foreground"}`} onClick={() => setRaw(false)}>Keys</button>
-        <button type="button" aria-pressed={raw} className={`rounded px-2.5 py-1 text-xs ${raw ? "bg-accent text-foreground" : "text-muted hover:text-foreground"}`} onClick={() => setRaw(true)}>Raw</button>
+        <button type="button" aria-pressed={raw} className={`rounded px-2.5 py-1 text-xs ${raw ? "bg-accent text-foreground" : "text-muted hover:text-foreground"}`} onClick={() => { if (!raw) whenAllowed("reveal", null, () => setRaw(true)); }}>Raw</button>
       </div>
       <span className="text-xs text-muted">{keyCount === 1 ? "1 key" : `${keyCount} keys`}</span>
       <span className="flex-1" />
       {!raw && <button type="button" className={button} disabled={maskable.length === 0} aria-pressed={allRevealed}
-        onClick={() => setRevealed(allRevealed ? new Set() : new Set(maskable.map((line) => line.id)))}>{allRevealed ? "Hide all" : "Reveal all"}</button>}
-      <button type="button" className={button} disabled={disabled || text === ""} onClick={() => void copy(text, "Copied the whole file as .env text.")}>Copy as .env</button>
+        onClick={() => { if (allRevealed) setRevealed(new Set()); else reveal(maskable.map((line) => line.id), null); }}>{allRevealed ? "Hide all" : "Reveal all"}</button>}
+      <button type="button" className={button} disabled={disabled || text === ""} onClick={() => void copy(text, "Copied the whole file as .env text.", null)}>Copy as .env</button>
     </div>
 
     {raw ? <>
@@ -173,7 +205,7 @@ export function VaultEnvEditor({ text, newline, disabled = false, onChange, onNo
             const key = parked.get(line.id);
             return <tr key={line.id}>
               <td colSpan={key === undefined ? 3 : 2} className="px-1 pt-2 font-mono text-xs italic text-muted break-all">{key === undefined || shown ? line.raw.trim() : `# ${key}=${MASK}`}</td>
-              {key !== undefined && <td className="px-1 pt-1"><button type="button" className={quietButton} aria-label={`${shown ? "Hide" : "Reveal"} commented ${key}`} aria-pressed={shown} onClick={() => toggle(line.id)}>{shown ? "Hide" : "Show"}</button></td>}
+              {key !== undefined && <td className="px-1 pt-1"><button type="button" className={quietButton} aria-label={`${shown ? "Hide" : "Reveal"} commented ${key}`} aria-pressed={shown} onClick={() => toggle(line.id, `commented ${key}`)}>{shown ? "Hide" : "Show"}</button></td>}
             </tr>;
           }
           if (line.kind === "malformed") return <tr key={line.id} className="align-top">
@@ -181,7 +213,7 @@ export function VaultEnvEditor({ text, newline, disabled = false, onChange, onNo
               <code aria-label={`Unreadable line ${row}`} className="block rounded-md border border-dashed border-border px-2.5 py-1.5 font-mono text-[13px] text-muted break-all whitespace-pre-wrap">{shown ? line.raw : MASK}</code>
               <p className="mt-1 text-xs text-muted">{line.reason} Kept exactly as written. Edit it in Raw.</p>
             </td>
-            <td className="px-1"><button type="button" className={quietButton} aria-label={`${shown ? "Hide" : "Reveal"} line ${row}`} aria-pressed={shown} onClick={() => toggle(line.id)}>{shown ? "Hide" : "Show"}</button></td>
+            <td className="px-1"><button type="button" className={quietButton} aria-label={`${shown ? "Hide" : "Reveal"} line ${row}`} aria-pressed={shown} onClick={() => toggle(line.id, `line ${row}`)}>{shown ? "Hide" : "Show"}</button></td>
           </tr>;
           const name = line.key || `row ${row}`;
           const problem = keyProblem(line, duplicates);
@@ -206,8 +238,8 @@ export function VaultEnvEditor({ text, newline, disabled = false, onChange, onNo
                 onChange={(event) => setValue(event.target.value)} />}
             </td>
             <td className="px-1 whitespace-nowrap">
-              <button type="button" className={quietButton} aria-label={`${shown ? "Hide" : "Reveal"} ${name}`} aria-pressed={shown} onClick={() => toggle(line.id)}>{shown ? "Hide" : "Show"}</button>
-              <button type="button" className={quietButton} aria-label={`Copy value of ${name}`} disabled={disabled} onClick={() => void copy(line.value, `Copied the value of ${name}.`)}>Copy</button>
+              <button type="button" className={quietButton} aria-label={`${shown ? "Hide" : "Reveal"} ${name}`} aria-pressed={shown} onClick={() => toggle(line.id, name)}>{shown ? "Hide" : "Show"}</button>
+              <button type="button" className={quietButton} aria-label={`Copy value of ${name}`} disabled={disabled} onClick={() => void copy(line.value, `Copied the value of ${name}.`, name)}>Copy</button>
               <button type="button" className={quietButton} aria-label={`Remove ${name}`} disabled={disabled} onClick={() => commit(removeDotenvLine(parsed, line.id))}>×</button>
             </td>
           </tr>;

@@ -105,6 +105,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     vaultTouchIdAvailable: vi.fn(async () => ({ available: false, enrolled: false })),
     vaultTouchIdEnroll: vi.fn(async () => ({ ok: false as const, reason: "unavailable" as const })),
     vaultTouchIdUnlock: vi.fn(async () => ({ ok: false as const, reason: "unavailable" as const })),
+    vaultTouchIdConfirm: vi.fn(async () => ({ ok: false as const, reason: "unavailable" as const })),
     vaultTouchIdRemove: vi.fn(async () => ({ ok: true })),
     searchDocuments: vi.fn(async () => ({ results: [], scanned: 0, total: 0, partial: false })),
 

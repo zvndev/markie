@@ -336,7 +336,7 @@ const CORS = {
   // Development only: the app's browser build at http://localhost:5174 reads this.
   "access-control-allow-origin": "*",
   "access-control-allow-headers": "authorization, content-type",
-  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-methods": "GET, POST, PUT, OPTIONS",
   "access-control-expose-headers": "set-auth-token, content-disposition",
 };
 
@@ -445,9 +445,29 @@ const server = createServer(async (req, res) => {
       return reply(200, {
         doc: {
           id: doc.id, name: doc.name, version: doc.version, content: doc.content, hash: doc.hash,
-          updated_at: doc.updatedAt, format: doc.format, origin: doc.origin,
+          updated_at: doc.updatedAt, format: doc.format, origin: doc.origin, role: doc.role,
         },
       });
+    }
+
+    // The desktop sync's save route (server/src/docs.ts): baseVersion must be
+    // the version on the server, or 0 to create. Viewers can't save.
+    if (req.method === "PUT" && one) {
+      const id = decodeURIComponent(one[1]);
+      const body = await readJson(req);
+      if (!body || typeof body.content !== "string" || !body.name) return reply(400, { error: "bad request" });
+      if (id === FORBIDDEN_ID) return reply(403, { error: "forbidden" });
+      const existing = docs.get(id);
+      if (existing && existing.role === "viewer") return reply(403, { error: "forbidden" });
+      if (existing && existing.version !== body.baseVersion) return reply(409, { error: "conflict", serverVersion: existing.version });
+      const name = String(body.name);
+      const format = /\.wd$/i.test(name) ? "darkmown" : /\.(txt|text|log)$/i.test(name) ? "text" : "markdown";
+      const updatedAt = new Date().toISOString();
+      const doc = existing
+        ? { ...existing, name, content: body.content, hash: body.hash, version: existing.version + 1, updatedAt }
+        : { id, name, content: body.content, format, version: 1, hash: body.hash, createdAt: updatedAt, updatedAt, origin: { kind: "app", agent: null }, shared: false, sharedBy: null, role: "owner", unlisted: false };
+      docs.set(id, doc);
+      return reply(200, { id, version: doc.version, updated_at: updatedAt });
     }
   }
 

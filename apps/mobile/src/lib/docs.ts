@@ -32,6 +32,8 @@ export interface CloudDoc {
   updatedAt: string | null;
   origin: DocOrigin;
   privateLink: string;
+  /** The caller's role on it (owner, editor, viewer), or null when the server didn't say. */
+  role: string | null;
   /** A public share opened through /s/<token>: read without an account. */
   publicToken?: string;
 }
@@ -44,12 +46,65 @@ export const PUBLIC_TOKEN = /^[A-Za-z0-9_-]{16,128}$/;
 
 const FORMATS = new Set<DocFormat>(["markdown", "darkmown", "text"]);
 
-/** The contract's rule: `.wd` is Darkmown; `.txt`, `.text`, `.log` are text; the rest is markdown. */
+// Data files the desktop opens as text. The server files them under
+// "markdown" (anything it doesn't recognise is), so the phone reads the name
+// itself rather than render a CSV as a paragraph.
+const PLAIN_TEXT_NAME = /\.(txt|text|log|csv|tsv|json|ya?ml|xml|toml|ini)$/;
+
+/** The contract's rule: `.wd` is Darkmown; `.txt`, `.text`, `.log` (and data files) are text; the rest is markdown. */
 export function formatFromName(name: string): DocFormat {
   const lower = String(name ?? "").toLowerCase();
   if (lower.endsWith(".wd")) return "darkmown";
-  if (/\.(txt|text|log)$/.test(lower)) return "text";
+  if (PLAIN_TEXT_NAME.test(lower)) return "text";
   return "markdown";
+}
+
+/** The glyph a document's icon draws: its format, or the data file kind its name says. */
+export function markFormat(doc: { name: string; format: DocFormat }): string {
+  const ext = /\.([a-z0-9]+)$/i.exec(doc.name)?.[1]?.toLowerCase() ?? "";
+  if (ext === "csv" || ext === "tsv") return "csv";
+  if (ext === "json") return "json";
+  if (ext === "xml") return "xml";
+  return doc.format;
+}
+
+/** Whether a save from this account would be taken: owners and editors, or a role the server didn't name. */
+export function canEditDoc(doc: CloudDoc): boolean {
+  if (doc.publicToken || doc.version === null) return false;
+  return doc.role === null || doc.role === "owner" || doc.role === "editor";
+}
+
+/** The kinds of document the phone can start. Each one is text, which is what Markie Cloud stores. */
+export interface NewDocType {
+  id: string;
+  label: string;
+  hint: string;
+  extension: string;
+  starter: (title: string) => string;
+}
+
+export const NEW_DOC_TYPES: readonly NewDocType[] = [
+  { id: "markdown", label: "Markdown", hint: "Headings, lists, links and tables", extension: ".md", starter: (title) => `# ${title}\n\n` },
+  { id: "text", label: "Plain text", hint: "Just the words, nothing rendered", extension: ".txt", starter: () => "" },
+  { id: "darkmown", label: "Darkmown", hint: "An interactive document with buttons and state", extension: ".wd", starter: (title) => `---\ntitle: ${title}\n---\n\n# ${title}\n\n:state count = 0\n\nCount: { count }.\n\n:button "Add one" -> count++\n` },
+  { id: "csv", label: "CSV", hint: "Rows and columns", extension: ".csv", starter: () => "Name,Value\n" },
+  { id: "json", label: "JSON", hint: "Structured data", extension: ".json", starter: () => "{\n  \n}\n" },
+  { id: "yaml", label: "YAML", hint: "Config and front matter", extension: ".yaml", starter: () => "" },
+];
+
+/** A file name from what someone typed: trimmed, no slashes, and the type's extension unless they gave one. */
+export function newDocName(typed: string, type: NewDocType): string {
+  // eslint-disable-next-line no-control-regex
+  const cleaned = String(typed ?? "").replace(/[\u0000-\u001f\u007f/\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+  const base = cleaned || "Untitled";
+  return /\.[a-z0-9]{1,8}$/i.test(base) ? base : `${base}${type.extension}`;
+}
+
+/** A new document id, the same shape the desktop mints (crypto.randomUUID). */
+export function newDocId(random: () => string = () => crypto.randomUUID()): string {
+  const id = random();
+  if (!DOC_ID.test(id)) throw new Error("Couldn't make a document id.");
+  return id;
 }
 
 function cleanText(value: unknown, max: number): string | null {
@@ -86,6 +141,7 @@ export function privateLinkFor(origin: string, id: string): string {
 }
 
 function parseFormat(value: unknown, name: string): DocFormat {
+  if (PLAIN_TEXT_NAME.test(name.toLowerCase())) return "text";
   return typeof value === "string" && FORMATS.has(value as DocFormat) ? (value as DocFormat) : formatFromName(name);
 }
 
@@ -143,6 +199,7 @@ export function parseCloudDoc(value: unknown, serverOrigin: string): CloudDoc {
     updatedAt: isoOrNull(doc.updatedAt) ?? isoOrNull(doc.updated_at),
     origin: parseOrigin(doc.origin),
     privateLink: httpUrlOrNull(doc.privateLink) ?? privateLinkFor(serverOrigin, doc.id),
+    role: cleanText(doc.role, 32),
   };
 }
 
@@ -168,7 +225,7 @@ export function nameFromDisposition(header: string | undefined): string | null {
  */
 export function publicDocName(downloadName: string | null): string {
   const name = downloadName ?? "Shared document.md";
-  return /\.(wd|txt|text|log)\.md$/i.test(name) ? name.slice(0, -3) : name;
+  return /\.(wd|txt|text|log|csv|tsv|json|ya?ml|xml|toml|ini)\.md$/i.test(name) ? name.slice(0, -3) : name;
 }
 
 /** A short line for the document header: who made it. */

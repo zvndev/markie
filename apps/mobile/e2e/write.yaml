@@ -1,0 +1,26 @@
+# Edits a document, starts a new one, and checks both reach the mock server.
+# Run after e2e/sign-in-ios.yaml (or -android) against dev/mock-server.mjs.
+appId: com.zvn.markie.mobile
+---
+- tapOn: ".*Launch brief.*"
+- extendedWaitUntil:
+    visible: "Edit"
+    timeout: 8000
+- tapOn: "Edit"
+- tapOn: "Text of Launch brief"
+- inputText: " Edited on the phone"
+- tapOn: "Save"
+- extendedWaitUntil:
+    visible: ".*Edited on the phone.*"
+    timeout: 8000
+- tapOn: "Back to Recent"
+- tapOn: "New document"
+- tapOn: "Untitled"
+- inputText: "Grocery list"
+- tapOn: "Next"
+- tapOn: "Text of Grocery list"
+- inputText: "- Milk"
+- tapOn: "Create"
+- extendedWaitUntil:
+    visible: ".*Milk.*"
+    timeout: 8000

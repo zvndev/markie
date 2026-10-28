@@ -2,8 +2,10 @@
 // tested without a device and the app can swap the native transport for the
 // browser's fetch while developing in a desktop browser.
 
+export type HttpMethod = "GET" | "POST" | "PUT";
+
 export interface HttpRequest {
-  method: "GET" | "POST";
+  method: HttpMethod;
   url: string;
   headers?: Record<string, string>;
   /** Serialized as JSON when present. */

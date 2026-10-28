@@ -140,6 +140,12 @@ test("a member's link opens the document, and stops the moment they are removed"
   const token = ensureShareToken(docId, bobId);
   assert.ok(token && token.length >= 32);
 
+  // The phone reads the caller's role here to decide whether to offer Edit.
+  const ownerRead = await jsonRequest<{ doc: { role: string } }>("GET", `/api/docs/${docId}`, owner.token);
+  assert.equal(ownerRead.data?.doc.role, "owner");
+  const bobRead = await jsonRequest<{ doc: { role: string } }>("GET", `/api/docs/${docId}`, bob.token);
+  assert.equal(bobRead.data?.doc.role, "viewer");
+
   const ok = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
   assert.equal(ok.status, 200);
   assert.ok(ok.body.includes(SECRET_LINE), "member should see the document body");

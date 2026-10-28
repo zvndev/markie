@@ -30,3 +30,7 @@ export const AlertIcon = (p: IconProps) => <Icon {...p}><circle cx="12" cy="12" 
 export const MailIcon = (p: IconProps) => <Icon {...p}><rect x="3" y="5.5" width="18" height="13" rx="2.4" /><path d="M3.8 7l8.2 6 8.2-6" /></Icon>;
 export const DocIcon = (p: IconProps) => <Icon {...p}><path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /><path d="M14 3v5h5" /></Icon>;
 export const ResetIcon = (p: IconProps) => <Icon {...p}><path d="M4 12a8 8 0 1 0 2.4-5.7" /><path d="M4 4.5v4h4" /></Icon>;
+export const PencilIcon = (p: IconProps) => <Icon {...p}><path d="M4 20h4L19 9a2.83 2.83 0 0 0-4-4L4 16Z" /><path d="M13.5 6.5l4 4" /></Icon>;
+export const PlusIcon = (p: IconProps) => <Icon {...p}><path d="M12 5v14M5 12h14" strokeWidth={2.2} /></Icon>;
+export const CheckIcon = (p: IconProps) => <Icon {...p}><path d="M5 12.5l4.5 4.5L19 7.5" strokeWidth={2.4} /></Icon>;
+export const InboxIcon = (p: IconProps) => <Icon {...p}><path d="M4 13.5 6.5 5h11l2.5 8.5V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19Z" /><path d="M4 13.5h4.5l1 2.5h5l1-2.5H20" /></Icon>;

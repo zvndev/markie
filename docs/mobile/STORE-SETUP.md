@@ -2,7 +2,7 @@
 
 Status, 2026-10-27:
 
-- **iOS:** the App Store Connect record **Markie Docs** exists, with bundle ID `com.zvn.markie.mobile` on team `3VU8SG5TD9`. The name "Markie" was taken. Build 0.1.0 (1) is on TestFlight. Build 0.1.0 (2), with the L3 brand icon, was uploaded on 2026-10-27 through Xcode's signed-in account and is processing. The home-screen name is still "Markie".
+- **iOS:** the App Store Connect record **Markie Docs** exists, with bundle ID `com.zvn.markie.mobile` on team `3VU8SG5TD9`. The name "Markie" was taken. Builds 0.1.0 (1) and (2) are on TestFlight. Build 0.2.0 (3) adds editing, new documents and "Open in Markie" for files from other apps. The home-screen name is still "Markie".
 - **Android:** a signed release bundle, 0.1.0 (versionCode 2) with the L3 brand icon, is built at `~/Desktop/Markie-mobile-0.1.0-2.aab`. It isn't uploaded yet.
 - **Server:** the app's server is live, and `apple-app-site-association` and `assetlinks.json` are served.
 

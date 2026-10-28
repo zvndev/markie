@@ -4,7 +4,8 @@ A Capacitor 8 app that opens Markie Cloud documents on a phone, including the on
 It follows `docs/mobile/AGENT-LINKS-CONTRACT.md` ("Mobile app" and "Link contract").
 
 - Bundle ID and Android package: `com.zvn.markie.mobile`. Display name: Markie. Apple team: `3VU8SG5TD9`.
-- Screens: Sign in (email code), Recent, Document (markdown, text, Darkmown), Settings.
+- Screens: Sign in (email code), Recent, Document (markdown, text, Darkmown), Editor, New document, an
+  incoming file, Settings.
 - The session token is stored in the iOS Keychain or, on Android, encrypted with an Android Keystore key
   (`@aparajita/capacitor-secure-storage`, wrapped by `src/lib/secure-store.ts`). It is never written to
   `localStorage`, Preferences or a cookie jar, and no response is kept in an HTTP cache: requests send
@@ -74,7 +75,7 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./android/gradlew -p android assembleDebu
 ## Test
 
 ```sh
-npm test                    # vitest: API client, deep-link router, token storage, recent list, mock server, CSP
+npm test                    # vitest: API client, deep-link router, token storage, recent list, writing, incoming files, mock server, CSP
 npm run typecheck
 ```
 
@@ -108,6 +109,35 @@ A link that arrives before sign-in is remembered and opens after sign-in.
 A document the user cannot read shows the server's message and a way back to Recent.
 An https link on a Markie host that the app cannot route (a raw download) opens in the default browser.
 Any other URL another app sends is ignored.
+
+## Writing
+
+- Edit: owners and editors get a pencil on a document (`GET /api/docs/:id` says the caller's `role`).
+  The editor saves through `PUT /api/docs/:id` with the version it started from, the same route and
+  hash (SHA-256 of the text) the desktop's sync uses. If another device saved first, the server answers
+  409 and the editor offers "Save as a copy" or "Discard mine". Nothing is merged over.
+- New document (+ on Recent): Markdown, plain text, Darkmown, CSV, JSON or YAML, or any name with its
+  own extension. Nothing reaches the server until Create, so backing out leaves no empty document.
+  The desktop lands it under Cloud on its next sync.
+- Drafts live in memory only, like everything else the app reads.
+
+## Files from other apps
+
+iOS lists Markie under "Open in" and the share sheet for Markdown, Darkmown, text, CSV, JSON, YAML, XML,
+HTML, Word (.docx), RTF and ODT (`CFBundleDocumentTypes` in `ios/App/App/Info.plist`, the same claims and
+ranks as the Mac app). Android takes the same kinds through an `ACTION_VIEW` filter. "Open a file from
+your phone" on the New document screen does the same through the system file picker.
+
+- iOS copies the file into the app's `Documents/Inbox` and opens a `file://` URL; Android sends a
+  `content://` URI. The page reads either through `Capacitor.convertFileSrc`, so no plugin is involved
+  (`src/lib/incoming-file.ts`). Copies older than a day are removed at launch (`AppDelegate.swift`).
+- Text arrives as it is. Word becomes Markdown; RTF, ODT and HTML become plain text with the desktop's
+  importers. The original file is never changed.
+- The file shows first, with Save (to Markie Cloud) and Edit. A file that arrives signed out waits in
+  memory and opens after sign-in.
+
+Try it on a simulator: copy a file into the app's data container under `Documents/Inbox`, then
+`xcrun simctl openurl booted "file://<container>/Documents/Inbox/<name>"`.
 
 ## Links and pictures inside a document
 

@@ -1385,3 +1385,273 @@ input {
   font-size: 15px;
   font-weight: 600;
 }
+
+/* ── Writing ───────────────────────────────────────────────────────────── */
+
+/* Text buttons in the nav bar: Cancel, Save, Create, Next. */
+.m-nav-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  color: var(--blue);
+  font-size: 17px;
+  white-space: nowrap;
+}
+
+.m-nav-text-strong {
+  font-weight: 600;
+}
+
+.m-nav-text:active:not(:disabled) {
+  opacity: 0.45;
+}
+
+.m-nav-text:disabled {
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.m-spinner-small {
+  width: 14px;
+  height: 14px;
+}
+
+.m-editor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.m-editor-tools {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  padding: 8px var(--m-gutter);
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 0.5px solid var(--m-separator);
+}
+
+.m-editor-tools::-webkit-scrollbar {
+  display: none;
+}
+
+.m-editor-tool {
+  flex: none;
+  min-width: 40px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--m-field-bg);
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.m-editor-tool:active {
+  background: color-mix(in srgb, var(--blue) 18%, var(--m-field-bg));
+}
+
+.m-editor-tool-italic {
+  font-style: italic;
+  font-family: Georgia, serif;
+}
+
+.m-editor-tool-code {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 13px;
+}
+
+.m-editor-text {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  padding: 16px var(--m-gutter) 32px;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: var(--background);
+  color: var(--foreground);
+  caret-color: var(--blue);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-size: 17px;
+  line-height: 1.55;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.m-editor-text.is-code {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 15px;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+.m-editor-banner {
+  display: flex;
+  gap: 10px;
+  margin: 10px var(--m-gutter) 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--status-yellow) 14%, var(--surface));
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.m-editor-banner svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--status-yellow);
+}
+
+.m-editor-banner p {
+  margin: 4px 0 10px;
+  color: var(--muted);
+}
+
+.m-editor-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.m-editor-error {
+  margin: 10px var(--m-gutter) 0;
+  color: var(--status-red);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* New document */
+.m-new-doc-form {
+  padding: 12px 16px 40px;
+}
+
+.m-new-doc-form > .m-field {
+  padding: 0 4px;
+}
+
+.m-new-doc-form .m-field-hint strong {
+  color: var(--foreground);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.m-type-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 16px;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  text-align: left;
+}
+
+.m-type-row + .m-type-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 60px;
+  right: 0;
+  height: 0.5px;
+  background: var(--m-separator);
+}
+
+.m-type-row:active {
+  background: var(--m-row-hover);
+}
+
+.m-type-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.m-type-label {
+  font-size: 17px;
+}
+
+.m-type-ext {
+  color: var(--muted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 13px;
+}
+
+.m-type-hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.m-type-check {
+  flex: none;
+  color: var(--blue);
+}
+
+.m-open-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  color: var(--blue);
+  text-align: left;
+}
+
+.m-open-file span {
+  flex: 1;
+}
+
+.m-open-error {
+  margin: 8px 16px 0;
+}
+
+/* A file from another app, before it is saved */
+.m-incoming-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px var(--m-gutter) 6px;
+  padding: 12px 12px 12px 14px;
+  border-radius: 14px;
+  background: var(--m-field-bg);
+}
+
+.m-incoming-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.m-incoming-text strong {
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-incoming-text span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.m-incoming-text span svg {
+  flex: none;
+}

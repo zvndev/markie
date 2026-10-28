@@ -8,6 +8,14 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+
+- **The Skills panel no longer has a Discover tab.** Markie no longer
+  searches skills.sh, downloads skills from GitHub, or installs or updates
+  them. The panel still lists every skill and agent file on this Mac, and you
+  can open, star and reveal them as before. Remove now moves a skill in your
+  agents' skills folders to the Trash, after asking.
+
 ## [0.9.2] - 2026-10-27
 
 ### Added

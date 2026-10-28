@@ -1,0 +1,25 @@
+# Litestream inside the app's container (zvn-infra docs/kata.md, "SQLite
+# apps"). Read only when LITESTREAM_IN_VM=1, by /opt/litestream-vm/init.
+# Canonical copy: zvn-infra kamal/sqlite-in-vm/litestream.yml.
+#
+# The replica path is the one the box's own tools use for the app
+# (roles/sqlite_apps): <prefix>/<app>/<db file>. LITESTREAM_APP and
+# LITESTREAM_DB come from the image, the rest from Kamal. Litestream expands
+# ${VAR} here from the environment. The B2 key is read from
+# LITESTREAM_ACCESS_KEY_ID and LITESTREAM_SECRET_ACCESS_KEY.
+dbs:
+  - path: ${LITESTREAM_DB}
+    replica:
+      type: s3
+      bucket: ${LITESTREAM_BUCKET}
+      path: ${LITESTREAM_PREFIX}/${LITESTREAM_APP}/${LITESTREAM_DB_NAME}
+      endpoint: ${LITESTREAM_ENDPOINT}
+      region: ${LITESTREAM_REGION}
+      sse-customer-key: "${LITESTREAM_SSE_C_KEY}"
+      sync-interval: 1s
+
+snapshot:
+  interval: 24h
+  retention: 72h
+
+shutdown-sync-timeout: 30s

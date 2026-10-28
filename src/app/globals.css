@@ -1927,3 +1927,93 @@ body {
 .group:has(:focus-visible) > .markie-rail-tip {
   opacity: 1;
 }
+
+/* ── Library file menu and the document "Copy all" button ──
+   Kept together in one block. The menu reuses .markie-menu-panel for its
+   surface; these rules only cover the rows inside it. */
+.markie-file-menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  padding: 5px 8px;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.25;
+  color: var(--foreground);
+}
+.markie-file-menu-item:hover,
+.markie-file-menu-item:focus {
+  outline: none;
+  background: color-mix(in srgb, var(--accent) 85%, transparent);
+}
+.markie-file-menu-icon {
+  display: inline-flex;
+  width: 16px;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.markie-file-menu-item[data-tone="accent"],
+.markie-file-menu-item[data-tone="accent"] .markie-file-menu-icon {
+  color: var(--status-blue);
+}
+.markie-file-menu-item[data-tone="danger"],
+.markie-file-menu-item[data-tone="danger"] .markie-file-menu-icon {
+  color: var(--status-red);
+}
+.markie-file-menu-item[data-tone="danger"]:hover,
+.markie-file-menu-item[data-tone="danger"]:focus {
+  background: color-mix(in srgb, var(--status-red) 14%, transparent);
+}
+.markie-file-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.markie-copy-all {
+  position: absolute;
+  top: 8px;
+  right: 18px;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+}
+.markie-document-area:hover .markie-copy-all,
+.markie-copy-all:focus-visible,
+.markie-copy-all[data-copied="true"] {
+  opacity: 1;
+}
+.markie-copy-all:hover {
+  color: var(--foreground);
+  background: var(--surface-2);
+}
+.markie-copy-all:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--blue) 70%, transparent);
+  outline-offset: 1px;
+}
+.markie-copy-all[data-copied="true"] {
+  color: var(--status-green);
+}
+@media (prefers-reduced-motion: reduce) {
+  .markie-copy-all {
+    transition: none;
+  }
+}
+@media print {
+  .markie-copy-all {
+    display: none;
+  }
+}

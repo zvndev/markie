@@ -68,6 +68,7 @@ import { RichLossBanner, RichPreparingNote } from "@/components/rich-guard";
 import { useRichSafety } from "@/lib/use-rich-safety";
 import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
+import { CopyAllButton } from "@/components/copy-all-button";
 import { FindBar } from "@/components/find-bar";
 import { richFindTarget } from "@/lib/rich-find";
 import type { SourceHandle } from "@/lib/source-handle";
@@ -2382,6 +2383,10 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
               revision={content}
               onClose={closeFind}
             />
+
+            {/* Copy the whole document from where you are reading it. Hidden
+                while Find is open, which sits in the same corner. */}
+            {!showFind && content ? <CopyAllButton text={content} /> : null}
 
             {/* Editor pane */}
             {(mode === "edit" || mode === "split") && (

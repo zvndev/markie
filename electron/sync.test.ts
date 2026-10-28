@@ -729,6 +729,81 @@ describe("remoteContent", () => {
   });
 });
 
+describe("trashFile", () => {
+  const tracked = (o: Partial<Row> = {}) =>
+    seedRow({ path: "/docs/a.md", sync_state: "synced", cloud_doc_id: "cloud-1", cloud_version: 2, ...o });
+
+  it("refuses a path the library does not track", async () => {
+    const trashItem = vi.fn(async () => {});
+    expect(await sync.trashFile("/etc/passwd", false, { trashItem, exists: () => true })).toEqual({
+      error: "That file isn't in your library.",
+    });
+    expect(trashItem).not.toHaveBeenCalled();
+  });
+
+  it("trashes the file and forgets it, leaving the cloud copy alone", async () => {
+    tracked();
+    const calls = respondWith();
+    const trashItem = vi.fn(async () => {});
+    expect(await sync.trashFile("/docs/a.md", false, { trashItem, exists: () => true })).toEqual({
+      ok: true, trashed: true, deletedRemote: false,
+    });
+    expect(trashItem).toHaveBeenCalledExactlyOnceWith("/docs/a.md");
+    expect(rows.has("/docs/a.md")).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("deletes the cloud copy before trashing when asked", async () => {
+    tracked();
+    const calls = respondWith({ status: 200 });
+    const trashItem = vi.fn(async () => {});
+    expect(await sync.trashFile("/docs/a.md", true, { trashItem, exists: () => true })).toEqual({
+      ok: true, trashed: true, deletedRemote: true,
+    });
+    expect(calls.map((c) => `${c.method} ${new URL(c.url).pathname}`)).toEqual(["DELETE /api/docs/cloud-1"]);
+    expect(trashItem).toHaveBeenCalledOnce();
+    expect(rows.has("/docs/a.md")).toBe(false);
+  });
+
+  it("keeps the local file when the cloud delete fails", async () => {
+    const row = tracked();
+    respondWith({ status: 500 });
+    const trashItem = vi.fn(async () => {});
+    const res = await sync.trashFile("/docs/a.md", true, { trashItem, exists: () => true });
+    expect(res.error).toBe("delete failed (500)");
+    expect(trashItem).not.toHaveBeenCalled();
+    expect(rows.get("/docs/a.md")).toBe(row);
+    expect(row.cloud_doc_id).toBe("cloud-1");
+  });
+
+  it("never deletes a document someone else shared", async () => {
+    tracked({ share_role: "editor", share_role_user: ME });
+    const calls = respondWith();
+    const trashItem = vi.fn(async () => {});
+    const res = await sync.trashFile("/docs/a.md", true, { trashItem, exists: () => true });
+    expect(res).toEqual({ ok: true, trashed: true, deletedRemote: false });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("forgets a row whose file is already gone without calling the Trash", async () => {
+    tracked({ sync_state: "local-only", cloud_doc_id: null });
+    const trashItem = vi.fn(async () => {});
+    expect(await sync.trashFile("/docs/a.md", false, { trashItem, exists: () => false })).toEqual({
+      ok: true, trashed: false, deletedRemote: false,
+    });
+    expect(trashItem).not.toHaveBeenCalled();
+    expect(rows.has("/docs/a.md")).toBe(false);
+  });
+
+  it("reports a Trash failure and keeps the row", async () => {
+    tracked({ sync_state: "local-only", cloud_doc_id: null });
+    const trashItem = vi.fn(async () => { throw new Error("no Trash here"); });
+    const res = await sync.trashFile("/docs/a.md", false, { trashItem, exists: () => true });
+    expect(res.error).toBe("Couldn't move a.md to the Trash: no Trash here");
+    expect(rows.has("/docs/a.md")).toBe(true);
+  });
+});
+
 describe("syncOff", () => {
   const cloudRow = (p: string) =>
     seedRow({

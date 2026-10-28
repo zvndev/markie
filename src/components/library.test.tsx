@@ -84,10 +84,12 @@ const rowFor = async (name: string) => {
   return label.closest("div.group") as HTMLElement;
 };
 
+// The row's "..." opens a popover menu portalled to <body>; this hands back
+// the menu, not the row.
 const openMenu = async (name: string) => {
   const row = await rowFor(name);
   await userEvent.click(within(row).getByRole("button", { name: "Actions" }));
-  return row;
+  return screen.findByRole("menu", { name: `Actions for ${name}` });
 };
 
 beforeEach(() => {
@@ -363,19 +365,15 @@ describe("Library notices", () => {
       [item({ name: "behind.md", state: "behind", cloudId: "c5" })],
       { overrides: { docResolve } as Partial<ElectronAPI> }
     );
-    const row = await openMenu("behind.md");
-    await userEvent.click(within(row).getByRole("button", { name: "Pull latest" }));
+    const menu = await openMenu("behind.md");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Pull latest" }));
 
     const notice = await screen.findByText("Server refused the pull.");
     expect(notice).toBeInTheDocument();
     // Errors are red; an acknowledgement is not.
     expect(notice).toHaveClass("text-[var(--status-red)]");
     // A failed action must never leave the row menu stuck open.
-    await waitFor(() =>
-      expect(
-        within(row).queryByRole("button", { name: "Pull latest" })
-      ).not.toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
     expect(onSyncChanged).toHaveBeenCalled();
   });
 
@@ -386,8 +384,8 @@ describe("Library notices", () => {
     renderLibrary([item({ name: "behind.md", state: "behind", cloudId: "c5" })], {
       overrides: { docResolve } as unknown as Partial<ElectronAPI>,
     });
-    const row = await openMenu("behind.md");
-    await userEvent.click(within(row).getByRole("button", { name: "Pull latest" }));
+    const menu = await openMenu("behind.md");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Pull latest" }));
     expect(await screen.findByText("Couldn't reach the server.")).toHaveClass(
       "text-[var(--status-red)]"
     );
@@ -400,8 +398,8 @@ describe("Library notices", () => {
     renderLibrary([item({ name: "behind.md", state: "behind", cloudId: "c5" })], {
       overrides: { docResolve } as Partial<ElectronAPI>,
     });
-    const row = await openMenu("behind.md");
-    await userEvent.click(within(row).getByRole("button", { name: "Pull latest" }));
+    const menu = await openMenu("behind.md");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Pull latest" }));
     expect(
       await screen.findByText(/That file isn't there anymore\./)
     ).toBeInTheDocument();
@@ -441,10 +439,10 @@ describe("Library signed-out state", () => {
 
   it("keeps cloud actions out of a signed-out menu", async () => {
     renderLibrary([item({ name: "solo.md" })], { signedIn: false });
-    const row = await openMenu("solo.md");
-    expect(within(row).getByRole("button", { name: "Copy path" })).toBeInTheDocument();
+    const menu = await openMenu("solo.md");
+    expect(within(menu).getByRole("menuitem", { name: "Copy path" })).toBeInTheDocument();
     expect(
-      within(row).queryByRole("button", { name: "Sync to cloud" })
+      within(menu).queryByRole("menuitem", { name: "Sync to cloud" })
     ).not.toBeInTheDocument();
   });
 
@@ -579,7 +577,7 @@ describe("the Cloud page inside the panel", () => {
     const row = await rowFor("cloud-only.md");
     expect(within(row).getByRole("img", { name: "In the cloud only" })).toBeInTheDocument();
     await userEvent.click(within(row).getByRole("button", { name: "Actions" }));
-    expect(within(row).getByRole("button", { name: /Download/ })).toBeInTheDocument();
+    expect(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /Download/ })).toBeInTheDocument();
   });
 
   it("offers my document whose file is gone the way back, in the menu and on the row", async () => {
@@ -598,7 +596,7 @@ describe("the Cloud page inside the panel", () => {
     expect(within(row).getByText("Missing on disk")).toBeInTheDocument();
 
     await userEvent.click(within(row).getByRole("button", { name: "Actions" }));
-    await userEvent.click(within(row).getByRole("button", { name: /Download/ }));
+    await userEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /Download/ }));
     expect(api.docPull).toHaveBeenCalledExactlyOnceWith({
       cloudId: "c8",
       suggestedName: "gone.md",
@@ -774,9 +772,10 @@ describe("documents on other servers", () => {
     }));
     renderLibrary([], { overrides: { libraryState, serversList: servers } as Partial<ElectronAPI> });
     const local = await openMenu("local.md");
-    expect(within(local).queryByRole("button", { name: "Sync to cloud" })).not.toBeInTheDocument();
+    expect(within(local).queryByRole("menuitem", { name: "Sync to cloud" })).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
     const theirs = await openMenu("theirs.md");
-    expect(within(theirs).getByRole("button", { name: "Stop syncing" })).toBeInTheDocument();
+    expect(within(theirs).getByRole("menuitem", { name: "Stop syncing to cloud…" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Sign in to sync these files/ })).toBeInTheDocument();
   });
 
@@ -788,7 +787,7 @@ describe("documents on other servers", () => {
     }));
     renderLibrary([], { overrides: { libraryState, serversList: servers } as Partial<ElectronAPI> });
     const theirs = await openMenu("theirs.md");
-    expect(within(theirs).queryByRole("button", { name: "Stop syncing" })).not.toBeInTheDocument();
+    expect(within(theirs).queryByRole("menuitem", { name: "Stop syncing to cloud…" })).not.toBeInTheDocument();
   });
 
   it("gets a missing copy back from the server it lives on", async () => {
@@ -796,5 +795,193 @@ describe("documents on other servers", () => {
     const { api } = renderLibrary([gone], { ...cloudProps, overrides: { serversList: servers } as Partial<ElectronAPI> });
     await userEvent.click(await rowFor("gone.md"));
     expect(api.docPull).toHaveBeenCalledExactlyOnceWith({ cloudId: "s8", suggestedName: "gone.md", server: SELF });
+  });
+});
+
+function stubClipboard() {
+  const writeText = vi.fn<(text: string) => Promise<void>>(async () => {});
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  return writeText;
+}
+
+describe("the row's action menu", () => {
+  it("opens as a popover with an icon per item and no Copy contents", async () => {
+    renderLibrary([item({ name: "synced.md", state: "synced", cloudId: "c1" })]);
+    const menu = await openMenu("synced.md");
+    const labels = within(menu).getAllByRole("menuitem").map((el) => el.textContent);
+    expect(labels).toEqual(["Copy link", "Copy path", "Manage sharing…", "Stop syncing to cloud…", "Delete file…"]);
+    for (const el of within(menu).getAllByRole("menuitem")) expect(el.querySelector("svg")).not.toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: /Copy contents/ })).not.toBeInTheDocument();
+    // The first item has focus so the keyboard can walk the menu at once.
+    expect(within(menu).getByRole("menuitem", { name: "Copy link" })).toHaveFocus();
+  });
+
+  it("does not offer a link for a file that is not in the cloud", async () => {
+    renderLibrary([item({ name: "solo.md" })]);
+    const menu = await openMenu("solo.md");
+    expect(within(menu).queryByRole("menuitem", { name: "Copy link" })).not.toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Delete file…" })).toHaveAttribute("data-tone", "danger");
+  });
+
+  it("walks with the arrow keys and closes on Escape, handing focus back", async () => {
+    renderLibrary([item({ name: "solo.md" })]);
+    const row = await rowFor("solo.md");
+    const trigger = within(row).getByRole("button", { name: "Actions" });
+    await userEvent.click(trigger);
+    const menu = await screen.findByRole("menu");
+    const items = within(menu).getAllByRole("menuitem");
+    expect(items[0]).toHaveFocus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(items[1]).toHaveFocus();
+    await userEvent.keyboard("{ArrowUp}");
+    expect(items[0]).toHaveFocus();
+    // Wraps from the top to the bottom.
+    await userEvent.keyboard("{ArrowUp}");
+    expect(items[items.length - 1]).toHaveFocus();
+    await userEvent.keyboard("{Home}");
+    expect(items[0]).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("closes on a click outside without opening the row", async () => {
+    const { onOpenPath } = renderLibrary([item({ name: "solo.md" })]);
+    await openMenu("solo.md");
+    await userEvent.click(document.body);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(onOpenPath).not.toHaveBeenCalled();
+  });
+
+  it("toggles closed when its trigger is pressed again", async () => {
+    renderLibrary([item({ name: "solo.md" })]);
+    const row = await rowFor("solo.md");
+    const trigger = within(row).getByRole("button", { name: "Actions" });
+    await userEvent.click(trigger);
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    await userEvent.click(trigger);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("opens the same menu on right-click", async () => {
+    const { onOpenPath } = renderLibrary([item({ name: "solo.md" })]);
+    const row = await rowFor("solo.md");
+    await userEvent.pointer({ keys: "[MouseRight]", target: row });
+    const menu = await screen.findByRole("menu", { name: "Actions for solo.md" });
+    expect(within(menu).getByRole("menuitem", { name: "Copy path" })).toBeInTheDocument();
+    expect(onOpenPath).not.toHaveBeenCalled();
+  });
+
+  it("copies the path and says so, without opening the file", async () => {
+    const { onOpenPath } = renderLibrary([item({ name: "solo.md" })]);
+    const writeText = stubClipboard();
+    const menu = await openMenu("solo.md");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Copy path" }));
+    expect(writeText).toHaveBeenCalledWith("/notes/one.md");
+    expect(await screen.findByText(/Path copied/)).toBeInTheDocument();
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(onOpenPath).not.toHaveBeenCalled();
+  });
+
+  it("copies the private link of a cloud file", async () => {
+    renderLibrary([item({ name: "synced.md", state: "synced", cloudId: "c 1" })]);
+    const writeText = stubClipboard();
+    const menu = await openMenu("synced.md");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Copy link" }));
+    expect(writeText).toHaveBeenCalledWith("https://account.example.test/d/c%201");
+  });
+
+  it("opens the share dialog from Manage sharing", async () => {
+    const { onManageShare } = renderLibrary([item({ name: "synced.md", state: "synced", cloudId: "c1" })]);
+    const menu = await openMenu("synced.md");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Manage sharing…" }));
+    expect(onManageShare).toHaveBeenCalledExactlyOnceWith("c1", "synced.md");
+  });
+
+  it("explains what stopping sync does to the people it was shared with", async () => {
+    const { api } = renderLibrary([item({ name: "synced.md", state: "synced", cloudId: "c1" })]);
+    const menu = await openMenu("synced.md");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Stop syncing to cloud…" }));
+    expect(screen.getByText("People you shared it with can still open the last synced version.")).toBeInTheDocument();
+    expect(screen.getByText("Deletes the cloud copy. Everyone you shared it with loses access.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Remove from cloud/ }));
+    expect(api.docSyncOff).toHaveBeenCalledExactlyOnceWith({ path: "/notes/one.md", deleteRemote: true });
+  });
+});
+
+describe("deleting a file from the Library", () => {
+  it("names the file, moves it to the Trash, and keeps the cloud alone for a local file", async () => {
+    const { api, onSyncChanged } = renderLibrary([item({ name: "solo.md" })]);
+    const menu = await openMenu("solo.md");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Delete file…" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByText("Delete “solo.md”?")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Move to Trash" }));
+    expect(api.libraryTrashFile).toHaveBeenCalledExactlyOnceWith({ path: "/notes/one.md", deleteRemote: false });
+    expect(await screen.findByText("Moved solo.md to the Trash.")).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onSyncChanged).toHaveBeenCalled();
+    // The registry changed, so the list is read again.
+    await waitFor(() => expect(api.libraryState).toHaveBeenCalledTimes(2));
+  });
+
+  it("keeps the cloud copy of a synced file unless asked", async () => {
+    const { api } = renderLibrary([item({ name: "synced.md", state: "synced", cloudId: "c1" })]);
+    const menu = await openMenu("synced.md");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Delete file…" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByRole("checkbox", { name: /Also delete the cloud copy/ })).not.toBeChecked();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Move to Trash" }));
+    expect(api.libraryTrashFile).toHaveBeenCalledExactlyOnceWith({ path: "/notes/one.md", deleteRemote: false });
+  });
+
+  it("deletes the cloud copy too when that box is ticked", async () => {
+    const libraryTrashFile = vi.fn(async () => ({ ok: true, trashed: true, deletedRemote: true }));
+    renderLibrary([item({ name: "synced.md", state: "synced", cloudId: "c1" })], {
+      overrides: { libraryTrashFile } as Partial<ElectronAPI>,
+    });
+    const menu = await openMenu("synced.md");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Delete file…" }));
+    const dialog = screen.getByRole("alertdialog");
+    await userEvent.click(within(dialog).getByRole("checkbox", { name: /Also delete the cloud copy/ }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Delete file and cloud copy" }));
+    expect(libraryTrashFile).toHaveBeenCalledExactlyOnceWith({ path: "/notes/one.md", deleteRemote: true });
+    expect(await screen.findByText("Moved synced.md to the Trash and deleted the cloud copy.")).toBeInTheDocument();
+  });
+
+  it("never offers to delete a cloud copy someone else owns", async () => {
+    renderLibrary([item({ name: "theirs.md", state: "synced", cloudId: "c9", owned: false, shared: true, role: "editor" })]);
+    const menu = await openMenu("theirs.md");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Delete file…" }));
+    expect(within(screen.getByRole("alertdialog")).queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
+  it("does nothing on Cancel", async () => {
+    const { api } = renderLibrary([item({ name: "solo.md" })]);
+    const menu = await openMenu("solo.md");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Delete file…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(api.libraryTrashFile).not.toHaveBeenCalled();
+  });
+
+  it("shows a refused delete as an error", async () => {
+    const libraryTrashFile = vi.fn(async () => ({ error: "delete failed (500)" }));
+    renderLibrary([item({ name: "solo.md" })], { overrides: { libraryTrashFile } as Partial<ElectronAPI> });
+    const menu = await openMenu("solo.md");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Delete file…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Move to Trash" }));
+    expect(await screen.findByText("delete failed (500)")).toHaveClass("text-[var(--status-red)]");
+  });
+
+  it("only forgets a file that is already gone from disk", async () => {
+    const libraryTrashFile = vi.fn(async () => ({ ok: true, trashed: false, deletedRemote: false }));
+    renderLibrary([item({ name: "gone.md", exists: false })], { overrides: { libraryTrashFile } as Partial<ElectronAPI> });
+    const menu = await openMenu("gone.md");
+    expect(within(menu).queryByRole("menuitem", { name: "Delete file…" })).not.toBeInTheDocument();
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Remove from Library" }));
+    expect(libraryTrashFile).toHaveBeenCalledExactlyOnceWith({ path: "/notes/one.md", deleteRemote: false });
+    expect(await screen.findByText("Removed gone.md from your library.")).toBeInTheDocument();
   });
 });

@@ -784,6 +784,38 @@ async function syncOff(filePath, deleteRemote) {
   return { ok: true, paused: true };
 }
 
+// Delete a Library file: the local file goes to the system Trash and its row
+// leaves the registry. Only a path the registry already tracks is accepted, so
+// the renderer cannot name an arbitrary file to throw away. With deleteRemote
+// the cloud copy is deleted FIRST: if that fails nothing local has changed and
+// the user can simply try again. A document someone else shared with this
+// account is never deleted remotely; the server would refuse anyway, and a
+// 404 from that refusal must not read as "gone".
+async function trashFile(filePath, deleteRemote, { trashItem, exists = fs.existsSync } = {}) {
+  if (typeof filePath !== "string" || !filePath) return { error: "No file to delete." };
+  if (typeof trashItem !== "function") return { error: "Moving files to the Trash isn't available." };
+  const row = registry.get(filePath);
+  if (!row) return { error: "That file isn't in your library." };
+  const sharedWithMe = row.share_role === "editor" || row.share_role === "viewer";
+  let deletedRemote = false;
+  if (deleteRemote && row.cloud_doc_id && !sharedWithMe) {
+    const res = await syncOff(row.path, true);
+    if (res.error) return { error: res.error };
+    deletedRemote = !!res.deleted;
+  }
+  let trashed = false;
+  if (exists(row.path)) {
+    try {
+      await trashItem(row.path);
+      trashed = true;
+    } catch (e) {
+      return { error: `Couldn't move ${path.basename(row.path)} to the Trash: ${e?.message ?? e}` };
+    }
+  }
+  registry.forget(row.path);
+  return { ok: true, trashed, deletedRemote };
+}
+
 // Download a cloud-only doc to a local path and track it as synced.
 // `origin` is the server the document lives on; the primary when not given.
 async function pull(cloudId, targetPath, origin) {
@@ -1460,6 +1492,7 @@ module.exports = {
   fetchAsset,
   syncOn,
   syncOff,
+  trashFile,
   push,
   pull,
   resolve,

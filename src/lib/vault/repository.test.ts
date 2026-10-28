@@ -31,6 +31,21 @@ function gate() {
 }
 
 describe("encrypted durable vault repository", () => {
+  it("checks the passphrase while unlocked without changing the vault, and refuses while locked", async () => {
+    const storage = new TestStorage();
+    const repository = new VaultRepository(storage);
+    await repository.create(secret);
+    const id = await repository.save(null, bytes, metadata);
+    const before = JSON.stringify(storage.value);
+    await expect(repository.verifyPassphrase(secret)).resolves.toBeUndefined();
+    await expect(repository.verifyPassphrase("not the vault passphrase at all")).rejects.toMatchObject({ code: "authentication-failed" });
+    expect(repository.unlocked).toBe(true);
+    expect((await repository.read(id)).bytes).toEqual(bytes);
+    expect(JSON.stringify(storage.value)).toBe(before);
+    repository.lock();
+    await expect(repository.verifyPassphrase(secret)).rejects.toMatchObject({ code: "locked" });
+  });
+
   it("creates/imports/locks/reopens/searches/edits and deletes without persisting names or plaintext", async () => {
     const storage = new TestStorage();
     const repository = new VaultRepository(storage);

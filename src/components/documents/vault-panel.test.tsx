@@ -5,6 +5,7 @@ import { VaultPanel } from "./vault-panel";
 import { validateStoredVault, VaultStorageError, type StoredVault, type VaultStorage } from "@/lib/vault/storage";
 import { VaultRepository } from "@/lib/vault/repository";
 import { installBridge } from "@/test/mock-bridge";
+import type { ElectronAPI } from "@/lib/electron";
 
 // Every unlock here runs the real key derivation, which takes well over the
 // default one second when the full suite loads the machine. A test runs
@@ -429,7 +430,7 @@ describe("vault page with environment keys", () => {
 function touchIdBridge() {
   const keychain = new Map<string, Uint8Array>();
   const released: Uint8Array[] = [];
-  const state = { unlock: "ok" as "ok" | "cancelled" | "missing" };
+  const state = { unlock: "ok" as "ok" | "cancelled" | "missing", confirm: "ok" as "ok" | "cancelled" | "unavailable" };
   const bridge = installBridge({
     vaultTouchIdAvailable: vi.fn(async (vaultId?: string) => ({ available: true, enrolled: !!vaultId && keychain.has(vaultId) })),
     vaultTouchIdEnroll: vi.fn(async (vaultId: string, secret: Uint8Array) => { keychain.set(vaultId, new Uint8Array(secret)); return { ok: true as const }; }),
@@ -441,6 +442,10 @@ function touchIdBridge() {
       released.push(copy);
       return { ok: true as const, secret: copy };
     }),
+    vaultTouchIdConfirm: vi.fn<NonNullable<ElectronAPI["vaultTouchIdConfirm"]>>(async (vaultId) => {
+      if (!keychain.has(vaultId)) return { ok: false as const, reason: "missing" as const };
+      return state.confirm === "ok" ? { ok: true as const } : { ok: false as const, reason: state.confirm };
+    }),
     vaultTouchIdRemove: vi.fn(async (vaultId: string) => { keychain.delete(vaultId); return { ok: true }; }),
   });
   return { bridge, keychain, released, state };
@@ -451,7 +456,9 @@ async function turnOnTouchId() {
   fireEvent.click(await screen.findByRole("button", { name: "Turn on Touch ID…" }));
   fireEvent.change(screen.getByLabelText("Confirm with your passphrase"), { target: { value: secret } });
   fireEvent.click(screen.getByRole("button", { name: "Turn on Touch ID" }));
-  await screen.findByRole("button", { name: "Turn off Touch ID" });
+  const off = await screen.findByRole("button", { name: "Turn off Touch ID" });
+  // The enroll operation finishes after the button appears; until then the item list is disabled.
+  await waitFor(() => expect(off).toBeEnabled());
 }
 
 describe("a calmer locked screen", () => {
@@ -576,6 +583,151 @@ describe("Touch ID unlock", () => {
     fireEvent.click(screen.getByRole("button", { name: "Lock vault" }));
     await screen.findByRole("button", { name: "Unlock vault" });
     expect(screen.queryByRole("button", { name: "Unlock with Touch ID" })).toBeNull();
+  });
+});
+
+describe("Touch ID per item", () => {
+  beforeEach(() => window.localStorage.clear());
+
+  async function saveNote(body: string) {
+    fireEvent.click(screen.getByRole("button", { name: "New private note" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Private text" }), { target: { value: body } });
+    fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
+    await screen.findByText("Encrypted saved copy");
+  }
+
+  async function saveEnv(text: string) {
+    fireEvent.click(screen.getByRole("button", { name: "New environment keys" }));
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Environment file text" }), { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
+    await screen.findByText("Encrypted saved copy");
+  }
+
+  it("asks Touch ID, naming the item, before a note opens; cancelling keeps it closed", async () => {
+    const touch = touchIdBridge();
+    await create(new TestStorage());
+    await saveNote("Per-item body");
+    await turnOnTouchId();
+    const confirm = vi.mocked(touch.bridge.vaultTouchIdConfirm!);
+    touch.state.confirm = "cancelled";
+    fireEvent.click(screen.getByRole("button", { name: /Untitled.txt/ }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Touch ID was cancelled. Untitled.txt stays hidden."));
+    expect(confirm).toHaveBeenLastCalledWith(expect.any(String), "open", "Untitled.txt");
+    expect(screen.queryByRole("textbox", { name: "Private text" })).toBeNull();
+    touch.state.confirm = "ok";
+    fireEvent.click(screen.getByRole("button", { name: /Untitled.txt/ }));
+    expect(await screen.findByRole("textbox", { name: "Private text" })).toHaveValue("Per-item body");
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens an env file masked, then asks Touch ID per reveal and per copy", async () => {
+    const touch = touchIdBridge();
+    await create(new TestStorage());
+    await saveEnv("API_KEY=sk-live-123\n");
+    await turnOnTouchId();
+    const confirm = vi.mocked(touch.bridge.vaultTouchIdConfirm!);
+    fireEvent.click(screen.getByRole("button", { name: /Untitled.env/ }));
+    const value = await screen.findByLabelText("Value of API_KEY");
+    expect(confirm).not.toHaveBeenCalled();
+    expect(value).toHaveAttribute("type", "password");
+
+    touch.state.confirm = "cancelled";
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API_KEY" }));
+    await waitFor(() => expect(confirm).toHaveBeenLastCalledWith(expect.any(String), "reveal", "API_KEY in Untitled.env"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Touch ID was cancelled"));
+    expect(screen.getByLabelText("Value of API_KEY")).toHaveAttribute("type", "password");
+    fireEvent.click(screen.getByRole("button", { name: "Copy value of API_KEY" }));
+    await waitFor(() => expect(confirm).toHaveBeenLastCalledWith(expect.any(String), "copy", "API_KEY in Untitled.env"));
+    expect(touch.bridge.copySecret).not.toHaveBeenCalled();
+
+    touch.state.confirm = "ok";
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API_KEY" }));
+    await waitFor(() => expect(screen.getByLabelText("Value of API_KEY")).toHaveAttribute("type", "text"));
+    fireEvent.click(screen.getByRole("button", { name: "Hide API_KEY" }));
+    expect(screen.getByLabelText("Value of API_KEY")).toHaveAttribute("type", "password");
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API_KEY" }));
+    await waitFor(() => expect(screen.getByLabelText("Value of API_KEY")).toHaveAttribute("type", "text"));
+    fireEvent.click(screen.getByRole("button", { name: "Copy value of API_KEY" }));
+    await waitFor(() => expect(touch.bridge.copySecret).toHaveBeenCalledWith("sk-live-123"));
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    await screen.findByRole("textbox", { name: "Environment file text" });
+    expect(confirm).toHaveBeenLastCalledWith(expect.any(String), "reveal", "Untitled.env");
+    // Cancelled reveal, cancelled copy, two reveals, a copy and the raw view: a fresh check each time.
+    expect(confirm).toHaveBeenCalledTimes(6);
+  });
+
+  it("asks for the passphrase instead when Touch ID cannot be used right now", async () => {
+    const touch = touchIdBridge();
+    await create(new TestStorage());
+    await saveNote("Fallback body");
+    await turnOnTouchId();
+    touch.state.confirm = "unavailable";
+    fireEvent.click(screen.getByRole("button", { name: /Untitled.txt/ }));
+    const check = await screen.findByRole("form", { name: "Passphrase check" });
+    expect(check).toHaveTextContent("Enter your passphrase to open Untitled.txt.");
+    fireEvent.change(within(check).getByLabelText("Passphrase to reveal"), { target: { value: "not the vault passphrase at all" } });
+    fireEvent.click(within(check).getByRole("button", { name: "Confirm" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("That passphrase is not correct");
+    expect(screen.queryByRole("textbox", { name: "Private text" })).toBeNull();
+    fireEvent.change(within(check).getByLabelText("Passphrase to reveal"), { target: { value: secret } });
+    fireEvent.click(within(check).getByRole("button", { name: "Confirm" }));
+    expect(await screen.findByRole("textbox", { name: "Private text" })).toHaveValue("Fallback body");
+    expect(screen.queryByRole("form", { name: "Passphrase check" })).toBeNull();
+  });
+
+  it("locking while the passphrase check is open refuses it and hides everything", async () => {
+    const touch = touchIdBridge();
+    await create(new TestStorage());
+    await saveNote("Locked body");
+    await turnOnTouchId();
+    touch.state.confirm = "unavailable";
+    fireEvent.click(screen.getByRole("button", { name: /Untitled.txt/ }));
+    await screen.findByRole("form", { name: "Passphrase check" });
+    fireEvent.click(screen.getByRole("button", { name: "Lock vault" }));
+    await screen.findByRole("button", { name: "Unlock with Touch ID" });
+    expect(screen.queryByRole("form", { name: "Passphrase check" })).toBeNull();
+    expect(screen.queryByText("Locked body")).toBeNull();
+  });
+
+  it("without Touch ID, items open and reveal as before with no prompt", async () => {
+    const touch = touchIdBridge();
+    await create(new TestStorage());
+    await saveEnv("TOKEN=plain\n");
+    fireEvent.click(screen.getByRole("button", { name: "Keys" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reveal TOKEN" }));
+    expect(screen.getByLabelText("Value of TOKEN")).toHaveAttribute("type", "text");
+    expect(touch.bridge.vaultTouchIdConfirm).not.toHaveBeenCalled();
+  });
+
+  it("offers Touch ID after a passphrase unlock, and 'Not now' sticks", async () => {
+    touchIdBridge();
+    await create(new TestStorage());
+    const offer = await screen.findByRole("region", { name: "Touch ID offer" });
+    fireEvent.click(within(offer).getByRole("button", { name: "Use Touch ID…" }));
+    expect(await screen.findByLabelText("Confirm with your passphrase")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Touch ID offer" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Lock vault" }));
+    await unlock();
+    fireEvent.click(within(await screen.findByRole("region", { name: "Touch ID offer" })).getByRole("button", { name: "Not now" }));
+    expect(screen.queryByRole("region", { name: "Touch ID offer" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Lock vault" }));
+    await unlock();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Unlocked."));
+    expect(screen.queryByRole("region", { name: "Touch ID offer" })).toBeNull();
+  });
+
+  it("shows no Touch ID offer, setting or prompt where the platform has none", async () => {
+    const bridge = installBridge({ platform: "win32" });
+    await create(new TestStorage());
+    await saveNote("Windows body");
+    expect(screen.queryByRole("region", { name: "Touch ID offer" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await screen.findByRole("region", { name: "Vault settings" });
+    expect(screen.queryByText("Touch ID")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Untitled.txt/ }));
+    expect(await screen.findByRole("textbox", { name: "Private text" })).toHaveValue("Windows body");
+    expect(bridge.vaultTouchIdConfirm).not.toHaveBeenCalled();
   });
 });
 

@@ -19,6 +19,22 @@ const MAX_FILE_BYTES = 4096;
 const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 const ENROLL_REASON = "turn on Touch ID for your vault";
 const UNLOCK_REASON = "unlock your vault";
+const REVEAL_ACTIONS = new Set(["open", "reveal", "copy"]);
+const MAX_LABEL = 60;
+
+/**
+ * The Touch ID sheet reads "Markie is trying to <reason>." The renderer only
+ * names the item; the verb comes from a fixed list and the name is flattened
+ * to one short printable line, so a crafted filename cannot reword the sheet.
+ */
+function revealReason(action, label) {
+  if (!REVEAL_ACTIONS.has(action) || typeof label !== "string") return null;
+  const flat = label.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}"“”]+/gu, " ").replace(/\s+/g, " ").trim();
+  if (!flat) return null;
+  const chars = Array.from(flat);
+  const name = chars.length > MAX_LABEL ? `${chars.slice(0, MAX_LABEL - 1).join("")}…` : flat;
+  return `${action} “${name}” from your vault`;
+}
 
 /** A canonical 16-byte base64url vault ID, the only thing allowed into a file name. */
 function validVaultId(value) {
@@ -115,6 +131,19 @@ function createVaultTouchId({ safeStorage, systemPreferences, userData, platform
     finally { decoded?.fill(0); }
   };
 
+  /**
+   * A fresh Touch ID check before one item is opened, revealed or copied. Only
+   * for a vault with Touch ID turned on, so the renderer cannot use it to put
+   * arbitrary sheets on screen. Never touches safeStorage and releases nothing.
+   */
+  const confirm = async (vaultId, action, label) => {
+    const reason = revealReason(action, label);
+    if (!validVaultId(vaultId) || !reason || !canPrompt()) return { ok: false, reason: "unavailable" };
+    if (!hasFile(vaultId)) return { ok: false, reason: "missing" };
+    const outcome = await prompt(reason);
+    return outcome === "ok" ? { ok: true } : { ok: false, reason: outcome };
+  };
+
   const remove = (vaultId) => {
     if (!validVaultId(vaultId)) return { ok: false };
     try { fs.unlinkSync(fileFor(vaultId)); }
@@ -122,7 +151,7 @@ function createVaultTouchId({ safeStorage, systemPreferences, userData, platform
     return { ok: true };
   };
 
-  return { status, enroll, unlock, remove };
+  return { status, enroll, unlock, confirm, remove };
 }
 
-module.exports = { createVaultTouchId, validVaultId, SECRET_BYTES, ENROLL_REASON, UNLOCK_REASON };
+module.exports = { createVaultTouchId, validVaultId, revealReason, SECRET_BYTES, ENROLL_REASON, UNLOCK_REASON };

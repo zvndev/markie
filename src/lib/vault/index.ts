@@ -170,6 +170,16 @@ export class Vault {
   }
 
   /**
+   * Checks the passphrase against the header while unlocked, without changing
+   * the held key. The decrypted raw key is zeroed at once.
+   */
+  async verifyPassphrase(serializedHeader: string, passphrase: string): Promise<void> {
+    const header = parseVaultHeader(serializedHeader);
+    if (!this.#key || header.vaultId !== this.#vaultId) throw new VaultError("locked");
+    (await this.#passphraseKey(header, passphrase, this.#epoch)).fill(0);
+  }
+
+  /**
    * Unlocks through the device slot. Takes ownership of `secret`: it is copied and the
    * caller's buffer is zeroed before any asynchronous work, whatever the outcome.
    */

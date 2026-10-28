@@ -174,6 +174,15 @@ export class VaultRepository {
     });
   }
 
+  /** Rejects with authentication-failed unless this is the unlocked vault's passphrase. Changes nothing. */
+  verifyPassphrase(passphrase: string): Promise<void> {
+    return this.#run(async (epoch) => {
+      const snapshot = this.#unlocked();
+      await this.#vault.verifyPassphrase(snapshot.header, passphrase);
+      this.#check(epoch);
+    });
+  }
+
   /** Turns off Touch ID: deletes the keychain secret and the stored device slot. */
   removeDevice(keeper: VaultDeviceKeeper): Promise<void> {
     return this.#run(async (epoch, signal) => {

@@ -3091,6 +3091,10 @@ handle("vault-touch-id-unlock", (event, vaultId) => {
   if (!fromVaultWindow(event)) return { ok: false, reason: "unavailable" };
   return vaultTouchId.unlock(vaultId);
 }, { onFailure: () => ({ ok: false, reason: "unavailable" }) });
+handle("vault-touch-id-confirm", (event, vaultId, action, label) => {
+  if (!fromVaultWindow(event)) return { ok: false, reason: "unavailable" };
+  return vaultTouchId.confirm(vaultId, action, label);
+}, { onFailure: () => ({ ok: false, reason: "unavailable" }) });
 handle("vault-touch-id-remove", (event, vaultId) => {
   if (!fromVaultWindow(event)) return { ok: false };
   return vaultTouchId.remove(vaultId);

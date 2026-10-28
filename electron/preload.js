@@ -66,6 +66,7 @@ if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI",
   vaultTouchIdAvailable: (vaultId) => ipcRenderer.invoke("vault-touch-id-available", vaultId),
   vaultTouchIdEnroll: (vaultId, secret) => ipcRenderer.invoke("vault-touch-id-enroll", vaultId, secret),
   vaultTouchIdUnlock: (vaultId) => ipcRenderer.invoke("vault-touch-id-unlock", vaultId),
+  vaultTouchIdConfirm: (vaultId, action, label) => ipcRenderer.invoke("vault-touch-id-confirm", vaultId, action, label),
   vaultTouchIdRemove: (vaultId) => ipcRenderer.invoke("vault-touch-id-remove", vaultId),
   searchDocuments: (args) => ipcRenderer.invoke("doc-search", args),
   // Workspace / Files view

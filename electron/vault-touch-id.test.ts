@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ENROLL_REASON, UNLOCK_REASON, createVaultTouchId, validVaultId } from "./vault-touch-id.js";
+import { ENROLL_REASON, UNLOCK_REASON, createVaultTouchId, revealReason, validVaultId } from "./vault-touch-id.js";
 
 const VAULT = "AAECAwQFBgcICQoLDA0ODw"; // 16 bytes, canonical base64url
 const OTHER = "EBESExQVFhcYGRobHB0eHw";
@@ -165,6 +165,49 @@ describe("vault Touch ID keychain (main process)", () => {
     symlinkSync(elsewhere, file);
     expect(touchId.status(VAULT).enrolled).toBe(false);
     expect(await touchId.unlock(VAULT)).toEqual({ ok: false, reason: "missing" });
+  });
+
+  it("asks a fresh Touch ID per item reveal, naming it, without touching the keychain", async () => {
+    const touch = fakeTouchId();
+    const safe = fakeSafeStorage();
+    const { touchId, systemPreferences } = setup({ touch, safe });
+    // Not turned on for this vault: no sheet at all.
+    expect(await touchId.confirm(VAULT, "reveal", "API_KEY in prod.env")).toEqual({ ok: false, reason: "missing" });
+    expect(systemPreferences.promptTouchID).not.toHaveBeenCalled();
+    await touchId.enroll(VAULT, secret());
+    safe.decryptString.mockClear();
+    safe.isEncryptionAvailable.mockClear();
+    expect(await touchId.confirm(VAULT, "reveal", "API_KEY in prod.env")).toEqual({ ok: true });
+    expect(systemPreferences.promptTouchID).toHaveBeenLastCalledWith("reveal “API_KEY in prod.env” from your vault");
+    expect(await touchId.confirm(VAULT, "copy", "API_KEY in prod.env")).toEqual({ ok: true });
+    expect(systemPreferences.promptTouchID).toHaveBeenCalledTimes(3);
+    touch.state.outcome = "cancel";
+    expect(await touchId.confirm(VAULT, "open", "notes.txt")).toEqual({ ok: false, reason: "cancelled" });
+    expect(safe.decryptString).not.toHaveBeenCalled();
+    expect(safe.isEncryptionAvailable).not.toHaveBeenCalled();
+  });
+
+  it("builds the reveal sheet text from a fixed verb and a flattened, short name", async () => {
+    expect(revealReason("open", "notes.txt")).toBe("open “notes.txt” from your vault");
+    expect(revealReason("delete", "notes.txt")).toBeNull();
+    expect(revealReason("open", "  \n‮ ")).toBeNull();
+    expect(revealReason("open", 42)).toBeNull();
+    expect(revealReason("copy", "a”. Enter your password\n\"x")).toBe("copy “a . Enter your password x” from your vault");
+    const long = revealReason("reveal", "k".repeat(200))!;
+    expect(long).toBe(`reveal “${"k".repeat(59)}…” from your vault`);
+    const { touchId, systemPreferences } = setup();
+    await touchId.enroll(VAULT, secret());
+    expect(await touchId.confirm(VAULT, "unlock", "x")).toEqual({ ok: false, reason: "unavailable" });
+    expect(await touchId.confirm("../x", "open", "x")).toEqual({ ok: false, reason: "unavailable" });
+    expect(systemPreferences.promptTouchID).toHaveBeenCalledTimes(1);
+  });
+
+  it("never prompts per item off macOS or without a sensor", async () => {
+    for (const options of [{ platform: "win32" }, { platform: "linux" }, { touch: fakeTouchId({ can: false }) }]) {
+      const { touchId, systemPreferences } = setup(options);
+      expect(await touchId.confirm(VAULT, "reveal", "API_KEY")).toEqual({ ok: false, reason: "unavailable" });
+      expect(systemPreferences.promptTouchID).not.toHaveBeenCalled();
+    }
   });
 
   it("refuses a second prompt while one is on screen", async () => {

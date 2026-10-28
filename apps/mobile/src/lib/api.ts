@@ -12,10 +12,12 @@ import {
   privateLinkFor,
   publicDocName,
   formatFromName,
+  newDocId,
   type CloudDoc,
   type RecentDoc,
 } from "./docs";
-import { NetworkError, type HttpResponse, type HttpTransport } from "./http";
+import { NetworkError, type HttpMethod, type HttpResponse, type HttpTransport } from "./http";
+import { sha256Hex } from "./sha256";
 
 // A document is at most a few megabytes (2 MB through the agent API, 100 MB
 // for the desktop's raw text route). The phone refuses to hold more than this
@@ -28,6 +30,9 @@ const MAX_RESPONSE_CHARS = 24_000_000;
 const MAX_ASSET_BYTES = 20_000_000;
 const ASSET_TIMEOUT_MS = 15_000;
 const MAX_ERROR_CHARS = 512;
+// The desktop's sync accepts far more; a phone keyboard never gets near this.
+const MAX_SAVE_CHARS = 8_000_000;
+const SAVE_TIMEOUT_MS = 30_000;
 
 export interface ApiUser {
   id: string;
@@ -84,7 +89,7 @@ export function createApiClient(options: ApiClientOptions) {
   const { origin, transport } = options;
 
   async function send(
-    method: "GET" | "POST",
+    method: HttpMethod,
     path: string,
     { body, auth = true, timeoutMs, binary = false, headers: extra }: { body?: unknown; auth?: boolean; timeoutMs?: number; binary?: boolean; headers?: Record<string, string> } = {}
   ): Promise<HttpResponse> {
@@ -112,7 +117,7 @@ export function createApiClient(options: ApiClientOptions) {
     return response;
   }
 
-  async function json(method: "GET" | "POST", path: string, init: { body?: unknown; auth?: boolean; timeoutMs?: number } = {}): Promise<{ response: HttpResponse; data: unknown }> {
+  async function json(method: HttpMethod, path: string, init: { body?: unknown; auth?: boolean; timeoutMs?: number } = {}): Promise<{ response: HttpResponse; data: unknown }> {
     const response = await send(method, path, init);
     const data = parseJson(response.text);
     if (response.status >= 200 && response.status < 300) return { response, data };
@@ -136,6 +141,33 @@ export function createApiClient(options: ApiClientOptions) {
       const refusal = signupRefusal(error.status, { code: error.code });
       throw new ApiError(error.status, refusal ?? authErrorMessage(error.status, context), error.code, error.serverMessage);
     }
+  }
+
+  /**
+   * Saves a new version through the same route the desktop's sync pushes to.
+   * `baseVersion` is the version this edit started from; the server refuses
+   * the save (409) when another device saved first, so nothing is overwritten
+   * unseen. A new document is the same call with baseVersion 0.
+   */
+  async function saveDoc({ id, name, content, baseVersion }: { id: string; name: string; content: string; baseVersion: number }): Promise<{ id: string; version: number }> {
+    if (!DOC_ID.test(id)) throw new ApiError(404, "That isn't a Markie document.");
+    if (content.length > MAX_SAVE_CHARS) throw new ApiError(413, "This document is too large to save from a phone.");
+    const hash = await sha256Hex(content);
+    let result: { data: unknown };
+    try {
+      result = await json("PUT", `/api/docs/${encodeURIComponent(id)}`, { body: { name, content, hash, baseVersion }, timeoutMs: SAVE_TIMEOUT_MS });
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+      if (error.status === 409 && error.code !== "placement-required") {
+        throw new ApiError(409, "This document changed on another device while you were editing.", "conflict", error.serverMessage);
+      }
+      if (error.status === 403) throw new ApiError(403, "You can read this document, but its owner hasn't let you edit it.", error.code, error.serverMessage);
+      if (error.status === 413) throw new ApiError(413, error.serverMessage ?? "Your Markie Cloud storage is full.", error.code, error.serverMessage);
+      throw error;
+    }
+    const version = (result.data as { version?: unknown } | null)?.version;
+    if (typeof version !== "number" || !Number.isSafeInteger(version)) throw new ApiError(502, "The server saved the document but didn't say which version it is now.");
+    return { id, version };
   }
 
   return {
@@ -203,6 +235,13 @@ export function createApiClient(options: ApiClientOptions) {
       }
     },
 
+    saveDoc,
+
+    /** A new document in this account. Returns its id, for opening it. */
+    async createDoc({ name, content }: { name: string; content: string }): Promise<{ id: string; version: number }> {
+      return saveDoc({ id: newDocId(), name, content, baseVersion: 0 });
+    },
+
     /** A public share, read the way a browser reads it: no account involved. */
     async publicDoc(token: string): Promise<CloudDoc> {
       if (!PUBLIC_TOKEN.test(token)) throw new ApiError(404, "That isn't a Markie share link.");
@@ -221,6 +260,7 @@ export function createApiClient(options: ApiClientOptions) {
         updatedAt: null,
         origin: { kind: "app", agent: null },
         privateLink: `${origin}/s/${encodeURIComponent(token)}`,
+        role: null,
         publicToken: token,
       };
     },

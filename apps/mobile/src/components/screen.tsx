@@ -14,6 +14,8 @@ interface ScreenProps {
   /** Shown big at the top of the body; the bar's own title appears once it scrolls away. */
   largeTitle?: boolean;
   back?: { label: string; onBack: () => void };
+  /** In place of the back button, for a screen that is cancelled rather than left. */
+  leading?: ReactNode;
   actions?: ReactNode;
   /** Sits under the large title and scrolls with it (search, filters). */
   header?: ReactNode;
@@ -27,7 +29,7 @@ interface ScreenProps {
   fill?: boolean;
 }
 
-export function Screen({ title, largeTitle = false, back, actions, header, onRefresh, onNearEnd, children, className = "", bodyRef, fill = false }: ScreenProps) {
+export function Screen({ title, largeTitle = false, back, leading, actions, header, onRefresh, onNearEnd, children, className = "", bodyRef, fill = false }: ScreenProps) {
   const localBody = useRef<HTMLDivElement>(null);
   const body = bodyRef ?? localBody;
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -102,7 +104,7 @@ export function Screen({ title, largeTitle = false, back, actions, header, onRef
               <ChevronLeft size={24} />
               <span>{back.label}</span>
             </button>
-          ) : null}
+          ) : leading ?? null}
         </div>
         <div className={`m-navbar-title${collapsed ? " is-visible" : ""}`} aria-hidden={!collapsed}>{title}</div>
         <div className="m-navbar-side m-navbar-trailing">{actions}</div>

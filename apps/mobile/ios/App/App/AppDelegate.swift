@@ -8,7 +8,25 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         Self.forgetSessionFromAnEarlierInstall()
+        Self.clearOldInboxFiles()
         return true
+    }
+
+    /// iOS copies every file opened in Markie (a Mail attachment, an AirDrop,
+    /// "Open in Markie" from Files) into Documents/Inbox before handing over
+    /// its URL. The page reads it once and saves it to Markie Cloud or drops
+    /// it, so a copy never needs to outlive the day. One that just arrived, the
+    /// one this launch may be opening, is left alone.
+    private static func clearOldInboxFiles() {
+        let files = FileManager.default
+        guard let documents = files.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        let inbox = documents.appendingPathComponent("Inbox", isDirectory: true)
+        guard let items = try? files.contentsOfDirectory(at: inbox, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
+        for item in items {
+            let modified = (try? item.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            if modified < cutoff { try? files.removeItem(at: item) }
+        }
     }
 
     /// Deleting the app removes its files and its UserDefaults, but iOS keeps

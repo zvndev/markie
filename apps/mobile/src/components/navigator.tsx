@@ -6,6 +6,8 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type T
 export interface StackEntry {
   key: string;
   node: ReactNode;
+  /** No edge swipe: the screen is left through its own Cancel (an editor with unsaved text). */
+  locked?: boolean;
 }
 
 interface NavigatorProps {
@@ -47,7 +49,7 @@ export function Navigator({ entries, onPop }: NavigatorProps) {
     setLeaving(null);
   }, [entries]);
 
-  const canSwipe = entries.length > 1;
+  const canSwipe = entries.length > 1 && !entries[entries.length - 1]?.locked;
 
   function onTouchStart(event: TouchEvent) {
     const point = event.touches[0];

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentFormatMark } from "@/components/document-format-mark";
 import { ApiError, type ApiClient } from "../lib/api";
 import { isMarkieCloud } from "../lib/server-origin";
-import type { RecentDoc } from "../lib/docs";
+import { markFormat, type RecentDoc } from "../lib/docs";
 import { haptics } from "../lib/native";
 import {
   PAGE_SIZE,
@@ -19,12 +19,13 @@ import {
   type RecentScope,
 } from "../lib/recent";
 import { Screen } from "../components/screen";
-import { AlertIcon, ChevronRight, ClearIcon, GearIcon, PeopleIcon, SearchIcon, SparkleIcon } from "../components/icons";
+import { AlertIcon, ChevronRight, ClearIcon, GearIcon, PeopleIcon, PlusIcon, SearchIcon, SparkleIcon } from "../components/icons";
 
 interface RecentProps {
   api: ApiClient;
   onOpen: (doc: RecentDoc) => void;
   onSettings: () => void;
+  onNew: () => void;
   onUnauthorized: () => void;
   /** Bumped by the app when it returns to the foreground. */
   refreshKey: number;
@@ -35,7 +36,7 @@ type LoadState = { status: "loading" } | { status: "ready" } | { status: "error"
 // The last list this launch saw, so coming back from a document is instant.
 let cached: { origin: string; docs: RecentDoc[]; cursor: string | null } | null = null;
 
-export function RecentScreen({ api, onOpen, onSettings, onUnauthorized, refreshKey }: RecentProps) {
+export function RecentScreen({ api, onOpen, onSettings, onNew, onUnauthorized, refreshKey }: RecentProps) {
   const warm = cached?.origin === api.origin ? cached : null;
   const [docs, setDocs] = useState<RecentDoc[]>(warm?.docs ?? []);
   const [cursor, setCursor] = useState<string | null>(warm?.cursor ?? null);
@@ -133,7 +134,12 @@ export function RecentScreen({ api, onOpen, onSettings, onUnauthorized, refreshK
       title="Recent"
       largeTitle
       header={header}
-      actions={<button type="button" className="m-nav-icon" aria-label="Settings" onClick={onSettings}><GearIcon size={23} /></button>}
+      actions={
+        <>
+          <button type="button" className="m-nav-icon" aria-label="New document" onClick={onNew}><PlusIcon size={24} /></button>
+          <button type="button" className="m-nav-icon" aria-label="Settings" onClick={onSettings}><GearIcon size={23} /></button>
+        </>
+      }
       onRefresh={load}
       onNearEnd={cursor ? () => void loadMore() : undefined}
     >
@@ -152,6 +158,7 @@ export function RecentScreen({ api, onOpen, onSettings, onUnauthorized, refreshK
           <SparkleIcon size={30} />
           <h2>No documents yet</h2>
           <p>Documents you save to {isMarkieCloud(api.origin) ? "Markie Cloud" : "this server"}, and the ones your agents make for you, show up here.</p>
+          <button type="button" className="m-button m-button-primary" onClick={onNew}><PlusIcon size={20} />New document</button>
         </div>
       ) : null}
       {docs.length > 0 && visible.length === 0 ? (
@@ -179,13 +186,13 @@ function DocRow({ doc, now, onOpen }: { doc: RecentDoc; now: number; onOpen: (do
   return (
     <li>
       <button type="button" className="m-row" onClick={() => onOpen(doc)}>
-        <DocumentFormatMark format={doc.format} size="sm" />
+        <DocumentFormatMark format={markFormat(doc)} size="sm" />
         <span className="m-row-main">
           <span className="m-row-title">{displayName(doc.name)}</span>
           <span className="m-row-meta">
             {badge ? <span className="m-badge m-badge-agent"><SparkleIcon size={11} />{badge}</span> : null}
             {shared ? <span className="m-row-shared"><PeopleIcon size={13} />{shared}</span> : null}
-            {!badge && !shared ? <span className="m-row-kind">{doc.format === "darkmown" ? "Interactive document" : doc.format === "text" ? "Text" : "Markdown"}</span> : null}
+            {!badge && !shared ? <span className="m-row-kind">{kindLabel(doc)}</span> : null}
           </span>
         </span>
         <span className="m-row-time">{timeLabel(doc.updatedAt, now)}</span>
@@ -193,6 +200,13 @@ function DocRow({ doc, now, onOpen }: { doc: RecentDoc; now: number; onOpen: (do
       </button>
     </li>
   );
+}
+
+function kindLabel(doc: RecentDoc): string {
+  if (doc.format === "darkmown") return "Interactive document";
+  if (doc.format === "markdown") return "Markdown";
+  const kind = markFormat(doc);
+  return kind === "csv" ? "Spreadsheet" : kind === "json" ? "JSON" : kind === "xml" ? "XML" : "Text";
 }
 
 function ListSkeleton() {

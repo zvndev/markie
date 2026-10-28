@@ -314,7 +314,8 @@ docs.get("/:id", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
-  if (!canReadLevel(accessLevel(docId, user.id))) return c.json({ error: "not found" }, 404);
+  const level = accessLevel(docId, user.id);
+  if (!canReadLevel(level)) return c.json({ error: "not found" }, 404);
   const row = db
     .prepare(
       "SELECT id, name, version, content, hash, updated_at, format, origin_kind, origin_agent FROM docs WHERE id = ? AND deleted_at IS NULL"
@@ -322,7 +323,8 @@ docs.get("/:id", async (c) => {
     .get(docId) as (DocRow & { format: string; origin_kind: string; origin_agent: string | null }) | undefined;
   if (!row) return c.json({ error: "not found" }, 404);
   const { origin_kind, origin_agent, ...doc } = row;
-  return c.json({ doc: { ...doc, origin: originOf({ origin_kind, origin_agent }), ...placement(user.id, docId) } });
+  // The caller's role, so the phone offers Edit only where a save would be taken.
+  return c.json({ doc: { ...doc, origin: originOf({ origin_kind, origin_agent }), role: level, ...placement(user.id, docId) } });
 });
 
 // One asset from a document the caller can read. Same read gate as the

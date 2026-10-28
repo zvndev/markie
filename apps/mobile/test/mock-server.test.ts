@@ -85,6 +85,29 @@ describe("against the mock server", () => {
     await expect(api.recent()).rejects.toMatchObject({ status: 401 });
   });
 
+  it("edits a document, refuses a stale save, and creates new ones", async () => {
+    const transport = fetchTransport();
+    const { token } = await createApiClient({ origin, transport }).verifyCode("editor@example.com", "123456");
+    const api = createApiClient({ origin, transport, getToken: () => token });
+
+    const before = await api.doc("agent-brief");
+    expect(before.role).toBe("owner");
+    const saved = await api.saveDoc({ id: before.id, name: before.name, content: `${before.content}\nEdited on a phone.\n`, baseVersion: before.version! });
+    expect(saved.version).toBe(before.version! + 1);
+    expect((await api.doc("agent-brief")).content).toContain("Edited on a phone.");
+
+    // The edit started from the old version: refused, never merged over.
+    await expect(api.saveDoc({ id: before.id, name: before.name, content: "stale", baseVersion: before.version! })).rejects.toMatchObject({ status: 409, code: "conflict" });
+    expect((await api.doc("agent-brief")).content).not.toBe("stale");
+
+    const created = await api.createDoc({ name: "From the phone.csv", content: "Name,Value\nA,1\n" });
+    const fresh = await api.doc(created.id);
+    expect(fresh).toMatchObject({ name: "From the phone.csv", format: "text", version: 1, content: "Name,Value\nA,1\n" });
+    expect((await api.recent({ limit: 1 }))[0].id).toBe(created.id);
+
+    await expect(api.saveDoc({ id: "someone-elses-doc", name: "x.md", content: "x", baseVersion: 1 })).rejects.toMatchObject({ status: 403 });
+  });
+
   it("routes a scheme deep link to a document on the signed-in server", () => {
     const target = parseMarkieLink("markie-mobile://d/counter-wd");
     expect(target && resolveForSession(target, origin)).toEqual({ ok: true, target: { kind: "doc", id: "counter-wd", origin } });

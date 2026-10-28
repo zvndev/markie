@@ -2,7 +2,7 @@
 // links go. Screens below receive only what they need.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as CapApp } from "@capacitor/app";
-import { CapacitorCookies } from "@capacitor/core";
+import { Capacitor, CapacitorCookies } from "@capacitor/core";
 import { createApiClient, type ApiUser } from "./lib/api";
 import type { HttpTransport } from "./lib/http";
 import {
@@ -15,6 +15,7 @@ import {
   takePendingLink,
   type LinkTarget,
 } from "./lib/deep-links";
+import { IncomingFileError, isIncomingFileUrl, readIncomingFile, type IncomingFile } from "./lib/incoming-file";
 import { createSessionStore, type SecureKeyValue, type StoredSession } from "./lib/session";
 import { loadPreferredOrigin, savePreferredOrigin } from "./lib/server-origin";
 import { loadThemeMode, paintTone, resolveTone, saveThemeMode, systemPrefersDark, type ThemeMode } from "./lib/theme-mode";
@@ -24,11 +25,17 @@ import { SignInScreen } from "./screens/sign-in";
 import { clearRecentCache, RecentScreen } from "./screens/recent";
 import { DocumentScreen } from "./screens/document";
 import { SettingsScreen } from "./screens/settings";
+import { EditorScreen, type EditorDraft } from "./screens/editor";
+import { NewDocScreen } from "./screens/new-doc";
+import { IncomingScreen } from "./screens/incoming";
 
 type Route =
   | { key: string; kind: "recent" }
   | { key: string; kind: "settings" }
-  | { key: string; kind: "doc"; target: LinkTarget; name?: string };
+  | { key: string; kind: "doc"; target: LinkTarget; name?: string; reloadKey?: number }
+  | { key: string; kind: "new" }
+  | { key: string; kind: "edit"; draft: EditorDraft }
+  | { key: string; kind: "file"; file: IncomingFile };
 
 const ROOT: Route = { key: "recent", kind: "recent" };
 const SERVER_SIGN_OUT_TIMEOUT_MS = 3_000;
@@ -39,6 +46,13 @@ interface AppProps {
   transport: HttpTransport;
   secure: SecureKeyValue;
   native: boolean;
+}
+
+/** An incoming file's bytes, served to the page by Capacitor's web view. */
+async function fetchFileBytes(url: string): Promise<Uint8Array> {
+  const response = await fetch(Capacitor.convertFileSrc(url));
+  if (!response.ok) throw new Error(`status ${response.status}`);
+  return new Uint8Array(await response.arrayBuffer());
 }
 
 function pendingStorage(): Storage | null {
@@ -132,6 +146,23 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     });
   }, [showToast]);
 
+  // A file from Mail, AirDrop or Files. Before sign-in it waits in memory
+  // (never on disk) and opens once the person signs in.
+  const pendingFile = useRef<IncomingFile | null>(null);
+  const openFile = useCallback((file: IncomingFile) => {
+    setRoutes([ROOT, { key: nextKey("file"), kind: "file", file }]);
+  }, []);
+  const receiveFile = useCallback(async (url: string) => {
+    try {
+      const file = await readIncomingFile(url, fetchFileBytes);
+      if (sessionRef.current) { openFile(file); return; }
+      pendingFile.current = file;
+      setSignInNotice(`Sign in to open "${file.name}" and save it to Markie Cloud.`);
+    } catch (error) {
+      showToast(error instanceof IncomingFileError ? error.message : "Markie couldn't open that file.");
+    }
+  }, [openFile, showToast]);
+
   // Links from outside: universal links, app links and markie-mobile://.
   const lastUrl = useRef<{ url: string; at: number } | null>(null);
   const handleIncomingUrl = useCallback((url: string) => {
@@ -139,6 +170,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     // A cold start can report the same URL as both the launch URL and an open event.
     if (lastUrl.current && lastUrl.current.url === url && now - lastUrl.current.at < 3000) return;
     lastUrl.current = { url, at: now };
+    if (isIncomingFileUrl(url)) { void receiveFile(url); return; }
     const target = parseMarkieLink(url, sessionRef.current?.origin ?? null);
     if (!target) {
       // Android app links can only claim path prefixes, so a /d/<id>/raw or
@@ -157,7 +189,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
       return;
     }
     openTarget(target, { replaceStack: true });
-  }, [openTarget, showToast]);
+  }, [openTarget, receiveFile, showToast]);
 
   const sessionKnown = session !== undefined;
   useEffect(() => {
@@ -171,6 +203,26 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   }, [native, sessionKnown, handleIncomingUrl]);
 
   const pop = useCallback(() => setRoutes((stack) => (stack.length > 1 ? stack.slice(0, -1) : stack)), []);
+  // The editor answers Android's back button itself, so unsaved text is asked about first.
+  const backGuard = useRef<(() => void) | null>(null);
+
+  /** After a save: every open copy of that document reads it again, and so does the list. */
+  const reloadDoc = useCallback((stack: Route[], id: string | null): Route[] => stack.map((route) =>
+    route.kind === "doc" && (id === null || (route.target.kind === "doc" && route.target.id === id))
+      ? { ...route, reloadKey: (route.reloadKey ?? 0) + 1 }
+      : route), []);
+
+  const editorSaved = useCallback(({ id, name, created }: { id: string; name: string; created: boolean }) => {
+    setRefreshKey((value) => value + 1);
+    setRoutes((stack) => {
+      const withoutEditor = stack.slice(0, -1);
+      if (!created) return reloadDoc(withoutEditor, id);
+      // A new document replaces the editor, and the file it came from if any.
+      const base = withoutEditor[withoutEditor.length - 1]?.kind === "file" ? withoutEditor.slice(0, -1) : withoutEditor;
+      const origin = sessionRef.current?.origin ?? null;
+      return [...base, { key: nextKey("doc"), kind: "doc", target: { kind: "doc", id, origin }, name }];
+    });
+  }, [reloadDoc]);
 
   // Android's back button walks the stack, then leaves the app as usual.
   const routesRef = useRef(routes);
@@ -180,6 +232,8 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     let handle: { remove: () => Promise<void> } | null = null;
     let removed = false;
     void CapApp.addListener("backButton", () => {
+      const top = routesRef.current[routesRef.current.length - 1];
+      if (top.kind === "edit" && backGuard.current) { backGuard.current(); return; }
       if (routesRef.current.length > 1 && sessionRef.current) pop();
       else void CapApp.minimizeApp().catch(() => undefined);
     }).then((h) => { if (removed) void h.remove(); else handle = h; });
@@ -190,6 +244,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     await sessionStore.clear().catch(() => undefined);
     if (native) await CapacitorCookies.clearAllCookies().catch(() => undefined);
     clearRecentCache();
+    pendingFile.current = null;
     sessionRef.current = null;
     setSession(null);
     setRoutes([ROOT]);
@@ -232,8 +287,11 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     const storage = pendingStorage();
     const pending = storage ? takePendingLink(storage) : null;
     setHasPending(false);
-    if (pending) openTarget(pending, { replaceStack: true });
-  }, [openTarget, sessionStore]);
+    const file = pendingFile.current;
+    pendingFile.current = null;
+    if (file) openFile(file);
+    else if (pending) openTarget(pending, { replaceStack: true });
+  }, [openFile, openTarget, sessionStore]);
 
   const setThemeMode = useCallback((mode: ThemeMode) => {
     saveThemeMode(mode);
@@ -269,6 +327,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
             refreshKey={refreshKey}
             onOpen={(doc) => openTarget({ kind: "doc", id: doc.id, origin: api.origin }, { name: doc.name })}
             onSettings={() => setRoutes((stack) => (stack[stack.length - 1].kind === "settings" ? stack : [...stack, { key: nextKey("settings"), kind: "settings" }]))}
+            onNew={() => setRoutes((stack) => (stack[stack.length - 1].kind === "new" ? stack : [...stack, { key: nextKey("new"), kind: "new" }]))}
             onUnauthorized={onUnauthorized}
           />
         ),
@@ -278,6 +337,57 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
       return {
         key: route.key,
         node: <SettingsScreen session={session} themeMode={themeMode} onThemeMode={setThemeMode} onSignOut={signOut} onBack={pop} />,
+      };
+    }
+    if (route.kind === "new") {
+      return {
+        key: route.key,
+        locked: true,
+        node: (
+          <NewDocScreen
+            onCancel={pop}
+            onStart={(draft) => setRoutes((stack) => [...stack.slice(0, -1), { key: nextKey("edit"), kind: "edit", draft: { kind: "new", ...draft } }])}
+            onOpenFile={(file) => setRoutes((stack) => [...stack.slice(0, -1), { key: nextKey("file"), kind: "file", file }])}
+          />
+        ),
+      };
+    }
+    if (route.kind === "edit") {
+      return {
+        key: route.key,
+        locked: true,
+        node: (
+          <EditorScreen
+            api={api}
+            draft={route.draft}
+            backGuard={backGuard}
+            onCancel={(reload) => setRoutes((stack) => (reload ? reloadDoc(stack.slice(0, -1), route.draft.kind === "cloud" ? route.draft.id : null) : stack.slice(0, -1)))}
+            onSaved={editorSaved}
+            onUnauthorized={onUnauthorized}
+          />
+        ),
+      };
+    }
+    if (route.kind === "file") {
+      return {
+        key: route.key,
+        node: (
+          <IncomingScreen
+            api={api}
+            file={route.file}
+            fileKey={route.key}
+            tone={tone}
+            backLabel={backLabel}
+            onBack={pop}
+            onEdit={() => setRoutes((stack) => [...stack, { key: nextKey("edit"), kind: "edit", draft: { kind: "new", name: route.file.name, format: route.file.format, content: route.file.content } }])}
+            onSaved={({ id, name }) => {
+              setRefreshKey((value) => value + 1);
+              setRoutes((stack) => stack.map((item) => (item.key === route.key ? { key: nextKey("doc"), kind: "doc", target: { kind: "doc", id, origin: api.origin }, name } : item)));
+            }}
+            onOpen={(target) => openTarget(target)}
+            onUnauthorized={onUnauthorized}
+          />
+        ),
       };
     }
     return {
@@ -292,6 +402,12 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
           onBack={pop}
           onRecent={() => setRoutes([ROOT])}
           onOpen={(target) => openTarget(target)}
+          onEdit={(doc) => {
+            if (doc.version === null) return;
+            const draft: EditorDraft = { kind: "cloud", id: doc.id, name: doc.name, format: doc.format, content: doc.content, version: doc.version };
+            setRoutes((stack) => [...stack, { key: nextKey("edit"), kind: "edit", draft }]);
+          }}
+          reloadKey={route.reloadKey}
           onUnauthorized={onUnauthorized}
         />
       ),

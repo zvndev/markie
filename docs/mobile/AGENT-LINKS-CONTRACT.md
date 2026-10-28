@@ -130,7 +130,8 @@ Document-platform documents (Word, ODT and others in `dp_documents`) are out of 
 list in this build.
 
 Existing `GET /api/docs/:id` returns content for the viewer. Add `format` and `origin` to its
-response.
+response, and `role` (`owner`, `editor` or `viewer`), so the phone offers Edit only where the
+desktop's `PUT /api/docs/:id` would accept the save.
 
 `GET /api/docs` reports `sharedOut: true` for every document with an `origin_token_id`, as well as
 for shared ones. The desktop treats that text as written by someone else, so it never pulls local

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DocumentFormatMark } from "@/components/document-format-mark";
 import { ApiError, documentErrorCopy, type ApiClient, type AssetSource } from "../lib/api";
 import { classifyDocumentLink, type LinkTarget } from "../lib/deep-links";
-import { originLabel, type CloudDoc } from "../lib/docs";
+import { canEditDoc, markFormat, originLabel, type CloudDoc } from "../lib/docs";
 import { openExternal, openSystemUrl, shareLink } from "../lib/native";
 import { serverLabel } from "../lib/server-origin";
 import { displayName, timeLabel } from "../lib/recent";
@@ -14,7 +14,7 @@ import type { Tone } from "../lib/theme-mode";
 import { Screen } from "../components/screen";
 import { MarkdownView } from "../components/markdown-view";
 import { DarkmownView } from "../components/darkmown-view";
-import { AlertIcon, LockIcon, ShareIcon, SparkleIcon } from "../components/icons";
+import { AlertIcon, LockIcon, PencilIcon, ShareIcon, SparkleIcon } from "../components/icons";
 
 interface DocumentProps {
   api: ApiClient;
@@ -27,7 +27,11 @@ interface DocumentProps {
   /** Back to the list, past any documents in between. */
   onRecent: () => void;
   onOpen: (target: LinkTarget) => void;
+  /** Opens the editor on the version shown. */
+  onEdit: (doc: CloudDoc) => void;
   onUnauthorized: () => void;
+  /** Bumped by the app after a save, so the screen reads the new version. */
+  reloadKey?: number;
 }
 
 type State =
@@ -35,7 +39,7 @@ type State =
   | { status: "ready"; doc: CloudDoc }
   | { status: "error"; error: unknown };
 
-export function DocumentScreen({ api, target, initialName, backLabel, tone, onBack, onRecent, onOpen, onUnauthorized }: DocumentProps) {
+export function DocumentScreen({ api, target, initialName, backLabel, tone, onBack, onRecent, onOpen, onEdit, onUnauthorized, reloadKey = 0 }: DocumentProps) {
   const [state, setState] = useState<State>({ status: "loading" });
   const [related, setRelated] = useState<Map<string, string>>(new Map());
   const [notice, setNotice] = useState<string | null>(null);
@@ -56,7 +60,7 @@ export function DocumentScreen({ api, target, initialName, backLabel, tone, onBa
     }
   }, [api, target, onUnauthorized]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); }, [load, reloadKey]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(null), 3200);
@@ -84,10 +88,17 @@ export function DocumentScreen({ api, target, initialName, backLabel, tone, onBa
     }
   }, [api.origin, onOpen, related]);
 
-  const share = doc ? (
-    <button type="button" className="m-nav-icon" aria-label="Share link" onClick={() => void shareLink(displayName(doc.name), doc.privateLink)}>
-      <ShareIcon size={23} />
-    </button>
+  const actions = doc ? (
+    <>
+      {canEditDoc(doc) ? (
+        <button type="button" className="m-nav-icon" aria-label="Edit" onClick={() => onEdit(doc)}>
+          <PencilIcon size={22} />
+        </button>
+      ) : null}
+      <button type="button" className="m-nav-icon" aria-label="Share link" onClick={() => void shareLink(displayName(doc.name), doc.privateLink)}>
+        <ShareIcon size={23} />
+      </button>
+    </>
   ) : null;
 
   const isWd = doc?.format === "darkmown";
@@ -100,7 +111,7 @@ export function DocumentScreen({ api, target, initialName, backLabel, tone, onBa
     <Screen
       title={title}
       back={{ label: backLabel, onBack }}
-      actions={share}
+      actions={actions}
       onRefresh={doc && !isWd ? load : undefined}
       fill={isWd}
       className="m-document"
@@ -127,12 +138,13 @@ function DocMeta({ doc }: { doc: CloudDoc }) {
   const from = originLabel(doc.origin);
   return (
     <div className="m-doc-meta">
-      <DocumentFormatMark format={doc.format} size="sm" />
+      <DocumentFormatMark format={markFormat(doc)} size="sm" />
       <div className="m-doc-meta-text">
         <span className="m-visually-hidden">{doc.name}</span>
         <span className="m-doc-meta-line">
           {from ? <span className="m-badge m-badge-agent"><SparkleIcon size={11} />{from}</span> : null}
           {doc.publicToken ? <span className="m-badge">Public link</span> : <span className="m-doc-private"><LockIcon size={12} />Private</span>}
+          {doc.role === "viewer" ? <span>View only</span> : null}
           {doc.updatedAt ? <span>Updated {timeLabel(doc.updatedAt)}</span> : null}
         </span>
       </div>

@@ -50,6 +50,23 @@
                 <data android:host="s" />
             </intent-filter>
 
+            <!-- "Open with Markie" for a document from Gmail, Drive or Files.
+                 The page reads the content:// URI through the web view
+                 (src/lib/incoming-file.ts) and offers to save it to the cloud. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="text/markdown" />
+                <data android:mimeType="text/x-markdown" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/rtf" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/vnd.oasis.opendocument.text" />
+            </intent-filter>
+
         </activity>
 
         <provider

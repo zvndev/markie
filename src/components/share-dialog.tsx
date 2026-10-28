@@ -1,25 +1,23 @@
-import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { type ShareAccess, type ShareMember } from "@/lib/auth-client";
-import { isPrimaryServer, sharesClientFor, useAuthFor } from "@/lib/server-sessions";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  getServerURL,
+  type ShareAccess,
+  type ShareContact,
+  type ShareMember,
+} from "@/lib/auth-client";
+import { sharesClientFor, useAuthFor } from "@/lib/server-sessions";
 import { localAssetCount } from "@/lib/attach";
 import { colorForName, initials } from "@/lib/collab";
-import { getDocTheme, setDocTheme } from "@/lib/theme-sync";
-import { findTheme, loadThemeStore } from "@/lib/theme";
-import {
-  shareAccessLine,
-  shareCapabilityView,
-  shareMembersEmptyLine,
-  sharePublicLinkUnavailableLine,
-  shareRoleLabel,
-} from "@/lib/share-access-view";
-import {
-  generalAccessFor,
-  generalAccessLine,
-  publishWarning,
-  revokeWarning,
-  roleDescription,
-} from "@/lib/general-access";
+import { shareMembersEmptyLine } from "@/lib/share-access-view";
+import { roleDescription } from "@/lib/general-access";
 import { getElectronAPI } from "@/lib/electron";
+
+// Shaped after Google Docs' share dialog, because that is the one people
+// already know: add people at the top, who has access in the middle, general
+// access below, and the link one click away in the footer from the moment the
+// dialog opens.
+
+type Role = "viewer" | "editor";
 
 interface ShareDialogProps {
   docId: string;
@@ -31,8 +29,15 @@ interface ShareDialogProps {
   // it. Sharing sends the text and nothing else.
   body?: string;
   onClose: () => void;
-  // Membership changed — the page re-evaluates whether the doc is live
+  // Membership changed: the page re-evaluates whether the doc is live
   onChanged: () => void;
+}
+
+const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+const MAX_SUGGESTIONS = 6;
+
+function isEmail(value: string): boolean {
+  return EMAIL_RE.test(value.trim());
 }
 
 export function ShareDialog({
@@ -45,23 +50,27 @@ export function ShareDialog({
 }: ShareDialogProps) {
   const { user: me } = useAuthFor(server);
   const sharesClient = sharesClientFor(server);
-  // Pinned themes are stored on Markie Cloud, so they are offered there only.
-  const themesHere = isPrimaryServer(server);
   const [access, setAccess] = useState<ShareAccess | null>(null);
   const [members, setMembers] = useState<ShareMember[] | null>(null);
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"viewer" | "editor">("viewer");
+  const [publicUrl, setPublicUrl] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [contacts, setContacts] = useState<ShareContact[]>([]);
+
+  // The "Add people" field: addresses already chosen, plus what is being typed.
+  const [pending, setPending] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
+  const [role, setRole] = useState<Role>("viewer");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [themePinned, setThemePinned] = useState(false);
-  const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [linkBusy, setLinkBusy] = useState(false);
   const [copied, setCopied] = useState(false);
-  // Which person's role is mid-change, so only their row shows it.
-  const [roleBusy, setRoleBusy] = useState<string | null>(null);
-  // Publishing asks once before it happens.
-  const [confirmingPublish, setConfirmingPublish] = useState(false);
+  // Which person's row is mid-change, so only that row shows it.
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
 
   const load = useCallback(() => {
     return Promise.all([
@@ -72,26 +81,26 @@ export function ShareDialog({
       setAccess(nextAccess);
       setMembers(list ?? []);
       setPublicUrl(url);
+      setLoaded(true);
     });
   }, [docId, sharesClient]);
 
   useEffect(() => {
     load();
-    if (themesHere) getDocTheme(docId).then((tokens) => setThemePinned(!!tokens));
-  }, [load, docId, themesHere]);
+  }, [load]);
 
-  const toggleThemePin = async () => {
-    if (!canManage) return setError("Only the owner can pin the shared theme.");
-    const next = !themePinned;
-    setThemePinned(next);
-    const store = loadThemeStore();
-    const ok = await setDocTheme(
-      docId,
-      next ? findTheme(store, store.activeId).tokens : null
-    );
-    if (!ok) setThemePinned(!next);
-    else onChanged();
-  };
+  const canManage = !!access?.canManage;
+
+  useEffect(() => {
+    if (!canManage) return;
+    let live = true;
+    sharesClient.contacts().then((list) => {
+      if (live) setContacts(list);
+    });
+    return () => {
+      live = false;
+    };
+  }, [canManage, sharesClient]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -101,83 +110,167 @@ export function ShareDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const accessChecking = members === null;
-  const canManage = !!access?.canManage;
+  // Everyone already on the document, so suggestions never offer them again.
+  const taken = useMemo(() => {
+    const set = new Set<string>(pending);
+    for (const m of members ?? []) set.add(m.email.toLowerCase());
+    if (me?.email) set.add(me.email.toLowerCase());
+    return set;
+  }, [members, pending, me?.email]);
 
-  const handleAdd = async () => {
+  const suggestions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return contacts
+      .filter((c) => !taken.has(c.email.toLowerCase()))
+      .filter(
+        (c) =>
+          c.email.toLowerCase().includes(q) ||
+          (c.name ?? "").toLowerCase().includes(q)
+      )
+      .slice(0, MAX_SUGGESTIONS);
+  }, [contacts, query, taken]);
+
+  const showMenu = menuOpen && suggestions.length > 0;
+
+  const addPending = (address: string) => {
+    const clean = address.trim().toLowerCase();
+    if (!clean) return;
+    if (!isEmail(clean)) {
+      setError(`"${address.trim()}" is not an email address.`);
+      return;
+    }
+    setError(null);
+    setFlash(null);
+    if (!taken.has(clean)) setPending((p) => [...p, clean]);
+    setQuery("");
+    setMenuOpen(false);
+    setHighlight(0);
+    inputRef.current?.focus();
+  };
+
+  const removePending = (address: string) => {
+    setPending((p) => p.filter((a) => a !== address));
+    inputRef.current?.focus();
+  };
+
+  const cancelInvite = () => {
+    setPending([]);
+    setQuery("");
+    setMenuOpen(false);
+    setError(null);
+  };
+
+  // What Send would send: the chosen addresses, plus a finished address still
+  // sitting in the field, so nobody has to press Enter before Send.
+  const toSend = useMemo(() => {
+    const typed = query.trim().toLowerCase();
+    return isEmail(typed) && !pending.includes(typed) ? [...pending, typed] : pending;
+  }, [pending, query]);
+  const inviting = toSend.length > 0;
+
+  const send = async () => {
     if (!canManage) return setError("Only the owner can invite people.");
-    const target = email.trim().toLowerCase();
-    if (!target) return;
+    if (toSend.length === 0) return;
     setBusy(true);
     setError(null);
     setFlash(null);
-    const res = await sharesClient.add(docId, target, role);
-    setBusy(false);
-    if (!res.ok) {
-      setError(res.error ?? "Couldn't share the doc");
-      return;
+    const failed: { email: string; error: string }[] = [];
+    const invited: string[] = [];
+    const shared: string[] = [];
+    for (const target of toSend) {
+      const res = await sharesClient.add(docId, target, role);
+      if (!res.ok) failed.push({ email: target, error: res.error ?? "Couldn't share the doc" });
+      else if (res.status === "invited") invited.push(target);
+      else shared.push(target);
     }
-    setEmail("");
-    setFlash(
-      res.status === "invited"
-        ? `Invited ${target} — they'll get an email and it lands in their Library when they join.`
-        : `Shared with ${target}.`
-    );
-    await load();
-    onChanged();
-  };
-
-  // idOrEmail: member user id, or the email for a pending invite
-  const handleRemove = async (idOrEmail: string) => {
-    if (!canManage) return setError("Only the owner can remove access.");
-    setBusy(true);
-    const ok = await sharesClient.remove(docId, idOrEmail);
     setBusy(false);
-    if (ok) {
+    const failedEmails = failed.map((f) => f.email);
+    setPending(failedEmails);
+    // Whatever failed stays as a chip, so it can be fixed and sent again.
+    setQuery("");
+    if (failed.length > 0) {
+      setError(
+        failed.length === 1 && toSend.length === 1
+          ? failed[0].error
+          : failed.map((f) => `${f.email}: ${f.error}`).join(" ")
+      );
+    }
+    const lines: string[] = [];
+    if (shared.length) lines.push(`Shared with ${listOf(shared)}.`);
+    if (invited.length) {
+      lines.push(
+        `Invited ${listOf(invited)}. ${
+          invited.length === 1 ? "They get" : "Each gets"
+        } an email, and it lands in their Library when they join.`
+      );
+    }
+    if (lines.length) setFlash(lines.join(" "));
+    if (shared.length || invited.length) {
       await load();
       onChanged();
     }
   };
 
-  // Changing somebody's role reuses the invite call, which upserts. Kept as its
-  // own function so the row can show which person is mid-change.
-  const changeRole = async (
-    target: string,
-    nextRole: "viewer" | "editor"
-  ) => {
-    if (!canManage) return setError("Only the owner can change what people can do.");
-    setRoleBusy(target);
+  // idOrEmail: member user id, or the email for a pending invite
+  const removeMember = async (idOrEmail: string) => {
+    if (!canManage) return setError("Only the owner can remove access.");
+    setRowBusy(idOrEmail);
     setError(null);
-    const res = await sharesClient.add(docId, target, nextRole);
-    setRoleBusy(null);
-    if (!res.ok) {
-      setError(res.error ?? "Couldn't change their access");
-      return;
-    }
+    const ok = await sharesClient.remove(docId, idOrEmail);
+    setRowBusy(null);
+    if (!ok) return setError("Couldn't remove their access.");
     await load();
     onChanged();
   };
 
-  // Publishing is the one action here that cannot be taken back for anyone who
-  // already has the URL, so it asks first and says what it means in the file's
-  // own name. Everything else in this dialog is reversible.
-  const createLink = async () => {
-    if (!canManage) return setError("Only the owner can create a public link.");
-    if (!confirmingPublish) {
-      setConfirmingPublish(true);
-      return;
-    }
-    setConfirmingPublish(false);
+  // Changing somebody's role reuses the invite call, which upserts.
+  const changeRole = async (rowKey: string, target: string, nextRole: Role) => {
+    if (!canManage) return setError("Only the owner can change what people can do.");
+    setRowBusy(rowKey);
+    setError(null);
+    const res = await sharesClient.add(docId, target, nextRole);
+    setRowBusy(null);
+    if (!res.ok) return setError(res.error ?? "Couldn't change their access");
+    await load();
+    onChanged();
+  };
+
+  // General access. "Anyone with the link" publishes at once, the way Docs
+  // does: the select itself is the decision, and Restricted takes it back.
+  const setGeneralAccess = async (next: "restricted" | "link") => {
+    if (!canManage) return setError("Only the owner can change general access.");
     setLinkBusy(true);
     setError(null);
-    const url = await sharesClient.createPublicLink(docId);
-    setLinkBusy(false);
-    if (url) setPublicUrl(url);
-    else setError("Public link unavailable — check your connection and try again.");
+    if (next === "link") {
+      const url = await sharesClient.createPublicLink(docId);
+      setLinkBusy(false);
+      if (url) setPublicUrl(url);
+      else setError("Couldn't turn on the link. Check your connection and try again.");
+    } else {
+      const ok = await sharesClient.revokePublicLink(docId);
+      setLinkBusy(false);
+      if (ok) setPublicUrl(null);
+      else setError("Couldn't turn off the link. Check your connection and try again.");
+    }
+  };
+
+  // The link Copy hands out: the public page when anyone may open it, and
+  // otherwise the document's own page, which opens for the people above.
+  const privateUrl = `${(server ?? getServerURL()).replace(/\/+$/, "")}/d/${encodeURIComponent(docId)}`;
+  const linkToCopy = publicUrl ?? privateUrl;
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(linkToCopy).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      },
+      () => setError("Couldn't copy the link.")
+    );
   };
 
   // Seeing the page a stranger sees is the only way to be sure what is exposed.
-  // Reading the URL is not the same as looking at it.
   const viewPublicPage = () => {
     if (!publicUrl) return;
     const api = getElectronAPI();
@@ -185,26 +278,41 @@ export function ShareDialog({
     else window.open(publicUrl, "_blank", "noopener");
   };
 
-  const revokeLink = async () => {
-    if (!canManage) return setError("Only the owner can revoke the public link.");
-    setLinkBusy(true);
-    setError(null);
-    const ok = await sharesClient.revokePublicLink(docId);
-    setLinkBusy(false);
-    if (ok) setPublicUrl(null);
-    else setError("Couldn't revoke the link");
+  const onFieldKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown" && suggestions.length > 0) {
+      e.preventDefault();
+      setMenuOpen(true);
+      setHighlight((h) => (showMenu ? (h + 1) % suggestions.length : 0));
+    } else if (e.key === "ArrowUp" && suggestions.length > 0) {
+      e.preventDefault();
+      setMenuOpen(true);
+      setHighlight((h) => (h - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (showMenu) addPending(suggestions[Math.min(highlight, suggestions.length - 1)].email);
+      else if (query.trim()) addPending(query);
+      else if (pending.length > 0) void send();
+    } else if (e.key === "," || e.key === ";" || (e.key === "Tab" && query.trim())) {
+      if (query.trim()) {
+        e.preventDefault();
+        addPending(query);
+      }
+    } else if (e.key === "Backspace" && !query && pending.length > 0) {
+      setPending((p) => p.slice(0, -1));
+    } else if (e.key === "Escape") {
+      // Escape steps back one level before it closes the dialog.
+      if (showMenu) {
+        e.stopPropagation();
+        setMenuOpen(false);
+      } else if (pending.length > 0 || query) {
+        e.stopPropagation();
+        cancelInvite();
+      }
+    }
   };
 
-  const copyLink = () => {
-    if (!publicUrl) return;
-    navigator.clipboard.writeText(publicUrl).then(
-      () => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      },
-      () => setError("Couldn't copy the link")
-    );
-  };
+  const generalIsPublic = !!publicUrl;
+  const memberCount = members?.length ?? 0;
 
   return (
     <div
@@ -214,13 +322,15 @@ export function ShareDialog({
       }}
     >
       <div
-        className="markie-overlay-panel overlay-panel-enter w-[440px] max-w-[92vw] max-h-[84vh] overflow-y-auto rounded-xl p-5"
+        className="markie-overlay-panel overlay-panel-enter markie-share w-[480px] max-w-[94vw] max-h-[86vh] overflow-y-auto rounded-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="markie-share-title"
       >
-        <div className="flex items-center justify-between mb-1">
-          <h2 id="markie-share-title" className="text-[14px] font-semibold text-foreground">Share</h2>
+        <div className="markie-share-head">
+          <h2 id="markie-share-title" className="markie-share-title" title={fileName}>
+            Share &quot;{fileName}&quot;
+          </h2>
           <button
             onClick={onClose}
             aria-label="Close share dialog"
@@ -229,370 +339,284 @@ export function ShareDialog({
             ×
           </button>
         </div>
-        <div className="text-[11px] text-muted mb-4 truncate">{fileName}</div>
-        <ShareAccessSummary access={access} checking={accessChecking} />
-        <LocalFilesNotice count={localAssetCount(body)} />
-
-        {/* The standing answer to "who can see this". Above the controls,
-            because it is the thing you came here to find out, and loudest when
-            the answer is "anyone". */}
-        {members !== null && (
-          <WhoCanSeeThis
-            line={generalAccessLine({
-              general: generalAccessFor(publicUrl),
-              namedCount: members.filter((m) => !m.pending).length,
-              invitedCount: members.filter((m) => m.pending).length,
-            })}
-            isPublic={!!publicUrl}
-          />
-        )}
 
         {canManage && (
-          <div className="mb-4">
-            <div className="markie-overlay-section mb-2">Invite by email</div>
-            <div className="flex gap-2">
+          <div>
+            <div className="markie-share-add">
+            <div
+              className="markie-share-field"
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget) {
+                  e.preventDefault();
+                  inputRef.current?.focus();
+                }
+              }}
+            >
+              {pending.map((address) => (
+                <span key={address} className="markie-share-chip">
+                  <span
+                    className="markie-share-avatar markie-share-avatar--sm"
+                    style={{ background: colorForName(address) }}
+                    aria-hidden="true"
+                  >
+                    {initials(address)}
+                  </span>
+                  <span className="truncate">{address}</span>
+                  <button
+                    type="button"
+                    onClick={() => removePending(address)}
+                    aria-label={`Don't add ${address}`}
+                    className="markie-share-chip-x"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
               <input
+                ref={inputRef}
                 autoFocus
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleAdd();
+                type="text"
+                inputMode="email"
+                autoComplete="off"
+                spellCheck={false}
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setMenuOpen(true);
+                  setHighlight(0);
                 }}
-                placeholder="person@example.com"
-                className="markie-overlay-field flex-1 text-[13px] px-2.5 py-1.5"
+                onFocus={() => setMenuOpen(true)}
+                onBlur={() => setMenuOpen(false)}
+                onKeyDown={onFieldKey}
+                placeholder={pending.length ? "" : "Add people by email"}
+                aria-label="Add people by email"
+                role="combobox"
+                aria-expanded={showMenu}
+                aria-controls="markie-share-suggestions"
+                aria-autocomplete="list"
+                aria-activedescendant={
+                  showMenu ? `markie-share-suggestion-${highlight}` : undefined
+                }
+                className="markie-share-input"
               />
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value as "viewer" | "editor")}
-                aria-label="Role"
-                className="markie-overlay-field text-[12px] px-2"
-              >
-                <option value="viewer">Can view</option>
-                <option value="editor">Can edit</option>
-              </select>
-              <button
-                onClick={handleAdd}
-                disabled={busy || !email.trim()}
-                className="markie-overlay-button text-[13px] px-3 rounded-md bg-accent text-foreground hover:opacity-90 disabled:opacity-50"
-              >
-                Invite
-              </button>
             </div>
-            {error && <StatusRow tone="error">{error}</StatusRow>}
-            {flash && <StatusRow tone="ok">{flash}</StatusRow>}
-            <div className="text-[11px] text-muted mt-2">
-              Anyone with an email works — no Markie account needed to invite
-              them. They get an email; the doc shows up in their Library when
-              they join, and editors edit live with you.
-            </div>
-            {themesHere && <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={themePinned}
-                onChange={toggleThemePin}
-                className="accent-current"
-              />
-              <span className="text-[12px] text-foreground/90">
-                Viewers see my theme
-              </span>
-              <span className="text-[10px] text-muted">
-                — pins your current preset to this doc
-              </span>
-            </label>}
-          </div>
-        )}
-
-        <div className="markie-overlay-section mb-2">
-          People with access
-        </div>
-        {members === null ? (
-          <div className="text-[12px] text-muted">Loading…</div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {canManage && me && (
-              <MemberRow
-                name={me.name || me.email}
-                email={me.email}
-                role="owner"
-              />
+            {showMenu && (
+              <ul
+                id="markie-share-suggestions"
+                role="listbox"
+                aria-label="Suggested people"
+                className="markie-menu-panel markie-share-suggestions"
+              >
+                {suggestions.map((c, i) => (
+                  <li
+                    key={c.email}
+                    id={`markie-share-suggestion-${i}`}
+                    role="option"
+                    aria-selected={i === highlight}
+                    data-active={i === highlight ? "true" : "false"}
+                    className="markie-share-suggestion"
+                    // mousedown, not click: the field's blur would close the
+                    // menu before a click landed.
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      addPending(c.email);
+                    }}
+                    onMouseEnter={() => setHighlight(i)}
+                  >
+                    <Avatar name={c.name || c.email} />
+                    <div className="min-w-0 flex-1">
+                      <div className="markie-share-name truncate">{c.name || c.email}</div>
+                      {c.name && <div className="markie-share-sub truncate">{c.email}</div>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
             )}
-            {members.map((m) => (
-              <MemberRow
-                key={m.user_id ?? m.email}
-                name={m.name || m.email}
-                email={m.email}
-                role={m.role === "editor" ? "editor" : "viewer"}
-                pending={m.pending}
-                busy={roleBusy === (m.pending ? m.email : m.user_id)}
-                onRoleChange={
-                  canManage
-                    ? (next) => changeRole(m.email, next)
-                    : undefined
-                }
-                onRemove={
-                  canManage
-                    ? () => handleRemove(m.pending ? m.email : (m.user_id as string))
-                    : undefined
-                }
-              />
-            ))}
-            {members.length === 0 && (
-              <div className="text-[12px] text-muted">
-                {shareMembersEmptyLine(access)}
+            </div>
+
+            {inviting && (
+              <div className="markie-share-invite-row">
+                <select
+                  value={role}
+                  onChange={(e) => setRole(e.target.value as Role)}
+                  aria-label="Role"
+                  title={roleDescription(role)}
+                  className="markie-overlay-field markie-share-select"
+                >
+                  <option value="viewer">Viewer</option>
+                  <option value="editor">Editor</option>
+                </select>
+                <span className="markie-share-sub flex-1">
+                  {role === "editor" ? "Can edit and comment" : "Can read and comment"}
+                </span>
+                <button
+                  type="button"
+                  onClick={cancelInvite}
+                  className="markie-overlay-button markie-share-btn markie-share-btn--quiet"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void send()}
+                  disabled={busy}
+                  className="markie-overlay-button markie-share-btn markie-share-btn--primary"
+                >
+                  {busy ? "Sending…" : "Send"}
+                </button>
               </div>
             )}
           </div>
         )}
 
-        {/* General access. Presented as the document's current state with two
-            settings, not as a button that makes a feature appear: "Restricted"
-            has to be visible as a live choice, or nobody ever learns it was
-            the alternative. */}
-        <div data-markie-general-access className="mt-5 pt-4 border-t border-border">
-          <div className="markie-overlay-section mb-2">General access</div>
+        {error && <StatusRow tone="error">{error}</StatusRow>}
+        {flash && <StatusRow tone="ok">{flash}</StatusRow>}
+        <LocalFilesNotice count={localAssetCount(body)} />
 
-          {!canManage ? (
-            <div className="text-[11px] text-muted">
-              {sharePublicLinkUnavailableLine(access)}
-            </div>
+        <div className="markie-share-section">
+          <div className="markie-share-label">People with access</div>
+          {!loaded ? (
+            <div className="markie-share-sub py-1">Loading…</div>
           ) : (
-            <>
-              <div className="flex items-center gap-2">
-                <span aria-hidden="true" className="text-[13px]">
-                  {publicUrl ? "🌐" : "🔒"}
-                </span>
+            <div className="flex flex-col">
+              {canManage && me && (
+                <MemberRow
+                  name={me.name ? `${me.name} (you)` : me.email}
+                  email={me.email}
+                  avatarName={me.name || me.email}
+                  role="owner"
+                />
+              )}
+              {(members ?? []).map((m) => {
+                const key = m.pending ? m.email : (m.user_id as string);
+                return (
+                  <MemberRow
+                    key={m.user_id ?? m.email}
+                    name={m.name || m.email}
+                    email={m.email}
+                    avatarName={m.name || m.email}
+                    role={m.role === "editor" ? "editor" : "viewer"}
+                    pending={m.pending}
+                    busy={rowBusy === key}
+                    onRoleChange={
+                      canManage ? (next) => changeRole(key, m.email, next) : undefined
+                    }
+                    onRemove={canManage ? () => removeMember(key) : undefined}
+                  />
+                );
+              })}
+              {memberCount === 0 && !canManage && (
+                <div className="markie-share-sub py-1">{shareMembersEmptyLine(access)}</div>
+              )}
+              {!access && (
+                <div className="markie-share-sub py-1">
+                  Access details could not be loaded. Sign in again or check your
+                  connection before changing sharing.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="markie-share-section" data-markie-general-access>
+          <div className="markie-share-label">General access</div>
+          <div className="markie-share-general">
+            <span
+              className="markie-share-general-icon"
+              data-public={generalIsPublic ? "true" : "false"}
+              aria-hidden="true"
+            >
+              {generalIsPublic ? <GlobeIcon /> : <LockIcon />}
+            </span>
+            <div className="min-w-0 flex-1">
+              {canManage ? (
                 <select
-                  value={publicUrl ? "link" : "restricted"}
-                  disabled={linkBusy}
-                  onChange={(e) => {
-                    setConfirmingPublish(false);
-                    if (e.target.value === "link") createLink();
-                    else revokeLink();
-                  }}
+                  value={generalIsPublic ? "link" : "restricted"}
+                  disabled={linkBusy || !loaded}
+                  onChange={(e) =>
+                    void setGeneralAccess(e.target.value as "restricted" | "link")
+                  }
                   aria-label="General access"
-                  className="markie-overlay-field text-[12px] px-2 py-1.5 disabled:opacity-50"
+                  className="markie-share-general-select"
                 >
                   <option value="restricted">Restricted</option>
                   <option value="link">Anyone with the link</option>
                 </select>
-                {linkBusy && <span className="text-[11px] text-muted">Working…</span>}
-              </div>
-
-              <div className="text-[11px] text-muted mt-2 leading-snug">
-                {publicUrl
-                  ? revokeWarning()
-                  : "Only people you add above can open it. Backing the document up to the cloud does not publish it."}
-              </div>
-
-              {/* Publishing asks once. It is the only control in this dialog
-                  whose effect survives being undone. */}
-              {confirmingPublish && !publicUrl && (
-                <div className="mt-2 rounded-md border border-[color:var(--status-yellow)] px-3 py-2">
-                  <div className="text-[11px] leading-snug text-[var(--status-yellow)]">
-                    {publishWarning(fileName)}
-                  </div>
-                  <div className="flex items-center gap-2 mt-2">
-                    <button
-                      onClick={createLink}
-                      disabled={linkBusy}
-                      className="markie-overlay-button text-[12px] px-3 py-1.5 rounded-md bg-accent text-foreground hover:opacity-90 disabled:opacity-50"
-                    >
-                      Publish it
-                    </button>
-                    <button
-                      onClick={() => setConfirmingPublish(false)}
-                      className="markie-overlay-button text-[12px] px-3 py-1.5 text-muted hover:text-foreground"
-                    >
-                      Keep it private
-                    </button>
-                  </div>
+              ) : (
+                <div className="markie-share-name font-medium">
+                  {generalIsPublic ? "Anyone with the link" : "Restricted"}
                 </div>
               )}
-
-              {publicUrl && (
-                <div data-markie-public-link className="markie-public-link mt-3">
-                  <div className="markie-public-link-label">Public link</div>
-                  <div className="markie-public-link-box">
-                    <input
-                      readOnly
-                      value={displayUrl(publicUrl)}
-                      onFocus={(e) => e.currentTarget.select()}
-                      aria-label="Public link"
-                      title={publicUrl}
-                      className="markie-public-link-url"
-                    />
+              <div className="markie-share-sub" data-markie-access-line>
+                {linkBusy
+                  ? "Updating…"
+                  : generalIsPublic
+                    ? "Anyone on the internet with the link can view"
+                    : "Only people with access can open with the link"}
+                {generalIsPublic && !linkBusy && (
+                  <>
+                    {" · "}
                     <button
-                      onClick={copyLink}
-                      data-copied={copied ? "true" : "false"}
-                      className="markie-overlay-button markie-public-link-copy"
+                      type="button"
+                      onClick={viewPublicPage}
+                      className="markie-share-inline-link"
                     >
-                      {copied ? <CheckIcon /> : <CopyIcon />}
-                      {copied ? "Copied" : "Copy"}
+                      See what a stranger sees
                     </button>
-                  </div>
-                  <div className="markie-public-link-note">
-                    <ShieldIcon />
-                    Readers get a read-only copy. Nobody can edit your file through it.
-                  </div>
-                  {/* Reading a URL is not the same as looking at the page.
-                      Seeing it is the only way to know what is exposed. */}
-                  <button
-                    onClick={viewPublicPage}
-                    className="markie-overlay-button markie-public-link-view"
-                  >
-                    See what a stranger sees ↗
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// The scheme is noise when reading a link aloud or at a glance. Copy still
-// copies the full URL.
-function displayUrl(url: string): string {
-  return url.replace(/^https?:\/\//, "");
-}
-
-function CopyIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="9" y="9" width="12" height="12" rx="2" />
-      <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-    </svg>
-  );
-}
-
-function ShieldIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-    </svg>
-  );
-}
-
-function StatusRow({
-  tone,
-  children,
-}: {
-  tone: "ok" | "error";
-  children: ReactNode;
-}) {
-  return (
-    <div className={`markie-status-row markie-status-row--${tone} mt-2`} role="status">
-      {tone === "ok" ? <CheckIcon /> : <AlertIcon />}
-      <span>{children}</span>
-    </div>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
-  );
-}
-
-function AlertIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-      <line x1="12" y1="9" x2="12" y2="13" />
-      <line x1="12" y1="17" x2="12.01" y2="17" />
-    </svg>
-  );
-}
-
-function ShareAccessSummary({
-  access,
-  checking,
-}: {
-  access: ShareAccess | null;
-  checking: boolean;
-}) {
-  const capabilities = shareCapabilityView(access);
-  return (
-    <div className="mb-4 rounded-md border border-border/70 bg-background/40 px-3 py-2.5">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-[10px] uppercase tracking-wide text-muted">Your access</div>
-          <div className="mt-0.5 text-[13px] font-medium text-foreground">
-            {shareRoleLabel(access, checking)}
+                  </>
+                )}
+              </div>
+            </div>
+            {generalIsPublic && <span className="markie-share-sub shrink-0">Viewer</span>}
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          {capabilities.map((capability) => (
-            <span
-              key={capability.label}
-              className={`rounded border px-1.5 py-0.5 text-[10px] ${
-                capability.enabled
-                  ? "border-[color:var(--status-green)] text-[var(--status-green)]"
-                  : "border-border text-muted"
-              }`}
-            >
-              {capability.label}
-            </span>
-          ))}
+
+        <div className="markie-share-foot">
+          <button
+            type="button"
+            onClick={copyLink}
+            data-copied={copied ? "true" : "false"}
+            title={linkToCopy}
+            className="markie-overlay-button markie-share-btn markie-share-copy"
+          >
+            {copied ? <CheckIcon /> : <LinkIcon />}
+            {copied ? "Link copied" : "Copy link"}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="markie-overlay-button markie-share-btn markie-share-btn--primary"
+          >
+            Done
+          </button>
         </div>
-      </div>
-      <div className="mt-1.5 text-[11px] leading-snug text-muted">
-        {shareAccessLine(access, checking)}
       </div>
     </div>
   );
 }
 
-// The sentence that says what the document's exposure actually is. Styled by
-// state rather than uniformly: "anyone on the internet" should not look the
-// same as "only you".
-function WhoCanSeeThis({ line, isPublic }: { line: string; isPublic: boolean }) {
+function listOf(items: string[]): string {
+  if (items.length <= 2) return items.join(" and ");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+function Avatar({ name, pending }: { name: string; pending?: boolean }) {
   return (
-    <div
-      data-markie-access-line
-      data-public={isPublic ? "true" : "false"}
-      role="status"
-      className={`mb-4 rounded-md border px-3 py-2 text-[12px] leading-snug ${
-        isPublic
-          ? "border-[color:var(--status-yellow)] text-[var(--status-yellow)]"
-          : "border-border/70 text-muted"
-      }`}
-      style={isPublic ? { background: "rgba(250,204,21,0.07)" } : undefined}
+    <span
+      className="markie-share-avatar"
+      data-pending={pending ? "true" : "false"}
+      style={pending ? undefined : { background: colorForName(name) }}
+      aria-hidden="true"
     >
-      {isPublic && <span aria-hidden="true">⚠ </span>}
-      {line}
-    </div>
+      {initials(name)}
+    </span>
   );
 }
 
 function MemberRow({
   name,
   email,
+  avatarName,
   role,
   pending,
   busy,
@@ -601,66 +625,126 @@ function MemberRow({
 }: {
   name: string;
   email: string;
+  avatarName: string;
   // "owner" is not a role anyone can be moved to or from, so it renders as a
   // label rather than a choice.
-  role: "viewer" | "editor" | "owner";
+  role: Role | "owner";
   pending?: boolean;
   busy?: boolean;
-  onRoleChange?: (next: "viewer" | "editor") => void;
+  onRoleChange?: (next: Role) => void;
   onRemove?: () => void;
 }) {
+  const label = role === "owner" ? "Owner" : role === "editor" ? "Editor" : "Viewer";
   return (
-    <div className="flex items-center gap-2.5">
-      <span
-        className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 ${
-          pending ? "text-muted border border-dashed border-border" : "text-black/80"
-        }`}
-        style={pending ? undefined : { background: colorForName(name) }}
-      >
-        {pending ? "…" : initials(name)}
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="text-[13px] text-foreground truncate">{name}</div>
+    <div className="markie-share-row">
+      <Avatar name={avatarName} pending={pending} />
+      <div className="min-w-0 flex-1">
+        <div className="markie-share-name truncate">{name}</div>
         {/* An invited person has no access at all until they sign up. Saying
             "Viewer" alone reads as though they already have it. */}
-        <div className="text-[11px] text-muted truncate">
+        <div className="markie-share-sub truncate">
           {pending ? "Invited, not joined yet" : email}
         </div>
       </div>
-      {onRoleChange && role !== "owner" ? (
+      {role !== "owner" && onRoleChange ? (
         <select
           value={role}
           disabled={busy}
-          onChange={(e) => onRoleChange(e.target.value as "viewer" | "editor")}
+          onChange={(e) => {
+            const next = e.target.value;
+            if (next === "remove") onRemove?.();
+            else onRoleChange(next as Role);
+          }}
           aria-label={`What ${name} can do`}
           title={roleDescription(role)}
-          className="markie-overlay-field text-[11px] px-1.5 py-1 disabled:opacity-50"
+          className="markie-share-role-select"
         >
-          <option value="viewer">Can view</option>
-          <option value="editor">Can edit</option>
+          <option value="viewer">Viewer</option>
+          <option value="editor">Editor</option>
+          <option disabled>──────────</option>
+          <option value="remove">Remove access</option>
         </select>
       ) : (
-        <span className="text-[11px] text-muted" title={roleDescription(role)}>
-          {role === "owner" ? "Owner" : role === "editor" ? "Can edit" : "Can view"}
+        <span className="markie-share-sub shrink-0" title={roleDescription(role)}>
+          {label}
         </span>
-      )}
-      {onRemove && (
-        <button
-          onClick={onRemove}
-          aria-label={`Remove ${name}`}
-          title={`Remove ${name} — takes effect immediately`}
-          className="markie-overlay-close hover:text-[var(--status-red)] text-[13px]"
-        >
-          ×
-        </button>
       )}
     </div>
   );
 }
 
+function StatusRow({ tone, children }: { tone: "ok" | "error"; children: ReactNode }) {
+  return (
+    <div className={`markie-status-row markie-status-row--${tone} mt-2`} role="status">
+      {tone === "ok" ? <CheckIcon /> : <AlertIcon />}
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function svgProps(size = 16) {
+  return {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+}
+
+function LinkIcon() {
+  return (
+    <svg {...svgProps(15)}>
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </svg>
+  );
+}
+
+function LockIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <rect x="4" y="11" width="16" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </svg>
+  );
+}
+
+function GlobeIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg {...svgProps(14)}>
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+function AlertIcon() {
+  return (
+    <svg {...svgProps(14)}>
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
 /**
- * Said before either sharing control, not after, because the moment to learn
- * that a picture will be missing is before somebody else opens the link.
+ * Said before anything is shared, because the moment to learn that a picture
+ * will be missing is before somebody else opens the link.
  *
  * The plan is to upload these to storage of our own and rewrite the links, at
  * which point this notice goes away. Until then the honest thing is to say what
@@ -669,10 +753,7 @@ function MemberRow({
 function LocalFilesNotice({ count }: { count: number }) {
   if (count < 1) return null;
   return (
-    <div
-      className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-[11px] leading-[1.5] text-muted"
-      role="note"
-    >
+    <div className="markie-share-note" role="note">
       <span className="text-foreground font-medium">
         {count === 1 ? "1 file on this computer" : `${count} files on this computer`}
       </span>{" "}

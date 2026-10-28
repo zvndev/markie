@@ -7,6 +7,7 @@ import {
   canReadLevel,
   sharedDocsFor,
   docsSharedByMe,
+  shareContactsFor,
   sharedOutDocIds,
   removeDocShares,
 } from "./shares.ts";
@@ -229,6 +230,15 @@ docs.get("/shared-by-me", async (c) => {
     ...placement(user.id, d.id),
   }));
   return c.json({ docs: rows });
+});
+
+// Suggestions for the share dialog's "Add people" field: everyone the caller
+// has shared with, plus owners who shared with the caller. Registered before
+// "/:id" so the literal path wins over the param route.
+docs.get("/share-contacts", async (c) => {
+  const user = await requireUser(c);
+  if (!user) return c.json({ error: "unauthorized" }, 401);
+  return c.json({ contacts: shareContactsFor(user.id, user.email) });
 });
 
 // The mobile home screen: owned and shared markdown documents, newest first,

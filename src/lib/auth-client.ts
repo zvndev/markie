@@ -541,6 +541,12 @@ export interface ShareAccess {
   canManage: boolean;
 }
 
+// Someone this account has shared with or been shared with before.
+export interface ShareContact {
+  email: string;
+  name: string | null;
+}
+
 // A doc I own that I've shared with people (the "shared by me" tab).
 export interface SharedByMeDoc {
   id: string;
@@ -571,6 +577,14 @@ export function makeSharesClient(request: ApiRequest) {
     sharedByMe: async (): Promise<SharedByMeDoc[] | null> => {
       const res = await request<{ docs: SharedByMeDoc[] }>("/api/docs/shared-by-me");
       return res.ok ? res.data?.docs ?? [] : null;
+    },
+
+    // People to suggest in the share dialog's "Add people" field: everyone
+    // this account has shared with, plus owners who shared with it. A failed
+    // request is an empty list: suggestions are a convenience, never a gate.
+    contacts: async (): Promise<ShareContact[]> => {
+      const res = await request<{ contacts: ShareContact[] }>("/api/docs/share-contacts");
+      return res.ok ? res.data?.contacts ?? [] : [];
     },
 
     list: async (docId: string): Promise<ShareMember[] | null> => {

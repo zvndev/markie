@@ -244,6 +244,51 @@ export function docsSharedByMe(userId: string) {
   }>;
 }
 
+// People the caller has shared with or been shared with, for the share
+// dialog's "Add people" suggestions. Three sources: members of the caller's
+// documents, invites the caller sent that are still waiting, and owners of
+// documents shared with the caller. One row per address, newest first, never
+// the caller. Every address here is one the caller typed into a share, or one
+// whose owner shared a document with them, so nothing new is disclosed.
+export const SHARE_CONTACTS_LIMIT = 50;
+export function shareContactsFor(userId: string, ownEmail?: string | null) {
+  const rows = db
+    .prepare(
+      `SELECT email, MAX(name) AS name, MAX(at) AS at FROM (
+         SELECT lower(u.email) AS email, NULLIF(u.name, '') AS name, s.created_at AS at
+           FROM shares s
+           JOIN docs d ON d.id = s.doc_id
+           JOIN user u ON u.id = s.user_id
+          WHERE d.owner_id = ? AND d.deleted_at IS NULL AND s.user_id <> ?
+         UNION ALL
+         SELECT lower(p.email) AS email, NULL AS name, p.created_at AS at
+           FROM pending_shares p
+           JOIN docs d ON d.id = p.doc_id
+          WHERE d.owner_id = ? AND d.deleted_at IS NULL
+         UNION ALL
+         SELECT lower(o.email) AS email, NULLIF(o.name, '') AS name, s.created_at AS at
+           FROM shares s
+           JOIN docs d ON d.id = s.doc_id
+           JOIN user o ON o.id = d.owner_id
+          WHERE s.user_id = ? AND d.deleted_at IS NULL AND d.owner_id <> ?
+       )
+       WHERE email IS NOT NULL AND email <> ''
+       GROUP BY email
+       ORDER BY at DESC
+       LIMIT ?`
+    )
+    .all(userId, userId, userId, userId, userId, SHARE_CONTACTS_LIMIT + 1) as Array<{
+    email: string;
+    name: string | null;
+    at: string;
+  }>;
+  const self = (ownEmail ?? "").trim().toLowerCase();
+  return rows
+    .filter((r) => r.email !== self)
+    .slice(0, SHARE_CONTACTS_LIMIT)
+    .map((r) => ({ email: r.email, name: r.name }));
+}
+
 export const shares = new Hono();
 
 // Current user's explicit access level for this doc. The renderer must not infer

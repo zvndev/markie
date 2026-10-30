@@ -36,6 +36,7 @@ import { checkMarkdown } from "./check-md.mjs";
 import { walkAll } from "./scan.mjs";
 import { askMarkie, tellMarkie } from "./agent-client.mjs";
 import { createHash } from "node:crypto";
+import { COMMENT_TOOLS, COMMENT_TOOL_NAMES, commentRequest, MARKIE_NOT_RUNNING_FOR_COMMENTS } from "./comment-tools.mjs";
 import { createRequire } from "node:module";
 
 // Read the version from package.json so the MCP handshake can never drift from
@@ -272,6 +273,7 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  ...COMMENT_TOOLS,
   {
     name: "markie_check_md",
     description:
@@ -397,6 +399,12 @@ async function readDocument(input) {
 let clientName = "";
 
 async function runTool(name, args) {
+  if (COMMENT_TOOL_NAMES.has(name)) {
+    // Fenced like markie_read_md before anything reaches the app; the app
+    // checks again and is the only writer of the comment store.
+    const { method, params } = commentRequest(name, args, { home: HOME, agent: clientName });
+    return await askMarkie(method, params, { notRunning: MARKIE_NOT_RUNNING_FOR_COMMENTS });
+  }
   switch (name) {
     case "markie_find_documents": {
       const rows = await scan();

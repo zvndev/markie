@@ -193,6 +193,16 @@ if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI",
   // A background reconciliation pass changed a document's text or media, so
   // whatever is showing the library should look again.
   onLibraryChanged: (callback) => subscribe("library-changed", callback),
+  // Comments on local documents (super-nightly). Kept in Markie's data folder.
+  localComments: {
+    list: (path) => ipcRenderer.invoke("local-comments-list", { path }),
+    add: (args) => ipcRenderer.invoke("local-comments-add", args),
+    reply: (args) => ipcRenderer.invoke("local-comments-reply", args),
+    setStatus: (args) => ipcRenderer.invoke("local-comments-status", args),
+    remove: (args) => ipcRenderer.invoke("local-comments-delete", args),
+    // An agent (or another window) changed a document's comments.
+    onChanged: (callback) => subscribe("local-comments-changed", callback, (info) => info),
+  },
   appCloseReady: (requestId) => ipcRenderer.send("app-close-ready", requestId),
   appCloseCancel: (requestId) => ipcRenderer.send("app-close-cancel", requestId),
   crashConsentGet: () => ipcRenderer.invoke("crash-consent-get"),

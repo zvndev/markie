@@ -113,6 +113,7 @@ export async function askMarkie(method, params, {
   launch = launchMarkie,
   waitMs = LAUNCH_WAIT_MS,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  notRunning = "Markie isn't running. Open the Markie app, sign in to Markie Cloud, and try again.",
 } = {}) {
   let info = await find();
   if (!info && launch()) {
@@ -121,6 +122,6 @@ export async function askMarkie(method, params, {
       info = await find();
     }
   }
-  if (!info) throw new Error("Markie isn't running. Open the Markie app, sign in to Markie Cloud, and try again.");
+  if (!info) throw new Error(notRunning);
   return call(info, method, params);
 }

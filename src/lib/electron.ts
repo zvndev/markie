@@ -1,6 +1,7 @@
 import type { BlockRecord } from "@/lib/projects/cluster";
 import type { ProjectNameRecord } from "@/lib/projects/taxonomy";
 import type { NativeDocumentFileApi } from "./native-document-files";
+import type { LocalCommentsBridge } from "./local-comments";
 
 export interface FilePayload {
   name: string;
@@ -458,6 +459,9 @@ export interface ElectronAPI {
   // the library snapshot the renderer is holding is out of date. Optional so
   // an older main process still type-checks.
   onLibraryChanged?(cb: () => void): Unsubscribe;
+  // Comments on local documents (super-nightly, src/lib/local-comments.ts).
+  // Optional so an older main process still type-checks.
+  localComments?: LocalCommentsBridge;
   /** Whether crash reports may be sent, and whether a DSN is configured at all. */
   crashConsentGet(): Promise<{ enabled: boolean; available: boolean }>;
   crashConsentSet(

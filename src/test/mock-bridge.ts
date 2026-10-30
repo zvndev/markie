@@ -259,6 +259,15 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     historyName: vi.fn(async () => ({ ok: true })),
     onMenuHistory: vi.fn(subscribe("onMenuHistory")),
     onLibraryChanged: vi.fn(subscribe("onLibraryChanged")),
+    // Local comments (super-nightly): an empty store by default.
+    localComments: {
+      list: vi.fn(async (path: string) => ({ ok: true as const, path, threads: [] })),
+      add: vi.fn(async ({ path }: { path: string }) => ({ ok: true as const, path, threads: [] })),
+      reply: vi.fn(async ({ path }: { path: string }) => ({ ok: true as const, path, threads: [] })),
+      setStatus: vi.fn(async ({ path }: { path: string }) => ({ ok: true as const, path, threads: [] })),
+      remove: vi.fn(async ({ path }: { path: string }) => ({ ok: true as const, path, threads: [] })),
+      onChanged: vi.fn(subscribe("onLocalCommentsChanged")),
+    },
 
     // Crash reporting (consent-gated; off and unavailable by default in tests)
     crashConsentGet: vi.fn(async () => ({ enabled: false, available: false })),

@@ -166,6 +166,50 @@ function history() {
   return _history;
 }
 
+// Markie's own records about a document (userData/doc-meta/<slug>/): local
+// comments now, branches and block versions later. See electron/doc-meta.js.
+let _docMeta = null;
+function docMeta() {
+  if (!_docMeta) {
+    const { createDocMeta } = require("./doc-meta");
+    _docMeta = createDocMeta({ dir: app.getPath("userData") });
+  }
+  return _docMeta;
+}
+
+// Carry a document's records along when Markie renames or moves it, a file or
+// a whole folder. A record that cannot move stays where it was, still naming
+// its old path, and is never deleted.
+function docMetaMoved(from, to) {
+  try { docMeta().move(from, to); } catch (err) { logCrash("doc-meta-move-failed", err); }
+}
+
+// Comments on local documents. The anchor module is ESM shared with the
+// renderer, so it arrives through a dynamic import the first time it is used.
+let _localComments = null;
+function localComments() {
+  if (!_localComments) {
+    _localComments = import("./text-anchor.mjs").then((anchors) => {
+      const { createLocalComments } = require("./local-comments");
+      return createLocalComments({
+        store: docMeta(),
+        anchors,
+        changed: (filePath) => {
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-comments-changed", { path: filePath });
+        },
+      });
+    });
+    _localComments.catch(() => { _localComments = null; });
+  }
+  return _localComments;
+}
+
+// Local comments are a super-nightly feature: on in the private build and in a
+// dev run, refused everywhere else (the renderer gate is src/lib/nightly.ts).
+function localCommentsEnabled() {
+  return !!privateReleaseConfig || !app.isPackaged;
+}
+
 // Copy what is on disk before replacing it. Never allowed to fail a save: a
 // missing snapshot is a smaller loss than a save that did not happen.
 function snapshotBeforeWrite(filePath, nextContent) {
@@ -1468,6 +1512,7 @@ handle("rename-file", async (_event, { oldPath, newName }) => {
     fileGrants.moveGrant(access.oldPath, access.newPath);
     try { registry.movePath(access.oldPath, access.newPath); } catch { /* registry best-effort */ }
     mdIndexMoved(access.oldPath, access.newPath);
+    docMetaMoved(access.oldPath, access.newPath);
     return { success: true, path: access.newPath, name: access.name };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -1977,6 +2022,30 @@ handle("draft-discard", (_e, key) => drafts().discard(String(key || "")), {
 // ── File history ──
 // One version per committed write, plus whatever an agent or another editor
 // wrote while the document was open. Reading a version never touches the file.
+// ── Local comments (super-nightly) ──
+// The renderer may comment only on a document it was granted, the same rule
+// as reading it. The store is Markie's own folder; nothing touches the file.
+// Every answer is { ok, threads } or { ok: false, error }.
+async function withCommentDoc(p, fn) {
+  if (!localCommentsEnabled()) return { ok: false, error: "Comments on local documents are not in this build." };
+  const access = fileGrants.canRead(String(p || ""));
+  if (!access.ok) return { ok: false, error: access.error };
+  const store = await localComments();
+  // A refusal ("only your own comments") is an answer, not a crash to log.
+  try { fn(store, access.path); } catch (err) { return { ok: false, error: errorMessage(err) }; }
+  return { ok: true, path: access.path, threads: store.list(access.path, null) };
+}
+const commentFailure = { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) };
+handle("local-comments-list", (_e, { path: p }) => withCommentDoc(p, () => {}), commentFailure);
+handle("local-comments-add", (_e, { path: p, anchor, body }) =>
+  withCommentDoc(p, (store, doc) => store.addFromUser(doc, anchor, body)), commentFailure);
+handle("local-comments-reply", (_e, { path: p, threadId, body }) =>
+  withCommentDoc(p, (store, doc) => store.replyFromUser(doc, String(threadId || ""), body)), commentFailure);
+handle("local-comments-status", (_e, { path: p, threadId, status }) =>
+  withCommentDoc(p, (store, doc) => store.setStatusFromUser(doc, String(threadId || ""), status)), commentFailure);
+handle("local-comments-delete", (_e, { path: p, threadId, commentId }) =>
+  withCommentDoc(p, (store, doc) => store.removeOwn(doc, String(threadId || ""), String(commentId || ""))), commentFailure);
+
 handle("history-list", (_e, p) => history().list(String(p || "")), {
   onFailure: () => [],
 });
@@ -2332,7 +2401,10 @@ function mdIndexAdded(filePath) {
 
 // The workspace module moves the registry rows itself; the index is main's.
 function afterWorkspaceMove(from, result) {
-  if (result && result.ok && result.path && result.path !== from) mdIndexMoved(from, result.path);
+  if (result && result.ok && result.path && result.path !== from) {
+    mdIndexMoved(from, result.path);
+    docMetaMoved(from, result.path);
+  }
   return result;
 }
 
@@ -2615,12 +2687,19 @@ function startAgentBridge() {
     home: require("os").homedir(),
     unlocked: () => privateRelease.authorized(),
   });
+  const { createAgentComments } = require("./agent-comments");
+  const comments = createAgentComments({
+    loadComments: localComments,
+    home: require("os").homedir(),
+    enabled: localCommentsEnabled,
+    unlocked: () => !privateReleaseConfig || privateRelease.authorized(),
+  });
   const instance = require("crypto").createHash("sha256").update(app.getPath("userData")).digest("hex").slice(0, 10);
   agentBridge = createAgentBridge({
     dir: path.join(require("os").homedir(), ".markie"),
     instance,
     info: { app: app.getName(), version: app.getVersion() },
-    handlers: { ...cloud.handlers, ...agentHistory.handlers },
+    handlers: { ...cloud.handlers, ...agentHistory.handlers, ...comments.handlers },
   });
   agentBridge.start().catch((err) => { logCrash("agent-bridge-start-failed", err); agentBridge = null; });
 }

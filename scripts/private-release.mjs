@@ -15,7 +15,9 @@ const require = createRequire(import.meta.url);
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const PRIVATE_PREFIX = "/private-releases/super-nightly/";
 export const PRIVATE_FEED = "super-nightly-mac.yml";
-export const PRIVATE_GATEWAY_ORIGIN = "https://markie-nightly.fly.dev";
+// Since 2026-10-30. Builds made before read https://markie-nightly.fly.dev,
+// now a read-only copy that refuses publishes (server/fly.nightly.toml).
+export const PRIVATE_GATEWAY_ORIGIN = "https://markie-nightly.zvndev.com";
 const LIMIT = 512 * 1024 * 1024;
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const digest = (bytes) => createHash("sha512").update(bytes).digest("base64");

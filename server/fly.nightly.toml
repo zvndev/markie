@@ -1,6 +1,10 @@
 # Markie super-nightly gateway on Fly.io: serves the private update feed and
 # artifacts to the owner's authorized builds. Moved off Railway after its
-# 2026-10-21 breach. Secret: PRIVATE_RELEASE_PUBLISH_KEY.
+# 2026-10-21 breach.
+#
+# Since 2026-10-30 a read-only copy, for builds made before the feed moved to
+# https://markie-nightly.zvndev.com (docs/PRIVATE_RELEASES.md). It has no
+# PRIVATE_RELEASE_PUBLISH_KEY, so every publish answers 404.
 app = "markie-nightly"
 primary_region = "iad"
 

@@ -54,7 +54,7 @@ describe("guarded private Super-nightly packaging", () => {
   });
   it("requires the reviewed HTTPS gateway, never public storage or a credential/path URL", () => {
     expect(privateApiOrigin(PRIVATE_GATEWAY_ORIGIN)).toBe(PRIVATE_GATEWAY_ORIGIN);
-    for (const candidate of [undefined, "http://localhost", "https://markiedocs.com", "https://s3.amazonaws.com", "https://github.com", "https://unreviewed.example", PRIVATE_GATEWAY_ORIGIN + "/private-releases/", PRIVATE_GATEWAY_ORIGIN + "?key=no", PRIVATE_GATEWAY_ORIGIN.replace("https://", "https://user:pass@")]) expect(() => privateApiOrigin(candidate)).toThrow();
+    for (const candidate of [undefined, "http://localhost", "https://markiedocs.com", "https://s3.amazonaws.com", "https://github.com", "https://unreviewed.example", "https://markie-nightly.fly.dev", PRIVATE_GATEWAY_ORIGIN + "/private-releases/", PRIVATE_GATEWAY_ORIGIN + "?key=no", PRIVATE_GATEWAY_ORIGIN.replace("https://", "https://user:pass@")]) expect(() => privateApiOrigin(candidate)).toThrow();
   });
 
   it("requires a clean exact commit and channel-specific version without rewriting source versions", () => {

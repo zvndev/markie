@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
@@ -9,6 +9,7 @@ import { conflictingShortcuts } from "@/lib/editor-keymap";
 import { findHighlightField, sourceFindTarget } from "@/lib/source-find";
 import { commentHighlightField, sourceCommentTarget } from "@/lib/source-comments";
 import type { SourceHandle } from "@/lib/source-handle";
+import { SourceSectionRail } from "@/components/section-rail";
 import {
   editorThemeForTokens,
   findTheme,
@@ -98,30 +99,62 @@ export function Editor({
   // keep searching a destroyed view.
   useEffect(() => () => onReady?.(null), [onReady]);
 
+  // The section rail (super-nightly) needs the view to find and reach lines.
+  const [view, setView] = useState<EditorView | null>(null);
+  const lineStart = useCallback(
+    (line: number) => {
+      const doc = view!.state.doc;
+      return doc.line(Math.min(Math.max(1, line + 1), doc.lines)).from;
+    },
+    [view]
+  );
+  const lineTop = useCallback(
+    (line: number) => {
+      const scroller = view!.scrollDOM;
+      const offset = view!.documentTop - scroller.getBoundingClientRect().top + scroller.scrollTop;
+      return view!.lineBlockAt(lineStart(line)).top + offset;
+    },
+    [view, lineStart]
+  );
+  const scrollToLine = useCallback(
+    (line: number) => {
+      view!.dispatch({ effects: EditorView.scrollIntoView(lineStart(line), { y: "start", yMargin: 6 }) });
+    },
+    [view, lineStart]
+  );
+
   return (
-    <CodeMirror
-      value={value}
-      onChange={onChange}
-      readOnly={readOnly}
-      onCreateEditor={(view) => onReady?.(handleFor(view))}
-      extensions={[
-        appShortcutGuard,
-        ...(plainText ? [] : [markdown({ base: markdownLanguage, codeLanguages: languages })]),
-        findHighlightField,
-        commentHighlightField,
-        theme,
-        EditorView.lineWrapping,
-      ]}
-      theme={codeTheme}
-      basicSetup={{
-        lineNumbers: true,
-        highlightActiveLineGutter: true,
-        highlightActiveLine: true,
-        foldGutter: true,
-        bracketMatching: true,
-        indentOnInput: true,
-      }}
-      className="h-full"
-    />
+    <div className="flex h-full">
+      {view && !plainText ? (
+        <SourceSectionRail markdown={value} scroller={view.scrollDOM} lineTop={lineTop} scrollToLine={scrollToLine} />
+      ) : null}
+      <CodeMirror
+        value={value}
+        onChange={onChange}
+        readOnly={readOnly}
+        onCreateEditor={(created) => {
+          setView(created);
+          onReady?.(handleFor(created));
+        }}
+        extensions={[
+          appShortcutGuard,
+          ...(plainText ? [] : [markdown({ base: markdownLanguage, codeLanguages: languages })]),
+          findHighlightField,
+          commentHighlightField,
+          theme,
+          EditorView.lineWrapping,
+        ]}
+        theme={codeTheme}
+        basicSetup={{
+          lineNumbers: true,
+          highlightActiveLineGutter: true,
+          highlightActiveLine: true,
+          foldGutter: true,
+          bracketMatching: true,
+          indentOnInput: true,
+        }}
+        className="h-full min-w-0 flex-1"
+      />
+    </div>
   );
 }

@@ -2080,6 +2080,18 @@ body {
   box-shadow: 0 0 0 1px rgba(251, 146, 60, 0.9);
 }
 
+/* A passage with a comment on it (local comments, super-nightly). Underlined
+   rather than filled, so it never reads as a find match. */
+.markie-local-comment {
+  background: rgba(96, 165, 250, 0.14);
+  border-bottom: 2px solid rgba(96, 165, 250, 0.7);
+  cursor: pointer;
+}
+
+.markie-local-comment--active {
+  background: rgba(96, 165, 250, 0.32);
+}
+
 /* Another person's selection. y-tiptap paints the colour inline at ~44% alpha
    and gives it this class; the shape is ours. Rounded and given a little
    breathing room so a selection reads as a highlight over the sentence rather

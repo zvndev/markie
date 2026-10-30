@@ -2124,3 +2124,72 @@ test("the instructions tell agents to give the private link and make public ones
   assert.match(INSTRUCTIONS, /privateLink/);
   assert.match(INSTRUCTIONS, /Only pass create: true when the user asked for a public link/);
 });
+
+// ---- comment tools ----
+
+test("comment tools: four tools with the documented arguments", async () => {
+  const { COMMENT_TOOLS } = await import("./comment-tools.mjs");
+  const byName = Object.fromEntries(COMMENT_TOOLS.map((t) => [t.name, t]));
+  assert.deepEqual(Object.keys(byName).sort(), [
+    "markie_add_comment",
+    "markie_list_comments",
+    "markie_reply_comment",
+    "markie_resolve_comment",
+  ]);
+  assert.deepEqual(byName.markie_list_comments.inputSchema.required, ["path"]);
+  assert.equal(byName.markie_list_comments.inputSchema.properties.include_resolved.type, "boolean");
+  assert.deepEqual(byName.markie_add_comment.inputSchema.required, ["path", "quote", "body"]);
+  for (const key of ["occurrence", "prefix", "suffix"]) assert.ok(byName.markie_add_comment.inputSchema.properties[key], key);
+  assert.deepEqual(byName.markie_reply_comment.inputSchema.required, ["path", "thread_id", "body"]);
+  assert.deepEqual(byName.markie_resolve_comment.inputSchema.required, ["path", "thread_id"]);
+  for (const tool of COMMENT_TOOLS) {
+    assert.equal(tool.inputSchema.additionalProperties, false, tool.name);
+    assert.ok(!tool.description.includes("—"), `${tool.name} has an em dash`);
+  }
+  assert.match(INSTRUCTIONS, /markie_add_comment/);
+});
+
+test("commentRequest fences the path like markie_read_md and names the agent", async () => {
+  const { commentRequest } = await import("./comment-tools.mjs");
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  try {
+    const doc = pjoin(home, "notes", "plan.md");
+    mkdirSync(pdirname(doc), { recursive: true });
+    writeFileSync(doc, "# Plan\n");
+    const ctx = { home, env: {} };
+    assert.deepEqual(commentRequest("markie_add_comment", { path: doc, quote: "Plan", body: "Why?" }, { ...ctx, agent: "Claude Code" }), {
+      method: "comments_add",
+      params: { path: doc, quote: "Plan", body: "Why?", agent: "Claude Code" },
+    });
+    assert.equal(commentRequest("markie_resolve_comment", { path: "~/notes/plan.md", thread_id: "t_1" }, ctx).params.agent, "Agent");
+    assert.deepEqual(commentRequest("markie_list_comments", { path: doc }, ctx).params, { path: doc, include_resolved: false });
+    // Refused before anything reaches the app.
+    assert.throws(() => commentRequest("markie_list_comments", { path: "/etc/hosts.md" }, ctx), /home folder/);
+    assert.throws(() => commentRequest("markie_list_comments", { path: pjoin(home, "a.txt") }, ctx), /markdown|\.md/i);
+    mkdirSync(pjoin(home, "node_modules", "pkg"), { recursive: true });
+    writeFileSync(pjoin(home, "node_modules", "pkg", "README.md"), "x");
+    assert.throws(() => commentRequest("markie_list_comments", { path: pjoin(home, "node_modules", "pkg", "README.md") }, ctx), /excluded/);
+    assert.throws(() => commentRequest("markie_add_comment", { path: doc, quote: " ", body: "x" }, ctx), /quote is required/);
+    assert.throws(() => commentRequest("markie_reply_comment", { path: doc, body: "x" }, ctx), /thread_id is required/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("the MCP server lists the comment tools and refuses an unreadable path without asking the app", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "markie-home-")));
+  const client = startMcpClient(home, { isolate: true });
+  try {
+    await client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "markie-test", version: "0" } });
+    const tools = (await client.request("tools/list")).result.tools.map((t) => t.name);
+    for (const name of ["markie_list_comments", "markie_add_comment", "markie_reply_comment", "markie_resolve_comment"]) {
+      assert.ok(tools.includes(name), name);
+    }
+    const res = await client.callTool("markie_add_comment", { path: "/etc/passwd.md", quote: "root", body: "x" });
+    assert.equal(res.result.isError, true);
+    assert.match(res.result.content[0].text, /home folder/);
+  } finally {
+    client.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});

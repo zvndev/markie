@@ -152,6 +152,10 @@ function history() {
       _history = {
         capture: () => ({ skipped: "unavailable" }),
         captureExternal: () => ({ skipped: "unavailable" }),
+        noteAgentWrite: () => ({ skipped: "unavailable" }),
+        head: () => null,
+        name: () => ({ ok: false, error: "Version history is unavailable." }),
+        nameCurrent: () => ({ ok: false, error: "Version history is unavailable." }),
         list: () => [],
         read: () => null,
         has: () => false,
@@ -2050,6 +2054,31 @@ handle(
   (_e, { path: p, stamp }) => ({ content: history().read(String(p || ""), String(stamp || "")) }),
   { onFailure: () => ({ content: null }) }
 );
+// Who wrote the text on screen, for the "Current version" row. Reads the
+// file, so it goes through the same grant check as opening it.
+handle(
+  "history-head",
+  (_e, args) => {
+    const filePath = String((args && typeof args === "object" ? args.path : args) || "");
+    const content = args && typeof args === "object" && typeof args.content === "string" ? args.content : undefined;
+    if (!fileGrants.canRead(filePath).ok) return null;
+    return history().head(filePath, content);
+  },
+  { onFailure: () => null }
+);
+// A version's name lives in history's own metadata, never in the file.
+// Named versions are exempt from retention.
+handle(
+  "history-name",
+  (_e, { path: p, stamp, name }) => {
+    const filePath = String(p || "");
+    if (!fileGrants.canRead(filePath).ok) return { ok: false, error: "Markie cannot read that file." };
+    return stamp
+      ? history().name(filePath, String(stamp), String(name ?? ""))
+      : history().nameCurrent(filePath, String(name ?? ""));
+  },
+  { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
+);
 // Which tracked files the server is ahead of. One request for the whole
 // library, called on focus and on a timer, so it has to stay cheap and quiet.
 handle(
@@ -2651,6 +2680,13 @@ function startAgentBridge() {
     permissions: agentPermissions,
     libraryChanged: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("library-changed"); },
   });
+  // An MCP write announces itself here first, so version history can name
+  // the agent that made it.
+  const agentHistory = require("./agent-history").createAgentHistory({
+    history: history(),
+    home: require("os").homedir(),
+    unlocked: () => privateRelease.authorized(),
+  });
   const { createAgentComments } = require("./agent-comments");
   const comments = createAgentComments({
     loadComments: localComments,
@@ -2663,7 +2699,7 @@ function startAgentBridge() {
     dir: path.join(require("os").homedir(), ".markie"),
     instance,
     info: { app: app.getName(), version: app.getVersion() },
-    handlers: { ...cloud.handlers, ...comments.handlers },
+    handlers: { ...cloud.handlers, ...agentHistory.handlers, ...comments.handlers },
   });
   agentBridge.start().catch((err) => { logCrash("agent-bridge-start-failed", err); agentBridge = null; });
 }

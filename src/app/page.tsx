@@ -228,6 +228,8 @@ const toDisk = (name: string | null, md: string) =>
 
 const DocumentEditor = lazy(() => import("@/components/document-workspace-host").then((module) => ({ default: module.DocumentWorkspaceHost })));
 const DocumentCloudLibrary = lazy(() => import("@/components/document-cloud-library").then((module) => ({ default: module.DocumentCloudLibrary })));
+// Lazy: it renders through the export pipeline, which stays off the launch path.
+const VersionHistoryView = lazy(() => import("@/components/version-history-view").then((module) => ({ default: module.VersionHistoryView })));
 const CLOUD_HANDOFF_ERROR = "Recovery did not finish. The cloud document was not opened.";
 interface CloudHandoff {
   id: string;
@@ -2623,7 +2625,23 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         />
       )}
 
-      {showHistory && filePath && (
+      {showHistory && filePath && nightlyFeaturesEnabled() && (
+        <Suspense fallback={null}>
+          <VersionHistoryView
+            filePath={filePath}
+            fileName={fileName ?? "this document"}
+            currentContent={toDisk(fileName, content)}
+            dirty={isDirty}
+            onClose={() => setShowHistory(false)}
+            onRestore={(versionContent) => {
+              setShowHistory(false);
+              // Same as the dialog below: loaded as unsaved, never written.
+              void loadFile({ name: fileName ?? "untitled.md", content: versionContent, path: filePath, unsaved: true });
+            }}
+          />
+        </Suspense>
+      )}
+      {showHistory && filePath && !nightlyFeaturesEnabled() && (
         <HistoryDialog
           filePath={filePath}
           fileName={fileName ?? "this document"}

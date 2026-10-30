@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -194,5 +195,192 @@ describe("createHistory", () => {
     expect(new Set(list.map((v: { stamp: string }) => h.read(target, v.stamp)))).toEqual(
       new Set(["v1", "v2"])
     );
+  });
+});
+
+describe("named versions and retention", () => {
+  it("never drops a named version, however old", () => {
+    const old = { ...entry(40 * DAY), named: true };
+    const drop = planRetention([old, entry(41 * DAY)], NOW, { keepNewest: 0 });
+    expect(drop).toEqual([entry(41 * DAY).stamp]);
+  });
+
+  it("a named version does not take an autosave's hour slot", () => {
+    const named = { ...entry(2 * DAY + 5 * 60_000), named: true };
+    const autosave = entry(2 * DAY + 10 * 60_000);
+    // Same clock hour. Without the exemption the autosave would be thinned.
+    expect(planRetention([named, autosave], NOW, { keepNewest: 0 })).toEqual([]);
+  });
+
+  it("the per-file cap drops unnamed versions only, and counts named ones", () => {
+    const named = Array.from({ length: 3 }, (_, i) => ({ ...entry((300 + i) * 60_000), named: true }));
+    const plain = Array.from({ length: 5 }, (_, i) => entry(i * 60_000));
+    const drop = planRetention([...named, ...plain], NOW, { maxPerFile: 6 });
+    // Room for 6: three named, so three unnamed survive and the two oldest go.
+    expect(drop.sort()).toEqual(plain.slice(3).map((e) => e.stamp).sort());
+  });
+});
+
+describe("history names and authors", () => {
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "markie-history-"));
+  const ticking = (startIso = "2026-08-26T12:00:00Z") => {
+    let t = Date.parse(startIso);
+    return () => new Date((t += 1000));
+  };
+  const sha = (s: string) => crypto.createHash("sha256").update(s, "utf8").digest("hex");
+
+  it("names, renames and unnames a version in its own metadata, not the file", () => {
+    const dir = tmp();
+    const target = path.join(dir, "doc.md");
+    fs.writeFileSync(target, "v1");
+    const h = createHistory({ dir, now: ticking() });
+    h.capture(target, "v2", { author: "user" });
+    const [v] = h.list(target);
+    expect(h.name(target, v.stamp, "  Before the rewrite \n").ok).toBe(true);
+    expect(h.list(target)[0].name).toBe("Before the rewrite");
+    h.name(target, v.stamp, "Draft for Ana");
+    expect(h.list(target)[0].name).toBe("Draft for Ana");
+    h.name(target, v.stamp, "");
+    expect(h.list(target)[0].name).toBeUndefined();
+    expect(fs.readFileSync(target, "utf-8")).toBe("v1");
+    expect(h.name(target, "1999-01-01T00-00-00.000Z", "x").ok).toBe(false);
+  });
+
+  it("keeps a named version through retention that prunes its neighbours", () => {
+    const dir = tmp();
+    const target = path.join(dir, "doc.md");
+    let t = Date.parse("2026-08-01T12:00:00Z");
+    const clock = () => new Date(t);
+    const h = createHistory({ dir, now: clock, caps: { keepNewest: 0 } });
+    fs.writeFileSync(target, "a");
+    h.capture(target, "b", { author: "user" });
+    const kept = h.list(target)[0].stamp;
+    h.name(target, kept, "Launch copy");
+    fs.writeFileSync(target, "b");
+    t += 1000;
+    h.capture(target, "c", { author: "user" });
+    // Forty days later both are past every window. Only the named one stays,
+    // plus the version this save just made.
+    t += 40 * DAY;
+    fs.writeFileSync(target, "c");
+    h.capture(target, "d", { author: "user" });
+    const stamps = h.list(target).map((v: { stamp: string }) => v.stamp);
+    expect(stamps).toContain(kept);
+    expect(h.read(target, kept)).toBe("a");
+    expect(stamps).toHaveLength(2);
+  });
+
+  it("names the current text by keeping it as a version", () => {
+    const dir = tmp();
+    const target = path.join(dir, "doc.md");
+    fs.writeFileSync(target, "now");
+    const h = createHistory({ dir, now: ticking() });
+    const res = h.nameCurrent(target, "Sent to client");
+    expect(res.ok).toBe(true);
+    expect(h.list(target)[0]).toMatchObject({ name: "Sent to client" });
+    expect(h.read(target, res.stamp)).toBe("now");
+    // Saving over it does not keep the same bytes a second time.
+    expect(h.capture(target, "later", { author: "user" }).skipped).toBe("duplicate");
+    expect(h.nameCurrent(target, "   ").ok).toBe(false);
+  });
+
+  it("labels a version with the agent that wrote it, announced before the write", () => {
+    const dir = tmp();
+    const target = path.join(dir, "doc.md");
+    const h = createHistory({ dir, now: ticking() });
+    fs.writeFileSync(target, "first");
+    h.capture(target, "mine", { author: "user" });
+    fs.writeFileSync(target, "mine");
+    const agentBody = "rewritten by the agent";
+    // Announced over the bridge: what is there now becomes a version, the user's.
+    expect(h.noteAgentWrite(target, { agent: "Claude Code", hash: sha(agentBody) }).ok).toBe(true);
+    expect(h.list(target)[0]).toMatchObject({ author: "user" });
+    fs.writeFileSync(target, agentBody);
+    // The open-file watcher then sees it and records it: the agent wrote it.
+    expect(h.captureExternal(target).ok).toBe(true);
+    expect(h.list(target)[0]).toMatchObject({ author: "agent", agent: "Claude Code" });
+    expect(h.head(target)).toMatchObject({ author: "agent", agent: "Claude Code" });
+  });
+
+  it("labels an agent's write when the user saves over it later, unwatched", () => {
+    const dir = tmp();
+    const target = path.join(dir, "doc.md");
+    const h = createHistory({ dir, now: ticking() });
+    fs.writeFileSync(target, "v0");
+    h.capture(target, "v1", { author: "user" });
+    fs.writeFileSync(target, "v1");
+    h.noteAgentWrite(target, { agent: "Codex", hash: sha("agent text") });
+    fs.writeFileSync(target, "agent text");
+    // Nobody watched the file. The user's next save keeps the agent's text.
+    h.capture(target, "user text", { author: "user" });
+    expect(h.list(target)[0]).toMatchObject({ author: "agent", agent: "Codex" });
+    expect(h.read(target, h.list(target)[0].stamp)).toBe("agent text");
+  });
+
+  it("calls bytes nobody announced an external edit, and the user's own bytes theirs", () => {
+    const dir = tmp();
+    const target = path.join(dir, "doc.md");
+    const h = createHistory({ dir, now: ticking() });
+    fs.writeFileSync(target, "v1");
+    h.capture(target, "v2", { author: "user" });
+    fs.writeFileSync(target, "v2");
+    h.capture(target, "v3", { author: "user" });
+    expect(h.list(target)[0].author).toBe("user");
+    fs.writeFileSync(target, "someone else");
+    expect(h.head(target)).toMatchObject({ author: "external" });
+    h.capture(target, "v4", { author: "user" });
+    expect(h.list(target)[0].author).toBe("external");
+  });
+
+  it("head describes the text on screen, and says nothing for text it cannot place", () => {
+    const dir = tmp();
+    const target = path.join(dir, "doc.md");
+    const h = createHistory({ dir, now: ticking() });
+    fs.writeFileSync(target, "v1");
+    h.capture(target, "mine", { author: "user" });
+    fs.writeFileSync(target, "mine");
+    h.noteAgentWrite(target, { agent: "Codex", hash: sha("theirs") });
+    fs.writeFileSync(target, "theirs");
+    // On disk: the agent's text. On screen, not reloaded yet: the user's.
+    expect(h.head(target, "theirs")).toMatchObject({ author: "agent", agent: "Codex" });
+    expect(h.head(target, "mine")).toBeNull();
+    expect(h.head(target)).toMatchObject({ author: "agent" });
+  });
+
+  it("dates bytes Markie did not write by the file's own modified time", () => {
+    const dir = tmp();
+    const target = path.join(dir, "doc.md");
+    fs.writeFileSync(target, "written by someone else last week");
+    const lastWeek = new Date(NOW - 7 * DAY);
+    fs.utimesSync(target, lastWeek, lastWeek);
+    const h = createHistory({ dir, now: () => new Date(NOW) });
+    h.capture(target, "mine", { author: "user" });
+    expect(h.list(target)[0].iso).toBe(lastWeek.toISOString());
+  });
+
+  it("refuses an announcement without a real hash", () => {
+    const dir = tmp();
+    const target = path.join(dir, "doc.md");
+    fs.writeFileSync(target, "v1");
+    const h = createHistory({ dir, now: ticking() });
+    expect(h.noteAgentWrite(target, { agent: "x", hash: "nope" }).skipped).toBe("bad-hash");
+    expect(h.list(target)).toHaveLength(0);
+  });
+
+  it("the global byte cap skips named versions", () => {
+    const dir = tmp();
+    const h = createHistory({ dir, now: ticking(), caps: { maxTotalBytes: 2500 } });
+    const body = "x".repeat(1000);
+    const first = path.join(dir, "a.md");
+    fs.writeFileSync(first, body + "a");
+    h.capture(first, "next", { author: "user" });
+    h.name(first, h.list(first)[0].stamp, "Keep");
+    for (const name of ["b", "c", "d"]) {
+      const target = path.join(dir, `${name}.md`);
+      fs.writeFileSync(target, body + name);
+      h.capture(target, "next", { author: "user" });
+    }
+    expect(h.has(first)).toBe(true);
+    expect(h.has(path.join(dir, "b.md"))).toBe(false);
   });
 });

@@ -187,6 +187,8 @@ if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI",
   // File history
   historyList: (path) => ipcRenderer.invoke("history-list", path),
   historyRead: (args) => ipcRenderer.invoke("history-read", args),
+  historyHead: (args) => ipcRenderer.invoke("history-head", args),
+  historyName: (args) => ipcRenderer.invoke("history-name", args),
   onMenuHistory: (callback) => subscribe("menu-history", callback),
   // A background reconciliation pass changed a document's text or media, so
   // whatever is showing the library should look again.

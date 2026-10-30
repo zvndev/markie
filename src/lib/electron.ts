@@ -70,9 +70,23 @@ export interface HistoryEntry {
   /** The version's filename stamp, which is also its id. */
   stamp: string;
   iso: string;
-  /** "user", "external" (an agent or another editor), or "unknown" (pre-0.5.0). */
+  /**
+   * "user", "agent" (an MCP write Markie was told about), "external" (another
+   * editor, or an agent Markie was not told about), or "unknown" (pre-0.5.0).
+   */
   author: string;
+  /** The MCP client's own name for itself, when author is "agent". */
+  agent?: string;
+  /** What the user named this version. Named versions are never pruned. */
+  name?: string;
   bytes: number;
+}
+
+/** Who wrote what is on disk now, as far as Markie knows. */
+export interface HistoryHead {
+  author: string;
+  agent?: string;
+  iso: string | null;
 }
 
 export type ViewMode = "edit" | "preview" | "split";
@@ -430,6 +444,15 @@ export interface ElectronAPI {
   // content of one of them. Reading never touches the file on disk.
   historyList(path: string): Promise<HistoryEntry[]>;
   historyRead(args: { path: string; stamp: string }): Promise<{ content: string | null }>;
+  // Optional so an older main process still type-checks.
+  historyHead?(args: { path: string; content?: string }): Promise<HistoryHead | null>;
+  // Name a stored version, or with no stamp keep the file as it is now as a
+  // named version. An empty name removes the name.
+  historyName?(args: {
+    path: string;
+    stamp?: string;
+    name: string;
+  }): Promise<{ ok: boolean; stamp?: string; name?: string | null; error?: string }>;
   onMenuHistory(cb: () => void): Unsubscribe;
   // A background reconciliation pass pushed a document's text or media, so
   // the library snapshot the renderer is holding is out of date. Optional so

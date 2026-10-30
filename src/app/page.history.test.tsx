@@ -1,6 +1,6 @@
 // History has to be reachable from the File menu and the palette, and a
 // restore must land in the buffer without writing anything.
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -64,6 +64,43 @@ describe("history from the page", () => {
     await waitFor(() => expect(document.title).toMatch(/^• /));
     // ...and nothing was written on the way.
     expect(saveFile).not.toHaveBeenCalled();
+  });
+
+  it("opens the version history view instead in a nightly build, and restores as unsaved", async () => {
+    localStorage.setItem("markie.nightly", "1");
+    const saveFile = vi.fn(async () => ({ success: true, path: OPEN.path }));
+    withHistory({ saveFile } as Partial<ElectronAPI>);
+    render(<Home />);
+    await screen.findByText("start");
+    await act(async () => {
+      emit("onMenuHistory");
+    });
+    expect(await screen.findByRole("complementary", { name: "Version history" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /history: notes\.md/i })).toBeNull();
+    const list = screen.getByRole("listbox", { name: "Versions" });
+    const older = (await within(list).findAllByRole("option")).find((o) => /August 26/.test(o.textContent ?? ""))!;
+    await userEvent.click(older);
+    const restore = await screen.findByRole("button", { name: "Restore this version" });
+    await waitFor(() => expect(restore).toBeEnabled());
+    await userEvent.click(restore);
+    expect(await screen.findByText("an older version")).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Version history" })).toBeNull();
+    await waitFor(() => expect(document.title).toMatch(/^• /));
+    expect(saveFile).not.toHaveBeenCalled();
+  });
+
+  it("leaves the version history view with Escape", async () => {
+    localStorage.setItem("markie.nightly", "1");
+    withHistory();
+    render(<Home />);
+    await screen.findByText("start");
+    await act(async () => {
+      emit("onMenuHistory");
+    });
+    await screen.findByRole("complementary", { name: "Version history" });
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Version history" })).toBeNull());
+    expect(screen.getByText("start")).toBeInTheDocument();
   });
 
   it("is in the command palette under File", async () => {

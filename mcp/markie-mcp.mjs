@@ -34,7 +34,8 @@ import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { MARKDOWN_GUIDE, GUIDE_URI } from "./markdown-guide.mjs";
 import { checkMarkdown } from "./check-md.mjs";
 import { walkAll } from "./scan.mjs";
-import { askMarkie } from "./agent-client.mjs";
+import { askMarkie, tellMarkie } from "./agent-client.mjs";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 
 // Read the version from package.json so the MCP handshake can never drift from
@@ -305,6 +306,18 @@ const RESOURCES = [
   },
 ];
 
+// Tell a running Markie which agent is about to write these bytes, so its
+// version history names the agent instead of "External edit". Markie also
+// keeps what the file says now as a version first. Best effort: when Markie
+// is closed nobody is told, and the write goes ahead regardless.
+async function announceWrite(path, body) {
+  await tellMarkie("history_note_write", {
+    path,
+    agent: clientName,
+    sha256: createHash("sha256").update(body, "utf8").digest("hex"),
+  });
+}
+
 // Write one guarded path. The guard already vetted every ancestor segment
 // (under home, no excluded dirs, not an agent/skill folder), so creating
 // missing parents stays inside an allowed tree.
@@ -439,6 +452,7 @@ async function runTool(name, args) {
       const body = g.format === "markdown" ? applyMarkieFrontMatter(content, fm) : content;
       const problem = checkWritableContent(body, g.format);
       if (problem) throw new Error(`${problem} Nothing was written.`);
+      await announceWrite(g.path, body);
       return await writeGuarded(g.path, body);
     }
     case "markie_find_md": {
@@ -460,6 +474,7 @@ async function runTool(name, args) {
       const g = guardPath(args.path, HOME, { mode: "write" });
       if (!g.ok) throw new Error(g.error);
       const body = applyMarkieFrontMatter(String(args.content ?? ""), frontMatterArgs(args));
+      await announceWrite(g.path, body);
       return await writeGuarded(g.path, body);
     }
     case "markie_list_skills": {

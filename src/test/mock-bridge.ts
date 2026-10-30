@@ -255,6 +255,8 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     draftDiscard: vi.fn(async () => noopResult),
     historyList: vi.fn(async () => []),
     historyRead: vi.fn(async () => ({ content: null })),
+    historyHead: vi.fn(async () => null),
+    historyName: vi.fn(async () => ({ ok: true })),
     onMenuHistory: vi.fn(subscribe("onMenuHistory")),
     onLibraryChanged: vi.fn(subscribe("onLibraryChanged")),
 

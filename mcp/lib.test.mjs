@@ -27,6 +27,7 @@ import { spawn } from "node:child_process";
 import { dirname as pdirname, join as pjoin, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 
 const HOME = "/home/u";
 const MCP_DIR = pdirname(fileURLToPath(import.meta.url));
@@ -2036,6 +2037,48 @@ test("the cloud tools reach the app with a fenced path and return its answer", a
     server.close();
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("a write tells a running Markie which agent wrote which bytes, before it writes", async () => {
+  const home = realpathSync(mkdtempSync(pjoin(tmpdir(), "mcpw-")));
+  const doc = pjoin(home, "Documents", "Markie", "plan.md");
+  let fileExistedAtNote = null;
+  const { server, seen } = await fakeBridge(pjoin(home, ".markie"), () => {
+    // The note arrives before the bytes land, so Markie can keep the old text.
+    if (fileExistedAtNote === null) fileExistedAtNote = existsSync(doc);
+    return { ok: true, result: { noted: true } };
+  });
+  const client = startMcpClient(home);
+  try {
+    await client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "claude-code", version: "0" } });
+    const res = await client.callTool("markie_write_md", { path: doc, content: "# Plan\n" });
+    assert.equal(res.result.isError, undefined);
+    const body = readFileSync(doc, "utf8");
+    assert.equal(fileExistedAtNote, false);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].method, "history_note_write");
+    assert.deepEqual(seen[0].params, {
+      path: doc,
+      agent: "claude-code",
+      sha256: createHash("sha256").update(body, "utf8").digest("hex"),
+    });
+    const res2 = await client.callTool("markie_write_document", { path: doc, content: "# Plan v2\n" });
+    assert.equal(res2.result.isError, undefined);
+    assert.equal(seen[1].method, "history_note_write");
+  } finally {
+    client.close();
+    server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a write goes ahead when Markie is not running or does not answer", async () => {
+  const { tellMarkie } = await import("./agent-client.mjs");
+  assert.equal(await tellMarkie("history_note_write", {}, { find: async () => null }), null);
+  assert.equal(
+    await tellMarkie("history_note_write", {}, { find: async () => ({ socket: "/s", token: "t" }), call: async () => { throw new Error("gone"); } }),
+    null
+  );
 });
 
 // The guide tells an agent which files markie_cloud_sync takes. Two other places

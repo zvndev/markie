@@ -91,6 +91,21 @@ function launchMarkie(platform = process.platform) {
   }
 }
 
+/**
+ * Tell the app something only if it is already running, and never wait long.
+ * For notes the app can use but a write must not depend on: no launch, a
+ * short timeout, and null instead of an error.
+ */
+export async function tellMarkie(method, params, { find = findBridge, call = callBridge, timeoutMs = 2000 } = {}) {
+  try {
+    const info = await find();
+    if (!info) return null;
+    return await call(info, method, params, { timeoutMs });
+  } catch {
+    return null;
+  }
+}
+
 /** Ask the running app; start it first on macOS when it is not running. */
 export async function askMarkie(method, params, {
   find = findBridge,

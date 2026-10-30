@@ -7,6 +7,7 @@ import { Toolbar } from "@/components/toolbar";
 import { preloadSourceEditor, SourceEditor } from "@/components/source-editor";
 import { RichView, type FlushRich } from "@/components/rich-view";
 import { FormatRail } from "@/components/format-rail";
+import { RichSectionRail } from "@/components/section-rail";
 import { DocToolbar, executeDocToolbarAction, setDocToolbarStyle } from "@/components/doc-toolbar";
 import type { FormattingAction } from "@/lib/format-controls";
 import {
@@ -2447,6 +2448,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
                 {showFormatRail(leftState) && (
                   <FormatRail editor={richEditor} disabled={formatRailDisabled(leftState)} />
                 )}
+                <RichSectionRail editor={richEditor} />
                 <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
                   {richBlocked && !collabCfg && (
                     <RichLossBanner

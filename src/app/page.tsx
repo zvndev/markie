@@ -159,48 +159,6 @@ const FORMAT_MENU_STYLES: Readonly<Record<string, string>> = { "format-normal": 
 const sizeUnlessConverted = (md: string, raw: string, bytes: number): number | undefined =>
   md === raw ? bytes : undefined;
 
-const SAMPLE = `# Northstar Sprint Brief
-
-A calm launch room needs one source of truth: \`decisions\`, owners, evidence, and [source links](https://markiedocs.com). This brief keeps the work legible without turning it into a status meeting.
-
-## Signal
-
-- **Customer promise** - local files stay fast, private, and portable.
-- **Launch proof** - every platform claim needs a build, a smoke test, and a screenshot.
-- **Quality bar** - permissions, sync state, and visual themes must agree with the server truth.
-
-## Release Gate
-
-\`\`\`typescript
-type Gate = "blocked" | "ready";
-
-const releaseGate = ({ mac, windows, sharing }: Record<string, boolean>): Gate =>
-  mac && windows && sharing ? "ready" : "blocked";
-\`\`\`
-
-## Evidence
-
-| Track | Evidence | State |
-| --- | --- | --- |
-| Research | Interview notes and source links | Stable |
-| Prototype | Screen captures and edge cases | In review |
-| Security | Access rules and audit notes | Ready |
-| Rollout | Owner, date, and follow-up plan | Draft |
-
-## Open Work
-
-- [x] Name the customer promise
-- [x] Record the decision log
-- [x] Attach verification evidence
-- [ ] Trim loose language
-- [ ] Send the final brief
-
-> A good tool disappears when the work gets serious.
-
----
-
-$E = mc^2$
-`;
 
 type ViewMode = "edit" | "preview" | "split";
 
@@ -1796,8 +1754,9 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   }, [enforcedTheme, documentsOpen]);
 
   // Boot: decide the first painted document — the OS-opened file, the one-time
-  // welcome document, or the sample — before rendering anything, so the wrong
-  // doc never flashes
+  // welcome document, or a blank one — before rendering anything, so the wrong
+  // doc never flashes. There is no demo document: a launch without a file opens
+  // an empty page, never made-up content.
   useEffect(() => {
     const pending =
       getElectronAPI()?.getInitialFile?.() ?? Promise.resolve(null);
@@ -1819,18 +1778,17 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           assessRichSafety(WELCOME_DOC, null);
           markWelcomeSeen();
         } else {
-          applyExternalDoc(SAMPLE);
-          assessRichSafety(SAMPLE, null);
+          applyExternalDoc("");
+          assessRichSafety("", null);
         }
       })
       // A rejected getInitialFile used to leave `booted` false forever, and
       // the pre-boot placeholder is an empty div: the app launched to a blank
-      // window with no way out. The welcome document is a better answer than
-      // nothing.
+      // window with no way out. An empty, editable page is a better answer.
       .catch((err) => {
         console.error("Markie: couldn't read the file to open at launch", err);
-        applyExternalDoc(SAMPLE);
-        assessRichSafety(SAMPLE, null);
+        applyExternalDoc("");
+        assessRichSafety("", null);
       })
       .finally(() => setBooted(true));
   }, [loadFile, assessRichSafety, applyExternalDoc]);

@@ -19,9 +19,14 @@ it accepts no arbitrary builder arguments or public fallback.
 Set these non-secret values in the root agent's process:
 
 - `MARKIE_PRIVATE_API_ORIGIN`: required exact origin
-  `https://markie-nightly.fly.dev`. A future gateway
+  `https://markie-nightly.zvndev.com`, since 2026-10-30. A future gateway
   change requires an explicit reviewed tooling change; arbitrary HTTPS hosts
-  cannot receive the publisher key.
+  cannot receive the publisher key. Builds made before then read
+  `https://markie-nightly.fly.dev`, which stays up as a read-only copy of the
+  feed as it was that day. It refuses publishes. An installed build does not
+  follow a redirect (its access check uses `redirect: "error"`, and the
+  updater cancels any URL off its own origin), so such a build moves to the
+  new origin only when its owner installs a newer nightly by hand.
 - `MARKIE_PRIVATE_VERSION`: for example `0.8.1-super-nightly.1`. This changes only
   packaged `extraMetadata`, never source versions or public manifests.
 - `MARKIE_PRIVATE_ARCHS`: `arm64` by default for the first private cut on the

@@ -272,6 +272,7 @@ module.exports = {
         "agent-classify.mjs",
         "agent-client.mjs",
         "check-md.mjs",
+        "comment-tools.mjs",
         "conventions.mjs",
         "doc-text.cjs",
         "lib.mjs",

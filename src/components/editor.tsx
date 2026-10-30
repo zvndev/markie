@@ -7,6 +7,7 @@ import { Prec } from "@codemirror/state";
 import { undo as cmUndo, redo as cmRedo } from "@codemirror/commands";
 import { conflictingShortcuts } from "@/lib/editor-keymap";
 import { findHighlightField, sourceFindTarget } from "@/lib/source-find";
+import { commentHighlightField, sourceCommentTarget } from "@/lib/source-comments";
 import type { SourceHandle } from "@/lib/source-handle";
 import { SourceSectionRail } from "@/components/section-rail";
 import {
@@ -29,8 +30,8 @@ const theme = EditorView.theme({
   ".cm-scroller": { overflow: "auto" },
 });
 
-// This module is the one place outside src/lib/source-find.ts that imports
-// from @codemirror, and it is loaded on first use (src/components/source-editor.tsx).
+// This module is the one place outside src/lib/source-find.ts and
+// src/lib/source-comments.ts that imports from @codemirror, and it is loaded on first use (src/components/source-editor.tsx).
 export interface EditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -55,6 +56,7 @@ function handleFor(view: EditorView): SourceHandle {
     },
     focus: () => view.focus(),
     findTarget: () => sourceFindTarget(view),
+    commentTarget: () => sourceCommentTarget(view),
   };
 }
 
@@ -138,6 +140,7 @@ export function Editor({
           appShortcutGuard,
           ...(plainText ? [] : [markdown({ base: markdownLanguage, codeLanguages: languages })]),
           findHighlightField,
+          commentHighlightField,
           theme,
           EditorView.lineWrapping,
         ]}

@@ -7,6 +7,7 @@
 // this handle, built on its side of the line, and the page never learns what
 // is behind it.
 import type { FindTarget } from "@/lib/find-target";
+import type { CommentTarget } from "@/lib/comment-target";
 
 export interface SourceHandle {
   undo(): void;
@@ -14,4 +15,6 @@ export interface SourceHandle {
   focus(): void;
   /** The find bar's view of this pane; see src/lib/source-find.ts. */
   findTarget(): FindTarget;
+  /** Local comments' view of this pane (src/lib/source-comments.ts). Absent in panes that do not paint them. */
+  commentTarget?(): CommentTarget;
 }

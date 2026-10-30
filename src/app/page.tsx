@@ -70,6 +70,9 @@ import { useRichSafety } from "@/lib/use-rich-safety";
 import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
 import { CopyAllButton } from "@/components/copy-all-button";
+import { LocalComments } from "@/components/local-comments";
+import { isCommentableDoc } from "@/lib/local-comments";
+import { nightlyFeaturesEnabled } from "@/lib/nightly";
 import { FindBar } from "@/components/find-bar";
 import { richFindTarget } from "@/lib/rich-find";
 import type { SourceHandle } from "@/lib/source-handle";
@@ -2388,6 +2391,12 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
             {/* Copy the whole document from where you are reading it. Hidden
                 while Find is open, which sits in the same corner. */}
             {!showFind && content ? <CopyAllButton text={content} /> : null}
+
+            {/* Comments on a local markdown file, super-nightly only. A live
+                cloud document keeps its own comment layer instead. */}
+            {nightlyFeaturesEnabled() && isCommentableDoc(filePath) && !collabCfg && largeDocSize === null ? (
+              <LocalComments key={filePath} path={filePath!} content={content} mode={mode} richEditor={richEditor} sourceHandle={sourceHandle} canComment={docEditable} />
+            ) : null}
 
             {/* Editor pane */}
             {(mode === "edit" || mode === "split") && (

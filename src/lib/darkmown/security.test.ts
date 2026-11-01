@@ -112,4 +112,74 @@ describe("Darkmown's offline runtime boundary", () => {
     await expect(sanitizeDarkmownBody("x".repeat(2_000_001), true)).rejects.toThrow("limit");
     await expect(sanitizeDarkmownBody("<div>".repeat(70) + "x" + "</div>".repeat(70), true)).rejects.toThrow("deeply");
   });
+
+  it("keeps branch and row templates, sanitized, and validates their runtime data", async () => {
+    const { bodyHtml, warnings } = await sanitizeDarkmownBody('<div data-wd-if="open" data-wd-if-active="false"><template data-wd-true><p onclick="x()">Yes <span data-wd-bind="n" data-wd-fmt=\'[["money",["USD"]]]\'>1</span><img src="x"></p></template><template data-wd-false><p>No</p></template><div data-wd-if-out><p>No</p></div></div>', true);
+    expect(bodyHtml).toContain('<template data-wd-true=""><p>Yes <span data-wd-bind="n" data-wd-fmt="[[&#x22;money&#x22;,[&#x22;USD&#x22;]]]">1</span></p></template>');
+    expect(bodyHtml).toContain('<template data-wd-false=""><p>No</p></template>');
+    expect(bodyHtml).not.toContain("onclick");
+    expect(bodyHtml).not.toContain("<img");
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("drops an unmarked template, and every template before trust", async () => {
+    const unknown = await sanitizeDarkmownBody("<template><p>Hidden</p></template>", true);
+    expect(unknown.bodyHtml).toBe("");
+    expect(unknown.warnings).toHaveLength(1);
+    const before = await sanitizeDarkmownBody('<div data-wd-if="open"><template data-wd-true><p>Yes</p></template><div data-wd-if-out><p>No</p></div></div>', false);
+    expect(before.bodyHtml).not.toContain("template");
+    expect(before.bodyHtml).not.toContain("data-wd");
+    expect(before.bodyHtml).toContain("<p>No</p>");
+    expect(before.warnings).toEqual([]);
+  });
+
+  it("refuses runtime data outside the closed vocabulary", async () => {
+    for (const html of [
+      '<span data-wd-bind="n" data-wd-fmt=\'[["eval",[]]]\'>1</span>',
+      '<span data-wd-bind="n" data-wd-fmt=\'{"a":1}\'>1</span>',
+      '<span data-wd-bind="n" data-wd-fmt=\'[["upper",[{"x":1}]]]\'>1</span>',
+      `<span data-wd-bind="n" data-wd-fmt='[["join",["${"x".repeat(300)}"]]]'>1</span>`,
+      '<div data-wd-if="__proto__.x"></div>',
+      '<div data-wd-if="" data-wd-if-expr=\'["call",["S","x"]]\'></div>',
+      '<div data-wd-if="" data-wd-if-active="maybe"></div>',
+      '<div data-wd-loop="constructor"></div>',
+      '<div data-wd-loop="rows" data-wd-loop-where=\'["eval"]\'></div>',
+      '<div data-wd-loop="rows" data-wd-loop-sort-dir="sideways"></div>',
+      '<div data-wd-loop="rows" data-wd-loop-limit="-1"></div>',
+      '<span data-wd-each-meta="secret"></span>',
+    ]) {
+      const { warnings } = await sanitizeDarkmownBody(html, true);
+      expect(warnings, html).toHaveLength(1);
+    }
+    const ok = await sanitizeDarkmownBody('<div data-wd-loop="rows" data-wd-loop-where=\'["&gt;",["I","p"],["L",1]]\' data-wd-loop-sort="p" data-wd-loop-sort-dir="desc" data-wd-loop-limit="5" data-wd-loop-offset="1" data-wd-loop-reverse=""><template data-wd-loop-template><div data-wd-loop-piece><span data-wd-each data-wd-path="t"></span><span data-wd-each-meta="index"></span></div></template><template data-wd-loop-empty><p>None</p></template><div data-wd-loop-out></div></div>', true);
+    expect(ok.warnings).toEqual([]);
+    expect(ok.bodyHtml).toContain('data-wd-loop-sort="p"');
+    expect(ok.bodyHtml).toContain('<template data-wd-loop-template="">');
+  });
+
+  it("refuses a computed that a cycle or a long + chain could blow up", async () => {
+    const computed = (key: string, ast: unknown) => `<span data-wd-computed data-wd-computed-key="${key}" data-wd-computed-expr='${JSON.stringify(ast)}'></span>`;
+    const cycle = await sanitizeDarkmownBody(computed("a", ["+", ["S", "b"], ["S", "b"]]) + computed("b", ["+", ["S", "a"], ["L", "x"]]), true);
+    expect(cycle.bodyHtml).not.toContain("data-wd-computed");
+    expect(cycle.warnings).toHaveLength(1);
+
+    let chain = computed("x0", ["+", ["S", "seed"], ["S", "seed"]]);
+    for (let index = 1; index < 8; index++) chain += computed(`x${index}`, ["+", ["S", `x${index - 1}`], ["S", `x${index - 1}`]]);
+    const doubled = await sanitizeDarkmownBody(chain, true);
+    expect(doubled.bodyHtml).toContain('data-wd-computed-key="x4"');
+    expect(doubled.bodyHtml).not.toContain('data-wd-computed-key="x6"');
+    expect(doubled.warnings).toHaveLength(1);
+
+    const numbers = await sanitizeDarkmownBody(computed("n", ["*", ["S", "a"], ["-", ["S", "a"], ["L", 1]]]), true);
+    expect(numbers.bodyHtml).toContain('data-wd-computed-key="n"');
+    expect(numbers.warnings).toEqual([]);
+  });
+
+  it("refuses nested loops over lists long enough to draw too many rows", async () => {
+    const loop = (inner: string) => `<div data-wd-loop="rows"><template data-wd-loop-template>${inner}</template><div data-wd-loop-out></div></div>`;
+    const seed = (length: number) => `<script type="application/json" data-wd-state>{"rows":[${Array(length).fill(1).join(",")}]}</script>`;
+    await expect(sanitizeDarkmownBody(seed(500) + loop(loop("<p>x</p>")), true)).rejects.toThrow("too many rows");
+    await expect(sanitizeDarkmownBody(seed(100) + loop(loop("<p>x</p>")), true)).resolves.toBeTruthy();
+    await expect(sanitizeDarkmownBody(seed(1000) + loop("<p>x</p>"), true)).resolves.toBeTruthy();
+  });
 });

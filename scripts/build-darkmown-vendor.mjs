@@ -106,6 +106,8 @@ async function main() {
   const check = process.argv.includes("--check");
   const generated = new Map(Object.entries(artifacts).map(([name, content]) => [path.join(destination, name), content]));
   generated.set(path.join(root, "electron/darkmown-runtime-policy.json"), policy);
+  // The MCP server ships outside the app and may not import from src/. Same bytes.
+  generated.set(path.join(root, "mcp/darkmown-compiler.mjs"), artifacts["compiler-browser.mjs"]);
   for (const name of ["THIRD-PARTY-NOTICES.txt", "PROVENANCE.json"]) generated.set(path.join(root, "public/darkmown", name), artifacts[name]);
   for (const [target, content] of generated) {
     if (check) {

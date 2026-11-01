@@ -18,6 +18,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, realp
 import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { MARKDOWN_GUIDE, GUIDE_URI, guideEssentials } from "./markdown-guide.mjs";
 import { checkMarkdown } from "./check-md.mjs";
+import { checkDarkmown } from "./check-wd.mjs";
+import { DARKMOWN_SOURCE_LIMIT } from "./darkmown-limits.mjs";
 // The pinned Darkmown compiler the app's preview runs. A test file may reach out
 // of mcp/; the server code may not (see the scan.mjs header).
 import { compileFromMemory } from "../src/lib/darkmown/vendor/compiler-browser.mjs";
@@ -1282,7 +1284,7 @@ test("the guide covers shared documents, write limits, hosted-only agents and pu
   assert.match(MARKDOWN_GUIDE, /Batch your edits/);
   assert.match(MARKDOWN_GUIDE, /60 an hour per token, 200 an hour per user, 50 MB a day per user, 20 MB a day per token/);
   assert.match(MARKDOWN_GUIDE, /it disappears from `markie_read_my_document` and `markie_list_my_documents`/);
-  assert.match(MARKDOWN_GUIDE, /Agents using only the hosted tools can skip: markie_check_md, workspace folders, the Other document types table, front-matter filing\./);
+  assert.match(MARKDOWN_GUIDE, /Agents using only the hosted tools can skip: markie_check_md, markie_check_wd, workspace folders, the Other document types table, front-matter filing\./);
   assert.match(MARKDOWN_GUIDE, /The hosted tools cannot make a public link\./);
   assert.match(readSkill(), /The hosted tools\s+cannot make a public link\./);
   assert.match(readSkill(), /`shared`/);
@@ -2232,4 +2234,52 @@ test("the MCP server lists the comment tools and refuses an unreadable path with
     client.close();
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+// ---- markie_check_wd (mcp/check-wd.mjs) ----
+// src/lib/darkmown/check-wd-parity.test.ts holds this to what the app's preview does.
+
+test("markie_check_wd reports a clean document as clean", async () => {
+  const report = await checkDarkmown(":state n = 1\n\n{ n }\n", "/d/Counter.wd");
+  assert.equal(report.ok, true);
+  assert.equal(report.interactive, true);
+  assert.match(report.summary, /Counter\.wd compiles, and everything in it runs/);
+});
+
+test("markie_check_wd names the real file and line for an error, not the compiler's path", async () => {
+  const report = await checkDarkmown(":state\n", "/d/Broken.wd");
+  assert.equal(report.ok, false);
+  assert.match(report.errors[0], /WD201/);
+  assert.match(report.errors[0], /Broken\.wd/);
+  assert.doesNotMatch(report.errors[0], /site\/pages/);
+  assert.match(report.summary, /stops with an error/);
+});
+
+test("markie_check_wd surfaces the compiler's warnings, so a typo is not clean", async () => {
+  const report = await checkDarkmown(":state count = 1\n\n{ coutn }\n", "/d/Typo.wd");
+  assert.equal(report.ok, false);
+  assert.match(report.warnings[0], /Typo\.wd:3/);
+  assert.match(report.warnings[0], /Did you mean "count"\?/);
+  assert.match(report.summary, /1 thing\(s\) will not work/);
+
+  const fetch = await checkDarkmown(':fetch u from "/api/{ userid }"\n', "/d/Fetch.wd");
+  assert.ok(fetch.warnings.some((warning) => /no :state userid/.test(warning)));
+  assert.ok(fetch.switchedOff.some((message) => /:fetch does not run/.test(message)));
+});
+
+test("markie_check_wd refuses what the preview refuses, before compiling", async () => {
+  const report = await checkDarkmown("x".repeat(DARKMOWN_SOURCE_LIMIT + 1), "/d/Big.wd");
+  assert.match(report.errors[0], /128,000 characters/);
+});
+
+test("markie_check_wd stops at the output limit the preview uses", async () => {
+  const tags = Array.from({ length: 150 }, (_, index) => `t${index}`).join(", ");
+  const source = `---\ntitle: T\ntags: [${tags}]\n---\n@loop meta.tags into a\n${"x".repeat(9_000)}\n@endloop\n`;
+  const report = await checkDarkmown(source, "/d/Wide.wd");
+  assert.match(report.errors[0], /more than an interactive preview can show/);
+});
+
+test("the MCP copy of the compiler is byte for byte the one the app runs", () => {
+  const read = (relative) => readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");
+  assert.equal(read("./darkmown-compiler.mjs"), read("../src/lib/darkmown/vendor/compiler-browser.mjs"));
 });

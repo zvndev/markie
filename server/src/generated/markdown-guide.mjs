@@ -44,7 +44,7 @@ export const MARKDOWN_GUIDE = `# Writing documents for Markie
 
 Markie draws much more than plain markdown: tables, task lists, pictures, video, audio and live Darkmown documents. Use them. Every example below is checked against Markie's own renderer when Markie is built.
 
-Agents using only the hosted tools can skip: markie_check_md, workspace folders, the Other document types table, front-matter filing.
+Agents using only the hosted tools can skip: markie_check_md, markie_check_wd, workspace folders, the Other document types table, front-matter filing.
 
 ## The short version
 
@@ -240,7 +240,7 @@ Limits:
 - Source length times the number of \`{\` characters and \`:computed\` lines may not pass 1,000,000.
 - Directives only work at the very start of a line. In a list, a quote, indented text or a code fence they are plain text.
 - Declare before use. A \`:computed\` or bound control that names an undeclared value stops the preview (WD234, WD406, WD450). A plain \`{ name }\` for an undeclared name prints as \`{ name }\`, with a notice.
-- A wrong line shows an error such as \`[WD201] Malformed :state\`, and the source is never changed. You cannot run the preview, so copy the shapes below.
+- A wrong line shows an error such as \`[WD201] Malformed :state\`, and the source is never changed. You cannot run the preview, so copy the shapes below, then run \`markie_check_wd\`.
 
 ### A counter: :state, :computed, :button
 
@@ -441,7 +441,7 @@ The total is hidden.
 :endif
 \`\`\`
 
-- \`:if name\`, \`:if a > b\`, \`:else if\` and \`:else\` show one block and switch live.
+- \`:if name\`, \`:if a > b\`, \`:else if\` and \`:else\` switch live.
 - \`@loop rows into row\` repeats its block for a list in \`:state\`. Add \`where row.price < 5\`, \`sort by row.price desc\`, \`reverse\`, \`offset 1\` or \`limit 3\`.
 - Pipes: \`money\`, \`number\`, \`percent\`, \`round\`, \`date\`, \`time\`, \`upper\`, \`lower\`, \`capitalize\`, \`truncate\`, \`trim\`, \`pluralize\`, \`default\`, \`sum\`, \`avg\`, \`min\`, \`max\`, \`count\`, \`join\`.
 - Buttons can change lists: \`list append "x"\`, \`list prepend "x"\`, \`list clear\`.
@@ -488,7 +488,7 @@ A \`- [ ]\` or \`- [x]\` task list shows read-only boxes. For a box the reader c
 An error stops the preview:
 
 - \`@include\`, and \`@loop\` over a file. Put the list in \`:state\`.
-- Anything too large to preview: nested loops over long lists, text doubled line after line, a pipe argument over 200 characters.
+- Anything too large to preview: nested loops over long lists, text doubled line after line, long pipe arguments.
 - A \`:computed\` or bound control naming an undeclared value (WD234, WD406, WD450), a \`:bind\` attribute other than \`placeholder\`, a \`:checkbox\` with several labels, a semicolon inside a quoted action value.
 
 A notice appears in the preview pane and the feature is switched off:

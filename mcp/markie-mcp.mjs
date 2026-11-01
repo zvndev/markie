@@ -33,6 +33,7 @@ import docText from "./doc-text.cjs";
 import { INSTRUCTIONS, applyMarkieFrontMatter } from "./conventions.mjs";
 import { MARKDOWN_GUIDE, GUIDE_URI } from "./markdown-guide.mjs";
 import { checkMarkdown } from "./check-md.mjs";
+import { checkDarkmown } from "./check-wd.mjs";
 import { walkAll } from "./scan.mjs";
 import { askMarkie, tellMarkie } from "./agent-client.mjs";
 import { createHash } from "node:crypto";
@@ -286,6 +287,17 @@ const TOOLS = [
     },
   },
   {
+    name: "markie_check_wd",
+    description:
+      "Compile a Darkmown (.wd) file with the same compiler and limits Markie's preview uses, because you cannot run the preview yourself. Reports errors that stop it (with a WD code and line), warnings such as a { name } that matches nothing or a :fetch reading undeclared state, and features Markie switches off. Run it after writing a .wd, before handing it over.",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string", description: "Absolute path to a .wd file, ~ allowed" } },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "markie_guide",
     description:
       "How to write a document for Markie, with an example of each: which format to pick (.md, or Darkmown .wd when the reader should click, tick, slide or calculate), structure, tables, task lists, notes, code, pictures, video and audio and where those files have to live to display at all, sizing and centring, video cards, which inline HTML the editor keeps, what is dropped silently, every Darkmown directive that works and what it cannot do, and how to hand the user a link (markie_cloud_sync, then paste markdownLink). Read it before writing any document longer than a few paragraphs. Static text, no arguments.",
@@ -532,6 +544,11 @@ async function runTool(name, args) {
       const g = guardPath(args.path, HOME);
       if (!g.ok) throw new Error(g.error);
       return checkMarkdown(await readFile(g.path, "utf8"), g.path);
+    }
+    case "markie_check_wd": {
+      const g = guardPath(args.path, HOME, { formats: ["darkmown"] });
+      if (!g.ok) throw new Error(g.error);
+      return checkDarkmown(await readFile(g.path, "utf8"), g.path);
     }
     case "markie_guide":
       return MARKDOWN_GUIDE;

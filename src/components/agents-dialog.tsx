@@ -19,6 +19,7 @@ const TOOLS: [string, string][] = [
   ["markie_open_in_markie", "open any document here in Markie"],
   ["markie_list_skills", "list your agent and skill files, grouped by tool"],
   ["markie_check_md", "say which pictures, clips and tags in a document will not show"],
+  ["markie_check_wd", "compile a Darkmown document and say what will not work"],
   ["markie_cloud_sync", "put a file in your Markie Cloud and hand back its private link"],
   ["markie_cloud_public_link", "a public link, only when you ask for one, and you confirm it"],
   ["markie_guide", "what Markie renders and which types each tool handles"],

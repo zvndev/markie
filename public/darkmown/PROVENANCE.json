@@ -4,7 +4,7 @@
   "version": "2.13.0",
   "build": {
     "script": "scripts/build-darkmown-vendor.mjs",
-    "scriptSha256": "20e9dcb38a877da0e98663558e0be76525ea62e76e5ff17e64fc0050bef4686f",
+    "scriptSha256": "8fd6365febe009c0625b9eaf49c736235529dfb82c2251983dbcb59f2f548ae5",
     "esbuild": "0.28.2",
     "sourceLockSha256": "aa86a7e69b7cab7460298a8550492c71e44c075ae1fd512898d7ac4b516db658"
   },

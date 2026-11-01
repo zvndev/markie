@@ -74,7 +74,8 @@ Left to do: { left } of 2.
 - The user must choose Trust this document before the controls turn on, and an
   edit takes the trust away. State is not saved. A `.wd` stays under 128,000
   characters and 5,000 lines.
-- Copy the shapes in `markie_guide`. You cannot run the preview yourself.
+- Copy the shapes in `markie_guide`. You cannot run the preview yourself, so
+  run `markie_check_wd` after writing a `.wd`.
 
 ## Give the user the document
 

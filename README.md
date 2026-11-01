@@ -62,7 +62,7 @@ gives an AI agent a document workspace on *your* machine: markdown, plain text,
 CSV, JSON, YAML, XML, Darkmown, Word, RTF, OpenDocument and HTML. Its tools are
 `markie_find_documents`, `markie_search_documents` (the same full-text search as
 the app's ⇧⌘F), `markie_read_document`, `markie_write_document`,
-`markie_check_md`, `markie_list_skills`, `markie_guide`, and
+`markie_check_md`, `markie_check_wd`, `markie_list_skills`, `markie_guide`, and
 `markie_open_in_markie`, plus the original markdown-only `markie_find_md`,
 `markie_read_md` and `markie_write_md`. It runs locally and needs no API key.
 Four optional tools (`markie_cloud_status`, `markie_cloud_sync`,
@@ -96,7 +96,8 @@ the elements Markie actually renders, how a picture, a clip or a recording is
 written, where those files have to live to display at all, and which inline HTML
 survives a save. `markie_guide` and the `markie://guide/markdown` resource serve
 the whole of it, and `markie_check_md` reads a finished document back and names
-anything in it that will not show up.
+anything in it that will not show up. `markie_check_wd` does the same for a `.wd`,
+with the compiler the preview uses.
 
 **Claude Code — plugin (easiest):**
 

@@ -53,7 +53,7 @@ Agents using only the hosted tools can skip: markie_check_md, workspace folders,
 - These do not exist: callouts (\`> [!NOTE]\` shows as a plain quote), diagrams (a \`mermaid\` block stays code), emoji shortcodes, and heading anchors (\`[Jump](#section)\` goes nowhere).
 - A picture, clip or recording is \`![alt](path)\`. The file has to sit beside the document, or inside a folder the user added to Markie as a workspace. Any other path displays nothing, with no error. Never point at /tmp.
 - Math and footnotes render in exports and shared web pages, not in the Markie editor. HTML at the start of a line shows as a placeholder token in the editor, and \`<script>\`, \`<iframe>\` and \`<form>\` render nowhere.
-- Darkmown runs \`:state\`, \`:computed\` (\`-\` \`*\` \`/\` \`%\` only, so add with \`a - -b\`), \`:button\`, \`:slider\`, \`:bind\`, bound \`:select\` \`:checkbox\` \`:radio\`, and \`:form into\`. It does not run \`:if\`, loops, includes, \`:store\`, \`persist\`, \`:fetch\`, \`+\` or format pipes. Declare a name before you use it: an undeclared \`{ name }\` prints as \`{ name }\`, and \`:input\` and \`:textarea\` outside a form are disabled silently.
+- Darkmown runs \`:state\`, \`:computed\`, \`:if\`, \`@loop\`, format pipes such as \`{ price | money }\`, \`:button\`, \`:slider\`, \`:bind\`, bound \`:select\` \`:checkbox\` \`:radio\`, and \`:form into\`. It does not run includes, \`:store\`, \`persist\` or \`:fetch\`. Declare a name before you use it: an undeclared \`{ name }\` prints as \`{ name }\`, and \`:input\` and \`:textarea\` outside a form are disabled silently.
 - Give the user a link: write with \`markie_write_document\`, call \`markie_cloud_sync\`, and paste the \`markdownLink\` it returns. With only the hosted tools, call \`markie_create_document\` and paste its \`markdownLink\`. Leave \`project\` and \`block\` out of a document you send as a link. Make a public link only when the user asked for one.
 
 ## Choosing a format
@@ -259,8 +259,8 @@ Today: { cups } cups, about { ounces } ounces.
 
 - \`:state name = value\` declares a number, a string in double quotes, \`true\` or \`false\`, or an object such as \`{"count": 0, "total": 0}\`.
 - \`{ name }\` prints it, in a paragraph, heading, list, quote or table cell. \`{ cart.count }\` reaches into an object.
-- \`:computed name = expression\` derives a value from names, numbers, \`-\` \`*\` \`/\` \`%\`, a leading minus and parentheses. It may use another computed value.
-- **There is no \`+\`, but you can add: subtract a negative.** \`total = subtotal - -tax\` and \`total = subtotal - (0 - tax)\` both work and update live. Comparisons, \`sum()\` and the other aggregates are not available.
+- \`:computed name = expression\` derives a value from names, numbers, quoted text, \`+\` \`-\` \`*\` \`/\` \`%\`, comparisons, \`and\` \`or\` \`not\`, a leading minus, parentheses and \`sum(rows, field)\` with the other aggregates. It may use another computed value.
+- \`+\` adds numbers and joins text: \`total = subtotal + tax\`, \`full = first + " " + last\`.
 - Button actions: \`n++\`, \`n--\`, \`n += 5\`, \`n -= 2\`, \`n = 10\`, \`label = "Done"\`, \`on = true\`, \`on toggle\`, \`n reset\` (back to the \`:state\` value).
 - Chain actions with a semicolon: \`:button "Add" -> cart.count++ ; cart.total += 9\`. Never put one inside a quoted value.
 
@@ -350,8 +350,8 @@ Outside a form, \`:select\`, \`:radio\` and \`:checkbox\` tie to a state of the 
 - 24.5
 - 40
 
-:computed exact = qty * price * (100 - -taxrate)
-:computed half = exact - -0.5
+:computed exact = qty * price * (100 + taxrate)
+:computed half = exact + 0.5
 :computed cents = half - half % 1
 :computed total = cents / 100
 
@@ -359,9 +359,9 @@ Total with tax: { total } for { qty } at { price } each.
 \`\`\`
 
 - \`:radio\` and \`:select\` options that are numbers feed straight into \`:computed\`, which suits quantity and tier pickers. Declare the state as a number matching one option.
-- \`price * (100 - -taxrate)\` is the price plus tax, in cents.
-- Round with \`%\`: \`x % 1\` is the fractional part, so \`x - x % 1\` drops it. Add one half first (\`x - -0.5\`) to round to the nearest. Round cents, then divide by 100.
-- Numbers print as JavaScript prints them: \`0.1 * 3\` shows \`0.30000000000000004\`, and 70.50 shows \`70.5\`. There are no format pipes.
+- \`price * (100 + taxrate)\` is the price plus tax, in cents.
+- Round with \`%\`: \`x % 1\` is the fractional part, so \`x - x % 1\` drops it. Add one half first (\`x + 0.5\`) to round to the nearest. Round cents, then divide by 100.
+- Numbers print as JavaScript prints them: \`0.1 * 3\` shows \`0.30000000000000004\`, and 70.50 shows \`70.5\`. Format the value to fix that: \`{ total | money }\` shows \`$70.50\`.
 
 ### A checklist that counts
 
@@ -411,7 +411,40 @@ A checked box is 1 and an unchecked box is 0, so \`3 - design - copy - ship\` is
 Stove on: { hot }
 \`\`\`
 
-There is no \`:if\`, so a step-through sets a text state and prints it, one button per step.
+A step-through sets a text state and prints it, or uses \`:if\`.
+
+### Branches, lists and formats: :if, @loop, pipes
+
+\`\`\`wd
+# Shopping list
+
+:state shopping = [{"item": "Bread", "price": 4.5, "got": false}, {"item": "Milk", "price": 2, "got": true}]
+:state showTotal = false
+:state name = "Ada"
+:computed title = name + "'s list"
+
+## { title | upper }
+
+@loop shopping into row sort by row.price desc
+{ row.item }: { row.price | money }
+:if row.got
+(in the basket)
+:endif
+@endloop
+
+:button "Toggle total" -> showTotal toggle
+
+:if showTotal
+Total: { shopping | sum:"price" | money }
+:else
+The total is hidden.
+:endif
+\`\`\`
+
+- \`:if name\`, \`:if a > b\`, \`:else if\` and \`:else\` show one block and switch live.
+- \`@loop rows into row\` repeats its block for a list in \`:state\`. Add \`where row.price < 5\`, \`sort by row.price desc\`, \`reverse\`, \`offset 1\` or \`limit 3\`.
+- Pipes: \`money\`, \`number\`, \`percent\`, \`round\`, \`date\`, \`time\`, \`upper\`, \`lower\`, \`capitalize\`, \`truncate\`, \`trim\`, \`pluralize\`, \`default\`, \`sum\`, \`avg\`, \`min\`, \`max\`, \`count\`, \`join\`.
+- Buttons can change lists: \`list append "x"\`, \`list prepend "x"\`, \`list clear\`.
 
 ### A form: :form into
 
@@ -454,24 +487,20 @@ A \`- [ ]\` or \`- [x]\` task list shows read-only boxes. For a box the reader c
 
 An error stops the preview:
 
-- \`@loop\` and \`@include\`.
-- \`+\` in \`:computed\`. To add numbers, subtract a negative. Text cannot be joined: print the values side by side, \`{ first } { last }\`.
-- Format pipes such as \`{ price | money }\`.
+- \`@include\`, and \`@loop\` over a file. Put the list in \`:state\`.
+- Anything too large to preview: nested loops over long lists, text doubled line after line, a pipe argument over 200 characters.
 - A \`:computed\` or bound control naming an undeclared value (WD234, WD406, WD450), a \`:bind\` attribute other than \`placeholder\`, a \`:checkbox\` with several labels, a semicolon inside a quoted action value.
 
 A notice appears in the preview pane and the feature is switched off:
 
-- \`:if\`, \`:else if\`, \`:else\`, \`:endif\`: the branches never switch. Show state with \`{ name }\`.
-- Comparisons, \`sum()\`, \`avg()\` and \`count()\` in \`:computed\`.
 - \`:store\` and \`persist\`: nothing is kept, and \`:store\` loses its starting value. Use \`:state\`.
 - \`:every\`, \`:effect\`, \`:fetch\`, \`:theme\`, \`:carousel\`, \`:video\`, \`:audio\`, \`:embed\`.
-- Button actions that change lists or objects: \`append\`, \`prepend\`, \`remove\`, \`clear\`, \`merge\`, \`delete\`.
 - Links and pictures inside a \`.wd\` (links become plain text, pictures vanish), a checkbox group in a form, and table alignment colons.
 
 Nothing tells you about these:
 
 - \`:input\` and \`:textarea\` outside a form are disabled silently. Use \`:bind\`.
-- Subtracting a negative from text, such as \`first - -last\`, prints \`NaN\`.
+- Subtracting text, such as \`first - last\`, prints \`NaN\`.
 - Footnotes, math and raw HTML do not render, and fenced code has no colour.
 
 ## Sending the document to the user

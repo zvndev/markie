@@ -133,6 +133,7 @@ describe("every Darkmown example the guide shows", () => {
       "Order total",
       "Launch checklist",
       "Make pasta",
+      "Shopping list",
       "RSVP",
       "Notes",
     ]);
@@ -256,26 +257,38 @@ describe("the examples do what the guide says they do", () => {
     expect(rounded.text()).toBe("33");
   });
 
-  it("adds by subtracting a negative, with a name or with parentheses, and both update live", async () => {
-    const page = await open(':state a = 4\n:state b = 3\n:computed s = a - -b\n:computed t = a - (0 - b)\n:button "Up" -> a++\n\n{ s } { t }\n');
+  it("adds and joins with +, and both update live", async () => {
+    const page = await open(':state a = 4\n:state b = 3\n:state first = "Ada"\n:computed s = a + b\n:computed full = first + " " + "L"\n:button "Up" -> a++\n\n{ s } { full }\n');
     expect(page.warnings).toEqual([]);
-    expect(page.text()).toContain("7 7");
+    expect(page.text()).toContain("7 Ada L");
     await page.click("Up");
-    expect(page.text()).toContain("8 8");
-    // The exact sentence the guide and the skill teach.
-    expect(MARKDOWN_GUIDE).toContain("total = subtotal - -tax");
-    expect(SKILL).toContain("total = subtotal - -tax");
-    expect(await rejected(":state a = 1\n:state b = 2\n:computed c = a + b\n\n{ c }\n")).toMatch(/Computed addition/);
+    expect(page.text()).toContain("8 Ada L");
+    expect(MARKDOWN_GUIDE).toContain("total = subtotal + tax");
+    expect(SKILL).toContain("total = subtotal + tax");
+    expect(MARKDOWN_GUIDE).toContain('full = first + " " + last');
   });
 
-  it("does not join text by subtracting a negative: it prints NaN with no warning, as the guide says", async () => {
-    const page = await open(':state first = "Ada"\n:state last = "Lovelace"\n:computed full = first - -last\n\n{ full }\n');
+  it("prints NaN for subtracting text, as the guide says", async () => {
+    const page = await open(':state first = "Ada"\n:state last = "L"\n:computed full = first - last\n\n{ full }\n');
     expect(page.warnings).toEqual([]);
     expect(page.text()).toContain("NaN");
-    expect(MARKDOWN_GUIDE).toContain("Text cannot be joined: print the values side by side, `{ first } { last }`.");
-    expect(MARKDOWN_GUIDE).toContain("prints `NaN`");
-    expect(MARKDOWN_GUIDE).not.toMatch(/including string joining\. Subtract a negative/);
+    expect(MARKDOWN_GUIDE).toContain("prints \`NaN\`");
   });
+
+  it("draws the shopping list: :if switches, the loop sorts, pipes format, and it all reacts", async () => {
+    const page = await open(example("Shopping list"));
+    expect(page.warnings).toEqual([]);
+    const text = page.text();
+    expect(text).toContain("ADA'S LIST");
+    expect(text.indexOf("Bread")).toBeLessThan(text.indexOf("Milk"));
+    expect(text).toContain("$4.50");
+    expect(text).toContain("(in the basket)");
+    expect(text).toContain("The total is hidden.");
+    await page.click("Toggle total");
+    expect(page.text()).toContain("Total: $6.50");
+    expect(page.text()).not.toContain("The total is hidden.");
+  });
+
 
   it("rounds with % on a number, to the nearest by adding one half first", async () => {
     const floor = await open(":state x = 7.9\n:computed whole = x - x % 1\n\n{ whole }\n");
@@ -406,31 +419,54 @@ describe("the examples do what the guide says they do", () => {
 describe("what the guide says does not work in Darkmown preview", () => {
   const switchedOff = async (source: string) => (await compileDarkmownPreview(source, true)).warnings.length > 0;
 
-  it(":if never switches, so its text is never shown by a click", async () => {
-    const source = ':state open = false\n:button "Flip" -> open toggle\n\n:if open\nDetails shown.\n:endif\n';
-    expect(await switchedOff(source)).toBe(true);
-    const page = await open(source);
+  it("switches an :if on a click", async () => {
+    const page = await open(':state open = false\n:button "Flip" -> open toggle\n\n:if open\nDetails shown.\n:else\nHidden.\n:endif\n');
+    expect(page.warnings).toEqual([]);
+    expect(page.text()).toContain("Hidden.");
     await page.click("Flip");
-    expect(page.text()).not.toContain("Details shown.");
+    expect(page.text()).toContain("Details shown.");
+    expect(page.text()).not.toContain("Hidden.");
   });
 
-  it("refuses loops and includes", async () => {
-    expect(await rejected(":state rows = [1]\n\n@loop rows into r\n{ r }\n@endloop\n")).toMatch(/Loops and included files are not available/);
-    expect(await rejected("@include /other.wd\n")).toMatch(/Loops and included files are not available/);
+  it("switches an :if on a comparison, and a per-row :if on the row", async () => {
+    const page = await open(':state n = 1\n:state rows = [{"a": 1, "on": true}, {"a": 2, "on": false}]\n:button "Up" -> n += 5\n\n:if n > 3\nBig.\n:endif\n\n@loop rows into r\nRow { r.a }\n:if r.on\nyes\n:else\nno\n:endif\n@endloop\n');
+    expect(page.warnings).toEqual([]);
+    expect(page.text()).not.toContain("Big.");
+    expect(page.text()).toMatch(/Row 1\s*yes/);
+    expect(page.text()).toMatch(/Row 2\s*no/);
+    await page.click("Up");
+    expect(page.text()).toContain("Big.");
   });
 
-  it("refuses + in :computed", async () => {
-    expect(await rejected(":state a = 1\n:state b = 2\n:computed c = a + b\n\n{ c }\n")).toMatch(/Computed addition/);
+  it("redraws a loop when a button changes its list", async () => {
+    const page = await open(':state items = ["a"]\n:button "More" -> items append "b"\n:button "None" -> items clear\n\n@loop items into i\nItem { i }\n@empty\nNothing yet.\n@endloop\n');
+    expect(page.warnings).toEqual([]);
+    expect(page.text()).toContain("Item a");
+    await page.click("More");
+    expect(page.text()).toContain("Item b");
+    await page.click("None");
+    expect(page.text()).toContain("Nothing yet.");
+    expect(page.text()).not.toContain("Item a");
   });
 
-  it("refuses format pipes", async () => {
-    expect(await rejected(":state p = 5\n\n{ p | money }\n")).toMatch(/Format pipelines are not available/);
+  it("refuses includes and loops over a file", async () => {
+    expect(await rejected("@include /other.wd\n")).toMatch(/Included files are not available/);
+    expect(await rejected("@loop /rows.json into r\n{ r.a }\n@endloop\n")).toMatch(/WD/);
+    expect(MARKDOWN_GUIDE).toContain("\`@loop\` over a file");
   });
 
-  it("switches off comparisons and aggregates in :computed", async () => {
-    expect(await switchedOff(":state n = 1\n:computed big = n > 5\n\n{ big }\n")).toBe(true);
-    expect(await switchedOff(':state rows = [{"p": 1}, {"p": 2}]\n:computed total = sum(rows, p)\n\n{ total }\n')).toBe(true);
-    expect(await switchedOff(':state rows = [{"p": 1}, {"p": 2}]\n:computed total = count(rows)\n\n{ total }\n')).toBe(true);
+  it("runs format pipes", async () => {
+    const page = await open(":state p = 5\n:button \"Up\" -> p += 1\n\n{ p | money }\n");
+    expect(page.warnings).toEqual([]);
+    expect(page.text()).toContain("$5.00");
+    await page.click("Up");
+    expect(page.text()).toContain("$6.00");
+  });
+
+  it("runs comparisons and aggregates in :computed", async () => {
+    const page = await open(':state n = 7\n:state rows = [{"p": 1}, {"p": 2}]\n:computed big = n > 5\n:computed total = sum(rows, p)\n:computed many = count(rows)\n\n{ big } { total } { many }\n');
+    expect(page.warnings).toEqual([]);
+    expect(page.text()).toContain("true 3 2");
   });
 
   it("warns on :store and persist, and :store loses its starting value", async () => {
@@ -460,13 +496,21 @@ describe("what the guide says does not work in Darkmown preview", () => {
     }
   });
 
-  it("disables buttons whose action changes a list or an object", async () => {
-    for (const action of ['list append "x"', 'list prepend "x"', 'list remove "x"', "list clear", 'obj merge {"a": 1}', 'obj delete "a"']) {
-      const source = `:state list = ["a"]\n:state obj = {"a": 0}\n:button "Go" -> ${action}\n\n{ list }\n`;
-      const page = await open(source).catch(() => null);
-      if (page === null) continue; // refused outright is also not available
-      const disabled = page.button("Go").disabled || page.warnings.length > 0;
-      expect(disabled, action).toBe(true);
+  it("runs buttons that change a list or an object", async () => {
+    for (const [action, before, after] of [
+      ['list append "x"', "a", "a,x"], ['list prepend "x"', "a", "x,a"], ['list remove "a"', "a", ""], ["list clear", "a", ""],
+    ]) {
+      const page = await open(`:state list = ["a"]\n:button "Go" -> ${action}\n\n[{ list | join:"," }]\n`);
+      expect(page.warnings, action).toEqual([]);
+      expect(page.text(), action).toContain(`[${before}]`);
+      await page.click("Go");
+      expect(page.text(), action).toContain(`[${after}]`);
+    }
+    for (const [action, after] of [['obj merge {"a": 5}', "[5]"], ['obj delete "a"', "[]"]]) {
+      const page = await open(`:state obj = {"a": 0}\n:button "Go" -> ${action}\n\n[{ obj.a }]\n`);
+      expect(page.warnings, action).toEqual([]);
+      await page.click("Go");
+      expect(page.text(), action).toContain(after);
     }
   });
 
@@ -489,8 +533,8 @@ describe("what the guide says does not work in Darkmown preview", () => {
     expect(MARKDOWN_GUIDE).toContain("task list shows read-only boxes");
   });
 
-  it("raises a notice for links and pictures, an :if and a right-aligned table", async () => {
-    for (const source of ["[Docs](https://example.com)\n", "![pic](x.png)\n", ":state o = false\n:if o\nX\n:endif\n", "| A |\n| ---: |\n| 1 |\n"]) {
+  it("raises a notice for links and pictures and a right-aligned table", async () => {
+    for (const source of ["[Docs](https://example.com)\n", "![pic](x.png)\n", "| A |\n| ---: |\n| 1 |\n"]) {
       expect((await compileDarkmownPreview(source, true)).warnings.length, source).toBeGreaterThan(0);
     }
   });

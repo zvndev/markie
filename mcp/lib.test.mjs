@@ -1085,7 +1085,7 @@ test("the guide says what does not exist, so an agent does not write it", () => 
   assert.match(MARKDOWN_GUIDE, /placeholder token/);
   assert.match(MARKDOWN_GUIDE, /Trust this document/);
   assert.match(MARKDOWN_GUIDE, /128,000 characters and 5,000 lines/);
-  for (const unsupported of [":if", "@loop", "@include", ":store", "persist", ":fetch", "format pipes"]) {
+  for (const unsupported of [":if", "@loop", "@include", ":store", "persist", ":fetch", "format pipes", "sum(rows, field)"]) {
     assert.ok(MARKDOWN_GUIDE.includes(unsupported), `the guide never warns about ${unsupported}`);
   }
 });
@@ -1255,15 +1255,12 @@ test("markie_check_md advice is the same sentence in the guide, the skill and th
   assert.doesNotMatch(readSkill(), /markie_check_md[^.\n]*(every|each|all) /i);
 });
 
-test("the guide and the skill teach addition by subtracting a negative, and rounding with %", () => {
+test("the guide and the skill teach addition with +, and rounding with %", () => {
   for (const [name, text] of [["guide", MARKDOWN_GUIDE], ["skill", readSkill()]]) {
-    assert.match(text, /subtract a negative/i, `${name} never teaches addition`);
-    assert.ok(text.includes("subtotal - -tax"), `${name} never shows total = subtotal - -tax`);
+    assert.ok(text.includes("total = subtotal + tax"), `${name} never shows total = subtotal + tax`);
     assert.ok(text.includes("raw - raw % 1"), `${name} never shows rounding with %`);
-    // Addition is not described as impossible.
-    assert.doesNotMatch(text, /\bno addition\b|cannot add|can't add|addition is not available/i, `${name} says addition is impossible`);
+    assert.doesNotMatch(text, /subtract a negative|\bno addition\b|cannot add|can't add/i, `${name} says addition is impossible`);
   }
-  assert.ok(MARKDOWN_GUIDE.includes("(0 - tax)"), "the guide never shows the parenthesised form");
   assert.ok(MARKDOWN_GUIDE.includes(":computed raw = (3 - left) * 100 / 3"));
   assert.ok(MARKDOWN_GUIDE.includes(":computed cents = half - half % 1"));
   assert.match(MARKDOWN_GUIDE, /33\.333333333333336/);

@@ -32,13 +32,13 @@ they do not sanitize HTML, authorize network access, grant filesystem access or
 provide a credential store. Runtime state is not document source.
 
 The preview compiler runs in a disposable worker, never as a synchronous renderer
-fallback. The initial single-file host subset rejects active loops/includes,
-computed `+` (including numeric addition, until a typed value budget is available)
-and interpolation formatter pipelines before compilation. It also limits source
-to 128,000 characters / 5,000 lines, applies a conservative source-length times
-binding/declaration complexity budget of 1,000,000, bounds output and stops the
-worker after ten seconds (including cold startup) or cancellation. These are preview limits, not edits
-to authored source or claims that Darkmown itself lacks those language features.
+fallback. The single-file host subset rejects includes before compilation. It also
+limits source to 128,000 characters / 5,000 lines, applies a conservative
+source-length times binding/declaration complexity budget of 1,000,000, bounds
+`+` chains, nested loops and pipe arguments, bounds output and stops the worker
+after ten seconds (including cold startup) or cancellation. These are preview
+limits, not edits to authored source or claims that Darkmown itself lacks those
+language features.
 
 Full upstream and bundled dependency licenses are in `THIRD-PARTY-NOTICES.txt`.
 The notices and provenance are also generated into `public/darkmown/` so packaged

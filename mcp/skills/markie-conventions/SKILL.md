@@ -58,18 +58,18 @@ the `markie://guide/markdown` resource.
 Left to do: { left } of 2.
 ```
 
-- Works: `:state`, `:computed` (with `-` `*` `/` `%` only), `:button`
-  (`n++`, `n--`, `n += 5`, `n = 10`, `x = "text"`, `flag toggle`, `n reset`),
-  `:slider`, `:bind`, bound `:select` `:checkbox` `:radio`, and `:form into`.
-- There is no `+`. To add, subtract a negative: `total = subtotal - -tax`.
+- Works: `:state`, `:computed`, `:if`, `@loop` over a list in `:state`, format
+  pipes (`{ price | money }`), `:button` (`n++`, `n--`, `n += 5`, `n = 10`,
+  `x = "text"`, `flag toggle`, `n reset`, `list append "x"`), `:slider`, `:bind`,
+  bound `:select` `:checkbox` `:radio`, and `:form into`.
+- `+` adds numbers and joins text: `total = subtotal + tax`.
 - Round with `%`: `percent = raw - raw % 1` drops the fraction (a checklist of
   3 otherwise prints 33.333333333333336). Radio and select options that are
   numbers feed straight into `:computed`. `markie_guide` has money and
   checklist examples.
-- Does not work in the preview: `:if`, `@loop`, `@include`, `:store`,
-  `persist`, `:fetch`, `+`, format pipes, links and pictures
-  inside a `.wd`. `- [ ]` boxes are read-only. `:input` and `:textarea` outside a form are disabled with no
-  notice.
+- Does not work in the preview: `@include`, `:store`, `persist`, `:fetch`, links
+  and pictures inside a `.wd`. `- [ ]` boxes are read-only. `:input` and
+  `:textarea` outside a form are disabled with no notice.
 - Declare a name before you use it: an undeclared `{ name }` prints as itself.
 - The user must choose Trust this document before the controls turn on, and an
   edit takes the trust away. State is not saved. A `.wd` stays under 128,000

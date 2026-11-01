@@ -72,24 +72,28 @@ describe("bounded off-thread Darkmown preview compiler", () => {
     expect(third.worker.terminate).toHaveBeenCalledOnce();
   });
 
-  it("refuses static, reactive and nested expansion before constructing a worker", async () => {
+  it("refuses includes and oversized loops before constructing a worker", async () => {
     const createWorker = vi.fn();
-    const examples = [
-      "@loop meta.tags into row\nRepeated\n@endloop",
-      ":state rows = []\n@loop rows into row\nRepeated\n@endloop",
-      "::: section\n@loop meta.tags into row\n@loop meta.tags into item\nRepeated\n@endloop\n@endloop\n:::",
-      "@include /other.wd",
-      "# Windows\r\n@loop meta.tags into row\r\nRepeated\r\n@endloop",
-    ];
-    for (const source of examples) await expect(compileDarkmownOffThread(source, { createWorker })).rejects.toThrow("not available");
+    await expect(compileDarkmownOffThread("@include /other.wd", { createWorker })).rejects.toThrow("not available");
+    const list = `[${Array.from({ length: 900 }, (_, index) => index).join(",")}]`;
+    for (const source of [
+      `:state rows = ${list}\n@loop rows into a\n@loop rows into b\n@loop rows into c\nX\n@endloop\n@endloop\n@endloop`,
+      `---\ntags: ${list}\n---\n@loop meta.tags into a\n@loop meta.tags into b\nX\n@endloop\n@endloop`,
+      `# Windows\r\n:state rows = ${list}\r\n@loop rows into a\r\n@loop rows into b\r\nX\r\n@endloop\r\n@endloop`,
+    ]) await expect(compileDarkmownOffThread(source, { createWorker })).rejects.toThrow("too many rows");
     expect(createWorker).not.toHaveBeenCalled();
   });
 
+  it("allows an ordinary loop, and a small nested one", () => {
+    expect(() => validateDarkmownPreviewSource(":state rows = [1, 2, 3]\n@loop rows into r\n{ r }\n@endloop")).not.toThrow();
+    expect(() => validateDarkmownPreviewSource(":state rows = [1, 2, 3]\n@loop rows into r\n@loop rows into s\n{ s }\n@endloop\n@endloop")).not.toThrow();
+  });
+
   it("follows compiler fence semantics for literal directive examples", () => {
-    expect(() => validateDarkmownPreviewSource("````wd\n```\n@loop meta.tags into row\n````\n# Safe")).not.toThrow();
-    expect(() => validateDarkmownPreviewSource("~~~wd\n@loop rows into row\n~~~\n# Safe")).not.toThrow();
-    expect(() => validateDarkmownPreviewSource("\\@loop rows into row\n    @loop rows into row")).not.toThrow();
-    expect(() => validateDarkmownPreviewSource("```wd\nLiteral\n```\n@loop rows into row")).toThrow("not available");
+    expect(() => validateDarkmownPreviewSource("````wd\n```\n@include /a.wd\n````\n# Safe")).not.toThrow();
+    expect(() => validateDarkmownPreviewSource("~~~wd\n@include /a.wd\n~~~\n# Safe")).not.toThrow();
+    expect(() => validateDarkmownPreviewSource("\\@include /a.wd\n    @include /a.wd")).not.toThrow();
+    expect(() => validateDarkmownPreviewSource("```wd\nLiteral\n```\n@include /a.wd")).toThrow("not available");
   });
 
   it("rejects exponential computed concatenation before executing the compiler", async () => {
@@ -97,18 +101,19 @@ describe("bounded off-thread Darkmown preview compiler", () => {
     const source = ':state x0 = "' + "a".repeat(1_000) + '"\n' + Array.from({ length: 13 }, (_, index) => `:computed x${index + 1} = x${index} + x${index}`).join("\n") + "\n\n{ x13 }";
     await expect(compileDarkmownOffThread(source, { createWorker })).rejects.toThrow("concatenation");
     expect(createWorker).not.toHaveBeenCalled();
-    expect(() => validateDarkmownPreviewSource("---\ntitle: Counter\n```\n---\n:computed x = x + x")).toThrow("concatenation");
     expect(() => validateDarkmownPreviewSource(":state count = 0\n:computed doubled = count * 2\n{ doubled }")).not.toThrow();
+    expect(() => validateDarkmownPreviewSource(':state a = "x"\n:computed b = a + "x + y"\n:computed c = b + b\n{ c }')).not.toThrow();
+    expect(() => validateDarkmownPreviewSource(`:state a = 1\n:computed b = ${Array(65).fill("a").join(" + ")}\n{ b }`)).toThrow("concatenation");
   });
 
-  it("rejects amplifying format pipelines and repeated large bindings before worker creation", async () => {
+  it("rejects a format pipe with an oversized argument, and repeated large bindings, before worker creation", async () => {
     const createWorker = vi.fn();
-    for (const source of [':state list = []\n{ list | join:"long separator" }', ':state list = []\n{ list \\| join:"long separator" }', '{ meta.title | upper }']) {
-      await expect(compileDarkmownOffThread(source, { createWorker })).rejects.toThrow("pipelines");
-    }
+    const long = "x".repeat(300);
+    await expect(compileDarkmownOffThread(`:state list = []\n{ list | join:"${long}" }`, { createWorker })).rejects.toThrow("pipelines");
     const repeated = ':state text = "' + "a".repeat(10_000) + '"\n' + "{ text }\n".repeat(100);
     await expect(compileDarkmownOffThread(repeated, { createWorker })).rejects.toThrow("complexity budget");
     expect(createWorker).not.toHaveBeenCalled();
-    expect(() => validateDarkmownPreviewSource("```wd\n{ rows | join:\", \" }\n:computed y = x + x\n```")).not.toThrow();
+    expect(() => validateDarkmownPreviewSource('{ meta.title | upper }\n:state list = []\n{ list | join:", " }')).not.toThrow();
+    expect(() => validateDarkmownPreviewSource(`\`\`\`wd\n{ rows | join:"${long}" }\n\`\`\``)).not.toThrow();
   });
 });

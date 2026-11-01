@@ -8,6 +8,21 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Interactive documents can do much more.** A Darkmown `.wd` can now show and
+  hide blocks with `:if`, repeat a block for each row of a list with `@loop`, add
+  numbers and join text with `+`, format values such as `{ price | money }`, and
+  change a list from a button. Task lists show as read-only boxes. All of it still
+  runs inside the offline sandbox, after you choose Trust this document.
+- **Agents can check a `.wd` before handing it to you.** The new `markie_check_wd`
+  tool compiles a document the way the preview does and reports what will not work.
+
+### Changed
+
+- **Updated the bundled Darkmown to 2.13.0**, which includes its latest security
+  fixes. The preview now also tells you when a `{ name }` matches nothing.
+
 ## [0.9.3] - 2026-10-27
 
 ### Changed

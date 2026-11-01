@@ -128,6 +128,14 @@ The rule: an enhancement is allowed in `.md` only if the document still makes se
 
 **Under the hood:** the existing Darkmown compiler and sandboxed frame run the interactive parts, so the security work carries over.
 
+**Settled with Kirby on 2026-11-01:**
+
+- Full power means all of Darkmown in Markie, including `:fetch` and saved state, each behind a per-document permission. The offline subset is a stage, not the goal.
+- Darkmown projects become a first-class citizen with their own separate area that feels more like an IDE.
+- The default stays simple: a person makes a doc interactive as a standalone Darkmown doc.
+
+Done so far: Darkmown 2.13, `:if`, `@loop`, `+`, format pipes, list actions and task lists in the sandbox, and `markie_check_wd` for agents. Still open: permissions for links, pictures, `:fetch` and saved state, the projects area, and the enhancement comments in `.md`.
+
 This needs a design pass before code: which conversions come first, and how a converted block looks in the editor.
 
 ## Order

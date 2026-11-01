@@ -1,4 +1,4 @@
-@zvndev/darkmown 2.12.2 (MIT)
+@zvndev/darkmown 2.13.0 (MIT)
 MIT License
 
 Copyright (c) 2026 ZVN
@@ -101,7 +101,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------
 
-markdown-it 14.3.2 (MIT)
+markdown-it 14.3.3 (MIT)
 Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin.
 
 Permission is hereby granted, free of charge, to any person

@@ -1,12 +1,12 @@
 {
   "source": "https://github.com/ZVN-DEV/darkmown",
-  "commit": "f3023a444696bcbcbc0475d718889291d88af7b1",
-  "version": "2.12.2",
+  "commit": "219c8881ee77c83c01b3f65f6dde33b80c69073e",
+  "version": "2.13.0",
   "build": {
     "script": "scripts/build-darkmown-vendor.mjs",
-    "scriptSha256": "bdcdf6de80fd44cc8f3f86dde6e9a22f75816f277d5f3f13a8837919d9eb05e9",
+    "scriptSha256": "20e9dcb38a877da0e98663558e0be76525ea62e76e5ff17e64fc0050bef4686f",
     "esbuild": "0.28.2",
-    "sourceLockSha256": "1f666e3578519849a9972453e060d8ea16f142ab18dd770cdb7619dbca13892d"
+    "sourceLockSha256": "aa86a7e69b7cab7460298a8550492c71e44c075ae1fd512898d7ac4b516db658"
   },
   "entryPoints": [
     "src/compiler/page.js:compileFromMemory",
@@ -33,7 +33,7 @@
   "bundledPackages": [
     {
       "name": "@zvndev/darkmown",
-      "version": "2.12.2",
+      "version": "2.13.0",
       "license": "MIT"
     },
     {
@@ -53,7 +53,7 @@
     },
     {
       "name": "markdown-it",
-      "version": "14.3.2",
+      "version": "14.3.3",
       "license": "MIT"
     },
     {
@@ -375,7 +375,7 @@
     },
     {
       "path": "node_modules/markdown-it/lib/rules_block/reference.mjs",
-      "sha256": "edccd89f1455f60cb0833d2886a508a88f20e54dfe8ba13e21611dc9119ca3cc"
+      "sha256": "8884a101e95de67d72b1fd3dfe3341bf52876132398d72a528481f662e0eecb6"
     },
     {
       "path": "node_modules/markdown-it/lib/rules_block/state_block.mjs",
@@ -447,7 +447,7 @@
     },
     {
       "path": "node_modules/markdown-it/lib/rules_inline/html_inline.mjs",
-      "sha256": "f843b79ce79be4d93e7ed0b33f4c20c64c892266ba759107b33a17c5be9add60"
+      "sha256": "f7bee2bd14c158e0178ef409ea84a5d330672094265fbd112673d23a75ff1924"
     },
     {
       "path": "node_modules/markdown-it/lib/rules_inline/image.mjs",
@@ -467,7 +467,7 @@
     },
     {
       "path": "node_modules/markdown-it/lib/rules_inline/state_inline.mjs",
-      "sha256": "bdca3dd6a3359f3f8e0f3b760e6dd8e90624dc1356f24062123b7a4332b71619"
+      "sha256": "f4b30bd182fea54a661528d6a031c2cdcb06c688a00fb5598c39cf8ae9554372"
     },
     {
       "path": "node_modules/markdown-it/lib/rules_inline/strikethrough.mjs",
@@ -551,7 +551,7 @@
     },
     {
       "path": "src/compiler/context.js",
-      "sha256": "0487bda826ff13a3edb645530eacd3852d896ede1de0fa52193ac837f6450af7"
+      "sha256": "99a453781ade8e259e81f19baa83b12018ddc1de09ae2d7c7180aa74d5a778f5"
     },
     {
       "path": "src/compiler/directives.js",
@@ -563,11 +563,11 @@
     },
     {
       "path": "src/compiler/fetch.js",
-      "sha256": "d7f0bfd263cda2732fb6297023ec2b404221c51ab39aa4f77191c6aec83498b2"
+      "sha256": "6db3600174fa9c0b75b3cd6ea21b8c5a417cc06e00d20c9c4665f81249691780"
     },
     {
       "path": "src/compiler/format.js",
-      "sha256": "605542c4b40fa397050b3e492b2973588e1810e9388226187081ef6d192f9d79"
+      "sha256": "72c814c4a97e6d7e1fd8f2616ec30cf2a360fe504e8fb0cce20705cd6291a869"
     },
     {
       "path": "src/compiler/forms.js",
@@ -575,7 +575,7 @@
     },
     {
       "path": "src/compiler/frontmatter.js",
-      "sha256": "da1875f2068bb047d88e9bfbfc57aba2342dfb6dfacd2470c4809166bab5cf5d"
+      "sha256": "5d9d6af7540d1ebf0fb62efd9fc988e2353f7787299530dcc8d096e8831da8c7"
     },
     {
       "path": "src/compiler/image-size.js",
@@ -595,7 +595,7 @@
     },
     {
       "path": "src/compiler/markdown.js",
-      "sha256": "66068171ce56e5a21f30dce9b5fcb6fa55933cab14fdfb14aedf44a35993340c"
+      "sha256": "e979c71111e7c4417a4aaa6e509dce37a54ee89bb6a5ee6287f236ae98a0e8a8"
     },
     {
       "path": "src/compiler/media.js",
@@ -603,7 +603,7 @@
     },
     {
       "path": "src/compiler/page.js",
-      "sha256": "66fb63e791350ea599b1d883874eab0dce6c17acc87fba59466560cb921dd492"
+      "sha256": "f871a563977d2d19b7bee171d521d546d858f626a0e35c961dba21539ac545c8"
     },
     {
       "path": "src/compiler/predicates.js",
@@ -635,7 +635,7 @@
     },
     {
       "path": "src/runtime.js",
-      "sha256": "a3694bfeee8d549f1dbfaf923c8720f995a7610bb74757b8ae73d1848a2939a1"
+      "sha256": "8d13007dd788f892f91ebf58adf7c34188621e8005a1e3547ec2e7c4c806b9c1"
     },
     {
       "path": "src/skin.js",
@@ -644,16 +644,16 @@
   ],
   "artifacts": {
     "compiler-browser.mjs": {
-      "bytes": 423393,
-      "sha256": "9779c1a50c5940e90b03a895d7770680e93d174c0f5728ce39e96940a58c0331"
+      "bytes": 428523,
+      "sha256": "daab03c4b3fcaf5bf2324293dc77cbc89161f0ea0737a78b4c46064cd7bffd4b"
     },
     "runtime.js.txt": {
-      "bytes": 17976,
-      "sha256": "680a7861ec4efca5c2f1fdbe9a766287c72c4cabd6a65c6db5a9519a1d4e4768"
+      "bytes": 18052,
+      "sha256": "29faefc6bd199e85a84959b77e569c5816ea05a7c93e7314d00ed30743c1f0de"
     },
     "THIRD-PARTY-NOTICES.txt": {
       "bytes": 10937,
-      "sha256": "e9073734e9bb13af02a97656fd50404ff1e145ac47dc53a9cfc9863966b4bd1a"
+      "sha256": "6bd4251e029b02bf67bc0fb45097ba63789937b4162eab0246f34b47525641a6"
     }
   }
 }

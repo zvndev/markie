@@ -1272,7 +1272,7 @@ test("the guide and the skill teach addition by subtracting a negative, and roun
 
 test("the guide says which Darkmown mistakes are silent, and to declare before use", () => {
   assert.match(MARKDOWN_GUIDE, /`:input` and `:textarea` outside a form are disabled silently/);
-  assert.match(MARKDOWN_GUIDE, /`- \[ \]` task lists show the literal brackets/);
+  assert.match(MARKDOWN_GUIDE, /task list shows read-only boxes/);
   assert.match(MARKDOWN_GUIDE, /WD234/);
   assert.match(MARKDOWN_GUIDE, /prints as `\{ name \}`/);
   assert.match(MARKDOWN_GUIDE, /Declare before use/);

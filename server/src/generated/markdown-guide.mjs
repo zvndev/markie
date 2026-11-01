@@ -239,7 +239,7 @@ Limits:
 - At most 128,000 characters and 5,000 lines (a final newline counts as a line). Past that, Markie saves the file but will not preview it.
 - Source length times the number of \`{\` characters and \`:computed\` lines may not pass 1,000,000.
 - Directives only work at the very start of a line. In a list, a quote, indented text or a code fence they are plain text.
-- Declare before use. A \`:computed\` or bound control that names an undeclared value stops the preview (WD234, WD406, WD450). A plain \`{ name }\` for an undeclared name prints as \`{ name }\`, with no error.
+- Declare before use. A \`:computed\` or bound control that names an undeclared value stops the preview (WD234, WD406, WD450). A plain \`{ name }\` for an undeclared name prints as \`{ name }\`, with a notice.
 - A wrong line shows an error such as \`[WD201] Malformed :state\`, and the source is never changed. You cannot run the preview, so copy the shapes below.
 
 ### A counter: :state, :computed, :button
@@ -448,6 +448,8 @@ On submit or Enter, a form puts what was typed into the state named after \`into
 
 \`::: name\` opens a block and a bare \`:::\` closes it. It is a plain group: classes such as \`.card\` are dropped, so it adds no box or colour.
 
+A \`- [ ]\` or \`- [x]\` task list shows read-only boxes. For a box the reader can tick, use \`:checkbox\`.
+
 ### What does not work in Darkmown preview
 
 An error stops the preview:
@@ -469,7 +471,6 @@ A notice appears in the preview pane and the feature is switched off:
 Nothing tells you about these:
 
 - \`:input\` and \`:textarea\` outside a form are disabled silently. Use \`:bind\`.
-- \`- [ ]\` task lists show the literal brackets. Use \`:checkbox\`.
 - Subtracting a negative from text, such as \`first - -last\`, prints \`NaN\`.
 - Footnotes, math and raw HTML do not render, and fenced code has no colour.
 

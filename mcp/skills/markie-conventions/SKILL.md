@@ -67,8 +67,8 @@ Left to do: { left } of 2.
   numbers feed straight into `:computed`. `markie_guide` has money and
   checklist examples.
 - Does not work in the preview: `:if`, `@loop`, `@include`, `:store`,
-  `persist`, `:fetch`, `+`, format pipes, links, pictures and `- [ ]` lists
-  inside a `.wd`. `:input` and `:textarea` outside a form are disabled with no
+  `persist`, `:fetch`, `+`, format pipes, links and pictures
+  inside a `.wd`. `- [ ]` boxes are read-only. `:input` and `:textarea` outside a form are disabled with no
   notice.
 - Declare a name before you use it: an undeclared `{ name }` prints as itself.
 - The user must choose Trust this document before the controls turn on, and an

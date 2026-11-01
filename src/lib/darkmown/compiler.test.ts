@@ -84,7 +84,7 @@ describe("pinned offline Darkmown compiler and runtime", () => {
 
   it("pins every generated artifact, notices and the exact Electron runtime hash", () => {
     const sha256 = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
-    expect(provenance.commit).toBe("f3023a444696bcbcbc0475d718889291d88af7b1");
+    expect(provenance.commit).toBe("219c8881ee77c83c01b3f65f6dde33b80c69073e");
     for (const [name, descriptor] of Object.entries(provenance.artifacts)) {
       const bytes = readFileSync(path.resolve("src/lib/darkmown/vendor", name));
       expect(bytes.byteLength).toBe(descriptor.bytes);

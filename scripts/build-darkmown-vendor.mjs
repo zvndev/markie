@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const SOURCE_COMMIT = "f3023a444696bcbcbc0475d718889291d88af7b1";
+const SOURCE_COMMIT = "219c8881ee77c83c01b3f65f6dde33b80c69073e";
 const ESBUILD_VERSION = "0.28.2";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const destination = path.join(root, "src/lib/darkmown/vendor");

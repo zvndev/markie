@@ -486,7 +486,7 @@ describe("what the guide says does not work in Darkmown preview", () => {
     for (const source of ["- [ ] one\n- [x] two\n", "Note[^1]\n\n[^1]: the note\n", "$x^2$\n", "<mark>marked</mark>\n"]) {
       expect((await compileDarkmownPreview(source, true)).warnings, source).toEqual([]);
     }
-    expect(MARKDOWN_GUIDE).toContain("`- [ ]` task lists show the literal brackets");
+    expect(MARKDOWN_GUIDE).toContain("task list shows read-only boxes");
   });
 
   it("raises a notice for links and pictures, an :if and a right-aligned table", async () => {
@@ -499,7 +499,8 @@ describe("what the guide says does not work in Darkmown preview", () => {
     expect(await rejected(":state a = 1\n:computed b = a * missing\n\n{ b }\n")).toMatch(/WD234/);
     expect(await rejected(":computed b = a * 2\n:state a = 1\n\n{ b }\n")).toMatch(/WD234/);
     const before = await open("Hello { a }\n\n:state a = 1\n");
-    expect(before.warnings).toEqual([]);
+    expect(before.warnings).toHaveLength(1);
+    expect(before.warnings[0]).toMatch(/"\{ a \}" matches no :state/);
     expect(before.text()).toContain("Hello { a }");
     const never = await open(":state a = 1\n\nHello { missing } and { a }\n");
     expect(never.text()).toContain("Hello { missing } and 1");
@@ -524,12 +525,13 @@ describe("what the guide says does not work in Darkmown preview", () => {
     expect(await rejected(":state\n")).toMatch(/WD201/);
   });
 
-  it("does not render links, pictures, task lists, footnotes, math or raw HTML the way .md does", async () => {
+  it("renders a task list as read-only boxes, but not links, pictures, footnotes, math or raw HTML the way .md does", async () => {
     const page = await open("[Docs](https://example.com) and [rel](other.md)\n\n![pic](x.png)\n\n- [ ] one\n- [x] two\n\nNote[^1]\n\n[^1]: the note\n\n$x^2$\n\n<mark>marked</mark>\n");
     expect(page.doc.querySelector("a[href]")).toBeNull();
     expect(page.doc.querySelector("img")).toBeNull();
-    expect(page.doc.querySelector("input[type=checkbox]")).toBeNull();
-    expect(page.text()).toContain("[ ] one");
+    const boxes = [...page.doc.querySelectorAll<HTMLInputElement>("input[type=checkbox]")];
+    expect(boxes.map((box) => [box.disabled, box.checked])).toEqual([[true, false], [true, true]]);
+    expect(page.text()).not.toContain("[ ] one");
     expect(page.text()).toContain("$x^2$");
     expect(page.doc.querySelector("mark")).toBeNull();
     expect(page.text()).toContain("Docs and rel");

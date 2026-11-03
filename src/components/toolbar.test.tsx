@@ -1,8 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installBridge } from "@/test/mock-bridge";
 import { Toolbar } from "./toolbar";
+import { exportFormatsFor } from "@/lib/export-formats";
 
 function renderToolbar(props: Partial<React.ComponentProps<typeof Toolbar>> = {}) {
   const handlers = {
@@ -33,7 +34,7 @@ describe("the existing Markie top bar", () => {
     expect(screen.getByRole("button", { name: "Save a Copy…" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "PDF (Dark)" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "PDF (Light)" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Export HTML" }));
+    await userEvent.click(screen.getByRole("button", { name: "HTML (.html)" }));
     expect(onExportHTML).toHaveBeenCalledTimes(1);
   });
 
@@ -56,7 +57,8 @@ describe("the existing Markie top bar", () => {
     await userEvent.click(screen.getByRole("button", { name: "Share" }));
     expect(onShare).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole("button", { name: "Export menu" }));
-    expect(screen.queryByRole("button", { name: "Export HTML" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "HTML (.html)" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Export as" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^PDF/ })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Save a Copy…" }));
     expect(onSaveAs).toHaveBeenCalledTimes(1);
@@ -78,6 +80,46 @@ describe("the existing Markie top bar", () => {
     expect(screen.getByRole("button", { name: "Export PDF…" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Export PDF…" }));
     expect(onDocumentExportPDF).toHaveBeenCalledOnce();
+  });
+
+  it("groups every export under Export as, in order, with the RTF and ODT limit stated", async () => {
+    const onExportFormat = vi.fn();
+    renderToolbar({ exportFormats: exportFormatsFor("markdown"), onExportFormat });
+    await userEvent.click(screen.getByRole("button", { name: "Export menu" }));
+    const group = screen.getByRole("group", { name: "Export as" });
+    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "PDF (Dark)", "PDF (Light)", "HTML (.html)", "Word (.docx)", "RTF (.rtf)", "OpenDocument (.odt)", "Plain text (.txt)",
+    ]);
+    expect(within(group).getByRole("note")).toHaveTextContent("Tables there become tab-separated rows");
+    await userEvent.click(within(group).getByRole("button", { name: "Word (.docx)" }));
+    expect(onExportFormat).toHaveBeenCalledExactlyOnceWith("docx");
+    expect(screen.queryByRole("group", { name: "Export as" })).not.toBeInTheDocument();
+  });
+
+  it("offers Markdown instead of plain text for a text file, and greys exports out while one runs", async () => {
+    renderToolbar({ exportFormats: exportFormatsFor("text"), onExportFormat: vi.fn(), exporting: true });
+    await userEvent.click(screen.getByRole("button", { name: "Export menu" }));
+    expect(screen.getByRole("button", { name: "Markdown (.md)" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Plain text (.txt)" })).not.toBeInTheDocument();
+  });
+
+  it("puts Copy all in the top bar beside Export and copies the freshest text", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    renderToolbar({ copyText: "old", readCopyText: () => "# Latest" });
+    const copy = screen.getByRole("button", { name: "Copy all" });
+    expect(copy).toHaveAttribute("title", "Copy all");
+    expect(copy.closest('[data-window-control-region="file"]')).not.toBeNull();
+    await userEvent.click(copy);
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("# Latest");
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+
+  it("disables Copy all for an empty document and hides it for a Word session", () => {
+    const { view } = renderToolbar({ copyText: "" });
+    expect(screen.getByRole("button", { name: "Copy all" })).toBeDisabled();
+    view.rerender(<Toolbar documentMode fileName="proposal.docx" isDirty={false} canRename={false} onOpenFile={vi.fn()} onExportPDF={vi.fn()} onSaveAs={vi.fn()} onExportHTML={vi.fn()} onRename={vi.fn()} onShare={vi.fn()} onThemePresets={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Copy all" })).not.toBeInTheDocument();
   });
 
   it("keeps narrow-screen file, share and appearance actions reachable in the existing overflow", async () => {

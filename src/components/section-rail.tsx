@@ -9,13 +9,12 @@
 //
 // The rich view and the source view each supply the headings and how to find
 // and reach them (RichSectionRail below; SourceSectionRail, mounted by the
-// CodeMirror wrapper in src/components/editor.tsx). Super-nightly only, behind
-// nightlyFeaturesEnabled().
+// CodeMirror wrapper in src/components/editor.tsx). It ships to every build;
+// it started behind nightlyFeaturesEnabled() and left the gate on 2026-11-03.
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
 import { BRAND_COLORS } from "@/lib/brand";
-import { nightlyFeaturesEnabled } from "@/lib/nightly";
 import {
   activeSectionIndex,
   clipSnippet,
@@ -333,11 +332,10 @@ function contentTop(scroller: HTMLElement, el: HTMLElement): number {
 
 /** The rail for the rich view, mounted beside it in the rich pane. */
 export function RichSectionRail({ editor }: { editor: Editor | null }) {
-  const [enabled] = useState(() => nightlyFeaturesEnabled());
   const [state, setState] = useState<{ scroller: HTMLElement; sections: Section[]; headings: HTMLElement[] } | null>(null);
 
   useEffect(() => {
-    if (!enabled || !editor) {
+    if (!editor) {
       setState(null);
       return;
     }
@@ -368,7 +366,7 @@ export function RichSectionRail({ editor }: { editor: Editor | null }) {
       if (timer) clearTimeout(timer);
       editor.off("transaction", onTransaction);
     };
-  }, [enabled, editor]);
+  }, [editor]);
 
   const measure = useCallback(() => {
     if (!state) return [];
@@ -408,16 +406,14 @@ export interface SourceSectionRailProps {
  * editor only has to say where a line is and how to get there.
  */
 export function SourceSectionRail({ markdown, scroller, lineTop, scrollToLine }: SourceSectionRailProps) {
-  const [enabled] = useState(() => nightlyFeaturesEnabled());
-  const [sections, setSections] = useState<SourceSection[]>(() => (enabled ? extractSections(markdown) : []));
+  const [sections, setSections] = useState<SourceSection[]>(() => extractSections(markdown));
 
   // Parsing the whole text on every keystroke would be wasted on a rail that
   // only needs to be right once typing pauses.
   useEffect(() => {
-    if (!enabled) return;
     const timer = setTimeout(() => setSections(extractSections(markdown)), 200);
     return () => clearTimeout(timer);
-  }, [enabled, markdown]);
+  }, [markdown]);
 
   const lineTopRef = useRef(lineTop);
   const scrollRef = useRef(scrollToLine);
@@ -431,6 +427,5 @@ export function SourceSectionRail({ markdown, scroller, lineTop, scrollToLine }:
     if (section) scrollRef.current(section.line);
   }, [sections]);
 
-  if (!enabled) return null;
   return <SectionRail sections={sections} scroller={scroller} measure={measure} onSelect={onSelect} placement="column" />;
 }

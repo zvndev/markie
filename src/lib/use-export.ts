@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
 import { getColorMode, resolveColorMode } from "@/lib/color-mode";
 import { getSafeAPI } from "@/lib/electron";
+import { convertForExport, exportFileName, exportFormat, type ExportFormatId } from "@/lib/export-formats";
 
 // One wording for "an export is already running", wherever the second one is
 // refused: the renderer's own guard and the main process's say the same thing.
@@ -29,6 +30,8 @@ export interface ExportInputs {
   /** The open file's path, so main can inline that folder's images. */
   docPath: () => string | null;
   fileName: string | null;
+  /** A plain-text file is exported literally; anything else is read as Markdown. */
+  plainText?: boolean;
   /** Where a failure is said out loud. Null clears a previous message. */
   onError: (message: string | null) => void;
 }
@@ -141,5 +144,27 @@ export function useDocumentExport(inputs: ExportInputs) {
     );
   }, [guarded]);
 
-  return { exporting, exportPDF, exportHTML, printDocument };
+  // A converted copy (Word, RTF, ODT, text, Markdown). The bytes are made here
+  // by the pure converter, then main asks where they go. Under the same guard
+  // as the rest, so a slow conversion cannot be started twice.
+  const exportAs = useCallback(async (id: ExportFormatId) => {
+    const { currentMarkdown, fileName, plainText } = ref.current;
+    const api = getSafeAPI();
+    const format = exportFormat(id);
+    const defaultName = exportFileName(fileName, id);
+    await guarded(`Couldn't export this document as ${format.label}.`, async () => {
+      const data = await convertForExport(currentMarkdown(), plainText ? "text" : "markdown", id);
+      if (api?.exportDocument) return api.exportDocument({ format: id, defaultName, data });
+      // Browser: the same bytes as a download, which is all a page may do.
+      const url = URL.createObjectURL(new Blob([data as BlobPart], { type: format.mimeType }));
+      const link = Object.assign(document.createElement("a"), { href: url, download: defaultName });
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      return { success: true };
+    });
+  }, [guarded]);
+
+  return { exporting, exportPDF, exportHTML, exportAs, printDocument };
 }

@@ -8,6 +8,24 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Long documents show their outline at the left edge.** A document with a few
+  headings that runs past a screen and a half gets a column of short ticks, one
+  per heading. Hover one to see the section, click it to jump there. It works in
+  the rich view and in the source view. It was only in test builds before.
+- **Export to Word, RTF, OpenDocument and plain text.** The Export menu now
+  lists every format under Export as: PDF, HTML, Word (.docx), RTF, OpenDocument
+  (.odt) and plain text. A plain-text file can be exported as Markdown instead.
+  Word keeps headings, bold, italic, lists, links and tables. RTF and ODT keep
+  the text and its formatting; a table there becomes tab-separated rows and a
+  link shows its address after the text. Your document is not changed.
+
+### Changed
+
+- **Copy all moved to the top bar.** It sits beside Export as an icon, instead
+  of floating in the corner of the page where Find also opens.
+
 ## [0.9.4] - 2026-11-02
 
 ### Added

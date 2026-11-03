@@ -217,6 +217,13 @@ export interface ElectronAPI {
     html: string;
     docPath?: string | null;
   }): Promise<SaveResult>;
+  // A converted copy (src/lib/export-formats.ts) written through the save
+  // sheet. Main owns the format table; the open document is never touched.
+  exportDocument?(args: {
+    format: "docx" | "rtf" | "odt" | "txt" | "md";
+    defaultName: string;
+    data: Uint8Array;
+  }): Promise<SaveResult>;
   saveFile(args: {
     filePath: string;
     content: string;

@@ -1,6 +1,6 @@
 # Document features for super-nightly
 
-2026-10-30. Kirby's list: a section rail, document tabs, comments driven by MCP, version history, branches and block versions, and a rethought Darkmown. All of it ships to super-nightly only, so Kirby can iterate before anyone else sees it. Markdown first. Other formats can wait.
+2026-10-30. Kirby's list: a section rail, document tabs, comments driven by MCP, version history, branches and block versions, and a rethought Darkmown. All of it ships to super-nightly only, so Kirby can iterate before anyone else sees it. The section rail is the exception: it left the gate on 2026-11-03 and now ships to every build. Markdown first. Other formats can wait.
 
 ## Do we need a versioned API?
 
@@ -40,6 +40,8 @@ What it is: the tick marks on the left edge of the T3 Code thread, applied to a 
 - Works in the rich view and the source view.
 
 No decisions needed. This is the first build.
+
+**Shipped to everyone on 2026-11-03.** Kirby moved to the public build, missed the rail and asked for it back for every user. It is no longer behind `nightlyFeaturesEnabled()`. Tabs, comments and the history panel stay nightly-only.
 
 ## 2. Document tabs
 

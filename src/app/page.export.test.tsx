@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElectronAPI } from "@/lib/electron";
@@ -133,6 +134,36 @@ describe("page export/print handlers", () => {
     await push("onMenuPrint");
     await waitFor(() => expect(exportPDF).toHaveBeenCalledTimes(1));
     expect(((exportPDF.mock.calls[0] as unknown[])[0] as { mode?: string }).mode).toBe("print");
+  });
+
+  it("exports a Word copy from the toolbar's Export as list through main's save sheet", async () => {
+    const exportDocument = vi.fn(async () => ({ success: true, path: "/tmp/notes.docx" }));
+    await boot({ exportDocument } as Partial<ElectronAPI>);
+    await userEvent.click(screen.getByRole("button", { name: "Export menu" }));
+    const group = screen.getByRole("group", { name: "Export as" });
+    expect(within(group).queryByRole("button", { name: "Markdown (.md)" })).toBeNull();
+    await userEvent.click(within(group).getByRole("button", { name: "Word (.docx)" }));
+    await waitFor(() => expect(exportDocument).toHaveBeenCalledTimes(1));
+    const arg = (exportDocument.mock.calls[0] as unknown[])[0] as { format: string; defaultName: string; data: Uint8Array };
+    expect(arg.format).toBe("docx");
+    expect(arg.defaultName).toBe("notes.docx");
+    const { openDocx } = await import("@/lib/office/docx");
+    expect((await openDocx(arg.data)).text).toBe("opened content");
+  });
+
+  it("says out loud when a converted export fails", async () => {
+    const exportDocument = vi.fn(async () => ({ success: false, error: "The disk is full." }));
+    await boot({ exportDocument } as Partial<ElectronAPI>);
+    await userEvent.click(screen.getByRole("button", { name: "Export menu" }));
+    await userEvent.click(screen.getByRole("button", { name: "RTF (.rtf)" }));
+    expect(await screen.findByText(/The disk is full\./)).toBeInTheDocument();
+  });
+
+  it("keeps Copy all in the toolbar, not floating over the document", async () => {
+    await boot();
+    const copy = screen.getByRole("button", { name: "Copy all" });
+    expect(copy.closest(".markie-toolbar")).not.toBeNull();
+    expect(document.querySelector("[data-markie-document-area] [data-markie-copy-all]")).toBeNull();
   });
 
   it("treats a dismissed print sheet as a non-event, not an error", async () => {

@@ -1568,6 +1568,20 @@ handle(
   { onFailure: (err) => ({ success: false, error: exportFailure(err) }) }
 );
 
+// IPC: export a converted copy (Word, RTF, ODT, text, Markdown). The renderer
+// converts; export-document.js owns the format table, the sheet and the write.
+const { createDocumentExporter } = require("./export-document");
+const exportDocument = createDocumentExporter({
+  dialog,
+  getWindow: () => mainWindow,
+  writeFile: (target, data) => writeFileAtomic(target, data),
+});
+handle(
+  "export-document",
+  async (_event, args) => exportDocument(args),
+  { onFailure: (err) => ({ success: false, error: exportFailure(err) }) }
+);
+
 // ── Sync / library IPC ──
 const registry = require("./registry");
 const mdindex = require("./mdindex");

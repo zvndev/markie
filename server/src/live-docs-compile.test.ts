@@ -56,10 +56,14 @@ test("a compile past its time limit is stopped, and the next try runs again", as
 });
 
 // A Live Doc inside every source limit that still needs more than 12 MB to compile.
-const HEAVY = `:state rows = [${Array.from({ length: 900 }, (_, i) => i).join(", ")}]\n@loop rows into r\n{ r } and some longer text for each row { r }\n@endloop\n`;
+// Measured on Node 22 and 26, 20 runs each: "# Light" fits in a 16 MB old
+// generation every time, and this 1,200-row loop (inside the row cap) never
+// does. It needs about 20 MB. At 12 MB with 900 rows the two overlapped, so a
+// tiny page sometimes failed too, on Node 22 in CI.
+const HEAVY = `:state rows = [${Array.from({ length: 1200 }, (_, i) => i).join(", ")}]\n@loop rows into r\n{ r } and some longer text for each row { r }\n@endloop\n`;
 
 test("a compile past its memory limit is stopped, while a small one fits", async () => {
-  const compiler = createLiveDocCompiler({ resourceLimits: { maxOldGenerationSizeMb: 12, maxYoungGenerationSizeMb: 2 } });
+  const compiler = createLiveDocCompiler({ resourceLimits: { maxOldGenerationSizeMb: 16, maxYoungGenerationSizeMb: 4 } });
   assert.ok((await compiler.compile("# Light\n")).ok, "the limit leaves room for an ordinary compile");
   const result = await compiler.compile(HEAVY);
   assert.deepEqual(result, { ok: false, kind: "failed", message: "This Live Doc needed too much memory to compile, so it was stopped." });

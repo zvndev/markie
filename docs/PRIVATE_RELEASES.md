@@ -98,6 +98,10 @@ feed artifact hashes/sizes before atomic feed replacement. GET access to both
 the feed and every artifact requires authorized account access; there is no
 public redirect or public object-storage destination.
 
+When the publish is for Kirby to test, move his Mac onto it with
+`npm run markie:use -- private` (below): a public install never sees the private
+feed, so Check for Updates alone will not reach him.
+
 ## Verification boundary
 
 The private pre-sign hook and final ZIP verification inspect actual `app.asar`

@@ -69,3 +69,7 @@ Use only trailers that add real decision context.
   **Check for Updates**.
 - Websites and emails link to `https://markiedocs.com/download` or a stable manifest route,
   never a versioned artifact URL.
+- Kirby's own Mac follows the work: after publishing a super-nightly he is meant to test, run
+  `npm run markie:use -- private`; after a full release reaches stable, run
+  `npm run markie:use -- public`. It quits and reopens Markie, so say so in the reply. See
+  `docs/PRIVATE_RELEASES.md`.

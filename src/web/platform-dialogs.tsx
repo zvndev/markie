@@ -5,6 +5,7 @@
 // dialogs. Access goes to existing verified accounts only, and a link is a
 // read-only download that expires in a day.
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { getServerURL } from "@/lib/auth-client";
 import { platformClient } from "./cloud";
 import type { CloudRole } from "./cloud";
 
@@ -88,7 +89,7 @@ export function PlatformShareDialog({ docId, name, role, onClose }: { docId: str
           const result = await platformClient().call(`/documents/${docId}/links`, "POST", { expiresInSeconds: 86400 });
           const value = result.link as { token?: string; id?: string } | undefined;
           if (!value?.token || !/^[A-Za-z0-9_-]{20,128}$/.test(value.token)) throw new Error("The server didn't return a usable link.");
-          setLink({ url: `${window.location.origin}/api/document-platform/links/${value.token}/download`, id: value.id ?? null });
+          setLink({ url: `${getServerURL()}/api/document-platform/links/${value.token}/download`, id: value.id ?? null });
         })}>Create a 24-hour download link</button>}
       </div>
     </>}

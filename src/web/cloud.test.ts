@@ -118,6 +118,7 @@ describe("routes", () => {
     expect(parseWebRoute("/app/d/doc-1")).toEqual({ page: "doc", id: "doc-1" });
     expect(parseWebRoute("/app/d/a%2Fb")).toEqual({ page: "library", create: false });
     expect(webRoutePath({ page: "doc", id: "doc-1" })).toBe("/app/d/doc-1");
-    expect(signInHref({ page: "library", create: true })).toBe("/auth/web-signin?next=%2Fapp%2Fnew");
+    expect(signInHref({ page: "library", create: true }, "https://api.markiedocs.com")).toBe("https://api.markiedocs.com/auth/web-signin?next=%2Fapp%2Fnew");
+    expect(signInHref({ page: "doc", id: "d1" }, "http://localhost:8787/")).toBe("http://localhost:8787/auth/web-signin?next=%2Fapp%2Fd%2Fd1");
   });
 });

@@ -35,6 +35,7 @@ import {
 } from "./cloud";
 import { PlatformShareDialog, PlatformHistoryDialog } from "./platform-dialogs";
 import type { WebSessionUser } from "./session";
+import { RoomTexts, resolveLiveConflict } from "./live-save";
 
 const WordDocumentEditor = lazy(() => import("@/components/documents/word-document-editor").then((m) => ({ default: m.WordDocumentEditor })));
 
@@ -156,6 +157,10 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
   const officeRef = useRef(office); officeRef.current = office;
   const collabRef = useRef(collab); collabRef.current = collab;
   const stateRef = useRef(state); stateRef.current = state;
+  // Every text this tab has held while live, its own and its peers', so a
+  // refused save can tell a peer's version from an outside one (live-save.ts).
+  const roomTexts = useRef<RoomTexts | null>(null);
+  if (!roomTexts.current) { roomTexts.current = new RoomTexts(); roomTexts.current.add(initial.text); }
   const saving = useRef<Promise<void> | null>(null);
   const flushRich = useRef<(() => string | null) | null>(null);
 
@@ -233,14 +238,18 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
         try {
           next = await write(content, docName, version.current, officeDoc);
         } catch (error) {
-          // Live: the room already merged everyone's edits, and a peer saved
-          // the same converged document a moment earlier. Take their version
-          // when it is this text, otherwise save the merged text over it.
+          // Live: a peer in the room may have saved a moment earlier. Take
+          // their version when it is this text, and save the merged text over
+          // it only when it is a state this tab saw in the room. A version
+          // with text the room never had was written from outside it, and is
+          // surfaced as a conflict below, never saved over (live-save.ts).
           if (!(error instanceof CloudConflictError) || !collabRef.current) throw error;
           const server = await openTextDoc(id);
           if (!server) throw error;
+          const answer = resolveLiveConflict(server, { content, name: docName }, roomTexts.current!);
+          if (answer === "conflict") throw new CloudConflictError(server.version);
           version.current = server.version;
-          next = server.content === content && server.name === docName ? server.version : await write(content, docName, server.version, null);
+          next = answer === "adopt" ? server.version : await write(content, docName, server.version, null);
         }
         version.current = next;
         savedText.current = content;
@@ -281,7 +290,10 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
     if (dirty) scheduleSave();
   }, [isDirty, scheduleSave]);
 
-  const editText = useCallback((next: string) => { textRef.current = next; setText(next); changed(); }, [changed]);
+  const editText = useCallback((next: string) => {
+    if (collabRef.current) roomTexts.current?.add(next);
+    textRef.current = next; setText(next); changed();
+  }, [changed]);
   const editOffice = useCallback((next: RichDocument) => {
     officeRef.current = next; officeGeneration.current += 1; setOffice(next); changed();
   }, [changed]);

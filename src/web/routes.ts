@@ -19,7 +19,11 @@ export function webRoutePath(route: WebRoute): string {
   return route.create ? "/app/new" : "/app";
 }
 
-/** Where the web sign-in brings a browser back to (server/src/web-signin.ts safeNext). */
-export function signInHref(route: WebRoute): string {
-  return `/auth/web-signin?next=${encodeURIComponent(webRoutePath(route))}`;
+/**
+ * The web sign-in, on the API origin where the session cookie lives, coming
+ * back to this page (server/src/web-signin.ts safeNext). The server sends an
+ * /app page on the API origin on to the docs host, so `next` is a path.
+ */
+export function signInHref(route: WebRoute, apiOrigin: string): string {
+  return `${apiOrigin.replace(/\/+$/, "")}/auth/web-signin?next=${encodeURIComponent(webRoutePath(route))}`;
 }

@@ -22,6 +22,9 @@ Object.assign(process.env, {
   BETTER_AUTH_URL: ORIGIN,
   BETTER_AUTH_SECRET: "markie-selfhost-boot-test-secret-32-plus",
   MARKIE_MAIL_LOG: "1",
+  // A server image without the web app, whatever a local `build:web` left in
+  // server/web-dist (web-app.ts webAppAvailable).
+  MARKIE_WEB_DIST: join(dir, "no-web-dist"),
   MARKIE_STORAGE_QUOTA_BYTES: String(QUOTA),
   MARKIE_NO_LISTEN: "1",
 });

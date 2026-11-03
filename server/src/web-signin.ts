@@ -149,7 +149,9 @@ export function renderWebSignInPage({ next, google, failed }: { next: string; go
           if (r.ok) { location.replace(next); return; }
           err.textContent = r.status === 403
             ? ${JSON.stringify(google ? "Use the main email on your account, or sign in with Google." : "Use the main email on your account.")}
-            : "That code isn't right, or it expired.";
+            : r.status === 429
+              ? "Too many tries. Wait a minute, then try the code again."
+              : "That code isn't right, or it expired.";
         }, function () { err.textContent = "Couldn't reach Markie."; });
       });
     })();
@@ -157,29 +159,17 @@ export function renderWebSignInPage({ next, google, failed }: { next: string; go
 </body></html>`;
 }
 
-function requestHost(request: Request): string {
-  const first = (request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "").split(",")[0]?.trim();
-  try {
-    return first ? new URL(`https://${first}`).host : new URL(request.url).host;
-  } catch {
-    return new URL(request.url).host;
-  }
-}
-
 /**
- * `emailOnlyHost` is the web app's docs host when it is not BETTER_AUTH_URL's
- * (deployment.ts docsOrigin). Google's callback always lands on
- * BETTER_AUTH_URL's host, so a Google sign-in started on the docs host would
- * lose its state cookie and set its session on the wrong host. There the page
- * offers the emailed code only, which signs in on the host that served it.
+ * Always served on this server's own origin. A web app page in `next` is
+ * reached on this origin first and sent on to the docs host from there
+ * (index.ts), so Google's callback and the emailed code both set the session
+ * cookie here, where the app asks for it.
  */
-export function createWebSignIn({ authBase, google, emailOnlyHost }: { authBase: string; google: boolean; emailOnlyHost?: string }) {
+export function createWebSignIn({ authBase, google }: { authBase: string; google: boolean }) {
   const app = new Hono();
-  const googleHere = (request: Request) => google && (!emailOnlyHost || requestHost(request) !== emailOnlyHost);
   app.get("/auth/web-signin", async (c) => {
     c.header("Cache-Control", "private, no-store");
     c.header("Referrer-Policy", "no-referrer");
-    const google = googleHere(c.req.raw);
     const next = safeNext(c.req.query("next"));
     const failed = c.req.query("error") !== undefined;
     // An emailed link lands on the website's origin, which never carries this
@@ -194,8 +184,8 @@ export function createWebSignIn({ authBase, google, emailOnlyHost }: { authBase:
     return c.html(renderWebSignInPage({ next, google, failed }));
   });
   app.get("/auth/web-google", async (c) => {
+    if (!google) return c.redirect("/auth/web-signin", 302);
     const next = safeNext(c.req.query("next"));
-    if (!googleHere(c.req.raw)) return c.redirect(`/auth/web-signin?next=${encodeURIComponent(next)}`, 302);
     try {
       const res = await auth.api.signInSocial({
         body: {

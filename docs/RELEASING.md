@@ -336,11 +336,19 @@ The server image also carries the web app at `/app` (`server/src/web-app.ts`). B
 image, run `npm ci && npm run build:web` at the repo root: it writes the build into `server/web-dist/`,
 which `server/Dockerfile` copies in, and the image is still built with `server/` as its context.
 Build from that working tree, not a clean `git archive` of `server/`, because the build output is
-gitignored. Without the step the image still builds and `/app` answers 404. For Markie Cloud, set
-`MARKIE_DOCS_ORIGIN=https://markiedocs.com`: `/app` and its sign-in are then sent there, its session
-cookie lives on that host only, and Google sign-in is not offered there (email code only). Unset, the
-web app stays on the server's own origin, which is what a self-hosted server wants. Check
-`https://markiedocs.com/app` signs in and opens a document after the deploy.
+gitignored. Without the step the image still builds and `/app` answers 404.
+
+For Markie Cloud, set `MARKIE_DOCS_ORIGIN=https://markiedocs.com`. The website proxies `/d`, `/s`
+and `/app` to this server. The app calls `https://api.markiedocs.com` directly, and sign-in (Google
+and the emailed code) stays there with its session cookie. Unset, everything stays on the server's
+own origin, which is what a self-hosted server wants.
+
+Order matters. Deploy the server first, then the website's `/app` rewrite, then set the variable.
+After setting it, check that the proxy's requests are told apart from direct ones:
+`curl -sI -H 'Sec-Fetch-Mode: navigate' https://markiedocs.com/app` must answer 200, not a 302 to
+itself, and the same request to `https://api.markiedocs.com/app` must answer 302 to
+`https://markiedocs.com/app`. If the first loops, unset the variable. After the deploy, check that `https://markiedocs.com/app`
+signs in with a code and with Google, and opens a document.
 
 ### 2. Set the version once
 

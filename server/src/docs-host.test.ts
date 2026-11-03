@@ -59,6 +59,9 @@ test("MARKIE_DOCS_ORIGIN is read as an origin, and is null when unset", () => {
   // Plain http on a loopback name is for development only.
   assert.equal(resolveDeployment({ BETTER_AUTH_URL: "http://localhost:8787", MARKIE_DOCS_ORIGIN: "http://localhost:8799" }).docsOrigin, "http://localhost:8799");
   assert.throws(() => resolveDeployment({ BETTER_AUTH_URL: "http://localhost:8787", MARKIE_DOCS_ORIGIN: "http://docs.example" }), /MARKIE_DOCS_ORIGIN/);
+  // The reserved .test and .localhost names count as development names, in development only.
+  assert.equal(resolveDeployment({ BETTER_AUTH_URL: "http://localhost:8787", MARKIE_DOCS_ORIGIN: "http://markie.localhost:8798" }).docsOrigin, "http://markie.localhost:8798");
+  assert.throws(() => resolveDeployment({ ...prod, MARKIE_DOCS_ORIGIN: "http://markie.test" }), /MARKIE_DOCS_ORIGIN/);
 });
 
 test("the docs host is trusted for signed-in requests, exactly and only when set", async () => {

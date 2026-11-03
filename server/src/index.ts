@@ -17,7 +17,8 @@ import { agentDocsApi, restAgentAuth } from "./agent-docs.ts";
 import { mcpApi, mcpAuth } from "./mcp-server.ts";
 import { createWellKnown } from "./well-known.ts";
 import { createWebSignIn } from "./web-signin.ts";
-import { createWebApp, docsHostRedirect, isWebAppPath } from "./web-app.ts";
+import { createWebApp, isWebAppPath } from "./web-app.ts";
+import { docsHostConfig, redirectToDocsHost } from "./docs-host.ts";
 import { BRAND_HEAD, brandAssets, brandLogoSvg } from "./brand.ts";
 import { attachCollab, closeAllRooms, terminateAllRooms } from "./collab.ts";
 import { collabTickets } from "./collab-tickets.ts";
@@ -184,14 +185,13 @@ app.use("*", async (c, next) => {
   if (!target) return next();
   return new Response(null, { status: 308, headers: { location: target, "cache-control": "no-store" } });
 });
-// The web app and its sign-in run on the docs host only, when one is set
-// (MARKIE_DOCS_ORIGIN, web-app.ts docsHostRedirect). 302: the docs host is a
-// deployment setting that can change, and a browser must not remember it.
-app.use("*", async (c, next) => {
-  const target = docsHostRedirect(c.req.raw, DEPLOYMENT);
-  if (!target) return next();
-  return new Response(null, { status: 302, headers: { location: target, "cache-control": "no-store" } });
-});
+// The web app's pages live on the docs host when one is set (MARKIE_DOCS_ORIGIN):
+// a browser opening /app on one of this server's API names is sent there,
+// by the same positive API-host rule as public pages (docs-host.ts). Sign-in
+// stays here. 302: the docs host is a deployment setting that can change,
+// and a browser must not remember it.
+app.use("/app/*", redirectToDocsHost(() => docsHostConfig(DEPLOYMENT), isWebAppPath));
+app.use("/app", redirectToDocsHost(() => docsHostConfig(DEPLOYMENT), isWebAppPath));
 const EMAIL_SIGN_IN = emailSignInAvailable();
 const SIGNUP = signupMode();
 adminEmail();
@@ -305,21 +305,14 @@ const AUTH_BASE =
 // Who this server is, on the deep link that hands its token to the app.
 const AUTH_ISSUER = desktopAuthIssuer(AUTH_BASE);
 
-// Signing in from a browser to read a private /d/<id> page (web-signin.ts).
-// On a separate docs host Google is not offered: its callback lands on
-// BETTER_AUTH_URL's host, so the state cookie and the session it sets would
-// be on the wrong host for the web app.
-app.route("/", createWebSignIn({
-  authBase: AUTH_BASE,
-  google: googleConfigured,
-  ...(DEPLOYMENT.docsOrigin !== DEPLOYMENT.origin ? { emailOnlyHost: new URL(DEPLOYMENT.docsOrigin).host } : {}),
-}));
+// Signing in from a browser, to read a private /d/<id> page or to use the
+// web app (web-signin.ts). Always on this server's own origin, where the
+// session cookie belongs; the web app on the docs host calls this origin
+// directly, so Google and the emailed code both work for it.
+app.route("/", createWebSignIn({ authBase: AUTH_BASE, google: googleConfigured }));
 
 // The web app at /app, when this image carries its build (web-app.ts).
-app.route("/", createWebApp({
-  collabOrigin: DEPLOYMENT.origin,
-  sessionUser: async (request) => (await auth.api.getSession({ headers: request.headers }))?.user ?? null,
-}));
+app.route("/", createWebApp({ apiOrigin: DEPLOYMENT.origin }));
 
 app.get("/auth/google-start", async (c) => {
   try {

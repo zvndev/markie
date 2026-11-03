@@ -1,6 +1,5 @@
 // The Markie web app: the desktop renderer's editor, built for a browser
-// (`npm run build:web` at the repo root, src/web) and served here on the
-// server's own origin, so the web sign-in's session cookie is the credential.
+// (`npm run build:web` at the repo root, src/web) and served by this server.
 //
 //   GET /app            the cloud library
 //   GET /app/d/<id>     one document, open in the editor
@@ -12,9 +11,20 @@
 // every /app route is a plain 404 page and webAppAvailable() says false, so
 // nothing else on the server sends a reader there.
 //
-// A signed-out visitor to an /app page goes to the web sign-in and comes back
-// to the same page. Assets need no session: they are the same public bundle
-// for everyone and carry nothing about any account.
+// Where it runs: on the docs host when MARKIE_DOCS_ORIGIN names one
+// (markiedocs.com on Markie Cloud, through the website's Vercel rewrites of
+// /app), otherwise on this server's own origin. Either way it talks to this
+// server's own origin directly, the API origin the page names: the session
+// cookie the web sign-in set lives there, host-only, and the docs host is the
+// same site, so a credentialed fetch from the app carries it. Sign-in, rate
+// limits and uploads all happen on the API host with the browser's own
+// address, never through the website's proxy, and the live-editing socket
+// goes there too, since a proxying website cannot carry one.
+//
+// The shell is the same public bundle for everyone and holds nothing about
+// any account, so it is served without asking for a session. The app asks
+// the API for it and sends a signed-out browser to the sign-in itself
+// (src/web/main.tsx).
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,8 +38,12 @@ const SHELL = "app.html";
 // and the Darkmown frame may run (scripts/web-app-manifest.mjs).
 const MANIFEST = "web-app.json";
 
-/** Whether the web app build is on this server. Cheap: one stat per call. */
-export function webAppAvailable(dir: string = DEFAULT_DIR): boolean {
+/**
+ * Whether the web app build is on this server. Cheap: one stat per call, so
+ * a deploy that adds or removes the build needs no restart. MARKIE_WEB_DIST
+ * points somewhere else, which is how tests switch it on and off.
+ */
+export function webAppAvailable(dir: string = process.env.MARKIE_WEB_DIST || DEFAULT_DIR): boolean {
   try {
     return statSync(resolve(dir, SHELL)).isFile();
   } catch {
@@ -40,55 +54,6 @@ export function webAppAvailable(dir: string = DEFAULT_DIR): boolean {
 /** Whether a path is one of the web app's, which set their own page policy. */
 export function isWebAppPath(path: string): boolean {
   return path === "/app" || path.startsWith("/app/");
-}
-
-const DOC_ID = /^[A-Za-z0-9_-]{1,128}$/;
-
-/**
- * The page a signed-out visitor is sent back to after signing in: an /app
- * route this server serves, and nothing else, so the sign-in cannot be used
- * to bounce a browser anywhere. Anything unrecognised is the library.
- */
-export function webAppReturnPath(path: string): string {
-  if (path === "/app" || path === "/app/" || path === "/app/new") return path;
-  const doc = /^\/app\/d\/([^/]+)$/.exec(path);
-  return doc && DOC_ID.test(doc[1]) ? path : "/app";
-}
-
-function hostOf(value: string | null | undefined): string | null {
-  const first = value?.split(",")[0]?.trim();
-  if (!first) return null;
-  try {
-    return new URL(`https://${first}`).host;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Where to send this request instead, so the web app and its sign-in run on
- * the docs host (MARKIE_DOCS_ORIGIN) and nowhere else: its session cookie is
- * set on the host that serves the sign-in, and a cookie on any other host is
- * one the app never sees. Null to serve the request here.
- *
- * Only browser GETs: an /app page, and the web sign-in when it is returning
- * to one. Nothing happens unless the docs host differs from this server's
- * own origin, so a self-hosted or local server is never redirected. The
- * target is the configured origin plus this request's path and query, never
- * anything else taken from the request (the same rule as canonical-host.ts).
- */
-export function docsHostRedirect(request: Request, deployment: { origin: string; docsOrigin: string }): string | null {
-  if (deployment.docsOrigin === deployment.origin) return null;
-  if (request.method !== "GET" && request.method !== "HEAD") return null;
-  const url = new URL(request.url);
-  const appPage = isWebAppPath(url.pathname);
-  const appSignIn = (url.pathname === "/auth/web-signin" || url.pathname === "/auth/web-google")
-    && isWebAppPath(url.searchParams.get("next") ?? "");
-  if (!appPage && !appSignIn) return null;
-  const docs = new URL(deployment.docsOrigin);
-  const host = hostOf(request.headers.get("x-forwarded-host")) ?? hostOf(request.headers.get("host")) ?? url.host;
-  if (host === docs.host) return null;
-  return `${docs.origin}${url.pathname}${url.search}`;
 }
 
 // Video players a document may embed, the same two the desktop allows
@@ -107,28 +72,40 @@ function readScriptHashes(dir: string): string[] {
   }
 }
 
-/** The websocket origin (ws: or wss:) for an http(s) origin, or null. */
-export function socketOrigin(collabOrigin: string): string | null {
+/** An http(s) origin exactly, or null. */
+function httpOrigin(value: string): string | null {
   try {
-    const url = new URL(collabOrigin);
+    const url = new URL(value);
     if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-    return `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}`;
+    return url.origin;
   } catch {
     return null;
   }
 }
 
+/** The websocket origin (ws: or wss:) for an http(s) origin, or null. */
+export function socketOrigin(apiOrigin: string): string | null {
+  const origin = httpOrigin(apiOrigin);
+  if (!origin) return null;
+  const url = new URL(origin);
+  return `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}`;
+}
+
 /**
- * The page tells the app where its live-editing socket is. The app's own
- * origin may be a website that proxies plain HTTP to this server and cannot
- * carry a websocket (markiedocs.com through Vercel), so the socket goes to
- * this server's own origin directly. It carries only a short-lived collab
- * ticket (collab-tickets.ts), never the session.
+ * The page tells the app where this server is: the API origin it signs in
+ * on and calls, and the live-editing socket on the same host. Both are this
+ * server's own configured origin (BETTER_AUTH_URL), never anything from the
+ * request. The socket carries only a short-lived collab ticket
+ * (collab-tickets.ts), never the session.
  */
-export function withCollabMeta(shell: string, collabOrigin: string): string {
-  const socket = socketOrigin(collabOrigin);
-  if (!socket) return shell;
-  return shell.replace("</head>", `  <meta name="markie-collab" content="${socket}/collab" />\n  </head>`);
+export function withServerMeta(shell: string, apiOrigin: string): string {
+  const api = httpOrigin(apiOrigin);
+  const socket = socketOrigin(apiOrigin);
+  if (!api || !socket) return shell;
+  return shell.replace(
+    "</head>",
+    `  <meta name="markie-api" content="${api}" />\n  <meta name="markie-collab" content="${socket}/collab" />\n  </head>`
+  );
 }
 
 /**
@@ -136,10 +113,12 @@ export function withCollabMeta(shell: string, collabOrigin: string): string {
  * the build named: the pinned Darkmown interpreter and its bootstrap, which a
  * Darkmown preview's srcdoc frame inherits this policy for (the desktop names
  * the same two, electron/csp.js). Author JavaScript is never allowed. Network
- * calls go to this origin, and the collab websocket to this server's own.
+ * calls go to this origin and to the API origin, and the collab websocket to
+ * the API origin's host.
  */
-export function webAppCsp(scriptHashes: readonly string[], collabOrigin: string): string {
-  const socket = socketOrigin(collabOrigin);
+export function webAppCsp(scriptHashes: readonly string[], apiOrigin: string): string {
+  const api = httpOrigin(apiOrigin);
+  const socket = socketOrigin(apiOrigin);
   return [
     "default-src 'self'",
     ["script-src 'self'", ...scriptHashes.filter((hash) => SCRIPT_HASH.test(hash)).map((hash) => `'${hash}'`)].join(" "),
@@ -147,7 +126,7 @@ export function webAppCsp(scriptHashes: readonly string[], collabOrigin: string)
     "img-src 'self' data: blob: https:",
     "media-src 'self' data: blob: https:",
     "font-src 'self' data:",
-    `connect-src 'self'${socket ? ` ${socket}` : ""}`,
+    ["connect-src 'self'", api, socket].filter(Boolean).join(" "),
     "worker-src 'self'",
     `frame-src about: ${EMBED_FRAME_ORIGINS.join(" ")}`,
     "base-uri 'none'",
@@ -178,18 +157,16 @@ const NOT_BUILT_PAGE = `<!doctype html>
 <body><h1>Not found</h1><p>The Markie web app is not on this server.</p></body></html>`;
 
 export interface WebAppOptions {
-  /** Where the build is. Defaults to server/web-dist. */
+  /** Where the build is. Defaults to server/web-dist (or MARKIE_WEB_DIST). */
   dir?: string;
   /**
    * This server's own origin (BETTER_AUTH_URL), which a browser reaches
-   * directly: the collab websocket's address, wherever the app is served.
+   * directly: the API the app calls and signs in on, and its socket's host.
    */
-  collabOrigin: string;
-  /** The signed-in user for a request, or null. */
-  sessionUser: (request: Request) => Promise<{ id: string } | null>;
+  apiOrigin: string;
 }
 
-export function createWebApp({ dir = DEFAULT_DIR, collabOrigin, sessionUser }: WebAppOptions) {
+export function createWebApp({ dir = process.env.MARKIE_WEB_DIST || DEFAULT_DIR, apiOrigin }: WebAppOptions) {
   const root = resolve(dir);
   const assetsRoot = resolve(root, "assets");
   const app = new Hono();
@@ -219,30 +196,22 @@ export function createWebApp({ dir = DEFAULT_DIR, collabOrigin, sessionUser }: W
     });
   });
 
-  const page = async (c: { req: { raw: Request; path: string } }) => {
+  const page = () => {
     if (!webAppAvailable(root)) return notBuilt();
-    const user = await sessionUser(c.req.raw).catch(() => null);
-    if (!user) {
-      const next = webAppReturnPath(c.req.path);
-      return new Response(null, {
-        status: 302,
-        headers: { location: `/auth/web-signin?next=${encodeURIComponent(next)}`, "cache-control": "no-store" },
-      });
-    }
     let shell: string;
     try {
       shell = readFileSync(resolve(root, SHELL), "utf8");
     } catch {
       return notBuilt();
     }
-    return new Response(withCollabMeta(shell, collabOrigin), {
+    return new Response(withServerMeta(shell, apiOrigin), {
       headers: {
         "content-type": "text/html; charset=utf-8",
-        // The shell is the same for everyone, but whether it is served at all
-        // depends on the session, so no cache may keep it.
-        "cache-control": "private, no-store",
+        // The same for everyone, but it names this server and a deploy
+        // replaces it, so no cache keeps it.
+        "cache-control": "no-store",
         "referrer-policy": "no-referrer",
-        "content-security-policy": webAppCsp(readScriptHashes(root), collabOrigin),
+        "content-security-policy": webAppCsp(readScriptHashes(root), apiOrigin),
       },
     });
   };

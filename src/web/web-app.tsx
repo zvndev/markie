@@ -4,6 +4,7 @@
 // updater, Live Docs) have no meaning without the desktop and are not here
 // at all, rather than present and broken.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getServerURL } from "@/lib/auth-client";
 import { authStore } from "@/lib/auth-store";
 import { applyColorMode, getColorMode, type ColorMode } from "@/lib/color-mode";
 import { createDocumentSession, serializeDocumentSession, type EditableDocumentFormat } from "@/lib/document-session";
@@ -138,9 +139,9 @@ export function WebApp({ user }: { user: WebSessionUser }) {
     setRoute(next);
   }, []);
 
-  const sessionEnded = useCallback(() => { window.location.assign(signInHref(parseWebRoute(window.location.pathname))); }, []);
+  const sessionEnded = useCallback(() => { window.location.assign(signInHref(parseWebRoute(window.location.pathname), getServerURL())); }, []);
   const signOut = useCallback(() => {
-    void authStore.signOut().finally(() => window.location.assign(signInHref({ page: "library", create: false })));
+    void authStore.signOut().finally(() => window.location.assign(signInHref({ page: "library", create: false }, getServerURL())));
   }, []);
   const setTitle = useCallback((name: string | null) => { document.title = name ? `${name} · Markie` : "Markie"; }, []);
   useEffect(() => { if (route.page === "library") setTitle(null); }, [route, setTitle]);

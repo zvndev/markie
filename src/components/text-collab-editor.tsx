@@ -10,6 +10,7 @@ import type { WebsocketProvider } from "y-websocket";
 import { useCollabRuntime, type CollabRuntime } from "@/lib/collab-loader";
 import {
   COLLAB_SCHEMA_VERSION,
+  connectWithTicket,
   SEED_SETTLE_MS,
   type CollabConfig,
   type PeerUser,
@@ -55,7 +56,8 @@ function TextCollabEditorInner({
   useEffect(() => { valueRef.current = value; }, [value]);
 
   // Created disconnected so a discarded initializer never opens a socket;
-  // the effect below owns connect/destroy (same lifecycle as RichView).
+  // the effect below owns connect/destroy (same lifecycle as RichView). It
+  // starts with no credential: connectWithTicket supplies the pass.
   const [session] = useState<TextSession | null>(() => {
     if (!runtime) return null;
     let ydoc: YDoc | null = null;
@@ -64,7 +66,7 @@ function TextCollabEditorInner({
       ydoc = new runtime.Y.Doc();
       provider = new runtime.WebsocketProvider(collab.wsBase, collab.docId, ydoc, {
         connect: false,
-        params: { token: collab.token },
+        params: {},
       });
       provider.awareness.setLocalStateField("user", collab.user);
       const binding = new TextCollabBinding(ydoc, ydoc.getText(TEXT_COLLAB_KEY), (text) => {
@@ -78,14 +80,22 @@ function TextCollabEditorInner({
     }
   });
 
+  // No pass means no live session, reported the way RichView reports it.
+  const onCollabStatusRef = useRef(onCollabStatus);
+  useEffect(() => { onCollabStatusRef.current = onCollabStatus; }, [onCollabStatus]);
   useEffect(() => {
     if (!session) return;
-    session.provider.connect();
+    const stop = connectWithTicket(session.provider, collab, () =>
+      onCollabStatusRef.current?.("unavailable")
+    );
     return () => {
+      stop();
       session.binding.dispose();
       session.provider.destroy();
       session.ydoc.destroy();
     };
+    // The parent remounts this component whenever collab changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   // The server closes with 4403 when access went away mid-session: stop for

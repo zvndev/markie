@@ -86,6 +86,11 @@ jobs:
         working-directory: server
       - run: npm test
         working-directory: server
+      # Who can reach a private document, asked of a real server from the
+      # outside: signed out, a stranger, an unverified account, a viewer
+      # writing, a removed member, links from share and invite emails, and the
+      # live-editing socket. A refusal counts only if no content came back.
+      - run: node scripts/doc-access-check.mjs
 
   # Dependency-free MCP server: no install step at all. These tests cover the
   # filesystem sandbox an AI agent writes through, so they matter most.

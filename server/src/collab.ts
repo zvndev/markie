@@ -11,6 +11,7 @@ import * as decoding from "lib0/decoding";
 import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
 import { FAULT_ROUTES, reportFault } from "./little-friend.ts";
+import { liveSession, redeemCollabTicket, type TicketHolder } from "./collab-tickets.ts";
 import {
   accessLevel,
   canEditLevel,
@@ -140,13 +141,6 @@ export function roomHasCollabContent(ydoc: Y.Doc): boolean {
   if (ydoc.getXmlFragment("default").length > 0) return true;
   const text = ydoc.share.get("content");
   return text instanceof Y.Text && text.length > 0;
-}
-
-function liveSession(userId: string, sessionId: string): boolean {
-  const session = db.prepare('SELECT userId,expiresAt FROM "session" WHERE id=?').get(sessionId) as { userId: string; expiresAt: string | number } | undefined;
-  if (!session || session.userId !== userId) return false;
-  const expiresAt = typeof session.expiresAt === "number" ? session.expiresAt : /^\d+$/.test(session.expiresAt) ? Number(session.expiresAt) : Date.parse(session.expiresAt);
-  return Number.isFinite(expiresAt) && expiresAt > Date.now();
 }
 
 function readLevel(docId: string, conn: Conn): ShareAccessLevel {
@@ -520,10 +514,17 @@ function handleConnection(
   }
 }
 
-async function sessionFromToken(token: string) {
-  return auth.api.getSession({
+// LEGACY: desktop builds released before collab tickets (collab-tickets.ts)
+// put the account's session token in the socket URL, where the proxy logs it.
+// Accepted only so those builds keep their live sessions. Every connection
+// that comes in this way prints "collab: legacy token connection"; once that
+// line stops appearing in the server log, delete this and the ?token= branch.
+async function legacyTokenHolder(token: string): Promise<TicketHolder | null> {
+  const session = await auth.api.getSession({
     headers: new Headers({ Authorization: `Bearer ${token}` }),
   });
+  if (!session?.user || !session.session?.id) return null;
+  return { user: session.user, sessionId: session.session.id };
 }
 
 // The largest single message a collaborator may send. ws defaults to 100 MiB,
@@ -561,10 +562,19 @@ export function attachCollab(server: Server): void {
         return;
       }
       const docId = decodeURIComponent(match[1]);
-      const token = url.searchParams.get("token") ?? "";
-      const session = await sessionFromToken(token);
-      const level = session?.user ? accessLevel(docId, session.user.id) : null;
-      if (!session?.user || !session.session?.id || !liveSession(session.user.id, session.session.id) || !canReadLevel(level)) {
+      // A ticket, when there is one, is the only credential looked at: a URL
+      // that carries both is never allowed to fall through to the token.
+      const ticket = url.searchParams.get("ticket");
+      const holder =
+        ticket !== null
+          ? redeemCollabTicket(ticket, docId)
+          : await legacyTokenHolder(url.searchParams.get("token") ?? "");
+      // Either way the socket is bound to one person and one sign-in from
+      // here on, so every per-message and fan-out check in handleConnection
+      // applies to a ticket exactly as it did to a token.
+      const level =
+        holder && liveSession(holder.user.id, holder.sessionId) ? accessLevel(docId, holder.user.id) : null;
+      if (!holder || !canReadLevel(level)) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
@@ -575,10 +585,13 @@ export function attachCollab(server: Server): void {
         socket.destroy();
         return;
       }
-      const user = session.user;
+      // Nothing that identifies the caller or the document: this line exists
+      // to be counted, and the log it lands in is the one the ticket keeps
+      // credentials out of.
+      if (ticket === null) console.log("collab: legacy token connection");
       socket.removeListener("error", onSocketError);
       wss.handleUpgrade(req, socket, head, (conn) => {
-        handleConnection(conn, docId, user, session.session.id);
+        handleConnection(conn, docId, holder.user, holder.sessionId);
       });
     } catch (err) {
       console.error("collab upgrade error:", err);

@@ -53,6 +53,9 @@ export function ShareDialog({
   const [access, setAccess] = useState<ShareAccess | null>(null);
   const [members, setMembers] = useState<ShareMember[] | null>(null);
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
+  // The new public URL after a removal swapped the old one out, so the owner
+  // learns that the link they posted somewhere no longer works.
+  const [rotatedUrl, setRotatedUrl] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [contacts, setContacts] = useState<ShareContact[]>([]);
 
@@ -73,10 +76,14 @@ export function ShareDialog({
   const [rowBusy, setRowBusy] = useState<string | null>(null);
 
   const load = useCallback(() => {
+    // The public link is the owner's to see, and the server answers anyone
+    // else with a 403. Asking only once access says so keeps that refusal
+    // from ever reaching a member as an error.
+    const accessRequest = sharesClient.access(docId);
     return Promise.all([
-      sharesClient.access(docId),
+      accessRequest,
       sharesClient.list(docId),
-      sharesClient.getPublicLink(docId),
+      accessRequest.then((a) => (a?.canManage ? sharesClient.getPublicLink(docId) : null)),
     ]).then(([nextAccess, list, url]) => {
       setAccess(nextAccess);
       setMembers(list ?? []);
@@ -217,9 +224,13 @@ export function ShareDialog({
     if (!canManage) return setError("Only the owner can remove access.");
     setRowBusy(idOrEmail);
     setError(null);
-    const ok = await sharesClient.remove(docId, idOrEmail);
+    const res = await sharesClient.remove(docId, idOrEmail);
     setRowBusy(null);
-    if (!ok) return setError("Couldn't remove their access.");
+    if (!res.ok) return setError("Couldn't remove their access.");
+    if (res.rotatedPublicUrl) {
+      setPublicUrl(res.rotatedPublicUrl);
+      setRotatedUrl(res.rotatedPublicUrl);
+    }
     await load();
     onChanged();
   };
@@ -242,6 +253,8 @@ export function ShareDialog({
     if (!canManage) return setError("Only the owner can change general access.");
     setLinkBusy(true);
     setError(null);
+    // Turning the link off or on again leaves nothing to warn about.
+    setRotatedUrl(null);
     if (next === "link") {
       const url = await sharesClient.createPublicLink(docId);
       setLinkBusy(false);
@@ -518,6 +531,9 @@ export function ShareDialog({
           )}
         </div>
 
+        {/* Owner only. The server does not tell anyone else whether a public
+            link exists, so a member would only ever see a guess here. */}
+        {canManage && (
         <div className="markie-share-section" data-markie-general-access>
           <div className="markie-share-label">General access</div>
           <div className="markie-share-general">
@@ -529,24 +545,18 @@ export function ShareDialog({
               {generalIsPublic ? <GlobeIcon /> : <LockIcon />}
             </span>
             <div className="min-w-0 flex-1">
-              {canManage ? (
-                <select
-                  value={generalIsPublic ? "link" : "restricted"}
-                  disabled={linkBusy || !loaded}
-                  onChange={(e) =>
-                    void setGeneralAccess(e.target.value as "restricted" | "link")
-                  }
-                  aria-label="General access"
-                  className="markie-share-general-select"
-                >
-                  <option value="restricted">Restricted</option>
-                  <option value="link">Anyone with the link</option>
-                </select>
-              ) : (
-                <div className="markie-share-name font-medium">
-                  {generalIsPublic ? "Anyone with the link" : "Restricted"}
-                </div>
-              )}
+              <select
+                value={generalIsPublic ? "link" : "restricted"}
+                disabled={linkBusy || !loaded}
+                onChange={(e) =>
+                  void setGeneralAccess(e.target.value as "restricted" | "link")
+                }
+                aria-label="General access"
+                className="markie-share-general-select"
+              >
+                <option value="restricted">Restricted</option>
+                <option value="link">Anyone with the link</option>
+              </select>
               <div className="markie-share-sub" data-markie-access-line>
                 {linkBusy
                   ? "Updating…"
@@ -569,7 +579,19 @@ export function ShareDialog({
             </div>
             {generalIsPublic && <span className="markie-share-sub shrink-0">Viewer</span>}
           </div>
+          {rotatedUrl && (
+            <div className="markie-share-note" role="status" data-markie-link-rotated>
+              <div>
+                The public link changed because you removed someone. Share the new
+                link wherever you had posted the old one.
+              </div>
+              <div className="text-foreground truncate select-all" title={rotatedUrl}>
+                {rotatedUrl}
+              </div>
+            </div>
+          )}
         </div>
+        )}
 
         <div className="markie-share-foot">
           <button

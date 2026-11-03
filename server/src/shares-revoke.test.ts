@@ -242,10 +242,102 @@ test("only the owner can create or revoke the public link", async () => {
   assert.equal((await call("POST", `/api/docs/${docId}/public-link`, stranger)).status, 403);
   assert.equal((await call("DELETE", `/api/docs/${docId}/public-link`, undefined)).status, 401);
 
-  // an editor may still see whether one exists
-  assert.equal((await call("GET", `/api/docs/${docId}/public-link`, member)).status, 200);
-  // a stranger may not
+  // a stranger may not read it either
   assert.equal((await call("GET", `/api/docs/${docId}/public-link`, stranger)).status, 403);
+});
+
+// The URL needs no account, so anyone who reads it can keep using it after
+// their access is gone. Only the owner, who can also turn it off, sees it.
+test("only the owner can read the public link, and a member's 403 carries no url", async () => {
+  const docId = await newDoc();
+  await call("POST", `/api/docs/${docId}/shares`, owner, { email: memberEmail, role: "editor" });
+  const viewerDoc = await newDoc();
+  await call("POST", `/api/docs/${viewerDoc}/shares`, owner, { email: memberEmail, role: "viewer" });
+  for (const id of [docId, viewerDoc]) {
+    const made = await call<{ url: string }>("POST", `/api/docs/${id}/public-link`, owner);
+    assert.equal(made.status, 200);
+
+    const asOwner = await call<{ url: string | null }>("GET", `/api/docs/${id}/public-link`, owner);
+    assert.equal(asOwner.status, 200);
+    assert.equal(asOwner.data?.url, made.data?.url);
+
+    const asMember = await call<Record<string, unknown>>("GET", `/api/docs/${id}/public-link`, member);
+    assert.equal(asMember.status, 403);
+    assert.deepEqual(asMember.data, { error: "forbidden" });
+  }
+});
+
+const tokenOf = (url: string | null | undefined) => {
+  const token = url?.split("/s/")[1];
+  assert.ok(token, `no public token in ${url}`);
+  return token;
+};
+const openPublic = async (token: string) =>
+  (await app.request(`/s/${token}`, { headers: { "x-forwarded-for": "127.0.0.1" } })).status;
+
+test("removing a member gives an existing public link a fresh token", async () => {
+  const docId = await newDoc();
+  await call("POST", `/api/docs/${docId}/shares`, owner, { email: memberEmail, role: "viewer" });
+  const made = await call<{ url: string }>("POST", `/api/docs/${docId}/public-link`, owner);
+  const oldToken = tokenOf(made.data?.url);
+  assert.equal(await openPublic(oldToken), 200);
+
+  const id = await memberId(docId, memberEmail);
+  const res = await call<{ ok: boolean; publicLinkRotated: boolean; url: string }>(
+    "DELETE",
+    `/api/docs/${docId}/shares/${id}`,
+    owner
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.data?.publicLinkRotated, true);
+  const newToken = tokenOf(res.data?.url);
+  assert.notEqual(newToken, oldToken);
+  assert.match(res.data!.url, /^https:\/\/markie\.test\/s\/[a-f0-9]+$/);
+
+  // The URL the removed member may have kept is dead; the new one works, and
+  // it is the one the owner now reads back.
+  assert.equal(await openPublic(oldToken), 404);
+  assert.equal(await openPublic(newToken), 200);
+  const readBack = await call<{ url: string | null }>("GET", `/api/docs/${docId}/public-link`, owner);
+  assert.equal(readBack.data?.url, res.data?.url);
+});
+
+test("removing a member from a document with no public link does not make one", async () => {
+  const docId = await newDoc();
+  await call("POST", `/api/docs/${docId}/shares`, owner, { email: memberEmail, role: "editor" });
+  const id = await memberId(docId, memberEmail);
+  const res = await call<Record<string, unknown>>("DELETE", `/api/docs/${docId}/shares/${id}`, owner);
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.data, { ok: true, publicLinkRotated: false });
+  const read = await call<{ url: string | null }>("GET", `/api/docs/${docId}/public-link`, owner);
+  assert.equal(read.data?.url, null);
+});
+
+test("withdrawing a pending invite gives the public link a fresh token too", async () => {
+  const docId = await newDoc();
+  const made = await call<{ url: string }>("POST", `/api/docs/${docId}/public-link`, owner);
+  const oldToken = tokenOf(made.data?.url);
+  await call("POST", `/api/docs/${docId}/shares`, owner, { email: invitedEmail, role: "viewer" });
+
+  const res = await call<{ ok: boolean; publicLinkRotated: boolean; url: string }>(
+    "DELETE",
+    `/api/docs/${docId}/shares/${encodeURIComponent(invitedEmail)}`,
+    owner
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.data?.publicLinkRotated, true);
+  const newToken = tokenOf(res.data?.url);
+  assert.notEqual(newToken, oldToken);
+  assert.equal(await openPublic(oldToken), 404);
+  assert.equal(await openPublic(newToken), 200);
+});
+
+test("a removal that finds nobody leaves the public link alone", async () => {
+  const docId = await newDoc();
+  const made = await call<{ url: string }>("POST", `/api/docs/${docId}/public-link`, owner);
+  const token = tokenOf(made.data?.url);
+  assert.equal((await call("DELETE", `/api/docs/${docId}/shares/${randomUUID()}`, owner)).status, 404);
+  assert.equal(await openPublic(token), 200);
 });
 
 test("asking twice for a public link returns the same one", async () => {

@@ -89,6 +89,11 @@ function docName(docId: string): string {
 
 // New comment → notify the owner + everyone in the thread, minus the author.
 // Fire-and-forget: notification failures never fail the API call.
+//
+// The mail carries the comment in full, so a participant gets it only while
+// they can still read the document. Somebody removed from it keeps their old
+// comments in the thread, and without the check every later reply would
+// still reach their inbox.
 function notify(
   docId: string,
   threadId: string,
@@ -98,7 +103,9 @@ function notify(
   const recipients = new Map<string, string>();
   const owner = docOwner(docId);
   if (owner) recipients.set(owner.id, owner.email);
-  for (const p of threadParticipants(threadId)) recipients.set(p.id, p.email);
+  for (const p of threadParticipants(threadId)) {
+    if (canReadLevel(accessLevel(docId, p.id))) recipients.set(p.id, p.email);
+  }
   recipients.delete(author.id);
   const name = docName(docId);
   const from = author.name || author.email;
@@ -205,13 +212,16 @@ comments.post("/:id/threads/:threadId/status", async (c) => {
 });
 
 // Delete own comment; the doc owner can delete any. Last comment out
-// deletes the thread.
+// deletes the thread. Authorship alone is not enough: somebody removed from
+// the document no longer gets to change what its readers see, their own old
+// comments included.
 comments.delete("/:id/threads/:threadId/comments/:commentId", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const docId = c.req.param("id");
   const threadId = c.req.param("threadId");
   const commentId = c.req.param("commentId");
+  if (!canReadLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   const comment = db
     .prepare(
       `SELECT c.author_id FROM comments c JOIN threads t ON t.id = c.thread_id

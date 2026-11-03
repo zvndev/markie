@@ -143,7 +143,7 @@ function createAgentCloud({ registry, sync, home, unlocked, confirm, permissions
     const origin = sync.originOfRow(row);
     const res = await sync.withOrigin(origin, () => sync.api(method, `/api/docs/${encodeURIComponent(row.cloud_doc_id)}/public-link${suffix || ""}`));
     if (res.status === 401) throw new Error("Sign in to Markie Cloud in the Markie app first.");
-    if (res.status === 403) throw new Error("Only the owner of this document can change its public link.");
+    if (res.status === 403) throw new Error("Only the owner of this document can see or change its public link.");
     if (res.status < 200 || res.status >= 300) throw new Error(res.status === 0 ? "Markie Cloud could not be reached." : `Markie Cloud refused (${res.status}).`);
     return res.data || {};
   }

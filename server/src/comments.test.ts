@@ -533,6 +533,48 @@ test("removing a viewer takes their comment access with it", async () => {
   );
 });
 
+test("a removed member cannot delete the comments they left", async () => {
+  const f = await fixture();
+  const t = await thread(f, f.owner, "Owner's note");
+  const mine = await call<{ id: string }>(
+    "POST",
+    `/api/docs/${f.docId}/threads/${t.id}/comments`,
+    f.viewer,
+    { body: "Viewer's reply" }
+  );
+  assert.equal(mine.status, 200);
+
+  const list = await call<{ shares: Array<{ user_id: string | null; email: string }> }>(
+    "GET",
+    `/api/docs/${f.docId}/shares`,
+    f.owner
+  );
+  const target = list.data?.shares.find((m) => m.email === f.viewerEmail);
+  assert.ok(target?.user_id);
+  assert.equal(
+    (await call("DELETE", `/api/docs/${f.docId}/shares/${target.user_id}`, f.owner)).status,
+    200
+  );
+
+  const del = await call<{ error: string }>(
+    "DELETE",
+    `/api/docs/${f.docId}/threads/${t.id}/comments/${mine.data!.id}`,
+    f.viewer
+  );
+  assert.equal(del.status, 403);
+  assert.equal(del.data?.error, "forbidden");
+
+  // The comment is still there for the people who can read the document.
+  const read = await call<{ threads: ThreadView[] }>("GET", `/api/docs/${f.docId}/threads`, f.owner);
+  assert.deepEqual(read.data?.threads[0].comments.map((c) => c.body), ["Owner's note", "Viewer's reply"]);
+
+  // And the owner can still clear it away.
+  assert.equal(
+    (await call("DELETE", `/api/docs/${f.docId}/threads/${t.id}/comments/${mine.data!.id}`, f.owner)).status,
+    200
+  );
+});
+
 test("threads come back oldest first", async () => {
   const f = await fixture();
   await thread(f, f.owner, "One");

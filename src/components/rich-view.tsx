@@ -23,6 +23,7 @@ import type { WebsocketProvider } from "y-websocket";
 import { useCollabRuntime, type CollabRuntime } from "@/lib/collab-loader";
 import {
   COLLAB_SCHEMA_VERSION,
+  connectWithTicket,
   shouldWarnSchema,
   SCHEMA_MISMATCH_NOTICE,
   SEED_SETTLE_MS,
@@ -190,9 +191,11 @@ function RichViewInner({
     let provider: WebsocketProvider | null = null;
     try {
       ydoc = new runtime.Y.Doc();
+      // No credential yet: connectWithTicket fills params in once the
+      // server has issued a pass, and the provider does not connect before.
       provider = new runtime.WebsocketProvider(collab.wsBase, collab.docId, ydoc, {
         connect: false,
-        params: { token: collab.token },
+        params: {},
       });
       const extensions: AnyExtension[] = [
         runtime.Collaboration.configure({ document: ydoc }),
@@ -220,13 +223,20 @@ function RichViewInner({
   const session = init.session;
   const [collabError, setCollabError] = useState<string | null>(init.error);
 
+  // No pass means no live session: the page treats that as the runtime
+  // failing to load and goes back to the local copy.
   useEffect(() => {
-    if (!session) return;
-    session.provider.connect();
+    if (!session || !collab) return;
+    const stop = connectWithTicket(session.provider, collab, () =>
+      onCollabStatusRef.current?.("unavailable")
+    );
     return () => {
+      stop();
       session.provider.destroy();
       session.ydoc.destroy();
     };
+    // The parent remounts this component whenever collab changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   // The session never started, so the toolbar must stop saying "connecting"

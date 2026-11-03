@@ -197,3 +197,37 @@ test("an inviter whose name is nothing but a link is named by their verified add
   assert.ok(sent[0].text.includes('"a document"'));
   assert.ok(!JSON.stringify(sent[0]).includes("evil.test"));
 });
+
+// The /d/<id>?k= links open only for the right account, so the mail has to
+// say which one instead of promising a read without signing in.
+test("share mail says which account opens the link, and never that no account is needed", async () => {
+  const owner = await fresh("copyowner");
+  const member = await fresh("copymember");
+  const doc = await makeDoc(owner.token);
+  const stranger = `newcomer.${Date.now()}@far.test`;
+  sent.length = 0;
+  assert.equal((await call("POST", `/api/docs/${doc}/shares`, owner.token, { email: member.email, role: "viewer" })).status, 200);
+  assert.equal((await call("POST", `/api/docs/${doc}/shares`, owner.token, { email: stranger, role: "viewer" })).status, 200);
+  assert.equal(sent.length, 2);
+  const [toMember, toInvitee] = sent;
+
+  assert.deepEqual(toMember.to, [member.email]);
+  assert.match(toMember.text, /Read it here: https:\/\/markie\.test\/d\/[^\s]+\?k=/);
+  assert.match(toMember.text, /Or open it straight in Markie: markie:\/\/doc\?id=/);
+  const memberLine = `Sign in to Markie as ${member.email} to open it. The link does not work for anyone else.`;
+  assert.ok(toMember.text.endsWith(memberLine), toMember.text);
+  assert.ok(toMember.html?.includes(memberLine), "the html body says the same");
+
+  assert.deepEqual(toInvitee.to, [stranger]);
+  const inviteLine = `create your Markie account with this email address, ${stranger}`;
+  assert.ok(toInvitee.text.includes(inviteLine), toInvitee.text);
+  assert.ok(toInvitee.html?.includes(inviteLine), "the html body says the same");
+  assert.match(toInvitee.text, /sign in/);
+
+  for (const mail of [toMember, toInvitee]) {
+    for (const part of [mail.text, mail.html ?? ""]) {
+      assert.doesNotMatch(part, /no account (is )?needed/i);
+      assert.doesNotMatch(part, /—/);
+    }
+  }
+});

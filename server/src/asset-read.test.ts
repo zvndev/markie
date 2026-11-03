@@ -117,19 +117,25 @@ test("a matching If-None-Match answers 304 with no body, weak prefix tolerated",
   assert.equal(weak.headers.get("etag"), etag);
 });
 
-test("the /d/ route follows resolveViewer: personal token or session, nothing else", async () => {
+test("the /d/ route follows resolveViewer: a signed-in member, nothing else", async () => {
   assert.equal((await app.request(`/d/${docId}/assets?ref=a.png`, { headers: H() })).status, 404);
   // The viewer's personal ?k= token, minted on the share row the way the
-  // invite email mints it.
+  // invite email mints it. On its own it opens nothing: a forwarded email
+  // used to be enough to read the document's pictures.
   const { ensureShareToken } = await import("./shares.ts");
   const k = ensureShareToken(docId, viewer.id);
-  const withToken = await app.request(`/d/${docId}/assets?ref=a.png&k=${encodeURIComponent(k)}`, { headers: H() });
-  assert.equal(withToken.status, 200);
-  assert.equal(await withToken.text(), "0123456789");
-  assert.equal((await app.request(`/d/${docId}/assets?ref=a.png&k=not-a-token`, { headers: H() })).status, 404);
-  // Removing the member kills the token with the share row.
+  const tokenOnly = await app.request(`/d/${docId}/assets?ref=a.png&k=${encodeURIComponent(k)}`, { headers: H() });
+  assert.equal(tokenOnly.status, 401);
+  assert.notEqual(await tokenOnly.text(), "0123456789");
+  // Signed in as that member, the picture loads.
+  const signedIn = await app.request(`/d/${docId}/assets?ref=a.png`, { headers: H(viewer.token) });
+  assert.equal(signedIn.status, 200);
+  assert.equal(await signedIn.text(), "0123456789");
+  // Removing the member closes it for their session too.
   await app.request(`/api/docs/${docId}/shares/${viewer.id}`, { method: "DELETE", headers: H(owner.token) });
-  assert.equal((await app.request(`/d/${docId}/assets?ref=a.png&k=${encodeURIComponent(k)}`, { headers: H() })).status, 404);
+  const removed = await app.request(`/d/${docId}/assets?ref=a.png`, { headers: H(viewer.token) });
+  assert.notEqual(removed.status, 200);
+  assert.notEqual(await removed.text(), "0123456789");
 });
 
 test("the /s/ route follows the public token and revocation", async () => {

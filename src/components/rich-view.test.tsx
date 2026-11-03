@@ -4,6 +4,7 @@ import type { Editor } from "@tiptap/react";
 import { RichView } from "@/components/rich-view";
 import { installBridge } from "@/test/mock-bridge";
 import { setAssetDocPath } from "@/lib/asset-url";
+import { TICKET_CLOSE_REFRESH_MIN_MS, type CollabConfig, type CollabTicketAnswer } from "@/lib/collab";
 
 // The loader stands between a shared document and its editor; a chunk that
 // fails to load must not take the editor with it. Only the failure is faked.
@@ -12,6 +13,13 @@ const loader = vi.hoisted(() => ({
   // When set, the live session runs over this in-memory room instead of a
   // socket: `seed` fills the room before the first sync, as a server would.
   room: null as null | { seed?: (doc: import("yjs").Doc) => void },
+  // Every fake provider made, newest last, so a test can read its params.
+  providers: [] as Array<{
+    createdWith: Record<string, string>;
+    params: Record<string, string>;
+    connects: number;
+    drop: (code: number) => void;
+  }>,
 }));
 vi.mock("@/lib/collab-loader", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/collab-loader")>();
@@ -19,12 +27,22 @@ vi.mock("@/lib/collab-loader", async (importOriginal) => {
   const { Awareness } = await import("y-protocols/awareness");
   class FakeProvider {
     synced = false;
+    shouldConnect = false;
+    connects = 0;
+    params: Record<string, string>;
+    createdWith: Record<string, string>;
     awareness: InstanceType<typeof Awareness>;
     #doc: import("yjs").Doc;
     #handlers = new Map<string, Set<(...args: unknown[]) => void>>();
-    constructor(_url: string, _room: string, doc: import("yjs").Doc) {
+    constructor(_url: string, _room: string, doc: import("yjs").Doc, opts?: { params?: Record<string, string> }) {
       this.#doc = doc;
       this.awareness = new Awareness(doc);
+      this.params = opts?.params ?? {};
+      this.createdWith = { ...this.params };
+      loader.providers.push(this);
+    }
+    drop(code: number) {
+      this.#emit("connection-close", { code });
     }
     on(event: string, fn: (...args: unknown[]) => void) {
       if (!this.#handlers.has(event)) this.#handlers.set(event, new Set());
@@ -37,6 +55,8 @@ vi.mock("@/lib/collab-loader", async (importOriginal) => {
       for (const fn of this.#handlers.get(event) ?? []) fn(...args);
     }
     connect() {
+      this.shouldConnect = true;
+      this.connects += 1;
       setTimeout(() => {
         loader.room?.seed?.(this.#doc);
         this.synced = true;
@@ -237,6 +257,7 @@ describe("RichView when the live session cannot load", () => {
             docId: "doc-1",
             wsBase: "ws://localhost/collab",
             token: "t",
+            fetchTicket: async () => ({ kind: "ticket", ticket: "tk", expiresAt: 0 }),
             user: { name: "Me", color: "#000000" },
             readonly: false,
           }}
@@ -261,10 +282,11 @@ describe("RichView when the live session cannot load", () => {
 
 describe("RichView in a live room nobody has written yet", () => {
   const file = "Meeting Title: Monday\\\nMe: A line of the transcript.\n";
-  const collab = (readonly: boolean) => ({
+  const collab = (readonly: boolean): CollabConfig => ({
     docId: "doc-1",
     wsBase: "ws://localhost/collab",
     token: "t",
+    fetchTicket: async () => ({ kind: "ticket", ticket: "tk", expiresAt: 0 }),
     user: { name: "Me", color: "#000000" },
     readonly,
   });
@@ -337,6 +359,87 @@ describe("RichView in a live room nobody has written yet", () => {
       await new Promise((r) => setTimeout(r, 400));
       expect(onCollabStatus).not.toHaveBeenCalledWith("empty");
     } finally {
+      loader.room = null;
+    }
+  });
+});
+
+describe("RichView's live-editing pass", () => {
+  const SESSION_TOKEN = "account-wide-session-token";
+  const collab = (fetchTicket: () => Promise<CollabTicketAnswer>): CollabConfig => ({
+    docId: "doc-1",
+    wsBase: "ws://localhost/collab",
+    token: SESSION_TOKEN,
+    fetchTicket,
+    user: { name: "Me", color: "#000000" },
+    readonly: false,
+  });
+  const latest = () => loader.providers.at(-1)!;
+
+  it("creates the provider with no session token and connects with the server's ticket", async () => {
+    loader.room = {};
+    loader.providers = [];
+    try {
+      const fetchTicket = vi.fn(async (): Promise<CollabTicketAnswer> => ({ kind: "ticket", ticket: "tk-1", expiresAt: 0 }));
+      render(<RichView value={"# Doc\n"} onChange={() => {}} collab={collab(fetchTicket)} />);
+      await waitFor(() => expect(latest()?.connects).toBe(1));
+      expect(latest().createdWith).toEqual({});
+      expect(latest().params).toEqual({ ticket: "tk-1" });
+      expect(JSON.stringify(latest().params)).not.toContain(SESSION_TOKEN);
+    } finally {
+      loader.room = null;
+    }
+  });
+
+  it("falls back to the token on a server that has no ticket route", async () => {
+    loader.room = {};
+    loader.providers = [];
+    try {
+      render(<RichView value={"# Doc\n"} onChange={() => {}} collab={collab(async () => ({ kind: "legacy" }))} />);
+      await waitFor(() => expect(latest()?.connects).toBe(1));
+      expect(latest().params).toEqual({ token: SESSION_TOKEN });
+    } finally {
+      loader.room = null;
+    }
+  });
+
+  it("does not connect at all when no ticket can be had, and tells the page the session is unavailable", async () => {
+    loader.room = {};
+    loader.providers = [];
+    try {
+      const onCollabStatus = vi.fn();
+      render(
+        <RichView
+          value={"# Doc\n"}
+          onChange={() => {}}
+          collab={collab(async () => ({ kind: "failed", status: 401 }))}
+          onCollabStatus={onCollabStatus}
+        />
+      );
+      await waitFor(() => expect(onCollabStatus).toHaveBeenCalledWith("unavailable"));
+      expect(latest().connects).toBe(0);
+      expect(latest().params).toEqual({});
+    } finally {
+      loader.room = null;
+    }
+  });
+
+  it("puts a fresh ticket in provider.params when the connection drops", async () => {
+    loader.room = {};
+    loader.providers = [];
+    const realNow = Date.now;
+    try {
+      let n = 0;
+      const fetchTicket = vi.fn(async (): Promise<CollabTicketAnswer> => ({ kind: "ticket", ticket: `tk-${++n}`, expiresAt: 0 }));
+      render(<RichView value={"# Doc\n"} onChange={() => {}} collab={collab(fetchTicket)} />);
+      await waitFor(() => expect(latest()?.params).toEqual({ ticket: "tk-1" }));
+      const start = realNow();
+      vi.spyOn(Date, "now").mockImplementation(() => start + TICKET_CLOSE_REFRESH_MIN_MS + 1000);
+      latest().drop(1006);
+      await waitFor(() => expect(latest().params).toEqual({ ticket: "tk-2" }));
+      expect(latest().connects).toBe(1);
+    } finally {
+      vi.restoreAllMocks();
       loader.room = null;
     }
   });

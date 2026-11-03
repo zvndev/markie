@@ -198,7 +198,12 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   const onRoomReady = useCallback((roomText: string) => {
     roomTexts.current?.add(roomText);
     if (refusal || readOnly || !kind) return;
-    void assessLiveRoom(roomText, { content: stored.current, version: version.current }, kind, roomMeta(liveRoomRef.current)).then(setLiveBase);
+    void assessLiveRoom(roomText, { content: stored.current, version: version.current }, kind, roomMeta(liveRoomRef.current)).then((base) => {
+      // Ahead: the room's text is what goes out, whether or not the editor
+      // has handed it over as an edit yet.
+      if (base === "ahead") setValue((current) => (current === roomText ? current : roomText));
+      setLiveBase(base);
+    });
   }, [refusal, readOnly, kind]);
 
   const writeLive = useCallback(async (text: string) => {

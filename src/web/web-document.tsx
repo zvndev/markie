@@ -361,6 +361,9 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
     const stored = savedText.current;
     void assessLiveRoom(roomText, { content: stored, version: version.current }, liveKindHere, roomMeta(liveSessionRef.current)).then((base) => {
       setLiveBase(base);
+      // Ahead: the room's text is what goes out, whether or not the editor
+      // has handed it over as an edit yet.
+      if (base === "ahead" && textRef.current !== roomText) { textRef.current = roomText; setText(roomText); }
       if (base === "room-state" || base === "ahead") { changed(); return; }
       if (base === "diverged") {
         setState("conflict");

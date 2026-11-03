@@ -79,6 +79,7 @@ vi.mock("@/lib/collab-loader", async (importOriginal) => {
 
 import Home from "./page";
 import { authStore } from "@/lib/auth-store";
+import { setRichOverride } from "@/lib/rich-override";
 
 const PATH = "/notes/shared.md";
 const HELD = [
@@ -113,7 +114,7 @@ interface Handle {
 const richEditor = () => (window as unknown as { __markieEditor?: Handle | null }).__markieEditor ?? null;
 const liveSession = () => (window as unknown as { __markieCollab?: unknown }).__markieCollab ?? null;
 
-async function boot(content: string) {
+async function boot(content: string, extra: Partial<ElectronAPI> = {}) {
   const saveFile = vi.fn<(args: SaveArgs) => Promise<SaveResult>>(async () => ({ success: true, path: PATH }));
   const draftSave = vi.fn<(args: { content: string }) => Promise<{ ok: true }>>(async () => ({ ok: true }));
   const docPush = vi.fn(async () => ({ ok: true, pushed: true }));
@@ -126,6 +127,7 @@ async function boot(content: string) {
     saveFile,
     draftSave,
     docPush,
+    ...extra,
   } as Partial<ElectronAPI>);
   const view = render(<Home />);
   return { saveFile, draftSave, docPush, view };
@@ -179,7 +181,83 @@ describe("a live rich session and the file on disk", () => {
     for (const [{ content }] of draftSave.mock.calls) {
       if (content) expect(content).toBe(HELD);
     }
+    // The pane's note, and ⌘S saying the same out loud rather than nothing.
+    await waitFor(() => expect(screen.getAllByText(/isn't updated from the live session/)).toHaveLength(2));
+  });
+
+  it("gives Copy all and Save a Copy the live text, and says so, while the file is left alone", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const saveFileAs = vi.fn(async (args: { content: string }) => ({ success: true, path: "/notes/copy.md", name: "copy.md", wroteCsv: false, content: args.content }));
+    const { saveFile } = await boot(HELD, { saveFileAs: saveFileAs as unknown as ElectronAPI["saveFileAs"] });
+    await waitLive();
+    await typeWordAndAutosave();
+    expect(screen.getAllByText(/isn't updated from the live session/)).toHaveLength(1);
+
+    await act(async () => {
+      fireEvent.click(document.querySelector("[data-markie-copy-all]")!);
+      await vi.advanceTimersByTimeAsync(50);
+    });
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const copied = (writeText.mock.calls[0] as unknown as [string])[0];
+    expect(copied).toContain("typed");
+    expect(await screen.findByText(/Copied the live session's text/)).toBeInTheDocument();
+
+    await act(async () => {
+      emit("onMenuSaveAs");
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(saveFileAs).toHaveBeenCalledTimes(1);
+    expect((saveFileAs.mock.calls[0] as unknown as [{ content: string }])[0].content).toContain("typed");
+    expect(await screen.findByText(/Saved the live session's text/)).toBeInTheDocument();
+    // The original file still has every byte it had.
+    for (const content of written(saveFile)) expect(content).toBe(HELD);
+  });
+
+  // No construct on the known list: a reference link whose definition sits a
+  // block away. The room cannot write it back, and nothing names why; the
+  // generic guard finds out by writing it through a room once. Solo, the
+  // rich pane is read-only for it until the reader says "edit anyway"; that
+  // consent is for their own edits, never for a room's rewrite of the file.
+  it("leaves alone a file the room cannot write back even with nothing known-unsafe in it", async () => {
+    const odd = "# Plan\n\nSee [the docs][ref].\n\nUnrelated paragraph.\n\n[ref]: https://example.com\n";
+    setRichOverride(PATH, true);
+    const { saveFile } = await boot(odd);
+    await waitLive();
+    await typeWordAndAutosave();
+    expect(richEditor()?.getText()).toContain("typed");
+    for (const content of written(saveFile)) expect(content).toBe(odd);
     expect(await screen.findByText(/isn't updated from the live session/)).toBeInTheDocument();
+  });
+
+  // The verifier's document, which every peer's first keystroke used to
+  // rewrite: math, a right-aligned column and the closing newline.
+  it("writes one typed word into a math-and-table file and changes nothing else", async () => {
+    const everything = [
+      "# Plan for everything",
+      "",
+      "Inline math $e^{i\\pi} + 1 = 0$ in a sentence.",
+      "",
+      "$$",
+      "\\int_0^1 x^2 \\, dx = \\frac{1}{3}",
+      "$$",
+      "",
+      "| Item | Price |",
+      "| :--- | ---: |",
+      "| Tea | 3 |",
+      "| Cake | 12 |",
+      "",
+      "Last line.",
+      "",
+    ].join("\n");
+    const { saveFile } = await boot(everything);
+    await waitLive();
+    await typeWordAndAutosave();
+    await waitFor(() => expect(written(saveFile).some((c) => c.includes("typed"))).toBe(true));
+    for (const content of written(saveFile)) {
+      expect([everything, everything.replace("Last line.", "Last line. typed")]).toContain(content);
+    }
+    expect(screen.queryByText(/isn't updated from the live session/)).not.toBeInTheDocument();
   });
 
   it("never writes room text over that file when another client seeded the room", async () => {

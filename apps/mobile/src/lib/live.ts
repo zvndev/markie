@@ -8,7 +8,7 @@
 // back to a token (src/lib/collab.ts).
 import { classifyDocumentFormat } from "@/lib/document-formats";
 import { colorForName, type CollabConfig, type CollabTicketAnswer } from "@/lib/collab";
-import { writeLiveSnapshot, type LiveSnapshotResult, type RoomTexts } from "@/lib/live-snapshot";
+import { writeLiveSnapshot, type LiveSnapshotResult, type RoomMeta, type RoomTexts } from "@/lib/live-snapshot";
 import type { DocFormat } from "./docs";
 
 // The desktop opens no live session for a document this large
@@ -84,7 +84,7 @@ const isVersionConflict = (error: unknown) =>
  */
 export function saveLiveSnapshot(
   api: SnapshotApi,
-  { id, name, content, version, room }: { id: string; name: string; content: string; version: number; room: RoomTexts }
+  { id, name, content, version, room, meta = null }: { id: string; name: string; content: string; version: number; room: RoomTexts; meta?: RoomMeta | null }
 ): Promise<LiveSnapshotResult> {
   return writeLiveSnapshot({
     save: async (text, baseVersion) => (await api.saveDoc({ id, name, content: text, baseVersion })).version,
@@ -93,5 +93,5 @@ export function saveLiveSnapshot(
       return current.version === null ? null : { content: current.content, name: current.name ?? name, version: current.version };
     },
     isConflict: isVersionConflict,
-  }, { content, name, version, room });
+  }, { content, name, version, room, meta });
 }

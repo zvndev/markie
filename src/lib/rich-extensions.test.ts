@@ -8,6 +8,8 @@ describe("richBaseExtensions", () => {
   it("contains the full editing surface, in a stable order", () => {
     expect(names()).toEqual([
       "starterKit",
+      // Text is ours, so math is written back as it was written.
+      "text",
       // Paragraph and heading are ours, so an aligned one reaches the file.
       "paragraph",
       "heading",

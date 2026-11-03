@@ -23,6 +23,7 @@ import { AlignedHeading, AlignedParagraph } from "@/lib/rich-aligned-blocks";
 import { Placeholder } from "@tiptap/extension-placeholder";
 import { Highlight } from "@tiptap/extension-highlight";
 import { MarkieKeymap } from "@/lib/rich-keymap";
+import { MathAwareText } from "@/lib/rich-math";
 import { TextAlign } from "@tiptap/extension-text-align";
 import {
   Color,
@@ -248,12 +249,16 @@ export function richBaseExtensions(
     StarterKit.configure({
       paragraph: false,
       heading: false,
+      // The same text node with a markdown spec that keeps `$…$` and
+      // `$$…$$` as written (rich-math.ts).
+      text: false,
       // TipTap opens on ProseMirror mouseup, before our DOM click owner can
       // hand the link to the OS. Desktop has exactly one owner; web retains
       // TipTap's ordinary browser navigation when no desktop bridge exists.
       link: { openOnClick: !getElectronAPI()?.openExternal },
       ...(opts.collab ? { undoRedo: false } : {}),
     }),
+    MathAwareText,
     AlignedParagraph,
     AlignedHeading,
     TableKit.configure({ table: { resizable: false } }),

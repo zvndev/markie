@@ -40,7 +40,7 @@ import { memberAssetUrl, viewHtml } from "./view-content";
 import { WebExportMenu } from "./web-export";
 import type { WebSessionUser } from "./session";
 import {
-  DIVERGED_NOTE, RoomTexts, SNAPSHOT_REFUSAL_NOTE, liveSnapshotRefusal, liveSnapshotWait, roomMatchesStored, useLiveRoom, writeLiveSnapshot,
+  DIVERGED_NOTE, RoomTexts, SNAPSHOT_REFUSAL_NOTE, assessLiveRoom, liveSnapshotRefusal, liveSnapshotWait, roomMeta, useLiveRoom, writeLiveSnapshot,
   type LiveBase, type LiveRoom, type LiveRoomState, type SnapshotRefusal,
 } from "@/lib/live-snapshot";
 
@@ -230,6 +230,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
   const [liveBase, setLiveBase] = useState<LiveBase>("unknown");
   const base: LiveBase = refusal ? "room-state" : liveBase;
   const baseRef = useRef(base); baseRef.current = base;
+  const liveSessionRef = useRef(liveSession); liveSessionRef.current = liveSession;
   const onLiveSession = useCallback((session: LiveSession | LiveRoom | null) => {
     setLiveSession(session as unknown as LiveRoom | null);
     setLiveBase("unknown");
@@ -288,7 +289,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
               return server ? { content: server.content, name: server.name, version: server.version } : null;
             },
             isConflict: (error) => error instanceof CloudConflictError,
-          }, { content, name: docName, version: version.current, room: roomTexts.current! });
+          }, { content, name: docName, version: version.current, room: roomTexts.current!, meta: roomMeta(liveSessionRef.current) });
           if (result.kind === "conflict") throw new CloudConflictError(result.serverVersion);
           next = result.version;
         } else {
@@ -348,24 +349,26 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
     if (isDirty()) scheduleSave();
   }, [collab, room, refusal, base, editable, isDirty, scheduleSave]);
 
-  // The room's first text, as it becomes ready (rule 6). The same text as a
-  // room seeded from the stored copy: that is the baseline, so opening never
-  // rewrites the document. Anything else: the room drifted from a version
-  // written outside it, and this session never writes over that.
+  // The room's first text, as it becomes ready (rules 3, 6 and 7). The
+  // stored copy itself: opening never rewrites the document. A room that
+  // moved on from the stored copy it recorded: its text goes out. A room
+  // that cannot write this document faithfully: nothing goes out, and the
+  // note says so. Anything else: the room drifted from a version written
+  // outside it, and this session never writes over that.
   const onRoomReady = useCallback((roomText: string) => {
     roomTexts.current?.add(roomText);
     if (refusalRef.current || !editable) return;
     const stored = savedText.current;
-    void roomMatchesStored(roomText, stored, liveKindHere).then((same) => {
-      if (same) {
-        if (textRef.current === roomText || textRef.current === stored) savedText.current = roomText;
-        setLiveBase("room-state");
-        changed();
-        return;
+    void assessLiveRoom(roomText, { content: stored, version: version.current }, liveKindHere, roomMeta(liveSessionRef.current)).then((base) => {
+      setLiveBase(base);
+      // Ahead: the room's text is what goes out, whether or not the editor
+      // has handed it over as an edit yet.
+      if (base === "ahead" && textRef.current !== roomText) { textRef.current = roomText; setText(roomText); }
+      if (base === "room-state" || base === "ahead") { changed(); return; }
+      if (base === "diverged") {
+        setState("conflict");
+        setMessage(DIVERGED_NOTE);
       }
-      setLiveBase("diverged");
-      setState("conflict");
-      setMessage(DIVERGED_NOTE);
     });
   }, [editable, liveKindHere, changed]);
   const editOffice = useCallback((next: RichDocument) => {
@@ -563,7 +566,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
       {state === "signed-out" ? <a className="underline" href={`/auth/web-signin?next=${encodeURIComponent(`/app/d/${id}`)}`} target="_blank" rel="noreferrer">Sign in</a> : null}
       <button type="button" className="text-muted" onClick={() => setMessage(null)}>Dismiss</button>
     </div> : null}
-    {collab && refusal && editable ? <p role="status" data-web-live-held className="border-b border-border bg-surface px-4 py-1.5 text-[11.5px] text-muted">{SNAPSHOT_REFUSAL_NOTE}</p> : null}
+    {collab && (refusal || liveBase === "uncarried") && editable ? <p role="status" data-web-live-held className="border-b border-border bg-surface px-4 py-1.5 text-[11.5px] text-muted">{SNAPSHOT_REFUSAL_NOTE}</p> : null}
     {!editable && kind !== "unsupported" ? <p className="border-b border-border bg-surface px-4 py-1.5 text-[11.5px] text-muted">You can read and comment on this document. Its owner hasn&apos;t let you edit it.</p> : null}
 
     {kind === "markdown" && mode === "rich" ? <DocToolbar editor={richEditor} appearance={appearance} onAppearance={changeAppearance} canEdit={!richReadOnly} /> : null}

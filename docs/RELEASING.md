@@ -449,6 +449,12 @@ git push origin "v$MARKIE_RELEASE_VERSION"
 Create the GitHub release from that tag and attach or link the release notes. Do not attach unsigned
 Windows artifacts, or Linux packages that did not pass `release:prepare:linux`.
 
+Then put Kirby's own Mac back on the public lane, so he runs what everyone else now has:
+
+```sh
+npm run markie:use -- public
+```
+
 ## Rollback
 
 If the newly published feed must be withdrawn, explicitly approve rollback and run:

@@ -1,0 +1,237 @@
+// What hosted Live Docs keep in the database: each Live Doc's address, the
+// one-time passes that open it, and the cookies a pass turns into.
+//
+//   live_doc_addresses  doc id -> label. The label is 80 random bits, never
+//                       derived from the doc id, so an address says nothing
+//                       about the document and cannot be worked out from it.
+//   live_doc_tickets    a pass: single use, 60 seconds, for one document,
+//                       one person, one sign-in and one label. Stored hashed.
+//   live_doc_sessions   what a pass becomes on the Live Doc's own host: a
+//                       random cookie value, stored hashed, bound the same way.
+//
+// Nothing here decides access on its own. Every page load re-reads the doc,
+// the person's Markie sign-in and their access level (live-docs.ts), so a
+// deleted document, an ended sign-in or a removed share refuses the next load
+// whatever these tables still hold.
+//
+// Tickets and cookie values are 32 random bytes and only their SHA-256 is
+// kept, the same reasoning as collab-tickets.ts: a leaked table opens nothing,
+// and the lookup is by hash, off the secret itself.
+import { createHash, randomBytes } from "node:crypto";
+import { openDatabase } from "./db.ts";
+import { accessLevel, type ShareAccessLevel } from "./shares.ts";
+import { LIVE_DOC_LABEL } from "./live-docs-config.ts";
+
+const db = openDatabase();
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS live_doc_addresses (
+    doc_id TEXT PRIMARY KEY,
+    label TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS live_doc_tickets (
+    ticket_hash TEXT PRIMARY KEY,
+    doc_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    auth_session_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    issued_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_live_doc_tickets_user ON live_doc_tickets(user_id, issued_at);
+  CREATE INDEX IF NOT EXISTS idx_live_doc_tickets_expiry ON live_doc_tickets(expires_at);
+  CREATE TABLE IF NOT EXISTS live_doc_sessions (
+    session_hash TEXT PRIMARY KEY,
+    doc_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    auth_session_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_live_doc_sessions_doc ON live_doc_sessions(doc_id);
+  CREATE INDEX IF NOT EXISTS idx_live_doc_sessions_user ON live_doc_sessions(user_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_live_doc_sessions_expiry ON live_doc_sessions(expires_at);
+`);
+
+/** How long a pass is good for, from the app host's redirect to the live host's redeem. */
+export const LIVE_DOC_TICKET_TTL_MS = 60 * 1000;
+/** How long the Live Doc cookie lasts. The Markie sign-in behind it is re-checked on every load. */
+export const LIVE_DOC_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+// One person opening their Live Docs needs a pass per tab they open. Thirty a
+// minute is far beyond that and still stops a script filling the table.
+export const LIVE_DOC_TICKETS_PER_MINUTE = 30;
+// Each pass redeemed adds a cookie row, so the same bound applies there.
+export const LIVE_DOC_SESSIONS_PER_USER = 200;
+
+const hash = (secret: string) => createHash("sha256").update(secret, "utf8").digest("hex");
+
+const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
+
+/** 10 random bytes as 16 lowercase base32 characters: exactly 80 bits, DNS-safe. */
+export function newLiveDocLabel(): string {
+  const bytes = randomBytes(10);
+  let bits = 0;
+  let value = 0;
+  let out = "";
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += BASE32[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  return out;
+}
+
+export function liveDocLabel(docId: string): string | null {
+  const row = db.prepare("SELECT label FROM live_doc_addresses WHERE doc_id = ?").get(docId) as { label: string } | undefined;
+  return row?.label ?? null;
+}
+
+/** The doc's label, minted on first use. Stable for the life of the document. */
+export function ensureLiveDocLabel(docId: string, now = Date.now()): string {
+  const existing = liveDocLabel(docId);
+  if (existing) return existing;
+  // A collision between two 80-bit labels will not happen, but if it ever
+  // did the UNIQUE constraint refuses it and a fresh label is drawn.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      db.prepare("INSERT OR IGNORE INTO live_doc_addresses (doc_id, label, created_at) VALUES (?, ?, ?)").run(docId, newLiveDocLabel(), now);
+    } catch (error) {
+      if (!(error instanceof Error) || !/UNIQUE/i.test(error.message)) throw error;
+      continue;
+    }
+    const label = liveDocLabel(docId);
+    if (label) return label;
+  }
+  throw new Error("could not assign a Live Doc address");
+}
+
+/** Which document a label addresses, or null. Says nothing about who may open it. */
+export function docIdForLabel(label: string): string | null {
+  if (!LIVE_DOC_LABEL.test(label)) return null;
+  const row = db.prepare("SELECT doc_id FROM live_doc_addresses WHERE label = ?").get(label) as { doc_id: string } | undefined;
+  return row?.doc_id ?? null;
+}
+
+export interface LiveDocRow {
+  id: string;
+  name: string;
+  content: string;
+  ownerId: string;
+}
+
+/** A document that is a Live Doc right now: present, not deleted, format darkmown. */
+export function loadLiveDoc(docId: string): LiveDocRow | null {
+  const row = db
+    .prepare("SELECT id, name, content, owner_id FROM docs WHERE id = ? AND deleted_at IS NULL AND format = 'darkmown'")
+    .get(docId) as { id: string; name: string; content: string; owner_id: string } | undefined;
+  return row ? { id: row.id, name: row.name, content: row.content, ownerId: row.owner_id } : null;
+}
+
+/**
+ * Which access levels open a hosted Live Doc. H1 hosts private Live Docs
+ * only, so it is the owner alone. H2 (shared) widens this one function; every
+ * caller already goes through it and through the same accessLevel the rest of
+ * the server uses.
+ */
+export function liveDocLevelOpens(level: ShareAccessLevel): boolean {
+  return level === "owner";
+}
+
+/** Whether `userId` may open `docId` as a hosted Live Doc, read live from the database. */
+export function canOpenLiveDoc(docId: string, userId: string): boolean {
+  return loadLiveDoc(docId) !== null && liveDocLevelOpens(accessLevel(docId, userId));
+}
+
+export interface LiveDocBinding {
+  docId: string;
+  userId: string;
+  authSessionId: string;
+  label: string;
+}
+
+/**
+ * A new pass, or null when this person has asked for too many in the last
+ * minute. Expired rows go on the way in, so the table only ever holds passes
+ * that could still be used.
+ */
+export function issueLiveDocTicket(binding: LiveDocBinding, now = Date.now()): { ticket: string; expiresAt: number } | null {
+  return db.transaction(() => {
+    db.prepare("DELETE FROM live_doc_tickets WHERE expires_at <= ?").run(now);
+    const recent = (db
+      .prepare("SELECT COUNT(*) AS n FROM live_doc_tickets WHERE user_id = ? AND issued_at > ?")
+      .get(binding.userId, now - 60_000) as { n: number }).n;
+    if (recent >= LIVE_DOC_TICKETS_PER_MINUTE) return null;
+    const ticket = randomBytes(32).toString("base64url");
+    const expiresAt = now + LIVE_DOC_TICKET_TTL_MS;
+    db.prepare(
+      "INSERT INTO live_doc_tickets (ticket_hash, doc_id, user_id, auth_session_id, label, issued_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(hash(ticket), binding.docId, binding.userId, binding.authSessionId, binding.label, now, expiresAt);
+    return { ticket, expiresAt };
+  })();
+}
+
+/**
+ * Spends a pass on `label`'s host. The row is deleted in the same statement
+ * that reads it, so two requests racing with one pass cannot both win, and a
+ * pass shown to the wrong host is burned rather than kept for the right one.
+ */
+export function consumeLiveDocTicket(ticket: string, label: string, now = Date.now()): LiveDocBinding | null {
+  if (!ticket || ticket.length > 128) return null;
+  const row = db
+    .prepare("DELETE FROM live_doc_tickets WHERE ticket_hash = ? RETURNING doc_id, user_id, auth_session_id, label, expires_at")
+    .get(hash(ticket)) as { doc_id: string; user_id: string; auth_session_id: string; label: string; expires_at: number } | undefined;
+  if (!row || row.label !== label || row.expires_at <= now) return null;
+  return { docId: row.doc_id, userId: row.user_id, authSessionId: row.auth_session_id, label: row.label };
+}
+
+/** The cookie value for a redeemed pass. Only its hash is stored. */
+export function createLiveDocSession(binding: LiveDocBinding, now = Date.now()): { value: string; expiresAt: number } {
+  return db.transaction(() => {
+    db.prepare("DELETE FROM live_doc_sessions WHERE expires_at <= ?").run(now);
+    // Oldest first, so a person who has opened hundreds keeps their newest.
+    db.prepare(
+      `DELETE FROM live_doc_sessions WHERE session_hash IN (
+         SELECT session_hash FROM live_doc_sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT -1 OFFSET ?
+       )`
+    ).run(binding.userId, LIVE_DOC_SESSIONS_PER_USER - 1);
+    const value = randomBytes(32).toString("base64url");
+    const expiresAt = now + LIVE_DOC_SESSION_TTL_MS;
+    db.prepare(
+      "INSERT INTO live_doc_sessions (session_hash, doc_id, user_id, auth_session_id, label, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(hash(value), binding.docId, binding.userId, binding.authSessionId, binding.label, now, expiresAt);
+    return { value, expiresAt };
+  })();
+}
+
+/** Who a cookie value on `label`'s host belongs to, or null. A cookie for another label is no cookie. */
+export function liveDocSessionFor(value: string, label: string, now = Date.now()): LiveDocBinding | null {
+  if (!value || value.length > 128) return null;
+  const row = db
+    .prepare("SELECT doc_id, user_id, auth_session_id, label, expires_at FROM live_doc_sessions WHERE session_hash = ?")
+    .get(hash(value)) as { doc_id: string; user_id: string; auth_session_id: string; label: string; expires_at: number } | undefined;
+  if (!row || row.label !== label || row.expires_at <= now) return null;
+  return { docId: row.doc_id, userId: row.user_id, authSessionId: row.auth_session_id, label: row.label };
+}
+
+export function endLiveDocSession(value: string): void {
+  if (value) db.prepare("DELETE FROM live_doc_sessions WHERE session_hash = ?").run(hash(value));
+}
+
+/**
+ * Everything hosted for one document: its address, its passes and its
+ * cookies. Called when the document is deleted, so a revived id starts with
+ * a new address. Access already fails on the next load without this; this
+ * makes sure nothing is left that could ever point at it again.
+ */
+export function removeLiveDoc(docId: string): void {
+  db.transaction(() => {
+    db.prepare("DELETE FROM live_doc_sessions WHERE doc_id = ?").run(docId);
+    db.prepare("DELETE FROM live_doc_tickets WHERE doc_id = ?").run(docId);
+    db.prepare("DELETE FROM live_doc_addresses WHERE doc_id = ?").run(docId);
+  })();
+}

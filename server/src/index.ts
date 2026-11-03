@@ -33,6 +33,8 @@ import {
   installLittleFriend,
 } from "./little-friend.ts";
 import { createDocumentPlatform } from "./document-platform.ts";
+import { assertLiveDocsIsolated, liveDocsConfig } from "./live-docs-config.ts";
+import { createLiveDocs } from "./live-docs.ts";
 import { createSqliteDocumentPlatformStore } from "./document-platform-store.ts";
 import type Database from "better-sqlite3";
 import { accountIdentitiesEnabled, guardAccountAuthRequest } from "./account-context.ts";
@@ -56,6 +58,30 @@ const app = new Hono();
 // it times every request, including the ones a later middleware refuses.
 installLittleFriend(littleFriendFromEnv(process.env));
 app.use("*", requestTiming);
+
+// Hosted Live Docs (live-docs.ts), on their own domain. Off unless
+// LIVE_DOCS_DOMAIN is set. A request for the live domain is answered here,
+// ahead of every app middleware below, so no app route, CORS grant, app
+// header or app cookie ever comes back from a Live Doc's host, and the app
+// host never serves a Live Doc page. The boot stops if the live domain could
+// share cookies with any name the app answers on.
+const LIVE_DOCS_CONFIG = liveDocsConfig();
+const liveDocs = LIVE_DOCS_CONFIG
+  ? (() => {
+      const deploymentNow = deployment();
+      assertLiveDocsIsolated(LIVE_DOCS_CONFIG, [
+        deploymentNow.origin,
+        ...deploymentNow.apiAliases,
+        deploymentNow.siteUrl,
+        deploymentNow.downloadSiteUrl,
+        ...(process.env.MARKIE_WEB_ORIGINS?.split(",").map((value) => value.trim()) ?? []),
+      ]);
+      return createLiveDocs({ config: LIVE_DOCS_CONFIG, appOrigin: deploymentNow.origin, siteUrl: deploymentNow.siteUrl });
+    })()
+  : null;
+if (liveDocs) {
+  app.use("*", async (c, next) => (await liveDocs.dispatch(c.req.raw)) ?? next());
+}
 
 // What a shared document page is allowed to load.
 //
@@ -418,6 +444,9 @@ app.route("/api/docs", shares);
 app.route("/api/docs", comments);
 // The pass a live-editing socket opens with, instead of the session token.
 app.route("/api/docs", collabTickets);
+// A Live Doc's address for its owner, and the pass that opens it. Only
+// registered when Live Docs are on, so a server without them hands out none.
+if (liveDocs) app.route("/", liveDocs.app);
 app.route("/api", themes);
 app.route("/api", assetsApi);
 app.route("/api", docLinksApi);
@@ -480,7 +509,7 @@ app.get("/api/me", async (c) => {
   });
 });
 
-export { app };
+export { app, liveDocs };
 
 // Importing this module in a test must not bind a port or open a websocket
 // server; `npm start` leaves the variable unset and listens as usual.

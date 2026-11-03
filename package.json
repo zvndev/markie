@@ -94,6 +94,7 @@
     "share:check": "node scripts/share-link-check.mjs",
     "shared-viewer:check": "node scripts/shared-viewer-check.mjs",
     "access:check": "node scripts/doc-access-check.mjs",
+    "markie:use": "node scripts/markie-lane.mjs",
     "reveal:check": "node scripts/reveal-check.mjs",
     "find:check": "node scripts/find-check.mjs",
     "update:check": "node scripts/update-flow-check.mjs",

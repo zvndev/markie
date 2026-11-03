@@ -29,10 +29,10 @@
     "remark-parse": "^11.0.0",
     "remark-rehype": "^11.1.2",
     "unified": "^11.0.5",
-    "ws": "^8.21.0",
+    "ws": "^8.22.1",
     "y-protocols": "^1.0.7",
-    "y-websocket": "^3.0.0",
-    "yjs": "^13.6.31"
+    "y-websocket": "^3.1.0",
+    "yjs": "^13.6.33"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13"

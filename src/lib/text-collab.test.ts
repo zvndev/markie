@@ -40,6 +40,7 @@ describe("TextCollabBinding over real Yjs docs", () => {
     // this in production); what matters here is both sides converge and keep
     // converging through ordinary concurrent edits.
     expect(textA.toString()).toBe(textB.toString());
+    a.markSynced(); b.markSynced();
     const base = textA.toString();
 
     a.applyLocal(`${base}from A\n`);
@@ -58,5 +59,38 @@ describe("TextCollabBinding over real Yjs docs", () => {
 
     a.dispose(); b.dispose();
     docA.destroy(); docB.destroy();
+  });
+
+  it("does not write a keystroke typed before the first sync, so the room is never doubled", async () => {
+    const { Y } = await loadCollabRuntime();
+    // The server's copy of the room.
+    const server = new Y.Doc();
+    server.getText(TEXT_COLLAB_KEY).insert(0, "line one\nline two\n");
+    // A client joining: its Y.Text is empty until the sync, while its editor
+    // already shows the whole local file.
+    const doc = new Y.Doc();
+    const text = doc.getText(TEXT_COLLAB_KEY);
+    const remote: string[] = [];
+    const binding = new TextCollabBinding(doc, text, (t) => remote.push(t));
+    const file = "line one\nline two\n";
+
+    // Typing before the sync: diffed against "" this used to insert the
+    // whole file into the room.
+    expect(binding.applyLocal(`${file}x`)).toBeNull();
+    expect(text.toString()).toBe("");
+
+    // The sync arrives as a remote edit and the editor is handed the room.
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(server));
+    binding.markSynced();
+    expect(text.toString()).toBe(file);
+    expect(remote.at(-1)).toBe(file);
+
+    // From here an edit is one span on the room's text, never a second copy.
+    expect(binding.applyLocal(`${file}x`)).toBe(`${file}x`);
+    Y.applyUpdate(server, Y.encodeStateAsUpdate(doc, Y.encodeStateVector(server)));
+    expect(server.getText(TEXT_COLLAB_KEY).toString()).toBe(`${file}x`);
+
+    binding.dispose();
+    doc.destroy(); server.destroy();
   });
 });

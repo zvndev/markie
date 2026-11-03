@@ -21,6 +21,7 @@ import { warmBlocks } from "@/lib/rich-warmup";
 import type { Doc as YDoc } from "yjs";
 import type { WebsocketProvider } from "y-websocket";
 import { useCollabRuntime, type CollabRuntime } from "@/lib/collab-loader";
+import { useLiveRoom, type LiveRoom } from "@/lib/live-snapshot";
 import {
   COLLAB_SCHEMA_VERSION,
   connectWithTicket,
@@ -77,6 +78,34 @@ interface RichViewProps {
   // write the document as it stood a keystroke ago. Called with null on unmount
   // so the parent never holds a flush for a destroyed editor.
   onFlushReady?: (flush: FlushRich | null) => void;
+  /**
+   * Draw the desktop's comment gutter over a live document. Defaults to true.
+   * The phone (apps/mobile) passes false and draws its own touch comment
+   * sheet from the session handed out by onLiveSession, so a live document
+   * never carries two comment layers.
+   */
+  showCommentLayer?: boolean;
+  /**
+   * The live session's shared document, provider and runtime once it exists,
+   * and null when it ends. For a host that anchors comments itself
+   * (apps/mobile) or writes the stored copy (src/lib/live-snapshot.ts).
+   */
+  onLiveSession?: (session: LiveSession | null) => void;
+  /**
+   * Hold typing in a live document until the room is ready: synced, and
+   * holding the document (or the document is empty). Before that the pane
+   * is an empty room, and typing there would become the room's first
+   * content in place of the document. Seeding is not held. Off by default:
+   * the desktop keeps its behaviour; the web app and the phone turn it on.
+   */
+  holdUntilReady?: boolean;
+}
+
+/** What onLiveSession hands a host: the room's Yjs document, its provider and the loaded runtime. */
+export interface LiveSession {
+  ydoc: YDoc;
+  provider: WebsocketProvider;
+  runtime: CollabRuntime;
 }
 
 /** Returns the freshly serialized markdown, or null when nothing was pending. */
@@ -145,6 +174,9 @@ function RichViewInner({
   onPeersChange,
   onCollabStatus,
   onFlushReady,
+  showCommentLayer = true,
+  onLiveSession,
+  holdUntilReady = false,
 }: RichViewProps & { runtime: CollabRuntime | null }) {
   // The server told us, mid-session, that this user is no longer in the room.
   // The role prop cannot know that yet, so the editor has to lock itself.
@@ -222,6 +254,23 @@ function RichViewInner({
   });
   const session = init.session;
   const [collabError, setCollabError] = useState<string | null>(init.error);
+
+  // Hand the session to a host that anchors comments itself or writes the
+  // stored copy. Null on the way out, so it never holds a destroyed document.
+  useEffect(() => {
+    if (!session || !onLiveSession) return;
+    onLiveSession({ ydoc: session.ydoc, provider: session.provider, runtime: session.runtime });
+    return () => onLiveSession(null);
+  }, [session, onLiveSession]);
+
+  // `locked` is who may edit, and decides seeding. `held` is only "not yet":
+  // the room is not ready, so typing waits while seeding goes ahead.
+  const liveRoom = useLiveRoom(holdUntilReady && session ? (session as unknown as LiveRoom) : null, "rich", {
+    documentEmpty: !value.trim(),
+    offer: false,
+  });
+  const held = holdUntilReady && !!session && !liveRoom.ready;
+  const editableNow = !locked && !held;
 
   // No pass means no live session: the page treats that as the runtime
   // failing to load and goes back to the local copy.
@@ -378,7 +427,7 @@ function RichViewInner({
 
   const editor = useEditor({
     immediatelyRender: false,
-    editable: !locked,
+    editable: editableNow,
     editorProps: {
       handleDrop: (view, event) => attachDroppedFiles(view, event as DragEvent),
     },
@@ -429,11 +478,11 @@ function RichViewInner({
   // EditorInstanceManager.onRender), so a role that resolves after mount only
   // takes effect if it is applied by hand.
   useEffect(() => {
-    const shouldEdit = !locked;
+    const shouldEdit = editableNow;
     // The second argument is emitUpdate. Left at its default, applying the
     // role raised an update event, which the handler above took for an edit.
     if (editor && editor.isEditable !== shouldEdit) editor.setEditable(shouldEdit, false);
-  }, [editor, locked]);
+  }, [editor, editableNow]);
 
   // Document links: once the editor has drawn, ask main what each
   // `[x](plan.md)` is for this reader and mark the anchors, so a link to a
@@ -712,7 +761,7 @@ function RichViewInner({
             editing, so the viewer waits for a double there. Read-only has no
             selection to protect. */}
         <ImageLightbox container={scrollEl} openOn={locked ? "click" : "dblclick"} />
-        {editor && session && collab && (
+        {editor && session && collab && showCommentLayer && (
           <CommentLayer
             editor={editor}
             ydoc={session.ydoc}

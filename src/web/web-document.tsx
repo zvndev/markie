@@ -7,8 +7,8 @@
 // Saving is versioned. A save names the version the edits started from, and
 // the server refuses it when someone else saved first. On a document nobody
 // else is editing live that refusal stops autosave and asks what to do; it is
-// never merged over. In a live session the room has already merged everyone's
-// edits, so the converged text is saved over the version a peer just wrote.
+// never merged over. In a live session the stored copy is written from the
+// room by one client, under the shared policy in src/lib/live-snapshot.ts.
 import "@/components/documents/document-workspace.css";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
@@ -20,7 +20,7 @@ import { decodeTextDocument, encodeTextDocument, type DecodedTextDocument } from
 import { exportRichDocument, openRichDocument, type RichDocument } from "@/lib/office/rich-document";
 import { useRichSafety } from "@/lib/use-rich-safety";
 import { DocToolbar } from "@/components/doc-toolbar";
-import { RichView } from "@/components/rich-view";
+import { RichView, type LiveSession } from "@/components/rich-view";
 import { RichLossBanner, RichPreparingNote } from "@/components/rich-guard";
 import { RichSectionRail } from "@/components/section-rail";
 import { SourceEditor } from "@/components/source-editor";
@@ -35,7 +35,10 @@ import {
 } from "./cloud";
 import { PlatformShareDialog, PlatformHistoryDialog } from "./platform-dialogs";
 import type { WebSessionUser } from "./session";
-import { RoomTexts, resolveLiveConflict } from "./live-save";
+import {
+  RoomTexts, SNAPSHOT_REFUSAL_NOTE, liveSnapshotRefusal, liveSnapshotWait, useLiveRoom, writeLiveSnapshot,
+  type LiveRoom, type LiveRoomState, type SnapshotRefusal,
+} from "@/lib/live-snapshot";
 
 const WordDocumentEditor = lazy(() => import("@/components/documents/word-document-editor").then((m) => ({ default: m.WordDocumentEditor })));
 
@@ -138,6 +141,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
   const [collab, setCollab] = useState<CollabConfig | null>(null);
   const [liveStatus, setLiveStatus] = useState<string | null>(null);
   const [liveUnavailable, setLiveUnavailable] = useState(false);
+  const [liveSession, setLiveSession] = useState<LiveRoom | null>(null);
   const [peers, setPeers] = useState<PeerUser[]>([]);
   const [mode, setMode] = useState<"rich" | "source">("rich");
   const [richEditor, setRichEditor] = useState<Editor | null>(null);
@@ -157,8 +161,8 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
   const officeRef = useRef(office); officeRef.current = office;
   const collabRef = useRef(collab); collabRef.current = collab;
   const stateRef = useRef(state); stateRef.current = state;
-  // Every text this tab has held while live, its own and its peers', so a
-  // refused save can tell a peer's version from an outside one (live-save.ts).
+  // Every text this tab has held from the room, its own and its peers', so a
+  // refused save can tell a room state from an outside one (live-snapshot.ts).
   const roomTexts = useRef<RoomTexts | null>(null);
   if (!roomTexts.current) { roomTexts.current = new RoomTexts(); roomTexts.current.add(initial.text); }
   const saving = useRef<Promise<void> | null>(null);
@@ -198,6 +202,20 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
     setLiveStatus(status);
   }, []);
 
+  // Who writes the stored copy while live, and whether it can be written at
+  // all (src/lib/live-snapshot.ts). The refusal is read from the stored copy
+  // as the session starts: a rich room cannot carry front matter or raw HTML.
+  const liveKindHere = kind === "markdown" ? "rich" : "text";
+  const room = useLiveRoom(collab ? liveSession : null, liveKindHere, {
+    documentEmpty: !initial.text.trim(),
+    offer: editable && !!collab,
+  });
+  // savedText is read as the session starts, on purpose.
+  const refusal = useMemo<SnapshotRefusal | null>(() => (collab ? liveSnapshotRefusal(savedText.current, liveKindHere) : null), [collab, liveKindHere]);
+  const roomRef = useRef<LiveRoomState>(room); roomRef.current = room;
+  const refusalRef = useRef(refusal); refusalRef.current = refusal;
+  const onLiveSession = useCallback((session: LiveSession | LiveRoom | null) => setLiveSession(session as unknown as LiveRoom | null), []);
+
   // ── Saving ─────────────────────────────────────────────────────────────
   const currentText = useCallback(() => {
     if (kind === "markdown" && mode === "rich") {
@@ -231,25 +249,31 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
       setState("saved");
       return;
     }
+    // Live: only the room's elected writer pushes, only once the room is
+    // connected, synced and holding the document, and never over a stored
+    // copy the room cannot carry. Anything else waits; the room keeps the
+    // edits either way.
+    const live = !!collabRef.current;
+    if (live && liveSnapshotWait(roomRef.current, { editable, refusal: refusalRef.current })) return;
     setState("saving");
     const run = (async () => {
       try {
         let next: number;
-        try {
+        if (live) {
+          // A 409 is resolved by the fingerprint rule: over a room state, or
+          // surfaced as a conflict, never over an outside write.
+          const result = await writeLiveSnapshot({
+            save: (text, base) => write(text, docName, base, null),
+            read: async () => {
+              const server = await openTextDoc(id);
+              return server ? { content: server.content, name: server.name, version: server.version } : null;
+            },
+            isConflict: (error) => error instanceof CloudConflictError,
+          }, { content, name: docName, version: version.current, room: roomTexts.current! });
+          if (result.kind === "conflict") throw new CloudConflictError(result.serverVersion);
+          next = result.version;
+        } else {
           next = await write(content, docName, version.current, officeDoc);
-        } catch (error) {
-          // Live: a peer in the room may have saved a moment earlier. Take
-          // their version when it is this text, and save the merged text over
-          // it only when it is a state this tab saw in the room. A version
-          // with text the room never had was written from outside it, and is
-          // surfaced as a conflict below, never saved over (live-save.ts).
-          if (!(error instanceof CloudConflictError) || !collabRef.current) throw error;
-          const server = await openTextDoc(id);
-          if (!server) throw error;
-          const answer = resolveLiveConflict(server, { content, name: docName }, roomTexts.current!);
-          if (answer === "conflict") throw new CloudConflictError(server.version);
-          version.current = server.version;
-          next = answer === "adopt" ? server.version : await write(content, docName, server.version, null);
         }
         version.current = next;
         savedText.current = content;
@@ -260,7 +284,9 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
       } catch (error) {
         if (error instanceof CloudConflictError) {
           setState("conflict");
-          setMessage("Someone saved a newer version of this document. Your edits are still here and were not saved over theirs.");
+          setMessage(live
+            ? "Someone saved this document outside the live session, an agent or another device. The live edits are still here and weren't saved over theirs."
+            : "Someone saved a newer version of this document. Your edits are still here and were not saved over theirs.");
         } else if (error instanceof SessionEndedError) {
           setState("signed-out");
           setMessage("Your session ended, so this edit wasn't saved. Sign in again in another tab, then save.");
@@ -291,9 +317,17 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
   }, [isDirty, scheduleSave]);
 
   const editText = useCallback((next: string) => {
-    if (collabRef.current) roomTexts.current?.add(next);
+    // Only text that came out of a ready room is a room state.
+    if (collabRef.current && roomRef.current.ready) roomTexts.current?.add(next);
     textRef.current = next; setText(next); changed();
   }, [changed]);
+
+  // A push that waited (not connected yet, not the writer yet) goes as soon
+  // as it may.
+  useEffect(() => {
+    if (!collab || liveSnapshotWait(room, { editable, refusal })) return;
+    if (isDirty()) scheduleSave();
+  }, [collab, room, refusal, editable, isDirty, scheduleSave]);
   const editOffice = useCallback((next: RichDocument) => {
     officeRef.current = next; officeGeneration.current += 1; setOffice(next); changed();
   }, [changed]);
@@ -307,7 +341,8 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
       }
     };
     const onLeave = (event: BeforeUnloadEvent) => {
-      if (!isDirty() || !editable) return;
+      // Live edits are in the room whether or not this tab wrote them out.
+      if (!isDirty() || !editable || collabRef.current) return;
       event.preventDefault();
       event.returnValue = "";
     };
@@ -385,6 +420,8 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
 
   const statusText = !editable
     ? kind === "unsupported" ? "Can't be edited here" : "View only"
+    : collab && refusal ? "Live, not saved to Markie Cloud"
+    : collab && state !== "conflict" && state !== "saving" && !room.writer ? "Live"
     : state === "saving" ? "Saving…" : state === "dirty" ? "Unsaved changes" : state === "conflict" ? "Not saved" : state === "error" ? "Not saved" : state === "signed-out" ? "Signed out" : "Saved to Markie Cloud";
 
   const richReadOnly = !editable || !richSafety.armed;
@@ -413,7 +450,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
           {(["rich", "source"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}
             className={`rounded px-2 py-0.5 text-[11.5px] ${mode === value ? "bg-accent text-foreground" : "text-muted hover:text-foreground"}`}>{value === "rich" ? "Rich" : "Source"}</button>)}
         </div> : null}
-        {editable && state !== "saved" && state !== "saving" ? <button type="button" onClick={() => void save()} className="markie-toolbar-action h-7 rounded-md px-2 text-[12px] text-muted hover:text-foreground">Save</button> : null}
+        {editable && state !== "saved" && state !== "saving" && !(collab && liveSnapshotWait(room, { editable, refusal })) ? <button type="button" onClick={() => void save()} className="markie-toolbar-action h-7 rounded-md px-2 text-[12px] text-muted hover:text-foreground">Save</button> : null}
         <button type="button" onClick={() => setShowShare(true)} className="h-7 rounded-md bg-foreground px-3 text-[12px] font-medium text-background hover:opacity-90">Share</button>
         <div className="relative">
           <button type="button" aria-label="Document menu" aria-expanded={menu} onClick={() => setMenu(!menu)} className="markie-toolbar-action flex h-7 w-7 items-center justify-center rounded-md text-muted hover:text-foreground">
@@ -438,6 +475,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
       {state === "signed-out" ? <a className="underline" href={`/auth/web-signin?next=${encodeURIComponent(`/app/d/${id}`)}`} target="_blank" rel="noreferrer">Sign in</a> : null}
       <button type="button" className="text-muted" onClick={() => setMessage(null)}>Dismiss</button>
     </div> : null}
+    {collab && refusal && editable ? <p role="status" data-web-live-held className="border-b border-border bg-surface px-4 py-1.5 text-[11.5px] text-muted">{SNAPSHOT_REFUSAL_NOTE}</p> : null}
     {!editable && kind !== "unsupported" ? <p className="border-b border-border bg-surface px-4 py-1.5 text-[11.5px] text-muted">You can read and comment on this document. Its owner hasn&apos;t let you edit it.</p> : null}
 
     {kind === "markdown" && mode === "rich" ? <DocToolbar editor={richEditor} appearance={appearance} onAppearance={changeAppearance} canEdit={!richReadOnly} /> : null}
@@ -453,6 +491,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
             <ErrorBoundary fallback={(_error, reset) => <div role="alert" className="p-4 text-sm">The rich view stopped. <button type="button" className="underline" onClick={() => { reset(); setMode("source"); }}>Edit in Source</button></div>}>
               <RichView key={collab ? `live:${collab.docId}:${collab.readonly}` : "solo"} value={text} onChange={editText} onEditorReady={setRichEditor}
                 collab={collab} readOnly={richReadOnly} canModerate={role === "owner"} onPeersChange={setPeers} onCollabStatus={onCollabStatus}
+                holdUntilReady onLiveSession={onLiveSession}
                 onFlushReady={(flush) => { flushRich.current = flush; }} />
             </ErrorBoundary>
           </div>
@@ -468,7 +507,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
         {liveUnavailable ? <LiveUnavailableNote /> : null}
         <div className="min-h-0 flex-1 overflow-hidden">
           {collab ? <TextCollabEditor key={`live-text:${collab.docId}:${collab.readonly}`} value={text} onChange={editText} collab={collab} readOnly={!editable}
-            onPeersChange={setPeers} onCollabStatus={onCollabStatus} />
+            onPeersChange={setPeers} onCollabStatus={onCollabStatus} onLiveSession={onLiveSession} />
             : <SourceEditor value={text} plainText onChange={editText} readOnly={!editable} />}
         </div>
       </div> : null}

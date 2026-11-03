@@ -132,6 +132,16 @@ Still to do: new Google and email secrets; move the super-nightly gateway (still
 - Mobile: iOS 0.1.0 (2) with the new icons uploaded to App Store Connect from Xcode (PR #48). Android AAB 0.1.0 (2) at `~/Desktop/Markie-mobile-0.1.0-2.aab`.
 - Still open: TestFlight internal group (Kirby in App Store Connect), Play internal testing (account verification), the Play app-signing SHA-256 in `ANDROID_APP_CERT_SHA256`, a hand check of the AppImage and .deb on a real Linux desktop, and the GitHub social preview image (Settings, no API).
 
+## 2026-11-02 Markie 0.9.4 stable on macOS, Windows and Linux
+
+- Kirby asked for a full release, super nightly through stable, the same night. Contents: viewers no longer get a blank page on a shared doc whose live room is empty, and `$6 ... $100` in a transcript is no longer read as one equation (#72); share-email and invite links need a signed-in account, the public link is owner only and replaced on removal, removed members get no comment emails, and live editing joins with a 5-minute per-doc pass instead of the session token (#75); plus Darkmown 2.13 and `.wd` work (#69, #70, #71) and an empty page on launch (#68). Section rail, local comments and the version history panel (#65, #66, #67) stay super-nightly only. Release commit `29ca9f6`.
+- Server: `zvn-apps/markie-api:d602d872c0f8` deployed to `zvn-apps-a` under the production lock at 21:55 ET, outside the daytime window with Kirby's go. Adds `POST /api/docs/:id/collab-ticket` and `collab_tickets`; `?token=` on `/collab` stays for older builds and logs `collab: legacy token connection`.
+- Windows run 41569025178 (signed CN=ZVN DEV LLC), Linux run 41569027799. Mac arm64 and x64 notarized and stapled.
+- Early access on all three, then `release:promote -- --confirm-promote=0.9.4 --now`. `release:verify:public --deep` passed on mac, win and linux; every `/download` route and `latest.json` name 0.9.4.
+- Update from 0.9.3: Mac `update:check -- --install` 12/12; Windows run 41570395803; Linux run 41570383569. Tagged `v0.9.4`, GitHub release created. Super nightly `0.9.4-super-nightly.1` published from the same commit.
+- New checks: `npm run access:check` (CI, server job) asks every document route as each kind of outsider; `npm run shared-viewer:check` opens shared docs as a viewer in a real window.
+- Audit items not done, not filed: agent tokens never expire; `/s/` pages send no Cache-Control; no Origin check on writes; an editor can surface the owner's other public links through doc links; awareness messages are not checked; Markie's kamal-proxy still logs full URLs in Docker on the box (zvn-infra syslog switch pending). The mobile `.m-markdown` wrap fix needs a mobile build.
+
 ## 2026-10-28 Markie 0.9.3 stable on macOS, Windows and Linux
 
 - Kirby asked for a full release. Contents: Google Docs-style Share dialog with contact suggestions (#56), Library file menu with Delete and Copy all (#57), per-item Touch ID in the vault (#58), Skills Discover removed (#55), wordmark in the top bar (#54). Release commit `3e3f50c` (#59).

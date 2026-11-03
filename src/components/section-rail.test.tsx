@@ -7,7 +7,6 @@ import {
   SectionRail,
   SourceSectionRail,
 } from "@/components/section-rail";
-import { NIGHTLY_STORAGE_KEY } from "@/lib/nightly";
 import type { Section } from "@/lib/section-outline";
 
 // jsdom has no layout: give a scroller the sizes a long document would have.
@@ -149,14 +148,16 @@ describe("RichSectionRail", () => {
     scroller.appendChild(dom);
   });
 
-  it("renders nothing outside the super-nightly build", () => {
+  // The rail left the super-nightly gate on 2026-11-03: a public build, with
+  // no nightly flag anywhere, shows it.
+  it("shows on every build, with no nightly flag set", () => {
+    expect(localStorage.getItem("markie.nightly")).toBeNull();
     const { editor } = fakeEditor(dom);
     render(<RichSectionRail editor={editor} />);
-    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.getByRole("navigation", { name: "Sections" })).toBeInTheDocument();
   });
 
   it("reads the editor's headings and rereads them after an edit", async () => {
-    localStorage.setItem(NIGHTLY_STORAGE_KEY, "1");
     const { editor, change } = fakeEditor(dom);
     render(<RichSectionRail editor={editor} />);
     expect(screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["One", "Two", "Three"]);
@@ -170,13 +171,13 @@ describe("RichSectionRail", () => {
 describe("SourceSectionRail", () => {
   const md = ["---", "title: x", "---", "# One", "text", "```", "# not a heading", "```", "## Two", "Three", "-----", "body"].join("\n");
 
-  it("renders nothing outside the super-nightly build", () => {
+  it("shows on every build, with no nightly flag set", () => {
+    expect(localStorage.getItem("markie.nightly")).toBeNull();
     render(<SourceSectionRail markdown={md} scroller={makeScroller()} lineTop={(l) => l * 20} scrollToLine={() => {}} />);
-    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.getByRole("navigation", { name: "Sections" })).toBeInTheDocument();
   });
 
   it("takes headings from the markdown and scrolls to the heading's line", () => {
-    localStorage.setItem(NIGHTLY_STORAGE_KEY, "1");
     const scrollToLine = vi.fn();
     render(<SourceSectionRail markdown={md} scroller={makeScroller()} lineTop={(l) => l * 20} scrollToLine={scrollToLine} />);
     expect(screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["One", "Two", "Three"]);

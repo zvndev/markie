@@ -8,6 +8,13 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Long documents show their outline at the left edge.** A document with a few
+  headings that runs past a screen and a half gets a column of short ticks, one
+  per heading. Hover one to see the section, click it to jump there. It works in
+  the rich view and in the source view. It was only in test builds before.
+
 ## [0.9.4] - 2026-11-02
 
 ### Added

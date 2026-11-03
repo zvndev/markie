@@ -269,6 +269,44 @@ async function probeRenderer(cdp, timeoutMs) {
   );
 }
 
+// The E2E window is never shown. On Electron 42 Linux, Chromium sometimes has
+// no frame for a hidden window when the screenshot is asked for, and the
+// capture waits for one that never comes. Before each attempt the page is put
+// back in the active lifecycle state and given an emulated size change, which
+// makes the renderer produce a fresh frame. A capture that still never answers
+// fails the smoke, with the page's visibility in the message.
+const CAPTURE_ATTEMPTS = 3;
+
+async function captureHiddenWindow(cdp) {
+  let lastError;
+  for (let attempt = 1; attempt <= CAPTURE_ATTEMPTS; attempt += 1) {
+    await cdp.send("Page.setWebLifecycleState", { state: "active" }).catch(() => null);
+    await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => null);
+    const size = await cdp
+      .evaluate("({ width: window.innerWidth, height: window.innerHeight })")
+      .catch(() => null);
+    if (size?.width && size?.height) {
+      await cdp
+        .send("Emulation.setDeviceMetricsOverride", {
+          width: size.width,
+          height: size.height - (attempt % 2),
+          deviceScaleFactor: 0,
+          mobile: false,
+        })
+        .catch(() => null);
+    }
+    try {
+      return await capturePageScreenshot(cdp);
+    } catch (error) {
+      lastError = error;
+    } finally {
+      await cdp.send("Emulation.clearDeviceMetricsOverride").catch(() => null);
+    }
+  }
+  const visibility = await cdp.evaluate("document.visibilityState").catch(() => "unknown");
+  throw new Error(`${lastError?.message ?? "screenshot failed"} (after ${CAPTURE_ATTEMPTS} attempts; page visibility: ${visibility})`);
+}
+
 async function waitForExit(child, timeoutMs = 2000) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   await Promise.race([
@@ -403,7 +441,7 @@ export async function runDesktopLaunchSmoke({
     if (startupErrors.length) {
       throw new Error(`the main process threw while starting:\n${describeLaunchErrors(startupErrors)}`);
     }
-    const screenshotPng = await capturePageScreenshot(cdp);
+    const screenshotPng = await captureHiddenWindow(cdp);
     const artifact = buildDesktopLaunchSmokeArtifact({
       baseDir,
       distDir,

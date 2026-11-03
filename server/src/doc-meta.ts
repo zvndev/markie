@@ -77,7 +77,8 @@ export function originOf(row: { origin_kind?: string | null; origin_agent?: stri
 /**
  * The origin private links are built on. With MARKIE_DOCS_ORIGIN set, that
  * docs host, where the documents are served; links already handed out on the
- * old host redirect there (docs-host.ts). Unset, this server's own public
+ * old host still open (doc-view.ts sends a reader on to the web app on the
+ * docs host, or signs them in here). Unset, this server's own public
  * origin: Markie Cloud answers on more than one name while it moves hosts,
  * and the mobile app claims only api.markiedocs.com, so the official
  * deployment names that one. Every other server, self-hosted or local, names

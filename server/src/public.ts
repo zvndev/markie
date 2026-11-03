@@ -222,6 +222,9 @@ async function publicNav(docId: string, headers: Headers) {
 publicShare.get("/s/:token", async (c) => {
   const token = c.req.param("token");
   const doc = docForToken(token);
+  // The bar can name the signed-in reader and offer them the editor, so the
+  // page differs per person: no cache, shared or private, may keep it.
+  c.header("Cache-Control", "private, no-store");
   if (!doc) return c.html(renderNotFoundPage(MARKIE_SITE), 404);
   const { nav, editDocId } = await publicNav(doc.doc_id, c.req.raw.headers);
   const refs = assetRefsFor(doc.doc_id);

@@ -326,6 +326,7 @@ Everything else lives in `.env`.
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in |
 | `MARKIE_STORAGE_QUOTA_BYTES` | Per-account quota in bytes. Unset means unlimited |
 | `MARKIE_WEB_ORIGINS` | Extra HTTPS origins allowed to make signed-in requests |
+| `MARKIE_DOCS_ORIGIN` | Optional. A separate HTTPS origin that proxies `/d`, `/s` and `/app` to this server, so document links are built on it. It is trusted for signed-in requests. Sign-in and the session stay on this server's own origin. The proxy must set `X-Forwarded-Host` to the docs origin's host: a proxy that rewrites `Host` to this server's name without it makes old `/s/` links redirect in a loop. Unset keeps everything on one host, which is what most servers want |
 | `MARKIE_CLIENT_IP_HEADER` or `CLIENT_IP_HEADER` | The header your proxy sets to the client's address, for example `cf-connecting-ip` behind Cloudflare. Only that header is read. Unset uses `x-forwarded-for`, which Caddy sets |
 | `ENABLE_CRONS` | `false` stops this server running its hourly cleanup of unused uploads. Unset runs it |
 | `LF_SERVER_KEY` | A Little Friend secret server key (`lfs_...`). Set, the server reports its errors and request timings by route template to Little Friend. Unset sends nothing |

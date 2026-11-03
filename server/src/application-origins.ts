@@ -1,4 +1,5 @@
 import { cloudApiAliases, officialFlag } from "./official.ts";
+import { docsOriginFrom } from "./deployment.ts";
 
 // The dev renderer (`next dev` / Vite on :3000). Trusted only outside
 // production: a credentialed CORS grant to localhost in production hands any
@@ -18,7 +19,7 @@ const OFFICIAL_WEB_ORIGINS = ["https://markiedocs.com", "https://www.markiedocs.
  * own origin, app://markie, is trusted by every server.
  */
 export function applicationOrigins(
-  env: { MARKIE_WEB_ORIGINS?: string; NODE_ENV?: string; MARKIE_OFFICIAL?: string; BETTER_AUTH_URL?: string } = process.env
+  env: { MARKIE_WEB_ORIGINS?: string; NODE_ENV?: string; MARKIE_OFFICIAL?: string; BETTER_AUTH_URL?: string; MARKIE_DOCS_ORIGIN?: string } = process.env
 ): string[] {
   const official = officialFlag(env);
   const origins = new Set([
@@ -35,6 +36,12 @@ export function applicationOrigins(
   // server, so a page it served before the move can still finish what it
   // started.
   for (const alias of cloudApiAliases(env)) origins.add(alias);
+  // The docs host (deployment.ts docsOrigin), when it is not this server's
+  // own: its pages, the web app above all, ask this origin for the session.
+  // Only that exact origin, never a parent domain, so a sibling host is
+  // trusted with nothing.
+  const docs = docsOriginFrom(env.MARKIE_DOCS_ORIGIN, { production: env.NODE_ENV === "production" });
+  if (docs) origins.add(docs);
   const additional = env.MARKIE_WEB_ORIGINS?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
   if (additional.length > 16) throw new Error("Too many configured browser origins.");
   for (const value of additional) {

@@ -1,11 +1,17 @@
 // Hosted documents are linked on their own origin when MARKIE_DOCS_ORIGIN
 // names one (deployment.ts). On Markie Cloud that is https://markiedocs.com,
-// whose Vercel rewrites proxy /d and /s to this server. Links handed out
-// before, private links on https://api.markiedocs.com/d/<id> above all, keep
-// arriving here directly and must keep working, so a browser GET for a
-// document page, its raw download or its assets that arrives on one of this
-// server's own API names is sent to the same path and query on the docs
-// origin.
+// whose Vercel rewrites proxy /d and /s to this server. A public page
+// (/s/<token>) a browser opens on one of this server's API names is sent to
+// the same path and query on the docs origin, so an old link lands where new
+// ones do.
+//
+// Only that page, and only when a browser is navigating to it. /s/<token>/raw
+// and /s/<token>/assets are fetched by the phone app and the desktop from
+// code that refuses redirects on purpose (apps/mobile/src/lib/native-http.ts
+// and http.ts, electron/share-open.js), so they are always answered where
+// they are asked for. /d/<id> is never redirected here: its sign-in and
+// session cookie live on the API host, and doc-view.ts sends a reader on to
+// the web app itself.
 //
 // Requests through the website's proxy reach this server on the API host as
 // well, so the host alone cannot tell the two apart. What the browser asked
@@ -20,17 +26,17 @@
 //     redirected, whatever its host headers say, so the proxy cannot loop
 //     even if it ever stops sending X-Forwarded-Host.
 //
+// A proxy other than Vercel that rewrites Host to the API name without
+// setting X-Forwarded-Host would loop; docs/SELF-HOSTING.md says to set it.
 // The target is the configured origin plus the request's path and query,
-// nothing else from the request. The query is kept because a member's link
-// carries its ?k= there, and the page it lands on decides access from the
-// session alone, as it always has. With MARKIE_DOCS_ORIGIN unset nothing
+// nothing else from the request. With MARKIE_DOCS_ORIGIN unset nothing
 // redirects. The API (/api/*, /mcp) is never touched.
 import type { MiddlewareHandler } from "hono";
 import { hostOf } from "./canonical-host.ts";
 import { deployment } from "./deployment.ts";
 
-// /d/<id>, /d/<id>/raw, /d/<id>/assets, and the same three under /s/<token>.
-const HOSTED_DOC = /^\/[ds]\/[^/]+(?:\/(?:raw|assets))?\/?$/;
+// The public page itself: /s/<token>, never its /raw or /assets.
+const PUBLIC_PAGE = /^\/s\/[^/]+\/?$/;
 
 export interface DocsHostConfig {
   /** MARKIE_DOCS_ORIGIN, or null. */
@@ -43,28 +49,56 @@ export function docsHostConfig(d = deployment()): DocsHostConfig {
   return { docsOrigin: d.docsOrigin, apiOrigins: [d.origin, ...d.apiAliases] };
 }
 
+/**
+ * Whether a browser is loading this as a page, rather than code fetching it.
+ * Every current browser sends Sec-Fetch-Mode; Accept: text/html covers the
+ * rest. The phone app's and the desktop's fetches send neither.
+ */
+export function isNavigation(request: Request): boolean {
+  const mode = request.headers.get("sec-fetch-mode");
+  if (mode) return mode === "navigate";
+  return (request.headers.get("accept") ?? "").includes("text/html");
+}
+
+/**
+ * Whether this request reached the server on one of its own API names, not
+ * through the docs host's proxy: a positive match only.
+ */
+export function onApiHost(request: Request, { apiOrigins }: Pick<DocsHostConfig, "apiOrigins">): boolean {
+  if (request.headers.has("x-vercel-id")) return false;
+  const url = new URL(request.url);
+  const host = hostOf(request.headers.get("x-forwarded-host")) ?? hostOf(request.headers.get("host")) ?? url.host;
+  return apiOrigins.some((origin) => new URL(origin).host === host);
+}
+
 /** Where to send this request instead, or null to serve it here. */
-export function docsHostRedirect(request: Request, { docsOrigin, apiOrigins }: DocsHostConfig): string | null {
+export function docsHostRedirect(
+  request: Request,
+  config: DocsHostConfig,
+  isPage: (path: string) => boolean = (path) => PUBLIC_PAGE.test(path)
+): string | null {
+  const { docsOrigin } = config;
   if (!docsOrigin) return null;
   if (request.method !== "GET" && request.method !== "HEAD") return null;
-  if (request.headers.has("x-vercel-id")) return null;
   const url = new URL(request.url);
-  if (!HOSTED_DOC.test(url.pathname)) return null;
+  if (!isPage(url.pathname) || !isNavigation(request)) return null;
   const target = new URL(docsOrigin);
-  const host = hostOf(request.headers.get("x-forwarded-host")) ?? hostOf(request.headers.get("host")) ?? url.host;
-  if (host === target.host) return null;
-  if (!apiOrigins.some((origin) => new URL(origin).host === host)) return null;
+  if (config.apiOrigins.some((origin) => new URL(origin).host === target.host)) return null;
+  if (!onApiHost(request, config)) return null;
   return `${target.origin}${url.pathname}${url.search}`;
 }
 
 /**
- * The redirect as middleware, for the /d/* and /s/* routes. The URL can carry
- * a personal or public token, so the answer is kept out of caches and out of
- * any referrer, like the pages themselves.
+ * The redirect as middleware, for the /s/* routes. The URL carries a public
+ * token, so the answer is kept out of caches and out of any referrer, like
+ * the pages themselves.
  */
-export function redirectToDocsHost(config: () => DocsHostConfig = () => docsHostConfig()): MiddlewareHandler {
+export function redirectToDocsHost(
+  config: () => DocsHostConfig = () => docsHostConfig(),
+  isPage?: (path: string) => boolean
+): MiddlewareHandler {
   return async (c, next) => {
-    const to = docsHostRedirect(c.req.raw, config());
+    const to = docsHostRedirect(c.req.raw, config(), isPage);
     if (!to) return next();
     c.header("Cache-Control", "private, no-store");
     c.header("Referrer-Policy", "no-referrer");

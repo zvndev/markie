@@ -38,6 +38,9 @@ app.route("/api/docs", shares);
 app.route("/", docView);
 app.route("/", publicShare);
 
+// No MARKIE_DOCS_ORIGIN here, so the web app and the sign-in are both on
+// this server's own origin.
+const APP = "http://localhost:8787";
 const ORIGIN = { Origin: "http://localhost:3000", "x-forwarded-for": "127.0.0.1" };
 const stamp = Date.now();
 const BODY = "hosted-routes-secret-line";
@@ -45,9 +48,9 @@ const BODY = "hosted-routes-secret-line";
 function webApp(on: boolean) {
   if (on) {
     mkdirSync(webDist, { recursive: true });
-    writeFileSync(join(webDist, "index.html"), "<!doctype html>");
+    writeFileSync(join(webDist, "app.html"), "<!doctype html>");
   } else {
-    rmSync(join(webDist, "index.html"), { force: true });
+    rmSync(join(webDist, "app.html"), { force: true });
   }
   assert.equal(webAppAvailable(), on);
 }
@@ -94,7 +97,7 @@ test("a signed-in reader is sent on to the document in the web app", async () =>
   for (const who of [owner, viewer]) {
     const res = await page(`/d/${docId}`, who.token);
     assert.equal(res.status, 302);
-    assert.equal(res.location, `/app/d/${docId}`);
+    assert.equal(res.location, `${APP}/app/d/${docId}`);
     assert.ok(!res.body.includes(BODY));
     assert.equal(res.headers.get("cache-control"), "private, no-store");
   }
@@ -105,7 +108,7 @@ test("a member's ?k= token is not carried on to the web app", async () => {
   const token = ensureShareToken(docId, viewerShare?.userId as string);
   const res = await page(`/d/${docId}?k=${encodeURIComponent(token as string)}`, viewer.token);
   assert.equal(res.status, 302);
-  assert.equal(res.location, `/app/d/${docId}`);
+  assert.equal(res.location, `${APP}/app/d/${docId}`);
 });
 
 test("?view=1 keeps the static page, with the editor link for an editor only", async () => {
@@ -121,29 +124,46 @@ test("?view=1 keeps the static page, with the editor link for an editor only", a
   assert.deepEqual(appHrefs(theirs.body), ["/app", "/app/new"]);
 });
 
-test("nobody who cannot read is sent to the web app", async () => {
+test("a browser with no session here is sent to the web app, which signs it in", async () => {
   webApp(true);
-  // Nobody signed in, no token: the access page, as before.
+  // Through the docs host's proxy no request carries the session cookie, so
+  // the app decides: it asks the API for the session and reads only what the
+  // account may read. The same redirect answers for every id, existing or
+  // not, and never carries the ?k= token.
   const anon = await page(`/d/${docId}`);
-  assert.equal(anon.status, 403);
-  // A member's emailed link with nobody signed in: to sign in, not the app.
   const token = ensureShareToken(docId, viewerShare?.userId as string) as string;
   const forwarded = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
-  assert.equal(forwarded.status, 302);
-  assert.match(forwarded.location ?? "", /\/auth\/web-signin\?next=/);
-  // An open invite's holder keeps the invite page.
-  const invited = await share(owner.token, docId, `hr.nobody.${stamp}@test.local`, "viewer");
-  assert.equal(invited?.status, "invited");
+  const missing = await page(`/d/hr-missing-${stamp}`);
+  for (const [res, id] of [[anon, docId], [forwarded, docId], [missing, `hr-missing-${stamp}`]] as const) {
+    assert.equal(res.status, 302);
+    assert.equal(res.location, `${APP}/app/d/${id}`);
+    assert.ok(!res.body.includes(BODY));
+    assert.equal(res.headers.get("cache-control"), "private, no-store");
+  }
+});
+
+test("a signed-in account that cannot read keeps its refusal", async () => {
+  webApp(true);
   // Signed in as someone it was not shared with.
   const wrong = await page(`/d/${docId}`, stranger.token);
   assert.equal(wrong.status, 403);
-  // Signed in, document does not exist.
+  // Signed in, document does not exist: the same refusal.
   const missing = await page(`/d/hr-missing-${stamp}`, owner.token);
   assert.equal(missing.status, 403);
-  for (const res of [anon, forwarded, wrong, missing]) {
-    assert.ok(!(res.location ?? "").includes("/app"), "never toward the web app");
+  for (const res of [wrong, missing]) {
+    assert.equal(res.location, null, "never toward the web app");
     assert.ok(!res.body.includes(BODY));
   }
+});
+
+test("without the web app a browser with no session gets the old refusals", async () => {
+  webApp(false);
+  const anon = await page(`/d/${docId}`);
+  assert.equal(anon.status, 403);
+  const token = ensureShareToken(docId, viewerShare?.userId as string) as string;
+  const forwarded = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
+  assert.equal(forwarded.status, 302);
+  assert.equal(forwarded.location, `${APP}/auth/web-signin?next=${encodeURIComponent(`/d/${docId}`)}`);
 });
 
 test("an invite holder keeps the invite page", async () => {
@@ -179,6 +199,8 @@ test("a public link page stays a page and its bar follows the reader's account",
   webApp(true);
   const anon = await page(`/s/${token}`);
   assert.equal(anon.status, 200, "a public link never redirects to the web app");
+  // The bar can name the reader, so no cache may keep the page.
+  assert.equal(anon.headers.get("cache-control"), "private, no-store");
   assert.ok(anon.body.includes(BODY));
   assert.deepEqual(appHrefs(anon.body), ["/app"]);
   assert.match(anon.body, />Sign in</);

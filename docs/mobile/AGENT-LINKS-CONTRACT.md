@@ -43,10 +43,17 @@ renders, and Darkmown (`.wd`) for documents that benefit from live state.
   - When it is unset, links are exactly what they were: `https://api.markiedocs.com/d/<id>` for a
     private link on Markie Cloud, the site URL for invite and public links, and a self-hosted
     server's own origin in place of `https://api.markiedocs.com`.
-  - Links already sent keep working. With the docs origin set, a browser `GET` or `HEAD` for
-    `/d/<id>`, `/d/<id>/raw`, `/d/<id>/assets`, `/s/<token>`, `/s/<token>/raw` or
-    `/s/<token>/assets` that arrives directly on one of the server's API names (`api.markiedocs.com`
-    or its Railway name) answers `302` to the same path and query on the docs origin.
+  - Links already sent keep working, on either host.
+    - `/d/<id>`, `/d/<id>/raw` and `/d/<id>/assets` are answered wherever they arrive. Sign-in and
+      the session cookie stay on the API host. With the web app on the server, a `/d/<id>` page
+      for a browser that carries no session here (every request through the website's proxy)
+      answers `302` to `<docs origin>/app/d/<id>`, without the `?k=`. The app asks the API host
+      for the session and signs the browser in there. An open invite's link keeps its invite page.
+    - A browser page load of `/s/<token>` (`Sec-Fetch-Mode: navigate`, or `Accept: text/html`)
+      that arrives directly on one of the server's API names (`api.markiedocs.com` or its Railway
+      name) answers `302` to the same path and query on the docs origin.
+    - `/s/<token>/raw` and `/s/<token>/assets` are never redirected. The app fetches them with
+      redirects refused, so they must answer `200` where they are asked for.
     - The host is `X-Forwarded-Host` when present, else `Host`, as `canonical-host.ts` reads it.
       Only a positive API-name match redirects.
     - A request carrying `x-vercel-id` came through the website's proxy and is never redirected,

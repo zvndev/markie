@@ -332,6 +332,16 @@ there. Compare what is deployed against `git log -- server/` and deploy anything
 publishing. Then check that `https://api.markiedocs.com/health` returns 200. The entrypoint migrates
 the schema on every boot, so a bad migration takes the service down at start.
 
+The server image also carries the web app at `/app` (`server/src/web-app.ts`). Before building the
+image, run `npm ci && npm run build:web` at the repo root: it writes the build into `server/web-dist/`,
+which `server/Dockerfile` copies in, and the image is still built with `server/` as its context.
+Build from that working tree, not a clean `git archive` of `server/`, because the build output is
+gitignored. Without the step the image still builds and `/app` answers 404. For Markie Cloud, set
+`MARKIE_DOCS_ORIGIN=https://markiedocs.com`: `/app` and its sign-in are then sent there, its session
+cookie lives on that host only, and Google sign-in is not offered there (email code only). Unset, the
+web app stays on the server's own origin, which is what a self-hosted server wants. Check
+`https://markiedocs.com/app` signs in and opens a document after the deploy.
+
 ### 2. Set the version once
 
 ```sh

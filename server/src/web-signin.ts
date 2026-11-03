@@ -14,7 +14,8 @@
 // on purpose (account-context.ts), so the page says to use the primary
 // address or Google.
 //
-// `next` is only ever a /d/<id> path on this origin. Anything else becomes "/",
+// `next` is only ever a /d/<id> path or a web app page (/app, /app/new,
+// /app/d/<id>) on this origin. Anything else becomes "/",
 // so neither route can be used to bounce a browser somewhere else.
 import { Hono } from "hono";
 import { auth } from "./auth.ts";
@@ -22,9 +23,12 @@ import { reportRouteFault } from "./little-friend.ts";
 import { BRAND_HEAD, brandLogoSvg } from "./brand.ts";
 
 const NEXT = /^\/d\/[A-Za-z0-9_-]{1,128}$/;
+// The web app's pages (web-app.ts): its library, the new-document chooser,
+// and one document. A signed-out visit to any of them comes back here.
+const APP_NEXT = /^\/app(?:\/|\/new|\/d\/[A-Za-z0-9_-]{1,128})?$/;
 
 export function safeNext(value: string | null | undefined): string {
-  return typeof value === "string" && NEXT.test(value) ? value : "/";
+  return typeof value === "string" && (NEXT.test(value) || APP_NEXT.test(value)) ? value : "/";
 }
 
 /**
@@ -110,7 +114,7 @@ export function renderWebSignInPage({ next, google, failed }: { next: string; go
   <main>
     <div class="m">${brandLogoSvg(160)}</div>
     <h1>Sign in to Markie</h1>
-    <p>Use the account this document belongs to.</p>
+    <p>${next.startsWith("/app") ? "Sign in to open your documents." : "Use the account this document belongs to."}</p>
     ${google ? `<a class="btn primary" href="${esc(googleHref)}">Continue with Google</a><div class="or">or get a code by email</div>` : ""}
     <form id="send">
       <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required aria-label="Email">
@@ -153,11 +157,29 @@ export function renderWebSignInPage({ next, google, failed }: { next: string; go
 </body></html>`;
 }
 
-export function createWebSignIn({ authBase, google }: { authBase: string; google: boolean }) {
+function requestHost(request: Request): string {
+  const first = (request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "").split(",")[0]?.trim();
+  try {
+    return first ? new URL(`https://${first}`).host : new URL(request.url).host;
+  } catch {
+    return new URL(request.url).host;
+  }
+}
+
+/**
+ * `emailOnlyHost` is the web app's docs host when it is not BETTER_AUTH_URL's
+ * (deployment.ts docsOrigin). Google's callback always lands on
+ * BETTER_AUTH_URL's host, so a Google sign-in started on the docs host would
+ * lose its state cookie and set its session on the wrong host. There the page
+ * offers the emailed code only, which signs in on the host that served it.
+ */
+export function createWebSignIn({ authBase, google, emailOnlyHost }: { authBase: string; google: boolean; emailOnlyHost?: string }) {
   const app = new Hono();
+  const googleHere = (request: Request) => google && (!emailOnlyHost || requestHost(request) !== emailOnlyHost);
   app.get("/auth/web-signin", async (c) => {
     c.header("Cache-Control", "private, no-store");
     c.header("Referrer-Policy", "no-referrer");
+    const google = googleHere(c.req.raw);
     const next = safeNext(c.req.query("next"));
     const failed = c.req.query("error") !== undefined;
     // An emailed link lands on the website's origin, which never carries this
@@ -172,8 +194,8 @@ export function createWebSignIn({ authBase, google }: { authBase: string; google
     return c.html(renderWebSignInPage({ next, google, failed }));
   });
   app.get("/auth/web-google", async (c) => {
-    if (!google) return c.redirect("/auth/web-signin", 302);
     const next = safeNext(c.req.query("next"));
+    if (!googleHere(c.req.raw)) return c.redirect(`/auth/web-signin?next=${encodeURIComponent(next)}`, 302);
     try {
       const res = await auth.api.signInSocial({
         body: {

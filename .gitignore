@@ -80,3 +80,8 @@ mcp/node_modules
 
 # Self-hosting kit output (deploy/init.sh): secrets, never commit
 deploy/markie-backup-key.txt
+
+# web app build (npm run build:web), served by the server at /app and copied
+# into its image; the placeholder keeps the Dockerfile's COPY valid without it
+/server/web-dist/*
+!/server/web-dist/.gitkeep

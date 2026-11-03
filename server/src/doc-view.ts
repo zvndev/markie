@@ -31,16 +31,23 @@ import {
 import { claimPendingInvites, listPendingForDoc, pendingForToken } from "./pending.ts";
 import { sharedPageLinkFor } from "./doc-links.ts";
 import { assetRefsFor, assetVersion, serveAsset } from "./assets.ts";
-import { deployment } from "./deployment.ts";
+import { deployment, docsOrigin } from "./deployment.ts";
 import { renderAccessRequiredPage, renderSharedDocPage } from "./render.ts";
 import { renderSignInNotice, webSignInHref } from "./web-signin.ts";
 import { downloadFilename } from "./doc-meta.ts";
+import { webAppAvailable } from "./web-app.ts";
 
 const db = openDatabase();
 
 const MARKIE_SITE = deployment().siteUrl;
-// Web sign-in runs on this server's own origin, where its session cookie lives.
-const AUTH_BASE = process.env.BETTER_AUTH_URL ?? "http://localhost:8787";
+// Web sign-in runs on this server's own origin (BETTER_AUTH_URL), where its
+// session cookie lives, wherever the page that links to it was served. A
+// page served through the docs host's proxy never sees that cookie, which is
+// why a reader there is sent on to the web app (below): the app asks this
+// origin for the session directly.
+const AUTH_BASE = deployment().origin;
+// Where the web app is: the docs host when MARKIE_DOCS_ORIGIN names one.
+const APP_BASE = docsOrigin();
 
 export const docView = new Hono();
 
@@ -60,6 +67,15 @@ function loadDoc(docId: string): DocRow | null {
       )
       .get(docId) as DocRow | undefined) ?? null
   );
+}
+
+// The account chip in the bar: the address, which is what someone recognises
+// as "me", or the name when there is none.
+function accountLabel(userId: string): string | null {
+  const row = db
+    .prepare("SELECT name, email FROM user WHERE id = ?")
+    .get(userId) as { name: string | null; email: string | null } | undefined;
+  return row?.email || row?.name || null;
 }
 
 function inviterName(userId: string): string | null {
@@ -187,8 +203,14 @@ docView.get("/d/:id", async (c) => {
   // 403 for both "no access" and "no such document": telling them apart would
   // turn this route into a way to enumerate document ids.
   const accessRequired = () => c.html(renderAccessRequiredPage(MARKIE_SITE, signIn), 403);
+  const webApp = webAppAvailable();
+  // The document in the web app, on the docs host when there is one. The URL
+  // names only the id, never the ?k= token: the app reads with the session.
+  const inWebApp = () => c.redirect(`${APP_BASE}/app/d/${encodeURIComponent(docId)}`, 302);
 
-  if (access.kind === "member-link") return signIn ? c.redirect(signIn, 302) : accessRequired();
+  // An open invite keeps its page, which names the address to sign in with.
+  // Signing in on this origin brings the browser back to /d/<id> with a
+  // session, and the claim in resolveViewer makes it a reader.
   if (access.kind === "invite") {
     const doc = loadDoc(docId);
     return doc ? c.html(invitePage(docId, doc, access.email), 401) : accessRequired();
@@ -196,9 +218,25 @@ docView.get("/d/:id", async (c) => {
   if (access.kind === "wrong-account") {
     return c.html(wrongAccountPage(docId, access.signedInAs, access.invitedEmail), 403);
   }
-  if (access.kind !== "reader") return accessRequired();
+  // Nobody signed in that this request carries. Through the docs host's proxy
+  // that is every request, since the session cookie is on this server's own
+  // origin. With the web app here, it decides: it asks this origin for the
+  // session, sends a signed-out browser to the sign-in, and reads only what
+  // the account may read, so the same redirect answers for every id and
+  // tells nobody anything. Without it, the old refusals.
+  if (access.kind === "member-link" || access.kind === "none") {
+    if (webApp) return inWebApp();
+    if (access.kind === "member-link") return signIn ? c.redirect(signIn, 302) : accessRequired();
+    return accessRequired();
+  }
   const doc = loadDoc(docId);
   if (!doc) return accessRequired();
+
+  // A signed-in reader goes on to the document in the web app, where the same
+  // account opens it (read-only there for a viewer). ?view=1 asks for this
+  // static page instead, so the quick view stays one link away for a browser
+  // signed in on this origin.
+  if (webApp && c.req.query("view") !== "1") return inWebApp();
 
   const refs = assetRefsFor(docId);
   // ?v= carries the hash this ref currently points at. The asset route
@@ -225,6 +263,7 @@ docView.get("/d/:id", async (c) => {
       docLinkFor: sharedPageLinkFor(docId, access.userId),
       // A Darkmown document never runs on the web: render.ts shows its source.
       format: doc.format,
+      nav: { webApp, account: accountLabel(access.userId) },
     })
   );
 });

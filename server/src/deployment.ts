@@ -33,6 +33,13 @@ export interface Deployment {
   downloadSiteUrl: string;
   /** Shown to people adding this server in Markie. */
   name: string;
+  /**
+   * MARKIE_DOCS_ORIGIN: the origin hosted documents (/d/:id, /s/:token) are
+   * linked on and read from. On Markie Cloud that is https://markiedocs.com,
+   * whose rewrites proxy those paths to this server. Null when unset, and
+   * then every link and page stays where it was (docs-host.ts).
+   */
+  docsOrigin: string | null;
 }
 
 type Env = Record<string, string | undefined>;
@@ -82,7 +89,39 @@ export function resolveDeployment(env: Env = process.env, warn: (message: string
     siteUrl,
     downloadSiteUrl: official ? siteUrl : canonical,
     name: name.slice(0, 80),
+    docsOrigin: docsOriginFrom(env.MARKIE_DOCS_ORIGIN, { production }),
   };
+}
+
+const DOCS_ORIGIN_RULE = "MARKIE_DOCS_ORIGIN must be an exact https origin, such as https://markiedocs.com.";
+
+/**
+ * MARKIE_DOCS_ORIGIN as an exact origin, or null when it is unset. It becomes
+ * a credentialed CORS and better-auth trusted origin (application-origins.ts),
+ * so only https is taken, and plain http only for a loopback name outside
+ * production, the same rule as MARKIE_WEB_ORIGINS.
+ */
+export function docsOriginFrom(value: string | undefined, { production = false }: { production?: boolean } = {}): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(DOCS_ORIGIN_RULE);
+  }
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  const devHttp = url.protocol === "http:" && loopback && !production;
+  if ((url.protocol !== "https:" && !devHttp) || url.username || url.password || url.search || url.hash
+    || (url.pathname !== "/" && url.pathname !== "")) {
+    throw new Error(DOCS_ORIGIN_RULE);
+  }
+  return url.origin;
+}
+
+/** Where hosted documents live: MARKIE_DOCS_ORIGIN, or this server's own origin when unset. */
+export function docsOrigin(d: Pick<Deployment, "docsOrigin" | "origin"> = deployment()): string {
+  return d.docsOrigin ?? d.origin;
 }
 
 let cached: Deployment | undefined;

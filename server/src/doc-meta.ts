@@ -75,14 +75,20 @@ export function originOf(row: { origin_kind?: string | null; origin_agent?: stri
 }
 
 /**
- * The origin private links are built on: this server's own public origin.
- * Markie Cloud answers on more than one name while it moves hosts, and the
- * mobile app claims only api.markiedocs.com, so the official deployment
- * always names that one. Every other server, self-hosted or local, names
+ * The origin private links are built on. With MARKIE_DOCS_ORIGIN set, that
+ * docs host, where the documents are served; links already handed out on the
+ * old host still open (doc-view.ts sends a reader on to the web app on the
+ * docs host, or signs them in here). Unset, this server's own public
+ * origin: Markie Cloud answers on more than one name while it moves hosts,
+ * and the mobile app claims only api.markiedocs.com, so the official
+ * deployment names that one. Every other server, self-hosted or local, names
  * itself.
  */
-export function privateLinkOrigin(d: { official: boolean; origin: string } = deployment()): string {
+export function privateLinkOrigin(
+  d: { official: boolean; origin: string; docsOrigin?: string | null } = deployment()
+): string {
   const { official, origin } = d;
+  if (d.docsOrigin) return d.docsOrigin;
   return official && CLOUD_API_ORIGINS.includes(origin) ? CLOUD_API_ORIGIN : origin;
 }
 

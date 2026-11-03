@@ -48,8 +48,7 @@
 // This module must not value-import yjs or y-websocket (they load lazily,
 // src/lib/collab-loader.ts): the room is typed structurally.
 import { useEffect, useState } from "react";
-import { splitFrontMatter } from "@/lib/front-matter";
-import { extractHoldAsides } from "@/lib/rich-hold-aside";
+import { richRoomCannotCarry } from "@/lib/live-room-carry";
 import { TEXT_COLLAB_KEY } from "@/lib/text-collab";
 
 export type LiveKind = "rich" | "text";
@@ -161,9 +160,9 @@ export type SnapshotRefusal = "held-constructs";
  */
 export function liveSnapshotRefusal(stored: string, kind: LiveKind): SnapshotRefusal | null {
   if (kind !== "rich") return null;
-  const { frontMatter, body } = splitFrontMatter(stored);
-  if (frontMatter) return "held-constructs";
-  return extractHoldAsides(body).holds.length > 0 ? "held-constructs" : null;
+  // The same rule the desktop applies to its own file while live, so desktop,
+  // web and phone refuse exactly the same texts (src/lib/live-room-carry.ts).
+  return richRoomCannotCarry(stored) ? "held-constructs" : null;
 }
 
 export const SNAPSHOT_REFUSAL_NOTE =

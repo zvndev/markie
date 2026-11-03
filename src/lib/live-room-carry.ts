@@ -9,9 +9,9 @@
 //
 // One rule for every writer of a live document's text: the desktop's own file
 // (src/app/page.tsx, while a rich session is live) and the stored cloud copy
-// written by the web app and the phone (rule 3 of src/lib/live-snapshot.ts on
-// the web-app branch, which should call this once both are on main). Plain
-// text rooms (Y.Text) are byte-faithful and never refused.
+// written by the web app and the phone (rule 3 of src/lib/live-snapshot.ts,
+// whose liveSnapshotRefusal calls this). Plain text rooms (Y.Text) are
+// byte-faithful and never refused.
 import { splitFrontMatter } from "@/lib/front-matter";
 import { extractHoldAsides } from "@/lib/rich-hold-aside";
 

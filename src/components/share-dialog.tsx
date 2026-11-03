@@ -28,6 +28,13 @@ interface ShareDialogProps {
   // The document's markdown, so the dialog can say what will not travel with
   // it. Sharing sends the text and nothing else.
   body?: string;
+  /**
+   * Where the document's pictures are held when it is not on this computer
+   * (the web app): how many of the files it links to Markie Cloud holds no
+   * copy of. Readers of the shared copy see every other one. When set, it is
+   * the count the dialog warns about and body is not read for files.
+   */
+  missingCloudFiles?: number;
   onClose: () => void;
   // Membership changed: the page re-evaluates whether the doc is live
   onChanged: () => void;
@@ -45,6 +52,7 @@ export function ShareDialog({
   server,
   fileName,
   body = "",
+  missingCloudFiles,
   onClose,
   onChanged,
 }: ShareDialogProps) {
@@ -484,7 +492,9 @@ export function ShareDialog({
 
         {error && <StatusRow tone="error">{error}</StatusRow>}
         {flash && <StatusRow tone="ok">{flash}</StatusRow>}
-        <LocalFilesNotice count={localAssetCount(body)} />
+        {missingCloudFiles === undefined
+          ? <LocalFilesNotice count={localAssetCount(body)} />
+          : <CloudFilesNotice count={missingCloudFiles} />}
 
         <div className="markie-share-section">
           <div className="markie-share-label">People with access</div>
@@ -784,6 +794,25 @@ function LocalFilesNotice({ count }: { count: number }) {
       {count === 1 ? "it is" : "they are"}. To send{" "}
       {count === 1 ? "it" : "them"} along, use Export, which folds pictures into
       the file itself.
+    </div>
+  );
+}
+
+/**
+ * The web app's version: the document lives in Markie Cloud, and so do the
+ * pictures that went up with it. Only a file it links to that the cloud has
+ * no copy of leaves a gap, and nothing on this computer can fill it.
+ */
+function CloudFilesNotice({ count }: { count: number }) {
+  if (count < 1) return null;
+  return (
+    <div className="markie-share-note" role="note">
+      <span className="text-foreground font-medium">
+        {count === 1 ? "1 file" : `${count} files`}
+      </span>{" "}
+      this document links to {count === 1 ? "isn't" : "aren't"} stored with it in
+      Markie Cloud, so whoever opens it will see a gap where{" "}
+      {count === 1 ? "it is" : "they are"}.
     </div>
   );
 }

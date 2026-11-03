@@ -16,6 +16,7 @@ import { classifyDocumentFormat, decodeTextDocument } from "@/lib/document-forma
 import { DocumentCloudClient, DocumentCloudError } from "@/lib/document-cloud";
 import { libraryDocumentFormat } from "@/lib/library-document-query";
 import type { LibraryFormat } from "@/lib/document-library";
+import { mediaRef } from "./view-content";
 
 export type CloudStore = "docs" | "platform";
 export type CloudRole = "owner" | "editor" | "viewer";
@@ -186,6 +187,26 @@ export async function openTextDoc(id: string, fetcher: Fetch = fetch): Promise<T
     throw new CloudRequestError(502, "The server's answer wasn't a document.");
   }
   return { store: "docs", id, name: doc.name, content: doc.content, version: doc.version, role: role(doc.role, "viewer") };
+}
+
+/** How many of a document's references the share dialog asks about. */
+export const MAX_ASSET_CHECKS = 50;
+
+/**
+ * Of a text document's local references (attach.ts localAssetRefs), the ones
+ * Markie Cloud holds no file for: what a reader of the shared copy would see
+ * as a gap. Each is asked for by the reference as written, one byte of it,
+ * through the same read gate the document uses. At most MAX_ASSET_CHECKS.
+ */
+export async function missingDocAssets(id: string, refs: readonly string[], fetcher: Fetch = fetch): Promise<string[]> {
+  if (!DOC_ID.test(id)) return [...refs];
+  const asked = refs.slice(0, MAX_ASSET_CHECKS);
+  const answers = await Promise.all(asked.map(async (ref) => {
+    const { status } = await request(`/api/docs/${encodeURIComponent(id)}/assets/file?ref=${encodeURIComponent(mediaRef(ref))}`,
+      { headers: { Range: "bytes=0-0" } }, fetcher);
+    return status >= 400 ? ref : null;
+  }));
+  return answers.filter((ref): ref is string => ref !== null);
 }
 
 async function sha256Hex(text: string): Promise<string> {

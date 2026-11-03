@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { getAssetBaseDir, isAssetUrl, resolveAssetSrc, setAssetDocPath } from "@/lib/asset-url";
+import { getAssetBaseDir, isAssetUrl, resolveAssetSrc, setAssetDocPath, setAssetResolver } from "@/lib/asset-url";
 
-afterEach(() => setAssetDocPath(null));
+afterEach(() => { setAssetDocPath(null); setAssetResolver(null); });
 
 // The query suffix names the document a reference belongs to and the
 // reference as written (see the tests at the bottom); every other test here
@@ -143,5 +143,38 @@ describe("resolveAssetSrc", () => {
     expect(resolveAssetSrc("shots/a.png", "/Users/k/report")).toBe(
       `markie-asset://local/${encodeURIComponent("/Users/k/report/shots/a.png")}`
     );
+  });
+});
+
+describe("resolveAssetSrc with a resolver (the web app)", () => {
+  // A cloud document has no folder. Its pictures are held by the server under
+  // the reference as written, and the web read view reaches them through the
+  // document's asset route; the rich editor must reach the same address, not
+  // one relative to the page (/app/d/<id>/img/chart.png).
+  const route = (ref: string) => `https://api.example/d/doc1/assets?ref=${encodeURIComponent(ref)}`;
+
+  it("sends a relative reference through the resolver, as written", () => {
+    setAssetResolver(route);
+    expect(resolveAssetSrc("img/chart.png")).toBe(route("img/chart.png"));
+    expect(resolveAssetSrc("./a%20b.png?v=2#x")).toBe(route("./a b.png"));
+    expect(resolveAssetSrc("/abs/a.png")).toBe(route("/abs/a.png"));
+  });
+
+  it("leaves URLs, data and fragments alone", () => {
+    setAssetResolver(route);
+    expect(resolveAssetSrc("https://example.com/a.png")).toBe("https://example.com/a.png");
+    expect(resolveAssetSrc("data:image/png;base64,AAAA")).toBe("data:image/png;base64,AAAA");
+    expect(resolveAssetSrc("#top")).toBe("#top");
+  });
+
+  it("does not take over a preview resolved against its own folder", () => {
+    setAssetResolver(route);
+    expect(isAssetUrl(resolveAssetSrc("a.png", "/elsewhere"))).toBe(true);
+  });
+
+  it("goes back to the folder rule once cleared", () => {
+    setAssetResolver(route);
+    setAssetResolver(null);
+    expect(resolveAssetSrc("a.png")).toBe("a.png");
   });
 });

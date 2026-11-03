@@ -21,7 +21,7 @@ import { WordImage } from "./word-images";
 import type { WordTextMatch } from "./word-find";
 import "./document-workspace.css";
 
-interface WordDocumentEditorProps<T extends RichDocument> { document: T; readOnly?: boolean; isReadOnly?: () => boolean; onChange: (document: T) => void; onCommandsReady?: (target: DocumentCommandTarget | null) => void; onHistory?: () => void }
+interface WordDocumentEditorProps<T extends RichDocument> { document: T; readOnly?: boolean; /** A read view (the web's /d/ page): no formatting toolbar, since nothing in it can be used. */ reading?: boolean; isReadOnly?: () => boolean; onChange: (document: T) => void; onCommandsReady?: (target: DocumentCommandTarget | null) => void; onHistory?: () => void }
 const WORD_ACTIONS: readonly FormattingAction[] = ["undo", "redo", "bold", "italic", "underline", "link", "image", "bullet", "ordered", "align-left", "align-center", "align-right", "clear"];
 const LAYOUT_BUTTON = "h-7 min-w-7 px-1.5 rounded flex items-center justify-center shrink-0 transition-colors text-muted hover:text-foreground hover:bg-accent/40 aria-pressed:bg-accent aria-pressed:text-foreground disabled:opacity-35 disabled:hover:bg-transparent";
 const WORD_FONTS = ["Arial", "Calibri", "Georgia", "Times New Roman", "Helvetica"];
@@ -29,7 +29,7 @@ const WORD_STYLES = [{ id: "", label: "Default paragraph" }, { id: "Normal", lab
 function commonValue<T>(values: readonly T[]): T | "mixed" | undefined {
   return values.length && values.some((value) => value !== values[0]) ? "mixed" : values[0];
 }
-export function WordDocumentEditor<T extends RichDocument>({ document, readOnly = false, isReadOnly, onChange, onCommandsReady, onHistory }: WordDocumentEditorProps<T>) {
+export function WordDocumentEditor<T extends RichDocument>({ document, readOnly = false, reading = false, isReadOnly, onChange, onCommandsReady, onHistory }: WordDocumentEditorProps<T>) {
   const capabilities = getRichCapabilities(document);
   const isDocx = document.format === "docx";
   const [selected, setSelected] = useState<string | undefined>(document.paragraphs[0]?.id);
@@ -543,7 +543,7 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
       replaceSelection(range, "", () => event.clipboardData.setData("text/plain", text));
     }}
     onClickCapture={(event) => handleExternalLinkClick(event.nativeEvent)} onAuxClickCapture={(event) => handleExternalLinkClick(event.nativeEvent)}>
-    <FormattingToolbar
+    {reading ? null : <FormattingToolbar
       startControls={<>
         {!onCommandsReady ? <button type="button" aria-label="Document commands" title="Document commands (⌘K / Ctrl+K)" onClick={openPalette} disabled={!!tool}>Commands</button> : null}
         {/* Page setup and spacing live in the Layout menu too; the toolbar is
@@ -567,8 +567,8 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
       onSize={(fontSizePoints) => { if (run && canFormat && canMutate()) formatRun({ fontSizePoints }, run.id); }}
       onStyle={(style) => setParagraphStyle(style || null)} onAction={action}
       onColor={(color) => { if (run && canFormat && canMutate()) formatRun({ color: color?.replace(/^#/, "") ?? null }, run.id); }}
-      supportedActions={isDocx ? WORD_ACTIONS : WORD_ACTIONS.filter((item) => !["link", "image", "bullet", "ordered"].includes(item))} showStyleControls={isDocx} showWidthControls={false} onHistory={onHistory ? () => execute("document-history") : undefined} />
-    {!selectionSupported ? <div className="docs-warning" role="status">Select text within one paragraph to format it.</div> : null}
+      supportedActions={isDocx ? WORD_ACTIONS : WORD_ACTIONS.filter((item) => !["link", "image", "bullet", "ordered"].includes(item))} showStyleControls={isDocx} showWidthControls={false} onHistory={onHistory ? () => execute("document-history") : undefined} />}
+    {!selectionSupported && !reading ? <div className="docs-warning" role="status">Select text within one paragraph to format it.</div> : null}
     {paletteOpen && !onCommandsReady ? <div onKeyDown={(event) => event.stopPropagation()}><CommandPalette commands={paletteCommands} onClose={closePalette} /></div> : null}
     {tool ? <WordToolsDialog key={tool} tool={tool} onClose={() => setTool(null)} document={document} paragraph={paragraph} runId={runId} fontSelection={selectionFormat} readOnly={blocked} onApply={apply} onError={rejectChange} onReplace={perform} onSelectMatch={selectMatch} onFormatRun={formatRun} onAddLink={addLink} onInsertBreak={insertBreak} review={{ tracking, author: reviewAuthor, originalView, onTracking: (value) => { if (canMutate()) { textSelection.current = null; setTracking(value); } }, onAuthor: setReviewAuthor, onOriginalView: (value) => { if (canView()) { textSelection.current = null; setOriginalView(value); } } }} /> : null}
     {tracking ? <div className="docs-tracking-banner" role="status">Tracking paragraph text as {reviewAuthor || "an author is required"}. Formatting, layout and inserted content are not tracked.</div> : null}

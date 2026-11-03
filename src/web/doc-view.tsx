@@ -68,7 +68,10 @@ async function loadMember(id: string, apiOrigin: string, user: WebSessionUser | 
   try {
     const doc = await loadDoc(id);
     if (!doc) return { state: "no-access" };
-    const editable = doc.role !== "viewer" && doc.kind !== "unsupported";
+    // A Word, RTF or ODT file Markie keeps read-only to protect what it can't
+    // edit (a table in an RTF, say) opens read-only in the editor too, so it
+    // is not offered for editing here.
+    const editable = doc.role !== "viewer" && doc.kind !== "unsupported" && doc.office?.canEdit !== false;
     return {
       state: "ready",
       doc: {
@@ -111,6 +114,16 @@ async function loadPublic(token: string, apiOrigin: string, user: WebSessionUser
   }
   return { state: "ready", doc: { name, kind: publicKind(format), text, office: null, editId, assetUrl: publicAssetUrl(apiOrigin, token) } };
 }
+
+/** The tab's title for each state that has no document to name, matching what the page says. */
+export const VIEW_TITLES: Record<ViewState["state"], string> = {
+  loading: "Opening document",
+  "signed-out": "Sign in to read this",
+  "no-access": "Can't open this document",
+  gone: "Link no longer available",
+  error: "Couldn't open this document",
+  ready: "Document",
+};
 
 function exportSource(kind: EditorKind): WebExportSource {
   return kind === "darkmown" ? "darkmown" : kind === "office" ? "office" : kind === "text" ? "text" : "markdown";
@@ -156,7 +169,7 @@ export function DocView({ route, apiOrigin, user, onEdit }: DocViewProps) {
 
   const doc = view.state === "ready" ? view.doc : null;
   useEffect(() => {
-    document.title = doc ? `${doc.name} · Markie` : view.state === "loading" ? "Markie" : "Sign in to read this · Markie";
+    document.title = `${doc ? doc.name : VIEW_TITLES[view.state]} · Markie`;
   }, [doc, view.state]);
 
   const signIn = route.kind === "member" ? viewSignInHref(route.id, apiOrigin) : null;
@@ -235,7 +248,7 @@ function ViewBody({ view, html, signIn, user, apiOrigin, route, onRetry }: {
   if (doc.kind === "office" && doc.office) {
     return <div className="markie-view-office docs-workspace docs-workspace-embedded w-full min-h-0 flex-1"><div className="docs-main"><div className="docs-editor-area">
       <Suspense fallback={<p role="status" className="markie-view-notice">Opening document…</p>}>
-        <WordDocumentEditor document={doc.office} readOnly onChange={() => {}} />
+        <WordDocumentEditor document={doc.office} readOnly reading onChange={() => {}} />
       </Suspense>
     </div></div></div>;
   }

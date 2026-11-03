@@ -8,6 +8,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-11-02
+
 ### Added
 
 - **Interactive documents can do much more.** A Darkmown `.wd` can now show and
@@ -22,6 +24,34 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Updated the bundled Darkmown to 2.13.0**, which includes its latest security
   fixes. The preview now also tells you when a `{ name }` matches nothing.
+- **Markie opens an empty page.** A launch with no file used to open a sample
+  document. It now opens a blank page ready to type in.
+
+### Fixed
+
+- **Documents shared with you as a viewer no longer open blank.** A document
+  shared from the Cloud page, the phone or an agent opened to an empty page
+  marked LIVE until its owner had opened it in Markie. It now shows the synced
+  copy, read-only, and goes live once the owner has opened it.
+- **Prices no longer turn into equations.** A transcript that mentioned "$6" and
+  later "$100" showed everything between them as one long line that ran off the
+  page in exports, PDFs, version history and shared pages. Math in `$...$` now
+  has to look like math: `$x^2$` still works, prices stay text.
+- **Long links wrap on shared pages** instead of running off the side.
+
+### Security
+
+- **Links in share emails only open for the person they were sent to.** You now
+  sign in as that account to read the document. Before, anyone holding the link
+  could open it.
+- **Invite links need an account at the invited address.** Before, an invite to
+  someone without a Markie account opened the document for whoever had the link.
+- **Only the owner sees a document's public link.** Removing someone from a
+  document now replaces its public link, so a copy they kept stops working. The
+  Share dialog shows the new link when this happens.
+- **People removed from a document stop getting its comment emails.**
+- **Live editing no longer puts your sign-in in the connection address.** It
+  uses a pass that works for one document for five minutes.
 
 ## [0.9.3] - 2026-10-27
 

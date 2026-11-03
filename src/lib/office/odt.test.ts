@@ -201,8 +201,14 @@ describe("original bounded ODT codec", () => {
     await expect(openOdt(odtFixture({ manifest: manifest.replace('manifest:media-type="text/xml"/>', 'manifest:media-type="text/xml"><manifest:encryption-data/></manifest:file-entry>') }))).rejects.toThrow("Encrypted");
     await expect(openOdt(odtFixture({ extra: [{ name: "META-INF/documentsignatures.xml", data: new Uint8Array() }] }))).rejects.toThrow("Signed");
   });
-  it("rejects DTDs and unsupported package versions", async () => {
-    await expect(openOdt(odtFixture({ content: '<!DOCTYPE x SYSTEM "file:///secret">' + ODT_FIXTURE_CONTENT }))).rejects.toThrow("DTD");
+  it("rejects DTD declarations and unsupported package versions", async () => {
+    await expect(openOdt(odtFixture({ content: '<!DOCTYPE x [<!ENTITY secret SYSTEM "file:///secret">]>' + ODT_FIXTURE_CONTENT.replace("works.", "&secret;") }))).rejects.toThrow("DTD");
+    await expect(openOdt(odtFixture({ content: '<!DOCTYPE x SYSTEM "file:///secret" [<!ATTLIST x a CDATA "b">]>' + ODT_FIXTURE_CONTENT }))).rejects.toThrow("DTD");
+    // A bare external identifier, as TextEdit and OpenOffice write, is never fetched or resolved.
+    const external = await openOdt(odtFixture({ content: '<!DOCTYPE x SYSTEM "file:///secret">' + ODT_FIXTURE_CONTENT }));
+    expect(external.text).toBe((await openOdt(odtFixture())).text);
+    expect(external.canEdit).toBe(true);
+    await expect(openOdt(odtFixture({ content: '<!DOCTYPE x SYSTEM "file:///secret">' + ODT_FIXTURE_CONTENT.replace("works.", "&secret;") }))).rejects.toThrow("Custom XML entities");
     await expect(openOdt(odtFixture({ content: ODT_FIXTURE_CONTENT.replace('office:version="1.3"', 'office:version="1.4"') }))).rejects.toThrow("1.2/1.3");
   });
 });

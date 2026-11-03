@@ -27,6 +27,47 @@ describe("original bounded XML reader", () => {
     expect(() => parseXml(source)).toThrow();
   });
 
+  it("skips a DOCTYPE that only names an external DTD, as TextEdit and OpenOffice manifests do", () => {
+    const manifest = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE manifest:manifest PUBLIC "-//OpenOffice.org//DTD Manifest 1.0//EN" "Manifest.dtd">\n<manifest:manifest xmlns:manifest="urn:m"><manifest:file-entry manifest:full-path="/"/></manifest:manifest>';
+    const root = parseXml(manifest);
+    expect(root.localName).toBe("manifest");
+    expect(root.children).toHaveLength(1);
+    expect(manifest.slice(root.start, root.start + 18)).toBe("<manifest:manifest");
+    expect(parseXml("<!DOCTYPE p>\n<p/>").localName).toBe("p");
+    expect(parseXml("<!-- lead --><!DOCTYPE p SYSTEM 'p.dtd' ><!-- after --><p>x</p>").text).toBe("x");
+    expect(parseXml("<!DOCTYPE p PUBLIC '-//A (q)//EN' \"https://example.invalid/p.dtd\"><p/>").localName).toBe("p");
+  });
+
+  it("never resolves the external DTD: a file:/// system identifier is inert and its entities stay unknown", () => {
+    expect(parseXml('<!DOCTYPE p SYSTEM "file:///etc/passwd"><p>plain</p>').text).toBe("plain");
+    expect(() => parseXml('<!DOCTYPE p SYSTEM "file:///etc/passwd"><p>&passwd;</p>')).toThrow(/Custom XML entities/);
+    expect(() => parseXml('<!DOCTYPE p SYSTEM "https://example.invalid/x.dtd"><p a="&x;"/>')).toThrow(/Custom XML entities/);
+  });
+
+  it.each([
+    ["billion laughs", '<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;"><!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">]><lolz>&lol3;</lolz>'],
+    ["external entity to /etc/passwd", '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>'],
+    ["parameter entity", '<!DOCTYPE foo [<!ENTITY % remote SYSTEM "https://example.invalid/evil.dtd">%remote;]><foo/>'],
+    ["empty internal subset", '<!DOCTYPE p []><p/>'],
+    ["external id plus internal subset", '<!DOCTYPE p SYSTEM "p.dtd" [<!ATTLIST p a CDATA "x">]><p/>'],
+    ["external id plus spaced internal subset", '<!DOCTYPE p PUBLIC "-//A//EN" "p.dtd" [ ]><p/>'],
+    ["bare ENTITY declaration", '<!ENTITY x "y"><p/>'],
+    ["bare ELEMENT declaration", '<!ELEMENT p ANY><p/>'],
+    ["lower-case doctype", '<!doctype p><p/>'],
+    ["two DOCTYPEs", '<!DOCTYPE p><!DOCTYPE p><p/>'],
+    ["DOCTYPE before the XML declaration", '<!DOCTYPE p><?xml version="1.0"?><p/>'],
+    ["DOCTYPE inside the root", '<p><!DOCTYPE p></p>'],
+    ["DOCTYPE after the root", '<p/><!DOCTYPE p>'],
+    ["PUBLIC without a system literal", '<!DOCTYPE p PUBLIC "-//A//EN"><p/>'],
+    ["unterminated DOCTYPE", '<!DOCTYPE p SYSTEM "p.dtd"'],
+    ["unquoted system id", '<!DOCTYPE p SYSTEM p.dtd><p/>'],
+    ["markup inside the system literal", '<!DOCTYPE p SYSTEM "a>[<!ENTITY x \'y\'>]"><p/>'],
+    ["invalid public id character", '<!DOCTYPE p PUBLIC "-//A{}//EN" "p.dtd"><p/>'],
+    ["double quote inside a single-quoted public id", "<!DOCTYPE p PUBLIC '-//A \"q\"//EN' 'p.dtd'><p/>"],
+  ])("still refuses hostile or declaring DTDs: %s", (_name, source) => {
+    expect(() => parseXml(source)).toThrow();
+  });
+
   it("accepts a UTF-16 declaration on already-decoded text; byte/declaration agreement is checked by the package decoder", () => {
     expect(parseXml('<?xml version="1.0" encoding="UTF-16" standalone="yes"?><p/>').localName).toBe("p");
   });

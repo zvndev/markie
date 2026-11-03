@@ -1,6 +1,6 @@
 import { DocxError, type DocxOperation, type DocxPageLayout, type DocxParagraph, type DocxRun, type DocxRunFormat, type DocxRunStyle, type DocxTextEdit } from "./docx-types";
 import { encodeTextDocument } from "../document-formats";
-import type { NativeRichDocument, RichParagraphInput, RichSnapshotOptions } from "./rich-text-types";
+import type { NativeRichDocument, RichBlockInput, RichParagraphInput, RichSnapshotOptions } from "./rich-text-types";
 
 const owned = new WeakMap<NativeRichDocument, number>();
 const defaultLayout = Object.freeze({ widthPoints: 612, heightPoints: 792, orientation: "portrait" as const, marginTopPoints: 72, marginRightPoints: 72, marginBottomPoints: 72, marginLeftPoints: 72 });
@@ -44,12 +44,40 @@ function finish(base: NativeRichDocument, paragraphs: readonly DocxParagraph[], 
   owned.set(result, nextId);
   return result;
 }
+/** Edits rebuild blocks from paragraphs alone, so a table can only ever be shown, never edited. */
+function layoutBlocks(paragraphs: readonly DocxParagraph[], input: readonly RichBlockInput[] | undefined, canEdit: boolean): Pick<NativeRichDocument, "blocks" | "tables"> {
+  if (!input) return { blocks: Object.freeze(paragraphs.map((p) => Object.freeze({ kind: "paragraph" as const, paragraphId: p.id }))), tables: Object.freeze([]) };
+  let next = 0;
+  const take = (index: number) => {
+    if (index !== next || !paragraphs[index]) invalid("Rich document blocks must list every paragraph once, in order.");
+    next++;
+    return paragraphs[index];
+  };
+  const tables: NativeRichDocument["tables"][number][] = [];
+  const blocks = input.map((block) => {
+    if (block.kind === "paragraph") return Object.freeze({ kind: "paragraph" as const, paragraphId: take(block.index).id });
+    if (canEdit) invalid("Tables in this format are read-only.");
+    if (!block.rows.length || block.rows.some((row) => !row.length || row.some((cell) => !cell.length))) invalid("Rich document tables need rows and cells with paragraphs.");
+    const id = `t${tables.length}`;
+    tables.push(Object.freeze({ id, rows: Object.freeze(block.rows.map((row) => Object.freeze({ cells: Object.freeze(row.map((cell) => Object.freeze({ paragraphs: Object.freeze(cell.map(take)) }))) }))) }));
+    return Object.freeze({ kind: "table" as const, tableId: id });
+  });
+  if (next !== paragraphs.length) invalid("Rich document blocks must list every paragraph once, in order.");
+  return { blocks: Object.freeze(blocks), tables: Object.freeze(tables) };
+}
 export function createRichSnapshot(format: "rtf" | "odt", inputs: readonly RichParagraphInput[], options: RichSnapshotOptions = {}): NativeRichDocument {
   if (!inputs.length || inputs.length > 10000) invalid("A rich document requires supported paragraphs.");
   const canEdit = options.canEdit ?? true;
+  for (const p of inputs) {
+    if (p.listKind === undefined && p.listLevel === undefined && p.listNumber === undefined) continue;
+    if (canEdit) invalid("List markers in this format are read-only.");
+    if (!["bullet", "numbered"].includes(p.listKind!) || !Number.isInteger(p.listLevel ?? 0) || (p.listLevel ?? 0) < 0 || (p.listLevel ?? 0) > 8
+      || (p.listNumber !== undefined && (!Number.isInteger(p.listNumber) || p.listNumber < 0 || p.listNumber > 1_000_000))) invalid("Invalid list marker.");
+  }
   const paragraphs = inputs.map((p, i) => paragraph({ ...p, id: `p${i}`, runs: (p.runs.length ? p.runs : [{ text: "" }]).map((r, j) => run(`p${i}:r${j}`, r.text, r.style ?? {}, canEdit)), revisionIds: Object.freeze([]) }));
   const empty = Object.freeze([]);
-  const base: NativeRichDocument = Object.freeze({ format, paragraphs: Object.freeze(paragraphs), text: paragraphs.map((p) => p.text).join("\n"), originalText: options.originalText, blocks: Object.freeze(paragraphs.map((p) => Object.freeze({ kind: "paragraph" as const, paragraphId: p.id }))), pageLayout: Object.freeze({ ...(options.pageLayout ?? defaultLayout) }), tables: empty, comments: empty, styles: empty, images: empty, hyperlinks: empty, pageBreaks: empty, revisions: empty, metadata: Object.freeze({ ...options.metadata }), diagnostics: Object.freeze((options.diagnostics ?? []).map((d) => Object.freeze({ ...d }))), canEdit, revision: options.revision ?? 0, modified: options.modified ?? false });
+  const { blocks, tables } = layoutBlocks(paragraphs, options.blocks, canEdit);
+  const base: NativeRichDocument = Object.freeze({ format, paragraphs: Object.freeze(paragraphs), text: paragraphs.map((p) => p.text).join("\n"), originalText: options.originalText, blocks, pageLayout: Object.freeze({ ...(options.pageLayout ?? defaultLayout) }), tables, comments: empty, styles: empty, images: empty, hyperlinks: empty, pageBreaks: empty, revisions: empty, metadata: Object.freeze({ ...options.metadata }), diagnostics: Object.freeze((options.diagnostics ?? []).map((d) => Object.freeze({ ...d }))), canEdit, revision: options.revision ?? 0, modified: options.modified ?? false });
   if (base.text.length > 1_000_000) invalid("Unsupported document size.");
   owned.set(base, 0);
   return base;

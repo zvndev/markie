@@ -33,7 +33,8 @@ export async function extractOdtText(bytes: Uint8Array, limits: DocumentImportLi
     while (budget.length) { const task = budget.pop()!; if (++structuralNodes > limits.maxNodes || task.depth > limits.maxDepth) throw new DocumentImportError("limit-exceeded", "ODT XML structure exceeds the import budget."); for (const child of task.node.children) budget.push({ node: child, depth: task.depth + 1 }); }
     if (root.namespace !== OFFICE || root.localName !== "document-content") throw new DocumentImportError("malformed", "ODT content root namespace is invalid.");
     const version = xmlAttribute(root, "version", OFFICE);
-    if (version !== "1.2" && version !== "1.3") throw new DocumentImportError("unsupported", "Only the common OpenDocument 1.2/1.3 text subset is converted.");
+    // TextEdit writes ODF 1.0 and current LibreOffice writes 1.4; the text elements read here are the same in each.
+    if (version !== undefined && !/^1\.[0-4]$/.test(version)) throw new DocumentImportError("unsupported", "Only OpenDocument 1.0 to 1.4 text is converted.");
     const bodies = root.children.filter((node) => node.namespace === OFFICE && node.localName === "body");
     const texts = bodies.length === 1 ? bodies[0].children.filter((node) => node.namespace === OFFICE && node.localName === "text") : [];
     if (texts.length !== 1) throw new DocumentImportError("malformed", "ODT requires exactly one office:text body.");

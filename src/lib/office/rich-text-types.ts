@@ -10,8 +10,19 @@ export interface RichParagraphInput {
   readonly spacingBeforePoints?: number;
   readonly spacingAfterPoints?: number;
   readonly lineSpacingMultiple?: number;
+  /** Display-only list markers; a codec that sets them must open read-only. */
+  readonly listKind?: "bullet" | "numbered";
+  readonly listLevel?: number;
+  readonly listNumber?: number;
 }
+/** Document order of top-level paragraphs and tables, by input paragraph index.
+ * Every paragraph appears exactly once, either alone or inside one table cell. */
+export type RichBlockInput =
+  | { readonly kind: "paragraph"; readonly index: number }
+  | { readonly kind: "table"; readonly rows: readonly (readonly (readonly number[])[])[] };
 export interface RichSnapshotOptions {
+  /** Tables are display-only in the shared model: a snapshot with any table must be read-only. */
+  readonly blocks?: readonly RichBlockInput[];
   readonly pageLayout?: Readonly<DocxPageLayout>;
   readonly diagnostics?: readonly DocxDiagnostic[];
   readonly metadata?: Readonly<Record<string, string>>;

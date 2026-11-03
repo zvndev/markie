@@ -2,6 +2,8 @@
  * https://www.w3.org/TR/xml/ and https://www.w3.org/TR/xml-names/
  * Source offsets let DOCX edits leave unrelated XML untouched. No DTD, external
  * entities, network access, executable markup or HTML interpretation is used.
+ * A DOCTYPE naming only an external identifier is skipped unread; any internal
+ * subset or markup declaration is rejected.
  */
 export interface XmlAttribute {
   name: string;
@@ -33,6 +35,12 @@ export class XmlError extends Error {
 export const XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
 const XMLNS_NAMESPACE = "http://www.w3.org/2000/xmlns/";
 const namePattern = /^[A-Za-z_][A-Za-z0-9_.-]*(?::[A-Za-z_][A-Za-z0-9_.-]*)?$/;
+// XML 1.0 §2.8 doctypedecl restricted to `<!DOCTYPE Name ExternalID? S? >`:
+// no internal subset, so no declarations at all. PubidLiteral uses the §2.3
+// PubidChar set; SystemLiteral additionally excludes markup and brackets.
+const pubid = (quote: string) => `${quote}[\\x20\\r\\na-zA-Z0-9\\-()+,./:=?;!*#@$_%${quote === '"' ? "'" : ""}]*${quote}`;
+const systemLiteral = `(?:"[^"<>[\\]]*"|'[^'<>[\\]]*')`;
+const doctypePattern = new RegExp(`<!DOCTYPE[\\x20\\t\\r\\n]+([^\\x20\\t\\r\\n>[]+)(?:[\\x20\\t\\r\\n]+(?:SYSTEM[\\x20\\t\\r\\n]+${systemLiteral}|PUBLIC[\\x20\\t\\r\\n]+(?:${pubid('"')}|${pubid("'")})[\\x20\\t\\r\\n]+${systemLiteral}))?[\\x20\\t\\r\\n]*>`, "y");
 
 function validCodePoint(point: number): boolean {
   return point === 9 || point === 10 || point === 13 || (point >= 32 && point <= 0xd7ff)
@@ -94,7 +102,7 @@ export function parseXml(source: string, maxCharacters = 8 * 1024 * 1024): XmlEl
   let root: XmlElement | undefined;
   let cursor = source.charCodeAt(0) === 0xfeff ? 1 : 0;
   const declarationOffset = cursor;
-  let nodeCount = 0;
+  let nodeCount = 0, doctypeSeen = false;
   while (cursor < source.length) {
     if (source[cursor] !== "<") {
       const next = source.indexOf("<", cursor);
@@ -134,6 +142,20 @@ export function parseXml(source: string, maxCharacters = 8 * 1024 * 1024): XmlEl
         throw new XmlError("Unsupported XML instruction or encoding.");
       }
       cursor = end + 2;
+      continue;
+    }
+    if (source.startsWith("<!DOCTYPE", cursor)) {
+      // TextEdit and older OpenOffice name an external DTD in their ODT
+      // manifest. A bare external identifier is inert here: it is matched,
+      // skipped and never fetched or resolved, so it can declare nothing.
+      // Internal subsets ("["), and with them every ENTITY, ELEMENT and
+      // ATTLIST declaration, stay forbidden, as do custom entity references.
+      if (stack.length || root || doctypeSeen) throw new XmlError("A DOCTYPE is only allowed once, before the root element.");
+      doctypePattern.lastIndex = cursor;
+      const match = doctypePattern.exec(source);
+      if (!match || !namePattern.test(match[1])) throw new XmlError("DTD internal subsets and markup declarations are forbidden.");
+      doctypeSeen = true;
+      cursor = doctypePattern.lastIndex;
       continue;
     }
     if (source.startsWith("<!", cursor)) throw new XmlError("DTD and XML declarations are forbidden.");

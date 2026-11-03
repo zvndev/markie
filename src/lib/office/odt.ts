@@ -9,9 +9,10 @@
 import { DocxError, type DocxOperation, type DocxRunStyle, type DocxTextEdit } from "./docx-types";
 import { createRichSnapshot, applySimpleRichOperations, rebaseSimpleRichDefaults, replaceSimpleRichText } from "./rich-text-model";
 import type { NativeRichDocument, RichParagraphInput, RichRunInput } from "./rich-text-types";
-import { escapeXmlText, parseXml, xmlAttribute, type XmlElement } from "./xml";
+import { escapeXmlText, parseXml, xmlAttribute, xmlDescendants, type XmlElement } from "./xml";
 import { readZip, writeZip, validateZipPath, type ZipEntry } from "./zip";
 import { appendOdtXml, odtPageProperties, odtPageStyles, readOdtPageGeometry, type OdtPageGeometry } from "./odt-page-layout";
+import { readOdtDisplayBody } from "./odt-readonly";
 
 const OFFICE = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 const TEXT = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
@@ -25,6 +26,7 @@ const utf8 = new TextDecoder("utf-8", { fatal: true });
 const encoder = new TextEncoder();
 interface State { original: Uint8Array; entries: ZipEntry[]; content: string; root: XmlElement; text: XmlElement; defaults: Resolved; geometry?: OdtPageGeometry; stylesRoot?: XmlElement; initial: NativeRichDocument }
 const owned = new WeakMap<NativeRichDocument, State>();
+const forbiddenParts = /^(?:META-INF\/.*signatures|Basic\/|Scripts\/|Object(?:\d+)?(?:\/|$))/i;
 function fail(message: string): never { throw new DocxError("unsupported-odt", message); }
 function attrs(node: XmlElement, allowed: readonly string[]): void {
   if (node.attributes.some(a => a.namespace !== XMLNS && !allowed.includes(`${a.namespace}|${a.localName}`))) {
@@ -241,7 +243,7 @@ export async function openOdt(input: Uint8Array): Promise<NativeRichDocument> {
   const entries = await readZip(original);
   const parts = new Map(entries.map(e => [e.name, e.data]));
   if (utf8.decode(parts.get("mimetype")) !== MIME) fail("This package is not an ODT text document.");
-  if (entries.some(e => /^(?:META-INF\/.*signatures|Basic\/|Scripts\/|Object(?:\d+)?(?:\/|$))/i.test(e.name))) fail("Signed, executable and embedded-object ODT packages are unsupported.");
+  if (entries.some(e => forbiddenParts.test(e.name))) fail("Signed, executable and embedded-object ODT packages are unsupported.");
   const manifestBytes = parts.get("META-INF/manifest.xml");
   if (!manifestBytes) fail("ODT manifest is missing.");
   const manifest = parseXml(utf8.decode(manifestBytes));
@@ -296,6 +298,66 @@ export async function openOdt(input: Uint8Array): Promise<NativeRichDocument> {
   const document = createRichSnapshot("odt", paragraphs.length ? paragraphs : [{ runs: [{ text: "" }] }], { pageLayout: geometry?.layout, diagnostics: [{ code: "odt-bounded-rich-text", severity: "info", message: "ODT rich text supports paragraphs, fonts, colors, basic emphasis, spacing and a single static page layout. Complex layouts and interactive content are not converted." }] });
   const defaults = resolve("text", undefined, resolve("paragraph", undefined, { run: {}, paragraph: {} }));
   owned.set(document, { original, entries, content, root, text, defaults, geometry, stylesRoot, initial: document });
+  return document;
+}
+
+/** Opens an ODT for editing when it fits the bounded codec above, and otherwise
+ * read-only for display. Only "unsupported-odt" refusals fall back: malformed or
+ * hostile XML (including any DTD declaration), ZIP damage, encryption, signatures,
+ * macros and embedded objects still refuse to open. */
+export async function openOdtForDisplay(input: Uint8Array): Promise<NativeRichDocument> {
+  try {
+    return await openOdt(input);
+  } catch (error) {
+    if (!(error instanceof DocxError) || error.code !== "unsupported-odt") throw error;
+    return openOdtReadOnly(input, error.message);
+  }
+}
+
+/** A read-only snapshot owned like an editable one, so export returns the original bytes. */
+export async function openOdtReadOnly(input: Uint8Array, reason = "Uses features outside the editable ODT subset."): Promise<NativeRichDocument> {
+  const original = new Uint8Array(input);
+  const view = new DataView(original.buffer);
+  if (original.length < 38 || view.getUint32(0, true) !== 0x04034b50 || view.getUint16(8, true) !== 0
+    || view.getUint16(26, true) !== 8 || view.getUint16(28, true) !== 0 || utf8.decode(original.slice(30, 38)) !== "mimetype") {
+    fail("ODT requires mimetype as the first, uncompressed ZIP entry without an extra field.");
+  }
+  const entries = await readZip(original);
+  const parts = new Map(entries.map(e => [e.name, e.data]));
+  if (utf8.decode(parts.get("mimetype")) !== MIME) fail("This package is not an ODT text document.");
+  if (entries.some(e => forbiddenParts.test(e.name))) fail("Signed, executable and embedded-object ODT packages are unsupported.");
+  const manifestBytes = parts.get("META-INF/manifest.xml");
+  if (!manifestBytes) fail("ODT manifest is missing.");
+  const manifest = parseXml(utf8.decode(manifestBytes));
+  if (!is(manifest, MANIFEST, "manifest")) fail("Invalid ODT manifest namespace.");
+  if (xmlDescendants(manifest).some(node => node.namespace === MANIFEST && ["encryption-data", "encrypted-key"].includes(node.localName))) fail("Encrypted ODT packages are unsupported.");
+  const media = (path: string) => manifest.children.filter(node => is(node, MANIFEST, "file-entry") && xmlAttribute(node, "full-path", MANIFEST) === path).map(node => xmlAttribute(node, "media-type", MANIFEST));
+  const rootMedia = media("/"), contentMedia = media("content.xml");
+  if (rootMedia.length !== 1 || rootMedia[0] !== MIME || contentMedia.length !== 1 || contentMedia[0] !== "text/xml") fail("ODT manifest media types do not match the text document.");
+  const contentBytes = parts.get("content.xml");
+  if (!contentBytes) fail("ODT content is missing.");
+  const content = utf8.decode(contentBytes), root = parseXml(content);
+  if (!is(root, OFFICE, "document-content")) fail("Invalid ODT content root.");
+  const bodies = root.children.filter(node => is(node, OFFICE, "body"));
+  const texts = bodies.length === 1 ? bodies[0].children.filter(node => is(node, OFFICE, "text")) : [];
+  if (texts.length !== 1) fail("ODT requires exactly one office:text body.");
+  const text = texts[0];
+  const roots = [root];
+  let stylesRoot: XmlElement | undefined;
+  const stylesBytes = parts.get("styles.xml");
+  if (stylesBytes) {
+    const styles = parseXml(utf8.decode(stylesBytes));
+    if (is(styles, OFFICE, "document-styles")) { stylesRoot = styles; roots.unshift(styles); }
+  }
+  let geometry: OdtPageGeometry | undefined;
+  try { geometry = readOdtPageGeometry(roots); } catch { geometry = undefined; }
+  const body = readOdtDisplayBody(content, text, roots);
+  const diagnostics = [
+    { code: "odt-read-only", severity: "warning" as const, message: `This OpenDocument file opens read-only because Markie can't edit all of its features yet. Exporting keeps the original file unchanged. Detail: ${reason}` },
+    ...(body.omitted ? [{ code: "odt-omitted", severity: "info" as const, message: "Pictures, comments, notes, hidden text and other content Markie can't show are left out of this view." }] : []),
+  ];
+  const document = createRichSnapshot("odt", body.paragraphs, { pageLayout: geometry?.layout, diagnostics, canEdit: false, blocks: body.blocks });
+  owned.set(document, { original, entries, content, root, text, defaults: { run: {}, paragraph: {} }, geometry, stylesRoot, initial: document });
   return document;
 }
 

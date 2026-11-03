@@ -1,11 +1,14 @@
 import type { DocxOperation, DocxTextEdit, DocxRunStyle, DocxPageLayout } from "./docx-types";
 import { DocxError } from "./docx-types";
-import type { NativeRichDocument, RichParagraphInput, RichRunInput } from "./rich-text-types";
+import type { NativeRichDocument, RichBlockInput, RichParagraphInput, RichRunInput } from "./rich-text-types";
 import { createRichSnapshot, applySimpleRichOperations, replaceSimpleRichText, rebaseSimpleRichDefaults } from "./rich-text-model";
 
 /** Original, deliberately bounded implementation of Microsoft RTF 1.9.1 prose, §§ Introduction,
- * Unicode RTF, Font/Color Tables, Paragraph Formatting and Character Text. No sample reader used.
- * Unsupported semantics keep the original stream readable and exportable, but never editable. */
+ * Unicode RTF, Font/Color Tables, Paragraph Formatting, Character Text and Table Definitions
+ * (rows and cells only). No sample reader used.
+ * Unsupported semantics keep the original stream readable and exportable, but never editable.
+ * Tables are read into rows and cells for display; the RTF writer has no table form, so any
+ * table makes the document read-only. */
 const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_TOKENS = 250_000;
 const MAX_TEXT = 1_000_000;
@@ -70,7 +73,11 @@ function lex(bytes: Uint8Array): Group {
 const codepages: Record<number, string> = { 1250: "windows-1250", 1251: "windows-1251", 1252: "windows-1252", 1253: "windows-1253", 1254: "windows-1254", 1255: "windows-1255", 1256: "windows-1256", 1257: "windows-1257", 1258: "windows-1258", 874: "windows-874", 932: "shift_jis", 936: "gbk", 949: "euc-kr", 950: "big5", 65001: "utf-8", 10000: "macintosh" };
 const charsets: Record<number, number> = { 0: 1252, 77: 10000, 128: 932, 129: 949, 134: 936, 136: 950, 161: 1253, 162: 1254, 163: 1258, 177: 1255, 178: 1256, 186: 1257, 204: 1251, 222: 874, 238: 1250 };
 interface Font { name: string; charset?: number; codepage?: number; family: string }
-interface State { style: DocxRunStyle; font?: number; uc: number; paragraph: Omit<RichParagraphInput, "runs">; line?: number; multiple?: number }
+interface State { style: DocxRunStyle; font?: number; uc: number; paragraph: Omit<RichParagraphInput, "runs">; line?: number; multiple?: number; inTable?: boolean }
+// Row and cell formatting (RTF 1.9.1, Table Definitions). Geometry, borders, shading and padding
+// are not drawn; they only mark the document read-only through the single "table" feature.
+const tableFormatting = /^(?:trowd|lastrow|itap|cellx|gaph|taflags|irow|irowband|tr[A-Za-z]+|cl[A-Za-z]+|tbl[A-Za-z]+|ts[A-Za-z]+)$/;
+const borderFormatting = /^brdr[A-Za-z]*$/;
 const paragraphDefaults = () => ({ alignment: "left", spacingBeforePoints: 0, spacingAfterPoints: 0, lineSpacingMultiple: 1 });
 const defaultLayout: DocxPageLayout = { widthPoints: 612, heightPoints: 792, orientation: "portrait", marginTopPoints: 72, marginBottomPoints: 72, marginLeftPoints: 72, marginRightPoints: 72 };
 
@@ -83,8 +90,20 @@ export async function openRtf(input: Uint8Array): Promise<NativeRichDocument> {
   const fontNames = new Set<string>();
   const colors: (string | undefined)[] = [];
   let defaultFont: number | undefined, codepage = 1252, textLength = 0, bodyStarted = false;
-  const layout = { ...defaultLayout };
+  const page = { ...defaultLayout };
   const paragraphs: RichParagraphInput[] = [];
+  // Document order by paragraph index. A cell is the paragraph indices up to its \cell; a row
+  // ends at \row. A table closes when a paragraph outside any table (no \intbl) begins.
+  const layout: RichBlockInput[] = [];
+  let cell: number[] = [], row: number[][] = [], tableRows: number[][][] = [], tableSeen = false;
+  const closeRow = () => {
+    if (cell.length) { row.push(cell); cell = []; }
+    if (row.length) { tableRows.push(row); row = []; }
+  };
+  const closeTable = () => {
+    closeRow();
+    if (tableRows.length) { layout.push({ kind: "table", rows: tableRows }); tableRows = []; }
+  };
   let runs: RichRunInput[] = [], currentParagraph = paragraphDefaults() as Omit<RichParagraphInput, "runs">;
   const warn = (name: string) => { if (unsupported.size < 64) unsupported.add(name); };
   const decode = (values: number[], cp: number) => {
@@ -111,7 +130,7 @@ export async function openRtf(input: Uint8Array): Promise<NativeRichDocument> {
     if (previous && JSON.stringify(previous.style) === JSON.stringify(style)) runs[runs.length - 1] = { text: previous.text + text, style };
     else runs.push({ text, style });
   };
-  const finish = (state: State) => {
+  const finish = (state: State, end: "paragraph" | "cell" = "paragraph") => {
     currentParagraph = { ...state.paragraph };
     if (state.line !== undefined) {
       if (state.multiple === 1 && state.line > 0) currentParagraph = { ...currentParagraph, lineSpacingMultiple: state.line / 240 };
@@ -120,8 +139,14 @@ export async function openRtf(input: Uint8Array): Promise<NativeRichDocument> {
     const font = state.font ?? defaultFont;
     const family = font === undefined ? "Times New Roman" : fonts.get(font)?.name;
     if (font !== undefined && !family) warn(`missing-font-${font}`);
+    const index = paragraphs.length;
     paragraphs.push({ ...currentParagraph, runs: runs.length ? runs : [{ text: "", style: { ...state.style, ...(family ? { fontFamily: family } : {}) } }] });
     runs = []; bodyStarted = true;
+    if (end === "cell" || state.inTable) {
+      tableSeen = true; warn("table");
+      cell.push(index);
+      if (end === "cell") { row.push(cell); cell = []; }
+    } else { closeTable(); layout.push({ kind: "paragraph", index }); }
   };
   const destination = (group: Group) => {
     const first = group.tokens[0];
@@ -245,7 +270,7 @@ export async function openRtf(input: Uint8Array): Promise<NativeRichDocument> {
     }
     return new TextEncoder().encode(`{\\info${pieces.join("")}}`);
   };
-  const suppressedDestinations = new Set(["info", "stylesheet", "pict", "object", "field", "footnote", "annotation", "header", "footer", "headerl", "headerr", "footerl", "footerr", "listtable", "listoverridetable", "revtbl", "filetbl", "xmlnstbl", "datastore", "themedata", "colorschememapping", "upr", "ud"]);
+  const suppressedDestinations = new Set(["info", "stylesheet", "pict", "object", "field", "footnote", "annotation", "header", "footer", "headerl", "headerr", "footerl", "footerr", "listtable", "listoverridetable", "revtbl", "filetbl", "xmlnstbl", "datastore", "themedata", "colorschememapping", "upr", "ud", "nonesttables"]);
   function visit(group: Group, inherited: State, isRoot = false) {
     const state: State = { ...inherited, style: { ...inherited.style }, paragraph: { ...inherited.paragraph } };
     if (!isRoot) {
@@ -291,7 +316,15 @@ export async function openRtf(input: Uint8Array): Promise<NativeRichDocument> {
       if (name === "uc") { if (!required(0, 32)) return error("Invalid RTF Unicode fallback count."); state.uc = value!; continue; }
       if (name === "u") { if (!required(-32768, 32767)) return error("Invalid signed RTF Unicode code unit."); append(String.fromCharCode(value! < 0 ? value! + 65536 : value!), state); fallback = state.uc; continue; }
       if (name === "plain") { state.style = { fontSizePoints: 12 }; state.font = defaultFont; continue; }
-      if (name === "pard") { state.paragraph = paragraphDefaults(); state.line = undefined; state.multiple = undefined; continue; }
+      if (name === "pard") { state.paragraph = paragraphDefaults(); state.line = undefined; state.multiple = undefined; state.inTable = false; continue; }
+      if (name === "intbl") { state.inTable = true; tableSeen = true; warn("table"); continue; }
+      if (name === "cell") { finish(state, "cell"); continue; }
+      if (name === "row") { if (runs.length) finish(state, "cell"); closeRow(); tableSeen = true; warn("table"); continue; }
+      // A nested table is shown flattened: each inner cell becomes a paragraph of the outer cell.
+      if (name === "nestcell") { finish({ ...state, inTable: true }); warn("nested-table"); continue; }
+      if (name === "nestrow") { warn("nested-table"); continue; }
+      if (tableFormatting.test(name)) { tableSeen = true; warn("table"); continue; }
+      if (tableSeen && borderFormatting.test(name)) continue;
       if (["b", "i", "ul"].includes(name)) { if (value !== undefined && value !== 0 && value !== 1) warn(`invalid-${name}`); state.style = { ...state.style, [name === "b" ? "bold" : name === "i" ? "italic" : "underline"]: name === "ul" ? value === 0 ? "none" : "single" : value !== 0 }; continue; }
       if (name === "ulnone") { state.style = { ...state.style, underline: "none" }; continue; }
       if (name === "fs") { if (!required(2, 800)) warn("unsupported-font-size"); else state.style = { ...state.style, fontSizePoints: value! / 2 }; continue; }
@@ -304,9 +337,9 @@ export async function openRtf(input: Uint8Array): Promise<NativeRichDocument> {
       if (name === "par") { finish(state); continue; }
       const special: Record<string, string> = { tab: "\t", line: "\n", emdash: "\u2014", endash: "\u2013", bullet: "\u2022", lquote: "\u2018", rquote: "\u2019", ldblquote: "\u201c", rdblquote: "\u201d", enspace: "\u2002", emspace: "\u2003", qmspace: "\u2005" };
       if (special[name]) { if (name === "enspace" || name === "emspace") warn("nonbreaking-font-relative-space"); append(special[name], state); continue; }
-      const page: Record<string, keyof DocxPageLayout> = { paperw: "widthPoints", paperh: "heightPoints", margt: "marginTopPoints", margb: "marginBottomPoints", margl: "marginLeftPoints", margr: "marginRightPoints" };
-      if (page[name]) { if (bodyStarted || !required(0, 31680)) warn("unsupported-page-layout"); else Object.assign(layout, { [page[name]]: value! / 20 }); continue; }
-      if (name === "landscape") { if (bodyStarted) warn("late-landscape"); else layout.orientation = "landscape"; continue; }
+      const pageFields: Record<string, keyof DocxPageLayout> = { paperw: "widthPoints", paperh: "heightPoints", margt: "marginTopPoints", margb: "marginBottomPoints", margl: "marginLeftPoints", margr: "marginRightPoints" };
+      if (pageFields[name]) { if (bodyStarted || !required(0, 31680)) warn("unsupported-page-layout"); else Object.assign(page, { [pageFields[name]]: value! / 20 }); continue; }
+      if (name === "landscape") { if (bodyStarted) warn("late-landscape"); else page.orientation = "landscape"; continue; }
       // Producer identity, viewer window state and Cocoa layout hints carry
       // no document content. Real TextEdit files always include them, so
       // treating them as features would lock every TextEdit RTF read-only.
@@ -315,11 +348,13 @@ export async function openRtf(input: Uint8Array): Promise<NativeRichDocument> {
     }
     flush();
     if (isRoot && (runs.length || !paragraphs.length)) finish(state);
+    if (isRoot) closeTable();
   }
   visit(root, { style: { fontSizePoints: 12 }, uc: 1, paragraph: paragraphDefaults() }, true);
-  if (layout.widthPoints <= 0 || layout.heightPoints <= 0 || layout.marginLeftPoints + layout.marginRightPoints >= layout.widthPoints || layout.marginTopPoints + layout.marginBottomPoints >= layout.heightPoints) warn("invalid-page-layout");
+  if (page.widthPoints <= 0 || page.heightPoints <= 0 || page.marginLeftPoints + page.marginRightPoints >= page.widthPoints || page.marginTopPoints + page.marginBottomPoints >= page.heightPoints) warn("invalid-page-layout");
   const diagnostics = unsupported.size ? [{ code: "rtf-unsupported", severity: "warning" as const, message: `This RTF uses unsupported features (${[...unsupported].join(", ")}). It is read-only; original bytes are preserved.` }] : [];
-  const document = createRichSnapshot("rtf", paragraphs, { pageLayout: layout, diagnostics, canEdit: !unsupported.size });
+  const blocks = layout.some((block) => block.kind === "table") ? layout : undefined;
+  const document = createRichSnapshot("rtf", paragraphs, { pageLayout: page, diagnostics, canEdit: !unsupported.size, blocks });
   owners.set(document, { bytes, retained, fonts, defaultFamily: defaultFont === undefined ? "Times New Roman" : fonts.get(defaultFont)?.name ?? "Times New Roman" });
   return document;
 }

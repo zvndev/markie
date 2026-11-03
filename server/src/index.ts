@@ -19,6 +19,7 @@ import { createWellKnown } from "./well-known.ts";
 import { createWebSignIn } from "./web-signin.ts";
 import { BRAND_HEAD, brandAssets, brandLogoSvg } from "./brand.ts";
 import { attachCollab, closeAllRooms, terminateAllRooms } from "./collab.ts";
+import { collabTickets } from "./collab-tickets.ts";
 import { desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
 import { applicationOrigins } from "./application-origins.ts";
 import { canonicalHostRedirect } from "./canonical-host.ts";
@@ -387,6 +388,8 @@ app.route("/api/document-platform", createDocumentPlatform({
 }));
 app.route("/api/docs", shares);
 app.route("/api/docs", comments);
+// The pass a live-editing socket opens with, instead of the session token.
+app.route("/api/docs", collabTickets);
 app.route("/api", themes);
 app.route("/api", assetsApi);
 app.route("/api", docLinksApi);

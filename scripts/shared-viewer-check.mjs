@@ -189,6 +189,28 @@ async function main() {
   res = await call(aliceToken, "POST", `/api/docs/${docId}/shares`, { email: bobEmail, role: "viewer" });
   if (!res.ok) throw new Error(`share: ${res.status} ${await res.text()}`);
 
+  // A second document Alice has already opened live, so its room holds the
+  // text. Bob's app has to join it with a live-editing pass and show the room.
+  const liveId = `live-${stamp}`;
+  const liveText = "# Live doc\n\nWritten in the room.\n";
+  res = await call(aliceToken, "PUT", `/api/docs/${liveId}`, { name: "Live doc.md", content: liveText, hash: createHash("sha256").update(liveText, "utf8").digest("hex"), baseVersion: 0 });
+  if (!res.ok) throw new Error(`create live doc: ${res.status} ${await res.text()}`);
+  res = await call(aliceToken, "POST", `/api/docs/${liveId}/shares`, { email: bobEmail, role: "viewer" });
+  if (!res.ok) throw new Error(`share live doc: ${res.status} ${await res.text()}`);
+  const Y = require("yjs");
+  const { WebsocketProvider } = require("y-websocket");
+  const WS = require("ws");
+  const pass = await (await call(aliceToken, "POST", `/api/docs/${liveId}/collab-ticket`, {})).json();
+  const aliceDoc = new Y.Doc();
+  const aliceLive = new WebsocketProvider(`ws://localhost:${apiPort}/collab`, liveId, aliceDoc, { WebSocketPolyfill: WS, params: { ticket: pass.ticket }, disableBc: true });
+  await new Promise((resolve) => (aliceLive.synced ? resolve() : aliceLive.once("sync", resolve)));
+  aliceDoc.transact(() => {
+    const paragraph = new Y.XmlElement("paragraph");
+    paragraph.insert(0, [new Y.XmlText("Only the live room has this line.")]);
+    aliceDoc.getXmlFragment("default").insert(0, [paragraph]);
+  });
+  await sleep(500);
+
   debugOrigin = `http://127.0.0.1:${debugPort}`;
   const dev = await startRendererDev({ port: devPort, log: path.join(artifactDir, "vite.log") });
   stopRenderer = dev.stop;
@@ -256,6 +278,20 @@ async function main() {
   check("the pane stays read-only for a viewer", state.editable === "false", `contenteditable=${state.editable}`);
   const errors = cdp.consoleLines.filter((l) => /EXCEPTION|error:/i.test(l) && !/Security Warning|DevTools/.test(l));
   check("no renderer exceptions", errors.length === 0, errors.slice(0, 5).join(" | "));
+
+  // The live document: Bob joins Alice's room through a pass.
+  const openedLive = await cdp.ev(`window.electronAPI.docOpenShared({ cloudId: ${JSON.stringify(liveId)}, suggestedName: "Live doc.md" })`);
+  check("the live document downloads and opens", !!openedLive?.ok, JSON.stringify(openedLive));
+  let liveState = null;
+  for (let i = 0; i < 24; i += 1) {
+    await sleep(500);
+    liveState = await cdp.ev(`(() => { const pm = document.querySelector('[data-markie-rich-pane] .ProseMirror'); return { live: !!window.__markieCollab, text: pm?.textContent ?? '' }; })()`);
+    if (liveState.live && liveState.text.includes("Only the live room has this line.")) break;
+  }
+  check("Bob joins Alice's live room and reads what is in it", !!liveState?.live && liveState.text.includes("Only the live room has this line."), JSON.stringify(liveState));
+  const asked = serverLog.join("").includes("collab: legacy token connection");
+  check("the app joined with a pass, never the session token", !asked, asked ? "the server logged a legacy token connection" : "");
+  aliceLive.destroy();
   if (process.env.SHOW_SERVER_LOG) process.stdout.write(serverLog.join(""));
   cdp.close();
 }

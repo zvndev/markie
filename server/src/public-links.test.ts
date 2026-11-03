@@ -11,6 +11,7 @@ const {
   getPublicLinkToken,
   resolvePublicToken,
   revokePublicLink,
+  rotatePublicLink,
 } = await import("./public-links.ts");
 
 test("createOrGetPublicLink is stable per doc", () => {
@@ -37,4 +38,16 @@ test("revokePublicLink removes the link", () => {
   assert.equal(revokePublicLink("doc4"), true);
   assert.equal(resolvePublicToken(token), null);
   assert.equal(revokePublicLink("doc4"), false);
+});
+
+test("rotatePublicLink swaps the token and never creates a link", () => {
+  const old = createOrGetPublicLink("doc5", "owner1");
+  const fresh = rotatePublicLink("doc5");
+  assert.ok(fresh && fresh !== old && fresh.length >= 32);
+  assert.equal(resolvePublicToken(old), null);
+  assert.deepEqual(resolvePublicToken(fresh), { doc_id: "doc5" });
+  assert.equal(getPublicLinkToken("doc5"), fresh);
+
+  assert.equal(rotatePublicLink("doc-without-link"), null);
+  assert.equal(getPublicLinkToken("doc-without-link"), null);
 });

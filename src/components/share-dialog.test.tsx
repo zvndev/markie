@@ -88,7 +88,7 @@ beforeEach(() => {
   contacts.mockResolvedValue(CONTACTS);
   getPublicLink.mockResolvedValue(null);
   add.mockResolvedValue({ ok: true, status: "member" });
-  remove.mockResolvedValue(true);
+  remove.mockResolvedValue({ ok: true, rotatedPublicUrl: null });
   createPublicLink.mockResolvedValue("https://markie.app/s/tok");
   revokePublicLink.mockResolvedValue(true);
 });
@@ -356,10 +356,94 @@ describe("ShareDialog", () => {
     expect(screen.queryByRole("combobox", { name: "Add people by email" })).toBeNull();
     expect(screen.queryByLabelText("General access")).toBeNull();
     expect(screen.queryByLabelText("What Grace Hopper can do")).toBeNull();
-    expect(screen.getByText("Restricted")).toBeInTheDocument();
     expect(within(screen.getByRole("dialog")).getByText("Viewer")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy link" })).toBeInTheDocument();
     expect(contacts).not.toHaveBeenCalled();
+  });
+
+  // The server answers anyone but the owner with a 403 and no URL. A member
+  // sees no public link section at all, and no error about it either.
+  it("never asks for the public link as a member, and shows no section or error for it", async () => {
+    access.mockResolvedValue(VIEWER);
+    list.mockResolvedValue([member()]);
+    getPublicLink.mockResolvedValue("https://markie.app/s/should-not-be-seen");
+    const { container } = renderDialog();
+
+    expect(await screen.findByText("Grace Hopper")).toBeInTheDocument();
+    expect(getPublicLink).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-markie-general-access]")).toBeNull();
+    expect(screen.queryByText("General access")).toBeNull();
+    expect(screen.queryByText("Restricted")).toBeNull();
+    expect(screen.queryByText("Anyone with the link")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("stays quiet when access cannot be loaded, without asking for the public link", async () => {
+    access.mockResolvedValue(null);
+    renderDialog();
+    await screen.findByText(/Access details could not be loaded/);
+    expect(getPublicLink).not.toHaveBeenCalled();
+    expect(screen.queryByText("General access")).toBeNull();
+  });
+
+  describe("removing someone from a public document", () => {
+    const OLD = "https://markie.app/s/old";
+    const NEW = "https://markie.app/s/new";
+    const NOTICE =
+      "The public link changed because you removed someone. Share the new link wherever you had posted the old one.";
+
+    it("tells the owner the link changed and shows the new one", async () => {
+      const user = userEvent.setup();
+      list.mockResolvedValue([member()]);
+      getPublicLink.mockResolvedValue(OLD);
+      remove.mockImplementation(async () => {
+        list.mockResolvedValue([]);
+        getPublicLink.mockResolvedValue(NEW);
+        return { ok: true, rotatedPublicUrl: NEW };
+      });
+      const writeText = stubClipboard();
+      renderDialog();
+
+      await waitFor(() => expect(screen.getByLabelText("General access")).toHaveValue("link"));
+      await user.selectOptions(screen.getByLabelText("What Grace Hopper can do"), "remove");
+
+      const notice = await screen.findByRole("status");
+      expect(notice).toHaveTextContent(NOTICE);
+      expect(within(notice).getByText(NEW)).toBeInTheDocument();
+      expect(screen.queryByText(/Couldn't/)).toBeNull();
+      // Copy link hands out the new URL, never the one that stopped working.
+      await user.click(screen.getByRole("button", { name: "Copy link" }));
+      expect(writeText).toHaveBeenCalledWith(NEW);
+    });
+
+    it("says nothing when the removal did not change the link", async () => {
+      const user = userEvent.setup();
+      list.mockResolvedValue([member()]);
+      const { onChanged } = renderDialog();
+
+      await user.selectOptions(await screen.findByLabelText("What Grace Hopper can do"), "remove");
+      await waitFor(() => expect(onChanged).toHaveBeenCalled());
+      expect(screen.queryByText(/The public link changed/)).toBeNull();
+    });
+
+    it("drops the notice once the owner turns the link off", async () => {
+      const user = userEvent.setup();
+      list.mockResolvedValue([member()]);
+      getPublicLink.mockResolvedValue(OLD);
+      remove.mockImplementation(async () => {
+        getPublicLink.mockResolvedValue(NEW);
+        return { ok: true, rotatedPublicUrl: NEW };
+      });
+      renderDialog();
+
+      await waitFor(() => expect(screen.getByLabelText("General access")).toHaveValue("link"));
+      await user.selectOptions(screen.getByLabelText("What Grace Hopper can do"), "remove");
+      expect(await screen.findByText(/The public link changed/)).toBeInTheDocument();
+
+      getPublicLink.mockResolvedValue(null);
+      await user.selectOptions(screen.getByLabelText("General access"), "restricted");
+      await waitFor(() => expect(screen.queryByText(/The public link changed/)).toBeNull());
+    });
   });
 
   it("says access could not be loaded rather than guessing", async () => {

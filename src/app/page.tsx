@@ -496,6 +496,8 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
                 docId: cid,
                 wsBase: server ? collabWsBaseFor(server) : collabWsBase(),
                 token,
+                // The same server and session the role came from.
+                fetchTicket: () => shares.collabTicket(cid),
                 user: { name: display, color: colorForName(display) },
                 readonly,
               }

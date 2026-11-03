@@ -4,6 +4,7 @@
 import { getElectronAPI } from "@/lib/electron";
 import { createAuthState } from "@/lib/auth-state";
 import { CLOUD_ALIASES, CLOUD_ORIGIN, canonicalCloudOrigin, isCloudOrigin } from "@/lib/cloud-origin";
+import type { CollabTicketAnswer } from "@/lib/collab";
 
 export interface MarkieUser {
   id: string;
@@ -562,6 +563,10 @@ export interface SharedByMeDoc {
 export type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<{ ok: boolean; status: number; data: T | null }>;
 
 export function makeSharesClient(request: ApiRequest) {
+  // Whether this server has shown it issues collab tickets. Once it has, a
+  // later 404 is never read as "this server is too old", so one odd answer
+  // cannot talk the app into putting the session token back on the socket.
+  let issuesTickets = false;
   return {
     access: async (docId: string): Promise<ShareAccess | null> => {
       const res = await request<{ access: ShareAccess }>(
@@ -607,15 +612,24 @@ export function makeSharesClient(request: ApiRequest) {
       return { ok: false, error: res.data?.error ?? "Couldn't share the doc" };
     },
 
-    // idOrEmail: a user id (member) or an email (pending invite)
-    remove: async (docId: string, idOrEmail: string): Promise<boolean> => {
-      const res = await request<{ ok?: boolean }>(
+    // idOrEmail: a user id (member) or an email (pending invite). When the
+    // document has a public link, the server swaps its token so the removed
+    // person's copy stops working, and answers with the new URL. A server that
+    // predates that answers without one, which reads as no change.
+    remove: async (
+      docId: string,
+      idOrEmail: string
+    ): Promise<{ ok: boolean; rotatedPublicUrl: string | null }> => {
+      const res = await request<{ ok?: boolean; publicLinkRotated?: boolean; url?: string }>(
         `/api/docs/${encodeURIComponent(docId)}/shares/${encodeURIComponent(idOrEmail)}`,
         { method: "DELETE" }
       );
-      return res.ok;
+      const rotated = res.ok && res.data?.publicLinkRotated === true && typeof res.data.url === "string";
+      return { ok: res.ok, rotatedPublicUrl: rotated ? res.data!.url! : null };
     },
 
+    // Owner only. Anyone else gets a 403 and no URL, which reads as null here:
+    // the share dialog does not ask unless the caller can manage the document.
     getPublicLink: async (docId: string): Promise<string | null> => {
       const res = await request<{ url: string | null }>(
         `/api/docs/${encodeURIComponent(docId)}/public-link`
@@ -637,6 +651,31 @@ export function makeSharesClient(request: ApiRequest) {
         { method: "DELETE" }
       );
       return res.ok;
+    },
+
+    // A pass for the live-editing socket, so the session token stays out of
+    // its URL and out of the proxy logs that keep URLs. The route refuses
+    // with `{ error: "no_ticket" }` (server/src/collab-tickets.ts), so a 404
+    // or 405 without that code means there is no such route: a server from
+    // before tickets, and the one case where the socket may still take the
+    // token. That holds for Markie Cloud too, so a desktop release that lands
+    // ahead of the server deploy keeps working; once Cloud runs this route it
+    // never answers that way.
+    collabTicket: async (docId: string): Promise<CollabTicketAnswer> => {
+      const res = await request<{ ticket?: unknown; expiresAt?: unknown; error?: unknown }>(
+        `/api/docs/${encodeURIComponent(docId)}/collab-ticket`,
+        { method: "POST", body: "{}" }
+      );
+      const ticket = res.ok && typeof res.data?.ticket === "string" ? res.data.ticket : "";
+      if (ticket) {
+        issuesTickets = true;
+        const expiresAt = typeof res.data?.expiresAt === "number" ? res.data.expiresAt : 0;
+        return { kind: "ticket", ticket, expiresAt };
+      }
+      const refusedByRoute = res.data?.error === "no_ticket";
+      if (refusedByRoute || res.status === 429) issuesTickets = true;
+      const noRoute = (res.status === 404 || res.status === 405) && !refusedByRoute;
+      return noRoute && !issuesTickets ? { kind: "legacy" } : { kind: "failed", status: res.status };
     },
   };
 }

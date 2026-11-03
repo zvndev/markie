@@ -1,10 +1,12 @@
 // The security contract for reading a shared document on the web.
 //
-// The interesting assertions here are the ones that must FAIL: a token from
-// another document, a token whose owner was removed, a withdrawn invite, and a
-// bare document id. If any of those render the document, a Markie document has
-// become readable by someone who was not shared it, which is the exact thing
-// this route exists to prevent.
+// The interesting assertions here are the ones that must FAIL: an emailed
+// link with nobody signed in, a link opened by the wrong account, a removed
+// member, an invite opened at a different address, and a bare document id. If
+// any of those render the document, a Markie document has become readable by
+// someone who was not shared it, which is the exact thing this route exists to
+// prevent. A ?k= token authorizes nothing: reading is the signed-in account's
+// access, every time.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -82,7 +84,8 @@ async function page(path: string, bearer?: string) {
 // everywhere except here.
 async function signUp(name: string, email: string) {
   const user = await signUpVerified(app, { name, email });
-  return { token: user.token, email };
+  assert.ok(user.id, `expected a user id for ${email}`);
+  return { token: user.token, email, id: user.id };
 }
 
 async function createDoc(token: string, docId: string) {
@@ -121,20 +124,64 @@ async function uploadAndLinkAsset(token: string, docId: string, ref: string) {
   return hash;
 }
 
-test("a member's link opens the document, and stops the moment they are removed", async () => {
+const SIGN_IN = (docId: string) =>
+  `http://localhost:8787/auth/web-signin?next=${encodeURIComponent(`/d/${docId}`)}`;
+
+// Every /d/ answer, a refusal or a redirect as much as a page, may be the one
+// carrying someone's personal token in its URL.
+function assertPrivate(res: { headers: Headers }, label: string) {
+  assert.equal(res.headers.get("cache-control"), "private, no-store", `${label}: cache-control`);
+  assert.equal(res.headers.get("referrer-policy"), "no-referrer", `${label}: referrer-policy`);
+}
+
+// A refusal carries none of the document: not its text, not its name.
+function assertNothingOfTheDoc(body: string, label: string) {
+  assert.ok(!body.includes(SECRET_LINE), `${label}: must not carry the document body`);
+  assert.ok(!body.includes("doc-view.md"), `${label}: must not carry the document name`);
+}
+
+function openDb() {
+  return import("better-sqlite3").then((m) => new m.default(process.env.DB_PATH as string));
+}
+
+async function pendingToken(docId: string, email: string): Promise<string> {
+  const db = await openDb();
+  const row = db
+    .prepare("SELECT token FROM pending_shares WHERE doc_id = ? AND email = ?")
+    .get(docId, email) as { token: string } | undefined;
+  db.close();
+  assert.ok(row?.token, "a pending invite has a token in pending_shares");
+  return row.token;
+}
+
+async function inviteAndToken(ownerToken: string, docId: string, email: string, role: "viewer" | "editor" = "viewer") {
+  const invited = await jsonRequest<{ status: string }>(
+    "POST",
+    `/api/docs/${docId}/shares`,
+    ownerToken,
+    { email, role }
+  );
+  assert.equal(invited.data?.status, "invited");
+  return pendingToken(docId, email);
+}
+
+async function shareWith(ownerToken: string, docId: string, email: string, role: "viewer" | "editor" = "viewer") {
+  const share = await jsonRequest<{ userId: string }>(
+    "POST",
+    `/api/docs/${docId}/shares`,
+    ownerToken,
+    { email, role }
+  );
+  assert.equal(share.status, 200);
+  return share.data?.userId as string;
+}
+
+test("a member's link alone sends the browser to sign in and carries nothing of the document", async () => {
   const owner = await signUp("Owner", `dv.owner.${stamp}@test.local`);
   const bob = await signUp("Bob", `dv.bob.${stamp}@test.local`);
   const docId = `dv-member-${stamp}`;
   await createDoc(owner.token, docId);
-
-  const share = await jsonRequest<{ userId: string }>(
-    "POST",
-    `/api/docs/${docId}/shares`,
-    owner.token,
-    { email: bob.email, role: "viewer" }
-  );
-  assert.equal(share.status, 200);
-  const bobId = share.data?.userId as string;
+  const bobId = await shareWith(owner.token, docId, bob.email);
 
   // The invite email carries exactly this token.
   const token = ensureShareToken(docId, bobId);
@@ -146,91 +193,138 @@ test("a member's link opens the document, and stops the moment they are removed"
   const bobRead = await jsonRequest<{ doc: { role: string } }>("GET", `/api/docs/${docId}`, bob.token);
   assert.equal(bobRead.data?.doc.role, "viewer");
 
-  const ok = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
-  assert.equal(ok.status, 200);
-  assert.ok(ok.body.includes(SECRET_LINE), "member should see the document body");
-  // A personal URL must not be stored by shared caches.
-  assert.match(ok.headers.get("cache-control") ?? "", /no-store/);
+  // A forwarded email is exactly this request: the token, and nobody signed in.
+  const forwarded = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
+  assert.equal(forwarded.status, 302);
+  assert.equal(forwarded.headers.get("location"), SIGN_IN(docId));
+  assert.ok(!(forwarded.headers.get("location") ?? "").includes(token), "the token is not carried on to sign-in");
+  assertNothingOfTheDoc(forwarded.body, "member link, no session");
+  assertPrivate(forwarded, "member link redirect");
 
-  // Revoking access revokes the link, with nothing else to revoke.
-  const removed = await jsonRequest(
-    "DELETE",
-    `/api/docs/${docId}/shares/${bobId}`,
-    owner.token
-  );
-  assert.equal(removed.status, 200);
-
-  const after = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
-  assert.equal(after.status, 403);
-  assert.ok(!after.body.includes(SECRET_LINE), "removed member must not see the body");
+  const raw = await page(`/d/${docId}/raw?k=${encodeURIComponent(token)}`);
+  assert.equal(raw.status, 401);
+  assertNothingOfTheDoc(raw.body, "raw, member link, no session");
+  assertPrivate(raw, "raw 401");
+  assert.equal(raw.headers.get("content-disposition"), null);
 });
 
-// A link is a key to one document, not to its holder's account. Bob is a
-// member of both documents here on purpose: if the token were treated merely as
-// proof of "you are Bob", the second request would succeed, because Bob really
-// can read that document. It must still be refused, so that forwarding one
-// email hands over one document rather than everything Bob has access to.
-test("a token for one document cannot open another, even one its owner may read", async () => {
+test("a member's link opens for that member's session, and stops the moment they are removed", async () => {
+  const owner = await signUp("Owner", `dv.mown.${stamp}@test.local`);
+  const bob = await signUp("Bob", `dv.mbob.${stamp}@test.local`);
+  const docId = `dv-member-session-${stamp}`;
+  await createDoc(owner.token, docId);
+  const bobId = await shareWith(owner.token, docId, bob.email);
+  const token = ensureShareToken(docId, bobId);
+
+  const ok = await page(`/d/${docId}?k=${encodeURIComponent(token)}`, bob.token);
+  assert.equal(ok.status, 200);
+  assert.ok(ok.body.includes(SECRET_LINE), "member should see the document body");
+  assertPrivate(ok, "member page");
+
+  const withoutToken = await page(`/d/${docId}`, bob.token);
+  assert.equal(withoutToken.status, 200, "the session is the access; the token adds nothing");
+
+  const removed = await jsonRequest("DELETE", `/api/docs/${docId}/shares/${bobId}`, owner.token);
+  assert.equal(removed.status, 200);
+
+  // Still signed in, still holding the link, no longer a member.
+  const after = await page(`/d/${docId}?k=${encodeURIComponent(token)}`, bob.token);
+  assert.equal(after.status, 403);
+  assertNothingOfTheDoc(after.body, "removed member, session");
+  assert.ok(!after.body.includes(owner.email), "the refusal names no other member");
+  assertPrivate(after, "removed member 403");
+  for (const path of [`/d/${docId}/raw`, `/d/${docId}/assets?ref=a.png`]) {
+    const res = await page(`${path}${path.includes("?") ? "&" : "?"}k=${encodeURIComponent(token)}`, bob.token);
+    assert.equal(res.status, 403, path);
+    assertNothingOfTheDoc(res.body, `removed member, ${path}`);
+  }
+
+  // Signed out, the dead token is a stranger's request: not even a redirect.
+  const signedOut = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
+  assert.equal(signedOut.status, 403);
+  assertNothingOfTheDoc(signedOut.body, "removed member, no session");
+});
+
+test("a member's link opened by another account that has no access gets a 403 naming only who is signed in", async () => {
+  const owner = await signUp("Owner", `dv.wown.${stamp}@test.local`);
+  const bob = await signUp("Bob", `dv.wbob.${stamp}@test.local`);
+  const mallory = await signUp("Mallory", `dv.wmal.${stamp}@test.local`);
+  const docId = `dv-wrong-${stamp}`;
+  await createDoc(owner.token, docId);
+  const bobId = await shareWith(owner.token, docId, bob.email);
+  const token = ensureShareToken(docId, bobId);
+
+  const res = await page(`/d/${docId}?k=${encodeURIComponent(token)}`, mallory.token);
+  assert.equal(res.status, 403);
+  assertNothingOfTheDoc(res.body, "wrong account");
+  assert.ok(!res.body.includes(bob.email), "must not name the member the link belongs to");
+  assert.ok(!res.body.includes(owner.email), "must not name the owner");
+  assert.ok(res.body.includes(mallory.email), "says who is signed in");
+  assert.ok(
+    res.body.includes(`${SIGN_IN(docId)}&amp;switch=1`),
+    "offers to sign in as a different account, past the signed-in forward"
+  );
+  assertPrivate(res, "wrong account 403");
+
+  const raw = await page(`/d/${docId}/raw?k=${encodeURIComponent(token)}`, mallory.token);
+  assert.equal(raw.status, 403);
+  assertNothingOfTheDoc(raw.body, "wrong account raw");
+
+  // The same refusal for an id that does not exist, so a signed-in account
+  // cannot use this route to find out which ids are real.
+  const missing = await page(`/d/dv-wrong-missing-${stamp}`, mallory.token);
+  assert.equal(missing.status, 403);
+  const withoutNext = (body: string) => body.replace(/next=[^"&]*/g, "next=");
+  assert.equal(withoutNext(missing.body), withoutNext(res.body));
+});
+
+// A token is not a key to anything, so a token for one document does not even
+// earn a redirect on another. Bob is a member of both on purpose.
+test("a token for one document does nothing for another, even one its owner may read", async () => {
   const owner = await signUp("Owner", `dv.cross.${stamp}@test.local`);
   const bob = await signUp("Bob", `dv.crossbob.${stamp}@test.local`);
   const first = `dv-first-${stamp}`;
   const second = `dv-second-${stamp}`;
   await createDoc(owner.token, first);
   await createDoc(owner.token, second);
-
-  const shareFirst = await jsonRequest<{ userId: string }>(
-    "POST",
-    `/api/docs/${first}/shares`,
-    owner.token,
-    { email: bob.email, role: "viewer" }
-  );
-  const bobId = shareFirst.data?.userId as string;
-  await jsonRequest("POST", `/api/docs/${second}/shares`, owner.token, {
-    email: bob.email,
-    role: "viewer",
-  });
-
+  const bobId = await shareWith(owner.token, first, bob.email);
+  await shareWith(owner.token, second, bob.email);
   const tokenForFirst = ensureShareToken(first, bobId);
 
   // Sanity: Bob genuinely has access to the second document.
   const bobSignedIn = await page(`/d/${second}`, bob.token);
   assert.equal(bobSignedIn.status, 200);
 
-  // But the first document's link must not reach it.
   const crossed = await page(`/d/${second}?k=${encodeURIComponent(tokenForFirst)}`);
-  assert.equal(
-    crossed.status,
-    403,
-    "a link for one document must not open another, even for a reader entitled to both"
-  );
+  assert.equal(crossed.status, 403);
   assert.ok(!crossed.body.includes(SECRET_LINE));
 });
 
-test("a pending invite opens, and withdrawing it closes the door", async () => {
+test("a pending invite's link shows the invite page and no content; withdrawing it closes even that", async () => {
   const owner = await signUp("Owner", `dv.pown.${stamp}@test.local`);
   const docId = `dv-pending-${stamp}`;
   const invitee = `dv.pending.${stamp}@test.local`;
   await createDoc(owner.token, docId);
-
-  const invited = await jsonRequest<{ status: string }>(
-    "POST",
-    `/api/docs/${docId}/shares`,
-    owner.token,
-    { email: invitee, role: "viewer" }
-  );
-  assert.equal(invited.data?.status, "invited");
-
+  const token = await inviteAndToken(owner.token, docId, invitee, "editor");
   const { pendingForToken } = await import("./pending.ts");
-  const db = new (await import("better-sqlite3")).default(process.env.DB_PATH as string);
-  const row = db
-    .prepare("SELECT token FROM pending_shares WHERE doc_id = ? AND email = ?")
-    .get(docId, invitee) as { token: string };
-  assert.ok(row?.token);
-  assert.equal(pendingForToken(row.token)?.docId, docId);
+  assert.equal(pendingForToken(token)?.docId, docId);
 
-  const ok = await page(`/d/${docId}?k=${encodeURIComponent(row.token)}`);
-  assert.equal(ok.status, 200);
-  assert.ok(ok.body.includes(SECRET_LINE));
+  const invite = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
+  assert.equal(invite.status, 401);
+  assert.ok(!invite.body.includes(SECRET_LINE), "the invite page carries no content");
+  assert.ok(invite.body.includes(invitee), "names the address the invite was sent to");
+  assert.ok(invite.body.includes(SIGN_IN(docId).replace(/&/g, "&amp;")), "links to the web sign-in");
+  // The name is already in the invite email's subject, so it may appear.
+  assert.ok(invite.body.includes("doc-view.md"));
+  assert.ok(!invite.body.includes("edit it with them"), "nothing of the document page, editor invite or not");
+  assertPrivate(invite, "invite page");
+
+  for (const path of [`/d/${docId}/raw`, `/d/${docId}/assets?ref=a.png`]) {
+    const res = await page(`${path}${path.includes("?") ? "&" : "?"}k=${encodeURIComponent(token)}`);
+    assert.equal(res.status, 401, path);
+    assertNothingOfTheDoc(res.body, `pending token, ${path}`);
+    assertPrivate(res, path);
+  }
 
   const withdrawn = await jsonRequest(
     "DELETE",
@@ -239,40 +333,92 @@ test("a pending invite opens, and withdrawing it closes the door", async () => {
   );
   assert.equal(withdrawn.status, 200);
 
-  const after = await page(`/d/${docId}?k=${encodeURIComponent(row.token)}`);
+  const after = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
   assert.equal(after.status, 403);
-  assert.ok(!after.body.includes(SECRET_LINE));
+  assertNothingOfTheDoc(after.body, "withdrawn invite");
+  assert.ok(!after.body.includes(invitee), "a withdrawn invite names no address");
 });
 
-test("the emailed link still works after the invitee makes an account", async () => {
+test("a verified account at the invited address claims the invite through the link and reads it", async () => {
   const owner = await signUp("Owner", `dv.claimown.${stamp}@test.local`);
   const docId = `dv-claim-${stamp}`;
   const invitee = `dv.claim.${stamp}@test.local`;
   await createDoc(owner.token, docId);
-  await jsonRequest("POST", `/api/docs/${docId}/shares`, owner.token, {
-    email: invitee,
-    role: "editor",
-  });
+  const token = await inviteAndToken(owner.token, docId, invitee, "editor");
 
-  const db = new (await import("better-sqlite3")).default(process.env.DB_PATH as string);
-  const { token } = db
-    .prepare("SELECT token FROM pending_shares WHERE doc_id = ? AND email = ?")
-    .get(docId, invitee) as { token: string };
-
-  // Making an account and proving the address claims the invite, which moves
-  // the token onto the share row. Signing up alone no longer does it, which is
-  // the whole point of the verification gate.
+  // Proving the address alone claims nothing here: signUpVerified marks the
+  // row verified directly, which runs no claim hook.
   const joined = await signUp("Claimer", invitee);
-  const listed = await jsonRequest("GET", "/api/docs", joined.token);
-  assert.equal(listed.status, 200);
 
-  const after = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
-  assert.equal(
-    after.status,
-    200,
-    "the link in an already-sent email must survive the recipient signing up"
-  );
-  assert.ok(after.body.includes(SECRET_LINE));
+  const opened = await page(`/d/${docId}?k=${encodeURIComponent(token)}`, joined.token);
+  assert.equal(opened.status, 200);
+  assert.ok(opened.body.includes(SECRET_LINE));
+  assert.ok(opened.body.includes("edit it with them"), "an editor invite becomes editor access");
+
+  const db = await openDb();
+  const share = db.prepare("SELECT role FROM shares WHERE doc_id = ? AND user_id = ?").get(docId, joined.id) as { role: string } | undefined;
+  const stillPending = db.prepare("SELECT 1 FROM pending_shares WHERE doc_id = ?").get(docId);
+  db.close();
+  assert.equal(share?.role, "editor", "the invite became a real share");
+  assert.equal(stillPending, undefined, "and is no longer an invite");
+
+  for (const path of [`/d/${docId}/raw`]) {
+    const res = await page(`${path}?k=${encodeURIComponent(token)}`, joined.token);
+    assert.equal(res.status, 200, path);
+    assert.ok(res.body.includes(SECRET_LINE));
+  }
+
+  // The link in the already-sent email now names a member, and still opens
+  // nothing on its own.
+  const signedOut = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
+  assert.equal(signedOut.status, 302);
+  assert.equal(signedOut.headers.get("location"), SIGN_IN(docId));
+  assertNothingOfTheDoc(signedOut.body, "claimed token, no session");
+});
+
+// Signing in on the web lands on /d/<id> with no token at all, so the claim
+// has to happen from the session alone.
+test("a verified account at the invited address claims on a bare /d/ visit, as after signing in", async () => {
+  const owner = await signUp("Owner", `dv.bareclaimown.${stamp}@test.local`);
+  const docId = `dv-bareclaim-${stamp}`;
+  const invitee = `dv.bareclaim.${stamp}@test.local`;
+  await createDoc(owner.token, docId);
+  await inviteAndToken(owner.token, docId, invitee);
+  const joined = await signUp("Claimer", invitee);
+
+  const opened = await page(`/d/${docId}`, joined.token);
+  assert.equal(opened.status, 200);
+  assert.ok(opened.body.includes(SECRET_LINE));
+  assert.ok(opened.body.includes("You have view access"));
+});
+
+test("an invite opened by a verified account at a different address is refused and stays an invite", async () => {
+  const owner = await signUp("Owner", `dv.mmown.${stamp}@test.local`);
+  const mallory = await signUp("Mallory", `dv.mmmal.${stamp}@test.local`);
+  const docId = `dv-mismatch-${stamp}`;
+  const invitee = `dv.mismatch.${stamp}@test.local`;
+  await createDoc(owner.token, docId);
+  const token = await inviteAndToken(owner.token, docId, invitee);
+
+  const res = await page(`/d/${docId}?k=${encodeURIComponent(token)}`, mallory.token);
+  assert.equal(res.status, 403);
+  assertNothingOfTheDoc(res.body, "mismatched address");
+  assert.ok(res.body.includes(mallory.email), "says who is signed in");
+  assert.ok(res.body.includes(invitee), "and which address the invite needs");
+  assertPrivate(res, "mismatch 403");
+
+  for (const path of [`/d/${docId}/raw`, `/d/${docId}/assets?ref=a.png`]) {
+    const r = await page(`${path}${path.includes("?") ? "&" : "?"}k=${encodeURIComponent(token)}`, mallory.token);
+    assert.equal(r.status, 403, path);
+    assertNothingOfTheDoc(r.body, `mismatch ${path}`);
+  }
+
+  const db = await openDb();
+  const share = db.prepare("SELECT 1 FROM shares WHERE doc_id = ? AND user_id = ?").get(docId, mallory.id);
+  const pending = db.prepare("SELECT email FROM pending_shares WHERE doc_id = ?").all(docId) as Array<{ email: string }>;
+  db.close();
+  assert.equal(share, undefined, "a forwarded invite claims nothing for whoever opens it");
+  assert.deepEqual(pending.map((p) => p.email), [invitee], "the invite still waits for its address");
 });
 
 test("a bare document id gives an access page that names nothing", async () => {
@@ -282,8 +428,8 @@ test("a bare document id gives an access page that names nothing", async () => {
 
   const bare = await page(`/d/${docId}`);
   assert.equal(bare.status, 403);
-  assert.ok(!bare.body.includes(SECRET_LINE));
-  assert.ok(!bare.body.includes("doc-view.md"), "must not leak the document name");
+  assertNothingOfTheDoc(bare.body, "bare id");
+  assertPrivate(bare, "bare id");
 
   // A document that does not exist is indistinguishable from one you cannot
   // read, so the route cannot be used to enumerate ids.
@@ -293,7 +439,7 @@ test("a bare document id gives an access page that names nothing", async () => {
   // sign-in link.
   const withoutNext = (body: string) => body.replace(/next=[^"&]*/g, "next=");
   assert.equal(withoutNext(missing.body), withoutNext(bare.body));
-  assert.ok(bare.body.includes(`http://localhost:8787/auth/web-signin?next=${encodeURIComponent(`/d/${docId}`)}`));
+  assert.ok(bare.body.includes(SIGN_IN(docId)));
 
   const garbage = await page(`/d/${docId}?k=not-a-real-token`);
   assert.equal(garbage.status, 403);
@@ -312,30 +458,35 @@ test("the owner reads their own document from a signed-in browser, no token need
 
   const theirs = await page(`/d/${docId}`, stranger.token);
   assert.equal(theirs.status, 403);
-  assert.ok(!theirs.body.includes(SECRET_LINE));
+  assertNothingOfTheDoc(theirs.body, "stranger");
 });
 
 test("the raw download enforces the same access as the page", async () => {
   const owner = await signUp("Owner", `dv.rawown.${stamp}@test.local`);
   const bob = await signUp("Bob", `dv.rawbob.${stamp}@test.local`);
+  const stranger = await signUp("Stranger", `dv.rawstr.${stamp}@test.local`);
   const docId = `dv-raw-${stamp}`;
   await createDoc(owner.token, docId);
-  const share = await jsonRequest<{ userId: string }>(
-    "POST",
-    `/api/docs/${docId}/shares`,
-    owner.token,
-    { email: bob.email, role: "viewer" }
-  );
-  const token = ensureShareToken(docId, share.data?.userId as string);
+  const token = ensureShareToken(docId, await shareWith(owner.token, docId, bob.email));
 
-  const ok = await page(`/d/${docId}/raw?k=${encodeURIComponent(token)}`);
+  const linkOnly = await page(`/d/${docId}/raw?k=${encodeURIComponent(token)}`);
+  assert.equal(linkOnly.status, 401);
+  assertNothingOfTheDoc(linkOnly.body, "raw, link only");
+
+  const ok = await page(`/d/${docId}/raw?k=${encodeURIComponent(token)}`, bob.token);
   assert.equal(ok.status, 200);
   assert.ok(ok.body.includes(SECRET_LINE));
   assert.match(ok.headers.get("content-disposition") ?? "", /doc-view\.md/);
+  assertPrivate(ok, "raw 200");
+
+  const theirs = await page(`/d/${docId}/raw`, stranger.token);
+  assert.equal(theirs.status, 403);
+  assertNothingOfTheDoc(theirs.body, "raw, stranger");
 
   const bare = await page(`/d/${docId}/raw`);
   assert.equal(bare.status, 403);
-  assert.ok(!bare.body.includes(SECRET_LINE));
+  assertNothingOfTheDoc(bare.body, "raw, bare");
+  assertPrivate(bare, "raw bare");
 });
 
 test("the same token is returned on repeat, so a document has one link per person", async () => {
@@ -343,26 +494,18 @@ test("the same token is returned on repeat, so a document has one link per perso
   const bob = await signUp("Bob", `dv.stablebob.${stamp}@test.local`);
   const docId = `dv-stable-${stamp}`;
   await createDoc(owner.token, docId);
-  const share = await jsonRequest<{ userId: string }>(
-    "POST",
-    `/api/docs/${docId}/shares`,
-    owner.token,
-    { email: bob.email, role: "viewer" }
-  );
-  const bobId = share.data?.userId as string;
+  const bobId = await shareWith(owner.token, docId, bob.email);
 
   assert.equal(ensureShareToken(docId, bobId), ensureShareToken(docId, bobId));
 });
 
 // ---------------------------------------------------------------------------
-// Why the emailed-token path survives the email-verification change.
+// An invite's token, and the email-verification gate.
 //
-// Every other route that acts on a pending invite is now gated on proof of
-// email ownership (auth.ts, docs.ts). This one is deliberately not, and these
-// cases are the reason it is safe: the token was mailed to the invited address
-// and nowhere else, so holding it is evidence of receiving mail there. It
-// grants one read of one document and never creates anything account-bound,
-// which is what keeps it from becoming a way around the gate.
+// Every route that turns a pending invite into a share requires proof of the
+// address (auth.ts, docs.ts, and the claim here). The token is not that proof:
+// email is forwarded. So the token on its own reads nothing and creates
+// nothing, whoever holds it and whatever account exists at the address.
 // ---------------------------------------------------------------------------
 
 // A signup that stops at signup: no proof of the address, so no session.
@@ -380,64 +523,40 @@ async function signUpUnverified(name: string, email: string) {
   return { sessionToken: res.headers.get("set-auth-token") };
 }
 
-async function inviteAndToken(ownerToken: string, docId: string, email: string) {
-  const invited = await jsonRequest<{ status: string }>(
-    "POST",
-    `/api/docs/${docId}/shares`,
-    ownerToken,
-    { email, role: "viewer" }
-  );
-  assert.equal(invited.data?.status, "invited");
-  const db = new (await import("better-sqlite3")).default(process.env.DB_PATH as string);
-  const row = db
-    .prepare("SELECT token FROM pending_shares WHERE doc_id = ? AND email = ?")
-    .get(docId, email) as { token: string };
-  assert.ok(row?.token);
-  return row.token;
-}
-
-test("an emailed invite token opens the doc without minting an account for anyone", async () => {
+test("an emailed invite token reads nothing and mints nothing for anyone", async () => {
   const owner = await signUp("Owner", `dv.tokown.${stamp}@test.local`);
   const docId = `dv-token-${stamp}`;
   const invitee = `dv.token.${stamp}@test.local`;
   await createDoc(owner.token, docId);
   const token = await inviteAndToken(owner.token, docId, invitee);
 
-  const ok = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
-  assert.equal(ok.status, 200);
-  assert.ok(ok.body.includes(SECRET_LINE), "the invited reader sees the document");
+  const res = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
+  assert.equal(res.status, 401);
+  assert.ok(!res.body.includes(SECRET_LINE), "the invite page carries no content");
 
-  // Reading it must leave no trace that could be mistaken for membership.
-  const db = new (await import("better-sqlite3")).default(process.env.DB_PATH as string);
+  const db = await openDb();
   const user = db.prepare("SELECT id FROM user WHERE email = ?").get(invitee);
+  const share = db.prepare("SELECT * FROM shares WHERE doc_id = ?").all(docId) as unknown[];
+  const pending = db.prepare("SELECT email FROM pending_shares WHERE doc_id = ?").all(docId) as Array<{ email: string }>;
+  db.close();
   assert.equal(user, undefined, "viewing must not create an account");
-  const share = db
-    .prepare("SELECT * FROM shares WHERE doc_id = ?")
-    .all(docId) as unknown[];
   assert.deepEqual(share, [], "viewing must not create a share row");
-  const pending = db
-    .prepare("SELECT email FROM pending_shares WHERE doc_id = ?")
-    .all(docId) as Array<{ email: string }>;
-  assert.deepEqual(
-    pending.map((p) => p.email),
-    [invitee],
-    "the invite is still an invite, not a membership"
-  );
+  assert.deepEqual(pending.map((p) => p.email), [invitee], "the invite is still an invite, not a membership");
 });
 
-test("withdrawing the invite kills the token immediately, account or no account", async () => {
+test("withdrawing the invite takes the address off its link, account or no account", async () => {
   const owner = await signUp("Owner", `dv.withown.${stamp}@test.local`);
   const docId = `dv-withdraw-${stamp}`;
   const invitee = `dv.withdraw.${stamp}@test.local`;
   await createDoc(owner.token, docId);
   const token = await inviteAndToken(owner.token, docId, invitee);
 
-  // An unverified account now exists at the address. It changes nothing about
-  // the token: the pending row is still the only authorization, so withdrawing
-  // it is still the whole revocation.
+  // An unverified account now exists at the address. It changes nothing: the
+  // link still shows the invite page and nothing more.
   await signUpUnverified("Not Proven", invitee);
   const before = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
-  assert.equal(before.status, 200);
+  assert.equal(before.status, 401);
+  assert.ok(!before.body.includes(SECRET_LINE));
 
   const withdrawn = await jsonRequest(
     "DELETE",
@@ -447,11 +566,11 @@ test("withdrawing the invite kills the token immediately, account or no account"
   assert.equal(withdrawn.status, 200);
 
   const after = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
-  assert.equal(after.status, 403, "the withdrawn invite must stop opening the doc");
-  assert.ok(!after.body.includes(SECRET_LINE));
+  assert.equal(after.status, 403, "the withdrawn invite is a stranger's link");
+  assertNothingOfTheDoc(after.body, "withdrawn, unverified account");
 });
 
-test("an unverified account at the invited address gains nothing extra from the token", async () => {
+test("an unverified account at the invited address gains nothing from the token", async () => {
   const owner = await signUp("Owner", `dv.unvown.${stamp}@test.local`);
   const docId = `dv-unverified-${stamp}`;
   const invitee = `dv.unverified.${stamp}@test.local`;
@@ -465,32 +584,23 @@ test("an unverified account at the invited address gains nothing extra from the 
     "an unproven address gets no session, so there is nothing to list with"
   );
 
-  // The token grants the read it always granted, and only that.
   const viaToken = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
-  assert.equal(viaToken.status, 200);
+  assert.equal(viaToken.status, 401);
+  assert.ok(!viaToken.body.includes(SECRET_LINE));
 
-  const db = new (await import("better-sqlite3")).default(process.env.DB_PATH as string);
-  const userId = (
-    db.prepare("SELECT id FROM user WHERE email = ?").get(invitee) as { id: string }
-  ).id;
-  const share = db
-    .prepare("SELECT * FROM shares WHERE doc_id = ? AND user_id = ?")
-    .get(docId, userId);
-  assert.equal(
-    share,
-    undefined,
-    "reading through the token must not convert the invite into a share"
-  );
-  const stillPending = db
-    .prepare("SELECT role FROM pending_shares WHERE doc_id = ? AND email = ?")
-    .get(docId, invitee);
+  const db = await openDb();
+  const userId = (db.prepare("SELECT id FROM user WHERE email = ?").get(invitee) as { id: string }).id;
+  const share = db.prepare("SELECT * FROM shares WHERE doc_id = ? AND user_id = ?").get(docId, userId);
+  const stillPending = db.prepare("SELECT role FROM pending_shares WHERE doc_id = ? AND email = ?").get(docId, invitee);
+  db.close();
+  assert.equal(share, undefined, "the token must not convert the invite into a share");
   assert.ok(stillPending, "the invite is still waiting for proof of the address");
 });
 
 // ---------------------------------------------------------------------------
 // Cloud assets: the page rewrites a media src to the document's own asset
-// route only for a ref the document actually links, and carries the reader's
-// own ?k= token along for the ride so the rewritten URL stays theirs to use.
+// route only for a ref the document actually links. The asset is read with the
+// same session as the page, so the src never carries a link token.
 // ---------------------------------------------------------------------------
 
 test("a linked asset renders through the doc's asset route, an unlinked ref does not", async () => {
@@ -518,9 +628,10 @@ test("a linked asset renders through the doc's asset route, an unlinked ref does
   assert.match(view.body, /src="b\.png"/);
 });
 
-test("a reader's rewritten asset src carries their own ?k= token", async () => {
+test("a reader's asset src never carries the link token, and the asset itself needs the session", async () => {
   const owner = await signUp("Owner", `dv.assetk.${stamp}@test.local`);
   const bob = await signUp("Bob", `dv.assetkbob.${stamp}@test.local`);
+  const stranger = await signUp("Stranger", `dv.assetkstr.${stamp}@test.local`);
   const docId = `dv-asset-k-${stamp}`;
   const content = "![a](a.png)\n";
   const hash = createHash("sha256").update(content, "utf8").digest("hex");
@@ -532,25 +643,35 @@ test("a reader's rewritten asset src carries their own ?k= token", async () => {
   });
   assert.equal(created.status, 200);
   const assetHash = await uploadAndLinkAsset(owner.token, docId, "a.png");
+  const token = ensureShareToken(docId, await shareWith(owner.token, docId, bob.email));
 
-  const share = await jsonRequest<{ userId: string }>(
-    "POST",
-    `/api/docs/${docId}/shares`,
-    owner.token,
-    { email: bob.email, role: "viewer" }
-  );
-  const token = ensureShareToken(docId, share.data?.userId as string);
-
-  const view = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
+  const view = await page(`/d/${docId}?k=${encodeURIComponent(token)}`, bob.token);
   assert.equal(view.status, 200);
-  // The HTML serializer entity-encodes the & in an attribute value
-  // (hast-util-to-html writes it as &#x26;), which a browser decodes back to
-  // a literal & when it parses the attribute; the query string still reaches
-  // the server as ref=a.png&k=<token>.
-  assert.match(
-    view.body,
-    new RegExp(`src="/d/${docId}/assets\\?ref=a\\.png&#x26;k=${token}&#x26;v=${assetHash.slice(0, 16)}"`)
-  );
+  // hast-util-to-html writes the & in an attribute as &#x26;.
+  assert.match(view.body, new RegExp(`src="/d/${docId}/assets\\?ref=a\\.png&#x26;v=${assetHash.slice(0, 16)}"`));
+  assert.ok(!view.body.includes(token), "the token appears nowhere on the page");
+
+  const asset = `/d/${docId}/assets?ref=a.png`;
+  const linkOnly = await page(`${asset}&k=${encodeURIComponent(token)}`);
+  assert.equal(linkOnly.status, 401);
+  assert.ok(!linkOnly.body.includes(`asset-bytes-a.png-${stamp}`));
+  assertPrivate(linkOnly, "asset 401");
+
+  const asBob = await page(asset, bob.token);
+  assert.equal(asBob.status, 200);
+  assert.equal(asBob.body, `asset-bytes-a.png-${stamp}`);
+  // A served asset keeps its own private, hour-long caching, which the ?v= in
+  // its URL is there for. Private still keeps it out of shared caches.
+  assert.equal(asBob.headers.get("cache-control"), "private, max-age=3600");
+
+  const asStranger = await page(`${asset}&k=${encodeURIComponent(token)}`, stranger.token);
+  assert.equal(asStranger.status, 403);
+  assert.ok(!asStranger.body.includes(`asset-bytes-a.png-${stamp}`));
+  assertPrivate(asStranger, "asset 403");
+
+  const bare = await page(asset);
+  assert.equal(bare.status, 404);
+  assertPrivate(bare, "asset bare");
 });
 
 test("a document link on the shared page opens for a member who may read the target and is muted for one who may not", async () => {
@@ -566,10 +687,7 @@ test("a document link on the shared page opens for a member who may read the tar
   assert.equal(put.status, 200);
   const linked = await jsonRequest("PUT", `/api/docs/${sourceId}/links`, owner.token, { links: [{ ref: "plan.md", target: targetId }] });
   assert.equal(linked.status, 200);
-
-  const share = await jsonRequest<{ userId: string }>("POST", `/api/docs/${sourceId}/shares`, owner.token, { email: bob.email, role: "viewer" });
-  assert.equal(share.status, 200);
-  const bobId = share.data?.userId as string;
+  const bobId = await shareWith(owner.token, sourceId, bob.email);
 
   // Bob may read the source but not the target: muted, with no target named.
   let view = await page(`/d/${sourceId}`, bob.token);
@@ -577,17 +695,15 @@ test("a document link on the shared page opens for a member who may read the tar
   assert.match(view.body, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">the plan<\/a>/);
   assert.ok(!view.body.includes(targetId), "the muted page must not name the target");
 
-  // Through Bob's personal token the answer is the same: it maps to Bob.
+  // Bob's link, opened in Bob's browser, answers the same: links follow the
+  // session, not the token.
   const token = ensureShareToken(sourceId, bobId);
-  view = await page(`/d/${sourceId}?k=${encodeURIComponent(token)}`);
+  view = await page(`/d/${sourceId}?k=${encodeURIComponent(token)}`, bob.token);
   assert.match(view.body, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">the plan<\/a>/);
 
   // Once the target is shared with Bob the link opens.
-  const shareTarget = await jsonRequest("POST", `/api/docs/${targetId}/shares`, owner.token, { email: bob.email, role: "viewer" });
-  assert.equal(shareTarget.status, 200);
+  await shareWith(owner.token, targetId, bob.email);
   view = await page(`/d/${sourceId}`, bob.token);
-  assert.match(view.body, new RegExp(`<a href="/d/${targetId}">the plan</a>`));
-  view = await page(`/d/${sourceId}?k=${encodeURIComponent(token)}`);
   assert.match(view.body, new RegExp(`<a href="/d/${targetId}">the plan</a>`));
 
   // The owner always may.
@@ -595,7 +711,7 @@ test("a document link on the shared page opens for a member who may read the tar
   assert.match(view.body, new RegExp(`<a href="/d/${targetId}">the plan</a>`));
 });
 
-test("a pending invite's link shows every document link muted", async () => {
+test("a pending invite's link shows none of the document's links", async () => {
   const owner = await signUp("Owner", `dl2.owner.${stamp}@test.local`);
   const sourceId = `dl2-source-${stamp}`;
   const targetId = `dl2-target-${stamp}`;
@@ -605,24 +721,12 @@ test("a pending invite's link shows every document link muted", async () => {
   const hash = createHash("sha256").update(withLink, "utf8").digest("hex");
   await jsonRequest("PUT", `/api/docs/${sourceId}`, owner.token, { name: "source.md", content: withLink, hash, baseVersion: 1 });
   await jsonRequest("PUT", `/api/docs/${sourceId}/links`, owner.token, { links: [{ ref: "plan.md", target: targetId }] });
-  const invitee = `dl2.nobody.${stamp}@test.local`;
-  const invite = await jsonRequest<{ status: string }>("POST", `/api/docs/${sourceId}/shares`, owner.token, { email: invitee, role: "viewer" });
-  assert.equal(invite.status, 200);
-  assert.equal(invite.data?.status, "invited");
-  // The POST response never carries the pending invite's token (see
-  // shares.ts); doc-view.test.ts's own pending-invite test above reads it
-  // straight off the pending_shares row, so this does the same.
-  const db = new (await import("better-sqlite3")).default(process.env.DB_PATH as string);
-  const row = db
-    .prepare("SELECT token FROM pending_shares WHERE doc_id = ? AND email = ?")
-    .get(sourceId, invitee) as { token: string };
-  const pendingToken = row?.token;
-  assert.ok(pendingToken, "a pending invite has a token in pending_shares");
-  const view = await page(`/d/${sourceId}?k=${encodeURIComponent(pendingToken)}`);
-  assert.equal(view.status, 200);
-  assert.match(view.body, /<a class="doc-link-muted" title="This document isn(?:'|&#x27;)t shared with you\.">the plan<\/a>/);
-  assert.ok(!view.body.includes(`/d/${targetId}`));
-  assert.ok(!view.body.includes(`href="/d/${targetId}"`));
+  const token = await inviteAndToken(owner.token, sourceId, `dl2.nobody.${stamp}@test.local`);
+
+  const view = await page(`/d/${sourceId}?k=${encodeURIComponent(token)}`);
+  assert.equal(view.status, 401);
+  assert.ok(!view.body.includes("the plan"));
+  assert.ok(!view.body.includes(targetId));
 });
 
 test("web sign-in only ever sends a browser on to a /d/ page on this server", async () => {
@@ -657,5 +761,47 @@ test("a browser signed in with an emailed code gets a session cookie that opens 
   const res = await app.request(`/d/${docId}`, { headers: new Headers({ cookie, "x-forwarded-for": "127.0.0.1" }) });
   assert.equal(res.status, 200);
   assert.ok((await res.text()).includes(SECRET_LINE));
+});
+
+// /d/ sends every reader who arrives without this origin's cookie to the web
+// sign-in, including ones already signed in here, because the emailed link is
+// on the website's origin. Those go straight back; only the "different
+// account" link and a failed attempt stop at the form.
+test("web sign-in sends an already signed-in browser straight back to the document", async () => {
+  const bob = await signUp("Bob", `dv.fwd.${stamp}@test.local`);
+  const owner = await signUp("Owner", `dv.fwdown.${stamp}@test.local`);
+  const docId = `dv-fwd-${stamp}`;
+  await createDoc(owner.token, docId);
+  const token = ensureShareToken(docId, await shareWith(owner.token, docId, bob.email));
+  const signedIn = await app.request("/api/auth/sign-in/email", {
+    method: "POST",
+    headers: new Headers({ "Content-Type": "application/json", "x-forwarded-for": "127.0.0.1", ...ORIGIN }),
+    body: JSON.stringify({ email: bob.email, password: "password-123" }),
+  });
+  assert.equal(signedIn.status, 200);
+  const cookie = signedIn.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  const asBrowser = (path: string) =>
+    app.request(path, { headers: new Headers({ cookie, "x-forwarded-for": "127.0.0.1" }) });
+
+  // The emailed link, opened in the browser that holds Bob's cookie.
+  const opened = await asBrowser(`/d/${docId}?k=${encodeURIComponent(token)}`);
+  assert.equal(opened.status, 200);
+  assert.ok((await opened.text()).includes(SECRET_LINE));
+
+  const next = encodeURIComponent(`/d/${docId}`);
+  const forwarded = await asBrowser(`/auth/web-signin?next=${next}`);
+  assert.equal(forwarded.status, 302);
+  assert.equal(forwarded.headers.get("location"), `/d/${docId}`);
+  assert.equal(forwarded.headers.get("cache-control"), "private, no-store");
+
+  for (const stay of [`/auth/web-signin?next=${next}&switch=1`, `/auth/web-signin?next=${next}&error=1`, `/auth/web-signin?next=${encodeURIComponent("https://evil.test")}`]) {
+    const res = await asBrowser(stay);
+    assert.equal(res.status, 200, stay);
+    assert.ok((await res.text()).includes('id="send"'), `${stay} shows the form`);
+  }
+
+  // Signed out, the page is the form whatever next is.
+  const signedOut = await page(`/auth/web-signin?next=${next}`);
+  assert.equal(signedOut.status, 200);
 });
 

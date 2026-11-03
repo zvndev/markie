@@ -221,12 +221,14 @@ test("authenticated share routes cover pending invites, member removal, and scop
   assert.equal(createPublicLink.status, 200);
   assert.match(createPublicLink.data?.url ?? "", /^https:\/\/markie\.test\/s\/[a-f0-9]+$/);
 
-  const memberCanReadLink = await jsonRequest<{ url: string }>(
+  // The link needs no account, so only the owner is shown it.
+  const memberCannotReadLink = await jsonRequest<{ url?: string }>(
     "GET",
     `/api/docs/${docId}/public-link`,
     invited.token
   );
-  assert.equal(memberCanReadLink.data?.url, createPublicLink.data?.url);
+  assert.equal(memberCannotReadLink.status, 403);
+  assert.equal(memberCannotReadLink.data?.url, undefined);
 
   const memberCannotRevoke = await jsonRequest(
     "DELETE",

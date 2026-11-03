@@ -11,6 +11,8 @@ vi.mock("@/lib/auth-client", () => ({
     access: async () => auth.active ? { role: auth.role } : null,
     list: async () => auth.active ? [{ user_id: auth.role === "owner" ? "other" : "me", role: auth.role === "owner" ? "editor" : auth.role }] : null,
     sharedByMe: async () => [],
+    // The live pane connects only once its server has issued a pass.
+    collabTicket: async () => ({ kind: "ticket", ticket: "test-ticket", expiresAt: 0 }),
   },
   collabWsBase: () => "ws://localhost",
   getAuthToken: () => auth.active ? "test-token" : null,

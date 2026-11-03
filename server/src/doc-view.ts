@@ -44,6 +44,7 @@ import { renderSignInNotice, webSignInHref } from "./web-signin.ts";
 import { downloadFilename } from "./doc-meta.ts";
 import { privateShell, webAppAvailable, webAppShell } from "./web-app.ts";
 import { docsHostConfig, onApiHost } from "./docs-host.ts";
+import { platformAccessLevel } from "./document-platform-store.ts";
 
 const db = openDatabase();
 
@@ -89,6 +90,22 @@ function inviterName(userId: string): string | null {
     .prepare("SELECT name, email FROM user WHERE id = ?")
     .get(userId) as { name: string | null; email: string | null } | undefined;
   return row?.name || row?.email || null;
+}
+
+// A Word, RTF or ODT file lives in the document platform's store, not in
+// docs, with its own members (dp_members) and no invites or member tokens.
+// /d/<id> is its read view too, so a signed-in account reads it under that
+// store's ACL: its owner or a member, nobody else, and never through a public
+// link (that is /s/<token>). A text document's id is checked first; the
+// platform's ids are server-minted UUIDs.
+function platformDocName(docId: string): string | null {
+  try {
+    const row = db.prepare("SELECT name FROM dp_documents WHERE id = ?").get(docId) as { name: string } | undefined;
+    return row?.name ?? null;
+  } catch {
+    // A database that never held the platform tables holds no such document.
+    return null;
+  }
 }
 
 /** What this request may do with this document, and what to show if nothing. */
@@ -138,6 +155,8 @@ export async function resolveViewer(
       level = accessLevel(docId, user.id);
     }
     if (canReadLevel(level)) return { kind: "reader", canEdit: canEditLevel(level), userId: user.id };
+    const platform = platformAccessLevel(db, docId, user.id);
+    if (platform) return { kind: "reader", canEdit: platform !== "viewer", userId: user.id };
     return { kind: "wrong-account", signedInAs: user.email ?? "", invitedEmail: invite?.email ?? null };
   }
 
@@ -252,7 +271,20 @@ docView.get("/d/:id", async (c) => {
     return accessRequired();
   }
   const doc = loadDoc(docId);
-  if (!doc) return accessRequired();
+  if (!doc) {
+    // A reader of a Word, RTF or ODT file: the read view draws it with the
+    // desktop's own Word engine. There is no scriptless page for one, so
+    // ?view=1, or a server without the build, says where it opens instead.
+    const officeName = platformDocName(docId);
+    if (!officeName) return accessRequired();
+    if (webApp && !scriptless) return readView();
+    return c.html(renderSignInNotice({
+      title: officeName,
+      heading: officeName,
+      lines: [["Word, RTF and OpenDocument files open in Markie, on the web or in the desktop app, not as a page here."]],
+      action: webApp ? { href: `/app/d/${encodeURIComponent(docId)}`, label: "Open in Markie" } : null,
+    }));
+  }
 
   // A signed-in reader gets the read view too, never the editor: Edit is a
   // button in its bar for an account that may edit. ?view=1 asks for this

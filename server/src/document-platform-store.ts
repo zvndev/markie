@@ -114,6 +114,28 @@ export interface DocumentPlatformStore {
 }
 
 /** Additive schema on the caller's injected handle only; never opens a database itself. */
+/**
+ * The caller's role on one platform document (Word, RTF, ODT and the other
+ * byte snapshots), or null: the store's own ACL, owner or dp_members row,
+ * without reading the document's bytes. For routes outside the platform API
+ * that must answer the same question, the web's /d/<id> read view among them
+ * (doc-view.ts). A database that has never held the platform tables holds no
+ * platform document, so the answer there is null too.
+ */
+export function platformAccessLevel(db: PlatformSqliteDatabase, id: string, userId: string): PlatformRole | null {
+  if (!opaqueId(id) || !userId) return null;
+  let row: { access_role?: unknown } | undefined;
+  try {
+    row = db.prepare("SELECT CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS access_role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? WHERE d.id = ? AND (d.owner_id = ? OR m.user_id = ?)")
+      .get(userId, userId, id, userId, userId) as { access_role?: unknown } | undefined;
+  } catch (error) {
+    if (error instanceof Error && /no such table/i.test(error.message)) return null;
+    throw error;
+  }
+  const role = row?.access_role;
+  return role === "owner" || role === "editor" || role === "viewer" ? role : null;
+}
+
 export interface DocumentPlatformStoreOptions {
   limits?: Partial<PlatformLimits>; now?: () => number; cloudAreas?: CloudAreasStore; verifiedUserForEmail?: (email: string) => string | null;
   /** The account-wide storage quota (quota.ts). Returns a refusal message when the owner may not grow by this many bytes. */

@@ -58,7 +58,7 @@ jobs:
 
       - name: Keep the run's logs
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: windows-update-check-${{ github.run_id }}-${{ github.run_attempt }}
           path: .autoloop/runs/update-flow-*

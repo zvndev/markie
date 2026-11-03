@@ -516,7 +516,10 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
         ) : null}
       </div>
 
-      {commentsOpen && draft.kind === "cloud" ? (
+      {/* Comments need the live room: a session that fell back to the saved
+          copy (an empty room, no runtime) closes the sheet rather than ask for
+          a selection nothing can anchor. */}
+      {commentsOpen && commentable && draft.kind === "cloud" ? (
         <CommentsSheet
           api={api}
           docId={draft.id}

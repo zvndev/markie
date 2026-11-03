@@ -14,8 +14,20 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 // empty room is told "empty" once the room has synced, as rich-view.tsx does.
 vi.mock("@/components/rich-view", async () => {
   const { useEffect } = await import("react");
-  return { RichView: (props: { value: string; readOnly?: boolean; collab?: unknown; onCollabStatus?: (status: string) => void }) => {
-    useEffect(() => { if (props.collab) props.onCollabStatus?.("empty"); }, [props.collab]);
+  const Y = await import("yjs");
+  const quiet = { on() {}, off() {} };
+  const session = () => ({
+    ydoc: new Y.Doc(),
+    runtime: {},
+    provider: { ...quiet, synced: true, wsconnected: true, awareness: { ...quiet, clientID: 1, getStates: () => new Map(), setLocalStateField() {} } },
+  });
+  return { RichView: (props: { value: string; readOnly?: boolean; collab?: unknown; onCollabStatus?: (status: string) => void; onLiveSession?: (session: unknown) => void }) => {
+    useEffect(() => {
+      if (!props.collab) return;
+      // The session exists before the room says it is empty.
+      props.onLiveSession?.(session());
+      setTimeout(() => props.onCollabStatus?.("empty"), 0);
+    }, [props.collab]);
     return createElement("div", { "data-rich": props.collab ? "live" : "solo", "data-readonly": String(!!props.readOnly) }, props.collab ? "" : props.value);
   } };
 });
@@ -62,6 +74,23 @@ describe("a viewer on a document nobody has opened live", () => {
     expect(pane?.getAttribute("data-readonly")).toBe("true");
     expect(pane?.textContent).toContain("Ship it.");
     expect(page.querySelector("[data-empty-room]")?.textContent).toBe(EMPTY_ROOM_NOTE);
+  });
+
+  it("does not leave the comments sheet asking for a selection it can't anchor", async () => {
+    const { EditorScreen } = await import("../src/screens/editor");
+    const api = {
+      origin: "https://api.markiedocs.com",
+      access: vi.fn(async () => ({ role: "viewer", canRead: true, canEdit: false, canManage: false })),
+      shares: vi.fn(async () => [{ userId: "u2", email: "carol@example.com", name: "Carol", role: "viewer", pending: false }]),
+      collabTicket: vi.fn(async () => ({ kind: "failed", status: 404 })),
+      threads: vi.fn(async () => []),
+    };
+    const draft = { kind: "cloud" as const, id: "doc-1", name: "Plan.md", format: "markdown" as const, content: "# Plan", version: 2, role: "viewer", openComments: true };
+    const page = await mount(createElement(EditorScreen, {
+      api: api as never, draft, me: { id: "u2", name: "Carol", email: "carol@example.com" },
+      onCancel: () => {}, onSaved: () => {}, onUnauthorized: () => {}, backGuard: { current: null },
+    }));
+    expect(page.querySelector('[role="dialog"]')).toBeNull();
   });
 });
 

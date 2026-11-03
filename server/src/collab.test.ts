@@ -30,6 +30,30 @@ test("a room seeded as plain text counts as holding the document", () => {
   assert.equal(roomHasCollabContent(richDoc), true);
 });
 
+test("a plain-text seed that arrives over the wire releases the seed lock", () => {
+  // The server never asks for the text type itself, so a seeder's update
+  // lands in a room where "content" is still an untyped placeholder. It
+  // holds the document all the same; reading it as empty kept the seed lock
+  // closed for good, and every editor but the seeder was dropped.
+  const seeder = new Y.Doc();
+  seeder.transact(() => {
+    seeder.getText("content").insert(0, "Standup, Tuesday");
+    seeder.getMap("meta").set("schemaVersion", 1);
+  });
+  const room = new Y.Doc();
+  Y.applyUpdate(room, Y.encodeStateAsUpdate(seeder));
+  assert.equal(room.share.get("content") instanceof Y.Text, false);
+  assert.equal(roomHasCollabContent(room), true);
+
+  // Text that was typed and then deleted again is not a document.
+  const emptied = new Y.Doc();
+  emptied.getText("content").insert(0, "x");
+  emptied.getText("content").delete(0, 1);
+  const emptiedRoom = new Y.Doc();
+  Y.applyUpdate(emptiedRoom, Y.encodeStateAsUpdate(emptied));
+  assert.equal(roomHasCollabContent(emptiedRoom), false);
+});
+
 function writeUpdateMessage(update: Uint8Array): Uint8Array {
   const encoder = encoding.createEncoder();
   syncProtocol.writeUpdate(encoder, update);

@@ -137,10 +137,18 @@ const rooms = new Map<string, Room>();
 // Checking only the fragment would keep a text room's seed lock closed
 // forever, leaving every editor but the seeder read-only. The text type is
 // read through `share` so merely asking never creates it in a Markdown room.
+//
+// Nothing on the server ever asks for the text type, so a seeder's update
+// arrives into a room where "content" is an untyped placeholder, not a
+// Y.Text, until something does. Its visible length says whether it holds
+// anything either way. Checking `instanceof Y.Text` alone read every
+// wire-seeded text room as empty and kept its seed lock closed for good.
 export function roomHasCollabContent(ydoc: Y.Doc): boolean {
   if (ydoc.getXmlFragment("default").length > 0) return true;
   const text = ydoc.share.get("content");
-  return text instanceof Y.Text && text.length > 0;
+  if (!text) return false;
+  if (text instanceof Y.Text) return text.length > 0;
+  return text._length > 0;
 }
 
 function readLevel(docId: string, conn: Conn): ShareAccessLevel {

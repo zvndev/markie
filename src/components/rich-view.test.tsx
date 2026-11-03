@@ -7,13 +7,57 @@ import { setAssetDocPath } from "@/lib/asset-url";
 
 // The loader stands between a shared document and its editor; a chunk that
 // fails to load must not take the editor with it. Only the failure is faked.
-const loader = vi.hoisted(() => ({ failed: false }));
+const loader = vi.hoisted(() => ({
+  failed: false,
+  // When set, the live session runs over this in-memory room instead of a
+  // socket: `seed` fills the room before the first sync, as a server would.
+  room: null as null | { seed?: (doc: import("yjs").Doc) => void },
+}));
 vi.mock("@/lib/collab-loader", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/collab-loader")>();
+  const runtime = await import("@/lib/collab-runtime");
+  const { Awareness } = await import("y-protocols/awareness");
+  class FakeProvider {
+    synced = false;
+    awareness: InstanceType<typeof Awareness>;
+    #doc: import("yjs").Doc;
+    #handlers = new Map<string, Set<(...args: unknown[]) => void>>();
+    constructor(_url: string, _room: string, doc: import("yjs").Doc) {
+      this.#doc = doc;
+      this.awareness = new Awareness(doc);
+    }
+    on(event: string, fn: (...args: unknown[]) => void) {
+      if (!this.#handlers.has(event)) this.#handlers.set(event, new Set());
+      this.#handlers.get(event)!.add(fn);
+    }
+    off(event: string, fn: (...args: unknown[]) => void) {
+      this.#handlers.get(event)?.delete(fn);
+    }
+    #emit(event: string, ...args: unknown[]) {
+      for (const fn of this.#handlers.get(event) ?? []) fn(...args);
+    }
+    connect() {
+      setTimeout(() => {
+        loader.room?.seed?.(this.#doc);
+        this.synced = true;
+        this.#emit("status", { status: "connected" });
+        this.#emit("sync", true);
+      }, 10);
+    }
+    disconnect() {}
+    destroy() {
+      this.awareness.destroy();
+    }
+  }
+  const fakeRuntime = { ...runtime, WebsocketProvider: FakeProvider } as unknown as typeof runtime;
   return {
     ...real,
     useCollabRuntime: (wanted: boolean) =>
-      wanted && loader.failed ? { runtime: null, failed: true } : real.useCollabRuntime(wanted),
+      wanted && loader.failed
+        ? { runtime: null, failed: true }
+        : wanted && loader.room
+          ? { runtime: fakeRuntime, failed: false }
+          : real.useCollabRuntime(wanted),
   };
 });
 
@@ -211,6 +255,89 @@ describe("RichView when the live session cannot load", () => {
       expect(onCollabStatus).toHaveBeenCalledWith("unavailable");
     } finally {
       loader.failed = false;
+    }
+  });
+});
+
+describe("RichView in a live room nobody has written yet", () => {
+  const file = "Meeting Title: Monday\\\nMe: A line of the transcript.\n";
+  const collab = (readonly: boolean) => ({
+    docId: "doc-1",
+    wsBase: "ws://localhost/collab",
+    token: "t",
+    user: { name: "Me", color: "#000000" },
+    readonly,
+  });
+
+  it("tells the page a viewer has nothing to read, so it can show the synced copy", async () => {
+    loader.room = {};
+    try {
+      const onChange = vi.fn();
+      const onCollabStatus = vi.fn();
+      render(<RichView value={file} onChange={onChange} collab={collab(true)} onCollabStatus={onCollabStatus} />);
+      await waitFor(() => expect(onCollabStatus).toHaveBeenCalledWith("empty"), { timeout: 2000 });
+      // A viewer never writes, and a blank room is not the document's content.
+      expect(onChange).not.toHaveBeenCalled();
+    } finally {
+      loader.room = null;
+    }
+  });
+
+  it("lets an editor seed the room from the file instead", async () => {
+    loader.room = {};
+    try {
+      const onCollabStatus = vi.fn();
+      let editor: Editor | null = null;
+      render(
+        <RichView
+          value={file}
+          onChange={() => {}}
+          collab={collab(false)}
+          onCollabStatus={onCollabStatus}
+          onEditorReady={(e) => {
+            if (e) editor = e;
+          }}
+        />
+      );
+      await waitFor(() => expect((editor as unknown as Editor | null)?.getText()).toContain("A line of the transcript."), {
+        timeout: 2000,
+      });
+      expect(onCollabStatus).not.toHaveBeenCalledWith("empty");
+    } finally {
+      loader.room = null;
+    }
+  });
+
+  it("shows a viewer the room once it has content", async () => {
+    const yjs = await import("yjs");
+    loader.room = {
+      seed: (doc) => {
+        const paragraph = new yjs.XmlElement("paragraph");
+        paragraph.insert(0, [new yjs.XmlText("Written in the room.")]);
+        doc.getXmlFragment("default").insert(0, [paragraph]);
+      },
+    };
+    try {
+      const onCollabStatus = vi.fn();
+      let editor: Editor | null = null;
+      render(
+        <RichView
+          value={file}
+          onChange={() => {}}
+          collab={collab(true)}
+          onCollabStatus={onCollabStatus}
+          onEditorReady={(e) => {
+            if (e) editor = e;
+          }}
+        />
+      );
+      await waitFor(() => expect((editor as unknown as Editor | null)?.getText()).toContain("Written in the room."), {
+        timeout: 2000,
+      });
+      await new Promise((r) => setTimeout(r, 400));
+      expect(onCollabStatus).not.toHaveBeenCalledWith("empty");
+    } finally {
+      loader.room = null;
     }
   });
 });

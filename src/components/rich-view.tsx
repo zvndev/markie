@@ -66,7 +66,11 @@ interface RichViewProps {
   // "unavailable" is the runtime failing to load at all (see RichView): the
   // parent should leave live mode for the document, since nothing will
   // connect and a solo editor under a live flag skips the cloud push.
-  onCollabStatus?: (status: "connecting" | "connected" | "disconnected" | "unavailable") => void;
+  /**
+   * "empty": this reader joined a room nobody has written yet. A viewer cannot
+   * seed it, so the page shows the synced copy instead of a blank pane.
+   */
+  onCollabStatus?: (status: "connecting" | "connected" | "disconnected" | "unavailable" | "empty") => void;
   // Hands the parent a way to settle the 250 ms debounce on demand and get the
   // markdown back synchronously. Exporting or saving inside that window used to
   // write the document as it stood a keystroke ago. Called with null on unmount
@@ -163,6 +167,10 @@ function RichViewInner({
   useEffect(() => {
     valueRef.current = value;
   }, [value]);
+  const onCollabStatusRef = useRef(onCollabStatus);
+  useEffect(() => {
+    onCollabStatusRef.current = onCollabStatus;
+  }, [onCollabStatus]);
 
   // The session is created disconnected so a StrictMode-discarded initializer
   // never opens a socket; the effect below owns connect/destroy.
@@ -538,14 +546,24 @@ function RichViewInner({
       });
     };
 
+    // A viewer is not an author. Seeding from a read-only client writes the
+    // room's first content from someone who was never allowed to edit it, and
+    // when several viewers open an empty room they each write their own copy.
+    // But a room is empty until an editor opens the document live, and a doc
+    // shared from the Cloud page, the phone or an agent may never have been
+    // opened that way. The viewer's synced copy is the document, so the page
+    // shows that instead of the blank this pane would otherwise draw.
+    const readFileInstead = () => {
+      settle = null;
+      if (cancelled || seededRef.current || roomHasContent()) return;
+      if (!valueRef.current.trim()) return;
+      onCollabStatusRef.current?.("empty");
+    };
+
     const trySeed = (isSynced: boolean) => {
       if (!isSynced || cancelled || seededRef.current || settle) return;
-      // A viewer is not an author. Seeding from a read-only client writes the
-      // room's first content from someone who was never allowed to edit it, and
-      // when several viewers open an empty room they each write their own copy.
-      if (locked) return;
       if (roomHasContent()) return;
-      settle = setTimeout(seedNow, SEED_SETTLE_MS);
+      settle = setTimeout(locked ? readFileInstead : seedNow, SEED_SETTLE_MS);
     };
 
     if (provider.synced) trySeed(true);

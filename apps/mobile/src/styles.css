@@ -1103,6 +1103,9 @@ input {
   padding: 18px var(--m-gutter) 40px;
   font-size: 17px;
   line-height: 1.6;
+  /* A long link or token in a pasted transcript wraps, as it does on the
+     desktop (.markdown-body), instead of being clipped at the screen edge. */
+  overflow-wrap: anywhere;
   /* A document's HTML keeps inline style on some blocks (the shared
      sanitizer, src/lib/markdown-html.ts). This box is where all of it ends:
      paint is clipped to the article, a position: fixed or absolute element

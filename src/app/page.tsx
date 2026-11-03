@@ -863,13 +863,17 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
 
   const handlePeersChange = useCallback((p: PeerUser[]) => setPeers(p), []);
   const handleCollabStatus = useCallback(
-    (s: "connecting" | "connected" | "disconnected" | "unavailable") => {
-      if (s !== "unavailable") {
+    (s: "connecting" | "connected" | "disconnected" | "unavailable" | "empty") => {
+      if (s !== "unavailable" && s !== "empty") {
         setLiveStatus(s);
         return;
       }
+      // Either way this document is read from the file until the next one
+      // opens. "empty" is a viewer in a room no editor has written yet: the
+      // synced copy is the document, so it shows without a note. The role
+      // still locks the pane, and the view-only banner still says whose it is.
       liveUnavailableRef.current = true;
-      setLiveUnavailable(true);
+      if (s === "unavailable") setLiveUnavailable(true);
       setLiveStatus("disconnected");
       setCollabCfg(null);
     },

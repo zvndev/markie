@@ -5,6 +5,7 @@ import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { remarkStrictMath } from "./remark-strict-math.ts";
 import remarkRehype from "remark-rehype";
 import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
@@ -120,6 +121,8 @@ function buildProcessor(opts: RenderOptions) {
     .use(remarkParse)
     .use(remarkGfm)
     .use(remarkMath)
+    // Prices are not equations: "$6 ... $100" stays text (remark-strict-math.ts).
+    .use(remarkStrictMath)
     // allowDangerousHtml only keeps the HTML nodes for rehype-raw to parse;
     // rehype-sanitize below is what decides what stays.
     .use(remarkRehype, { allowDangerousHtml: true })
@@ -205,7 +208,7 @@ const PAGE_CSS = `
     padding: 7px 14px; border-radius: 8px; white-space: nowrap; }
   .btn.primary { background: var(--accent-strong); color: var(--accent-text); }
   .btn.ghost { color: var(--text); border: 1px solid var(--line); background: color-mix(in srgb, var(--surface-strong) 64%, transparent); }
-  main { max-width: 760px; margin: 0 auto; padding: 36px 24px 64px; }
+  main { max-width: 760px; margin: 0 auto; padding: 36px 24px 64px; overflow-wrap: anywhere; }
   main :where(h1,h2,h3) { line-height: 1.25; margin-top: 1.6em; }
   main h1 { font-size: 1.9em; }
   main pre { background: var(--code-bg); padding: 14px 16px; border-radius: 8px;

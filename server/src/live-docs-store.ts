@@ -48,9 +48,11 @@ db.exec(`
     auth_session_id TEXT NOT NULL,
     label TEXT NOT NULL,
     created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL
+    expires_at INTEGER NOT NULL,
+    used_at INTEGER
   );
   CREATE INDEX IF NOT EXISTS idx_live_doc_sessions_doc ON live_doc_sessions(doc_id);
+  CREATE INDEX IF NOT EXISTS idx_live_doc_sessions_auth ON live_doc_sessions(auth_session_id, label, created_at);
   CREATE INDEX IF NOT EXISTS idx_live_doc_sessions_user ON live_doc_sessions(user_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_live_doc_sessions_expiry ON live_doc_sessions(expires_at);
 `);
@@ -216,6 +218,27 @@ export function liveDocSessionFor(value: string, label: string, now = Date.now()
     .get(hash(value)) as { doc_id: string; user_id: string; auth_session_id: string; label: string; expires_at: number } | undefined;
   if (!row || row.label !== label || row.expires_at <= now) return null;
   return { docId: row.doc_id, userId: row.user_id, authSessionId: row.auth_session_id, label: row.label };
+}
+
+/** Records that a cookie value opened its page, which is how a cookie that stuck is told from one that did not. */
+export function markLiveDocSessionUsed(value: string, now = Date.now()): void {
+  db.prepare("UPDATE live_doc_sessions SET used_at = ? WHERE session_hash = ? AND used_at IS NULL").run(now, hash(value));
+}
+
+// A browser that refuses the Live Doc cookie (cookies off, or Safari on a
+// plain-http local address) would otherwise go round live host, pass, redeem
+// and back until it gives up with "too many redirects". Each turn leaves one
+// cookie row that never opens a page. Two of those for one sign-in and label
+// in this window is that loop, not a person opening two tabs.
+export const LIVE_DOC_LOOP_WINDOW_MS = 20_000;
+export const LIVE_DOC_LOOP_LIMIT = 2;
+
+/** Whether this sign-in's browser is going round the pass without keeping the cookie. */
+export function liveDocCookieRefused(authSessionId: string, label: string, now = Date.now()): boolean {
+  const row = db
+    .prepare("SELECT COUNT(*) AS n FROM live_doc_sessions WHERE auth_session_id = ? AND label = ? AND used_at IS NULL AND created_at > ?")
+    .get(authSessionId, label, now - LIVE_DOC_LOOP_WINDOW_MS) as { n: number };
+  return row.n >= LIVE_DOC_LOOP_LIMIT;
 }
 
 export function endLiveDocSession(value: string): void {

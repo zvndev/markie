@@ -42,8 +42,8 @@ import {
 } from "./live-docs-page.ts";
 import {
   LIVE_DOC_SESSION_TTL_MS, canOpenLiveDoc, consumeLiveDocTicket, createLiveDocSession, docIdForLabel,
-  endLiveDocSession, ensureLiveDocLabel, issueLiveDocTicket, liveDocLabel, liveDocSessionFor, loadLiveDoc,
-  type LiveDocBinding,
+  endLiveDocSession, ensureLiveDocLabel, issueLiveDocTicket, liveDocCookieRefused, liveDocLabel, liveDocSessionFor,
+  loadLiveDoc, markLiveDocSessionUsed, type LiveDocBinding,
 } from "./live-docs-store.ts";
 
 /** The cookie on a Live Doc's own host. `__Host-`: Secure, Path=/, no Domain. */
@@ -136,6 +136,8 @@ export function createLiveDocs({ config, appOrigin, siteUrl, compiler = createLi
       endLiveDocSession(value!);
       return toPass(c, label, true);
     }
+    // The cookie came back, so it stuck; the pass's loop guard counts on this.
+    markLiveDocSessionUsed(value!);
     const compiled = await compiler.compile(doc.content);
     if (!compiled.ok) {
       if (compiled.kind === "refused") return notice(c, 422, "This Live Doc can't be hosted yet", compiled.message);
@@ -210,6 +212,17 @@ export function createLiveDocs({ config, appOrigin, siteUrl, compiler = createLi
     if (!docId || !canOpenLiveDoc(docId, user.id)) return refused(user.email ?? null);
     const stored = liveDocLabel(docId);
     if (!stored) return refused(user.email ?? null);
+    if (liveDocCookieRefused(sessionId, stored)) {
+      return c.html(renderSignInNotice({
+        title: "Cookies needed",
+        heading: "This browser didn't keep the Live Doc's cookie",
+        lines: [
+          ["A Live Doc keeps you in with a cookie on its own address, and this browser refused it, so the page can't open."],
+          ["Allow cookies for this site, or open the address in another browser."],
+        ],
+        action: { href: `${liveDocOrigin(config, stored)}/`, label: "Try again" },
+      }), 409);
+    }
     const issued = issueLiveDocTicket({ docId, userId: user.id, authSessionId: sessionId, label: stored });
     if (!issued) {
       c.header("Retry-After", "60");

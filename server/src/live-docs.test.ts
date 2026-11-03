@@ -111,10 +111,12 @@ async function redeem(label: string, ticket: string): Promise<{ res: Response; c
   return { res, cookie: line ? line.split(";")[0] : null };
 }
 
+/** The whole flow a browser takes, ending on the page the redeem redirects to. */
 async function openLiveDoc(label: string, appCookie: string): Promise<string> {
   const { res, cookie } = await redeem(label, await passFor(label, appCookie));
   assert.equal(res.status, 303);
   assert.ok(cookie);
+  await ask(liveHost(label), "/", { cookie });
   return cookie;
 }
 
@@ -254,7 +256,7 @@ test("a signed-in stranger is refused, and never gets a pass", async () => {
 });
 
 test("a ticket works once: replay fails", async () => {
-  const ticket = await passFor(labelA, ownerCookie);
+  const ticket = await passFor(labelA, await browserSignIn(owner.email));
   assert.ok((await redeem(labelA, ticket)).cookie);
   const replay = await redeem(labelA, ticket);
   assert.equal(replay.res.status, 403);
@@ -263,7 +265,7 @@ test("a ticket works once: replay fails", async () => {
 });
 
 test("two redeems racing with one ticket: exactly one wins", async () => {
-  const ticket = await passFor(labelA, ownerCookie);
+  const ticket = await passFor(labelA, await browserSignIn(owner.email));
   const results = await Promise.all([redeem(labelA, ticket), redeem(labelA, ticket), redeem(labelA, ticket)]);
   assert.equal(results.filter((r) => r.cookie).length, 1);
 });
@@ -281,7 +283,7 @@ test("an expired ticket fails", async () => {
 });
 
 test("a ticket for doc A cannot open doc B, and is burned by trying", async () => {
-  const ticket = await passFor(labelA, ownerCookie);
+  const ticket = await passFor(labelA, await browserSignIn(owner.email));
   const wrongHost = await redeem(labelB, ticket);
   assert.equal(wrongHost.res.status, 403);
   assert.equal(wrongHost.cookie, null);
@@ -339,7 +341,7 @@ test("app, API and auth routes are a 404 on a live host", async () => {
 });
 
 test("Live Doc routes are a 404 on the app host, and it never serves a Live Doc page", async () => {
-  const ticket = await passFor(labelA, ownerCookie);
+  const ticket = await passFor(labelA, await browserSignIn(owner.email));
   const res = await ask(APP_HOST, `/__markie/pass?ticket=${encodeURIComponent(ticket)}`);
   assert.equal(res.status, 404);
   assert.equal(res.headers.getSetCookie().length, 0);
@@ -451,11 +453,11 @@ test("an edit shows on the next load, compiled once per version", async () => {
   const id = `live-edit-${stamp}`;
   await putDoc(owner.token, id, "Edit.wd", "# First\n");
   const { label } = await addressOf(id, owner.token);
-  const cookie = await openLiveDoc(label, ownerCookie);
   const before = liveDocs!.compiler.workersStarted();
+  const cookie = await openLiveDoc(label, ownerCookie);
   assert.match(await (await ask(liveHost(label), "/", { cookie })).text(), /<h1>First<\/h1>/);
   assert.match(await (await ask(liveHost(label), "/", { cookie })).text(), /<h1>First<\/h1>/);
-  assert.equal(liveDocs!.compiler.workersStarted() - before, 1, "the second load came from the cache");
+  assert.equal(liveDocs!.compiler.workersStarted() - before, 1, "three loads, one compile");
   await putDoc(owner.token, id, "Edit.wd", "# Second\n", 1);
   assert.match(await (await ask(liveHost(label), "/", { cookie })).text(), /<h1>Second<\/h1>/);
 });
@@ -559,7 +561,7 @@ test("the hosted page carries exactly this CSP and header set", async () => {
 });
 
 test("every other live-host response carries the same headers and a script-free CSP", async () => {
-  const ticket = await passFor(labelA, ownerCookie);
+  const ticket = await passFor(labelA, await browserSignIn(owner.email));
   const responses: Array<[string, Response]> = [
     ["redirect to pass", await ask(liveHost(labelA), "/")],
     ["redeem", await ask(liveHost(labelA), `/__markie/pass?ticket=${encodeURIComponent(ticket)}`)],
@@ -572,4 +574,27 @@ test("every other live-host response carries the same headers and a script-free 
     assertLiveHeaders(res, what);
     assert.ok(!(res.headers.get("content-security-policy") ?? "").includes("script-src"), `${what}: no script allowed`);
   }
+});
+
+test("a browser that refuses the cookie gets a plain page, not a redirect loop", async () => {
+  // The loop: live host, pass, redeem, and back, with the cookie never sent.
+  const appCookie = await browserSignIn(owner.email);
+  for (let turn = 0; turn < 2; turn++) {
+    const { res } = await redeem(labelA, await passFor(labelA, appCookie));
+    assert.equal(res.status, 303);
+  }
+  const third = await ask(APP_HOST, `/live-docs/pass/${labelA}`, { cookie: appCookie });
+  assert.equal(third.status, 409);
+  assert.equal(third.headers.get("location"), null);
+  assert.match(await third.text(), /didn&#39;t keep the Live Doc&#39;s cookie/);
+  // It is this sign-in's loop only: another sign-in of the same person opens as usual.
+  assert.ok(await openLiveDoc(labelA, await browserSignIn(owner.email)));
+  // And a person opening two tabs at once is not a loop.
+  const tabs = await browserSignIn(owner.email);
+  const [first, second] = await Promise.all([passFor(labelA, tabs), passFor(labelA, tabs)]);
+  for (const ticket of [first, second]) {
+    const { cookie } = await redeem(labelA, ticket);
+    assert.equal((await ask(liveHost(labelA), "/", { cookie: cookie! })).status, 200);
+  }
+  assert.equal((await ask(APP_HOST, `/live-docs/pass/${labelA}`, { cookie: tabs })).status, 302);
 });

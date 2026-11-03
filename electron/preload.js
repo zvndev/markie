@@ -17,6 +17,9 @@ if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI",
   // Markie Cloud (electron/cloud-origin.json). A literal, because a sandboxed
   // preload cannot require a file; electron/cloud-origin.test.ts checks it.
   privateReleaseAuthOrigin: process.argv?.includes("--markie-private-release") ? "https://api.markiedocs.com" : undefined,
+  // The local Markie Preview build, which turns on super-nightly features
+  // (src/lib/nightly.ts). Only main passes the flag, and only to that build.
+  desktopPreview: process.argv?.includes("--markie-desktop-preview") ? true : undefined,
   privateReleaseStatus: () => ipcRenderer.invoke("private-release-status"),
   privateReleaseSession: () => ipcRenderer.invoke("private-release-session"),
   privateReleaseAuthorize: (token) => ipcRenderer.invoke("private-release-authorize", token),
@@ -218,6 +221,16 @@ if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI",
   onTermExit: (callback) => subscribe("term-exit", callback, (p) => p),
   termExternalApps: () => ipcRenderer.invoke("term-external-apps"),
   termOpenExternal: (app, cwd) => ipcRenderer.invoke("term-open-external", { app, cwd }),
+  // Live Docs preview (super-nightly). Main owns the folder: these pick one
+  // through the native dialog, start or stop it, and place the native view.
+  // None of them can name a path or a command.
+  liveDocsPreview: {
+    choose: () => ipcRenderer.invoke("live-docs-preview-choose"),
+    start: () => ipcRenderer.invoke("live-docs-preview-start"),
+    stop: () => ipcRenderer.invoke("live-docs-preview-stop"),
+    layout: (layout) => ipcRenderer.invoke("live-docs-preview-layout", layout),
+    onStatus: (callback) => subscribe("live-docs-preview-status", callback, (status) => status),
+  },
   // Auto-update
   checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
   updateStatus: () => ipcRenderer.invoke("update-status"),

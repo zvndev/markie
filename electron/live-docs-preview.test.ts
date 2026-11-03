@@ -538,3 +538,35 @@ describe("previewBounds", () => {
     }
   });
 });
+
+// main.js cannot load without Electron, so the IPC edge is read as source, the
+// way electron/ipc-contract.test.ts reads it.
+describe("the Live Docs gate in main.js", () => {
+  const mainSrc = fs.readFileSync(new URL("./main.js", import.meta.url), "utf8");
+  const all = [...mainSrc.matchAll(/handle\("(live-docs-preview-[a-z-]+)"/g)].map((match) => match[1]).sort();
+  const gated = [...mainSrc.matchAll(/handle\("(live-docs-preview-[a-z-]+)", (?:async )?\(([^)]*)\) => \{\n {2}const refused = liveDocsRefusal\(event\);\n {2}if \(refused\) return refused;\n/g)];
+
+  it("checks the build and the sender before anything else in every handler", () => {
+    expect(all).toEqual(["live-docs-preview-choose", "live-docs-preview-layout", "live-docs-preview-start", "live-docs-preview-stop"]);
+    expect(gated.map((match) => match[1]).sort()).toEqual(all);
+    const refusal = mainSrc.slice(mainSrc.indexOf("function liveDocsRefusal(event)"), mainSrc.indexOf("function liveDocsPublicProject"));
+    expect(refusal).toMatch(/if \(!nightlyEnabledInMain\(\)\) return/);
+    expect(refusal).toMatch(/if \(!currentCloseSender\(event\)\) return/);
+  });
+
+  it("takes no path or command from the renderer", () => {
+    for (const [, channel, params] of gated) {
+      expect(params.split(",").map((param) => param.trim()), channel).toEqual(channel === "live-docs-preview-layout" ? ["event", "layout"] : ["event"]);
+    }
+  });
+
+  it("keeps only a folder the native picker returned and the gate accepted", () => {
+    expect([...mainSrc.matchAll(/liveDocsProject = ([^;]+);/g)].map((match) => match[1])).toEqual(["null", "checked"]);
+    expect(mainSrc).toMatch(/const checked = liveDocs\.checkProjectFolder\(result\.filePaths\[0\]\);\n {2}if \(!checked\.ok\) return checked;/);
+  });
+
+  it("tells the renderer about the preview build only when the packaged manifest says so", () => {
+    expect(mainSrc).toMatch(/\.\.\.\(isDesktopPreview \? \["--markie-desktop-preview"\] : \[\]\)/);
+    expect(mainSrc).toMatch(/function nightlyEnabledInMain\(\) \{\n {2}return !!privateReleaseConfig \|\| !app\.isPackaged \|\| isDesktopPreview;\n\}/);
+  });
+});

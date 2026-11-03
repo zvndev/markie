@@ -123,9 +123,55 @@ export type VaultTouchIdFailure = "missing" | "cancelled" | "unavailable" | "bus
 export type VaultRevealAction = "open" | "reveal" | "copy";
 export type VaultTouchIdResult = { ok: true } | { ok: false; reason: VaultTouchIdFailure };
 
+/** A folder the main process accepted as a Darkmown project. Display only. */
+export interface LiveDocsPreviewProject {
+  name: string;
+  root: string;
+  /** Why it counts: "has site/pages", "depends on @zvndev/darkmown". */
+  reasons: string[];
+}
+
+export type LiveDocsPreviewPhase = "starting" | "ready" | "stopped" | "error";
+
+export interface LiveDocsPreviewStatus {
+  ok: boolean;
+  phase: LiveDocsPreviewPhase;
+  project?: LiveDocsPreviewProject | null;
+  /** The dev server's loopback address, once it answers. */
+  url?: string;
+  /** The user's own Node that runs the project, and how Markie found it. */
+  node?: { path: string; version: string; via: string };
+  code?: string;
+  message?: string;
+  /** The dev server's last lines of output, when it failed. */
+  log?: string[];
+  /** The private build's locked answer carries `error` instead of `message`. */
+  error?: string;
+}
+
+export type LiveDocsPreviewChoice =
+  | { ok: true; project: LiveDocsPreviewProject }
+  | { ok: false; code: string; message?: string; error?: string };
+
+/**
+ * The Live Docs preview (super-nightly, step M1). The main process keeps the
+ * folder the user picked; the renderer can only start, stop and place it.
+ */
+export interface LiveDocsPreviewApi {
+  /** Native folder picker; main keeps the folder if it is a Darkmown project. */
+  choose(): Promise<LiveDocsPreviewChoice>;
+  start(): Promise<LiveDocsPreviewStatus>;
+  stop(): Promise<{ ok: boolean; code?: string; message?: string }>;
+  /** Where the native view goes, in this page's CSS pixels. */
+  layout(layout: { x: number; y: number; width: number; height: number; visible: boolean }): Promise<{ ok: boolean }>;
+  onStatus(callback: (status: LiveDocsPreviewStatus) => void): Unsubscribe;
+}
+
 export interface ElectronAPI {
   platform: string;
   privateReleaseAuthOrigin?: string;
+  /** Set only in the local Markie Preview build. */
+  desktopPreview?: boolean;
   privateReleaseStatus?(): Promise<PrivateReleaseStatus>;
   privateReleaseSession?(): Promise<{ token: string | null }>;
   privateReleaseAuthorize?(token: string): Promise<PrivateReleaseStatus>;
@@ -189,6 +235,7 @@ export interface ElectronAPI {
   onTermExit(cb: (p: { id: string }) => void): Unsubscribe;
   termExternalApps(): Promise<Array<{ id: string; name: string }>>;
   termOpenExternal(app: string, cwd: string | null): Promise<WsResult>;
+  liveDocsPreview?: LiveDocsPreviewApi;
   getInitialFile(): Promise<OpenResult | null>;
   // `success: false` with a reason is a real outcome here: the print can time
   // out, another export can already hold the hidden window, or the save sheet

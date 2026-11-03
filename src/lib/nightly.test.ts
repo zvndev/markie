@@ -11,6 +11,10 @@ describe("nightlyFeaturesEnabled", () => {
     expect(nightlyFeaturesEnabled({ api, dev: false, storage: storage(null) })).toBe(true);
   });
 
+  it("is on in the local Markie Preview build", () => {
+    expect(nightlyFeaturesEnabled({ api: { desktopPreview: true }, dev: false, storage: storage(null) })).toBe(true);
+  });
+
   it("is off in a stable build, whatever localStorage says", () => {
     expect(nightlyFeaturesEnabled({ api: {}, dev: false, storage: storage("1") })).toBe(false);
   });

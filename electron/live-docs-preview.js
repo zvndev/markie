@@ -311,7 +311,7 @@ function createDevServerRunner({
   readyTimeoutMs = READY_TIMEOUT_MS,
   pollMs = 200,
   stopGraceMs = 3_000,
-  kill = (pid, signal) => process.kill(pid, signal),
+  kill = (pid, signal) => { process.kill(pid, signal); },
 } = {}) {
   let active = null;
   let generation = 0;

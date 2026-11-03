@@ -26,8 +26,8 @@ import { applyMarkdownAction, type MarkdownAction } from "../lib/markdown-edits"
 import { displayName } from "../lib/recent";
 import { liveConfig, liveKind, saveLiveSnapshot, shouldGoLive } from "../lib/live";
 import {
-  RoomTexts, SNAPSHOT_REFUSAL_NOTE, liveSnapshotRefusal, liveSnapshotWait, useLiveRoom,
-  type LiveRoom, type LiveSnapshotWait,
+  DIVERGED_NOTE, RoomTexts, SNAPSHOT_REFUSAL_NOTE, liveSnapshotRefusal, liveSnapshotWait, roomMatchesStored, useLiveRoom,
+  type LiveBase, type LiveRoom, type LiveSnapshotWait,
 } from "@/lib/live-snapshot";
 import { Screen } from "../components/screen";
 import { AlertIcon, CommentIcon } from "../components/icons";
@@ -174,7 +174,10 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
     offer: isLive && !readOnly,
   });
   const refusal = useMemo(() => (isLive && kind ? liveSnapshotRefusal(stored.current, kind) : null), [isLive, kind]);
-  const wait: LiveSnapshotWait | null = isLive && status !== "empty" ? liveSnapshotWait(room, { editable: !readOnly, refusal }) : "read-only";
+  // Rule 6: whether the room this session joined holds the stored copy.
+  const [liveBase, setLiveBase] = useState<LiveBase>("unknown");
+  const base: LiveBase = refusal ? "room-state" : liveBase;
+  const wait: LiveSnapshotWait | null = isLive && status !== "empty" ? liveSnapshotWait(room, { editable: !readOnly, refusal, base }) : "read-only";
   const waitRef = useRef(wait);
   waitRef.current = wait;
   // Every text this phone has held from the ready room, for the 409 rule.
@@ -185,6 +188,20 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
     if (roomReady) roomTexts.current?.add(text);
     setValue(text);
   }, [roomReady]);
+  // The room's first text, as it becomes ready: the stored copy as a room
+  // says it (the baseline, so opening never rewrites it), or a room that
+  // drifted from a version written outside it, which this session never
+  // writes over.
+  const onRoomReady = useCallback((roomText: string) => {
+    roomTexts.current?.add(roomText);
+    if (refusal || readOnly || !kind) return;
+    const before = stored.current;
+    void roomMatchesStored(roomText, before, kind).then((same) => {
+      if (!same) { setLiveBase("diverged"); return; }
+      if (valueRef.current === roomText || valueRef.current === before) stored.current = roomText;
+      setLiveBase("room-state");
+    });
+  }, [refusal, readOnly, kind]);
 
   const writeLive = useCallback(async (text: string) => {
     // Callers only write when the policy says this phone may; checked again
@@ -440,6 +457,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
               showCommentLayer={false}
               onLiveSession={setLiveSession}
               holdUntilReady
+              onRoomReady={onRoomReady}
             />
           </div>
         ) : liveText ? (
@@ -453,6 +471,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
               onPeersChange={setPeers}
               onCollabStatus={onStatus}
               onLiveSession={setTextSession}
+              onRoomReady={onRoomReady}
             />
           </div>
         ) : (
@@ -525,6 +544,8 @@ function LiveLine({ status, save, readOnly, wait }: { status: LiveStatus; save: 
             ? "Live. You can read and comment."
             : wait === "held-constructs"
               ? SNAPSHOT_REFUSAL_NOTE
+            : wait === "diverged"
+              ? DIVERGED_NOTE
             : wait === "not-synced" || wait === "not-ready"
               ? "Joining the live session…"
             : wait === "not-writer"

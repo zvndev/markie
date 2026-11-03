@@ -3687,10 +3687,17 @@ app.on("open-url", (event, url) => {
   deliverDeepLink(url);
 });
 
+// A check run that opens a shared document (scripts/shared-viewer-check.mjs)
+// lands it in Downloads. macOS resolves Downloads from the account, not from
+// $HOME, so a throwaway home alone still wrote into the developer's real folder.
+if (process.env.MARKIE_E2E === "1" && process.env.MARKIE_E2E_DOWNLOADS) {
+  app.setPath("downloads", process.env.MARKIE_E2E_DOWNLOADS);
+}
+
 // Single instance: a second launch (e.g. the OS opening markie:// on
 // Windows/Linux, or a double-clicked file) hands its argv to the running
 // instance instead of starting a rival process that would steal the deep link.
-const gotLock = process.env.MARKIE_E2E === "1" || app.requestSingleInstanceLock();
+const gotLock =process.env.MARKIE_E2E === "1" || app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {

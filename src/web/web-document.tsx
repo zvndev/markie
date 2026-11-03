@@ -19,6 +19,8 @@ import { createDocumentSession, editDocumentText, type DocumentSession } from "@
 import { decodeTextDocument, encodeTextDocument, type DecodedTextDocument } from "@/lib/document-formats";
 import { exportRichDocument, openRichDocument, type RichDocument } from "@/lib/office/rich-document";
 import { useRichSafety } from "@/lib/use-rich-safety";
+import { setAssetResolver } from "@/lib/asset-url";
+import { localAssetRefs } from "@/lib/attach";
 import { DocToolbar } from "@/components/doc-toolbar";
 import { RichView, type LiveSession } from "@/components/rich-view";
 import { RichLossBanner, RichPreparingNote } from "@/components/rich-guard";
@@ -30,7 +32,7 @@ import { LiveSourceBanner, LiveUnavailableNote } from "@/components/share-banner
 import { ErrorBoundary } from "@/components/error-boundary";
 import { DarkmownDocumentEditor } from "@/components/documents/darkmown-document-editor";
 import {
-  CloudConflictError, SessionEndedError, deletePlatformDoc, deleteTextDoc, editorKindFor,
+  CloudConflictError, SessionEndedError, deletePlatformDoc, deleteTextDoc, editorKindFor, missingDocAssets,
   openPlatformDoc, openTextDoc, renamedDocName, savePlatformDoc, saveTextDoc, type CloudRole, type CloudStore, type EditorKind,
 } from "./cloud";
 import { PlatformShareDialog, PlatformHistoryDialog } from "./platform-dialogs";
@@ -109,8 +111,11 @@ export function WebDocument({ id, user, onLibrary, onOpen, onSessionEnded, onTit
     loadDoc(id).then(
       (loaded) => {
         if (!live) return;
-        if (!loaded) setLoadError("This document was deleted, or it hasn't been shared with this account.");
-        else setDoc(loaded);
+        if (!loaded) { setLoadError("This document was deleted, or it hasn't been shared with this account."); return; }
+        // Its pictures are read where the read view reads them, before the
+        // rich editor draws a single one (asset-url.ts).
+        setAssetResolver(loaded.store === "docs" ? memberAssetUrl(getServerURL(), id) : null);
+        setDoc(loaded);
       },
       (error: unknown) => {
         if (!live) return;
@@ -118,7 +123,7 @@ export function WebDocument({ id, user, onLibrary, onOpen, onSessionEnded, onTit
         else setLoadError(error instanceof Error ? error.message : "Couldn't open this document.");
       },
     );
-    return () => { live = false; };
+    return () => { live = false; setAssetResolver(null); };
   }, [id, reload, onSessionEnded]);
 
   useEffect(() => { onTitle?.(doc?.name ?? null); }, [doc?.name, onTitle]);
@@ -144,7 +149,9 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
   onView?: () => void; barHidden: boolean; onHideBar?: () => void;
 }) {
   const { store, id, kind, role } = initial;
-  const editable = role !== "viewer" && kind !== "unsupported";
+  // A Word, RTF or ODT file Markie keeps read-only (a table in an RTF, say)
+  // refuses every change, so nothing here offers or saves one.
+  const editable = role !== "viewer" && kind !== "unsupported" && initial.office?.canEdit !== false;
   const [name, setName] = useState(initial.name);
   const [text, setText] = useState(initial.text);
   const [office, setOffice] = useState<RichDocument | null>(initial.office);
@@ -459,6 +466,20 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
     try { window.localStorage.setItem(appearanceStore, JSON.stringify(clean)); } catch { /* still applies here */ }
   };
 
+  // What the Share dialog warns about: the pictures this document links to
+  // that Markie Cloud holds no copy of. The rest went up with it, and readers
+  // see them (the read view draws them from the same place). Nothing is said
+  // until the check answers.
+  const [missingFiles, setMissingFiles] = useState(0);
+  useEffect(() => {
+    if (!showShare || store !== "docs" || kind !== "markdown") return;
+    const refs = localAssetRefs(textRef.current);
+    if (!refs.length) { setMissingFiles(0); return; }
+    let live = true;
+    missingDocAssets(id, refs).then((missing) => { if (live) setMissingFiles(missing.length); }, () => { /* the dialog still works */ });
+    return () => { live = false; };
+  }, [showShare, store, kind, id]);
+
   const darkmownSession = useDarkmownSession(kind === "darkmown" ? initial : null, text);
 
   const statusText = !editable
@@ -510,7 +531,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
     : undefined, [kind, initial.office]);
 
   return <div className="flex min-h-0 flex-1 flex-col" data-web-document={kind} data-web-store={store}>
-    {barHidden ? null : <div className="markie-toolbar flex h-10 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 sm:px-4" data-web-doc-bar>
+    {barHidden ? null : <div className="markie-toolbar flex h-10 shrink-0 items-center gap-2 border-b border-border bg-surface px-2 sm:px-4" data-web-doc-bar>
       <button type="button" onClick={onLibrary} aria-label="Back to documents" className="markie-toolbar-action flex h-7 items-center gap-1 rounded-md px-2 text-[12px] text-muted hover:text-foreground">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6" /></svg>
         <span className="hidden sm:inline">Documents</span>
@@ -523,18 +544,21 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
         : <button type="button" data-web-doc-title disabled={!editable} title={editable ? "Click to rename" : undefined} onClick={() => setRenaming(true)}
           className="min-w-0 max-w-[min(22rem,40vw)] truncate text-[12.5px] font-medium text-foreground/90 hover:text-foreground disabled:cursor-default">{name}</button>}
       <span role="status" data-web-save-state={editable ? state : "readonly"} className="hidden shrink-0 text-[11px] text-muted sm:inline">{statusText}</span>
-      <div className="ml-auto flex items-center gap-2">
+      {/* On a phone-width screen the bar keeps Back, the name, View, Copy all,
+          Export, Share and the menu; Rich and Source, and Hide, move into the
+          menu, so nothing is pushed off the page (DESIGN.md, 390px). */}
+      <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
         {onView ? <button type="button" data-web-view-button onClick={() => void goToView()} title="Read this document as it is shared"
           className="markie-toolbar-action flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-[12px] text-foreground/90 hover:text-foreground">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></svg>
-          View
+          <span className="sr-only sm:not-sr-only">View</span>
         </button> : null}
         {collab ? <span role="status" data-web-live={liveStatus ?? "connecting"} className="hidden items-center gap-1.5 text-[11px] text-muted md:flex">
           <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${liveStatus === "connected" ? "bg-[var(--status-green)]" : "bg-[var(--status-amber)]"}`} />Live
         </span> : null}
-        {peers.length ? <span aria-label="People editing now" className="flex -space-x-1.5">{peers.slice(0, 4).map((peer, index) =>
+        {peers.length ? <span aria-label="People editing now" className="hidden -space-x-1.5 sm:flex">{peers.slice(0, 4).map((peer, index) =>
           <span key={`${peer.name}-${index}`} title={peer.name} style={{ background: peer.color }} className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-surface text-[9px] font-semibold text-white">{initials(peer.name)}</span>)}</span> : null}
-        {kind === "markdown" ? <div role="group" aria-label="View" className="flex rounded-md border border-border p-0.5">
+        {kind === "markdown" ? <div role="group" aria-label="View" className="hidden rounded-md border border-border p-0.5 sm:flex">
           {(["rich", "source"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}
             className={`rounded px-2 py-0.5 text-[11.5px] ${mode === value ? "bg-accent text-foreground" : "text-muted hover:text-foreground"}`}>{value === "rich" ? "Rich" : "Source"}</button>)}
         </div> : null}
@@ -547,13 +571,18 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
           </button>
           {menu ? <div className="markie-menu-panel absolute right-0 top-full z-50 mt-1.5 min-w-[170px] rounded-lg py-1.5" role="menu">
+            {kind === "markdown" ? ((["rich", "source"] as const).map((value) => <button key={value} type="button" role="menuitemradio" aria-checked={mode === value} data-web-menu-mode={value}
+              onClick={() => { setMenu(false); setMode(value); }} className="markie-menu-item flex w-full items-center justify-between px-3 py-2 text-left text-[12px] text-muted sm:hidden">
+              {value === "rich" ? "Rich view" : "Source"}{mode === value ? <span aria-hidden="true">✓</span> : null}
+            </button>)) : null}
             {editable ? <button type="button" role="menuitem" onClick={() => { setMenu(false); setRenaming(true); }} className="markie-menu-item w-full px-3 py-2 text-left text-[12px] text-muted">Rename…</button> : null}
             {store === "platform" && role !== "viewer" ? <button type="button" role="menuitem" onClick={() => { setMenu(false); setShowHistory(true); }} className="markie-menu-item w-full px-3 py-2 text-left text-[12px] text-muted">Version history…</button> : null}
             {role === "owner" ? <button type="button" role="menuitem" onClick={() => void remove()} className="markie-menu-item w-full px-3 py-2 text-left text-[12px] text-[var(--status-red)]">Delete…</button> : null}
+            {onHideBar ? <button type="button" role="menuitem" data-web-menu-hide onClick={() => { setMenu(false); onHideBar(); }} className="markie-menu-item w-full px-3 py-2 text-left text-[12px] text-muted sm:hidden">Hide the bar</button> : null}
             {!editable && role !== "owner" ? <p className="px-3 py-2 text-[11px] text-muted">Shared with you to read.</p> : null}
           </div> : null}
         </div>
-        {onHideBar ? <HideBarButton onHide={onHideBar} className="markie-toolbar-action flex h-7 items-center gap-1 rounded-md px-1.5 text-[12px] text-muted hover:text-foreground" /> : null}
+        {onHideBar ? <HideBarButton onHide={onHideBar} className="markie-toolbar-action hidden h-7 items-center gap-1 rounded-md px-1.5 text-[12px] text-muted hover:text-foreground sm:flex" /> : null}
       </div>
     </div>}
 
@@ -567,7 +596,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
       <button type="button" className="text-muted" onClick={() => setMessage(null)}>Dismiss</button>
     </div> : null}
     {collab && (refusal || liveBase === "uncarried") && editable ? <p role="status" data-web-live-held className="border-b border-border bg-surface px-4 py-1.5 text-[11.5px] text-muted">{SNAPSHOT_REFUSAL_NOTE}</p> : null}
-    {!editable && kind !== "unsupported" ? <p className="border-b border-border bg-surface px-4 py-1.5 text-[11.5px] text-muted">You can read and comment on this document. Its owner hasn&apos;t let you edit it.</p> : null}
+    {role === "viewer" && kind !== "unsupported" ? <p className="border-b border-border bg-surface px-4 py-1.5 text-[11.5px] text-muted">You can read and comment on this document. Its owner hasn&apos;t let you edit it.</p> : null}
 
     {kind === "markdown" && mode === "rich" ? <DocToolbar editor={richEditor} appearance={appearance} onAppearance={changeAppearance} canEdit={!richReadOnly} /> : null}
 
@@ -618,7 +647,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
       {kind === "unsupported" ? <p className="p-6 text-sm text-muted">Markie can&apos;t open this kind of file in the browser.</p> : null}
     </div>
 
-    {showShare && store === "docs" ? <ShareDialog docId={id} fileName={name} body={kind === "markdown" ? text : ""} onClose={() => setShowShare(false)} onChanged={() => void refreshLive()} /> : null}
+    {showShare && store === "docs" ? <ShareDialog docId={id} fileName={name} missingCloudFiles={missingFiles} onClose={() => setShowShare(false)} onChanged={() => void refreshLive()} /> : null}
     {showShare && store === "platform" ? <PlatformShareDialog docId={id} name={name} role={role} onClose={() => setShowShare(false)} /> : null}
     {showHistory && store === "platform" ? <PlatformHistoryDialog docId={id} name={name} current={version.current} onClose={() => setShowHistory(false)}
       onOpenCopy={async (bytes) => {

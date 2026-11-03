@@ -480,6 +480,19 @@ describe("files that will not travel", () => {
     expect(note).toHaveTextContent(/gap where they are/i);
   });
 
+  it("on the web, warns only about files Markie Cloud does not hold", async () => {
+    // The web app's documents are not on this computer: their pictures went
+    // up with them, and readers of the shared copy see those.
+    const { unmount } = renderDialog({ body: "![a](img/chart.png)", missingCloudFiles: 0 });
+    await screen.findByRole("dialog");
+    expect(screen.queryByRole("note")).toBeNull();
+    unmount();
+    renderDialog({ body: "![a](img/chart.png)", missingCloudFiles: 1 });
+    const note = await screen.findByRole("note");
+    expect(note).toHaveTextContent("1 file this document links to isn't stored with it in Markie Cloud");
+    expect(note).not.toHaveTextContent(/on this computer/i);
+  });
+
   it("reads as one file when there is one", async () => {
     renderDialog({ body: "![a](shot.png)" });
     expect(await screen.findByRole("note")).toHaveTextContent("1 file on this computer");

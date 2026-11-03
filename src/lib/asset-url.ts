@@ -35,6 +35,20 @@ export function setAssetDocPath(path: string | null): void {
   docPath = path && path.trim() ? path : null;
 }
 
+// Where a document's files are read from when they are not on a disk at all.
+// The web app has no folder to resolve against: a cloud document's pictures
+// are held by the server under the reference as written, and its read view
+// reaches them through the document's asset route (src/web/view-content.ts).
+// The rich editor must use that same route, or a relative src resolves
+// against the page's own address and draws a broken picture.
+let assetResolver: ((ref: string) => string) | null = null;
+
+/** Send every local reference through `resolve` (the reference as written,
+ * decoded, without query or hash), or back to the folder rule with null. */
+export function setAssetResolver(resolve: ((ref: string) => string) | null): void {
+  assetResolver = resolve;
+}
+
 /** The path of the document on screen, as main knows it. */
 export function getAssetDocPath(): string | null {
   return docPath;
@@ -87,7 +101,8 @@ export function resolveAssetSrc(src: string | null | undefined, base?: string | 
   if (!raw || hasScheme(raw)) return raw;
   const override = base && base.trim() ? base : null;
   const dir = override ?? getAssetBaseDir();
-  if (!dir) return raw;
+  const resolver = override ? null : assetResolver;
+  if (!dir && !resolver) return raw;
 
   // Strip the query and hash the way a browser would before treating what is
   // left as a path, then put nothing back: a local file has no cache buster.
@@ -100,6 +115,8 @@ export function resolveAssetSrc(src: string | null | undefined, base?: string | 
   } catch {
     decoded = bare; // a stray % is not a reason to drop the picture
   }
+  if (resolver) return resolver(decoded);
+  if (!dir) return raw;
 
   const absolute = decoded.startsWith("/") ? decoded : joinPath(dir, decoded);
   const address = `${ASSET_ORIGIN}/${encodeURIComponent(absolute)}`;

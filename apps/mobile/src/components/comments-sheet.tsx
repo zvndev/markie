@@ -50,6 +50,18 @@ export function useThreads(api: ApiClient, docId: string, enabled: boolean, onUn
   return { threads, error, refresh };
 }
 
+/** A number that changes whenever the editor's document does. */
+export function useDocRevision(editor: Editor | null): number {
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    const bump = ({ transaction }: { transaction: { docChanged: boolean } }) => { if (transaction.docChanged) setRevision((n) => n + 1); };
+    editor.on("transaction", bump);
+    return () => { editor.off("transaction", bump); };
+  }, [editor]);
+  return revision;
+}
+
 interface CommentsSheetProps {
   api: ApiClient;
   docId: string;
@@ -76,6 +88,11 @@ export function CommentsSheet({ api, docId, editor, live, threads, error, refres
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // The words a thread is on are found in the editor's document as it is
+  // now. The sheet can open before the room has synced, or while a peer is
+  // typing, so every change to the document finds them again; otherwise a
+  // thread reads "deleted" until the sheet is closed and opened.
+  const revision = useDocRevision(editor);
   const located = useMemo<Located[]>(() => (threads ?? []).map((thread) => {
     if (!editor || editor.isDestroyed || !live) return { thread, range: null, quote: null };
     try {
@@ -85,7 +102,7 @@ export function CommentsSheet({ api, docId, editor, live, threads, error, refres
     } catch {
       return { thread, range: null, quote: null };
     }
-  }), [threads, editor, live]);
+  }), [threads, editor, live, revision]);
 
   const open = located.filter((item) => item.thread.status === "open");
   const resolved = located.filter((item) => item.thread.status === "resolved");

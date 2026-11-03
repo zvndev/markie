@@ -39,6 +39,15 @@ app.route("/api/docs", docs);
 app.route("/api/docs", shares);
 app.route("/", docView);
 app.route("/", publicShare);
+// Word, RTF and ODT files live in the document platform's store, wired as
+// index.ts wires it, on the same database.
+const { createDocumentPlatform } = await import("./document-platform.ts");
+const { createSqliteDocumentPlatformStore } = await import("./document-platform-store.ts");
+const { openDatabase } = await import("./db.ts");
+app.route("/api/document-platform", createDocumentPlatform({
+  store: createSqliteDocumentPlatformStore(openDatabase()),
+  resolveUser: async (request) => (await auth.api.getSession({ headers: request.headers }))?.user ?? null,
+}));
 
 // No MARKIE_DOCS_ORIGIN here, so the web app and the sign-in are both on
 // this server's own origin.
@@ -275,4 +284,82 @@ test("?view=1 keeps the static public page, whose bar follows the reader's accou
   const plain = await page(`/s/${token}`, owner.token);
   assert.deepEqual(appHrefs(plain.body), []);
   assert.match(plain.body, />Open in Markie</);
+});
+
+// ── Word, RTF and ODT: the document platform's store ─────────────────────
+// A fresh /d/<id> load of an Office file used to answer its own owner with
+// "No access", because the route only looked in the text store.
+const OFFICE_NAME = `Office-${stamp}.rtf`;
+const OFFICE_LINE = "office-secret-cell";
+const office = await (async () => {
+  const bytes = Buffer.from(String.raw`{\rtf1\ansi ` + OFFICE_LINE + String.raw`\par}`, "utf8");
+  const created = await json<{ document: { id: string } }>("POST", "/api/document-platform/documents", owner.token, {
+    schemaVersion: 2, name: OFFICE_NAME, format: "rtf", encoding: "base64", data: bytes.toString("base64"),
+    sha256: createHash("sha256").update(bytes).digest("hex"), baseVersion: 0,
+  });
+  assert.equal(created.status, 201, `create an Office document: ${JSON.stringify(created.data)}`);
+  return created.data!.document.id;
+})();
+const officeEditor = await signUpVerified(app, { name: "Office editor", email: `hr.office-editor.${stamp}@test.local` });
+const officeViewer = await signUpVerified(app, { name: "Office viewer", email: `hr.office-viewer.${stamp}@test.local` });
+for (const [member, role] of [[officeEditor, "editor"], [officeViewer, "viewer"]] as const) {
+  const added = await json("POST", `/api/document-platform/documents/${office}/members`, owner.token, { userId: member.id, role });
+  assert.ok(added.status === 200 || added.status === 201 || added.status === 204, `add ${role}: ${added.status} ${JSON.stringify(added.data)}`);
+}
+const MISSING_OFFICE = "00000000-0000-4000-8000-000000000000";
+
+test("an Office document's owner, editors and viewers get the read view on a fresh load", async () => {
+  webApp(true);
+  for (const who of [owner, officeEditor, officeViewer]) {
+    const res = await page(`/d/${office}`, who.token);
+    assertReadView(res, who.email);
+    assert.ok(!res.body.includes(OFFICE_LINE) && !res.body.includes(OFFICE_NAME), `${who.email}: the shell names nothing of the file`);
+  }
+});
+
+test("an Office document refuses a non-member exactly as it refuses a missing id", async () => {
+  webApp(true);
+  const wrong = await page(`/d/${office}`, stranger.token);
+  const missing = await page(`/d/${MISSING_OFFICE}`, stranger.token);
+  assert.equal(wrong.status, 403);
+  assert.equal(missing.status, 403);
+  // The page names only the id the browser asked for (in its sign-in link).
+  assert.equal(wrong.body.replaceAll(office, "ID"), missing.body.replaceAll(MISSING_OFFICE, "ID"), "nothing tells a real Office id from a made-up one");
+  assert.equal(wrong.location, null);
+  assert.ok(!wrong.body.includes(OFFICE_NAME) && !wrong.body.includes(OFFICE_LINE));
+  assert.doesNotMatch(wrong.body, /<div id="root">/);
+  // The text store's members get nothing from it either.
+  const textViewer = await page(`/d/${office}`, viewer.token);
+  assert.equal(textViewer.status, 403);
+  // With no session, the same shell as any other id, existing or not.
+  const anon = await page(`/d/${office}`);
+  const anonMissing = await page(`/d/${MISSING_OFFICE}`);
+  assertReadView(anon);
+  assert.equal(anon.body, anonMissing.body);
+});
+
+test("an Office document has no scriptless page, and says where it opens", async () => {
+  webApp(true);
+  const scriptless = await page(`/d/${office}?view=1`, owner.token);
+  assert.equal(scriptless.status, 200);
+  assert.doesNotMatch(scriptless.body, /<div id="root">/);
+  assert.ok(scriptless.body.includes(OFFICE_NAME), "a reader may see the name of a file they can read");
+  assert.ok(!scriptless.body.includes(OFFICE_LINE));
+  assert.ok(scriptless.body.includes(`href="/app/d/${office}"`));
+  const stranger403 = await page(`/d/${office}?view=1`, stranger.token);
+  assert.equal(stranger403.status, 403);
+
+  webApp(false);
+  const plain = await page(`/d/${office}`, officeViewer.token);
+  assert.equal(plain.status, 200);
+  assert.deepEqual(appHrefs(plain.body), [], "no web app, no link into it");
+  webApp(true);
+});
+
+test("an Office document's raw text and assets stay behind the text store's routes", async () => {
+  // /d/<id>/raw serves a text document's markdown; an Office file is read
+  // through the platform API with the reader's session, never here.
+  const raw = await page(`/d/${office}/raw`, owner.token);
+  assert.equal(raw.status, 403);
+  assert.ok(!raw.body.includes(OFFICE_LINE));
 });

@@ -97,6 +97,23 @@ describe("opening", () => {
   });
 });
 
+describe("pictures the shared copy carries", () => {
+  it("names the references Markie Cloud holds no file for, asked for as written", async () => {
+    const { fetcher, calls } = respond({
+      "GET /api/docs/doc-1/assets/file?ref=img%2Fchart.png": () => ({ status: 206, body: {} }),
+      "GET /api/docs/doc-1/assets/file?ref=a%20b.png": () => ({ status: 200, body: {} }),
+    });
+    expect(await cloud.missingDocAssets("doc-1", ["img/chart.png", "a%20b.png", "gone.png"], fetcher)).toEqual(["gone.png"]);
+    expect(calls.every((call) => (call.init.headers as Record<string, string>).Range === "bytes=0-0")).toBe(true);
+  });
+  it("asks about a bounded number of references", async () => {
+    const { fetcher, calls } = respond({});
+    const refs = Array.from({ length: 80 }, (_, n) => `p${n}.png`);
+    expect(await cloud.missingDocAssets("doc-1", refs, fetcher)).toHaveLength(cloud.MAX_ASSET_CHECKS);
+    expect(calls).toHaveLength(cloud.MAX_ASSET_CHECKS);
+  });
+});
+
 describe("names and editors", () => {
   it("keeps a document's type when it is renamed", () => {
     expect(cloud.renamedDocName("Plan.md", "Launch")).toBe("Launch.md");

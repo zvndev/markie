@@ -277,6 +277,16 @@ describe("Word renderer inside Markie", () => {
     view.mode({ readOnly: true, inert: true });
     fireEvent.click(link); expect(openExternal).toHaveBeenCalledOnce();
   });
+  it("draws no formatting toolbar in a read view, where none of it could be used", async () => {
+    // The web's read view of a Word or RTF file showed every control disabled.
+    const initial = await createRichDocument("rtf", "Read me");
+    const { unmount } = render(<WordDocumentEditor document={initial} readOnly reading onChange={vi.fn()} />);
+    expect(screen.getByText("Read me")).toBeInTheDocument();
+    expect(screen.queryByRole("toolbar")).toBeNull();
+    unmount();
+    render(<WordDocumentEditor document={initial} readOnly onChange={vi.fn()} />);
+    expect(screen.getByRole("toolbar")).toBeInTheDocument();
+  });
   describe.each(["rtf", "odt"] as const)("native %s in the shared editor", (format) => {
     it("fails closed if a Word-only dialog is requested directly", async () => {
       const initial = await createRichDocument(format, "Hello native"), apply = vi.fn();

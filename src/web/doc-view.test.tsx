@@ -88,6 +88,38 @@ describe("the read view", () => {
     expect(document.querySelector("[data-web-view-bar]")).toBeNull();
   });
 
+  it("titles the tab for the state the page is in", async () => {
+    render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={null} onEdit={() => {}} />);
+    await screen.findByRole("heading", { name: "Sign in to read this document" });
+    expect(document.title).toBe("Sign in to read this · Markie");
+    cleanup();
+    // Signed in, but not shared with this account: nothing says sign in.
+    loadDoc.mockResolvedValue(null);
+    render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
+    await screen.findByRole("heading", { name: "This account can't open this document" });
+    expect(document.title).toBe("Can't open this document · Markie");
+    cleanup();
+    loadDoc.mockResolvedValue(doc("owner"));
+    render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
+    await screen.findByRole("heading", { name: "Plan" });
+    expect(document.title).toBe("Plan.md · Markie");
+  });
+
+  it("offers no Edit for a Word, RTF or ODT file Markie keeps read-only", async () => {
+    // An RTF with a table: its owner opens it, and the editor would refuse
+    // every change, so the read view must not offer one.
+    const office = (canEdit: boolean) => ({ ...doc("owner"), name: "Table.rtf", kind: "office", text: "A B", store: "platform",
+      office: { format: "rtf", canEdit, text: "A B" } });
+    loadDoc.mockResolvedValue(office(false));
+    render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
+    await waitFor(() => expect(document.querySelector('[data-view-state="ready"]')).toBeTruthy());
+    expect(document.querySelector("[data-web-edit]")).toBeNull();
+    cleanup();
+    loadDoc.mockResolvedValue(office(true));
+    render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
+    await waitFor(() => expect(document.querySelector("[data-web-edit]")).toBeTruthy());
+  });
+
   it("makes a picture a keyboard stop that opens the viewer", async () => {
     loadDoc.mockResolvedValue(doc("owner"));
     render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);

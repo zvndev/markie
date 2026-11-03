@@ -122,6 +122,11 @@ const HTML_SRC = /<(?:img|video|audio|source)\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'(
  * of letting somebody find out from the recipient.
  */
 export function localAssetCount(markdown: string): number {
+  return localAssetRefs(markdown).length;
+}
+
+/** The references localAssetCount counts, once each, as the document wrote them. */
+export function localAssetRefs(markdown: string): string[] {
   const seen = new Set<string>();
   const text = String(markdown ?? "");
   const targets: string[] = [];
@@ -144,5 +149,5 @@ export function localAssetCount(markdown: string): number {
     if (opensAsDocument(target.split("#")[0].split("?")[0])) continue;
     seen.add(target);
   }
-  return seen.size;
+  return [...seen];
 }

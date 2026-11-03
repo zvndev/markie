@@ -44,6 +44,12 @@ interface ShareSheetProps {
   /** Owner only, and only for a document that has a web page. */
   publicLink?: PublicLinkApi | null;
   canManage: boolean;
+  /**
+   * For someone who doesn't own it: who does, as the list names them (Shared
+   * by). The owner is never in the member list the server sends, so the
+   * sheet adds them, as the desktop names them. Null when not known.
+   */
+  owner?: string | null;
   me: { email: string; name: string };
   /** The private link, for the system share sheet. None for a file that has no web page. */
   link: string | null;
@@ -53,7 +59,7 @@ interface ShareSheetProps {
   onChanged?: () => void;
 }
 
-export function ShareSheet({ title, people, publicLink = null, canManage, me, link, onClose, onUnauthorized, onChanged }: ShareSheetProps) {
+export function ShareSheet({ title, people, publicLink = null, canManage, owner = null, me, link, onClose, onUnauthorized, onChanged }: ShareSheetProps) {
   const [list, setList] = useState<SharePerson[] | null>(null);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<ShareRole>("viewer");
@@ -157,7 +163,15 @@ export function ShareSheet({ title, people, publicLink = null, canManage, me, li
             </span>
             <span className="m-share-person-role">Owner</span>
           </li>
-        ) : null}
+        ) : (
+          <li className="m-share-person" data-share-owner>
+            <Avatar name={owner || "Owner"} />
+            <span className="m-share-person-text">
+              <span className="m-share-person-name">{owner || "The document's owner"}</span>
+            </span>
+            <span className="m-share-person-role">Owner</span>
+          </li>
+        )}
         {list === null ? <li className="m-share-person"><span className="m-spinner" aria-hidden="true" /><span className="m-visually-hidden" role="status">Loading</span></li> : null}
         {list?.map((person) => {
           const label = person.name || person.email;
@@ -188,7 +202,6 @@ export function ShareSheet({ title, people, publicLink = null, canManage, me, li
             </li>
           );
         })}
-        {list && list.length === 0 && !canManage ? <li className="m-share-person"><span className="m-share-person-text">Only the owner.</span></li> : null}
       </ul>
       {list && list.length === 0 && canManage ? <p className="m-group-footer">Nobody else is on this document yet. Once someone is, you edit it together live.</p> : null}
     </Sheet>

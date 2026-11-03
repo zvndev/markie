@@ -104,22 +104,67 @@
 .markie-view .markdown-body .markie-render-error { white-space: pre-wrap; overflow-wrap: anywhere; background: none; border: 0; padding: 0;
   font: 15px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
 
-/* highlight.js, light and dark, the colours the exports use (pdf-styles.ts). */
-.markie-view .hljs { color: #24292e; }
-.markie-view .hljs-keyword { color: #d73a49; } .markie-view .hljs-string { color: #032f62; }
-.markie-view .hljs-title, .markie-view .hljs-function { color: #6f42c1; }
-.markie-view .hljs-built_in, .markie-view .hljs-type, .markie-view .hljs-variable { color: #e36209; }
-.markie-view .hljs-comment { color: #6a737d; }
-.markie-view .hljs-number, .markie-view .hljs-attr, .markie-view .hljs-literal { color: #005cc5; }
-:root[data-theme-tone="dark"] .markie-view .hljs { color: #c9d1d9; }
-:root[data-theme-tone="dark"] .markie-view .hljs-keyword { color: #ff7b72; }
-:root[data-theme-tone="dark"] .markie-view .hljs-string { color: #a5d6ff; }
-:root[data-theme-tone="dark"] .markie-view .hljs-title, :root[data-theme-tone="dark"] .markie-view .hljs-function { color: #d2a8ff; }
-:root[data-theme-tone="dark"] .markie-view .hljs-built_in, :root[data-theme-tone="dark"] .markie-view .hljs-type,
-:root[data-theme-tone="dark"] .markie-view .hljs-variable { color: #ffa657; }
-:root[data-theme-tone="dark"] .markie-view .hljs-comment { color: #8b949e; }
-:root[data-theme-tone="dark"] .markie-view .hljs-number, :root[data-theme-tone="dark"] .markie-view .hljs-attr,
-:root[data-theme-tone="dark"] .markie-view .hljs-literal { color: #79c0ff; }
+/* highlight.js. globals.css loads github-dark for every theme, so every class
+   it colours is given a colour here, per tone: GitHub's light palette (the
+   one the light exports use, pdf-styles.ts) and its dark one, each darkened
+   or lightened where it fell under 4.5:1 on --view-code. The test in
+   doc-view-code-colours.test.ts checks every class on both. Paper is light whatever the
+   screen's tone, so the dark set applies on screen only. */
+:is(.markie-view, .markie-print-layer) {
+  --hl-text: #24292e; --hl-keyword: #b31d28; --hl-entity: #6f42c1; --hl-constant: #0550ae;
+  --hl-string: #0a3069; --hl-variable: #953800; --hl-comment: #57606a; --hl-tag: #116329;
+  --hl-section: #0550ae; --hl-bullet: #735c0f;
+  --hl-addition: #116329; --hl-addition-bg: #dafbe1; --hl-deletion: #82071e; --hl-deletion-bg: #ffebe9;
+}
+@media screen {
+  :root[data-theme-tone="dark"] .markie-view {
+    --hl-text: #c9d1d9; --hl-keyword: #ff7b72; --hl-entity: #d2a8ff; --hl-constant: #79c0ff;
+    --hl-string: #a5d6ff; --hl-variable: #ffa657; --hl-comment: #8b949e; --hl-tag: #7ee787;
+    --hl-section: #58a6ff; --hl-bullet: #f2cc60;
+    --hl-addition: #aff5b4; --hl-addition-bg: #033a16; --hl-deletion: #ffdcd7; --hl-deletion-bg: #67060c;
+  }
+}
+:is(.markie-view, .markie-print-layer) .hljs,
+:is(.markie-view, .markie-print-layer) .hljs-subst,
+:is(.markie-view, .markie-print-layer) .hljs-emphasis,
+:is(.markie-view, .markie-print-layer) .hljs-strong { color: var(--hl-text); }
+:is(.markie-view, .markie-print-layer) .hljs-doctag,
+:is(.markie-view, .markie-print-layer) .hljs-keyword,
+:is(.markie-view, .markie-print-layer) .hljs-meta .hljs-keyword,
+:is(.markie-view, .markie-print-layer) .hljs-template-tag,
+:is(.markie-view, .markie-print-layer) .hljs-template-variable,
+:is(.markie-view, .markie-print-layer) .hljs-type,
+:is(.markie-view, .markie-print-layer) .hljs-variable.language_ { color: var(--hl-keyword); }
+:is(.markie-view, .markie-print-layer) .hljs-title,
+:is(.markie-view, .markie-print-layer) .hljs-title.class_,
+:is(.markie-view, .markie-print-layer) .hljs-title.class_.inherited__,
+:is(.markie-view, .markie-print-layer) .hljs-title.function_ { color: var(--hl-entity); }
+:is(.markie-view, .markie-print-layer) .hljs-attr,
+:is(.markie-view, .markie-print-layer) .hljs-attribute,
+:is(.markie-view, .markie-print-layer) .hljs-literal,
+:is(.markie-view, .markie-print-layer) .hljs-meta,
+:is(.markie-view, .markie-print-layer) .hljs-number,
+:is(.markie-view, .markie-print-layer) .hljs-operator,
+:is(.markie-view, .markie-print-layer) .hljs-variable,
+:is(.markie-view, .markie-print-layer) .hljs-selector-attr,
+:is(.markie-view, .markie-print-layer) .hljs-selector-class,
+:is(.markie-view, .markie-print-layer) .hljs-selector-id { color: var(--hl-constant); }
+:is(.markie-view, .markie-print-layer) .hljs-regexp,
+:is(.markie-view, .markie-print-layer) .hljs-string,
+:is(.markie-view, .markie-print-layer) .hljs-meta .hljs-string { color: var(--hl-string); }
+:is(.markie-view, .markie-print-layer) .hljs-built_in,
+:is(.markie-view, .markie-print-layer) .hljs-symbol { color: var(--hl-variable); }
+:is(.markie-view, .markie-print-layer) .hljs-comment,
+:is(.markie-view, .markie-print-layer) .hljs-code,
+:is(.markie-view, .markie-print-layer) .hljs-formula { color: var(--hl-comment); }
+:is(.markie-view, .markie-print-layer) .hljs-name,
+:is(.markie-view, .markie-print-layer) .hljs-quote,
+:is(.markie-view, .markie-print-layer) .hljs-selector-tag,
+:is(.markie-view, .markie-print-layer) .hljs-selector-pseudo { color: var(--hl-tag); }
+:is(.markie-view, .markie-print-layer) .hljs-section { color: var(--hl-section); }
+:is(.markie-view, .markie-print-layer) .hljs-bullet { color: var(--hl-bullet); }
+:is(.markie-view, .markie-print-layer) .hljs-addition { color: var(--hl-addition); background-color: var(--hl-addition-bg); }
+:is(.markie-view, .markie-print-layer) .hljs-deletion { color: var(--hl-deletion); background-color: var(--hl-deletion-bg); }
 
 /* A notice in place of the document: signed out, no access, gone. */
 .markie-view-notice { max-width: 520px; margin: 72px auto; padding: 0 24px; text-align: center; }

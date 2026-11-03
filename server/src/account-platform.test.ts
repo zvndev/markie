@@ -55,7 +55,7 @@ async function provider(uid: string) {
     // Privileged synthetic fixture creation follows the real hooks/SQL trigger;
     // it never disables those guards or inserts directly into account.
     google.noteCreatedUser(uid);
-    const account = await context.internalAdapter.createAccount({ userId: uid, providerId: "google", issuer: "https://accounts.google.com", accountId: `synthetic-google-sub-${randomUUID()}` });
+    const account = await context.internalAdapter.createAccount({ userId: uid, providerId: "google", accountId: `synthetic-google-sub-${randomUUID()}` });
     assert.ok(account); id = account.id;
     return Response.json({ ok: true });
   });
@@ -251,7 +251,7 @@ test("actual Better Auth CREATE rejects Google provider insertion when session i
   // Positive control traverses the real hooks and SQLite fence with a live initiator.
   const positive = await googleFlow(owner), positiveSubject = `synthetic-positive-${randomUUID()}`;
   await positive.google.runAuthRequest(new Request(`http://localhost:8787/api/auth/callback/google?state=${encodeURIComponent(positive.state)}`), async () => {
-    const created = await context.internalAdapter.createAccount({ userId: owner.id, providerId: "google", issuer: "https://accounts.google.com", accountId: positiveSubject });
+    const created = await context.internalAdapter.createAccount({ userId: owner.id, providerId: "google", accountId: positiveSubject });
     assert.ok(created); assert.ok(db.prepare("SELECT 1 FROM account WHERE id=? AND userId=?").get(created.id, owner.id));
     return Response.json({ ok: true });
   });
@@ -273,7 +273,7 @@ test("actual Better Auth CREATE rejects Google provider insertion when session i
   };
   try {
     const creation = flow.google.runAuthRequest(new Request(`http://localhost:8787/api/auth/callback/google?state=${encodeURIComponent(flow.state)}`), async () => {
-      await context.internalAdapter.createAccount({ userId: owner.id, providerId: "google", issuer: "https://accounts.google.com", accountId: subject });
+      await context.internalAdapter.createAccount({ userId: owner.id, providerId: "google", accountId: subject });
       return Response.json({ ok: true });
     });
     const rejected = assert.rejects(creation);

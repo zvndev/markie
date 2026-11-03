@@ -9,7 +9,10 @@
 // never merged over. A document someone else is on is edited live in the
 // desktop's room for it (the same websocket, the same short-lived pass), with
 // the others' carets and names, and its comments. Its text is written back as
-// the stored version as it changes, the way each desktop in the room does.
+// the stored version under the shared policy the web app follows
+// (src/lib/live-snapshot.ts): from a ready room only, by the room's one
+// writer, never over a stored copy the room cannot carry, and never over a
+// version written from outside the room.
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from "react";
 import type { Editor } from "@tiptap/react";
 import { RichView, type FlushRich, type LiveSession } from "@/components/rich-view";
@@ -22,6 +25,10 @@ import { useKeyboardInset } from "../lib/keyboard-inset";
 import { applyMarkdownAction, type MarkdownAction } from "../lib/markdown-edits";
 import { displayName } from "../lib/recent";
 import { liveConfig, liveKind, saveLiveSnapshot, shouldGoLive } from "../lib/live";
+import {
+  RoomTexts, SNAPSHOT_REFUSAL_NOTE, liveSnapshotRefusal, liveSnapshotWait, useLiveRoom,
+  type LiveRoom, type LiveSnapshotWait,
+} from "@/lib/live-snapshot";
 import { Screen } from "../components/screen";
 import { AlertIcon, CommentIcon } from "../components/icons";
 import { Presence, type LiveStatus } from "../components/presence";
@@ -83,7 +90,11 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   const box = useRef<HTMLTextAreaElement>(null);
   const keyboard = useKeyboardInset();
   const isNew = draft.kind === "new";
-  const readOnly = draft.kind === "cloud" && draft.role === "viewer";
+  // What the server says this account may do, read from /access as the
+  // screen opens. The list's role is only the fallback while that answer is
+  // on its way or if it never comes.
+  const [accessRole, setAccessRole] = useState<string | null>(null);
+  const readOnly = draft.kind === "cloud" && (accessRole ?? draft.role) === "viewer";
   const markdown = draft.format === "markdown" && /\.(md|markdown|mdx)$/i.test(draft.name);
   const prose = markdown || (draft.format === "text" && /\.(txt|text)$/i.test(draft.name));
   const kind = liveKind(draft.name, draft.format);
@@ -91,12 +102,17 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   // Who else is on it decides solo or live, exactly as on the desktop.
   const [session, setSession] = useState<Session>(() => (draft.kind === "cloud" && kind ? { mode: "checking" } : { mode: "solo" }));
   useEffect(() => {
-    if (draft.kind !== "cloud" || !kind) return;
+    if (draft.kind !== "cloud") return;
     let live = true;
+    if (!kind) {
+      void api.access(draft.id).then((access) => { if (live && access) setAccessRole(access.role); }, () => {});
+      return () => { live = false; };
+    }
     void (async () => {
       try {
         const [access, members] = await Promise.all([api.access(draft.id).catch(() => null), api.shares(draft.id)]);
         if (!live) return;
+        if (access) setAccessRole(access.role);
         setSession(shouldGoLive(members, kind, draft.content.length) ? { mode: "live", owner: access?.role === "owner" } : { mode: "solo" });
       } catch (error) {
         if (!live) return;
@@ -116,6 +132,9 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   const [peers, setPeers] = useState<PeerUser[]>([]);
   const [status, setStatus] = useState<LiveStatus>("connecting");
   const [liveSession, setLiveSession] = useState<LiveSession | null>(null);
+  // The text pane's session, for the same policy (it has no comments).
+  const [textSession, setTextSession] = useState<LiveRoom | null>(null);
+  const [liveUnavailable, setLiveUnavailable] = useState(false);
   const [editor, setEditor] = useState<Editor | null>(null);
   const flushRef = useRef<FlushRich | null>(null);
   const collab = useMemo(() => {
@@ -128,19 +147,55 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
       fetchTicket: () => api.collabTicket(draft.id),
     });
   }, [isLive, api, draft, me.name, me.email, readOnly]);
-  const onStatus = useCallback((next: LiveStatus) => setStatus(next), []);
+  // No pass, or no runtime: there is no room, so the phone edits alone, as
+  // the desktop does (src/app/page.tsx handleCollabStatus). Nothing typed
+  // into a session that never joined is written anywhere.
+  const onStatus = useCallback((next: LiveStatus) => {
+    if (next === "unavailable") {
+      setLiveUnavailable(true);
+      setSession({ mode: "solo" });
+      return;
+    }
+    setStatus(next);
+  }, []);
   const onFlushReady = useCallback((flush: FlushRich | null) => { flushRef.current = flush; }, []);
 
   // The stored version the live text is written over, and what it last said.
   const version = useRef(draft.kind === "cloud" ? draft.version : 0);
   const stored = useRef(draft.content);
-  const [liveSave, setLiveSave] = useState<"saved" | "pending" | "saving" | "error">("saved");
+  const [liveSave, setLiveSave] = useState<"saved" | "pending" | "saving" | "error" | "conflict">("saved");
   const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The shared policy (src/lib/live-snapshot.ts): whether this room is
+  // ready, whether this phone is its writer, and whether the room can carry
+  // the stored copy at all (read once, from the copy the session opened on).
+  const room = useLiveRoom(isLive ? (kind === "text" ? textSession : (liveSession as unknown as LiveRoom | null)) : null, kind ?? "rich", {
+    documentEmpty: !draft.content.trim(),
+    offer: isLive && !readOnly,
+  });
+  const refusal = useMemo(() => (isLive && kind ? liveSnapshotRefusal(stored.current, kind) : null), [isLive, kind]);
+  const wait: LiveSnapshotWait | null = isLive && status !== "empty" ? liveSnapshotWait(room, { editable: !readOnly, refusal }) : "read-only";
+  const waitRef = useRef(wait);
+  waitRef.current = wait;
+  // Every text this phone has held from the ready room, for the 409 rule.
+  const roomTexts = useRef<RoomTexts | null>(null);
+  if (!roomTexts.current) { roomTexts.current = new RoomTexts(); roomTexts.current.add(draft.content); }
+  const roomReady = room.ready;
+  const onLiveText = useCallback((text: string) => {
+    if (roomReady) roomTexts.current?.add(text);
+    setValue(text);
+  }, [roomReady]);
+
   const writeLive = useCallback(async (text: string) => {
-    if (draft.kind !== "cloud" || readOnly || text === stored.current) { setLiveSave("saved"); return true; }
+    // Callers only write when the policy says this phone may; checked again
+    // here because the room can change between the timer and the write.
+    if (draft.kind !== "cloud" || waitRef.current) return true;
+    if (text === stored.current) { setLiveSave("saved"); return true; }
     setLiveSave("saving");
     try {
-      version.current = await saveLiveSnapshot(api, { id: draft.id, name: draft.name, content: text, version: version.current });
+      const result = await saveLiveSnapshot(api, { id: draft.id, name: draft.name, content: text, version: version.current, room: roomTexts.current! });
+      if (result.kind === "conflict") { setLiveSave("conflict"); return false; }
+      version.current = result.version;
       stored.current = text;
       setLiveSave("saved");
       return true;
@@ -149,17 +204,19 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
       setLiveSave("error");
       return false;
     }
-  }, [api, draft, readOnly, onUnauthorized]);
+  }, [api, draft, onUnauthorized]);
   const valueRef = useRef(value);
   valueRef.current = value;
+  // Debounced, and only while this phone may write: a peer's keystroke here
+  // is a room change like any other, and only the writer pushes it.
   useEffect(() => {
-    if (!isLive || readOnly || status === "empty") return;
+    if (wait || liveSave === "conflict") return;
     if (value === stored.current) return;
     setLiveSave("pending");
     if (liveTimer.current) clearTimeout(liveTimer.current);
     liveTimer.current = setTimeout(() => { liveTimer.current = null; void writeLive(valueRef.current); }, LIVE_SAVE_DELAY_MS);
     return () => { if (liveTimer.current) clearTimeout(liveTimer.current); };
-  }, [isLive, readOnly, status, value, writeLive]);
+  }, [wait, liveSave, value, writeLive]);
 
   const [closing, setClosing] = useState(false);
   const done = useCallback(async () => {
@@ -167,7 +224,16 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
     setClosing(true);
     if (liveTimer.current) { clearTimeout(liveTimer.current); liveTimer.current = null; }
     const text = flushRef.current?.() ?? valueRef.current;
-    if (!readOnly && status !== "empty" && text !== stored.current && draft.kind === "cloud") {
+    // Offline: what was typed since the connection dropped is only on this
+    // phone, and closing drops it.
+    if (!readOnly && isLive && !room.connected && text !== stored.current
+      && !window.confirm("You're offline, so your latest edits haven't reached the live session. Close anyway and lose them?")) {
+      setClosing(false);
+      return;
+    }
+    // Only the room's writer writes the stored copy, and never over what the
+    // room cannot carry; everyone else's edits are in the room already.
+    if (!wait && text !== stored.current && draft.kind === "cloud") {
       const ok = await writeLive(text);
       if (!ok && !window.confirm("Your latest changes are in the live session, but the stored copy couldn't be updated. Close anyway? The next editor to open it saves them.")) {
         setClosing(false);
@@ -178,7 +244,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
       return;
     }
     onCancel(true);
-  }, [closing, readOnly, status, draft, writeLive, onSaved, onCancel]);
+  }, [closing, readOnly, isLive, room.connected, wait, draft, writeLive, onSaved, onCancel]);
 
   // ── Comments (live markdown only, as on the desktop) ────────────────────
   const commentable = isLive && kind === "rich" && draft.kind === "cloud";
@@ -228,7 +294,9 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
     setSave({ status: "saving" });
     try {
       if (draft.kind === "cloud" && !asCopy) {
-        const saved = await api.saveDoc({ id: draft.id, name: draft.name, content: text, baseVersion: draft.version });
+        // version.current: a live session this screen wrote before it dropped
+        // to solo has moved the stored version on.
+        const saved = await api.saveDoc({ id: draft.id, name: draft.name, content: text, baseVersion: version.current });
         haptics.success();
         onSaved({ id: saved.id, name: draft.name, created: false });
         return;
@@ -322,7 +390,21 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
           </div>
         ) : null}
         {save.status === "error" ? <p className="m-editor-error" role="alert">{save.message}</p> : null}
-        {isLive ? <LiveLine status={status} save={liveSave} readOnly={readOnly} /> : null}
+        {liveSave === "conflict" ? (
+          <div className="m-editor-banner" role="alert" data-live-conflict>
+            <AlertIcon size={18} />
+            <div>
+              <strong>Someone saved this document outside the live session.</strong>
+              <p>An agent or another device wrote a newer version. The live edits are still here and weren't saved over it.</p>
+              <div className="m-editor-banner-actions">
+                <button type="button" className="m-button m-button-small m-button-primary" onClick={() => void write(true)}>Save as a copy</button>
+                <button type="button" className="m-button m-button-small m-button-secondary" onClick={() => onCancel(true)}>Read the newer version</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {liveUnavailable && !isLive ? <p className="m-editor-note" role="note">The live session couldn't start, so you're editing your copy alone. Save when you're done.</p> : null}
+        {isLive ? <LiveLine status={status} save={liveSave} readOnly={readOnly} wait={wait} /> : null}
         {markdown ? (
           <div className="m-segmented m-editor-views" role="tablist" aria-label="Editor view">
             {(["rich", "source"] as const).map((mode) => (
@@ -347,7 +429,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
             <RichView
               key={collab ? `live:${collab.docId}` : "solo"}
               value={value}
-              onChange={setValue}
+              onChange={isLive ? onLiveText : setValue}
               onEditorReady={setEditor}
               collab={collab}
               readOnly={readOnly}
@@ -357,6 +439,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
               onFlushReady={onFlushReady}
               showCommentLayer={false}
               onLiveSession={setLiveSession}
+              holdUntilReady
             />
           </div>
         ) : liveText ? (
@@ -364,11 +447,12 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
             <TextCollabEditor
               key={`live-text:${collab.docId}`}
               value={value}
-              onChange={setValue}
+              onChange={onLiveText}
               collab={collab}
               readOnly={readOnly}
               onPeersChange={setPeers}
               onCollabStatus={onStatus}
+              onLiveSession={setTextSession}
             />
           </div>
         ) : (
@@ -428,7 +512,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   );
 }
 
-function LiveLine({ status, save, readOnly }: { status: LiveStatus; save: "saved" | "pending" | "saving" | "error"; readOnly: boolean }) {
+function LiveLine({ status, save, readOnly, wait }: { status: LiveStatus; save: "saved" | "pending" | "saving" | "error" | "conflict"; readOnly: boolean; wait: LiveSnapshotWait | null }) {
   const text = status === "empty"
     ? "Nobody has opened this live yet, so there is nothing to show here. Read it on the document screen."
     : status === "unavailable"
@@ -439,6 +523,14 @@ function LiveLine({ status, save, readOnly }: { status: LiveStatus; save: "saved
           ? "Joining the live session…"
           : readOnly
             ? "Live. You can read and comment."
+            : wait === "held-constructs"
+              ? SNAPSHOT_REFUSAL_NOTE
+            : wait === "not-synced" || wait === "not-ready"
+              ? "Joining the live session…"
+            : wait === "not-writer"
+              ? "Live. Another editor here keeps the stored copy up to date."
+            : save === "conflict"
+              ? "Live. Not saved: someone saved a newer version outside the session."
             : save === "error"
               ? "Live. The stored copy couldn't be updated; it retries on your next edit."
               : save === "saved"

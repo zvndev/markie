@@ -8,6 +8,7 @@
 // back to a token (src/lib/collab.ts).
 import { classifyDocumentFormat } from "@/lib/document-formats";
 import { colorForName, type CollabConfig, type CollabTicketAnswer } from "@/lib/collab";
+import { writeLiveSnapshot, type LiveSnapshotResult, type RoomTexts } from "@/lib/live-snapshot";
 import type { DocFormat } from "./docs";
 
 // The desktop opens no live session for a document this large
@@ -68,25 +69,29 @@ export function liveConfig({ origin, docId, displayName, readonly, fetchTicket }
 
 interface SnapshotApi {
   saveDoc(input: { id: string; name: string; content: string; baseVersion: number }): Promise<{ id: string; version: number }>;
-  doc(id: string): Promise<{ version: number | null; content: string }>;
+  doc(id: string): Promise<{ version: number | null; content: string; name?: string }>;
 }
 
+const isVersionConflict = (error: unknown) =>
+  !!error && typeof error === "object" && (error as { status?: unknown }).status === 409 && (error as { code?: unknown }).code === "conflict";
+
 /**
- * Writes a live document's text back as the stored version, the way each
- * desktop in a live session pushes its copy. The room holds every editor's
- * changes, so its text is the document: when another editor saved first
- * (409), the newer version is read and this text goes on top of it, once.
- * Returns the version the server now holds.
+ * Writes the room's text over the stored version, the way the web app does,
+ * under the shared policy (src/lib/live-snapshot.ts): the caller has already
+ * checked the room is ready and this phone is its writer, and a 409 goes
+ * over a version only when its text came out of the room. Anything else is
+ * a conflict, never an overwrite.
  */
-export async function saveLiveSnapshot(api: SnapshotApi, { id, name, content, version }: { id: string; name: string; content: string; version: number }): Promise<number> {
-  try {
-    return (await api.saveDoc({ id, name, content, baseVersion: version })).version;
-  } catch (error) {
-    const conflict = !!error && typeof error === "object" && (error as { status?: unknown }).status === 409 && (error as { code?: unknown }).code === "conflict";
-    if (!conflict) throw error;
-    const current = await api.doc(id);
-    if (current.version === null) throw error;
-    if (current.content === content) return current.version;
-    return (await api.saveDoc({ id, name, content, baseVersion: current.version })).version;
-  }
+export function saveLiveSnapshot(
+  api: SnapshotApi,
+  { id, name, content, version, room }: { id: string; name: string; content: string; version: number; room: RoomTexts }
+): Promise<LiveSnapshotResult> {
+  return writeLiveSnapshot({
+    save: async (text, baseVersion) => (await api.saveDoc({ id, name, content: text, baseVersion })).version,
+    read: async () => {
+      const current = await api.doc(id);
+      return current.version === null ? null : { content: current.content, name: current.name ?? name, version: current.version };
+    },
+    isConflict: isVersionConflict,
+  }, { content, name, version, room });
 }

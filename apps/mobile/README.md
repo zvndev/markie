@@ -128,9 +128,16 @@ The phone edits with the desktop's own editors, reached through the `@` alias li
   desktop's room for it over `/collab/<id>`: Markdown through the rich view, text through
   `@/components/text-collab-editor`. Others' names and carets show, and their edits arrive as they type.
   The socket's only credential is a five-minute pass from `POST /api/docs/:id/collab-ticket`; the
-  session token never goes in its URL, and the phone never takes the desktop's "legacy" token path. The
-  room's text is written back as the stored version a few seconds after each change, as each desktop in
-  a live session does. Source is read-only while live, exactly as on the desktop.
+  session token never goes in its URL, and the phone never takes the desktop's "legacy" token path.
+  Typing waits until the room has synced and holds the document. The room's text is written back as the
+  stored version a few seconds after a change, under the policy the web app shares
+  (`@/lib/live-snapshot`):
+  - only by the room's one writer
+  - never over a stored copy with front matter or raw HTML, which a live rich room can't keep
+  - never over a version written from outside the room, which shows as a conflict instead
+
+  A session whose pass never comes drops to editing alone. Source is read-only while live, exactly as on
+  the desktop.
 - Comments live on a live Markdown document, as on the desktop: select text, tap the comment button
   above the keyboard. The comment sheet lists threads with the words they are on (anchored in the room
   through `@/lib/comment-anchors`), and replies, resolves, reopens and deletes through

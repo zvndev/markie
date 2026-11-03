@@ -350,7 +350,13 @@ export function createApiClient(options: ApiClientOptions) {
     async publicLink(id: string): Promise<string | null> {
       if (!DOC_ID.test(id)) throw new ApiError(404, "That isn't a Markie document.");
       const { data } = await json("GET", `/api/docs/${encodeURIComponent(id)}/public-link`);
-      return publicUrlOrNull((data as { url?: unknown } | null)?.url);
+      const raw = (data as { url?: unknown } | null)?.url;
+      // No link is a null url. A url this app can't read is not "private":
+      // saying so would invite the owner to make public a document that is.
+      if (raw === null || raw === undefined) return null;
+      const url = publicUrlOrNull(raw);
+      if (!url) throw new ApiError(502, "The server's public link wasn't readable.");
+      return url;
     },
 
     /** Turns the public link on (or returns the one that exists). */
@@ -512,13 +518,17 @@ function plainString(value: unknown, max: number): string | null {
   return cleaned ? cleaned.slice(0, max) : null;
 }
 
-/** A public link is an http(s) URL ending in /s/<token>; anything else is treated as none. */
-function publicUrlOrNull(value: unknown): string | null {
+/**
+ * A public link is an http(s) URL whose path ends in /s/<token>. A server
+ * served under a path (https://example.org/markie/s/<token>) is one too.
+ */
+export function publicUrlOrNull(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 2048) return null;
   try {
     const url = new URL(value);
     if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-    return /^\/s\/[A-Za-z0-9_-]{16,128}$/.test(url.pathname) ? url.href : null;
+    if (url.username || url.password) return null;
+    return /^(?:\/[A-Za-z0-9._~-]+)*\/s\/[A-Za-z0-9_-]{16,128}$/.test(url.pathname) ? url.href : null;
   } catch {
     return null;
   }

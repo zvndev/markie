@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, createApiClient, platformFetch } from "../src/lib/api";
+import { ApiError, createApiClient, platformFetch, publicUrlOrNull } from "../src/lib/api";
 import type { HttpRequest, HttpResponse, HttpTransport } from "../src/lib/http";
 import { collabWsBase, liveConfig, liveKind, saveLiveSnapshot, shouldGoLive, LIVE_MAX_CHARS } from "../src/lib/live";
 import { docTypeGroup, kindFromName, newDocName, newDocType, NEW_DOC_TYPES, parsePlatformItem, parsePlatformList, type RecentDoc } from "../src/lib/docs";
 import { filterRecent, mergeRecent, withPlatform } from "../src/lib/recent";
 import { NEW_DOCUMENT_TYPES } from "@/components/new-document-modal";
+import { RoomTexts } from "@/lib/live-snapshot";
 
 const ORIGIN = "https://api.markiedocs.com";
 const TOKEN = "tok_aaaaaaaaaaaaaaaaaaaaaaaa";
@@ -53,25 +54,39 @@ describe("live editing", () => {
     expect(await old.api.collabTicket("doc-1")).toEqual({ kind: "failed", status: 404 });
   });
 
-  it("writes the room's text over a newer stored version once, and not at all when it already matches", async () => {
-    let version = 3;
-    let content = "theirs";
-    const puts: number[] = [];
+  function storedCopy(start: { version: number; content: string }) {
+    const state = { ...start, puts: [] as number[] };
     const api = {
       async saveDoc({ baseVersion, content: next }: { id: string; name: string; content: string; baseVersion: number }) {
-        puts.push(baseVersion);
-        if (baseVersion !== version) throw Object.assign(new ApiError(409, "conflict", "conflict"), {});
-        version += 1;
-        content = next;
-        return { id: "d", version };
+        state.puts.push(baseVersion);
+        if (baseVersion !== state.version) throw new ApiError(409, "conflict", "conflict");
+        state.version += 1;
+        state.content = next;
+        return { id: "d", version: state.version };
       },
-      async doc() { return { version, content }; },
+      async doc() { return { version: state.version, content: state.content, name: "d.md" }; },
     };
-    expect(await saveLiveSnapshot(api, { id: "d", name: "d.md", content: "room", version: 2 })).toBe(4);
-    expect(puts).toEqual([2, 3]);
-    expect(content).toBe("room");
-    expect(await saveLiveSnapshot(api, { id: "d", name: "d.md", content: "room", version: 1 })).toBe(4);
-    expect(puts).toEqual([2, 3, 1]);
+    return { state, api };
+  }
+
+  it("writes the room's text over a newer version only when that version came out of the room", async () => {
+    const { state, api } = storedCopy({ version: 3, content: "room, earlier" });
+    const room = new RoomTexts();
+    room.add("room, earlier");
+    expect(await saveLiveSnapshot(api, { id: "d", name: "d.md", content: "room, now", version: 2, room })).toEqual({ kind: "saved", version: 4 });
+    expect(state.puts).toEqual([2, 3]);
+    expect(state.content).toBe("room, now");
+    // Already holding exactly this: adopted, nothing written.
+    expect(await saveLiveSnapshot(api, { id: "d", name: "d.md", content: "room, now", version: 1, room })).toEqual({ kind: "saved", version: 4 });
+    expect(state.puts).toEqual([2, 3, 1]);
+  });
+
+  it("never writes over a version from outside the room (an agent, the desktop's file sync, another phone)", async () => {
+    const { state, api } = storedCopy({ version: 3, content: "an agent rewrote this through MCP" });
+    const result = await saveLiveSnapshot(api, { id: "d", name: "d.md", content: "room text", version: 2, room: new RoomTexts() });
+    expect(result).toEqual({ kind: "conflict", serverVersion: 3 });
+    expect(state.content).toBe("an agent rewrote this through MCP");
+    expect(state.puts).toEqual([2]);
   });
 });
 
@@ -106,8 +121,22 @@ describe("sharing", () => {
     expect(calls.map((c) => `${c.method} ${c.url.replace(ORIGIN, "")}`)).toEqual([
       "GET /api/docs/doc-1/public-link", "POST /api/docs/doc-1/public-link", "DELETE /api/docs/doc-1/public-link",
     ]);
+    // A url the app can't read is not "private": it fails, so the sheet says
+    // it couldn't check instead of offering to make a public document public.
     const odd = fake(() => ({ json: { url: "javascript:alert(1)" } }));
-    expect(await odd.api.publicLink("doc-1")).toBeNull();
+    await expect(odd.api.publicLink("doc-1")).rejects.toThrow(/wasn't readable/);
+  });
+
+  it("reads a public link from a server served under a path", async () => {
+    const token = "b".repeat(64);
+    expect(publicUrlOrNull(`https://example.org/markie/s/${token}`)).toBe(`https://example.org/markie/s/${token}`);
+    expect(publicUrlOrNull(`https://markiedocs.com/s/${token}`)).toBe(`https://markiedocs.com/s/${token}`);
+    for (const bad of [`https://example.org/s/${token}/raw`, `https://example.org/d/${token}`, `https://u:p@example.org/s/${token}`, "https://example.org/s/short", `ftp://example.org/s/${token}`]) {
+      expect(publicUrlOrNull(bad)).toBeNull();
+    }
+    const prefixed = fake(() => ({ json: { url: `https://example.org/markie/s/${token}` } }));
+    expect(await prefixed.api.publicLink("doc-1")).toBe(`https://example.org/markie/s/${token}`);
+    expect(await prefixed.api.createPublicLink("doc-1")).toBe(`https://example.org/markie/s/${token}`);
   });
 });
 

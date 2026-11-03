@@ -196,22 +196,26 @@ export function ShareSheet({ title, people, publicLink = null, canManage, me, li
 }
 
 function PublicLinkSection({ api, title, onUnauthorized, onChanged }: { api: PublicLinkApi; title: string; onUnauthorized: () => void; onChanged?: () => void }) {
-  // undefined while asking; null when the document is private.
-  const [url, setUrl] = useState<string | null | undefined>(undefined);
+  // undefined while asking; null when the document is private; "unknown"
+  // when the answer never came, which is not the same as private.
+  const [url, setUrl] = useState<string | null | undefined | "unknown">(undefined);
+  const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let live = true;
+    setUrl(undefined);
+    setError(null);
     api.get().then((value) => { if (live) setUrl(value); }, (failure) => {
       if (!live) return;
       if (failure instanceof ApiError && failure.status === 401) { onUnauthorized(); return; }
-      setUrl(null);
+      setUrl("unknown");
       setError("Couldn't check whether this document is public.");
     });
     return () => { live = false; };
-  }, [api, onUnauthorized]);
+  }, [api, onUnauthorized, attempt]);
 
   const change = async (work: () => Promise<string | null>) => {
     setBusy(true);
@@ -240,7 +244,7 @@ function PublicLinkSection({ api, title, onUnauthorized, onChanged }: { api: Pub
     }
   };
 
-  const isPublic = typeof url === "string";
+  const isPublic = typeof url === "string" && url !== "unknown";
   return (
     <section className="m-share-public" aria-label="Public link">
       <h3 className="m-group-heading">General access</h3>
@@ -252,8 +256,8 @@ function PublicLinkSection({ api, title, onUnauthorized, onChanged }: { api: Pub
               : <svg viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.2" /><path d="M8.2 10.5V7.8a3.8 3.8 0 0 1 7.6 0v2.7" /></svg>}
           </span>
           <span className="m-share-person-text">
-            <span className="m-share-person-name">{url === undefined ? "Checking…" : isPublic ? "Public: anyone with the link" : "Private"}</span>
-            <span className="m-share-person-email">{isPublic ? "Anyone with the link can read it, no account needed." : "Only you and the people below can open it."}</span>
+            <span className="m-share-person-name">{url === undefined ? "Checking…" : url === "unknown" ? "Couldn't check" : isPublic ? "Public: anyone with the link" : "Private"}</span>
+            <span className="m-share-person-email">{url === "unknown" ? "It may be public or private." : isPublic ? "Anyone with the link can read it, no account needed." : "Only you and the people below can open it."}</span>
           </span>
         </div>
         {isPublic ? (
@@ -268,6 +272,10 @@ function PublicLinkSection({ api, title, onUnauthorized, onChanged }: { api: Pub
               }}>{busy ? "Turning off…" : "Make private"}</button>
             </div>
           </>
+        ) : url === "unknown" ? (
+          <div className="m-share-public-actions">
+            <button type="button" className="m-button m-button-small m-button-secondary" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
+          </div>
         ) : url === null ? (
           <div className="m-share-public-actions">
             <button type="button" className="m-button m-button-small m-button-secondary" disabled={busy} onClick={() => {

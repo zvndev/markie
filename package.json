@@ -111,7 +111,7 @@
     "preview:check": "node scripts/link-preview-check.mjs"
   },
   "dependencies": {
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^12.11.1",
     "electron-updater": "^6.8.9",
     "node-pty": "^1.1.0"
   },
@@ -145,11 +145,11 @@
     "@types/react-dom": "^19",
     "@uiw/react-codemirror": "^4.25.8",
     "@vitejs/plugin-react": "^6.1.1",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "concurrently": "^9.2.1",
-    "electron": "^41.0.2",
+    "electron": "^42.11.18",
     "electron-builder": "^26.8.1",
     "eslint": "^9",
     "eslint-plugin-jsx-a11y": "^6.10.2",
@@ -159,7 +159,7 @@
     "highlight.js": "^11.11.1",
     "js-yaml": "^4.1.1",
     "jsdom": "^27.4.0",
-    "katex": "^0.16.38",
+    "katex": "^0.18.2",
     "prosemirror-markdown": "^1.13.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -172,28 +172,30 @@
     "remark-math": "^6.0.0",
     "remark-parse": "^11.0.0",
     "remark-rehype": "^11.1.2",
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "tailwindcss": "^4",
     "tiptap-markdown": "^0.9.0",
     "typescript": "^5",
     "typescript-eslint": "^8.69.0",
     "unified": "^11.0.5",
-    "vite": "^8.2.2",
-    "vitest": "^4.1.8",
+    "vite": "^8.3.5",
+    "vitest": "^4.1.12",
     "wait-on": "^9.0.4",
     "y-websocket": "^3.0.0",
     "yjs": "^13.6.31"
+  },
+  "overrides": {
+    "katex": "$katex"
   },
   "engines": {
     "node": ">=22"
   },
   "allowScripts": {
-    "better-sqlite3@12.10.0": true,
-    "electron@41.10.7": true,
+    "better-sqlite3@12.11.1": true,
     "electron-winstaller@5.4.0": true,
     "fsevents@2.3.3": true,
     "node-pty@1.1.0": true,
-    "sharp@0.35.4": true,
+    "sharp@0.35.5": true,
     "unrs-resolver@1.11.1": true
   }
 }

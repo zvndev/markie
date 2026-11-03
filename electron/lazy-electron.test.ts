@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 // CI installs with `npm ci --ignore-scripts`, so the Electron binary is never
-// downloaded and `require("electron")` throws at module load. A main-process
+// downloaded. Through Electron 41 `require("electron")` then threw at module
+// load; from Electron 42 it tries to download the ~100 MB binary on the spot
+// and throws only if that fails, which is no better on a test runner. A main-process
 // module that reaches for it at the top level therefore cannot be unit tested
 // on the runner: the whole suite fails to import, and every test in it stops
 // running. That is how registry.js took sync.test.ts (54 tests) off CI while

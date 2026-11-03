@@ -79,12 +79,12 @@ if [ -n "$BACKUP" ]; then
     -config "$LITESTREAM_CONFIG" "$DB_PATH" || true
 fi
 
-# Must run BEFORE the auth migration. better-auth 1.7 refuses to add its new
-# required `issuer` column to a populated `account` table, which means an
-# existing deployment cannot boot at all until every row has a correct value.
-# The refusal is right; this supplies what it is asking for.
-echo "backfilling account issuer if needed"
-node --experimental-strip-types src/backfill-issuer.ts
+# Must run BEFORE the auth migration. better-auth 1.7.0-1.7.2 added a required
+# `account.issuer` column; 1.7.3 dropped it again and no longer writes it, so a
+# database that still has it NOT NULL rejects every sign-up. This removes the
+# column and its unique index, as better-auth's upgrade guide prescribes.
+echo "removing the retired account issuer column if present"
+node --experimental-strip-types src/relax-account-issuer.ts
 
 echo "migrating auth schema"
 node --experimental-strip-types src/migrate.ts

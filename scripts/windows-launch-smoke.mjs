@@ -164,6 +164,27 @@ async function pickPort() {
   });
 }
 
+export const CDP_CALL_TIMEOUT_MS = 15000;
+
+// MARKIE_E2E keeps the window hidden. From Electron 42, Chromium can stop
+// compositing a hidden window shortly after start, and the screenshot then
+// waits forever for a frame. These are the switches browser automation passes
+// for the same reason; a user's launch never gets them.
+export const HIDDEN_WINDOW_SWITCHES = [
+  "--disable-backgrounding-occluded-windows",
+  "--disable-renderer-backgrounding",
+];
+
+export function withDeadline(promise, timeoutMs, label) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} did not answer within ${timeoutMs}ms`)), timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function waitFor(label, fn, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const started = Date.now();
   let lastError;
@@ -202,16 +223,23 @@ async function openCdpClient(webSocketDebuggerUrl) {
     }
   });
 
-  const send = (method, params = {}) =>
-    new Promise((resolve, reject) => {
-      const id = nextId++;
-      pending.set(id, (message) => {
-        if (message.error) reject(new Error(JSON.stringify(message.error)));
-        else if (message.result?.exceptionDetails) reject(new Error(JSON.stringify(message.result.exceptionDetails)));
-        else resolve(message.result);
-      });
-      ws.send(JSON.stringify({ id, method, params }));
-    });
+  // Every call has its own deadline: waitFor only checks its clock between
+  // attempts, so one call that never answers would hang the job silently.
+  const send = (method, params = {}) => {
+    const id = nextId++;
+    return withDeadline(
+      new Promise((resolve, reject) => {
+        pending.set(id, (message) => {
+          if (message.error) reject(new Error(JSON.stringify(message.error)));
+          else if (message.result?.exceptionDetails) reject(new Error(JSON.stringify(message.result.exceptionDetails)));
+          else resolve(message.result);
+        });
+        ws.send(JSON.stringify({ id, method, params }));
+      }),
+      CDP_CALL_TIMEOUT_MS,
+      `CDP ${method}`
+    ).finally(() => pending.delete(id));
+  };
 
   return {
     send,
@@ -275,6 +303,42 @@ export async function capturePageScreenshot(cdp) {
   return Buffer.from(result.data, "base64");
 }
 
+// Before each attempt the hidden page is put back in the active lifecycle
+// state and given an emulated size change, which makes the renderer produce a
+// fresh frame. A capture that still never answers fails, with the page's
+// visibility in the message.
+const CAPTURE_ATTEMPTS = 3;
+
+export async function captureHiddenWindow(cdp) {
+  let lastError;
+  for (let attempt = 1; attempt <= CAPTURE_ATTEMPTS; attempt += 1) {
+    await cdp.send("Page.setWebLifecycleState", { state: "active" }).catch(() => null);
+    await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => null);
+    const size = await cdp
+      .evaluate("({ width: window.innerWidth, height: window.innerHeight })")
+      .catch(() => null);
+    if (size?.width && size?.height) {
+      await cdp
+        .send("Emulation.setDeviceMetricsOverride", {
+          width: size.width,
+          height: size.height - (attempt % 2),
+          deviceScaleFactor: 0,
+          mobile: false,
+        })
+        .catch(() => null);
+    }
+    try {
+      return await capturePageScreenshot(cdp);
+    } catch (error) {
+      lastError = error;
+    } finally {
+      await cdp.send("Emulation.clearDeviceMetricsOverride").catch(() => null);
+    }
+  }
+  const visibility = await cdp.evaluate("document.visibilityState").catch(() => "unknown");
+  throw new Error(`${lastError?.message ?? "screenshot failed"} (after ${CAPTURE_ATTEMPTS} attempts; page visibility: ${visibility})`);
+}
+
 function killWindowsProcessTree(pid) {
   if (!pid) return;
   const result = spawnSync("taskkill", ["/pid", String(pid), "/t", "/f"], {
@@ -329,7 +393,7 @@ export async function runWindowsLaunchSmoke({
   const tempUserDataDir = userDataDir || (await mkdtemp(path.join(tmpdir(), "markie-win-launch-")));
   const child = spawn(
     app.executable,
-    [`--remote-debugging-port=${resolvedDebugPort}`, `--user-data-dir=${tempUserDataDir}`],
+    [`--remote-debugging-port=${resolvedDebugPort}`, `--user-data-dir=${tempUserDataDir}`, ...HIDDEN_WINDOW_SWITCHES],
     {
       cwd: app.appDir,
       env: { ...process.env, MARKIE_E2E: "1" },
@@ -369,7 +433,7 @@ export async function runWindowsLaunchSmoke({
     if (startupErrors.length) {
       throw new Error(`the main process threw while starting:\n${describeLaunchErrors(startupErrors)}`);
     }
-    const screenshotPng = await capturePageScreenshot(cdp);
+    const screenshotPng = await captureHiddenWindow(cdp);
     const artifact = buildWindowsLaunchSmokeArtifact({
       baseDir,
       distDir,

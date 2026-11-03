@@ -157,7 +157,7 @@ const esc = (s: string) =>
 const HEAD_CSS = `
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css">`;
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.18/dist/katex.min.css">`;
 
 const PAGE_CSS = `
   :root {

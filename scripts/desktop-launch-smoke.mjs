@@ -7,7 +7,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostSmokeMode, packageProfile, verifyPackageLayout } from "./package-smoke.mjs";
-import { capturePageScreenshot, selectPageTarget, validateRendererProbe } from "./windows-launch-smoke.mjs";
+import {
+  CDP_CALL_TIMEOUT_MS,
+  HIDDEN_WINDOW_SWITCHES,
+  captureHiddenWindow,
+  selectPageTarget,
+  validateRendererProbe,
+  withDeadline,
+} from "./windows-launch-smoke.mjs";
+
+export { withDeadline };
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
 import { createRequire } from "node:module";
 
@@ -189,16 +198,24 @@ async function openCdpClient(webSocketDebuggerUrl) {
     }
   });
 
-  const send = (method, params = {}) =>
-    new Promise((resolve, reject) => {
-      const id = nextId++;
-      pending.set(id, (message) => {
-        if (message.error) reject(new Error(JSON.stringify(message.error)));
-        else if (message.result?.exceptionDetails) reject(new Error(JSON.stringify(message.result.exceptionDetails)));
-        else resolve(message.result);
-      });
-      ws.send(JSON.stringify({ id, method, params }));
-    });
+  // Every call has its own deadline. waitFor only checks the clock between
+  // attempts, so one CDP call that never answers would otherwise hang the
+  // smoke (and the CI job) until the runner's own timeout, with no output.
+  const send = (method, params = {}) => {
+    const id = nextId++;
+    return withDeadline(
+      new Promise((resolve, reject) => {
+        pending.set(id, (message) => {
+          if (message.error) reject(new Error(JSON.stringify(message.error)));
+          else if (message.result?.exceptionDetails) reject(new Error(JSON.stringify(message.result.exceptionDetails)));
+          else resolve(message.result);
+        });
+        ws.send(JSON.stringify({ id, method, params }));
+      }),
+      CDP_CALL_TIMEOUT_MS,
+      `CDP ${method}`
+    ).finally(() => pending.delete(id));
+  };
 
   return {
     send,
@@ -248,6 +265,7 @@ async function probeRenderer(cdp, timeoutMs) {
     timeoutMs
   );
 }
+
 
 async function waitForExit(child, timeoutMs = 2000) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -328,14 +346,25 @@ export async function runDesktopLaunchSmoke({
   const tempUserDataDir = userDataDir || (await mkdtemp(path.join(tmpdir(), "markie-desktop-launch-")));
   const child = spawn(
     app.executable,
-    [`--remote-debugging-port=${resolvedDebugPort}`, `--user-data-dir=${tempUserDataDir}`],
+    [
+      `--remote-debugging-port=${resolvedDebugPort}`,
+      `--user-data-dir=${tempUserDataDir}`,
+      ...HIDDEN_WINDOW_SWITCHES,
+    ],
     {
       cwd: app.appDir,
       env: { ...process.env, MARKIE_E2E: "1" },
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     }
   );
+  // The app's own output, kept only to explain a failed launch.
+  let appOutput = "";
+  const keepOutput = (chunk) => {
+    appOutput = (appOutput + chunk.toString("utf8")).slice(-4000);
+  };
+  child.stdout?.on("data", keepOutput);
+  child.stderr?.on("data", keepOutput);
   let exitInfo = null;
   let spawnError = null;
   child.once("error", (error) => {
@@ -366,7 +395,7 @@ export async function runDesktopLaunchSmoke({
     if (startupErrors.length) {
       throw new Error(`the main process threw while starting:\n${describeLaunchErrors(startupErrors)}`);
     }
-    const screenshotPng = await capturePageScreenshot(cdp);
+    const screenshotPng = await captureHiddenWindow(cdp);
     const artifact = buildDesktopLaunchSmokeArtifact({
       baseDir,
       distDir,
@@ -388,10 +417,15 @@ export async function runDesktopLaunchSmoke({
     if (startupErrors.length && !String(error.message).includes("threw while starting")) {
       error.message += `\nthe main process threw while starting:\n${describeLaunchErrors(startupErrors)}`;
     }
+    if (appOutput.trim()) error.message += `\nlast app output:\n${appOutput.trim()}`;
     throw error;
   } finally {
     cdp?.close();
     await stopProcessTree(child);
+    // A grandchild (the AppImage runtime, a GPU helper) can outlive the app
+    // and hold these pipes open, which would keep this script alive.
+    child.stdout?.destroy();
+    child.stderr?.destroy();
     if (!userDataDir) {
       await rm(tempUserDataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
     }

@@ -11,7 +11,7 @@
 //
 // Two deviations from the plan, both forced by the environment:
 //   * better-sqlite3 cannot be required here. The prebuild in node_modules is
-//     compiled for Electron's ABI (NODE_MODULE_VERSION 145), and plain Node is
+//     compiled for Electron's ABI (NODE_MODULE_VERSION 146), and plain Node is
 //     137, so the require throws before any query runs. Node's own
 //     node:sqlite reads the same file and opens it read only.
 //   * --experimental-strip-types alone cannot resolve the engine's `@/`

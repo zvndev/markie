@@ -1,7 +1,48 @@
 version: 2
+
+# One grouped PR per ecosystem and directory each week for minor and patch
+# updates, so a small team reviews four PRs instead of forty. Majors are left
+# out of the groups and arrive one PR each, because each can break something on
+# its own (Electron, KaTeX and better-auth all have). Groups apply to version
+# updates only: security updates are still raised as soon as an advisory lands,
+# one PR per advisory, regardless of the schedule below.
 updates:
   # The signing workflow pins actions to commit SHAs; this keeps the pins current.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  # Desktop app and renderer.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      root-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  # Markie Cloud server.
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+    groups:
+      server-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  # Markie Docs phone app.
+  - package-ecosystem: npm
+    directory: /apps/mobile
+    schedule:
+      interval: weekly
+    groups:
+      mobile-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]

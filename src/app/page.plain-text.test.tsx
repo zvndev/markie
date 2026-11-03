@@ -112,9 +112,14 @@ describe("plain text is not Markdown", () => {
     // no rich editor, and no "file sync only" note. The pane remounts when
     // the session starts, so the textbox is re-queried after it lands.
     await waitFor(() => expect(view.container.querySelector("[data-markie-text-live]")).not.toBeNull());
+    const pane = view.container.querySelector("[data-markie-text-live]")!;
     const source = screen.getByRole("textbox", { name: "Source document" });
-    if (role === "viewer") expect(source).toHaveAttribute("readonly");
-    else expect(source).not.toHaveAttribute("readonly");
+    // The role decides who may edit. There is no server here, so the room
+    // never syncs, and until it does typing is held for everyone: an edit
+    // before the sync would be written into an empty room (text-collab.ts).
+    expect(pane).toHaveAttribute("data-markie-live-role", role === "viewer" ? "read-only" : "editor");
+    expect(pane).toHaveAttribute("data-markie-live-hold", "syncing");
+    expect(source).toHaveAttribute("readonly");
     expect(view.container.querySelector("[data-markie-rich-pane]")).toBeNull();
     expect(screen.queryByText(/Plain text uses file sync/)).not.toBeInTheDocument();
   });

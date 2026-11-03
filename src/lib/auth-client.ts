@@ -22,7 +22,17 @@ function accountSessionChanged(): void {
   if (typeof window !== "undefined") window.dispatchEvent(new Event("markie:account-session-change"));
 }
 
+// The Markie web app (src/web), served by the server itself at /app. There the
+// server is the page's own origin, and the session is the one the web sign-in
+// put in this browser's cookie (server/src/web-signin.ts). Its token is read
+// from that session once at boot and held in memory only, so the API clients
+// below, the share dialog, comments and collab tickets all work unchanged.
+// Nothing in the desktop or the phone app ever sets this.
+interface WebSession { origin: string; token: string | null; binding: PrincipalBinding | null; collabBase: string | null }
+let webSession: WebSession | null = null;
+
 export function getServerURL(): string {
+  if (webSession) return webSession.origin;
   const privateOrigin = getElectronAPI()?.privateReleaseAuthOrigin;
   if (privateOrigin === DEFAULT_SERVER) return DEFAULT_SERVER;
   try {
@@ -33,6 +43,7 @@ export function getServerURL(): string {
 }
 
 export function setServerURL(url: string): void {
+  if (webSession) return;
   if (getElectronAPI()?.privateReleaseAuthOrigin === DEFAULT_SERVER) return;
   const before = getServerURL();
   try {
@@ -52,6 +63,9 @@ export function setServerURL(url: string): void {
 
 // y-websocket appends "/<roomname>" to this base; the server matches /collab/:docId
 export function collabWsBase(): string {
+  // The web app may be served through a website that cannot proxy a
+  // websocket, so its page names the server's own socket address.
+  if (webSession?.collabBase) return webSession.collabBase;
   return `${getServerURL().replace(/^http/, "ws")}/collab`;
 }
 
@@ -70,6 +84,7 @@ export function adoptAuthToken(token: string): void {
 }
 
 function getToken(): string | null {
+  if (webSession) return webSession.token;
   if (usesPrivateCredential()) return privateToken;
   try {
     return localStorage.getItem(TOKEN_KEY);
@@ -80,7 +95,8 @@ function getToken(): string | null {
 
 function setToken(token: string | null): void {
   const before = getToken();
-  if (usesPrivateCredential()) {
+  if (webSession) webSession.token = token;
+  else if (usesPrivateCredential()) {
     privateToken = token;
     // This bootstrap IPC remains available after expiry, unlike ordinary sync IPC.
     // Forget native enrollment even when the server's sign-out request is offline.
@@ -122,6 +138,7 @@ interface PrincipalBinding {
 }
 
 function readBinding(): PrincipalBinding | null {
+  if (webSession) return webSession.binding;
   if (usesPrivateCredential()) return privateBinding;
   try {
     const raw = localStorage.getItem(PRINCIPAL_KEY);
@@ -140,6 +157,7 @@ function readBinding(): PrincipalBinding | null {
 }
 
 function writeBinding(binding: PrincipalBinding | null): void {
+  if (webSession) { webSession.binding = binding; return; }
   if (usesPrivateCredential()) { privateBinding = binding; return; }
   try {
     if (binding) localStorage.setItem(PRINCIPAL_KEY, JSON.stringify(binding));
@@ -268,6 +286,22 @@ migrateLegacyServer({ allowDev: import.meta.env?.DEV === true });
 migrateCloudAliasSessions();
 
 let principal: string | null = restorePrincipal();
+
+/**
+ * Switch this renderer to the web app's session: `origin` is the page's own
+ * origin and `token` the cookie session's token, read from the server by the
+ * web app's boot (src/web/session.ts). Nothing is written to storage.
+ */
+export function startWebSession(origin: string, token: string, collabBase: string | null = null): void {
+  webSession = { origin: origin.replace(/\/+$/, ""), token, binding: null, collabBase };
+  principal = null;
+  accountSessionChanged();
+}
+
+/** Whether this renderer is the web app, talking to its own origin. */
+export function inWebSession(): boolean {
+  return webSession !== null;
+}
 
 /** Read-only proof that the current token was confirmed by this exact server. */
 export function getConfirmedAuthIdentity(): { userId: string; serverURL: string } | null {

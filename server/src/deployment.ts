@@ -98,8 +98,8 @@ const DOCS_ORIGIN_RULE = "MARKIE_DOCS_ORIGIN must be an exact https origin, such
 /**
  * MARKIE_DOCS_ORIGIN as an exact origin, or null when it is unset. It becomes
  * a credentialed CORS and better-auth trusted origin (application-origins.ts),
- * so only https is taken, and plain http only for a loopback name outside
- * production, the same rule as MARKIE_WEB_ORIGINS.
+ * so only https is taken, and plain http only for a development name
+ * outside production.
  */
 export function docsOriginFrom(value: string | undefined, { production = false }: { production?: boolean } = {}): string | null {
   const raw = value?.trim();
@@ -110,8 +110,10 @@ export function docsOriginFrom(value: string | undefined, { production = false }
   } catch {
     throw new Error(DOCS_ORIGIN_RULE);
   }
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-  const devHttp = url.protocol === "http:" && loopback && !production;
+  // Development names only: loopback, and the reserved .test and .localhost
+  // names (RFC 6761), which no public resolver answers for.
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || /\.(?:test|localhost)$/.test(url.hostname);
+  const devHttp = url.protocol === "http:" && local && !production;
   if ((url.protocol !== "https:" && !devHttp) || url.username || url.password || url.search || url.hash
     || (url.pathname !== "/" && url.pathname !== "")) {
     throw new Error(DOCS_ORIGIN_RULE);

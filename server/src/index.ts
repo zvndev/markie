@@ -17,6 +17,8 @@ import { agentDocsApi, restAgentAuth } from "./agent-docs.ts";
 import { mcpApi, mcpAuth } from "./mcp-server.ts";
 import { createWellKnown } from "./well-known.ts";
 import { createWebSignIn } from "./web-signin.ts";
+import { createWebApp, isWebAppPath } from "./web-app.ts";
+import { docsHostConfig, redirectToDocsHost } from "./docs-host.ts";
 import { BRAND_HEAD, brandAssets, brandLogoSvg } from "./brand.ts";
 import { attachCollab, closeAllRooms, terminateAllRooms } from "./collab.ts";
 import { collabTickets } from "./collab-tickets.ts";
@@ -106,7 +108,9 @@ app.use("*", async (c, next) => {
   // no policy of its own gets the strict one. Routes that chose a policy
   // (an asset's private max-age, server-info's public one) keep theirs.
   if (c.req.path.startsWith("/api/") && !h.has("Cache-Control")) h.set("Cache-Control", "private, no-store");
-  if ((h.get("content-type") ?? "").includes("text/html")) {
+  // The web app's pages carry their own policy (web-app.ts): it runs the
+  // app's bundle and the Darkmown frame, which this one would refuse.
+  if ((h.get("content-type") ?? "").includes("text/html") && !isWebAppPath(c.req.path)) {
     h.set("Content-Security-Policy", CONTENT_SECURITY_POLICY);
   }
 });
@@ -181,6 +185,13 @@ app.use("*", async (c, next) => {
   if (!target) return next();
   return new Response(null, { status: 308, headers: { location: target, "cache-control": "no-store" } });
 });
+// The web app's pages live on the docs host when one is set (MARKIE_DOCS_ORIGIN):
+// a browser opening /app on one of this server's API names is sent there,
+// by the same positive API-host rule as public pages (docs-host.ts). Sign-in
+// stays here. 302: the docs host is a deployment setting that can change,
+// and a browser must not remember it.
+app.use("/app/*", redirectToDocsHost(() => docsHostConfig(DEPLOYMENT), isWebAppPath));
+app.use("/app", redirectToDocsHost(() => docsHostConfig(DEPLOYMENT), isWebAppPath));
 const EMAIL_SIGN_IN = emailSignInAvailable();
 const SIGNUP = signupMode();
 adminEmail();
@@ -294,8 +305,14 @@ const AUTH_BASE =
 // Who this server is, on the deep link that hands its token to the app.
 const AUTH_ISSUER = desktopAuthIssuer(AUTH_BASE);
 
-// Signing in from a browser to read a private /d/<id> page (web-signin.ts).
+// Signing in from a browser, to read a private /d/<id> page or to use the
+// web app (web-signin.ts). Always on this server's own origin, where the
+// session cookie belongs; the web app on the docs host calls this origin
+// directly, so Google and the emailed code both work for it.
 app.route("/", createWebSignIn({ authBase: AUTH_BASE, google: googleConfigured }));
+
+// The web app at /app, when this image carries its build (web-app.ts).
+app.route("/", createWebApp({ apiOrigin: DEPLOYMENT.origin }));
 
 app.get("/auth/google-start", async (c) => {
   try {

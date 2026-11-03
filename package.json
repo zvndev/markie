@@ -27,6 +27,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "build:web": "tsc --noEmit -p tsconfig.json && vite build --config vite.web.config.ts",
     "lint": "eslint",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",

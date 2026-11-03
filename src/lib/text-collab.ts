@@ -59,6 +59,12 @@ export function diffText(prev: string, next: string): TextDiff | null {
  * come out as the full new string. `last` is the string both sides last
  * agreed on, which is what makes the echo (local edit, then the same text
  * arriving back as a prop) a no-op instead of a second edit.
+ *
+ * Local edits are taken only once the room has synced (markSynced). Before
+ * that the Y.Text is empty while the editor shows the whole local file, so
+ * the first keystroke diffed against "" would insert the entire file into
+ * the room, and the sync would then merge it with the room's own copy into
+ * a document written out twice.
  */
 export class TextCollabBinding {
   #ydoc: YDoc;
@@ -67,6 +73,7 @@ export class TextCollabBinding {
   #last: string;
   #observer: (event: YTextEvent, transaction: Transaction) => void;
   #disposed = false;
+  #synced = false;
 
   constructor(ydoc: YDoc, ytext: YText, onRemote: (text: string) => void) {
     this.#ydoc = ydoc;
@@ -87,8 +94,23 @@ export class TextCollabBinding {
     return this.#last;
   }
 
-  /** Push one local whole-string edit. Returns the merged room text. */
-  applyLocal(next: string): string {
+  /** Whether local edits are taken yet: the room has synced. */
+  get synced(): boolean {
+    return this.#synced;
+  }
+
+  /** The room has the server's state: from here on, local edits go in. */
+  markSynced(): void {
+    this.#synced = true;
+    this.#last = this.#ytext.toString();
+  }
+
+  /**
+   * Push one local whole-string edit. Returns the merged room text, or null
+   * when the room has not synced yet and the edit was not taken.
+   */
+  applyLocal(next: string): string | null {
+    if (!this.#synced) return null;
     const op = diffText(this.#last, next);
     if (op) {
       this.#ydoc.transact(() => {

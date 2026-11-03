@@ -4,7 +4,7 @@
 // remount this component (key) when the collab config changes, exactly as
 // with RichView. Presence is names-only here; remote carets in CodeMirror
 // would need a cursor binding this does not claim to have.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Doc as YDoc } from "yjs";
 import type { WebsocketProvider } from "y-websocket";
 import { useCollabRuntime, type CollabRuntime } from "@/lib/collab-loader";
@@ -16,6 +16,7 @@ import {
   type PeerUser,
 } from "@/lib/collab";
 import { TextCollabBinding, TEXT_COLLAB_KEY } from "@/lib/text-collab";
+import { useLiveRoom, type LiveRoom } from "@/lib/live-snapshot";
 import type { SourceHandle } from "@/lib/source-handle";
 import { SourceEditor } from "@/components/source-editor";
 
@@ -27,6 +28,17 @@ interface TextCollabEditorProps {
   onReady?: (handle: SourceHandle | null) => void;
   onPeersChange?: (peers: PeerUser[]) => void;
   onCollabStatus?: (status: "connecting" | "connected" | "disconnected" | "unavailable") => void;
+  /**
+   * The live session's document and provider once it exists, null when it
+   * ends: for a host that writes the stored copy (src/lib/live-snapshot.ts).
+   */
+  onLiveSession?: (session: LiveRoom | null) => void;
+  /**
+   * Called once, as the room becomes ready and before anyone can type in it,
+   * with the room's text. The host compares it with the stored copy
+   * (live-snapshot.ts rule 6).
+   */
+  onRoomReady?: (text: string) => void;
 }
 
 interface TextSession {
@@ -43,6 +55,8 @@ function TextCollabEditorInner({
   onReady,
   onPeersChange,
   onCollabStatus,
+  onLiveSession,
+  onRoomReady,
   runtime,
 }: TextCollabEditorProps & { runtime: CollabRuntime | null }) {
   const [revoked, setRevoked] = useState(false);
@@ -163,6 +177,9 @@ function TextCollabEditorInner({
       });
     };
     const trySeed = (isSynced: boolean) => {
+      // The room has the server's state: local edits may go in from here
+      // (text-collab.ts markSynced), never before.
+      if (isSynced && !cancelled && !binding.synced) binding.markSynced();
       if (!isSynced || cancelled || seededRef.current || settle || lockedRef.current) return;
       if (roomHasText()) { seededRef.current = true; return; }
       settle = setTimeout(seedNow, SEED_SETTLE_MS);
@@ -176,9 +193,35 @@ function TextCollabEditorInner({
     };
   }, [session]);
 
+  // Hand the room to a host that writes the stored copy. Null on the way out,
+  // so it never holds a destroyed document.
+  const room = useMemo<LiveRoom | null>(
+    () => (session ? ({ ydoc: session.ydoc, provider: session.provider } as unknown as LiveRoom) : null),
+    [session]
+  );
+  useEffect(() => {
+    if (!room || !onLiveSession) return;
+    onLiveSession(room);
+    return () => onLiveSession(null);
+  }, [room, onLiveSession]);
+
+  // Typing waits for the room: synced, and holding the document (or the
+  // document is empty). Before that the pane shows the local file while the
+  // room is empty, and an edit there would be the room's first content.
+  const { ready } = useLiveRoom(room, "text", { documentEmpty: !value, offer: false });
+  const onRoomReadyRef = useRef(onRoomReady);
+  onRoomReadyRef.current = onRoomReady;
+  const roomReportedRef = useRef(false);
+  useEffect(() => {
+    if (!session || !ready || roomReportedRef.current) return;
+    roomReportedRef.current = true;
+    onRoomReadyRef.current?.(session.ydoc.getText(TEXT_COLLAB_KEY).toString());
+  }, [session, ready]);
+
   const handleChange = useCallback((next: string) => {
     if (!session || lockedRef.current) return;
     const merged = session.binding.applyLocal(next);
+    if (merged === null) return;
     onChangeRef.current(merged);
   }, [session]);
 
@@ -186,14 +229,14 @@ function TextCollabEditorInner({
     return <SourceEditor value={value} plainText onChange={onChange} onReady={onReady} readOnly={readOnly} />;
   }
   return (
-    <div className="h-full flex flex-col" data-markie-text-live>
+    <div className="h-full flex flex-col" data-markie-text-live data-markie-live-role={locked ? "read-only" : "editor"} data-markie-live-hold={ready ? undefined : "syncing"}>
       {error && (
         <div role="status" className="markie-banner shrink-0 flex items-center px-3 py-1.5 text-[11px] text-muted">
           {error}
         </div>
       )}
       <div className="flex-1 min-h-0 overflow-hidden">
-        <SourceEditor value={value} plainText onChange={handleChange} onReady={onReady} readOnly={locked} />
+        <SourceEditor value={value} plainText onChange={handleChange} onReady={onReady} readOnly={locked || !ready} />
       </div>
     </div>
   );

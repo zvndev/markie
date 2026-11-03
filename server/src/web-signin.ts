@@ -14,7 +14,8 @@
 // on purpose (account-context.ts), so the page says to use the primary
 // address or Google.
 //
-// `next` is only ever a /d/<id> path on this origin. Anything else becomes "/",
+// `next` is only ever a /d/<id> path or a web app page (/app, /app/new,
+// /app/d/<id>) on this origin. Anything else becomes "/",
 // so neither route can be used to bounce a browser somewhere else.
 import { Hono } from "hono";
 import { auth } from "./auth.ts";
@@ -22,9 +23,12 @@ import { reportRouteFault } from "./little-friend.ts";
 import { BRAND_HEAD, brandLogoSvg } from "./brand.ts";
 
 const NEXT = /^\/d\/[A-Za-z0-9_-]{1,128}$/;
+// The web app's pages (web-app.ts): its library, the new-document chooser,
+// and one document. A signed-out visit to any of them comes back here.
+const APP_NEXT = /^\/app(?:\/|\/new|\/d\/[A-Za-z0-9_-]{1,128})?$/;
 
 export function safeNext(value: string | null | undefined): string {
-  return typeof value === "string" && NEXT.test(value) ? value : "/";
+  return typeof value === "string" && (NEXT.test(value) || APP_NEXT.test(value)) ? value : "/";
 }
 
 /**
@@ -110,7 +114,7 @@ export function renderWebSignInPage({ next, google, failed }: { next: string; go
   <main>
     <div class="m">${brandLogoSvg(160)}</div>
     <h1>Sign in to Markie</h1>
-    <p>Use the account this document belongs to.</p>
+    <p>${next.startsWith("/app") ? "Sign in to open your documents." : "Use the account this document belongs to."}</p>
     ${google ? `<a class="btn primary" href="${esc(googleHref)}">Continue with Google</a><div class="or">or get a code by email</div>` : ""}
     <form id="send">
       <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required aria-label="Email">
@@ -145,7 +149,9 @@ export function renderWebSignInPage({ next, google, failed }: { next: string; go
           if (r.ok) { location.replace(next); return; }
           err.textContent = r.status === 403
             ? ${JSON.stringify(google ? "Use the main email on your account, or sign in with Google." : "Use the main email on your account.")}
-            : "That code isn't right, or it expired.";
+            : r.status === 429
+              ? "Too many tries. Wait a minute, then try the code again."
+              : "That code isn't right, or it expired.";
         }, function () { err.textContent = "Couldn't reach Markie."; });
       });
     })();
@@ -153,6 +159,12 @@ export function renderWebSignInPage({ next, google, failed }: { next: string; go
 </body></html>`;
 }
 
+/**
+ * Always served on this server's own origin. A web app page in `next` is
+ * reached on this origin first and sent on to the docs host from there
+ * (index.ts), so Google's callback and the emailed code both set the session
+ * cookie here, where the app asks for it.
+ */
 export function createWebSignIn({ authBase, google }: { authBase: string; google: boolean }) {
   const app = new Hono();
   app.get("/auth/web-signin", async (c) => {

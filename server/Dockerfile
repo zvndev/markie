@@ -23,6 +23,10 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 COPY src ./src
 COPY download-manifest.json ./download-manifest.json
+# The web app at /app (src/web-app.ts), built by `npm run build:web` at the
+# repo root before this image is built. Without that step the directory holds
+# only its placeholder and /app answers 404.
+COPY web-dist ./web-dist
 COPY litestream.yml /etc/litestream.yml
 COPY docker-entrypoint.sh ./
 # The server runs as `markie`, uid and gid 10002, never as root. /data belongs

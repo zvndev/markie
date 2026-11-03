@@ -2,7 +2,7 @@
 // tested without a device and the app can swap the native transport for the
 // browser's fetch while developing in a desktop browser.
 
-export type HttpMethod = "GET" | "POST" | "PUT";
+export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 export interface HttpRequest {
   method: HttpMethod;

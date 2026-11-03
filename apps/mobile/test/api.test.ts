@@ -74,7 +74,7 @@ describe("api client: documents", () => {
     const docs = await api.recent({ limit: 500, before: "2026-10-25T10:00:00.000Z" });
     expect(calls[0].url).toBe(`${ORIGIN}/api/docs/recent?limit=100&before=2026-10-25T10%3A00%3A00.000Z`);
     expect(calls[0].headers).toEqual({ authorization: `Bearer ${TOKEN}` });
-    expect(docs).toEqual([{ ...recentItem, format: "darkmown", origin: { kind: "agent", agent: "Claude Code" } }]);
+    expect(docs).toEqual([{ ...recentItem, store: "docs", kind: "darkmown", format: "darkmown", origin: { kind: "agent", agent: "Claude Code" } }]);
   });
 
   it("drops malformed rows instead of trusting them", async () => {

@@ -6,7 +6,7 @@ const NOW = Date.parse("2026-10-25T15:00:00.000Z");
 
 function doc(id: string, name: string, updatedAt: string, extra: Partial<RecentDoc> = {}): RecentDoc {
   return {
-    id, name, format: "markdown", createdAt: null, updatedAt,
+    id, store: "docs", kind: "markdown", name, format: "markdown", createdAt: null, updatedAt,
     origin: { kind: "app", agent: null }, shared: false, role: "owner", sharedBy: null,
     privateLink: `https://api.markiedocs.com/d/${id}`, ...extra,
   };

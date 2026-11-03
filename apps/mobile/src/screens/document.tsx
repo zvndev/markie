@@ -14,7 +14,11 @@ import type { Tone } from "../lib/theme-mode";
 import { Screen } from "../components/screen";
 import { MarkdownView } from "../components/markdown-view";
 import { DarkmownView } from "../components/darkmown-view";
-import { AlertIcon, LockIcon, PencilIcon, ShareIcon, SparkleIcon } from "../components/icons";
+import { AlertIcon, CommentIcon, LockIcon, PeopleIcon, PencilIcon, ShareIcon, SparkleIcon, UserPlusIcon } from "../components/icons";
+import { ShareSheet } from "../components/share-sheet";
+import { docsPeople, docsPublicLink } from "../lib/share-people";
+import { liveKind } from "../lib/live";
+import type { ShareMember } from "../lib/api";
 
 interface DocumentProps {
   api: ApiClient;
@@ -29,6 +33,10 @@ interface DocumentProps {
   onOpen: (target: LinkTarget) => void;
   /** Opens the editor on the version shown. */
   onEdit: (doc: CloudDoc) => void;
+  /** Opens the live document with its comments showing. */
+  onComments: (doc: CloudDoc) => void;
+  /** Who is signed in, for the share sheet. */
+  me: { email: string; name: string };
   onUnauthorized: () => void;
   /** Bumped by the app after a save, so the screen reads the new version. */
   reloadKey?: number;
@@ -39,7 +47,11 @@ type State =
   | { status: "ready"; doc: CloudDoc }
   | { status: "error"; error: unknown };
 
-export function DocumentScreen({ api, target, initialName, backLabel, tone, onBack, onRecent, onOpen, onEdit, onUnauthorized, reloadKey = 0 }: DocumentProps) {
+export function DocumentScreen({ api, target, initialName, backLabel, tone, onBack, onRecent, onOpen, onEdit, onComments, me, onUnauthorized, reloadKey = 0 }: DocumentProps) {
+  const [sharing, setSharing] = useState(false);
+  // Who else is on it: null until known, and for a public share, which has no members to ask about.
+  const [members, setMembers] = useState<ShareMember[] | null>(null);
+  const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [state, setState] = useState<State>({ status: "loading" });
   const [related, setRelated] = useState<Map<string, string>>(new Map());
   const [notice, setNotice] = useState<string | null>(null);
@@ -53,6 +65,8 @@ export function DocumentScreen({ api, target, initialName, backLabel, tone, onBa
       if (current !== run.current) return;
       setState({ status: "ready", doc });
       if (target.kind === "doc") void api.docLinks(target.id).then((links) => { if (current === run.current) setRelated(links); });
+      if (target.kind === "doc") void api.shares(target.id).then((list) => { if (current === run.current) setMembers(list); }, () => undefined);
+      if (target.kind === "doc" && doc.role === "owner") void api.publicLink(target.id).then((url) => { if (current === run.current) setPublicUrl(url); }, () => undefined);
     } catch (error) {
       if (current !== run.current) return;
       if (error instanceof ApiError && error.status === 401 && target.kind === "doc") { onUnauthorized(); return; }
@@ -88,6 +102,10 @@ export function DocumentScreen({ api, target, initialName, backLabel, tone, onBa
     }
   }, [api.origin, onOpen, related]);
 
+  const shared = !!members && members.length > 0;
+  const owner = doc?.role === "owner";
+  // Comments live on the live document, as on the desktop: a Markdown file someone else is on.
+  const commentable = !!doc && !doc.publicToken && shared && liveKind(doc.name, doc.format) === "rich";
   const actions = doc ? (
     <>
       {canEditDoc(doc) ? (
@@ -95,9 +113,20 @@ export function DocumentScreen({ api, target, initialName, backLabel, tone, onBa
           <PencilIcon size={22} />
         </button>
       ) : null}
-      <button type="button" className="m-nav-icon" aria-label="Share link" onClick={() => void shareLink(displayName(doc.name), doc.privateLink)}>
-        <ShareIcon size={23} />
-      </button>
+      {commentable ? (
+        <button type="button" className="m-nav-icon" aria-label="Comments" onClick={() => onComments(doc)}>
+          <CommentIcon size={22} />
+        </button>
+      ) : null}
+      {doc.publicToken ? (
+        <button type="button" className="m-nav-icon" aria-label="Share link" onClick={() => void shareLink(displayName(doc.name), doc.privateLink)}>
+          <ShareIcon size={23} />
+        </button>
+      ) : (
+        <button type="button" className="m-nav-icon" aria-label="Share" onClick={() => setSharing(true)}>
+          <UserPlusIcon size={23} />
+        </button>
+      )}
     </>
   ) : null;
 
@@ -120,13 +149,29 @@ export function DocumentScreen({ api, target, initialName, backLabel, tone, onBa
       {state.status === "error" ? <DocError error={state.error} server={serverLabel(api.origin)} onRetry={() => { setState({ status: "loading" }); void load(); }} onRecent={onRecent} onSignIn={onUnauthorized} /> : null}
       {doc ? (
         <>
-          <DocMeta doc={doc} />
+          <DocMeta doc={doc} members={members} publicUrl={publicUrl} />
           {doc.format === "markdown" ? <MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} /> : null}
           {doc.format === "text" ? <pre className="m-text-doc">{doc.content}</pre> : null}
           {doc.format === "darkmown" ? <DarkmownView docKey={docKey} source={doc.content} tone={tone} /> : null}
         </>
       ) : null}
       {notice ? <div className="m-toast" role="status">{notice}</div> : null}
+      {sharing && doc && target.kind === "doc" ? (
+        <ShareSheet
+          title={doc.name}
+          people={docsPeople(api, target.id)}
+          publicLink={owner ? docsPublicLink(api, target.id) : null}
+          canManage={owner}
+          me={me}
+          link={doc.privateLink}
+          onClose={() => setSharing(false)}
+          onUnauthorized={onUnauthorized}
+          onChanged={() => {
+            void api.shares(target.id).then(setMembers, () => undefined);
+            if (owner) void api.publicLink(target.id).then(setPublicUrl, () => undefined);
+          }}
+        />
+      ) : null}
     </Screen>
   );
 }
@@ -134,7 +179,7 @@ export function DocumentScreen({ api, target, initialName, backLabel, tone, onBa
 // The nav bar names the document and its own first heading usually does too,
 // so this line is only what neither says: its format, who made it, who can
 // read it, and when it last changed. The file name is there for VoiceOver.
-function DocMeta({ doc }: { doc: CloudDoc }) {
+function DocMeta({ doc, members, publicUrl }: { doc: CloudDoc; members: ShareMember[] | null; publicUrl: string | null }) {
   const from = originLabel(doc.origin);
   return (
     <div className="m-doc-meta">
@@ -143,7 +188,8 @@ function DocMeta({ doc }: { doc: CloudDoc }) {
         <span className="m-visually-hidden">{doc.name}</span>
         <span className="m-doc-meta-line">
           {from ? <span className="m-badge m-badge-agent"><SparkleIcon size={11} />{from}</span> : null}
-          {doc.publicToken ? <span className="m-badge">Public link</span> : <span className="m-doc-private"><LockIcon size={12} />Private</span>}
+          {doc.publicToken || publicUrl ? <span className="m-badge">Public link</span> : <span className="m-doc-private"><LockIcon size={12} />Private</span>}
+          {members && members.length > 0 ? <span className="m-doc-private"><PeopleIcon size={13} />{members.length === 1 ? "1 person" : `${members.length} people`}</span> : null}
           {doc.role === "viewer" ? <span>View only</span> : null}
           {doc.updatedAt ? <span>Updated {timeLabel(doc.updatedAt)}</span> : null}
         </span>

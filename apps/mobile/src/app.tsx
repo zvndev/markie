@@ -26,14 +26,17 @@ import { clearRecentCache, RecentScreen } from "./screens/recent";
 import { DocumentScreen } from "./screens/document";
 import { SettingsScreen } from "./screens/settings";
 import { EditorScreen, type EditorDraft } from "./screens/editor";
-import { NewDocScreen } from "./screens/new-doc";
+import { NewDocChooser, NewDocScreen } from "./screens/new-doc";
+import { OfficeScreen } from "./screens/office";
+import type { NewDocType } from "./lib/docs";
 import { IncomingScreen } from "./screens/incoming";
 
 type Route =
   | { key: string; kind: "recent" }
   | { key: string; kind: "settings" }
   | { key: string; kind: "doc"; target: LinkTarget; name?: string; reloadKey?: number }
-  | { key: string; kind: "new" }
+  | { key: string; kind: "new"; type: NewDocType }
+  | { key: string; kind: "office"; id: string; name?: string; startEditing?: boolean }
   | { key: string; kind: "edit"; draft: EditorDraft }
   | { key: string; kind: "file"; file: IncomingFile };
 
@@ -77,6 +80,10 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => loadThemeMode());
   const [systemDark, setSystemDark] = useState(() => systemPrefersDark());
   const [refreshKey, setRefreshKey] = useState(0);
+  // The desktop's New document chooser, over whichever screen asked for it.
+  const [chooser, setChooser] = useState(false);
+  const chooserRef = useRef(false);
+  chooserRef.current = chooser;
   const tone = resolveTone(themeMode, systemDark);
 
   // Theme: the desktop's Markie tokens, light or dark, and the status bar to match.
@@ -233,6 +240,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     let removed = false;
     void CapApp.addListener("backButton", () => {
       const top = routesRef.current[routesRef.current.length - 1];
+      if (chooserRef.current) { setChooser(false); return; }
       if (top.kind === "edit" && backGuard.current) { backGuard.current(); return; }
       if (routesRef.current.length > 1 && sessionRef.current) pop();
       else void CapApp.minimizeApp().catch(() => undefined);
@@ -248,6 +256,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     sessionRef.current = null;
     setSession(null);
     setRoutes([ROOT]);
+    setChooser(false);
     setSignInNotice(notice);
   }, [native, sessionStore]);
 
@@ -325,9 +334,11 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
           <RecentScreen
             api={api}
             refreshKey={refreshKey}
-            onOpen={(doc) => openTarget({ kind: "doc", id: doc.id, origin: api.origin }, { name: doc.name })}
+            onOpen={(doc) => doc.store === "platform"
+              ? setRoutes((stack) => [...stack, { key: nextKey("office"), kind: "office", id: doc.id, name: doc.name }])
+              : openTarget({ kind: "doc", id: doc.id, origin: api.origin }, { name: doc.name })}
             onSettings={() => setRoutes((stack) => (stack[stack.length - 1].kind === "settings" ? stack : [...stack, { key: nextKey("settings"), kind: "settings" }]))}
-            onNew={() => setRoutes((stack) => (stack[stack.length - 1].kind === "new" ? stack : [...stack, { key: nextKey("new"), kind: "new" }]))}
+            onNew={() => setChooser(true)}
             onUnauthorized={onUnauthorized}
           />
         ),
@@ -345,9 +356,34 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
         locked: true,
         node: (
           <NewDocScreen
+            api={api}
+            type={route.type}
             onCancel={pop}
             onStart={(draft) => setRoutes((stack) => [...stack.slice(0, -1), { key: nextKey("edit"), kind: "edit", draft: { kind: "new", ...draft } }])}
-            onOpenFile={(file) => setRoutes((stack) => [...stack.slice(0, -1), { key: nextKey("file"), kind: "file", file }])}
+            onCreated={({ id, name }) => {
+              setRefreshKey((value) => value + 1);
+              setRoutes((stack) => [...stack.slice(0, -1), { key: nextKey("office"), kind: "office", id, name, startEditing: true }]);
+            }}
+            onUnauthorized={onUnauthorized}
+          />
+        ),
+      };
+    }
+    if (route.kind === "office") {
+      return {
+        key: route.key,
+        node: (
+          <OfficeScreen
+            api={api}
+            id={route.id}
+            initialName={route.name}
+            backLabel={backLabel}
+            tone={tone}
+            me={{ email: session.email, name: session.name }}
+            startEditing={route.startEditing}
+            onBack={pop}
+            onUnauthorized={onUnauthorized}
+            onChanged={() => setRefreshKey((value) => value + 1)}
           />
         ),
       };
@@ -360,6 +396,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
           <EditorScreen
             api={api}
             draft={route.draft}
+            me={{ id: session.userId, name: session.name, email: session.email }}
             backGuard={backGuard}
             onCancel={(reload) => setRoutes((stack) => (reload ? reloadDoc(stack.slice(0, -1), route.draft.kind === "cloud" ? route.draft.id : null) : stack.slice(0, -1)))}
             onSaved={editorSaved}
@@ -404,9 +441,15 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
           onOpen={(target) => openTarget(target)}
           onEdit={(doc) => {
             if (doc.version === null) return;
-            const draft: EditorDraft = { kind: "cloud", id: doc.id, name: doc.name, format: doc.format, content: doc.content, version: doc.version };
+            const draft: EditorDraft = { kind: "cloud", id: doc.id, name: doc.name, format: doc.format, content: doc.content, version: doc.version, role: doc.role };
             setRoutes((stack) => [...stack, { key: nextKey("edit"), kind: "edit", draft }]);
           }}
+          onComments={(doc) => {
+            if (doc.version === null) return;
+            const draft: EditorDraft = { kind: "cloud", id: doc.id, name: doc.name, format: doc.format, content: doc.content, version: doc.version, role: doc.role === "viewer" ? "viewer" : doc.role, openComments: true };
+            setRoutes((stack) => [...stack, { key: nextKey("edit"), kind: "edit", draft }]);
+          }}
+          me={{ email: session.email, name: session.name }}
           reloadKey={route.reloadKey}
           onUnauthorized={onUnauthorized}
         />
@@ -417,6 +460,13 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   return (
     <>
       <Navigator entries={entries} onPop={pop} />
+      {chooser ? (
+        <NewDocChooser
+          onClose={() => setChooser(false)}
+          onChoose={(type) => { setChooser(false); setRoutes((stack) => [...stack, { key: nextKey("new"), kind: "new", type }]); }}
+          onOpenFile={(file) => { setChooser(false); setRoutes((stack) => [...stack, { key: nextKey("file"), kind: "file", file }]); }}
+        />
+      ) : null}
       {toast ? <div className="m-toast" role="status">{toast}</div> : null}
     </>
   );

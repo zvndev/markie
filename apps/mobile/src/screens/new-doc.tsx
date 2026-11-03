@@ -1,24 +1,28 @@
-// Starting a document on the phone: a name and a kind. Nothing is created on
-// the server until the first save, so backing out leaves no empty document.
+// Starting a document on the phone. The first step is the desktop's own
+// centered chooser (src/components/new-document-modal.tsx) with every format
+// it offers; the second is a name. A text kind isn't created on the server
+// until its first save, so backing out leaves no empty document. Word, Rich
+// Text and OpenDocument are files of their own format, created blank on the
+// document platform when Create is tapped, then opened to write in.
 import { useRef, useState } from "react";
 import { DocumentFormatMark } from "@/components/document-format-mark";
-import { formatFromName, markFormat, newDocName, NEW_DOC_TYPES, type DocFormat } from "../lib/docs";
+import { NewDocumentModal } from "@/components/new-document-modal";
+import { formatFromName, newDocName, newDocType, type DocFormat, type NewDocType } from "../lib/docs";
 import { decodeIncomingFile, IncomingFileError, type IncomingFile } from "../lib/incoming-file";
 import { haptics } from "../lib/native";
+import { ApiError, type ApiClient } from "../lib/api";
 import { Screen } from "../components/screen";
-import { CheckIcon, ChevronRight, InboxIcon } from "../components/icons";
+import { ChevronRight, InboxIcon } from "../components/icons";
 
 // What the Files picker offers: the text kinds, and the documents Markie turns into text.
 const OPENABLE = ".md,.markdown,.mdx,.wd,.txt,.text,.log,.csv,.tsv,.json,.yaml,.yml,.xml,.toml,.ini,.docx,.rtf,.odt,.html,.htm,text/*";
 
-interface NewDocProps {
-  onCancel: () => void;
-  onStart: (draft: { name: string; format: DocFormat; content: string }) => void;
-  /** A file picked from the phone (Files, iCloud Drive, Drive), opened before it is saved. */
+/** The desktop's chooser, over whatever screen asked for it, with the phone's own "Open a file" under the formats. */
+export function NewDocChooser({ onChoose, onClose, onOpenFile }: {
+  onChoose: (type: NewDocType) => void;
+  onClose: () => void;
   onOpenFile: (file: IncomingFile) => void;
-}
-
-export function NewDocScreen({ onCancel, onStart, onOpenFile }: NewDocProps) {
+}) {
   const picker = useRef<HTMLInputElement>(null);
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
@@ -37,25 +41,89 @@ export function NewDocScreen({ onCancel, onStart, onOpenFile }: NewDocProps) {
     }
   };
 
-  const [typed, setTyped] = useState("");
-  const [typeId, setTypeId] = useState(NEW_DOC_TYPES[0].id);
-  const type = NEW_DOC_TYPES.find((item) => item.id === typeId) ?? NEW_DOC_TYPES[0];
-  const name = newDocName(typed, type);
+  return (
+    <div className="m-chooser">
+      <NewDocumentModal
+        onClose={onClose}
+        onCreate={(format) => { haptics.tap(); onChoose(newDocType(format)); }}
+        footer={
+          <div className="m-chooser-footer">
+            <h3 className="mb-2.5 mt-6 text-[13px] font-semibold text-foreground">From your phone</h3>
+            <button type="button" className="m-chooser-open" onClick={() => picker.current?.click()} disabled={opening}>
+              <InboxIcon size={20} />
+              <span>{opening ? "Opening…" : "Open a file from your phone"}</span>
+              <ChevronRight size={16} className="m-row-chevron" />
+            </button>
+            {openError ? <p className="m-form-error" role="alert">{openError}</p> : null}
+            <input ref={picker} type="file" accept={OPENABLE} hidden onChange={(event) => void picked(event.target.files)} />
+          </div>
+        }
+      />
+    </div>
+  );
+}
 
-  const start = () => {
+interface NewDocProps {
+  api: ApiClient;
+  type: NewDocType;
+  onCancel: () => void;
+  /** A text kind: open the editor on a draft that isn't saved yet. */
+  onStart: (draft: { name: string; format: DocFormat; content: string }) => void;
+  /** A Word, RTF or OpenDocument file, made blank on the server: open it to write. */
+  onCreated: (doc: { id: string; name: string }) => void;
+  onUnauthorized: () => void;
+}
+
+export function NewDocScreen({ api, type, onCancel, onStart, onCreated, onUnauthorized }: NewDocProps) {
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const name = newDocName(typed, type);
+  const platform = type.store === "platform";
+
+  const start = async () => {
+    if (busy) return;
     const title = name.replace(/\.[^.]*$/, "");
     haptics.tap();
-    onStart({ name, format: formatFromName(name), content: type.starter(title) });
+    if (!platform) {
+      onStart({ name, format: formatFromName(name), content: type.starter(title) });
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const bytes = await blankFile(type.id);
+      const snapshot = await api.platform().upload({ name, bytes });
+      haptics.success();
+      onCreated({ id: snapshot.id, name: snapshot.name });
+    } catch (failure) {
+      const status = failure instanceof ApiError ? failure.status : (failure as { status?: unknown } | null)?.status;
+      if (status === 401) { onUnauthorized(); return; }
+      setError(failure instanceof Error && failure.message ? failure.message : "Couldn't create the document. Try again.");
+      setBusy(false);
+    }
   };
 
   return (
     <Screen
-      title="New document"
-      leading={<button type="button" className="m-nav-text" onClick={onCancel}>Cancel</button>}
-      actions={<button type="button" className="m-nav-text m-nav-text-strong" onClick={start}>Next</button>}
+      title={`New ${type.label}`}
+      leading={<button type="button" className="m-nav-text" onClick={onCancel} disabled={busy}>Cancel</button>}
+      actions={
+        <button type="button" className="m-nav-text m-nav-text-strong" onClick={() => void start()} disabled={busy}>
+          {busy ? <span className="m-spinner m-spinner-small" aria-hidden="true" /> : null}
+          {platform ? (busy ? "Creating" : "Create") : "Next"}
+        </button>
+      }
       className="m-new-doc"
     >
-      <form className="m-new-doc-form" onSubmit={(event) => { event.preventDefault(); start(); }}>
+      <form className="m-new-doc-form" onSubmit={(event) => { event.preventDefault(); void start(); }}>
+        <div className="m-new-doc-kind">
+          <DocumentFormatMark format={type.id} size="md" />
+          <span className="m-type-text">
+            <span className="m-type-label">{type.label} <span className="m-type-ext">{type.extension}</span></span>
+            <span className="m-type-hint">{type.hint}</span>
+          </span>
+        </div>
         <label className="m-field">
           <span className="m-field-label">Name</span>
           <input
@@ -63,48 +131,32 @@ export function NewDocScreen({ onCancel, onStart, onOpenFile }: NewDocProps) {
             onChange={(event) => setTyped(event.target.value)}
             placeholder="Untitled"
             autoFocus
-            enterKeyHint="next"
+            enterKeyHint={platform ? "done" : "next"}
             autoCapitalize="sentences"
             aria-describedby="m-new-doc-file"
           />
           <span id="m-new-doc-file" className="m-field-hint">Saved to Markie Cloud as <strong>{name}</strong></span>
         </label>
-        <h2 className="m-group-heading">Kind</h2>
-        <div className="m-group m-type-list" role="radiogroup" aria-label="Kind of document">
-          {NEW_DOC_TYPES.map((item) => {
-            const selected = item.id === type.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                className={`m-type-row${selected ? " is-selected" : ""}`}
-                onClick={() => { if (!selected) { haptics.selection(); setTypeId(item.id); } }}
-              >
-                <DocumentFormatMark format={markFormat({ name: `x${item.extension}`, format: formatFromName(`x${item.extension}`) })} size="sm" />
-                <span className="m-type-text">
-                  <span className="m-type-label">{item.label} <span className="m-type-ext">{item.extension}</span></span>
-                  <span className="m-type-hint">{item.hint}</span>
-                </span>
-                {selected ? <CheckIcon size={20} className="m-type-check" /> : null}
-              </button>
-            );
-          })}
-        </div>
-        <p className="m-group-footer">Type your own extension in the name for any other kind of text file. It opens on your computer the moment it syncs.</p>
-        <h2 className="m-group-heading">Or bring one in</h2>
-        <div className="m-group">
-          <button type="button" className="m-group-action m-open-file" onClick={() => picker.current?.click()} disabled={opening}>
-            <InboxIcon size={20} />
-            <span>{opening ? "Opening…" : "Open a file from your phone"}</span>
-            <ChevronRight size={16} className="m-row-chevron" />
-          </button>
-        </div>
-        {openError ? <p className="m-form-error m-open-error" role="alert">{openError}</p> : null}
-        <p className="m-group-footer">Markdown, text, Darkmown, CSV and JSON open as they are. Word files become Markdown, and RTF, OpenDocument and HTML become plain text. The original isn't changed.</p>
-        <input ref={picker} type="file" accept={OPENABLE} hidden onChange={(event) => void picked(event.target.files)} />
+        {error ? <p className="m-form-error" role="alert">{error}</p> : null}
+        <p className="m-group-footer">
+          {platform
+            ? `A ${type.label} file stays a ${type.label} file. It opens in Markie on your computer as one.`
+            : "Type your own extension in the name for any other kind of text file. It opens on your computer the moment it syncs."}
+        </p>
       </form>
     </Screen>
   );
+}
+
+/** A blank file of the format, written by the desktop's own writers. */
+async function blankFile(format: string): Promise<Uint8Array> {
+  if (format === "docx") {
+    const { createDocx, exportDocx } = await import("@/lib/office/docx");
+    return exportDocx(await createDocx(""));
+  }
+  if (format === "rtf" || format === "odt") {
+    const { createRichDocument, exportRichDocument } = await import("@/lib/office/rich-document");
+    return exportRichDocument(await createRichDocument(format, ""));
+  }
+  throw new Error("That kind of document is made as text.");
 }

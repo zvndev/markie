@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentFormatMark } from "@/components/document-format-mark";
 import { ApiError, type ApiClient } from "../lib/api";
+import { docTypeGroup as filterGroup } from "../lib/docs";
 import { isMarkieCloud } from "../lib/server-origin";
-import { markFormat, type RecentDoc } from "../lib/docs";
+import { DOC_TYPE_FILTERS, kindLabel, type DocTypeFilter, type RecentDoc } from "../lib/docs";
 import { haptics } from "../lib/native";
 import {
   PAGE_SIZE,
@@ -16,6 +17,7 @@ import {
   sectionRecent,
   sharedLabel,
   timeLabel,
+  withPlatform,
   type RecentScope,
 } from "../lib/recent";
 import { Screen } from "../components/screen";
@@ -43,6 +45,7 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onUnauthorized, r
   const [state, setState] = useState<LoadState>(warm ? { status: "ready" } : { status: "loading" });
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<RecentScope>("all");
+  const [type, setType] = useState<DocTypeFilter>("all");
   const [loadingMore, setLoadingMore] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const generation = useRef(0);
@@ -55,9 +58,11 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onUnauthorized, r
   const load = useCallback(async () => {
     const run = ++generation.current;
     try {
-      const page = await api.recent({ limit: PAGE_SIZE });
+      // Word, RTF and OpenDocument files live in the document platform, which
+      // answers with everything at once; the Markdown list pages.
+      const [page, platform] = await Promise.all([api.recent({ limit: PAGE_SIZE }), api.platformRecent()]);
       if (run !== generation.current) return;
-      const next = mergeRecent([], page);
+      const next = withPlatform(mergeRecent([], page), platform);
       setDocs(next);
       setCursor(nextCursor(page));
       setNow(Date.now());
@@ -91,7 +96,8 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onUnauthorized, r
     }
   }, [api, cursor, loadingMore, state.status, onUnauthorized]);
 
-  const visible = useMemo(() => filterRecent(docs, query, scope), [docs, query, scope]);
+  const visible = useMemo(() => filterRecent(docs, query, scope, type), [docs, query, scope, type]);
+  const typesPresent = useMemo(() => new Set(docs.map((doc) => filterGroup(doc))), [docs]);
   const sections = useMemo(() => sectionRecent(visible, now), [visible, now]);
   const sharedCount = useMemo(() => docs.filter((doc) => doc.shared).length, [docs]);
 
@@ -123,6 +129,20 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onUnauthorized, r
             onClick={() => { if (scope !== value) { haptics.selection(); setScope(value); } }}
           >
             {value === "all" ? "All" : `Shared with you${sharedCount ? ` (${sharedCount})` : ""}`}
+          </button>
+        ))}
+      </div>
+      <div className="m-chips" role="radiogroup" aria-label="Type of document">
+        {DOC_TYPE_FILTERS.filter((item) => item.id === "all" || item.id === type || typesPresent.has(item.id)).map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            role="radio"
+            aria-checked={type === item.id}
+            className={`m-chip${type === item.id ? " is-selected" : ""}`}
+            onClick={() => { if (type !== item.id) { haptics.selection(); setType(item.id); } }}
+          >
+            {item.label}
           </button>
         ))}
       </div>
@@ -163,15 +183,15 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onUnauthorized, r
       ) : null}
       {docs.length > 0 && visible.length === 0 ? (
         <div className="m-empty m-empty-compact">
-          <h2>{query ? "No matches" : "Nothing shared with you yet"}</h2>
-          <p>{query ? `No document names match "${query}".` : "When someone shares a document with this account, it appears here."}</p>
+          <h2>{query || type !== "all" ? "No matches" : "Nothing shared with you yet"}</h2>
+          <p>{query ? `No document names match "${query}".` : type !== "all" ? "No documents of that type here." : "When someone shares a document with this account, it appears here."}</p>
         </div>
       ) : null}
       {sections.map((section) => (
         <section key={section.title} className="m-list-section" aria-label={section.title}>
           <h2 className="m-list-heading">{section.title}</h2>
           <ul className="m-list">
-            {section.docs.map((doc) => <DocRow key={doc.id} doc={doc} now={now} onOpen={onOpen} />)}
+            {section.docs.map((doc) => <DocRow key={`${doc.store}:${doc.id}`} doc={doc} now={now} onOpen={onOpen} />)}
           </ul>
         </section>
       ))}
@@ -186,7 +206,7 @@ function DocRow({ doc, now, onOpen }: { doc: RecentDoc; now: number; onOpen: (do
   return (
     <li>
       <button type="button" className="m-row" onClick={() => onOpen(doc)}>
-        <DocumentFormatMark format={markFormat(doc)} size="sm" />
+        <DocumentFormatMark format={doc.kind} size="sm" />
         <span className="m-row-main">
           <span className="m-row-title">{displayName(doc.name)}</span>
           <span className="m-row-meta">
@@ -200,13 +220,6 @@ function DocRow({ doc, now, onOpen }: { doc: RecentDoc; now: number; onOpen: (do
       </button>
     </li>
   );
-}
-
-function kindLabel(doc: RecentDoc): string {
-  if (doc.format === "darkmown") return "Interactive document";
-  if (doc.format === "markdown") return "Markdown";
-  const kind = markFormat(doc);
-  return kind === "csv" ? "Spreadsheet" : kind === "json" ? "JSON" : kind === "xml" ? "XML" : "Text";
 }
 
 function ListSkeleton() {

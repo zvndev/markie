@@ -1,8 +1,15 @@
 // The document shapes the app reads from the server, parsed defensively.
 // The server is the user's own choice of origin, but the app still never
 // trusts a field's type, length or format just because it arrived as JSON.
+import { classifyDocumentFormat } from "@/lib/document-formats";
 
 export type DocFormat = "markdown" | "darkmown" | "text";
+
+/** A file's own kind from its name (yaml, csv, docx...), or the store's format when the name says nothing more. */
+export function kindFromName(name: string, format: DocFormat): string {
+  const kind = classifyDocumentFormat(name).kind;
+  return kind === "unsupported" || kind === "html" ? format : kind;
+}
 
 export interface DocOrigin {
   kind: "app" | "agent";
@@ -10,8 +17,19 @@ export interface DocOrigin {
   agent: string | null;
 }
 
+/**
+ * Where a document lives on the server. "docs" is the Markdown and text store
+ * (`/api/docs`), the one the desktop syncs and edits live. "platform" is the
+ * document platform (`/api/document-platform`), which keeps Word, RTF,
+ * OpenDocument and other files as versioned snapshots of their own bytes.
+ */
+export type DocStore = "docs" | "platform";
+
 export interface RecentDoc {
   id: string;
+  store: DocStore;
+  /** The file's own kind (classifyDocumentFormat): markdown, text, csv, docx, rtf, odt and so on. */
+  kind: string;
   name: string;
   format: DocFormat;
   createdAt: string | null;
@@ -74,29 +92,46 @@ export function canEditDoc(doc: CloudDoc): boolean {
   return doc.role === null || doc.role === "owner" || doc.role === "editor";
 }
 
-/** The kinds of document the phone can start. Each one is text, which is what Markie Cloud stores. */
+/**
+ * The kinds of document the phone can start: every format the desktop's New
+ * document chooser offers (src/components/new-document-modal.tsx), in its
+ * order. Text kinds go to the Markdown and text store; Word, RTF and
+ * OpenDocument go to the document platform as files of their own format.
+ */
 export interface NewDocType {
   id: string;
   label: string;
   hint: string;
   extension: string;
+  store: DocStore;
   starter: (title: string) => string;
 }
 
 export const NEW_DOC_TYPES: readonly NewDocType[] = [
-  { id: "markdown", label: "Markdown", hint: "Headings, lists, links and tables", extension: ".md", starter: (title) => `# ${title}\n\n` },
-  { id: "text", label: "Plain text", hint: "Just the words, nothing rendered", extension: ".txt", starter: () => "" },
-  { id: "darkmown", label: "Darkmown", hint: "An interactive document with buttons and state", extension: ".wd", starter: (title) => `---\ntitle: ${title}\n---\n\n# ${title}\n\n:state count = 0\n\nCount: { count }.\n\n:button "Add one" -> count++\n` },
-  { id: "csv", label: "CSV", hint: "Rows and columns", extension: ".csv", starter: () => "Name,Value\n" },
-  { id: "json", label: "JSON", hint: "Structured data", extension: ".json", starter: () => "{\n  \n}\n" },
-  { id: "yaml", label: "YAML", hint: "Config and front matter", extension: ".yaml", starter: () => "" },
+  { id: "markdown", label: "Markdown", hint: "Notes and docs with rich and source views", extension: ".md", store: "docs", starter: (title) => `# ${title}\n\n` },
+  { id: "docx", label: "Word", hint: "Native Word formatting and page layout", extension: ".docx", store: "platform", starter: () => "" },
+  { id: "rtf", label: "Rich Text", hint: "Portable formatting for Word and TextEdit", extension: ".rtf", store: "platform", starter: () => "" },
+  { id: "odt", label: "OpenDocument", hint: "The open format for LibreOffice", extension: ".odt", store: "platform", starter: () => "" },
+  { id: "text", label: "Plain text", hint: "Exactly the characters you type", extension: ".txt", store: "docs", starter: () => "" },
+  { id: "darkmown", label: "Darkmown", hint: "Notes with live values and interactive controls", extension: ".wd", store: "docs", starter: (title) => `---\ntitle: ${title}\n---\n\n# ${title}\n\n:state count = 0\n\nCount: { count }.\n\n:button "Add one" -> count++\n` },
+  { id: "csv", label: "CSV", hint: "Rows and columns with a table preview", extension: ".csv", store: "docs", starter: () => "Name,Value\n" },
+  { id: "json", label: "JSON", hint: "Structured data as literal source", extension: ".json", store: "docs", starter: () => "{\n  \n}\n" },
+  { id: "yaml", label: "YAML", hint: "Config and data as literal source", extension: ".yaml", store: "docs", starter: () => "" },
+  { id: "xml", label: "XML", hint: "Tagged data as literal source", extension: ".xml", store: "docs", starter: () => '<?xml version="1.0" encoding="UTF-8"?>\n<root>\n</root>\n' },
 ];
+
+/** The type for a format the chooser hands back, or Markdown. */
+export function newDocType(id: string): NewDocType {
+  return NEW_DOC_TYPES.find((type) => type.id === id) ?? NEW_DOC_TYPES[0];
+}
 
 /** A file name from what someone typed: trimmed, no slashes, and the type's extension unless they gave one. */
 export function newDocName(typed: string, type: NewDocType): string {
   // eslint-disable-next-line no-control-regex
   const cleaned = String(typed ?? "").replace(/[\u0000-\u001f\u007f/\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
   const base = cleaned || "Untitled";
+  // A Word, RTF or OpenDocument file is that format, whatever was typed.
+  if (type.store === "platform") return `${base.replace(/\.(docx|rtf|odt)$/i, "")}${type.extension}`;
   return /\.[a-z0-9]{1,8}$/i.test(base) ? base : `${base}${type.extension}`;
 }
 
@@ -152,10 +187,13 @@ export function parseRecentItem(value: unknown, serverOrigin: string): RecentDoc
   const name = cleanText(raw.name, 512) ?? "Untitled";
   const updatedAt = isoOrNull(raw.updatedAt);
   if (!updatedAt) return null;
+  const format = parseFormat(raw.format, name);
   return {
     id: raw.id,
+    store: "docs",
+    kind: kindFromName(name, format),
     name,
-    format: parseFormat(raw.format, name),
+    format,
     createdAt: isoOrNull(raw.createdAt),
     updatedAt,
     origin: parseOrigin(raw.origin),
@@ -232,4 +270,85 @@ export function publicDocName(downloadName: string | null): string {
 export function originLabel(origin: DocOrigin): string | null {
   if (origin.kind !== "agent") return null;
   return `from ${origin.agent ?? "an agent"}`;
+}
+
+// Formats the document platform stores (server/src/document-platform-store.ts).
+const PLATFORM_FORMATS = new Set(["markdown", "darkmown", "text", "csv", "json", "yaml", "xml", "docx", "doc", "rtf", "odt"]);
+const PLATFORM_ROLES = new Set(["owner", "editor", "viewer"]);
+
+/** One row of `GET /api/document-platform/documents`, as a Recent row. Null when it isn't one. */
+export function parsePlatformItem(value: unknown): RecentDoc | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(raw.id)) return null;
+  if (typeof raw.format !== "string" || !PLATFORM_FORMATS.has(raw.format)) return null;
+  if (typeof raw.role !== "string" || !PLATFORM_ROLES.has(raw.role)) return null;
+  const updated = typeof raw.updatedAt === "number" && Number.isSafeInteger(raw.updatedAt) && raw.updatedAt > 0 ? raw.updatedAt : null;
+  if (!updated) return null;
+  const created = typeof raw.createdAt === "number" && Number.isSafeInteger(raw.createdAt) && raw.createdAt > 0 ? raw.createdAt : null;
+  const name = cleanText(raw.name, 512) ?? "Untitled";
+  const kind = raw.format;
+  return {
+    id: raw.id,
+    store: "platform",
+    kind,
+    name,
+    format: kind === "darkmown" ? "darkmown" : kind === "markdown" ? "markdown" : "text",
+    createdAt: created ? new Date(created).toISOString() : null,
+    updatedAt: new Date(updated).toISOString(),
+    origin: { kind: "app", agent: null },
+    shared: raw.role !== "owner",
+    role: raw.role,
+    sharedBy: null,
+    privateLink: "",
+  };
+}
+
+export function parsePlatformList(value: unknown): RecentDoc[] {
+  const list = value && typeof value === "object" ? (value as { documents?: unknown }).documents : null;
+  if (!Array.isArray(list)) throw new Error("The server's document list wasn't in the expected shape.");
+  return list.slice(0, 1000).map(parsePlatformItem).filter((item): item is RecentDoc => item !== null);
+}
+
+/** The kinds Recent filters by. Each document is in exactly one. */
+export type DocTypeFilter = "all" | "markdown" | "text" | "darkmown" | "word" | "rtf" | "odt" | "data";
+
+export const DOC_TYPE_FILTERS: readonly { id: DocTypeFilter; label: string }[] = [
+  { id: "all", label: "All types" },
+  { id: "markdown", label: "Markdown" },
+  { id: "word", label: "Word" },
+  { id: "text", label: "Text" },
+  { id: "darkmown", label: "Darkmown" },
+  { id: "rtf", label: "Rich Text" },
+  { id: "odt", label: "OpenDocument" },
+  { id: "data", label: "Data" },
+];
+
+/** Which filter a document falls under, from its own kind. */
+export function docTypeGroup(doc: Pick<RecentDoc, "kind" | "format">): Exclude<DocTypeFilter, "all"> {
+  const kind = doc.kind;
+  if (kind === "docx" || kind === "doc") return "word";
+  if (kind === "rtf") return "rtf";
+  if (kind === "odt") return "odt";
+  if (kind === "darkmown" || doc.format === "darkmown") return "darkmown";
+  if (kind === "csv" || kind === "json" || kind === "yaml" || kind === "xml") return "data";
+  if (kind === "text") return "text";
+  return doc.format === "text" ? "data" : "markdown";
+}
+
+/** "Word", "Rich Text" and so on: the second line of a row with nothing else to say. */
+export function kindLabel(doc: Pick<RecentDoc, "kind" | "format">): string {
+  switch (doc.kind) {
+    case "docx": return "Word";
+    case "doc": return "Word 97-2003";
+    case "rtf": return "Rich Text";
+    case "odt": return "OpenDocument";
+    case "darkmown": return "Interactive document";
+    case "markdown": return "Markdown";
+    case "csv": return "Spreadsheet";
+    case "json": return "JSON";
+    case "yaml": return "YAML";
+    case "xml": return "XML";
+    default: return doc.format === "darkmown" ? "Interactive document" : doc.format === "markdown" ? "Markdown" : "Text";
+  }
 }

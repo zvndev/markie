@@ -17,11 +17,23 @@ describe("the app's content security policy", () => {
   });
 
   it("keeps network, plugins and navigation closed", () => {
-    expect(csp).toContain("connect-src 'self'");
+    const connect = csp.split("; ").find((d) => d.startsWith("connect-src "))!;
+    // No http(s) origin: every request goes through the native stack.
+    expect(connect).not.toMatch(/https?:/);
+    expect(connect).not.toContain("*.");
+    expect(connect).not.toMatch(/(^| )\*( |$)/);
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("base-uri 'none'");
     expect(csp).toContain("form-action 'none'");
     expect(csp).toContain("frame-src about:");
+  });
+
+  it("lets the live-editing socket reach the signed-in server, and plain ws only on loopback", () => {
+    const connect = csp.split("; ").find((d) => d.startsWith("connect-src "))!;
+    expect(connect).toBe("connect-src 'self' wss: ws://localhost:* ws://127.0.0.1:* ws://[::1]:*");
+    // The Android emulator's address is a development build's only.
+    expect(mobileCsp(undefined, { devServers: true })).toContain("ws://10.0.2.2:*");
+    expect(connect).not.toContain("10.0.2.2");
   });
 
   it("is injected where index.html asks for it", () => {

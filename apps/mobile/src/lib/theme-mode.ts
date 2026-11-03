@@ -1,6 +1,6 @@
 // System, light or dark, painted with the desktop's own Markie tokens
 // (src/lib/theme.ts), so a document reads the same on the phone as on the Mac.
-import { applyTheme, MARKIE_DARK, MARKIE_LIGHT } from "@/lib/theme";
+import { applyTheme, MARKIE_DARK, MARKIE_LIGHT, saveThemeStore } from "@/lib/theme";
 
 export type ThemeMode = "system" | "light" | "dark";
 export type Tone = "light" | "dark";
@@ -30,6 +30,15 @@ export function systemPrefersDark(): boolean {
 
 /** Paints the tokens and tells the shell which tone it is in. */
 export function paintTone(tone: Tone): void {
+  // The desktop's source editor (CodeMirror, in a live text document) picks
+  // its colours from the desktop's theme store when it mounts, and from the
+  // event applyTheme sends after that. The store is kept on the phone's tone
+  // so an editor that mounts later reads light text on light, never dark.
+  try {
+    saveThemeStore({ activeId: tone === "dark" ? MARKIE_DARK.id : MARKIE_LIGHT.id, custom: [] });
+  } catch {
+    // Storage unavailable: the event below still reaches a mounted editor.
+  }
   applyTheme(tone === "dark" ? MARKIE_DARK.tokens : MARKIE_LIGHT.tokens);
   const root = document.documentElement;
   root.classList.toggle("dark", tone === "dark");

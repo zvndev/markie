@@ -19,8 +19,14 @@ const runtimePolicy = JSON.parse(
 // preview is a srcdoc frame, and a srcdoc frame inherits this policy on top of
 // its own, so the pinned interpreter's two hashes are named here as well.
 // Author JavaScript is never permitted anywhere. API calls go through the
-// native HTTP stack (src/lib/native-http.ts), so connect-src stays 'self'.
-export function mobileCsp(policy = runtimePolicy): string {
+// native HTTP stack (src/lib/native-http.ts), so connect-src grants no http(s)
+// origin at all. Its one network grant is the live-editing socket
+// (src/lib/live.ts): wss to the server the person signed in to. That server is
+// chosen at sign-in (a self-hoster's own), and a meta policy is fixed when the
+// page loads, so the grant is wss: rather than one host. Plain ws only to the
+// loopback addresses sign-in accepts, and to the Android emulator's host in a
+// development build only.
+export function mobileCsp(policy = runtimePolicy, { devServers = false }: { devServers?: boolean } = {}): string {
   return [
     "default-src 'self'",
     `script-src 'self' 'sha256-${policy.runtimeSha256}' 'sha256-${policy.bootstrapSha256}'`,
@@ -28,7 +34,7 @@ export function mobileCsp(policy = runtimePolicy): string {
     "img-src 'self' data: blob: https:",
     "media-src 'self' https:",
     "font-src 'self' data:",
-    "connect-src 'self'",
+    `connect-src 'self' wss: ws://localhost:* ws://127.0.0.1:* ws://[::1]:*${devServers ? " ws://10.0.2.2:*" : ""}`,
     "worker-src 'self'",
     "frame-src about:",
     "object-src 'none'",
@@ -37,7 +43,7 @@ export function mobileCsp(policy = runtimePolicy): string {
   ].join("; ");
 }
 
-function contentSecurityPolicy(): Plugin {
+function contentSecurityPolicy(devServers: boolean): Plugin {
   return {
     name: "markie-mobile-csp",
     // Development keeps Vite's inline HMR preamble working; every build that
@@ -48,7 +54,7 @@ function contentSecurityPolicy(): Plugin {
       handler: (html) =>
         html.replace(
           "<!-- markie:csp -->",
-          `<meta http-equiv="Content-Security-Policy" content="${mobileCsp()}" />`
+          `<meta http-equiv="Content-Security-Policy" content="${mobileCsp(runtimePolicy, { devServers })}" />`
         ),
     },
   };
@@ -59,7 +65,7 @@ function contentSecurityPolicy(): Plugin {
 // to 10.0.2.2, the Android emulator's name for the development machine. Every
 // other build, the one that ships included, refuses it (src/lib/server-origin.ts).
 export default defineConfig(({ command, mode }) => ({
-  plugins: [react(), tailwindcss(), contentSecurityPolicy()],
+  plugins: [react(), tailwindcss(), contentSecurityPolicy(mode === "dev")],
   base: "./",
   define: {
     __MARKIE_MOBILE_VERSION__: JSON.stringify(pkg.version),

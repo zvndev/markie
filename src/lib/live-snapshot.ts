@@ -20,12 +20,18 @@
 //      means no room: the editor drops to solo, as the desktop does, and the
 //      ordinary versioned save takes over.
 //   3. The room can say everything the stored copy says. A rich room is
-//      seeded by parsing the markdown into TipTap, which has no node for
-//      front matter, raw HTML blocks, HTML comments or footnote definitions;
-//      the solo editor holds those aside and puts them back (rich-view.tsx
-//      serializeMarkdown), the room cannot. A push would strip them from the
-//      stored copy, so for such a document no rich push happens at all and
-//      the client says so. Plain text rooms (Y.Text) are byte-faithful.
+//      seeded by parsing the markdown into TipTap, and a push writes the
+//      room's serialization. That is only safe when it is faithful for this
+//      document: a room seeded from the stored copy, with nobody's edits in
+//      it, must write the stored copy back byte for byte (roomCarries in
+//      live-snapshot-rich.ts, which keeps every block the serializer merely
+//      reformats as its source bytes, as rich-view.tsx serializeMarkdown
+//      does). Front matter, raw HTML blocks, HTML comments, footnote
+//      definitions and a refused picture address are the known losses and
+//      answer at once (liveSnapshotRefusal); anything else the serializer
+//      cannot reproduce is caught when the room is ready ("uncarried"). For
+//      such a document no rich push happens at all and the client says so.
+//      Plain text rooms (Y.Text) are byte-faithful.
 //   4. One writer per room. Every eligible client advertises itself in the
 //      room's awareness and the one with the lowest client id writes; the
 //      rest only watch. That keeps peers from racing each other's versions.
@@ -40,10 +46,19 @@
 //      edited weeks ago can be older than a version an agent wrote since. A
 //      push from it would carry a correct base version, draw no 409, and
 //      silently put the old text back. So when the room is first ready, its
-//      text is compared with what a room seeded from the stored copy would
-//      say (roomMatchesStored): equal, and that text becomes the baseline,
-//      so opening a document never rewrites it; different, and the client
-//      shows a conflict and never pushes in this session.
+//      text is compared with the stored copy (classifyLiveRoom): equal, and
+//      opening a document never rewrites it; different, and the client
+//      shows a conflict and never pushes in this session, unless rule 7
+//      says the room is simply ahead.
+//   7. A room ahead of the stored copy is not a conflict. Live edits reach
+//      the room at once and the stored copy only on the writer's next push,
+//      so a server restart (every deploy) between the two leaves a room that
+//      is newer than its stored copy, with nobody outside having written.
+//      The room keeps a record in its meta map of the stored copy it last
+//      matched or pushed (version and fingerprint, plus the fingerprint of a
+//      push in flight). When the stored copy is still exactly that record,
+//      the room is ahead and the writer pushes it; only a stored copy the
+//      record does not know is an outside write.
 //
 // This module must not value-import yjs or y-websocket (they load lazily,
 // src/lib/collab-loader.ts): the room is typed structurally.
@@ -167,13 +182,16 @@ export function liveSnapshotRefusal(stored: string, kind: LiveKind): SnapshotRef
 }
 
 export const SNAPSHOT_REFUSAL_NOTE =
-  "Live edits stay in the live session. The saved copy isn't updated from it, because this document has front matter, raw HTML or a picture address that live editing can't keep.";
+  "Live edits stay in the live session. The saved copy isn't updated from it, because this document has front matter, raw HTML, a picture address or other markdown that live editing can't keep exactly.";
 
 /**
- * Rule 6: whether the room's first text is the stored copy. "unknown" until
- * the room is ready and its text has been compared.
+ * Rules 3, 6 and 7, decided when the room is first ready. "unknown" until
+ * then. "room-state": the room says exactly the stored copy. "ahead": the
+ * room moved on from a stored copy it recorded (rule 7), so its text goes
+ * out. "diverged": the stored copy was written outside the room.
+ * "uncarried": the room cannot write this document faithfully (rule 3).
  */
-export type LiveBase = "unknown" | "room-state" | "diverged";
+export type LiveBase = "unknown" | "room-state" | "ahead" | "diverged" | "uncarried";
 
 export type LiveSnapshotWait = "read-only" | "not-connected" | "not-synced" | "not-ready" | "not-writer" | "diverged" | SnapshotRefusal;
 
@@ -184,6 +202,7 @@ export function liveSnapshotWait(
 ): LiveSnapshotWait | null {
   if (!editable) return "read-only";
   if (refusal) return refusal;
+  if (base === "uncarried") return "held-constructs";
   if (base === "diverged") return "diverged";
   if (!room.connected) return "not-connected";
   if (!room.synced) return "not-synced";
@@ -192,15 +211,100 @@ export function liveSnapshotWait(
   return null;
 }
 
+// ── Rule 7: what the room last knew of the stored copy ────────────────────
+
+/** The part of a room's Yjs document the record lives in. */
+export interface RoomMeta {
+  getMap(name: string): { get(key: string): unknown; set(key: string, value: unknown): void };
+}
+
+/** The room's document as a RoomMeta, from whatever session a host holds. */
+export function roomMeta(room: { ydoc: unknown } | null | undefined): RoomMeta | null {
+  const ydoc = room?.ydoc as Partial<RoomMeta> | null | undefined;
+  return ydoc && typeof ydoc.getMap === "function" ? (ydoc as RoomMeta) : null;
+}
+
+/** The key in the room's "meta" map. */
+export const STORED_RECORD_KEY = "storedCopy";
+
 /**
- * Rule 6: whether `roomText`, the room's text as it first came out of the
- * editor, is what a room seeded from `stored` says. Plain text rooms hold
- * the characters themselves; a rich room holds the serializer's rendering.
+ * The stored copy this room last matched or pushed: its version and the
+ * fingerprint of its text, and `next`, the fingerprint of a push that was
+ * sent but whose answer the room has not heard yet.
  */
-export async function roomMatchesStored(roomText: string, stored: string, kind: LiveKind): Promise<boolean> {
-  if (kind === "text") return roomText === stored;
-  const { roomRendering } = await import("@/lib/live-snapshot-rich");
-  return roomText === roomRendering(stored) || roomText === stored;
+export interface StoredRecord {
+  version: number;
+  hash: string;
+  next?: string | null;
+}
+
+export function readStoredRecord(meta: RoomMeta): StoredRecord | null {
+  const value = meta.getMap("meta").get(STORED_RECORD_KEY) as Partial<StoredRecord> | undefined;
+  if (!value || typeof value !== "object" || typeof value.version !== "number" || typeof value.hash !== "string") return null;
+  return { version: value.version, hash: value.hash, next: typeof value.next === "string" ? value.next : null };
+}
+
+export function writeStoredRecord(meta: RoomMeta, record: StoredRecord): void {
+  const next = record.next ?? null;
+  const prev = readStoredRecord(meta);
+  if (prev && prev.version === record.version && prev.hash === record.hash && (prev.next ?? null) === next) return;
+  meta.getMap("meta").set(STORED_RECORD_KEY, { version: record.version, hash: record.hash, next });
+}
+
+/**
+ * Whether `stored` is a stored copy the room knows: the one it recorded, or
+ * the result of the push it recorded as in flight (which landed before the
+ * room heard back, a restart in between). A version the record does not
+ * know, or a text it never held, came from outside.
+ */
+export function recordCovers(record: StoredRecord | null, stored: { content: string; version: number }): boolean {
+  if (!record) return false;
+  const hash = textFingerprint(stored.content);
+  if (stored.version === record.version && hash === record.hash) return true;
+  return !!record.next && hash === record.next && stored.version > record.version;
+}
+
+/**
+ * Rules 3, 6 and 7: what the room's first text says about the stored copy.
+ * `roomText` is the room as the editor writes it back: for a rich room, with
+ * every untouched block in its source bytes, so a room seeded from the
+ * stored copy says it exactly whenever the room can carry it at all.
+ */
+export async function classifyLiveRoom(
+  roomText: string,
+  stored: { content: string; version: number },
+  kind: LiveKind,
+  record: StoredRecord | null
+): Promise<Exclude<LiveBase, "unknown">> {
+  if (roomText === stored.content) return "room-state";
+  if (kind === "rich") {
+    const { roomCarries } = await import("@/lib/live-snapshot-rich");
+    if (!roomCarries(stored.content)) return "uncarried";
+  }
+  return recordCovers(record, stored) ? "ahead" : "diverged";
+}
+
+/**
+ * classifyLiveRoom, with the record kept current: a room that says the
+ * stored copy records it, so a later session can tell "ahead" from an
+ * outside write. Only an editor calls this; a viewer cannot write the room.
+ */
+export async function assessLiveRoom(
+  roomText: string,
+  stored: { content: string; version: number },
+  kind: LiveKind,
+  meta: RoomMeta | null
+): Promise<Exclude<LiveBase, "unknown">> {
+  const record = meta ? readStoredRecord(meta) : null;
+  const base = await classifyLiveRoom(roomText, stored, kind, record);
+  if (base === "room-state" && meta) {
+    try {
+      writeStoredRecord(meta, { version: stored.version, hash: textFingerprint(stored.content) });
+    } catch {
+      // The session is already gone.
+    }
+  }
+  return base;
 }
 
 export const DIVERGED_NOTE =
@@ -208,7 +312,10 @@ export const DIVERGED_NOTE =
 
 // ── Rule 5: a refused save ────────────────────────────────────────────────
 
-/** A 53-bit fingerprint of a text (cyrb53): cheap, and never stored or sent. */
+/**
+ * A 53-bit fingerprint of a text (cyrb53): cheap, and not a secret. The room
+ * keeps one of its stored copy (rule 7), beside the room's own text.
+ */
 export function textFingerprint(text: string): string {
   let h1 = 0xdeadbeef ^ text.length;
   let h2 = 0x41c6ce57 ^ text.length;
@@ -272,24 +379,35 @@ export async function writeLiveSnapshot(
     read(): Promise<{ content: string; name: string; version: number } | null>;
     isConflict(error: unknown): boolean;
   },
-  { content, name, version, room }: { content: string; name: string; version: number; room: Pick<RoomTexts, "has" | "add"> }
+  { content, name, version, room, meta = null }: { content: string; name: string; version: number; room: Pick<RoomTexts, "has" | "add">; meta?: RoomMeta | null }
 ): Promise<LiveSnapshotResult> {
-  try {
-    const saved = await io.save(content, version);
+  // Rule 7: say what is about to land before it does, and what landed once
+  // it has, so a session that opens after a restart in between can tell this
+  // write from an outside one.
+  const hash = textFingerprint(content);
+  const note = (record: StoredRecord) => {
+    if (!meta) return;
+    try { writeStoredRecord(meta, record); } catch { /* the session is already gone */ }
+  };
+  const before = meta ? readStoredRecord(meta) : null;
+  note({ version: before?.version ?? version, hash: before?.hash ?? "", next: hash });
+  const landed = (next: number): LiveSnapshotResult => {
     room.add(content);
-    return { kind: "saved", version: saved };
+    note({ version: next, hash });
+    return { kind: "saved", version: next };
+  };
+  try {
+    return landed(await io.save(content, version));
   } catch (error) {
     if (!io.isConflict(error)) throw error;
   }
   const server = await io.read();
   if (!server) return { kind: "conflict", serverVersion: null };
   const answer = resolveLiveConflict(server, { content, name }, room);
-  if (answer === "adopt") return { kind: "saved", version: server.version };
+  if (answer === "adopt") return landed(server.version);
   if (answer === "conflict") return { kind: "conflict", serverVersion: server.version };
   try {
-    const saved = await io.save(content, server.version);
-    room.add(content);
-    return { kind: "saved", version: saved };
+    return landed(await io.save(content, server.version));
   } catch (error) {
     if (io.isConflict(error)) return { kind: "conflict", serverVersion: null };
     throw error;

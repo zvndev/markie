@@ -490,3 +490,96 @@ describe("RichView's live-editing pass", () => {
     }
   });
 });
+
+// The verifier's document (see src/lib/live-snapshot.test.ts): KaTeX inline
+// and display with a thin space, a right-aligned table column, a closing
+// newline. Solo editing kept it byte for byte; a live room rewrote all of it
+// on the first keystroke anyone made, in every reader's stored copy.
+const EVERYTHING = [
+  "# Everything",
+  "",
+  "Inline math $e^{i\\pi} + 1 = 0$ in a sentence.",
+  "",
+  "$$",
+  "\\int_0^1 x^2 \\, dx = \\frac{1}{3}",
+  "$$",
+  "",
+  "| Item | Price |",
+  "| :--- | ---: |",
+  "| Tea | 3 |",
+  "| Cake | 12 |",
+  "",
+  "Last line.",
+  "",
+].join("\n");
+
+describe("RichView in a live room: what it writes back", () => {
+  const collab: CollabConfig = {
+    docId: "doc-everything",
+    wsBase: "ws://localhost/collab",
+    token: "t",
+    fetchTicket: async () => ({ kind: "ticket", ticket: "tk", expiresAt: 0 }),
+    user: { name: "Me", color: "#000000" },
+    readonly: false,
+  };
+
+  // Alice opens the stored copy live and seeds the room; Bob then joins the
+  // room she wrote, from his own copy of the stored text, and edits it.
+  async function seededRoom(text: string): Promise<{ state: Uint8Array; first: string }> {
+    const Y = await import("yjs");
+    loader.room = {};
+    const onRoomReady = vi.fn();
+    const { unmount } = render(
+      <RichView value={text} onChange={() => {}} collab={collab} holdUntilReady onRoomReady={onRoomReady} />
+    );
+    try {
+      await waitFor(() => expect(onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      const session = (window as unknown as { __markieCollab?: { ydoc: import("yjs").Doc } | null }).__markieCollab;
+      return { state: Y.encodeStateAsUpdate(session!.ydoc), first: onRoomReady.mock.calls[0][0] as string };
+    } finally {
+      unmount();
+      loader.room = null;
+    }
+  }
+
+  async function peerEdits(text: string, state: Uint8Array, edit: (editor: Editor) => void): Promise<string> {
+    const Y = await import("yjs");
+    loader.room = { seed: (doc) => Y.applyUpdate(doc, state) };
+    try {
+      const onChange = vi.fn();
+      let editor: Editor | null = null;
+      render(
+        <RichView value={text} onChange={onChange} collab={collab} holdUntilReady onEditorReady={(e) => { if (e) editor = e; }} />
+      );
+      await waitFor(() => expect((editor as unknown as Editor | null)?.isEditable).toBe(true), { timeout: 3000 });
+      const before = onChange.mock.calls.length;
+      edit(editor as unknown as Editor);
+      await waitFor(() => expect(onChange.mock.calls.length).toBeGreaterThan(before), { timeout: 2000 });
+      return onChange.mock.calls[onChange.mock.calls.length - 1][0] as string;
+    } finally {
+      loader.room = null;
+    }
+  }
+
+  it("says the stored copy back byte for byte when the room is ready", async () => {
+    const { first } = await seededRoom(EVERYTHING);
+    expect(first).toBe(EVERYTHING);
+  });
+
+  it("keeps every block a peer did not touch, math, alignment and closing newline included", async () => {
+    const { state } = await seededRoom(EVERYTHING);
+    const out = await peerEdits(EVERYTHING, state, (editor) => {
+      editor.commands.insertContentAt(editor.state.doc.content.size - 1, " Bob");
+    });
+    expect(out).toBe(EVERYTHING.replace("Last line.", "Last line. Bob"));
+  });
+
+  it("keeps inline math as written in the paragraph a peer did edit", async () => {
+    const { state } = await seededRoom(EVERYTHING);
+    const out = await peerEdits(EVERYTHING, state, (editor) => {
+      // The end of the paragraph holding `$e^{i\pi} + 1 = 0$`.
+      editor.commands.insertContentAt(editor.state.doc.child(0).nodeSize + editor.state.doc.child(1).nodeSize - 1, " Bob");
+    });
+    expect(out).toBe(EVERYTHING.replace("in a sentence.", "in a sentence. Bob"));
+  });
+});

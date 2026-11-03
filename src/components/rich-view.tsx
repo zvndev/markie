@@ -128,10 +128,13 @@ interface CollabSession {
 interface SerializeCtx {
   frontMatter: string;
   holds: HoldAside[];
-  // Solo mode only. `baseline` is the placeholder-space source the editor's
-  // content came from; `normalize` tells a block the user changed from one the
-  // serializer merely reformatted. Both null in collab, where the room, not a
-  // file, is the source of truth.
+  // `baseline` is the source the editor's content came from (placeholder
+  // space in solo; in a live session, the whole text the pane opened on, then
+  // each text it wrote since); `normalize` tells a block the user changed
+  // from one the serializer merely reformatted. A live session preserves
+  // blocks exactly as solo does: without it, the first keystroke in a room
+  // rewrote every block the serializer cannot say byte for byte (math, table
+  // alignment, the closing newline) in everyone's stored copy.
   baseline: string | null;
   normalize: ((block: string) => string) | null;
 }
@@ -333,11 +336,13 @@ function RichViewInner({
   });
   const frontMatterRef = useRef(session ? "" : initialSplit.frontMatter);
   const holdsRef = useRef<HoldAside[]>(session ? [] : initialSplit.held.holds);
-  // Layer 2 baseline: the placeholder-space source the editor content came
-  // from, which block preservation diffs the serializer's output against.
-  const baselineBodyRef = useRef(session ? "" : initialSplit.held.text);
-  // One headless editor for the whole component lifetime, created on the first
-  // solo serialize and never in collab, which does not preserve blocks.
+  // Layer 2 baseline: the source the editor content came from, which block
+  // preservation diffs the serializer's output against. Solo: the
+  // placeholder-space body. Live: the whole text this pane opened on, which
+  // is what a room seeded from it holds (seedNow sets the full text).
+  const baselineBodyRef = useRef(session ? value : initialSplit.held.text);
+  // One headless editor for the whole component lifetime, created on the
+  // first serialize.
   const normalizerRef = useRef<ReturnType<typeof createBlockNormalizer> | null>(
     null
   );
@@ -353,7 +358,7 @@ function RichViewInner({
   // Read through refs so every serialize path sees the document as it stands.
   const serializeCtx = (): SerializeCtx =>
     session
-      ? { frontMatter: "", holds: [], baseline: null, normalize: null }
+      ? { frontMatter: "", holds: [], baseline: baselineBodyRef.current, normalize: getNormalizer().normalize }
       : {
           frontMatter: frontMatterRef.current,
           holds: holdsRef.current,
@@ -365,7 +370,7 @@ function RichViewInner({
   // back the markdown. Every path that writes the document goes through here.
   const serializeNow = (ed: Editor): string => {
     const { markdown, body } = serializeMarkdown(ed, serializeCtx());
-    if (!session) baselineBodyRef.current = body;
+    baselineBodyRef.current = body;
     return markdown;
   };
   const serializeNowRef = useRef(serializeNow);
@@ -730,6 +735,15 @@ function RichViewInner({
     // src/lib/rich-warmup.ts for why a single idle callback was not enough.
     return warmBlocks(held.text, (block) => getNormalizer().normalize(block));
   }, [value, editor, session]);
+
+  // A live pane preserves blocks too, against the text it opened on: warm
+  // that text's blocks while idle, as the solo path does on each load, so
+  // the first serialize after a keystroke does not normalize all of them.
+  useEffect(() => {
+    if (!session) return;
+    // Once per session: the baseline moves with every serialize after this.
+    return warmBlocks(baselineBodyRef.current, (block) => getNormalizer().normalize(block));
+  }, [session]);
 
   useEffect(() => {
     return () => {

@@ -169,6 +169,26 @@ describe("RichView serialization", () => {
     expect(out).toContain("Opening paragraph. EDITED");
     expect(out).not.toContain("markie-hold-");
   });
+
+  it("draws an SVG data: picture and saves it back as the picture, not as escaped text", async () => {
+    const svg = `data:image/svg+xml;base64,${btoa('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"/>')}`;
+    const value = `Opening paragraph.\n\n![Bottles opened per month](${svg})\n\nClosing line.\n`;
+    const onChange = vi.fn();
+    let editor: Editor | null = null;
+    const { container } = render(
+      <RichView value={value} onChange={onChange} onEditorReady={(e) => { if (e) editor = e; }} />
+    );
+    await waitFor(() => expect(editor).not.toBeNull());
+    const img = container.querySelector<HTMLImageElement>(".ProseMirror img");
+    expect(img?.getAttribute("src")).toBe(svg);
+    expect(img?.getAttribute("alt")).toBe("Bottles opened per month");
+    expect(container.querySelector(".ProseMirror")?.textContent).not.toContain("data:image");
+
+    appendToFirstBlock(" EDITED")(editor as unknown as Editor);
+    await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 2000 });
+    const out = onChange.mock.calls[onChange.mock.calls.length - 1][0] as string;
+    expect(out).toBe(value.replace("Opening paragraph.", "Opening paragraph. EDITED"));
+  });
 });
 
 describe("RichView document links", () => {
@@ -325,6 +345,32 @@ describe("RichView in a live room nobody has written yet", () => {
         timeout: 2000,
       });
       expect(onCollabStatus).not.toHaveBeenCalledWith("empty");
+    } finally {
+      loader.room = null;
+    }
+  });
+
+  it("seeds an SVG data: picture into the room as a picture", async () => {
+    const svg = `data:image/svg+xml;base64,${btoa('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"/>')}`;
+    loader.room = {};
+    try {
+      let editor: Editor | null = null;
+      render(
+        <RichView
+          value={`# Chart\n\n![Bottles opened per month](${svg})\n`}
+          onChange={() => {}}
+          collab={collab(false)}
+          onEditorReady={(e) => {
+            if (e) editor = e;
+          }}
+        />
+      );
+      // The live editor's content is the room's fragment, so a picture here
+      // is a picture in the room.
+      await waitFor(() => expect((editor as unknown as Editor | null)?.getText()).toContain("Chart"), { timeout: 2000 });
+      const live = editor as unknown as Editor;
+      expect(live.getHTML()).toContain(`<img src="${svg}" alt="Bottles opened per month">`);
+      expect(live.getText()).not.toContain("data:image");
     } finally {
       loader.room = null;
     }

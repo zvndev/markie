@@ -139,6 +139,12 @@ test("renderMarkdownHTML keeps an inlined image, which is how a report travels",
   assert.match(html, /<img src="data:image\/png;base64,iVBORw0KGgo="/);
 });
 
+test("renderMarkdownHTML keeps an inlined SVG chart, drawn inert by <img>", () => {
+  const src = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString("base64")}`;
+  assert.ok(renderMarkdownHTML(`![chart](${src})`).includes(`<img src="${src}" alt="chart">`));
+  assert.doesNotMatch(renderMarkdownHTML(`[chart](${src})`), /href="data:/);
+});
+
 test("renderMarkdownHTML still refuses a data: link, which is the actual attack", () => {
   const html = renderMarkdownHTML("[click](data:text/html;base64,PHNjcmlwdD4=)");
   assert.doesNotMatch(html, /href="data:/);

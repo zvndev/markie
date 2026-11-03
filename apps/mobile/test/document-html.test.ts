@@ -35,6 +35,16 @@ describe("a document's HTML on the phone", () => {
     expect(root.textContent).toContain("Sign in");
   });
 
+  it("draws a data: picture as written and never asks for it as a synced file", () => {
+    const svg = `data:image/svg+xml;base64,${btoa('<svg xmlns="http://www.w3.org/2000/svg"/>')}`;
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    const { html, assets } = render(`![chart](${svg})\n\n![dot](${png})\n`);
+    const imgs = Array.from(parse(html).querySelectorAll("img"));
+    expect(imgs.map((img) => img.getAttribute("src"))).toEqual([svg, png]);
+    expect(imgs.some((img) => img.hasAttribute(ASSET_ATTR))).toBe(false);
+    expect(assets).toEqual([]);
+  });
+
   it("keeps the desktop renderer's own classes (highlighting, math)", () => {
     const { html } = render("```js\nconst a = 1;\n```\n\n$x^2$");
     expect(html).toMatch(/class="[^"]*hljs/);

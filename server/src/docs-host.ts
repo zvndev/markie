@@ -9,9 +9,10 @@
 // and /s/<token>/assets are fetched by the phone app and the desktop from
 // code that refuses redirects on purpose (apps/mobile/src/lib/native-http.ts
 // and http.ts, electron/share-open.js), so they are always answered where
-// they are asked for. /d/<id> is never redirected here: its sign-in and
-// session cookie live on the API host, and doc-view.ts sends a reader on to
-// the web app itself.
+// they are asked for. /d/<id> is never redirected here: its invite and
+// wrong-account pages are decided by the session on the API host, so
+// doc-view.ts resolves who is asking first and only then sends a reader's
+// browser on to the read view on the docs host (with onApiHost below).
 //
 // Requests through the website's proxy reach this server on the API host as
 // well, so the host alone cannot tell the two apart. What the browser asked

@@ -12,7 +12,7 @@
 import "@/components/documents/document-workspace.css";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
-import { collabWsBase, getAuthToken, sharesClient } from "@/lib/auth-client";
+import { collabWsBase, getAuthToken, getServerURL, sharesClient } from "@/lib/auth-client";
 import { colorForName, initials, type CollabConfig, type PeerUser } from "@/lib/collab";
 import { appearanceKey, appearanceVars, DEFAULT_APPEARANCE, normalizeAppearance, type DocAppearance } from "@/lib/doc-appearance";
 import { createDocumentSession, editDocumentText, type DocumentSession } from "@/lib/document-session";
@@ -34,6 +34,10 @@ import {
   openPlatformDoc, openTextDoc, renamedDocName, savePlatformDoc, saveTextDoc, type CloudRole, type CloudStore, type EditorKind,
 } from "./cloud";
 import { PlatformShareDialog, PlatformHistoryDialog } from "./platform-dialogs";
+import { CopyAllButton } from "@/components/copy-all-button";
+import { HideBarButton } from "./bar-controls";
+import { memberAssetUrl, viewHtml } from "./view-content";
+import { WebExportMenu } from "./web-export";
 import type { WebSessionUser } from "./session";
 import {
   DIVERGED_NOTE, RoomTexts, SNAPSHOT_REFUSAL_NOTE, liveSnapshotRefusal, liveSnapshotWait, roomMatchesStored, useLiveRoom, writeLiveSnapshot,
@@ -46,7 +50,7 @@ const AUTOSAVE_MS = 1500;
 
 type SaveState = "saved" | "dirty" | "saving" | "conflict" | "error" | "signed-out";
 
-interface OpenDoc {
+export interface OpenDoc {
   store: CloudStore;
   id: string;
   name: string;
@@ -61,7 +65,8 @@ interface OpenDoc {
   office: RichDocument | null;
 }
 
-async function loadDoc(id: string): Promise<OpenDoc | null> {
+/** One cloud document from either store, or null when this account has no such id. The editor and the read view both open with it. */
+export async function loadDoc(id: string): Promise<OpenDoc | null> {
   const text = await openTextDoc(id);
   if (text) return { store: "docs", id, name: text.name, version: text.version, role: text.role, kind: editorKindFor(text.name), text: text.content, textMetadata: null, office: null };
   const platform = await openPlatformDoc(id);
@@ -85,9 +90,14 @@ export interface WebDocumentProps {
   onSessionEnded: () => void;
   /** The document's name and role, for the window title and the header. */
   onTitle?: (name: string | null) => void;
+  /** Back to the read view of this document (doc-view.tsx). */
+  onView?: () => void;
+  /** The bar is put away (bar-visibility.ts): the document bar is not drawn. */
+  barHidden?: boolean;
+  onHideBar?: () => void;
 }
 
-export function WebDocument({ id, user, onLibrary, onOpen, onSessionEnded, onTitle }: WebDocumentProps) {
+export function WebDocument({ id, user, onLibrary, onOpen, onSessionEnded, onTitle, onView, barHidden = false, onHideBar }: WebDocumentProps) {
   const [doc, setDoc] = useState<OpenDoc | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -125,11 +135,13 @@ export function WebDocument({ id, user, onLibrary, onOpen, onSessionEnded, onTit
   }
   if (!doc) return <p role="status" className="p-6 text-sm text-muted">Opening document…</p>;
   return <DocumentEditor key={`${doc.store}:${doc.id}:${reload}`} initial={doc} user={user} onLibrary={onLibrary} onOpen={onOpen}
-    onSessionEnded={onSessionEnded} onReload={() => setReload((n) => n + 1)} onRenamed={(name) => onTitle?.(name)} />;
+    onSessionEnded={onSessionEnded} onReload={() => setReload((n) => n + 1)} onRenamed={(name) => onTitle?.(name)}
+    onView={onView} barHidden={barHidden} onHideBar={onHideBar} />;
 }
 
-function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onReload, onRenamed }: {
+function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onReload, onRenamed, onView, barHidden, onHideBar }: {
   initial: OpenDoc; user: WebSessionUser; onLibrary: () => void; onOpen: (id: string) => void; onSessionEnded: () => void; onReload: () => void; onRenamed: (name: string) => void;
+  onView?: () => void; barHidden: boolean; onHideBar?: () => void;
 }) {
   const { store, id, kind, role } = initial;
   const editable = role !== "viewer" && kind !== "unsupported";
@@ -454,8 +466,48 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
 
   const richReadOnly = !editable || !richSafety.armed;
 
+  // ── View, Copy all and Export ──────────────────────────────────────────
+  // Back to the read view saves first, so the view shows what was typed. A
+  // save that cannot happen (a conflict, a lost session) keeps the editor
+  // open with the reason; live edits are in the room either way.
+  const goToView = async () => {
+    if (!onView) return;
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    // The rich pane hands its text over on a debounce; take it now.
+    if (editable && kind !== "office") {
+      const latest = currentText();
+      if (latest !== textRef.current) editText(latest);
+    }
+    if (editable && isDirty()) {
+      // While live, this tab's push waits for the room (connected, synced,
+      // this tab the writer), so give it a few seconds to land rather than
+      // leave for a view of the copy before it. Another tab writing, or a
+      // room that stays busy, does not keep anyone here: the edits are in the
+      // room either way.
+      const until = Date.now() + (collabRef.current ? 6000 : 0);
+      for (;;) {
+        await save();
+        if (!isDirty() || Date.now() >= until || stateRef.current === "conflict" || stateRef.current === "signed-out") break;
+        if (collabRef.current && (refusalRef.current || (roomRef.current.ready && !roomRef.current.writer))) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      if (isDirty() && !collabRef.current) {
+        setMessage((current) => current ?? "Your edits aren't saved yet, so the view would not show them. Save, then go back to View.");
+        return;
+      }
+    }
+    onView();
+  };
+  const exportText = useCallback(() => (kind === "office" ? officeRef.current?.text ?? "" : currentText()), [kind, currentText]);
+  const exportHtml = useMemo(() => kind === "markdown" || kind === "text"
+    ? () => viewHtml(kind, currentText(), store === "docs" ? memberAssetUrl(getServerURL(), id) : null)
+    : undefined, [kind, currentText, store, id]);
+  const exportOriginal = useMemo(() => kind === "office"
+    ? async () => new Uint8Array(await exportRichDocument(officeRef.current ?? initial.office!))
+    : undefined, [kind, initial.office]);
+
   return <div className="flex min-h-0 flex-1 flex-col" data-web-document={kind} data-web-store={store}>
-    <div className="markie-toolbar flex h-10 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 sm:px-4">
+    {barHidden ? null : <div className="markie-toolbar flex h-10 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 sm:px-4" data-web-doc-bar>
       <button type="button" onClick={onLibrary} aria-label="Back to documents" className="markie-toolbar-action flex h-7 items-center gap-1 rounded-md px-2 text-[12px] text-muted hover:text-foreground">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6" /></svg>
         <span className="hidden sm:inline">Documents</span>
@@ -469,6 +521,11 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
           className="min-w-0 max-w-[min(22rem,40vw)] truncate text-[12.5px] font-medium text-foreground/90 hover:text-foreground disabled:cursor-default">{name}</button>}
       <span role="status" data-web-save-state={editable ? state : "readonly"} className="hidden shrink-0 text-[11px] text-muted sm:inline">{statusText}</span>
       <div className="ml-auto flex items-center gap-2">
+        {onView ? <button type="button" data-web-view-button onClick={() => void goToView()} title="Read this document as it is shared"
+          className="markie-toolbar-action flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-[12px] text-foreground/90 hover:text-foreground">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></svg>
+          View
+        </button> : null}
         {collab ? <span role="status" data-web-live={liveStatus ?? "connecting"} className="hidden items-center gap-1.5 text-[11px] text-muted md:flex">
           <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${liveStatus === "connected" ? "bg-[var(--status-green)]" : "bg-[var(--status-amber)]"}`} />Live
         </span> : null}
@@ -479,6 +536,8 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
             className={`rounded px-2 py-0.5 text-[11.5px] ${mode === value ? "bg-accent text-foreground" : "text-muted hover:text-foreground"}`}>{value === "rich" ? "Rich" : "Source"}</button>)}
         </div> : null}
         {editable && state !== "saved" && state !== "saving" && !(collab && liveSnapshotWait(room, { editable, refusal, base })) ? <button type="button" onClick={() => void save()} className="markie-toolbar-action h-7 rounded-md px-2 text-[12px] text-muted hover:text-foreground">Save</button> : null}
+        {kind !== "unsupported" ? <CopyAllButton text={kind === "office" ? office?.text ?? "" : text} read={exportText} /> : null}
+        {kind !== "unsupported" ? <WebExportMenu name={name} source={kind === "office" ? "office" : kind} read={exportText} html={exportHtml} original={exportOriginal} /> : null}
         <button type="button" onClick={() => setShowShare(true)} className="h-7 rounded-md bg-foreground px-3 text-[12px] font-medium text-background hover:opacity-90">Share</button>
         <div className="relative">
           <button type="button" aria-label="Document menu" aria-expanded={menu} onClick={() => setMenu(!menu)} className="markie-toolbar-action flex h-7 w-7 items-center justify-center rounded-md text-muted hover:text-foreground">
@@ -491,8 +550,9 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
             {!editable && role !== "owner" ? <p className="px-3 py-2 text-[11px] text-muted">Shared with you to read.</p> : null}
           </div> : null}
         </div>
+        {onHideBar ? <HideBarButton onHide={onHideBar} className="markie-toolbar-action flex h-7 items-center gap-1 rounded-md px-1.5 text-[12px] text-muted hover:text-foreground" /> : null}
       </div>
-    </div>
+    </div>}
 
     {state === "conflict" ? <div role="alert" data-web-conflict className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-2 text-[12px]">
       <span className="min-w-0 flex-1 text-foreground">{message}</span>

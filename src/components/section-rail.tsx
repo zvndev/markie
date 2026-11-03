@@ -392,6 +392,34 @@ export function RichSectionRail({ editor }: { editor: Editor | null }) {
   );
 }
 
+/**
+ * The rail for a rendered, read-only document (the web's read view): the
+ * same headings the rich view reads, the top-level H1 to H3 of `root`.
+ * `content` is whatever changes when the document does, so the headings are
+ * read again.
+ */
+export function HtmlSectionRail({ root, scroller, content }: { root: HTMLElement | null; scroller: HTMLElement | null; content: unknown }) {
+  const [state, setState] = useState<{ sections: Section[]; headings: HTMLElement[] } | null>(null);
+  useEffect(() => {
+    setState(root ? readRichSections(root) : null);
+  }, [root, content]);
+
+  const measure = useCallback(() => {
+    if (!state || !scroller) return [];
+    return state.headings.map((h) => contentTop(scroller, h));
+  }, [state, scroller]);
+  const onSelect = useCallback(
+    (index: number) => {
+      const heading = state?.headings[index];
+      if (scroller && heading?.isConnected) scrollToTop(scroller, contentTop(scroller, heading));
+    },
+    [state, scroller]
+  );
+
+  if (!state || !scroller) return null;
+  return <SectionRail sections={state.sections} scroller={scroller} measure={measure} onSelect={onSelect} placement="overlay" />;
+}
+
 export interface SourceSectionRailProps {
   markdown: string;
   scroller: HTMLElement;

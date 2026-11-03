@@ -1,7 +1,9 @@
-// Who is sent on to the web app from /d/:id, who keeps the static page, and
-// what the bar links to, with the web app present and absent. The access
+// Who gets the read view at /d/:id and /s/:token, who keeps the static page,
+// and what the bar links to, with the web app present and absent. The access
 // rules themselves are doc-view.test.ts's; this file asserts only that the
-// web app changes nothing about who reads, and where a reader lands.
+// web app changes nothing about who reads, and where a reader lands. The read
+// view is the app's shell: it holds nothing of any document, and the browser
+// reads the document from the API with its own session.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -45,10 +47,26 @@ const ORIGIN = { Origin: "http://localhost:3000", "x-forwarded-for": "127.0.0.1"
 const stamp = Date.now();
 const BODY = "hosted-routes-secret-line";
 
+const SHELL = '<!doctype html><html><head><title>Markie</title></head><body><div id="root"></div></body></html>';
+
+// The read view: the shell, with the app's own page policy, kept private.
+function assertReadView(res: { status: number; body: string; location: string | null; headers: Headers }, label = "") {
+  assert.equal(res.status, 200, label);
+  assert.equal(res.location, null, `${label} never a redirect into the editor`);
+  assert.match(res.body, /<div id="root">/, label);
+  assert.ok(!res.body.includes(BODY), `${label} the shell carries no document text`);
+  assert.equal(res.headers.get("cache-control"), "private, no-store", label);
+  assert.equal(res.headers.get("referrer-policy"), "no-referrer", label);
+  const csp = res.headers.get("content-security-policy") ?? "";
+  assert.match(csp, /script-src 'self'/, label);
+  assert.doesNotMatch(/script-src ([^;]*)/.exec(csp)?.[1] ?? "", /unsafe-inline|https:/, label);
+  assert.match(csp, /frame-ancestors 'none'/, label);
+}
+
 function webApp(on: boolean) {
   if (on) {
     mkdirSync(webDist, { recursive: true });
-    writeFileSync(join(webDist, "app.html"), "<!doctype html>");
+    writeFileSync(join(webDist, "app.html"), SHELL);
   } else {
     rmSync(join(webDist, "app.html"), { force: true });
   }
@@ -92,23 +110,19 @@ const docId = `hr-doc-${stamp}`;
 await makeDoc(owner.token, docId);
 const viewerShare = await share(owner.token, docId, viewer.email, "viewer");
 
-test("a signed-in reader is sent on to the document in the web app", async () => {
+test("a signed-in reader gets the read view, never the editor", async () => {
   webApp(true);
   for (const who of [owner, viewer]) {
-    const res = await page(`/d/${docId}`, who.token);
-    assert.equal(res.status, 302);
-    assert.equal(res.location, `${APP}/app/d/${docId}`);
-    assert.ok(!res.body.includes(BODY));
-    assert.equal(res.headers.get("cache-control"), "private, no-store");
+    assertReadView(await page(`/d/${docId}`, who.token), who.email);
   }
 });
 
-test("a member's ?k= token is not carried on to the web app", async () => {
+test("a member's ?k= token goes nowhere from the read view", async () => {
   webApp(true);
-  const token = ensureShareToken(docId, viewerShare?.userId as string);
-  const res = await page(`/d/${docId}?k=${encodeURIComponent(token as string)}`, viewer.token);
-  assert.equal(res.status, 302);
-  assert.equal(res.location, `${APP}/app/d/${docId}`);
+  const token = ensureShareToken(docId, viewerShare?.userId as string) as string;
+  const res = await page(`/d/${docId}?k=${encodeURIComponent(token)}`, viewer.token);
+  assertReadView(res);
+  assert.ok(!res.body.includes(token));
 });
 
 test("?view=1 keeps the static page, with the editor link for an editor only", async () => {
@@ -124,22 +138,25 @@ test("?view=1 keeps the static page, with the editor link for an editor only", a
   assert.deepEqual(appHrefs(theirs.body), ["/app", "/app/new"]);
 });
 
-test("a browser with no session here is sent to the web app, which signs it in", async () => {
+test("a browser with no session here gets the same read view for every id", async () => {
   webApp(true);
   // Through the docs host's proxy no request carries the session cookie, so
-  // the app decides: it asks the API for the session and reads only what the
-  // account may read. The same redirect answers for every id, existing or
-  // not, and never carries the ?k= token.
+  // the view decides: it asks the API for the session and reads only what
+  // the account may read. The same shell answers for every id, existing or
+  // not, byte for byte, and never carries the ?k= token.
   const anon = await page(`/d/${docId}`);
   const token = ensureShareToken(docId, viewerShare?.userId as string) as string;
   const forwarded = await page(`/d/${docId}?k=${encodeURIComponent(token)}`);
   const missing = await page(`/d/hr-missing-${stamp}`);
-  for (const [res, id] of [[anon, docId], [forwarded, docId], [missing, `hr-missing-${stamp}`]] as const) {
-    assert.equal(res.status, 302);
-    assert.equal(res.location, `${APP}/app/d/${id}`);
-    assert.ok(!res.body.includes(BODY));
-    assert.equal(res.headers.get("cache-control"), "private, no-store");
+  for (const res of [anon, forwarded, missing]) {
+    assertReadView(res);
+    assert.ok(!res.body.includes(token));
+    assert.equal(res.body, anon.body, "nothing tells one id from another");
   }
+  // ?view=1 is the server's own pages throughout: the old refusal, no shell.
+  const scriptless = await page(`/d/${docId}?view=1`);
+  assert.equal(scriptless.status, 403);
+  assert.doesNotMatch(scriptless.body, /<div id="root">/);
 });
 
 test("a signed-in account that cannot read keeps its refusal", async () => {
@@ -190,14 +207,52 @@ test("without the web app a reader gets the static page and no /app links", asyn
   assert.match(res.body, />Open in Markie</);
 });
 
-test("a public link page stays a page and its bar follows the reader's account", async () => {
+async function publicToken() {
   const made = await json<{ url: string }>("POST", `/api/docs/${docId}/public-link`, owner.token);
   assert.equal(made.status, 200);
   const token = (made.data?.url ?? "").split("/s/")[1];
   assert.ok(token);
+  return token;
+}
+
+test("a public link opens the read view, naming only what the static page shows", async () => {
+  const token = await publicToken();
+  webApp(true);
+  for (const who of [undefined, owner.token, stranger.token]) {
+    const res = await page(`/s/${token}`, who);
+    assertReadView(res);
+    assert.match(res.body, /<title>hosted\.md · Markie<\/title>/);
+    assert.match(res.body, /<meta name="markie-doc-name" content="hosted\.md" \/>/);
+    assert.match(res.body, /<meta name="markie-doc-format" content="markdown" \/>/);
+    assert.ok(!res.body.includes(docId), "the shell never names the document's id");
+  }
+  // An unknown token is still the server's own not-found page.
+  const gone = await page(`/s/not-a-token-${stamp}`);
+  assert.equal(gone.status, 404);
+  assert.doesNotMatch(gone.body, /<div id="root">/);
+});
+
+test("the public view's Edit asks for the document's id, which only an editor gets", async () => {
+  const token = await publicToken();
+  const editor = await json<{ docId: string | null }>("GET", `/api/public-links/${token}/editor`, owner.token);
+  assert.equal(editor.status, 200);
+  assert.equal(editor.data?.docId, docId);
+  for (const who of [viewer, stranger]) {
+    const res = await json<{ docId: string | null }>("GET", `/api/public-links/${token}/editor`, who.token);
+    assert.equal(res.status, 200);
+    assert.equal(res.data?.docId, null, `${who.email} is not named the id`);
+  }
+  const anon = await json("GET", `/api/public-links/${token}/editor`);
+  assert.equal(anon.status, 401);
+  const unknown = await json("GET", `/api/public-links/nope-${stamp}/editor`, owner.token);
+  assert.equal(unknown.status, 404);
+});
+
+test("?view=1 keeps the static public page, whose bar follows the reader's account", async () => {
+  const token = await publicToken();
 
   webApp(true);
-  const anon = await page(`/s/${token}`);
+  const anon = await page(`/s/${token}?view=1`);
   assert.equal(anon.status, 200, "a public link never redirects to the web app");
   // The bar can name the reader, so no cache may keep the page.
   assert.equal(anon.headers.get("cache-control"), "private, no-store");
@@ -205,14 +260,14 @@ test("a public link page stays a page and its bar follows the reader's account",
   assert.deepEqual(appHrefs(anon.body), ["/app"]);
   assert.match(anon.body, />Sign in</);
 
-  const asOwner = await page(`/s/${token}`, owner.token);
+  const asOwner = await page(`/s/${token}?view=1`, owner.token);
   assert.equal(asOwner.status, 200);
   assert.deepEqual(appHrefs(asOwner.body), ["/app", "/app/new", `/app/d/${docId}`]);
 
-  const asViewer = await page(`/s/${token}`, viewer.token);
+  const asViewer = await page(`/s/${token}?view=1`, viewer.token);
   assert.deepEqual(appHrefs(asViewer.body), ["/app", "/app/new"], "a viewer is not offered the editor");
 
-  const asStranger = await page(`/s/${token}`, stranger.token);
+  const asStranger = await page(`/s/${token}?view=1`, stranger.token);
   assert.deepEqual(appHrefs(asStranger.body), ["/app", "/app/new"]);
   assert.ok(!asStranger.body.includes(docId), "the id is never named to an account that cannot edit it");
 

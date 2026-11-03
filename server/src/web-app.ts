@@ -11,6 +11,11 @@
 // every /app route is a plain 404 page and webAppAvailable() says false, so
 // nothing else on the server sends a reader there.
 //
+// The same shell is the read view of a hosted document (doc-view.ts at
+// /d/<id>, public.ts at /s/<token>): the bundle sees the path and opens the
+// view instead of the library (src/web/main.tsx). webAppShell() below is the
+// one response all of them send.
+//
 // Where it runs: on the docs host when MARKIE_DOCS_ORIGIN names one
 // (markiedocs.com on Markie Cloud, through the website's Vercel rewrites of
 // /app), otherwise on this server's own origin. Either way it talks to this
@@ -54,6 +59,15 @@ export function webAppAvailable(dir: string = process.env.MARKIE_WEB_DIST || DEF
 /** Whether a path is one of the web app's, which set their own page policy. */
 export function isWebAppPath(path: string): boolean {
   return path === "/app" || path.startsWith("/app/");
+}
+
+/**
+ * Whether a path is a hosted document's page, /d/<id> or /s/<token>, which
+ * is the web app's read view when the build is here. Its /raw and /assets
+ * are not pages.
+ */
+export function isReadViewPath(path: string): boolean {
+  return /^\/(?:d|s)\/[^/]+\/?$/.test(path);
 }
 
 // Video players a document may embed, the same two the desktop allows
@@ -123,8 +137,11 @@ export function webAppCsp(scriptHashes: readonly string[], apiOrigin: string): s
     "default-src 'self'",
     ["script-src 'self'", ...scriptHashes.filter((hash) => SCRIPT_HASH.test(hash)).map((hash) => `'${hash}'`)].join(" "),
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https:",
-    "media-src 'self' data: blob: https:",
+    // The API origin by name as well: a document's own pictures are read
+    // from it (/d/<id>/assets, /s/<token>/assets), and a development API host
+    // is plain http, which https: does not cover.
+    ["img-src 'self' data: blob: https:", api].filter(Boolean).join(" "),
+    ["media-src 'self' data: blob: https:", api].filter(Boolean).join(" "),
     "font-src 'self' data:",
     ["connect-src 'self'", api, socket].filter(Boolean).join(" "),
     "worker-src 'self'",
@@ -156,6 +173,89 @@ const NOT_BUILT_PAGE = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex"><title>Not found · Markie</title></head>
 <body><h1>Not found</h1><p>The Markie web app is not on this server.</p></body></html>`;
 
+/**
+ * A read view's shell (/d/<id>, /s/<token>) with the private headers every
+ * document page carries, over its own page policy: the URL can hold a
+ * personal or public token, so no cache keeps it and no referrer names it.
+ */
+export function privateShell(res: Response): Response {
+  const headers = new Headers(res.headers);
+  headers.set("Cache-Control", "private, no-store");
+  headers.set("Referrer-Policy", "no-referrer");
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("X-Frame-Options", "DENY");
+  return new Response(res.body, { status: res.status, headers });
+}
+
+function notBuiltPage(): Response {
+  return new Response(NOT_BUILT_PAGE, {
+    status: 404,
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'none'" },
+  });
+}
+
+const escAttr = (value: string) =>
+  value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]!);
+
+/**
+ * What a public link's view page knows before it fetches anything: the
+ * document's name, for the tab and the bar, and its format, so the view
+ * draws a Darkmown or plain-text document as itself. Both are what the
+ * static public page already shows the link's holder. Never sent for /d/,
+ * where the server cannot see the reader's session.
+ */
+export interface ShellDocMeta {
+  title: string;
+  format: string;
+}
+
+export function withDocMeta(shell: string, meta: ShellDocMeta): string {
+  const title = escAttr(meta.title.slice(0, 300));
+  const format = /^[a-z]{1,20}$/.test(meta.format) ? meta.format : "markdown";
+  return shell
+    .replace(/<title>[^<]*<\/title>/, `<title>${title} · Markie</title>`)
+    .replace(
+      "</head>",
+      `  <meta name="markie-doc-name" content="${title}" />\n  <meta name="markie-doc-format" content="${format}" />\n  </head>`
+    );
+}
+
+/**
+ * The shell as a response, with its page policy, or the not-built page.
+ * Every page that runs the bundle goes through here: /app, and the read
+ * views at /d/<id> and /s/<token>, so they all carry exactly one policy.
+ */
+export function webAppShell({
+  dir = process.env.MARKIE_WEB_DIST || DEFAULT_DIR,
+  apiOrigin,
+  doc,
+}: {
+  dir?: string;
+  apiOrigin: string;
+  doc?: ShellDocMeta;
+}): Response {
+  const root = resolve(dir);
+  if (!webAppAvailable(root)) return notBuiltPage();
+  let shell: string;
+  try {
+    shell = readFileSync(resolve(root, SHELL), "utf8");
+  } catch {
+    return notBuiltPage();
+  }
+  shell = withServerMeta(shell, apiOrigin);
+  if (doc) shell = withDocMeta(shell, doc);
+  return new Response(shell, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      // The same for everyone, but it names this server and a deploy
+      // replaces it, so no cache keeps it.
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+      "content-security-policy": webAppCsp(readScriptHashes(root), apiOrigin),
+    },
+  });
+}
+
 export interface WebAppOptions {
   /** Where the build is. Defaults to server/web-dist (or MARKIE_WEB_DIST). */
   dir?: string;
@@ -171,11 +271,7 @@ export function createWebApp({ dir = process.env.MARKIE_WEB_DIST || DEFAULT_DIR,
   const assetsRoot = resolve(root, "assets");
   const app = new Hono();
 
-  const notBuilt = () =>
-    new Response(NOT_BUILT_PAGE, {
-      status: 404,
-      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'none'" },
-    });
+  const notBuilt = notBuiltPage;
 
   app.get("/app/assets/*", (c) => {
     if (!webAppAvailable(root)) return notBuilt();
@@ -196,25 +292,7 @@ export function createWebApp({ dir = process.env.MARKIE_WEB_DIST || DEFAULT_DIR,
     });
   });
 
-  const page = () => {
-    if (!webAppAvailable(root)) return notBuilt();
-    let shell: string;
-    try {
-      shell = readFileSync(resolve(root, SHELL), "utf8");
-    } catch {
-      return notBuilt();
-    }
-    return new Response(withServerMeta(shell, apiOrigin), {
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-        // The same for everyone, but it names this server and a deploy
-        // replaces it, so no cache keeps it.
-        "cache-control": "no-store",
-        "referrer-policy": "no-referrer",
-        "content-security-policy": webAppCsp(readScriptHashes(root), apiOrigin),
-      },
-    });
-  };
+  const page = () => webAppShell({ dir: root, apiOrigin });
 
   app.get("/app", page);
   app.get("/app/*", page);

@@ -17,7 +17,7 @@ import { agentDocsApi, restAgentAuth } from "./agent-docs.ts";
 import { mcpApi, mcpAuth } from "./mcp-server.ts";
 import { createWellKnown } from "./well-known.ts";
 import { createWebSignIn } from "./web-signin.ts";
-import { createWebApp, isWebAppPath } from "./web-app.ts";
+import { createWebApp, isReadViewPath, isWebAppPath } from "./web-app.ts";
 import { docsHostConfig, redirectToDocsHost } from "./docs-host.ts";
 import { BRAND_HEAD, brandAssets, brandLogoSvg } from "./brand.ts";
 import { attachCollab, closeAllRooms, terminateAllRooms } from "./collab.ts";
@@ -109,8 +109,12 @@ app.use("*", async (c, next) => {
   // (an asset's private max-age, server-info's public one) keep theirs.
   if (c.req.path.startsWith("/api/") && !h.has("Cache-Control")) h.set("Cache-Control", "private, no-store");
   // The web app's pages carry their own policy (web-app.ts): it runs the
-  // app's bundle and the Darkmown frame, which this one would refuse.
-  if ((h.get("content-type") ?? "").includes("text/html") && !isWebAppPath(c.req.path)) {
+  // app's bundle and the Darkmown frame, which this one would refuse. So do
+  // the read views at /d/<id> and /s/<token>, which are the same shell and
+  // send the same policy (webAppShell). Only those two routes may: any other
+  // page gets this one, header or not.
+  const shellHere = isWebAppPath(c.req.path) || (isReadViewPath(c.req.path) && h.has("Content-Security-Policy"));
+  if ((h.get("content-type") ?? "").includes("text/html") && !shellHere) {
     h.set("Content-Security-Policy", CONTENT_SECURITY_POLICY);
   }
 });

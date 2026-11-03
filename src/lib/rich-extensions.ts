@@ -17,6 +17,7 @@ import { mediaKindOf, resolveAssetSrc } from "@/lib/asset-url";
 import { getElectronAPI } from "@/lib/electron";
 import { normalizeWidth, sizedMediaHtml } from "@/lib/rich-media-html";
 import { EmbedNode } from "@/lib/rich-embed";
+import { allowImageDataUris } from "@/lib/rich-data-images";
 import { requestLocalVideoViewer } from "@/lib/media-viewer-events";
 import { AlignedHeading, AlignedParagraph } from "@/lib/rich-aligned-blocks";
 import { Placeholder } from "@tiptap/extension-placeholder";
@@ -144,7 +145,10 @@ const LocalImage = Image.extend<LocalImageOptions>({
           if (node.isBlock) state.closeBlock(node);
         },
         parse: {
-          // handled by markdown-it, with html enabled
+          // Parsed by markdown-it, with html enabled. Its default address
+          // check refuses an SVG or AVIF data: picture, which then stays
+          // literal text and is saved escaped; see rich-data-images.ts.
+          setup: allowImageDataUris,
         },
       },
     };

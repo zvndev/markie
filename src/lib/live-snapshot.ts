@@ -154,9 +154,10 @@ export function useLiveRoom(room: LiveRoom | null, kind: LiveKind, { documentEmp
 export type SnapshotRefusal = "held-constructs";
 
 /**
- * Rule 3: whether the room can carry everything `stored` says. Front matter
- * and the constructs the solo editor holds aside (raw HTML blocks, HTML
- * comments, footnote definitions) do not survive a rich room.
+ * Rule 3: whether the room can carry everything `stored` says. Front matter,
+ * the constructs the solo editor holds aside (raw HTML blocks, HTML
+ * comments, footnote definitions) and a picture whose address the editor
+ * refuses do not survive a rich room.
  */
 export function liveSnapshotRefusal(stored: string, kind: LiveKind): SnapshotRefusal | null {
   if (kind !== "rich") return null;
@@ -166,7 +167,7 @@ export function liveSnapshotRefusal(stored: string, kind: LiveKind): SnapshotRef
 }
 
 export const SNAPSHOT_REFUSAL_NOTE =
-  "Live edits stay in the live session. The saved copy isn't updated from it, because this document has front matter or raw HTML that live editing can't keep.";
+  "Live edits stay in the live session. The saved copy isn't updated from it, because this document has front matter, raw HTML or a picture address that live editing can't keep.";
 
 /**
  * Rule 6: whether the room's first text is the stored copy. "unknown" until

@@ -34,7 +34,7 @@ import { IncomingScreen } from "./screens/incoming";
 type Route =
   | { key: string; kind: "recent" }
   | { key: string; kind: "settings" }
-  | { key: string; kind: "doc"; target: LinkTarget; name?: string; reloadKey?: number }
+  | { key: string; kind: "doc"; target: LinkTarget; name?: string; reloadKey?: number; sharedBy?: string | null }
   | { key: string; kind: "new"; type: NewDocType }
   | { key: string; kind: "office"; id: string; name?: string; startEditing?: boolean }
   | { key: string; kind: "edit"; draft: EditorDraft }
@@ -140,12 +140,12 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     });
   }, [apiIdentity, transport, persistRotatedToken]);
 
-  const openTarget = useCallback((target: LinkTarget, { replaceStack = false, name }: { replaceStack?: boolean; name?: string } = {}) => {
+  const openTarget = useCallback((target: LinkTarget, { replaceStack = false, name, sharedBy = null }: { replaceStack?: boolean; name?: string; sharedBy?: string | null } = {}) => {
     const current = sessionRef.current;
     if (!current) return;
     const resolved = resolveForSession(target, current.origin);
     if (!resolved.ok) { showToast(resolved.message); return; }
-    const route: Route = { key: nextKey("doc"), kind: "doc", target: resolved.target, name };
+    const route: Route = { key: nextKey("doc"), kind: "doc", target: resolved.target, name, sharedBy };
     setRoutes((stack) => {
       const top = stack[stack.length - 1];
       if (top.kind === "doc" && sameTarget(top.target, resolved.target)) return stack;
@@ -336,7 +336,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
             refreshKey={refreshKey}
             onOpen={(doc) => doc.store === "platform"
               ? setRoutes((stack) => [...stack, { key: nextKey("office"), kind: "office", id: doc.id, name: doc.name }])
-              : openTarget({ kind: "doc", id: doc.id, origin: api.origin }, { name: doc.name })}
+              : openTarget({ kind: "doc", id: doc.id, origin: api.origin }, { name: doc.name, sharedBy: doc.sharedBy })}
             onSettings={() => setRoutes((stack) => (stack[stack.length - 1].kind === "settings" ? stack : [...stack, { key: nextKey("settings"), kind: "settings" }]))}
             onNew={() => setChooser(true)}
             onUnauthorized={onUnauthorized}
@@ -434,6 +434,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
           api={api}
           target={route.target}
           initialName={route.name}
+          sharedBy={route.sharedBy ?? null}
           backLabel={backLabel}
           tone={tone}
           onBack={pop}

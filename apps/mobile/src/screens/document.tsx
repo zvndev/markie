@@ -25,6 +25,8 @@ interface DocumentProps {
   target: LinkTarget;
   /** The name from the list, shown while the document loads. */
   initialName?: string;
+  /** Who shared it with this account, from the list: its owner, for the share sheet. */
+  sharedBy?: string | null;
   backLabel: string;
   tone: Tone;
   onBack: () => void;
@@ -47,7 +49,7 @@ type State =
   | { status: "ready"; doc: CloudDoc }
   | { status: "error"; error: unknown };
 
-export function DocumentScreen({ api, target, initialName, backLabel, tone, onBack, onRecent, onOpen, onEdit, onComments, me, onUnauthorized, reloadKey = 0 }: DocumentProps) {
+export function DocumentScreen({ api, target, initialName, sharedBy = null, backLabel, tone, onBack, onRecent, onOpen, onEdit, onComments, me, onUnauthorized, reloadKey = 0 }: DocumentProps) {
   const [sharing, setSharing] = useState(false);
   // Who else is on it: null until known, and for a public share, which has no members to ask about.
   const [members, setMembers] = useState<ShareMember[] | null>(null);
@@ -162,6 +164,7 @@ export function DocumentScreen({ api, target, initialName, backLabel, tone, onBa
           people={docsPeople(api, target.id)}
           publicLink={owner ? docsPublicLink(api, target.id) : null}
           canManage={owner}
+          owner={owner ? null : sharedBy}
           me={me}
           link={doc.privateLink}
           onClose={() => setSharing(false)}

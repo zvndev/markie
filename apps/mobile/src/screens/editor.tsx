@@ -79,6 +79,9 @@ const MARKDOWN_ACTIONS: { action: MarkdownAction; label: string; text: string }[
   { action: "code", label: "Code", text: "</>" },
 ];
 
+/** What a viewer reads on a document no editor has opened live yet. */
+export const EMPTY_ROOM_NOTE = "This is the saved copy. Nobody who can edit has opened it live yet, and comments start once someone does.";
+
 // How long a live document waits after the last change before writing its
 // text back as the stored version.
 const LIVE_SAVE_DELAY_MS = 3_000;
@@ -150,9 +153,14 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   // No pass, or no runtime: there is no room, so the phone edits alone, as
   // the desktop does (src/app/page.tsx handleCollabStatus). Nothing typed
   // into a session that never joined is written anywhere.
+  // "empty": a viewer in a room nobody who can edit has opened yet. A viewer
+  // cannot seed it, so the stored copy is the document: it is shown, read
+  // only, as the desktop and the web app show it, rather than a blank room.
+  const [emptyRoom, setEmptyRoom] = useState(false);
   const onStatus = useCallback((next: LiveStatus) => {
-    if (next === "unavailable") {
-      setLiveUnavailable(true);
+    if (next === "unavailable" || next === "empty") {
+      if (next === "unavailable") setLiveUnavailable(true);
+      else setEmptyRoom(true);
       setSession({ mode: "solo" });
       return;
     }
@@ -420,6 +428,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
             </div>
           </div>
         ) : null}
+        {emptyRoom && !isLive ? <p className="m-editor-note" role="note" data-empty-room>{EMPTY_ROOM_NOTE}</p> : null}
         {liveUnavailable && !isLive ? <p className="m-editor-note" role="note">The live session couldn't start, so you're editing your copy alone. Save when you're done.</p> : null}
         {isLive ? <LiveLine status={status} save={liveSave} readOnly={readOnly} wait={wait} /> : null}
         {markdown ? (

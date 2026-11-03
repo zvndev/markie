@@ -348,7 +348,17 @@ export async function runDesktopLaunchSmoke({
   const tempUserDataDir = userDataDir || (await mkdtemp(path.join(tmpdir(), "markie-desktop-launch-")));
   const child = spawn(
     app.executable,
-    [`--remote-debugging-port=${resolvedDebugPort}`, `--user-data-dir=${tempUserDataDir}`],
+    [
+      `--remote-debugging-port=${resolvedDebugPort}`,
+      `--user-data-dir=${tempUserDataDir}`,
+      // MARKIE_E2E keeps the window hidden, and from Electron 42 Chromium
+      // stops compositing a hidden window on Linux after a moment, so the
+      // screenshot below waited forever for a frame. These are the switches
+      // browser automation passes for the same reason; they change nothing a
+      // user's launch does.
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+    ],
     {
       cwd: app.appDir,
       env: { ...process.env, MARKIE_E2E: "1" },

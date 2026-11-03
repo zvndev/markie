@@ -7,7 +7,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostSmokeMode, packageProfile, verifyPackageLayout } from "./package-smoke.mjs";
-import { capturePageScreenshot, selectPageTarget, validateRendererProbe } from "./windows-launch-smoke.mjs";
+import {
+  CDP_CALL_TIMEOUT_MS,
+  HIDDEN_WINDOW_SWITCHES,
+  captureHiddenWindow,
+  selectPageTarget,
+  validateRendererProbe,
+  withDeadline,
+} from "./windows-launch-smoke.mjs";
+
+export { withDeadline };
 import { requireElectronConsent } from "./lib/e2e-consent.mjs";
 import { createRequire } from "node:module";
 
@@ -151,18 +160,6 @@ async function pickPort() {
   });
 }
 
-const CDP_CALL_TIMEOUT_MS = 15000;
-
-export function withDeadline(promise, timeoutMs, label) {
-  let timer;
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${label} did not answer within ${timeoutMs}ms`)), timeoutMs);
-    }),
-  ]).finally(() => clearTimeout(timer));
-}
-
 async function waitFor(label, fn, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const started = Date.now();
   let lastError;
@@ -269,43 +266,6 @@ async function probeRenderer(cdp, timeoutMs) {
   );
 }
 
-// The E2E window is never shown. On Electron 42 Linux, Chromium sometimes has
-// no frame for a hidden window when the screenshot is asked for, and the
-// capture waits for one that never comes. Before each attempt the page is put
-// back in the active lifecycle state and given an emulated size change, which
-// makes the renderer produce a fresh frame. A capture that still never answers
-// fails the smoke, with the page's visibility in the message.
-const CAPTURE_ATTEMPTS = 3;
-
-async function captureHiddenWindow(cdp) {
-  let lastError;
-  for (let attempt = 1; attempt <= CAPTURE_ATTEMPTS; attempt += 1) {
-    await cdp.send("Page.setWebLifecycleState", { state: "active" }).catch(() => null);
-    await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => null);
-    const size = await cdp
-      .evaluate("({ width: window.innerWidth, height: window.innerHeight })")
-      .catch(() => null);
-    if (size?.width && size?.height) {
-      await cdp
-        .send("Emulation.setDeviceMetricsOverride", {
-          width: size.width,
-          height: size.height - (attempt % 2),
-          deviceScaleFactor: 0,
-          mobile: false,
-        })
-        .catch(() => null);
-    }
-    try {
-      return await capturePageScreenshot(cdp);
-    } catch (error) {
-      lastError = error;
-    } finally {
-      await cdp.send("Emulation.clearDeviceMetricsOverride").catch(() => null);
-    }
-  }
-  const visibility = await cdp.evaluate("document.visibilityState").catch(() => "unknown");
-  throw new Error(`${lastError?.message ?? "screenshot failed"} (after ${CAPTURE_ATTEMPTS} attempts; page visibility: ${visibility})`);
-}
 
 async function waitForExit(child, timeoutMs = 2000) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -389,13 +349,7 @@ export async function runDesktopLaunchSmoke({
     [
       `--remote-debugging-port=${resolvedDebugPort}`,
       `--user-data-dir=${tempUserDataDir}`,
-      // MARKIE_E2E keeps the window hidden, and from Electron 42 Chromium
-      // stops compositing a hidden window on Linux after a moment, so the
-      // screenshot below waited forever for a frame. These are the switches
-      // browser automation passes for the same reason; they change nothing a
-      // user's launch does.
-      "--disable-backgrounding-occluded-windows",
-      "--disable-renderer-backgrounding",
+      ...HIDDEN_WINDOW_SWITCHES,
     ],
     {
       cwd: app.appDir,

@@ -32,6 +32,7 @@ export function LiveDocsPreviewPanel({ choice: initialChoice, suspended, onClose
   const [status, setStatus] = useState<LiveDocsPreviewStatus | null>(null);
   const [attempt, setAttempt] = useState(0);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
   const project = choice.ok ? choice.project : null;
   const phase = !choice.ok ? "rejected" : (status?.phase ?? "starting");
   const ready = phase === "ready";
@@ -76,10 +77,15 @@ export function LiveDocsPreviewPanel({ choice: initialChoice, suspended, onClose
   }, [api, ready, suspended]);
 
   // Escape reaches this page only while it has focus. Inside the preview, the
-  // page gets the key, the way any web page would.
+  // page gets the key, the way any web page would. An Escape that started in
+  // another overlay (the palette's input) is that overlay's: by the time it
+  // bubbles here, the overlay has already closed and `suspended` is false.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !suspended) onClose();
+      if (event.key !== "Escape" || suspended) return;
+      const target = event.target;
+      const ours = !(target instanceof Node) || target === document.body || target === document.documentElement || !!panelRef.current?.contains(target);
+      if (ours) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -102,6 +108,7 @@ export function LiveDocsPreviewPanel({ choice: initialChoice, suspended, onClose
 
   return (
     <section
+      ref={panelRef}
       aria-label="Darkmown project preview"
       data-live-docs-phase={phase}
       className="markie-overlay-panel overlay-popover-enter fixed inset-x-3 bottom-3 top-12 z-[60] flex flex-col overflow-hidden rounded-xl"

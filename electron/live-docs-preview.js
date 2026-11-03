@@ -289,6 +289,13 @@ function pushLog(log, chunk) {
 
 // A process group belongs to us only when we created it: an integer pid above
 // 1 from a child we spawned detached. Anything else gets a plain kill.
+//
+// scripts/lib/safe-kill.mjs bans group kills for Electron, which relaunches
+// itself through LaunchServices and leaves its group, so the pgid can end up
+// naming someone else. The watchdog is plain node: it never relaunches, it
+// leads the group it was spawned into, and its pid cannot be reused before
+// libuv reaps it, which is the same tick that sets run.exited. Callers check
+// run.exited first.
 function signalRun(run, signal, kill) {
   const pid = run.child.pid;
   if (run.detached && Number.isInteger(pid) && pid > 1) {

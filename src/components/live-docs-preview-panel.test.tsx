@@ -97,4 +97,19 @@ describe("LiveDocsPreviewPanel", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  // Found in the packaged run: Escape closed the palette, the palette's close
+  // un-suspended the panel, and the same key then closed the preview too.
+  it("leaves an Escape that started in another overlay to that overlay", () => {
+    installApi();
+    const onClose = vi.fn();
+    render(<LiveDocsPreviewPanel choice={accepted} suspended={false} onClose={onClose} />);
+    const paletteInput = document.createElement("input");
+    document.body.appendChild(paletteInput);
+    fireEvent.keyDown(paletteInput, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("button", { name: "Close preview" }), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    paletteInput.remove();
+  });
 });

@@ -29,10 +29,14 @@ export const LIVE_DOC_COMPILER_VERSION = `${PROVENANCE.version}+${PROVENANCE.com
 // the source to 128,000 characters, 5,000 lines and its complexity budget.
 export const LIVE_DOC_SOURCE_LIMIT = 200_000;
 export const LIVE_DOC_COMPILE_TIMEOUT_MS = 8_000;
+// A 126,000-character Live Doc compiles in 32 MB of old generation in under
+// 100 ms (2026-11-03), so 64 MB is double what the largest accepted source
+// needs. With two compiles at once that is about 200 MB at worst, on top of a
+// markie-api container that runs in 1 GB and peaks near 325 MB.
 export const LIVE_DOC_RESOURCE_LIMITS: ResourceLimits = {
-  maxOldGenerationSizeMb: 128,
-  maxYoungGenerationSizeMb: 32,
-  codeRangeSizeMb: 32,
+  maxOldGenerationSizeMb: 64,
+  maxYoungGenerationSizeMb: 16,
+  codeRangeSizeMb: 16,
   stackSizeMb: 4,
 };
 

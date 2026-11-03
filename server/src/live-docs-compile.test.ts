@@ -67,6 +67,14 @@ test("a compile past its memory limit is stopped, while a small one fits", async
   assert.ok((await createLiveDocCompiler().compile(HEAVY)).ok);
 });
 
+test("the largest source the limits accept compiles under the production memory cap", async () => {
+  const paragraph = "A long paragraph of ordinary prose that goes on for a while to fill the document with text. ".repeat(10) + "\n\n";
+  let source = "# Big\n\n";
+  while (source.length + paragraph.length < 127_000) source += paragraph;
+  const result = await createLiveDocCompiler().compile(source);
+  assert.ok(result.ok, JSON.stringify(!result.ok && result));
+});
+
 test("a memory limit too small to start a worker is raised, never a process crash", async () => {
   // 1 MB of old generation aborts the whole Node process at isolate start.
   // The compiler raises it to its floor, so this fails one compile at most.

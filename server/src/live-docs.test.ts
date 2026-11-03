@@ -264,6 +264,14 @@ test("a ticket works once: replay fails", async () => {
   assert.equal(replay.res.headers.getSetCookie().length, 0);
 });
 
+test("a HEAD request to the redeem path does not spend the ticket", async () => {
+  const ticket = await passFor(labelA, await browserSignIn(owner.email));
+  const head = await ask(liveHost(labelA), `/__markie/pass?ticket=${encodeURIComponent(ticket)}`, { method: "HEAD" });
+  assert.equal(head.status, 404);
+  assert.equal(head.headers.getSetCookie().length, 0);
+  assert.ok((await redeem(labelA, ticket)).cookie, "the browser's GET still opens it");
+});
+
 test("two redeems racing with one ticket: exactly one wins", async () => {
   const ticket = await passFor(labelA, await browserSignIn(owner.email));
   const results = await Promise.all([redeem(labelA, ticket), redeem(labelA, ticket), redeem(labelA, ticket)]);

@@ -111,6 +111,9 @@ export function createLiveDocs({ config, appOrigin, siteUrl, compiler = createLi
   };
 
   live.get(LIVE_DOC_REDEEM_PATH, (c) => {
+    // A HEAD (a link checker, a prefetch) must not spend the pass the
+    // browser's own GET is about to bring.
+    if (c.req.method !== "GET") return c.text("Not found", 404);
     const label = c.env.label;
     const binding = consumeLiveDocTicket(c.req.query("ticket") ?? "", label);
     if (!binding || !stillOpens(binding, label)) {

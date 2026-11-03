@@ -138,3 +138,22 @@ npx eslint electron-builder.private.cjs scripts/private-release.mjs scripts/priv
 Those tests do not establish a valid Developer ID artifact, notary acceptance,
 owner-only gateway authorization, a successful installed app/update or native
 Windows distribution. The root records that separate exact-artifact evidence.
+
+## Moving Kirby's Mac between the private and public lanes
+
+A private build only updates from the private gateway, and a public build never looks there, so
+neither can move itself to the other lane. Both are `com.zvn.markie` from the same team at
+`/Applications/Markie.app`, and each keeps its own profile (`Markie Super-nightly` for private,
+`markie` for public), so swapping the app swaps which profile opens and loses nothing.
+
+```sh
+npm run markie:use -- private   # newest super-nightly built on this Mac, while testing private work
+npm run markie:use -- public    # newest stable from the stable feed, once the work is released
+npm run markie:use -- public --dry-run   # verify only; touches nothing
+```
+
+The script verifies the new app (bundle id, version, `codesign`, Gatekeeper and, for public, the
+SHA-512 the stable feed names), asks Markie to quit and waits for it, moves the installed app into
+`~/Library/Application Support/Markie Install Backups/`, copies the new one in and relaunches it. A
+Markie that does not quit within 30 seconds is left running and nothing changes. After a full
+release, run the `public` form so Kirby's own install sits on stable.

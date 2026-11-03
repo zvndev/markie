@@ -69,7 +69,6 @@ import { RichLossBanner, RichPreparingNote } from "@/components/rich-guard";
 import { useRichSafety } from "@/lib/use-rich-safety";
 import { AgentsDialog } from "@/components/agents-dialog";
 import { UpdateToast } from "@/components/update-toast";
-import { CopyAllButton } from "@/components/copy-all-button";
 import { LocalComments } from "@/components/local-comments";
 import { isCommentableDoc } from "@/lib/local-comments";
 import { nightlyFeaturesEnabled } from "@/lib/nightly";
@@ -142,6 +141,7 @@ import { opensAsDocument } from "@/lib/attach";
 import { useDocument, type EditInput } from "@/lib/use-document";
 import { useSaveGuard, type SaveGuard } from "@/lib/use-save-guard";
 import { useDocumentExport } from "@/lib/use-export";
+import { exportFormatsFor } from "@/lib/export-formats";
 
 // How long after the last edit the document's size is measured again (see the
 // re-tiering effect in Home).
@@ -1048,11 +1048,12 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
 
   // Paper, PDF, and standalone HTML all render through main's one hidden
   // window, so they share one in-flight guard and one error surface.
-  const { exporting, exportPDF, exportHTML, printDocument } = useDocumentExport({
+  const { exporting, exportPDF, exportHTML, exportAs, printDocument } = useDocumentExport({
     previewHTML: getPreviewHTML,
     currentMarkdown,
     docPath: () => docRef.current.filePath,
     fileName,
+    plainText,
     onError: setForkError,
   });
 
@@ -1965,6 +1966,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       { id: "export-pdf-dark", title: "Export PDF (Dark)", group: "File", shortcut: "⇧⌘E", keywords: "print", run: () => exportPDF("dark") },
       { id: "export-pdf-light", title: "Export PDF (Light)", group: "File", keywords: "print", run: () => exportPDF("light") },
       { id: "export-html", title: "Export HTML", group: "File", run: exportHTML },
+      ...(!documentsOpen ? exportFormatsFor(plainText ? "text" : "markdown").map((format): AppCommand => ({ id: `export-${format.id}`, title: `Export as ${format.label}`, group: "File", keywords: `export convert ${format.extension}`, run: () => void exportAs(format.id) })) : []),
       { id: "mode-view", title: "Rich Mode", group: "View", shortcut: "⌘1", keywords: "preview rich wysiwyg formatted view", run: () => requestMode("preview") },
       { id: "mode-edit", title: "Source Mode", group: "View", shortcut: "⌘2", keywords: "source raw markdown edit", run: () => setMode("edit") },
       { id: "mode-split", title: "Split Mode", group: "View", shortcut: "⌘3", keywords: "both side by side", run: () => requestMode("split") },
@@ -2026,6 +2028,8 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       revealLabel,
       exportPDF,
       exportHTML,
+      exportAs,
+      plainText,
       requestNewFile,
       selectView,
       editContent,
@@ -2204,6 +2208,12 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         onDocumentExportPDF={documentsOpen && !documentShell?.private && !documentShell?.busy && !documentShell?.commands?.modalOpen && documentShell?.commands?.enabledCommands.includes("document-export-pdf") ? () => runDocumentCommand("document-export-pdf") : undefined}
         onSaveAs={() => documentsOpen ? documentShellRef.current?.save(true) : handleSaveAs()}
         onExportHTML={exportHTML}
+        exportFormats={documentsOpen ? undefined : exportFormatsFor(plainText ? "text" : "markdown")}
+        onExportFormat={documentsOpen ? undefined : (format) => void exportAs(format)}
+        // Copy all copies the Markdown or text workspace's document; a Word,
+        // RTF or ODT session has no single text form to put there.
+        copyText={documentsOpen ? undefined : content}
+        readCopyText={currentMarkdown}
         exporting={documentsOpen ? !!documentShell?.busy : exporting}
         fileName={documentsOpen ? documentShell?.name ?? null : fileName}
         isDirty={documentsOpen ? !!documentShell?.dirty : isDirty}
@@ -2353,10 +2363,6 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
               revision={content}
               onClose={closeFind}
             />
-
-            {/* Copy the whole document from where you are reading it. Hidden
-                while Find is open, which sits in the same corner. */}
-            {!showFind && content ? <CopyAllButton text={content} /> : null}
 
             {/* Comments on a local markdown file, super-nightly only. A live
                 cloud document keeps its own comment layer instead. */}

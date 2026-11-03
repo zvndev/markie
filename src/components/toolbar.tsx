@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useSyncExternalStore } from "react";
+import { useId, useState, useRef, useEffect, useSyncExternalStore } from "react";
 import type { PDFTheme } from "@/lib/pdf-styles";
 import { getElectronAPI } from "@/lib/electron";
 import { initials, type PeerUser } from "@/lib/collab";
@@ -11,6 +11,8 @@ import {
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 import { RICH_DOCUMENT_OUTPUT_HELP } from "@/lib/document-output-policy";
 import { MarkieLogo } from "@/components/markie-logo";
+import { CopyAllButton } from "@/components/copy-all-button";
+import { EXPORT_FORMAT_NOTE, type ExportFormat, type ExportFormatId } from "@/lib/export-formats";
 
 interface ToolbarProps {
   documentMode?: boolean;
@@ -24,6 +26,15 @@ interface ToolbarProps {
   // PDF render it. All three live in the one visible Export menu.
   onSaveAs: () => void;
   onExportHTML: () => void;
+  // The converted copies (Word, RTF, ODT, text, Markdown) offered for this
+  // document, listed under "Export as" after PDF and HTML.
+  exportFormats?: readonly ExportFormat[];
+  onExportFormat?: (format: ExportFormatId) => void;
+  // "Copy all" sits beside Export when the open document has text to copy.
+  // Undefined hides it (a Word document); "" shows it disabled.
+  copyText?: string;
+  // Reads the freshest text at the moment of the click.
+  readCopyText?: () => string;
   // An export is running. A second one spawns a hidden renderer main never
   // reclaims, so the menu says so instead of letting it be started.
   exporting?: boolean;
@@ -54,6 +65,10 @@ export function Toolbar({
   onExportPDF,
   onSaveAs,
   onExportHTML,
+  exportFormats = [],
+  onExportFormat,
+  copyText,
+  readCopyText,
   exporting = false,
   fileName,
   isDirty,
@@ -72,6 +87,7 @@ export function Toolbar({
   const [draftName, setDraftName] = useState("");
   const [colorMode, setColorMode] = useState<ColorMode>(() => getColorMode());
   const menuRef = useRef<HTMLDivElement>(null);
+  const exportAsId = useId();
 
   const pickColorMode = (m: ColorMode) => {
     setColorMode(m);
@@ -190,7 +206,7 @@ export function Toolbar({
             </button>
 
             {showPDFMenu && (
-              <div className="markie-menu-panel absolute top-full right-0 sm:right-auto sm:left-0 mt-1.5 rounded-lg py-1.5 min-w-[152px] z-50">
+              <div className="markie-menu-panel absolute top-full right-0 sm:right-auto sm:left-0 mt-1.5 rounded-lg py-1.5 min-w-[188px] z-50">
                 {documentMode && onSave ? <button type="button" onClick={() => { onSave(); setShowPDFMenu(false); }} className="sm:hidden markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted">Save file</button> : null}
                 <button
                   onClick={() => { onSaveAs(); setShowPDFMenu(false); }}
@@ -212,7 +228,26 @@ export function Toolbar({
                   Export PDF…
                 </button> : null}
                 {documentMode && onDocumentExportPDF ? <p role="note" aria-label="Document PDF information" className="max-w-[240px] border-t border-border px-3 pt-2 mt-1 text-[11px] leading-relaxed text-muted">{RICH_DOCUMENT_OUTPUT_HELP}</p> : null}
-                {!documentMode ? <><button
+                {!documentMode ? <div role="group" aria-labelledby={exportAsId}>
+                <div className="h-px bg-border my-1" />
+                <p id={exportAsId} className="px-3 pt-1.5 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted/80">Export as</p>
+                <button
+                  onClick={() => { onExportPDF("dark"); setShowPDFMenu(false); }}
+                  disabled={exporting}
+                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2 disabled:opacity-40"
+                >
+                  <DownloadIcon />
+                  PDF (Dark)
+                </button>
+                <button
+                  onClick={() => { onExportPDF("light"); setShowPDFMenu(false); }}
+                  disabled={exporting}
+                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2 disabled:opacity-40"
+                >
+                  <DownloadIcon />
+                  PDF (Light)
+                </button>
+                <button
                   onClick={() => { onExportHTML(); setShowPDFMenu(false); }}
                   disabled={exporting}
                   className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2 disabled:opacity-40"
@@ -221,33 +256,25 @@ export function Toolbar({
                     <polyline points="16 18 22 12 16 6" />
                     <polyline points="8 6 2 12 8 18" />
                   </svg>
-                  Export HTML
+                  HTML (.html)
                 </button>
-                <div className="h-px bg-border my-1" />
-                <button
-                  onClick={() => { onExportPDF("dark"); setShowPDFMenu(false); }}
+                {onExportFormat ? exportFormats.map((format) => <button
+                  key={format.id}
+                  type="button"
+                  onClick={() => { onExportFormat(format.id); setShowPDFMenu(false); }}
                   disabled={exporting}
                   className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2 disabled:opacity-40"
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="8" y1="13" x2="16" y2="13" />
+                    <line x1="8" y1="17" x2="13" y2="17" />
                   </svg>
-                  PDF (Dark)
-                </button>
-                <button
-                  onClick={() => { onExportPDF("light"); setShowPDFMenu(false); }}
-                  disabled={exporting}
-                  className="markie-menu-item w-full text-left px-3 py-2 text-[12px] text-muted flex items-center gap-2 disabled:opacity-40"
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                  PDF (Light)
-                </button></> : null}
+                  {format.label}
+                </button>) : null}
+                {onExportFormat && exportFormats.some((f) => f.id === "rtf" || f.id === "odt") ? <p role="note" className="max-w-[220px] border-t border-border px-3 pt-2 mt-1 text-[11px] leading-relaxed text-muted">{EXPORT_FORMAT_NOTE}</p> : null}
+                </div> : null}
                 <div className="sm:hidden">
                   <div className="h-px bg-border my-1" />
                   {themeLocked || live || peers.length ? <div className="px-3 py-2 text-[11px] text-muted flex flex-col gap-1" aria-label="Document session status">
@@ -263,6 +290,7 @@ export function Toolbar({
               </div>
             )}
           </div>
+          {copyText !== undefined ? <CopyAllButton text={copyText} read={readCopyText} /> : null}
         </div>
       </div>
 
@@ -368,6 +396,16 @@ export function Toolbar({
         </button>
       </div>
     </div>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
   );
 }
 

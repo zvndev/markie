@@ -34,6 +34,16 @@
 //      in the room; anything else came from outside (an agent through MCP,
 //      a desktop's file sync, another device) and is surfaced, never
 //      overwritten.
+//   6. The stored copy the session opened on must be a state of the room.
+//      The server keeps the room (its update log) and the stored copy apart
+//      and only drops the room when the document is deleted, so a room last
+//      edited weeks ago can be older than a version an agent wrote since. A
+//      push from it would carry a correct base version, draw no 409, and
+//      silently put the old text back. So when the room is first ready, its
+//      text is compared with what a room seeded from the stored copy would
+//      say (roomMatchesStored): equal, and that text becomes the baseline,
+//      so opening a document never rewrites it; different, and the client
+//      shows a conflict and never pushes in this session.
 //
 // This module must not value-import yjs or y-websocket (they load lazily,
 // src/lib/collab-loader.ts): the room is typed structurally.
@@ -159,18 +169,42 @@ export function liveSnapshotRefusal(stored: string, kind: LiveKind): SnapshotRef
 export const SNAPSHOT_REFUSAL_NOTE =
   "Live edits stay in the live session. The saved copy isn't updated from it, because this document has front matter or raw HTML that live editing can't keep.";
 
-export type LiveSnapshotWait = "read-only" | "not-connected" | "not-synced" | "not-ready" | "not-writer" | SnapshotRefusal;
+/**
+ * Rule 6: whether the room's first text is the stored copy. "unknown" until
+ * the room is ready and its text has been compared.
+ */
+export type LiveBase = "unknown" | "room-state" | "diverged";
 
-/** Rules 1 to 4 together: null when this client may push now. */
-export function liveSnapshotWait(room: LiveRoomState, { editable, refusal }: { editable: boolean; refusal: SnapshotRefusal | null }): LiveSnapshotWait | null {
+export type LiveSnapshotWait = "read-only" | "not-connected" | "not-synced" | "not-ready" | "not-writer" | "diverged" | SnapshotRefusal;
+
+/** Rules 1 to 4 and 6 together: null when this client may push now. */
+export function liveSnapshotWait(
+  room: LiveRoomState,
+  { editable, refusal, base }: { editable: boolean; refusal: SnapshotRefusal | null; base: LiveBase }
+): LiveSnapshotWait | null {
   if (!editable) return "read-only";
   if (refusal) return refusal;
+  if (base === "diverged") return "diverged";
   if (!room.connected) return "not-connected";
   if (!room.synced) return "not-synced";
-  if (!room.ready) return "not-ready";
+  if (!room.ready || base === "unknown") return "not-ready";
   if (!room.writer) return "not-writer";
   return null;
 }
+
+/**
+ * Rule 6: whether `roomText`, the room's text as it first came out of the
+ * editor, is what a room seeded from `stored` says. Plain text rooms hold
+ * the characters themselves; a rich room holds the serializer's rendering.
+ */
+export async function roomMatchesStored(roomText: string, stored: string, kind: LiveKind): Promise<boolean> {
+  if (kind === "text") return roomText === stored;
+  const { roomRendering } = await import("@/lib/live-snapshot-rich");
+  return roomText === roomRendering(stored) || roomText === stored;
+}
+
+export const DIVERGED_NOTE =
+  "The live session and the saved copy differ: someone saved this document outside the live session since it was last edited live. The live edits stay in the session and aren't saved over that version.";
 
 // ── Rule 5: a refused save ────────────────────────────────────────────────
 

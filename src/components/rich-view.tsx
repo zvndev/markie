@@ -99,6 +99,12 @@ interface RichViewProps {
    * the desktop keeps its behaviour; the web app and the phone turn it on.
    */
   holdUntilReady?: boolean;
+  /**
+   * With holdUntilReady: called once, as the room becomes ready and before
+   * anyone can type in it, with the room's text as this editor serializes
+   * it. The host compares it with the stored copy (live-snapshot.ts rule 6).
+   */
+  onRoomReady?: (markdown: string) => void;
 }
 
 /** What onLiveSession hands a host: the room's Yjs document, its provider and the loaded runtime. */
@@ -177,6 +183,7 @@ function RichViewInner({
   showCommentLayer = true,
   onLiveSession,
   holdUntilReady = false,
+  onRoomReady,
 }: RichViewProps & { runtime: CollabRuntime | null }) {
   // The server told us, mid-session, that this user is no longer in the room.
   // The role prop cannot know that yet, so the editor has to lock itself.
@@ -483,6 +490,17 @@ function RichViewInner({
     // role raised an update event, which the handler above took for an edit.
     if (editor && editor.isEditable !== shouldEdit) editor.setEditable(shouldEdit, false);
   }, [editor, editableNow]);
+
+  // The room's first text, reported once as it becomes ready. Typing was
+  // held until this same render, so nothing typed here is in it.
+  const onRoomReadyRef = useRef(onRoomReady);
+  onRoomReadyRef.current = onRoomReady;
+  const roomReportedRef = useRef(false);
+  useEffect(() => {
+    if (!holdUntilReady || !session || !editor || !liveRoom.ready || roomReportedRef.current) return;
+    roomReportedRef.current = true;
+    onRoomReadyRef.current?.(serializeNowRef.current(editor));
+  }, [holdUntilReady, session, editor, liveRoom.ready]);
 
   // Document links: once the editor has drawn, ask main what each
   // `[x](plan.md)` is for this reader and mark the anchors, so a link to a

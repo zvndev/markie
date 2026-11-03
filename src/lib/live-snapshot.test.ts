@@ -1,6 +1,7 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import {
-  IDLE_ROOM, RoomTexts, SNAPSHOT_WRITER_FIELD, liveSnapshotRefusal, liveSnapshotWait, readLiveRoom, resolveLiveConflict,
+  IDLE_ROOM, RoomTexts, SNAPSHOT_WRITER_FIELD, liveSnapshotRefusal, liveSnapshotWait, readLiveRoom, resolveLiveConflict, roomMatchesStored,
   roomHasContent, snapshotWriter, textFingerprint, writeLiveSnapshot, type LiveRoom,
 } from "./live-snapshot";
 import { loadCollabRuntime } from "./collab-loader";
@@ -46,13 +47,54 @@ describe("rule 1: only a connected, synced room holding the document may push", 
 
   it("waits on each missing condition, in order", () => {
     const ready = { connected: true, synced: true, ready: true, writer: true };
-    expect(liveSnapshotWait(ready, { editable: true, refusal: null })).toBeNull();
-    expect(liveSnapshotWait(ready, { editable: false, refusal: null })).toBe("read-only");
-    expect(liveSnapshotWait({ ...ready, connected: false }, { editable: true, refusal: null })).toBe("not-connected");
-    expect(liveSnapshotWait({ ...ready, synced: false }, { editable: true, refusal: null })).toBe("not-synced");
-    expect(liveSnapshotWait({ ...ready, ready: false }, { editable: true, refusal: null })).toBe("not-ready");
-    expect(liveSnapshotWait({ ...ready, writer: false }, { editable: true, refusal: null })).toBe("not-writer");
-    expect(liveSnapshotWait(IDLE_ROOM, { editable: true, refusal: null })).toBe("not-connected");
+    expect(liveSnapshotWait(ready, { editable: true, refusal: null, base: "room-state" })).toBeNull();
+    expect(liveSnapshotWait(ready, { editable: false, refusal: null, base: "room-state" })).toBe("read-only");
+    expect(liveSnapshotWait({ ...ready, connected: false }, { editable: true, refusal: null, base: "room-state" })).toBe("not-connected");
+    expect(liveSnapshotWait({ ...ready, synced: false }, { editable: true, refusal: null, base: "room-state" })).toBe("not-synced");
+    expect(liveSnapshotWait({ ...ready, ready: false }, { editable: true, refusal: null, base: "room-state" })).toBe("not-ready");
+    expect(liveSnapshotWait({ ...ready, writer: false }, { editable: true, refusal: null, base: "room-state" })).toBe("not-writer");
+    expect(liveSnapshotWait(IDLE_ROOM, { editable: true, refusal: null, base: "room-state" })).toBe("not-connected");
+  });
+});
+
+describe("rule 6: the stored copy must be a state of the room", () => {
+  it("waits until the room has been compared, and never pushes from a room that drifted", () => {
+    const ready = { connected: true, synced: true, ready: true, writer: true };
+    expect(liveSnapshotWait(ready, { editable: true, refusal: null, base: "unknown" })).toBe("not-ready");
+    expect(liveSnapshotWait(ready, { editable: true, refusal: null, base: "diverged" })).toBe("diverged");
+    expect(liveSnapshotWait({ ...ready, connected: false }, { editable: true, refusal: null, base: "diverged" })).toBe("diverged");
+  });
+
+  it("knows a room seeded from the stored copy, byte differences of the serializer included", async () => {
+    const stored = "# Launch plan\n\nShip the **web app** this week.\n\n* Library\n* Editor\n";
+    const { roomRendering } = await import("./live-snapshot-rich");
+    const room = roomRendering(stored);
+    expect(room).not.toBe(stored); // the serializer's own bytes
+    expect(await roomMatchesStored(room, stored, "rich")).toBe(true);
+    // A room last edited before an agent rewrote the stored copy.
+    expect(await roomMatchesStored(roomRendering("# Launch plan\n\nOld text.\n"), stored, "rich")).toBe(false);
+    // Plain text rooms hold the characters themselves.
+    expect(await roomMatchesStored("a\nb\n", "a\nb\n", "text")).toBe(true);
+    expect(await roomMatchesStored("a\nb", "a\nb\n", "text")).toBe(false);
+  });
+
+  it("renders exactly what a seeded rich room serializes to", async () => {
+    // The room path: the collab schema bound to a real Y.Doc, seeded with
+    // setContent, read back through the markdown serializer.
+    const { Y } = await loadCollabRuntime();
+    const { Editor } = await import("@tiptap/core");
+    const { default: Collaboration } = await import("@tiptap/extension-collaboration");
+    const { richBaseExtensions } = await import("./rich-extensions");
+    const { formatMarkdownTables } = await import("./format-tables");
+    const { roomRendering } = await import("./live-snapshot-rich");
+    const stored = "# Plan\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- [ ] task\n\n1. one\n2. two\n\n> quote\n\n```js\nx = 1\n```\n";
+    const ydoc = new Y.Doc();
+    const editor = new Editor({ extensions: [...richBaseExtensions({ collab: true }), Collaboration.configure({ document: ydoc })] });
+    editor.commands.setContent(stored);
+    const room = formatMarkdownTables((editor.storage as unknown as { markdown: { getMarkdown(): string } }).markdown.getMarkdown());
+    editor.destroy();
+    ydoc.destroy();
+    expect(roomRendering(stored)).toBe(room);
   });
 });
 
@@ -65,7 +107,7 @@ describe("rule 3: a rich room cannot carry front matter or held constructs", () 
     expect(liveSnapshotRefusal("# Hi\n\nPlain **markdown**.\n", "rich")).toBeNull();
     expect(liveSnapshotRefusal("---\ntitle: x\n---\n", "text")).toBeNull();
     // The refusal outranks everything else: such a document is never pushed.
-    expect(liveSnapshotWait({ connected: true, synced: true, ready: true, writer: true }, { editable: true, refusal: "held-constructs" })).toBe("held-constructs");
+    expect(liveSnapshotWait({ connected: true, synced: true, ready: true, writer: true }, { editable: true, refusal: "held-constructs", base: "room-state" })).toBe("held-constructs");
   });
 });
 

@@ -33,6 +33,12 @@ interface TextCollabEditorProps {
    * ends: for a host that writes the stored copy (src/lib/live-snapshot.ts).
    */
   onLiveSession?: (session: LiveRoom | null) => void;
+  /**
+   * Called once, as the room becomes ready and before anyone can type in it,
+   * with the room's text. The host compares it with the stored copy
+   * (live-snapshot.ts rule 6).
+   */
+  onRoomReady?: (text: string) => void;
 }
 
 interface TextSession {
@@ -50,6 +56,7 @@ function TextCollabEditorInner({
   onPeersChange,
   onCollabStatus,
   onLiveSession,
+  onRoomReady,
   runtime,
 }: TextCollabEditorProps & { runtime: CollabRuntime | null }) {
   const [revoked, setRevoked] = useState(false);
@@ -202,6 +209,14 @@ function TextCollabEditorInner({
   // document is empty). Before that the pane shows the local file while the
   // room is empty, and an edit there would be the room's first content.
   const { ready } = useLiveRoom(room, "text", { documentEmpty: !value, offer: false });
+  const onRoomReadyRef = useRef(onRoomReady);
+  onRoomReadyRef.current = onRoomReady;
+  const roomReportedRef = useRef(false);
+  useEffect(() => {
+    if (!session || !ready || roomReportedRef.current) return;
+    roomReportedRef.current = true;
+    onRoomReadyRef.current?.(session.ydoc.getText(TEXT_COLLAB_KEY).toString());
+  }, [session, ready]);
 
   const handleChange = useCallback((next: string) => {
     if (!session || lockedRef.current) return;

@@ -36,8 +36,8 @@ import {
 import { PlatformShareDialog, PlatformHistoryDialog } from "./platform-dialogs";
 import type { WebSessionUser } from "./session";
 import {
-  RoomTexts, SNAPSHOT_REFUSAL_NOTE, liveSnapshotRefusal, liveSnapshotWait, useLiveRoom, writeLiveSnapshot,
-  type LiveRoom, type LiveRoomState, type SnapshotRefusal,
+  DIVERGED_NOTE, RoomTexts, SNAPSHOT_REFUSAL_NOTE, liveSnapshotRefusal, liveSnapshotWait, roomMatchesStored, useLiveRoom, writeLiveSnapshot,
+  type LiveBase, type LiveRoom, type LiveRoomState, type SnapshotRefusal,
 } from "@/lib/live-snapshot";
 
 const WordDocumentEditor = lazy(() => import("@/components/documents/word-document-editor").then((m) => ({ default: m.WordDocumentEditor })));
@@ -214,7 +214,14 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
   const refusal = useMemo<SnapshotRefusal | null>(() => (collab ? liveSnapshotRefusal(savedText.current, liveKindHere) : null), [collab, liveKindHere]);
   const roomRef = useRef<LiveRoomState>(room); roomRef.current = room;
   const refusalRef = useRef(refusal); refusalRef.current = refusal;
-  const onLiveSession = useCallback((session: LiveSession | LiveRoom | null) => setLiveSession(session as unknown as LiveRoom | null), []);
+  // Rule 6: whether the room the session joined holds the stored copy.
+  const [liveBase, setLiveBase] = useState<LiveBase>("unknown");
+  const base: LiveBase = refusal ? "room-state" : liveBase;
+  const baseRef = useRef(base); baseRef.current = base;
+  const onLiveSession = useCallback((session: LiveSession | LiveRoom | null) => {
+    setLiveSession(session as unknown as LiveRoom | null);
+    setLiveBase("unknown");
+  }, []);
 
   // ── Saving ─────────────────────────────────────────────────────────────
   const currentText = useCallback(() => {
@@ -254,7 +261,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
     // copy the room cannot carry. Anything else waits; the room keeps the
     // edits either way.
     const live = !!collabRef.current;
-    if (live && liveSnapshotWait(roomRef.current, { editable, refusal: refusalRef.current })) return;
+    if (live && liveSnapshotWait(roomRef.current, { editable, refusal: refusalRef.current, base: baseRef.current })) return;
     setState("saving");
     const run = (async () => {
       try {
@@ -325,9 +332,30 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
   // A push that waited (not connected yet, not the writer yet) goes as soon
   // as it may.
   useEffect(() => {
-    if (!collab || liveSnapshotWait(room, { editable, refusal })) return;
+    if (!collab || liveSnapshotWait(room, { editable, refusal, base })) return;
     if (isDirty()) scheduleSave();
-  }, [collab, room, refusal, editable, isDirty, scheduleSave]);
+  }, [collab, room, refusal, base, editable, isDirty, scheduleSave]);
+
+  // The room's first text, as it becomes ready (rule 6). The same text as a
+  // room seeded from the stored copy: that is the baseline, so opening never
+  // rewrites the document. Anything else: the room drifted from a version
+  // written outside it, and this session never writes over that.
+  const onRoomReady = useCallback((roomText: string) => {
+    roomTexts.current?.add(roomText);
+    if (refusalRef.current || !editable) return;
+    const stored = savedText.current;
+    void roomMatchesStored(roomText, stored, liveKindHere).then((same) => {
+      if (same) {
+        if (textRef.current === roomText || textRef.current === stored) savedText.current = roomText;
+        setLiveBase("room-state");
+        changed();
+        return;
+      }
+      setLiveBase("diverged");
+      setState("conflict");
+      setMessage(DIVERGED_NOTE);
+    });
+  }, [editable, liveKindHere, changed]);
   const editOffice = useCallback((next: RichDocument) => {
     officeRef.current = next; officeGeneration.current += 1; setOffice(next); changed();
   }, [changed]);
@@ -450,7 +478,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
           {(["rich", "source"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}
             className={`rounded px-2 py-0.5 text-[11.5px] ${mode === value ? "bg-accent text-foreground" : "text-muted hover:text-foreground"}`}>{value === "rich" ? "Rich" : "Source"}</button>)}
         </div> : null}
-        {editable && state !== "saved" && state !== "saving" && !(collab && liveSnapshotWait(room, { editable, refusal })) ? <button type="button" onClick={() => void save()} className="markie-toolbar-action h-7 rounded-md px-2 text-[12px] text-muted hover:text-foreground">Save</button> : null}
+        {editable && state !== "saved" && state !== "saving" && !(collab && liveSnapshotWait(room, { editable, refusal, base })) ? <button type="button" onClick={() => void save()} className="markie-toolbar-action h-7 rounded-md px-2 text-[12px] text-muted hover:text-foreground">Save</button> : null}
         <button type="button" onClick={() => setShowShare(true)} className="h-7 rounded-md bg-foreground px-3 text-[12px] font-medium text-background hover:opacity-90">Share</button>
         <div className="relative">
           <button type="button" aria-label="Document menu" aria-expanded={menu} onClick={() => setMenu(!menu)} className="markie-toolbar-action flex h-7 w-7 items-center justify-center rounded-md text-muted hover:text-foreground">
@@ -491,7 +519,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
             <ErrorBoundary fallback={(_error, reset) => <div role="alert" className="p-4 text-sm">The rich view stopped. <button type="button" className="underline" onClick={() => { reset(); setMode("source"); }}>Edit in Source</button></div>}>
               <RichView key={collab ? `live:${collab.docId}:${collab.readonly}` : "solo"} value={text} onChange={editText} onEditorReady={setRichEditor}
                 collab={collab} readOnly={richReadOnly} canModerate={role === "owner"} onPeersChange={setPeers} onCollabStatus={onCollabStatus}
-                holdUntilReady onLiveSession={onLiveSession}
+                holdUntilReady onLiveSession={onLiveSession} onRoomReady={onRoomReady}
                 onFlushReady={(flush) => { flushRich.current = flush; }} />
             </ErrorBoundary>
           </div>
@@ -507,7 +535,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
         {liveUnavailable ? <LiveUnavailableNote /> : null}
         <div className="min-h-0 flex-1 overflow-hidden">
           {collab ? <TextCollabEditor key={`live-text:${collab.docId}:${collab.readonly}`} value={text} onChange={editText} collab={collab} readOnly={!editable}
-            onPeersChange={setPeers} onCollabStatus={onCollabStatus} onLiveSession={onLiveSession} />
+            onPeersChange={setPeers} onCollabStatus={onCollabStatus} onLiveSession={onLiveSession} onRoomReady={onRoomReady} />
             : <SourceEditor value={text} plainText onChange={editText} readOnly={!editable} />}
         </div>
       </div> : null}

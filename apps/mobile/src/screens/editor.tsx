@@ -26,7 +26,7 @@ import { applyMarkdownAction, type MarkdownAction } from "../lib/markdown-edits"
 import { displayName } from "../lib/recent";
 import { liveConfig, liveKind, saveLiveSnapshot, shouldGoLive } from "../lib/live";
 import {
-  DIVERGED_NOTE, RoomTexts, SNAPSHOT_REFUSAL_NOTE, liveSnapshotRefusal, liveSnapshotWait, roomMatchesStored, useLiveRoom,
+  DIVERGED_NOTE, RoomTexts, SNAPSHOT_REFUSAL_NOTE, assessLiveRoom, liveSnapshotRefusal, liveSnapshotWait, roomMeta, useLiveRoom,
   type LiveBase, type LiveRoom, type LiveSnapshotWait,
 } from "@/lib/live-snapshot";
 import { Screen } from "../components/screen";
@@ -196,18 +196,21 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
     if (roomReady) roomTexts.current?.add(text);
     setValue(text);
   }, [roomReady]);
-  // The room's first text, as it becomes ready: the stored copy as a room
-  // says it (the baseline, so opening never rewrites it), or a room that
-  // drifted from a version written outside it, which this session never
-  // writes over.
+  // The room's first text, as it becomes ready (rules 3, 6 and 7): the
+  // stored copy itself (opening never rewrites it), a room ahead of the
+  // stored copy it recorded (its text goes out), a room that cannot write
+  // this document faithfully, or a room that drifted from a version written
+  // outside it. This session never writes over either of the last two.
+  const liveRoomRef = useRef<{ ydoc: unknown } | null>(null);
+  liveRoomRef.current = kind === "text" ? textSession : liveSession;
   const onRoomReady = useCallback((roomText: string) => {
     roomTexts.current?.add(roomText);
     if (refusal || readOnly || !kind) return;
-    const before = stored.current;
-    void roomMatchesStored(roomText, before, kind).then((same) => {
-      if (!same) { setLiveBase("diverged"); return; }
-      if (valueRef.current === roomText || valueRef.current === before) stored.current = roomText;
-      setLiveBase("room-state");
+    void assessLiveRoom(roomText, { content: stored.current, version: version.current }, kind, roomMeta(liveRoomRef.current)).then((base) => {
+      // Ahead: the room's text is what goes out, whether or not the editor
+      // has handed it over as an edit yet.
+      if (base === "ahead") setValue((current) => (current === roomText ? current : roomText));
+      setLiveBase(base);
     });
   }, [refusal, readOnly, kind]);
 
@@ -218,7 +221,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
     if (text === stored.current) { setLiveSave("saved"); return true; }
     setLiveSave("saving");
     try {
-      const result = await saveLiveSnapshot(api, { id: draft.id, name: draft.name, content: text, version: version.current, room: roomTexts.current! });
+      const result = await saveLiveSnapshot(api, { id: draft.id, name: draft.name, content: text, version: version.current, room: roomTexts.current!, meta: roomMeta(liveRoomRef.current) });
       if (result.kind === "conflict") { setLiveSave("conflict"); return false; }
       version.current = result.version;
       stored.current = text;

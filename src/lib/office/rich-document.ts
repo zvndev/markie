@@ -1,6 +1,6 @@
 import { applyDocxOperations, createDocx, exportDocx, getDocxImageBytes, openDocx, replaceDocxText, replaceDocxRange, DocxError, type DocxOperation, type DocxTextEdit } from "./docx";
 import { applyRtfOperations, createRtf, exportRtf, isSameRtfSource, openRtf, replaceRtfText } from "./rtf";
-import { applyOdtOperations, createOdt, exportOdt, isSameOdtSource, openOdt, replaceOdtText } from "./odt";
+import { applyOdtOperations, createOdt, exportOdt, isSameOdtSource, openOdtForDisplay, replaceOdtText } from "./odt";
 import type { RichDocument } from "./rich-text-types";
 export type { RichDocument, NativeRichDocument } from "./rich-text-types";
 import type { RichTextRange, RichRangeResult } from "./rich-range-types";
@@ -27,7 +27,7 @@ export function getRichCapabilities(document: RichDocument) {
 export async function openRichDocument(format: RichDocument["format"], bytes: Uint8Array): Promise<RichDocument> {
   if (format === "docx") return openDocx(bytes);
   if (format === "rtf") return openRtf(bytes);
-  if (format === "odt") return openOdt(bytes);
+  if (format === "odt") return openOdtForDisplay(bytes);
   throw new DocxError("unsupported-format", "Unsupported rich document format.");
 }
 export async function createRichDocument(format: RichDocument["format"], text = ""): Promise<RichDocument> {

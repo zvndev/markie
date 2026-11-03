@@ -84,4 +84,21 @@ describe("native rich projection and basic transactions", () => {
     expect(() => rebaseSimpleRichDefaults(next, { run: { fontSizePoints: NaN } })).toThrow();
     expect(() => rebaseSimpleRichDefaults(next, { paragraph: { spacingAfterPoints: -1 } })).toThrow();
   });
+  it("lays out display-only tables and list markers, and refuses them on editable snapshots", () => {
+    const inputs = ["Intro", "A1", "B1", "B1 second", "A2", "B2", "Outro"].map(text => ({ runs: [{ text }] }));
+    const blocks = [{ kind: "paragraph" as const, index: 0 }, { kind: "table" as const, rows: [[[1], [2, 3]], [[4], [5]]] }, { kind: "paragraph" as const, index: 6 }];
+    const doc = createRichSnapshot("rtf", inputs, { canEdit: false, blocks });
+    expect(doc.blocks).toEqual([{ kind: "paragraph", paragraphId: "p0" }, { kind: "table", tableId: "t0" }, { kind: "paragraph", paragraphId: "p6" }]);
+    expect(doc.tables[0].rows.map(row => row.cells.map(cell => cell.paragraphs.map(p => p.text)))).toEqual([[["A1"], ["B1", "B1 second"]], [["A2"], ["B2"]]]);
+    expect(doc.tables[0].rows[0].cells[0].paragraphs[0]).toBe(doc.paragraphs[1]);
+    expect(() => applySimpleRichOperations(doc, [{ type: "replace-paragraph", paragraphId: "p1", text: "x" }])).toThrow(/read-only/);
+    expect(() => createRichSnapshot("rtf", inputs, { blocks })).toThrow(/read-only/);
+    for (const bad of [[{ kind: "paragraph" as const, index: 1 }], [{ kind: "paragraph" as const, index: 0 }], [{ kind: "table" as const, rows: [[[0, 0]]] }], [{ kind: "table" as const, rows: [[[]]] }]]) {
+      expect(() => createRichSnapshot("rtf", inputs.slice(0, 2), { canEdit: false, blocks: bad })).toThrow();
+    }
+    const listed = createRichSnapshot("odt", [{ runs: [{ text: "One" }], listKind: "numbered", listLevel: 0, listNumber: 1 }], { canEdit: false });
+    expect(listed.paragraphs[0]).toMatchObject({ listKind: "numbered", listNumber: 1 });
+    expect(() => createRichSnapshot("odt", [{ runs: [{ text: "One" }], listKind: "bullet" }])).toThrow(/read-only/);
+    expect(() => createRichSnapshot("odt", [{ runs: [{ text: "One" }], listKind: "bullet", listLevel: 9 }], { canEdit: false })).toThrow();
+  });
 });

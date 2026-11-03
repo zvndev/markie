@@ -23,6 +23,11 @@ const SAFE: Array<[string, string]> = [
   ["blockquote", "> quoted line\n"],
   ["simple table", "| a | b |\n| --- | --- |\n| 1 | 2 |\n"],
   ["hr", "above\n\n---\n\nbelow\n"],
+  // Moved from LOSSY 2026-11-03: rich-math.ts keeps `$…$` and `$$…$$` as
+  // written in both directions, so backslashes no longer double and `\,`
+  // is no longer read as an escaped comma.
+  ["display math", "$$\n\\frac{a}{b} \\, dx\n$$\n"],
+  ["inline math", "Euler: $e^{i\\pi}$ stays.\n"],
 ];
 
 // Fixtures the current dependency set is expected to change when serialized
@@ -33,7 +38,6 @@ const LOSSY: Array<[string, string]> = [
   ["footnote", "Text with a note.[^1]\n\n[^1]: the note\n"],
   ["raw html block", "<div class=\"warn\">\n<b>html</b>\n</div>\n"],
   ["html comment", "before\n\n<!-- keep me -->\n\nafter\n"],
-  ["display math", "$$\n\\frac{a}{b} \\, dx\n$$\n"],
   ["table alignment", "| a | b |\n| :--- | ---: |\n| 1 | 2 |\n"],
   ["wrapped paragraph", "This paragraph is wrapped\nacross two lines.\n"],
   ["reference link", "See [the docs][ref].\n\n[ref]: https://example.com\n"],
@@ -42,10 +46,6 @@ const LOSSY: Array<[string, string]> = [
   // tightness pass does not reach taskItem nodes. Layer 2's run coalescing is
   // what keeps these documents editable.
   ["task list", "- [x] done\n- [ ] todo\n"],
-  // Measured 2026-08-26: inline math backslashes double on serialize
-  // ($e^{i\\pi}$ becomes $e^{i\\\\pi}$), the same escaping bug that corrupts
-  // display math.
-  ["inline math", "Euler: $e^{i\\pi}$ stays.\n"],
 ];
 
 describe("probeRoundTrip", () => {

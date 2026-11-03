@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { writeZip } from "../office/zip";
 import { extractOdtText } from "./odt";
@@ -15,6 +16,10 @@ export function makeOdtFixture(body = "<text:p>Hello</text:p>", options: { mime?
 const extract = (bytes: Uint8Array) => extractOdtText(bytes, resolveDocumentImportLimits());
 
 describe("original bounded OpenDocument main-body text conversion", () => {
+  it.each(["textedit-report.odt", "libreoffice-report.odt"])("converts real producer output (ODF 1.0 with a manifest DOCTYPE, and ODF 1.4): %s", async (name) => {
+    const result = await extract(new Uint8Array(readFileSync(new URL(`../office/fixtures/${name}`, import.meta.url))));
+    expect(result.text).toContain("Quarterly Report\nThis is bold and italic text.\nItems\nStep one\nStep two\nFirst item\nSecond item\nName\nQty\nApples\n3\nPears\n5\nAfter the table.");
+  });
   it("keeps mixed XML text order, headings, entities, tabs, breaks and explicit spaces", async () => {
     const result = await extract(makeOdtFixture('<text:h>Title</text:h><text:p>Before <text:span>bold</text:span> after &amp;<text:s text:c="3"/>gap<text:tab/>tab<text:line-break/>line</text:p>'));
     expect(result.text).toBe("Title\nBefore bold after &   gap\ttab\nline"); expect(result.warnings.join(" ")).toContain("new plain-text copy");
@@ -31,7 +36,7 @@ describe("original bounded OpenDocument main-body text conversion", () => {
     expect(result.text).toBe("Shown tail");
   });
   it("rejects wrong mimetype/root namespace, missing content contract and unsupported versions", async () => {
-    for (const source of [makeOdtFixture(undefined, { mime: "application/zip" }), makeOdtFixture(undefined, { office: "urn:wrong" }), makeOdtFixture(undefined, { version: "1.4" }), makeOdtFixture(undefined, { manifest: `<manifest xmlns="urn:wrong"/>` }), makeOdtFixture(undefined, { content: `<office:document-content xmlns:office="${OFFICE}" office:version="1.3"/>` })]) await expect(extract(source)).rejects.toBeInstanceOf(DocumentImportError);
+    for (const source of [makeOdtFixture(undefined, { mime: "application/zip" }), makeOdtFixture(undefined, { office: "urn:wrong" }), makeOdtFixture(undefined, { version: "2.0" }), makeOdtFixture(undefined, { manifest: `<manifest xmlns="urn:wrong"/>` }), makeOdtFixture(undefined, { content: `<office:document-content xmlns:office="${OFFICE}" office:version="1.3"/>` })]) await expect(extract(source)).rejects.toBeInstanceOf(DocumentImportError);
     const reordered = writeZip([{ name: "content.xml", data: encoder.encode("x") }, { name: "mimetype", data: encoder.encode(MIME) }]); await expect(extract(reordered)).rejects.toBeInstanceOf(DocumentImportError);
   });
   it("rejects encrypted manifest data, DTD/entity expansion, corrupt ZIP bytes and unsafe parts", async () => {

@@ -1,11 +1,48 @@
 import { describe, expect, it } from "vitest";
 import { Buffer } from "node:buffer";
+import { readFileSync } from "node:fs";
 import { applyRtfOperations, createRtf, exportRtf, openRtf, replaceRtfText, isSameRtfSource } from "./rtf";
 import { basicRtfFixture } from "./rtf.fixture";
 
 const bytes = (value: string) => new TextEncoder().encode(value);
 const open = (body: string) => openRtf(bytes(`{\\rtf1\\ansi ${body}}`));
+const cellTexts = (document: Awaited<ReturnType<typeof openRtf>>, index = 0) =>
+  document.tables[index].rows.map(row => row.cells.map(cell => cell.paragraphs.map(p => p.text).join("\n")));
 describe("original bounded RTF codec", () => {
+  it("reads a real TextEdit table into rows and cells in document order, read-only", async () => {
+    // `textutil -convert rtf src/lib/office/fixtures/report-source.html` on macOS 26.
+    const source = new Uint8Array(readFileSync(new URL("./fixtures/textedit-report.rtf", import.meta.url)));
+    const document = await openRtf(source);
+    expect(cellTexts(document)).toEqual([["Name", "Qty"], ["Apples", "3"], ["Pears", "5"]]);
+    const kinds = document.blocks.map(block => block.kind);
+    expect(kinds.filter(kind => kind === "table")).toHaveLength(1);
+    const table = kinds.indexOf("table");
+    const before = document.blocks[table - 1], after = document.blocks[table + 1];
+    expect(before.kind === "paragraph" && document.paragraphs.find(p => p.id === before.paragraphId)?.text).toContain("Second item");
+    expect(after.kind === "paragraph" && document.paragraphs.find(p => p.id === after.paragraphId)?.text).toBe("After the table.");
+    expect(document.paragraphs.find(p => p.text === "Name")?.runs[0].style.bold).toBe(true);
+    expect(document.paragraphs.find(p => p.text === "Name")?.alignment).toBe("center");
+    // Each cell is its own paragraph, so no reader runs the row together.
+    expect(document.text).toContain("Name\nQty\nApples\n3\nPears\n5\nAfter the table.");
+    expect(document.canEdit).toBe(false);
+    expect(document.diagnostics[0].message).toContain("table");
+    expect(document.diagnostics[0].message).not.toMatch(/trowd|cellx|clvertalc|clwWidth|brdrs/);
+    expect(await exportRtf(document)).toEqual(source);
+    expect(() => applyRtfOperations(document, [{ type: "replace-paragraph", paragraphId: document.paragraphs[0].id, text: "x" }])).toThrow("read-only");
+  });
+  it("keeps multi-paragraph, empty and unterminated cells, and closes a table at the next body paragraph", async () => {
+    const document = await open(String.raw`Intro\par\trowd\cellx1000\cellx2000\pard\intbl One\par Two\cell\cell\row\trowd\cellx1000\pard\intbl Tail\cell Extra\row\pard Outro\par\trowd\cellx1000\pard\intbl Second\cell\row`);
+    expect(document.blocks.map(block => block.kind)).toEqual(["paragraph", "table", "paragraph", "table"]);
+    expect(cellTexts(document)).toEqual([["One\nTwo", ""], ["Tail", "Extra"]]);
+    expect(cellTexts(document, 1)).toEqual([["Second"]]);
+    expect(document.paragraphs.filter(p => p.text === "Outro")).toHaveLength(1);
+    expect(document.canEdit).toBe(false);
+  });
+  it("flattens nested tables into the outer cell and ignores the no-nested-tables fallback", async () => {
+    const document = await open(String.raw`\trowd\cellx4000\pard\intbl Outer\par\itap2 Inner A\nestcell Inner B\nestcell{\*\nesttableprops\trowd\cellx2000\cellx4000\nestrow}{\nonesttables\par}\itap1 After\cell\row`);
+    expect(cellTexts(document)).toEqual([["Outer\nInner A\nInner B\nAfter"]]);
+    expect(document.diagnostics[0].message).toContain("nested-table");
+  });
   it("projects basic rich formatting, scoped state, Unicode and paragraphs", async () => {
     const document = await openRtf(basicRtfFixture());
     expect(document.format).toBe("rtf"); expect(document.canEdit).toBe(true);

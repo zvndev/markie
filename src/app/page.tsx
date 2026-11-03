@@ -48,7 +48,7 @@ import {
   LiveFileRefusalNote, LiveSourceBanner, LiveUnavailableNote,
   UpdateStrip,
 } from "@/components/share-banner";
-import { richRoomCannotCarry } from "@/lib/live-room-carry";
+import { LIVE_FILE_REFUSAL_NOTE, liveOutputNote, richRoomCannotCarry, type LiveOutputAction } from "@/lib/live-room-carry";
 import { ConflictDialog } from "@/components/conflict-dialog";
 import { TextCollabEditor } from "@/components/text-collab-editor";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
@@ -1034,20 +1034,59 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   );
 
   // While a rich session is live, the desktop writes its own file from the
-  // room's serialization. That serialization has no front matter and none of
-  // the constructs the solo editor holds aside, so for a file that has any of
-  // them the room's text must never reach the buffer: autosave wrote it over
-  // the file as soon as this desktop seeded the room, before a key was
-  // pressed. Edits still reach the room and every peer, and the file keeps
-  // its bytes: the same rule the web app and the phone apply to the stored
-  // cloud copy (src/lib/live-room-carry.ts).
+  // room's serialization. That is only safe when the room writes this file
+  // back byte for byte (roomCarries, src/lib/live-snapshot-rich.ts): front
+  // matter and the constructs the solo editor holds aside are the known
+  // losses and answer at once; anything else the serializer cannot
+  // reproduce is found by writing the file through a room once, as the
+  // session starts. For a file the room cannot carry, the room's text must
+  // never reach the buffer: autosave wrote it over the file as soon as this
+  // desktop seeded the room, before a key was pressed. Edits still reach the
+  // room and every peer, and the file keeps its bytes: the same rule the web
+  // app and the phone apply to the stored cloud copy.
+  //
+  // Until the check answers, the room's text waits beside the buffer
+  // (liveTextRef) rather than in it; "not proved yet" counts as not safe.
+  const liveRich = !!collabCfg && !plainText;
+  const [liveCarry, setLiveCarry] = useState<{ docId: string; carries: boolean } | null>(null);
+  const liveStartTextRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!liveRich || !collabCfg) {
+      liveStartTextRef.current = null;
+      setLiveCarry(null);
+      return;
+    }
+    const docId = collabCfg.docId;
+    const text = latestContent();
+    liveStartTextRef.current = text;
+    let cancelled = false;
+    void import("@/lib/live-snapshot-rich").then(({ roomCarries }) => {
+      if (cancelled) return;
+      setLiveCarry({ docId, carries: roomCarries(text) });
+    });
+    return () => { cancelled = true; };
+    // Once per session: what the file said as the session started.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveRich, collabCfg?.docId]);
+  const liveCarryKnown = !!collabCfg && liveCarry?.docId === collabCfg.docId;
   const liveRichRefused = useMemo(
     () =>
-      !!collabCfg &&
-      !plainText &&
-      (richRoomCannotCarry(doc.savedContent) || richRoomCannotCarry(content)),
-    [collabCfg, plainText, doc.savedContent, content]
+      liveRich &&
+      (richRoomCannotCarry(doc.savedContent) ||
+        richRoomCannotCarry(content) ||
+        (liveCarryKnown && liveCarry?.carries === false)),
+    [liveRich, doc.savedContent, content, liveCarryKnown, liveCarry]
   );
+  // The check has not answered yet: nothing from the room is written.
+  const liveRichPending = liveRich && !liveRichRefused && !liveCarryKnown;
+  const liveRichHeld = liveRichRefused || liveRichPending;
+  // The room's latest text as this desktop's pane wrote it, kept whether or
+  // not it reaches the buffer: Copy all, Save a Copy and export read it while
+  // the file is not being written.
+  const liveTextRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!collabCfg) liveTextRef.current = null;
+  }, [collabCfg]);
 
   // The document as it stands *now*. The rich pane serializes on a 250 ms
   // debounce, so exporting or saving straight after a keystroke used to use the
@@ -1057,20 +1096,38 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   // "current" has to mean the last write, not the last render: an autosave
   // fires from a timer and can beat React to it.
   // A refused live room is never read back (see liveRichRefused), so the
-  // buffer stays the file and every write that starts here (save, autosave,
-  // drafts, Save As, export) stays byte-faithful to it.
+  // buffer stays the file and every write to the file that starts here
+  // (save, autosave, drafts) stays byte-faithful to it.
   const currentMarkdown = useCallback(
-    (): string => plainText || liveRichRefused
+    (): string => plainText || liveRichHeld
       ? latestContent()
       : flushRichRef.current?.() ?? latestContent(),
-    [latestContent, plainText, liveRichRefused]
+    [latestContent, plainText, liveRichHeld]
   );
+
+  // What the reader sees: while a live room is not being written to the
+  // file, the room's text, not the file's. Copy all, Save a Copy and every
+  // export take this, and say which text they took; handing out the file
+  // without the edits on screen, and without a word, was the bug.
+  const liveRichRefusedRef = useRef(liveRichRefused);
+  liveRichRefusedRef.current = liveRichRefused;
+  const outputMarkdown = useCallback(
+    (action?: LiveOutputAction): string => {
+      if (plainText || !liveRichHeld) return currentMarkdown();
+      const live = flushRichRef.current?.() ?? liveTextRef.current ?? latestContent();
+      if (action && liveRichRefusedRef.current) setForkError(liveOutputNote(action));
+      return live;
+    },
+    [plainText, liveRichHeld, currentMarkdown, latestContent]
+  );
+  const exportMarkdown = useCallback(() => outputMarkdown("exported"), [outputMarkdown]);
+  const copyMarkdown = useCallback(() => outputMarkdown("copied"), [outputMarkdown]);
 
   // Paper, PDF, and standalone HTML all render through main's one hidden
   // window, so they share one in-flight guard and one error surface.
   const { exporting, exportPDF, exportHTML, exportAs, printDocument } = useDocumentExport({
     previewHTML: getPreviewHTML,
-    currentMarkdown,
+    currentMarkdown: exportMarkdown,
     docPath: () => docRef.current.filePath,
     fileName,
     plainText,
@@ -1081,7 +1138,11 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     const api = getSafeAPI();
     if (!api) return null;
     const name = defaultName ?? fileName ?? "untitled.md";
-    const md = currentMarkdown();
+    // A copy holds what is on screen: in a live session whose room is not
+    // written to the file, that is the room's text, and the buffer takes it
+    // too once the copy is the open document (below).
+    const liveCopy = liveRichRefusedRef.current;
+    const md = liveCopy ? outputMarkdown() : currentMarkdown();
     // The extension the user types in the dialog is the one that decides the
     // format, and they only type it after the content has been encoded. Hand
     // main both encodings so it can write the right one once, instead of the
@@ -1119,13 +1180,17 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           ? dropped.hasTable
             ? `Saved as CSV: ${dropped.droppedLines} line${dropped.droppedLines === 1 ? "" : "s"} outside the first table are not in that file.`
             : "Saved as CSV: this document has no table, so the file is empty."
-          : null
+          : liveCopy
+            ? liveOutputNote("saved")
+            : null
       );
       // A different file is open now, so whatever access the last one carried
       // stops applying here.
       resetDocAccess();
       setLocation(res.path, res.name);
-      markSaved(md);
+      // The buffer held the original file, not the live text the copy took.
+      if (liveCopy) applyExternalDoc(md);
+      else markSaved(md);
       // Save As commits the untitled buffer, so its journal entry is spent too.
       void getElectronAPI()?.draftSave?.({ path: null, name: null, content: "" });
       // A file Markie wrote and now has open belongs in the registry like any
@@ -1139,7 +1204,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       setLibRefreshKey((k) => k + 1);
     }
     return res;
-  }, [fileName, currentMarkdown, resetDocAccess, markSaved, setLocation]);
+  }, [fileName, currentMarkdown, outputMarkdown, resetDocAccess, markSaved, applyExternalDoc, setLocation]);
 
   // Resolves to an error message when the save landed on disk but not in the
   // cloud, and to null otherwise.
@@ -1190,6 +1255,10 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       markSaved(md);
       // These bytes are on disk now, so the journal entry for them is spent.
       void getElectronAPI()?.draftSave?.({ path: filePath, name: fileName, content: "" });
+      // ⌘S in a live session whose room is not written to this file saved
+      // the file as it was, without the edits on screen. Say so, every time
+      // it is asked for: a silent save reads as "saved".
+      if (!autosave && liveRichRefusedRef.current) setForkError(LIVE_FILE_REFUSAL_NOTE);
       // ⌘S on a .csv keeps the first table and drops the rest, every time.
       // Only on a save the user asked for: repeating it every second while
       // they type would bury the banner in its own noise.
@@ -1416,13 +1485,26 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     [editDoc, saveGuard]
   );
   // The rich pane's edits, unless they come out of a live room that cannot
-  // carry this file (see liveRichRefused).
+  // carry this file, or one not yet proved to (see liveRichRefused). Either
+  // way the room's text is kept beside the buffer for Copy all, Save a Copy
+  // and export.
   const editRichContent = useCallback(
     (md: string) => {
-      if (!liveRichRefused) editContent(md);
+      if (collabCfg) liveTextRef.current = md;
+      if (!liveRichHeld) editContent(md);
     },
-    [liveRichRefused, editContent]
+    [collabCfg, liveRichHeld, editContent]
   );
+  // The check proved the room carries this file: what the room said while
+  // it ran goes to the buffer now, as it would have then.
+  const liveCarries = liveCarryKnown && liveCarry?.carries === true && !liveRichRefused;
+  useEffect(() => {
+    if (!liveCarries) return;
+    const held = liveTextRef.current;
+    if (held !== null && held !== latestContent()) editContent(held);
+    // Once, as the answer lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveCarries]);
 
   // Resolves to an error message when the copy could not be made, null when it
   // was made or the user backed out of the dialog.
@@ -2241,7 +2323,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         // Copy all copies the Markdown or text workspace's document; a Word,
         // RTF or ODT session has no single text form to put there.
         copyText={documentsOpen ? undefined : content}
-        readCopyText={currentMarkdown}
+        readCopyText={copyMarkdown}
         exporting={documentsOpen ? !!documentShell?.busy : exporting}
         fileName={documentsOpen ? documentShell?.name ?? null : fileName}
         isDirty={documentsOpen ? !!documentShell?.dirty : isDirty}

@@ -421,3 +421,21 @@ test("an author's class does not survive onto a link the plugin rewrites to a re
   assert.doesNotMatch(html, /doc-link-muted/);
   assert.match(html, /<a(?: class="")? href="\/d\/target-1">x<\/a>/);
 });
+
+test("a picture on a document page enlarges with no script, and one in a link stays the link's", () => {
+  const page = renderPublicPage({
+    title: "Pics",
+    markdown: 'Look: ![A chart](https://x.test/chart.png) here.\n\n[![Linked](https://x.test/b.png)](https://x.test/)\n\n<img src="https://x.test/c.png" alt="" onclick="alert(1)">\n',
+    token: "tok",
+    siteUrl: "https://markie.test",
+  });
+  // A visually hidden checkbox, labelled by the picture and by its enlarged
+  // copy, all phrasing content, so the paragraph stays one paragraph.
+  assert.match(page, /<p>Look: <span class="markie-zoom"><input type="checkbox" id="markie-zoom-1" class="markie-zoom-toggle" aria-label="Enlarge picture: A chart"><label for="markie-zoom-1" class="markie-zoom-thumb"><img src="https:\/\/x.test\/chart.png" alt="A chart"><\/label><label for="markie-zoom-1" class="markie-zoom-full" aria-hidden="true"><img src="https:\/\/x.test\/chart.png" alt=""><\/label><\/span> here.<\/p>/);
+  assert.match(page, /<a href="https:\/\/x.test\/"><img src="https:\/\/x.test\/b.png" alt="Linked"><\/a>/);
+  assert.match(page, /id="markie-zoom-2"[^>]*aria-label="Enlarge picture"/);
+  assert.doesNotMatch(page, /onclick|<script/);
+  assert.match(page, /\.markie-zoom-toggle:checked ~ \.markie-zoom-full/);
+  // The plain renderer, used outside the pages, is unchanged.
+  assert.doesNotMatch(renderMarkdownHTML("![a](https://x.test/a.png)"), /markie-zoom/);
+});

@@ -44,10 +44,17 @@ function metadata(value: unknown): CloudDocumentMetadata {
     ...(typeof row.areaId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(row.areaId) ? { areaId: row.areaId } : {}) };
 }
 
+// Loopback: the addresses, and the reserved .localhost names (RFC 6761),
+// which browsers resolve to loopback themselves, as the web app's split-host
+// development setup uses (src/web/session.ts).
+function loopbackHost(hostname: string): boolean {
+  return ["localhost", "127.0.0.1", "[::1]"].includes(hostname) || /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.localhost$/i.test(hostname);
+}
+
 function originUrl(value: string): string {
   const url = new URL(value);
   if (url.username || url.password || url.search || url.hash
-    || (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))) {
+    || (url.protocol !== "https:" && !(url.protocol === "http:" && loopbackHost(url.hostname)))) {
     throw new DocumentCloudError(0, "Use an HTTPS cloud server or a loopback development server.");
   }
   return url.href.replace(/\/$/, "");

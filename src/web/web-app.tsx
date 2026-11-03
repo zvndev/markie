@@ -18,6 +18,8 @@ import { LibraryDocumentFilters } from "@/components/library-document-filters";
 import { listCloudDocuments, savePlatformDoc, saveTextDoc, SessionEndedError, type CloudDocSummary } from "./cloud";
 import { parseWebRoute, signInHref, webRoutePath, type WebRoute } from "./routes";
 import { WebDocument } from "./web-document";
+import { ShowBarButton } from "./bar-controls";
+import { useBarVisibility } from "./bar-visibility";
 import type { WebSessionUser } from "./session";
 
 /** Starts a blank document of `format` in the cloud and returns its id. */
@@ -123,8 +125,12 @@ function Library({ onOpen, onNew, onSessionEnded }: { onOpen: (id: string) => vo
   </main>;
 }
 
-export function WebApp({ user }: { user: WebSessionUser }) {
+export function WebApp({ user, onView }: { user: WebSessionUser; onView?: (id: string) => void }) {
   const [route, setRoute] = useState<WebRoute>(() => parseWebRoute(window.location.pathname));
+  // The editor's bar can be put away like the read view's (bar-visibility.ts).
+  // The library keeps its header: there is nothing there to read full-bleed.
+  const bar = useBarVisibility("editor", route.page === "doc");
+  const barHidden = bar.hidden && route.page === "doc";
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -160,8 +166,8 @@ export function WebApp({ user }: { user: WebSessionUser }) {
     }
   };
 
-  return <div className="markie-shell flex h-screen flex-col bg-background text-foreground" data-web-app>
-    <header className="markie-toolbar flex h-11 shrink-0 items-center gap-3 border-b border-border bg-surface px-3 sm:px-4">
+  return <div className="markie-shell flex h-screen flex-col bg-background text-foreground" data-web-app data-bar-hidden={barHidden ? "true" : "false"}>
+    {barHidden ? <ShowBarButton onShow={bar.show} /> : <header className="markie-toolbar flex h-11 shrink-0 items-center gap-3 border-b border-border bg-surface px-3 sm:px-4">
       <a href="/app" aria-label="Markie documents" onClick={(event) => { event.preventDefault(); go({ page: "library", create: false }); }} className="flex items-center text-foreground/90">
         <MarkieLogo width={64} className="mt-1" />
       </a>
@@ -169,10 +175,11 @@ export function WebApp({ user }: { user: WebSessionUser }) {
         {route.page === "doc" ? <button type="button" onClick={() => go({ page: "library", create: true })} className="markie-toolbar-action h-7 rounded-md px-2 text-[12px] text-muted hover:text-foreground">＋ New</button> : null}
         <AccountMenu user={user} onSignOut={signOut} />
       </div>
-    </header>
+    </header>}
     {createError ? <p role="alert" className="border-b border-border bg-surface px-4 py-2 text-[12px]">{createError}</p> : null}
     {route.page === "doc"
-      ? <WebDocument key={route.id} id={route.id} user={user} onLibrary={() => go({ page: "library", create: false })} onOpen={(id) => go({ page: "doc", id })} onSessionEnded={sessionEnded} onTitle={setTitle} />
+      ? <WebDocument key={route.id} id={route.id} user={user} onLibrary={() => go({ page: "library", create: false })} onOpen={(id) => go({ page: "doc", id })} onSessionEnded={sessionEnded} onTitle={setTitle}
+        onView={onView ? () => onView(route.id) : undefined} barHidden={barHidden} onHideBar={bar.hide} />
       : <Library onOpen={(id) => go({ page: "doc", id })} onNew={() => go({ page: "library", create: true })} onSessionEnded={sessionEnded} />}
     {route.page === "library" && route.create ? <NewDocumentModal onClose={() => go({ page: "library", create: false }, true)} onCreate={(format) => { if (!creating) void create(format); }} /> : null}
   </div>;

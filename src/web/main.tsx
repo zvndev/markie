@@ -2,13 +2,17 @@
 // a browser, never in Electron, so nothing here touches the desktop's boot in
 // src/main.tsx. The page may be served on the docs host; it talks to the API
 // origin the server names in it (server/src/web-app.ts).
+//
+// The same bundle is the read view of a shared document, at /d/<id> and
+// /s/<token> (doc-view.tsx). A view never sends the browser anywhere on its
+// own: signed out, it shows the sign-in; a public link reads with no account.
 import { createRoot } from "react-dom/client";
 import "@/app/globals.css";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { applyColorMode, getColorMode, watchSystemColorMode } from "@/lib/color-mode";
-import { parseWebRoute, signInHref } from "./routes";
+import { parseViewRoute, parseWebRoute, signInHref } from "./routes";
 import { apiOriginFrom, bootWebSession, clearSignInMark, collabBaseFrom, markSignInSent, signInWouldBounce } from "./session";
-import { WebApp } from "./web-app";
+import { WebRoot } from "./web-root";
 
 applyColorMode(getColorMode());
 watchSystemColorMode();
@@ -16,12 +20,19 @@ watchSystemColorMode();
 const root = createRoot(document.getElementById("root")!);
 const apiOrigin = apiOriginFrom(document, window.location.origin);
 const message = (text: string) => root.render(<p role="alert" style={{ padding: 24 }}>{text}</p>);
+const view = parseViewRoute(window.location.pathname);
 
 bootWebSession(apiOrigin, collabBaseFrom(document)).then(
   (boot) => {
     if (boot.kind === "signed-in") {
       clearSignInMark(sessionStorage);
-      root.render(<ErrorBoundary global><WebApp user={boot.user} /></ErrorBoundary>);
+      root.render(<ErrorBoundary global><WebRoot user={boot.user} apiOrigin={apiOrigin} /></ErrorBoundary>);
+      return;
+    }
+    // A public link reads with no account, whatever the session answered. A
+    // member's view says what it needs itself.
+    if (view && (boot.kind === "signed-out" || view.kind === "public")) {
+      root.render(<ErrorBoundary global><WebRoot user={null} apiOrigin={apiOrigin} /></ErrorBoundary>);
       return;
     }
     if (boot.kind === "error") {
@@ -41,5 +52,8 @@ bootWebSession(apiOrigin, collabBaseFrom(document)).then(
     markSignInSent(sessionStorage);
     window.location.replace(signInHref(parseWebRoute(window.location.pathname), apiOrigin));
   },
-  () => message("Can't reach Markie. Check your connection and reload."),
+  () => {
+    if (view?.kind === "public") root.render(<ErrorBoundary global><WebRoot user={null} apiOrigin={apiOrigin} /></ErrorBoundary>);
+    else message("Can't reach Markie. Check your connection and reload.");
+  },
 );

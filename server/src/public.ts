@@ -28,7 +28,7 @@ import { deployment } from "./deployment.ts";
 import { downloadFilename } from "./doc-meta.ts";
 import { auth } from "./auth.ts";
 import { accessLevel, canEditLevel } from "./shares.ts";
-import { webAppAvailable } from "./web-app.ts";
+import { privateShell, webAppAvailable, webAppShell } from "./web-app.ts";
 import { redirectToDocsHost } from "./docs-host.ts";
 
 const db = openDatabase();
@@ -226,6 +226,15 @@ publicShare.get("/s/:token", async (c) => {
   // page differs per person: no cache, shared or private, may keep it.
   c.header("Cache-Control", "private, no-store");
   if (!doc) return c.html(renderNotFoundPage(MARKIE_SITE), 404);
+  // The read view, rendered in the browser by the web app's bundle from
+  // /s/<token>/raw and /s/<token>/assets on the API origin, the same reads
+  // the phone makes. The shell carries the name and format the static page
+  // shows anyway, and nothing else; the reader's own account is asked for by
+  // the view itself (GET /api/public-links/:token/editor below). ?view=1 and
+  // a server without the build keep the static page.
+  if (webAppAvailable() && c.req.query("view") !== "1") {
+    return privateShell(webAppShell({ apiOrigin: DEPLOYMENT.origin, doc: { title: doc.name, format: doc.format } }));
+  }
   const { nav, editDocId } = await publicNav(doc.doc_id, c.req.raw.headers);
   const refs = assetRefsFor(doc.doc_id);
   // ?v= is the hash this ref points at, so a relink changes the URL; see the
@@ -248,6 +257,21 @@ publicShare.get("/s/:token", async (c) => {
       editDocId,
     })
   );
+});
+
+// Whether the account signed in on this browser may edit the document behind
+// a public link, for the read view's Edit button. The same rule as the static
+// page's editor link (publicNav): the document's id is named only to an
+// account that may edit it. The link alone already lets anyone read the
+// document, so a valid token's 401 or a null says nothing new about it.
+publicShare.get("/api/public-links/:token/editor", async (c) => {
+  c.header("Cache-Control", "private, no-store");
+  const doc = docForToken(c.req.param("token"));
+  if (!doc) return c.json({ error: "not found" }, 404);
+  const session = await auth.api.getSession({ headers: c.req.raw.headers }).catch(() => null);
+  const user = session?.user;
+  if (!user?.id) return c.json({ error: "unauthorized" }, 401);
+  return c.json({ docId: canEditLevel(accessLevel(doc.doc_id, user.id)) ? doc.doc_id : null });
 });
 
 publicShare.get("/s/:token/raw", (c) => {

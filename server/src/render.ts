@@ -16,6 +16,7 @@ import { rehypeCloudAssets } from "./rehype-cloud-assets.ts";
 import { rehypeDocLinks } from "./rehype-doc-links.ts";
 import { rehypeEmbeds } from "./rehype-embeds.ts";
 import { rehypeLegibleColors } from "./rehype-legible-colors.ts";
+import { rehypeZoomImages, ZOOM_CSS } from "./rehype-zoom-images.ts";
 import rehypeStringify from "rehype-stringify";
 import type { DocLinkAnswer } from "./doc-links.ts";
 import {
@@ -115,6 +116,8 @@ const sanitizeSchema: SanitizeSchema = {
 export interface RenderOptions {
   assetUrlFor?: (ref: string) => string | null;
   docLinkFor?: (ref: string) => DocLinkAnswer;
+  /** Pictures enlarge on a click, with no script (rehype-zoom-images.ts). The document pages only. */
+  zoomImages?: boolean;
 }
 
 function buildProcessor(opts: RenderOptions) {
@@ -139,13 +142,13 @@ function buildProcessor(opts: RenderOptions) {
   // rehypeLegibleColors reads the sanitized tree and changes nothing in it:
   // it leaves a stylesheet on the file for the page renderers below
   // (rehype-legible-colors.ts).
-  return p
-    .use(rehypeEmbeds)
+  p.use(rehypeEmbeds)
     .use(rehypeHighlight)
     .use(rehypeKatex)
-    .use(rehypeSanitize, sanitizeSchema)
-    .use(rehypeLegibleColors)
-    .use(rehypeStringify);
+    .use(rehypeSanitize, sanitizeSchema);
+  // After sanitizing, so nothing a document writes reaches this markup.
+  if (opts.zoomImages) p.use(rehypeZoomImages);
+  return p.use(rehypeLegibleColors).use(rehypeStringify);
 }
 
 // The no-context case (public-page previews with no doc context, and every
@@ -153,7 +156,7 @@ function buildProcessor(opts: RenderOptions) {
 const plain = buildProcessor({});
 
 function processMarkdown(markdown: string, opts: RenderOptions) {
-  const processor = opts.assetUrlFor || opts.docLinkFor ? buildProcessor(opts) : plain;
+  const processor = opts.assetUrlFor || opts.docLinkFor || opts.zoomImages ? buildProcessor(opts) : plain;
   return processor.processSync(markdown);
 }
 
@@ -317,7 +320,8 @@ const PAGE_CSS = `
     .who { max-width: 100%; }
     main { padding: 28px 18px 56px; }
   }
-  @media print { .chrome, .cta { display: none; } }`;
+  @media print { .chrome, .cta { display: none; } }
+  ${ZOOM_CSS}`;
 
 // The way out to the rest of Markie, on every page that shows a document.
 // `webApp` is webAppAvailable(): links into /app exist only when this server
@@ -366,7 +370,7 @@ function hostedBar(safeTitle: string, items: string[]): string {
 function renderDocBody(markdown: string, format: string | undefined, opts: RenderOptions): { html: string; css: string } {
   if (format === "darkmown") return { html: renderDarkmownSource(markdown), css: "" };
   if (format === "text") return { html: `<pre class="text-doc">${esc(markdown)}</pre>`, css: "" };
-  const file = processMarkdown(markdown, opts);
+  const file = processMarkdown(markdown, { ...opts, zoomImages: true });
   return { html: String(file), css: typeof file.data.legibleCss === "string" ? file.data.legibleCss : "" };
 }
 

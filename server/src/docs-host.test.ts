@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -218,4 +218,55 @@ test("invite emails and public links name the docs host", async () => {
   });
   const { url } = (await made.json()) as { url: string };
   assert.match(url, new RegExp(`^${DOCS.replace(/\./g, "\\.")}/s/[0-9a-f]{64}$`));
+});
+
+test("with the web app, /d/ answers with the read view on the docs host, after the API host decides who is asking", async () => {
+  const webDist = join(dir, "web-dist");
+  mkdirSync(webDist, { recursive: true });
+  writeFileSync(join(webDist, "app.html"), '<!doctype html><html><head><title>Markie</title></head><body><div id="root"></div></body></html>');
+  const before = process.env.MARKIE_WEB_DIST;
+  process.env.MARKIE_WEB_DIST = webDist;
+  try {
+    const owner = await signUpVerified(app, { name: "Owner", email: `dh.view.${stamp}@test.local` });
+    const docId = `dh-view-${stamp}`;
+    const content = "# Read view\n";
+    const hash = createHash("sha256").update(content, "utf8").digest("hex");
+    const put = await app.request(`http://localhost:8787/api/docs/${docId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Origin: "http://localhost:3000", "x-forwarded-for": "127.0.0.1", Authorization: `Bearer ${owner.token}` },
+      body: JSON.stringify({ name: "view.md", content, hash, baseVersion: 0 }),
+    });
+    assert.equal(put.status, 200);
+    const signedIn = { ...NAV, authorization: `Bearer ${owner.token}` };
+
+    // Back from the sign-in on the API host: on to the same view on the docs
+    // host, with the ?k= dropped.
+    for (const path of [`/d/${docId}`, `/d/${docId}?k=sometoken`]) {
+      const res = await app.request(req(path, "localhost:8787", signedIn));
+      assert.equal(res.status, 302, path);
+      assert.equal(res.headers.get("location"), `${DOCS}/d/${docId}`);
+      assert.equal(res.headers.get("cache-control"), "private, no-store");
+    }
+    // A browser with no session on the API host goes the same way.
+    const anon = await app.request(req(`/d/${docId}`, "localhost:8787", NAV));
+    assert.equal(anon.headers.get("location"), `${DOCS}/d/${docId}`);
+    // Through the docs host's proxy it is the view itself, never sent round.
+    for (const extra of [{ "x-forwarded-host": "private.markiedocs.test" }, { "x-vercel-id": "iad1::x" }]) {
+      const res = await app.request(req(`/d/${docId}`, "localhost:8787", { ...NAV, ...extra }));
+      assert.equal(res.status, 200);
+      assert.match(await res.text(), /<div id="root">/);
+    }
+    // ?view=1 on the API host keeps the static page for a signed-in reader.
+    const quick = await app.request(req(`/d/${docId}?view=1`, "localhost:8787", signedIn));
+    assert.equal(quick.status, 200);
+    assert.match(await quick.text(), /Read view/);
+    // The refusals stay server pages: another account here gets its 403.
+    const other = await signUpVerified(app, { name: "Other", email: `dh.other.${stamp}@test.local` });
+    const wrong = await app.request(req(`/d/${docId}`, "localhost:8787", { ...NAV, authorization: `Bearer ${other.token}` }));
+    assert.equal(wrong.status, 403);
+    assert.equal(wrong.headers.get("location"), null);
+  } finally {
+    if (before === undefined) delete process.env.MARKIE_WEB_DIST;
+    else process.env.MARKIE_WEB_DIST = before;
+  }
 });

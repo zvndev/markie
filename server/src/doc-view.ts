@@ -19,6 +19,13 @@
 //
 // Anything else gets an access page that names no document, so the route
 // cannot be used to discover which document ids exist.
+//
+// With the web app built (web-app.ts), a reader and a browser with no
+// session here both get the read view instead: the app's shell, the same
+// bundle for every id, which reads the document from the API with the
+// browser's own session and shows a signed-out browser the sign-in. The
+// invite page and the wrong-account page stay server pages, and ?view=1
+// keeps the static page for a signed-in reader.
 import { Hono, type Context } from "hono";
 import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
@@ -31,11 +38,12 @@ import {
 import { claimPendingInvites, listPendingForDoc, pendingForToken } from "./pending.ts";
 import { sharedPageLinkFor } from "./doc-links.ts";
 import { assetRefsFor, assetVersion, serveAsset } from "./assets.ts";
-import { deployment, docsOrigin } from "./deployment.ts";
+import { deployment } from "./deployment.ts";
 import { renderAccessRequiredPage, renderSharedDocPage } from "./render.ts";
 import { renderSignInNotice, webSignInHref } from "./web-signin.ts";
 import { downloadFilename } from "./doc-meta.ts";
-import { webAppAvailable } from "./web-app.ts";
+import { privateShell, webAppAvailable, webAppShell } from "./web-app.ts";
+import { docsHostConfig, onApiHost } from "./docs-host.ts";
 
 const db = openDatabase();
 
@@ -43,11 +51,9 @@ const MARKIE_SITE = deployment().siteUrl;
 // Web sign-in runs on this server's own origin (BETTER_AUTH_URL), where its
 // session cookie lives, wherever the page that links to it was served. A
 // page served through the docs host's proxy never sees that cookie, which is
-// why a reader there is sent on to the web app (below): the app asks this
-// origin for the session directly.
+// why a reader there gets the read view (below): it asks this origin for the
+// session directly.
 const AUTH_BASE = deployment().origin;
-// Where the web app is: the docs host when MARKIE_DOCS_ORIGIN names one.
-const APP_BASE = docsOrigin();
 
 export const docView = new Hono();
 
@@ -204,9 +210,22 @@ docView.get("/d/:id", async (c) => {
   // turn this route into a way to enumerate document ids.
   const accessRequired = () => c.html(renderAccessRequiredPage(MARKIE_SITE, signIn), 403);
   const webApp = webAppAvailable();
-  // The document in the web app, on the docs host when there is one. The URL
-  // names only the id, never the ?k= token: the app reads with the session.
-  const inWebApp = () => c.redirect(`${APP_BASE}/app/d/${encodeURIComponent(docId)}`, 302);
+  // The read view: the web app's shell, which renders the document in the
+  // browser with what the API origin gives this browser's own session
+  // (src/web/doc-view.tsx). The shell is the same public bundle for every
+  // id and every reader and names nothing about either, so serving it says
+  // nothing about the document. A browser that opened this on one of the
+  // API names, as it does coming back from the sign-in, is sent to the same
+  // view on the docs host when there is one. That URL names only the id,
+  // never the ?k= token: the view reads with the session.
+  const readView = () => {
+    const hosts = docsHostConfig();
+    const docsHost = hosts.docsOrigin ? new URL(hosts.docsOrigin) : null;
+    if (docsHost && onApiHost(c.req.raw, hosts) && !hosts.apiOrigins.some((o) => new URL(o).host === docsHost.host)) {
+      return c.redirect(`${docsHost.origin}/d/${encodeURIComponent(docId)}`, 302);
+    }
+    return privateShell(webAppShell({ apiOrigin: AUTH_BASE }));
+  };
 
   // An open invite keeps its page, which names the address to sign in with.
   // Signing in on this origin brings the browser back to /d/<id> with a
@@ -220,23 +239,26 @@ docView.get("/d/:id", async (c) => {
   }
   // Nobody signed in that this request carries. Through the docs host's proxy
   // that is every request, since the session cookie is on this server's own
-  // origin. With the web app here, it decides: it asks this origin for the
-  // session, sends a signed-out browser to the sign-in, and reads only what
-  // the account may read, so the same redirect answers for every id and
+  // origin. With the web app here, the read view decides: it asks this origin
+  // for the session, shows a signed-out browser the sign-in, and reads only
+  // what the account may read, so the same shell answers for every id and
   // tells nobody anything. Without it, the old refusals.
+  // ?view=1 asks for the server's own pages throughout, with no script: the
+  // static document for a reader, the old refusals for anyone else.
+  const scriptless = c.req.query("view") === "1";
   if (access.kind === "member-link" || access.kind === "none") {
-    if (webApp) return inWebApp();
+    if (webApp && !scriptless) return readView();
     if (access.kind === "member-link") return signIn ? c.redirect(signIn, 302) : accessRequired();
     return accessRequired();
   }
   const doc = loadDoc(docId);
   if (!doc) return accessRequired();
 
-  // A signed-in reader goes on to the document in the web app, where the same
-  // account opens it (read-only there for a viewer). ?view=1 asks for this
-  // static page instead, so the quick view stays one link away for a browser
-  // signed in on this origin.
-  if (webApp && c.req.query("view") !== "1") return inWebApp();
+  // A signed-in reader gets the read view too, never the editor: Edit is a
+  // button in its bar for an account that may edit. ?view=1 asks for this
+  // static page instead, so the scriptless view stays one link away for a
+  // browser signed in on this origin.
+  if (webApp && !scriptless) return readView();
 
   const refs = assetRefsFor(docId);
   // ?v= carries the hash this ref currently points at. The asset route

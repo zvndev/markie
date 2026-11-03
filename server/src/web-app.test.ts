@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { createWebApp, isWebAppPath, webAppAvailable, webAppCsp, withServerMeta } from "./web-app.ts";
+import { createWebApp, isReadViewPath, isWebAppPath, webAppAvailable, webAppCsp, withDocMeta, withServerMeta } from "./web-app.ts";
 import { docsHostRedirect } from "./docs-host.ts";
 
 const HASH = "sha256-Kfrvxr0ZnoWoSVm3flacWBbqBafJPnMU0A7TB0PB8N4=";
@@ -99,6 +99,27 @@ test("the page names this server's API origin and socket, from config only, and 
   for (const bad of ['https://x" onload="', "javascript:alert(1)", "not an origin"]) {
     assert.equal(withServerMeta("<head></head>", bad), "<head></head>", bad);
   }
+});
+
+test("a document's pictures may load from the API origin, and only from there besides https", () => {
+  const csp = webAppCsp([], "http://api.markie.localhost:8799");
+  assert.match(csp, /img-src 'self' data: blob: https: http:\/\/api\.markie\.localhost:8799(;|$)/);
+  assert.match(csp, /media-src 'self' data: blob: https: http:\/\/api\.markie\.localhost:8799(;|$)/);
+  assert.match(webAppCsp([], "javascript:alert(1)"), /img-src 'self' data: blob: https:;/);
+});
+
+test("a public view's shell names the document's name and format, escaped, and nothing else", () => {
+  const shell = "<html><head><title>Markie</title></head><body></body></html>";
+  const html = withDocMeta(shell, { title: 'Plan "<b>" & co.md', format: "darkmown" });
+  assert.match(html, /<title>Plan &quot;&lt;b&gt;&quot; &amp; co\.md · Markie<\/title>/);
+  assert.match(html, /<meta name="markie-doc-name" content="Plan &quot;&lt;b&gt;&quot; &amp; co\.md" \/>/);
+  assert.match(html, /<meta name="markie-doc-format" content="darkmown" \/>/);
+  assert.match(withDocMeta(shell, { title: "x", format: 'x" onload="1' }), /content="markdown"/, "an odd format is never written");
+});
+
+test("read view paths are a document page itself, never its raw text or assets", () => {
+  for (const path of ["/d/doc-1", "/d/doc-1/", "/s/tok", "/s/tok/"]) assert.equal(isReadViewPath(path), true, path);
+  for (const path of ["/d/doc-1/raw", "/d/doc-1/assets", "/s/tok/raw", "/s/tok/assets", "/d/", "/app/d/x", "/download"]) assert.equal(isReadViewPath(path), false, path);
 });
 
 test("only /app paths are the web app's", () => {

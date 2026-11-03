@@ -28,6 +28,15 @@ describe("explicit multi-format cloud client", () => {
   it("does not allow insecure remote token transport or invalid identities", () => {
     expect(() => new DocumentCloudClient({ baseUrl: "http://remote.test", token: "secret" })).toThrow(/HTTPS/);
     expect(() => new DocumentCloudClient({ baseUrl: "https://markie.test", token: "" })).toThrow(/Sign in/);
+    // Plain http only to loopback: the loopback addresses, and the reserved
+    // .localhost names (RFC 6761), which browsers always resolve to loopback.
+    // The split-host development setup (api.markie.localhost) needs these.
+    for (const ok of ["http://localhost:8787", "http://127.0.0.1:8787", "http://api.markie.localhost:8799"]) {
+      expect(() => new DocumentCloudClient({ baseUrl: ok, token: "secret" })).not.toThrow();
+    }
+    for (const bad of ["http://localhost.evil.test", "http://markie.test", "http://evil-localhost"]) {
+      expect(() => new DocumentCloudClient({ baseUrl: bad, token: "secret" })).toThrow(/HTTPS/);
+    }
   });
   it("uploads an owned byte snapshot with its format and digest", async () => {
     const request = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {

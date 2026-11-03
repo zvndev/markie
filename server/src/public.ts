@@ -26,6 +26,10 @@ import {
 
 import { deployment } from "./deployment.ts";
 import { downloadFilename } from "./doc-meta.ts";
+import { auth } from "./auth.ts";
+import { accessLevel, canEditLevel } from "./shares.ts";
+import { webAppAvailable } from "./web-app.ts";
+import { redirectToDocsHost } from "./docs-host.ts";
 
 const db = openDatabase();
 const DEPLOYMENT = deployment();
@@ -111,6 +115,9 @@ function docForToken(
 
 export const publicShare = new Hono();
 
+// A public link sent before the docs host existed goes on to it (docs-host.ts).
+publicShare.use("/s/*", redirectToDocsHost());
+
 // A self-hosted server is not a release channel. Its copy of the manifest is
 // whatever was in the repository when it was built, so serving downloads from
 // it would hand out stale builds under somebody else's domain. Every download
@@ -195,10 +202,28 @@ publicShare.get("/download/:platform", async (c) => {
   return c.redirect(release.artifactUrl, 302);
 });
 
-publicShare.get("/s/:token", (c) => {
+// The bar's account state on a public page. Looked up only when there is a
+// web app to link into: without one the bar is the same for everybody. The
+// link alone is what grants reading here, so this never changes what the page
+// shows, only where the bar can take a signed-in reader. The editor link is
+// offered to an account that may edit this document, and only to it.
+async function publicNav(docId: string, headers: Headers) {
+  const webApp = webAppAvailable();
+  if (!webApp) return { nav: { webApp, account: null }, editDocId: null };
+  const session = await auth.api.getSession({ headers }).catch(() => null);
+  const user = session?.user;
+  if (!user?.id) return { nav: { webApp, account: null }, editDocId: null };
+  return {
+    nav: { webApp, account: user.email || user.name || null },
+    editDocId: canEditLevel(accessLevel(docId, user.id)) ? docId : null,
+  };
+}
+
+publicShare.get("/s/:token", async (c) => {
   const token = c.req.param("token");
   const doc = docForToken(token);
   if (!doc) return c.html(renderNotFoundPage(MARKIE_SITE), 404);
+  const { nav, editDocId } = await publicNav(doc.doc_id, c.req.raw.headers);
   const refs = assetRefsFor(doc.doc_id);
   // ?v= is the hash this ref points at, so a relink changes the URL; see the
   // note in doc-view.ts for why an hour of freshness needs it.
@@ -215,6 +240,9 @@ publicShare.get("/s/:token", (c) => {
       siteUrl: MARKIE_SITE,
       assetUrlFor,
       docLinkFor: publicPageLinkFor(doc.doc_id),
+      format: doc.format,
+      nav,
+      editDocId,
     })
   );
 });

@@ -31,6 +31,10 @@ const { addPending, listPendingForDoc, removePending } = pendingStore;
 // with "Get Markie" still pointing at the official download page.
 const MARKIE_SITE = deployment().siteUrl;
 const DOWNLOAD_SITE = deployment().downloadSiteUrl;
+// Links to a hosted document (an invite's /d/ link, a public /s/ link) go to
+// the docs host when MARKIE_DOCS_ORIGIN names one, and stay on the site above
+// when it does not.
+const DOCS_BASE = deployment().docsOrigin ?? MARKIE_SITE;
 
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"]/g, (ch) =>
@@ -469,12 +473,12 @@ shares.delete("/:id/public-link", async (c) => {
 });
 
 function publicUrl(token: string): string {
-  return `${MARKIE_SITE}/s/${token}`;
+  return `${DOCS_BASE}/s/${token}`;
 }
 
 // A recipient's personal link to one document on the web.
 function docLink(docId: string, token: string): string {
-  return `${MARKIE_SITE}/d/${encodeURIComponent(docId)}?k=${encodeURIComponent(token)}`;
+  return `${DOCS_BASE}/d/${encodeURIComponent(docId)}?k=${encodeURIComponent(token)}`;
 }
 
 // Opens the document in the desktop app, in the reader's own Library, synced

@@ -41,6 +41,16 @@ test("the policy still allows what a shared document legitimately contains", asy
   assert.match(csp, /style-src [^;]*'unsafe-inline'/);
 });
 
+test("the policy lets a document page load its code and math styles, and nothing more", async () => {
+  // render.ts loads highlight.js and KaTeX stylesheets and fonts from this
+  // one CDN. Blocked, code loses its colours and every equation is drawn
+  // twice; a script from it stays blocked.
+  const csp = (await get("/download")).headers.get("content-security-policy") ?? "";
+  assert.match(csp, /style-src [^;]*https:\/\/cdn\.jsdelivr\.net/);
+  assert.match(csp, /font-src [^;]*https:\/\/cdn\.jsdelivr\.net/);
+  assert.doesNotMatch(/script-src ([^;]*)/.exec(csp)?.[1] ?? "", /jsdelivr|https:/);
+});
+
 test("the page that hands out a session token is never cached", async () => {
   // It carries a live credential in the markup and in the link. Cacheable is
   // the wrong default for that, whether the session resolves or not.

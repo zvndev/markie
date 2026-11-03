@@ -36,8 +36,27 @@ renders, and Darkmown (`.wd`) for documents that benefit from live state.
 
 ## Link contract
 
-- Private link: `https://api.markiedocs.com/d/<id>` (unchanged). Public link: `/s/<token>`
-  (unchanged). Self-hosted servers use their own origin in place of `https://api.markiedocs.com`.
+- Private link: `<docs origin>/d/<id>`. Public link: `<docs origin>/s/<token>`.
+  - The docs origin is `MARKIE_DOCS_ORIGIN` when the server sets it. On Markie Cloud that is
+    `https://markiedocs.com`: the website's Vercel rewrites proxy `/d` and `/s` to this server, so
+    hosted documents are read on `markiedocs.com`, not on `api.markiedocs.com`.
+  - When it is unset, links are exactly what they were: `https://api.markiedocs.com/d/<id>` for a
+    private link on Markie Cloud, the site URL for invite and public links, and a self-hosted
+    server's own origin in place of `https://api.markiedocs.com`.
+  - Links already sent keep working. With the docs origin set, a browser `GET` or `HEAD` for
+    `/d/<id>`, `/d/<id>/raw`, `/d/<id>/assets`, `/s/<token>`, `/s/<token>/raw` or
+    `/s/<token>/assets` that arrives directly on one of the server's API names (`api.markiedocs.com`
+    or its Railway name) answers `302` to the same path and query on the docs origin.
+    - The host is `X-Forwarded-Host` when present, else `Host`, as `canonical-host.ts` reads it.
+      Only a positive API-name match redirects.
+    - A request carrying `x-vercel-id` came through the website's proxy and is never redirected,
+      so the proxy cannot loop.
+    - The target is built from config only (`server/src/docs-host.ts`). `/api/*` and `/mcp` never
+      redirect.
+  - Clients that build a private link themselves (the desktop's `markie_cloud_sync`, the phone's
+    share sheet) still build it on the server origin they are signed in to. That link is valid and
+    redirects; it just differs from the server's `privateLink` until those clients read the docs
+    origin from the server.
 - Every API or tool result that names a document returns both:
   - `privateLink`: the URL above.
   - `markdownLink`: `[<name>](<privateLink>)`, ready to paste into chat.
@@ -49,7 +68,8 @@ renders, and Darkmown (`.wd`) for documents that benefit from live state.
 - Agent names, document names and server messages are always rendered as plain text, never as
   markdown or HTML, on desktop, web and mobile.
 - **Universal and app links.** The app claims paths `/d/*` and `/s/*` on `api.markiedocs.com` and
-  `markiedocs.com`.
+  `markiedocs.com`, so a docs-origin link on Markie Cloud opens the app as before. A docs origin on
+  any other host would open the web page instead until a phone release claims it.
   - iOS: Associated Domains `applinks:api.markiedocs.com` and `applinks:markiedocs.com`.
   - Android: intent filters with `android:autoVerify="true"` for both hosts.
 - The server serves, with `Content-Type: application/json`, no redirect and no auth:

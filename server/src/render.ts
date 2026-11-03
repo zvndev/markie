@@ -15,6 +15,7 @@ import { rehypeMedia } from "./rehype-media.ts";
 import { rehypeCloudAssets } from "./rehype-cloud-assets.ts";
 import { rehypeDocLinks } from "./rehype-doc-links.ts";
 import { rehypeEmbeds } from "./rehype-embeds.ts";
+import { rehypeLegibleColors } from "./rehype-legible-colors.ts";
 import rehypeStringify from "rehype-stringify";
 import type { DocLinkAnswer } from "./doc-links.ts";
 import {
@@ -135,16 +136,29 @@ function buildProcessor(opts: RenderOptions) {
   // that resolve links. Its default docLinkFor answers null for everything,
   // so a caller that does pass one sees no change in behaviour.
   p.use(rehypeDocLinks, opts.docLinkFor);
-  return p.use(rehypeEmbeds).use(rehypeHighlight).use(rehypeKatex).use(rehypeSanitize, sanitizeSchema).use(rehypeStringify);
+  // rehypeLegibleColors reads the sanitized tree and changes nothing in it:
+  // it leaves a stylesheet on the file for the page renderers below
+  // (rehype-legible-colors.ts).
+  return p
+    .use(rehypeEmbeds)
+    .use(rehypeHighlight)
+    .use(rehypeKatex)
+    .use(rehypeSanitize, sanitizeSchema)
+    .use(rehypeLegibleColors)
+    .use(rehypeStringify);
 }
 
 // The no-context case (public-page previews with no doc context, and every
 // existing test) is cached rather than rebuilt per call.
 const plain = buildProcessor({});
 
-export function renderMarkdownHTML(markdown: string, opts: RenderOptions = {}): string {
+function processMarkdown(markdown: string, opts: RenderOptions) {
   const processor = opts.assetUrlFor || opts.docLinkFor ? buildProcessor(opts) : plain;
-  return String(processor.processSync(markdown));
+  return processor.processSync(markdown);
+}
+
+export function renderMarkdownHTML(markdown: string, opts: RenderOptions = {}): string {
+  return String(processMarkdown(markdown, opts));
 }
 
 const esc = (s: string) =>
@@ -249,12 +263,114 @@ const PAGE_CSS = `
   .platform-card .btn { display: inline-flex; margin-top: 12px; }
   .download-note { margin-top: 24px; color: var(--muted); font-size: 0.9rem; }
   .cta-invite { margin-top: 10px; line-height: 1.5; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+  /* The bar on a document page (hostedBar below). A details element, so the
+     reader can put it away and read full-bleed with no script on the page:
+     the summary is a real, focusable disclosure button (Enter or Space), and
+     the browser itself tracks and announces whether the bar is shown. */
+  .chrome { position: sticky; top: 0; z-index: 20; }
+  .chrome .bar { position: static; padding-right: 92px; }
+  .chrome > summary { list-style: none; position: absolute; top: 50%; transform: translateY(-50%); right: 16px; z-index: 1;
+    display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 10px 0 7px;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--surface-strong);
+    color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; user-select: none; }
+  .chrome > summary::-webkit-details-marker { display: none; }
+  .chrome > summary:hover { color: var(--text); }
+  .chrome > summary svg { flex: none; }
+  .chrome:not([open]) > summary { top: 10px; right: 10px; transform: none; box-shadow: var(--shadow); }
+  .chrome[open] .when-closed, .chrome:not([open]) .when-open { display: none; }
+  .chrome > summary > span { display: inline-flex; align-items: center; gap: 4px; }
+  .chrome :focus-visible { outline: 2px solid var(--brand-red); outline-offset: 2px; }
+  .bar .nav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .nav-link { color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 600;
+    padding: 7px 8px; border-radius: 6px; white-space: nowrap; }
+  .nav-link:hover { color: var(--text); background: var(--code-bg); }
+  .nav-sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+  .who { display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; }
+  .btn:hover { filter: brightness(0.96); }
+
+  /* What a document can carry, legible on both pages. highlight.js paints its
+     own block background; the page's code panel is the one that follows the
+     scheme. */
+  main pre code.hljs { background: transparent; padding: 0; }
+  main th { background: var(--code-bg); }
+  main hr { border: 0; border-top: 1px solid var(--line); }
+  main .katex-display { overflow-x: auto; overflow-y: hidden; }
+  main pre.text-doc { white-space: pre-wrap; overflow-wrap: anywhere; background: none; border: 0; padding: 0;
+    font: 15px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  /* An author's own inline colours get a per-document stylesheet of their
+     own (rehype-legible-colors.ts, docStyle below). */
+
   @media (max-width: 640px) {
     .bar { align-items: flex-start; flex-wrap: wrap; }
     .bar .title { min-width: 0; flex-basis: calc(100% - 34px); }
     .bar .btn { flex: 1 1 auto; text-align: center; }
+    .chrome .bar { align-items: center; gap: 8px 10px; padding: 10px 14px; }
+    .chrome .bar .title { flex: 1 1 0; flex-basis: auto; margin-right: 84px; font-size: 13px; }
+    .chrome > summary, .chrome:not([open]) > summary { top: 9px; right: 12px; transform: none; }
+    .bar .nav { flex-basis: 100%; justify-content: flex-start; gap: 6px; }
+    .bar .nav .btn { flex: 0 1 auto; padding: 6px 10px; }
+    .nav-sep { display: none; }
+    .who { max-width: 100%; }
     main { padding: 28px 18px 56px; }
-  }`;
+  }
+  @media print { .chrome, .cta { display: none; } }`;
+
+// The way out to the rest of Markie, on every page that shows a document.
+// `webApp` is webAppAvailable(): links into /app exist only when this server
+// actually serves the web app. Without it the bar is what it always was, the
+// desktop deep link and the downloads.
+export interface HostedNav {
+  webApp: boolean;
+  /** Who the browser is signed in as, for the account chip. Null: nobody. */
+  account: string | null;
+}
+
+const CHEVRON_UP = `<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const CHEVRON_DOWN = `<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const NAV_SEP = `<span class="nav-sep" aria-hidden="true"></span>`;
+
+const navLink = (href: string, label: string) => `<a class="nav-link" href="${esc(href)}">${esc(label)}</a>`;
+const button = (kind: "primary" | "ghost", href: string, label: string) =>
+  `<a class="btn ${kind}" href="${esc(href)}">${esc(label)}</a>`;
+const accountChip = (account: string) =>
+  `<span class="who" title="${esc(`Signed in as ${account}`)}"><span class="sr-only">Signed in as </span>${esc(account)}</span>`;
+
+// The bar, inside a <details> so the reader can put it away and get it back
+// without any script: the page's CSP has no script-src and keeps none. Open by
+// default. The summary is the toggle; its name says which way it goes, and
+// the browser reports expanded or collapsed on it.
+function hostedBar(safeTitle: string, items: string[]): string {
+  return `<details class="chrome" open>
+    <summary class="chrome-toggle">
+      <span class="when-open">${CHEVRON_UP}Hide<span class="sr-only"> the Markie bar</span></span>
+      <span class="when-closed">${CHEVRON_DOWN}Show<span class="sr-only"> the Markie</span> bar</span>
+    </summary>
+    <header class="bar">
+      <span class="brand">${brandLogoSvg(120)}</span>
+      <span class="title">${safeTitle}</span>
+      <nav class="nav" aria-label="Markie">
+        ${items.join("\n        ")}
+      </nav>
+    </header>
+  </details>`;
+}
+
+// A document's body by docs.format: Darkmown as its escaped source, plain
+// text as escaped preformatted text (the phone app shows it the same way),
+// and everything else through the markdown pipeline.
+// `css` is the document's own colour stylesheet, empty for most documents.
+function renderDocBody(markdown: string, format: string | undefined, opts: RenderOptions): { html: string; css: string } {
+  if (format === "darkmown") return { html: renderDarkmownSource(markdown), css: "" };
+  if (format === "text") return { html: `<pre class="text-doc">${esc(markdown)}</pre>`, css: "" };
+  const file = processMarkdown(markdown, opts);
+  return { html: String(file), css: typeof file.data.legibleCss === "string" ? file.data.legibleCss : "" };
+}
+
+const docStyle = (css: string) => (css ? `\n  <style>${css}</style>` : "");
 
 export function renderPublicPage(opts: {
   title: string;
@@ -263,11 +379,36 @@ export function renderPublicPage(opts: {
   siteUrl: string;
   assetUrlFor?: (ref: string) => string | null;
   docLinkFor?: (ref: string) => DocLinkAnswer;
+  /** docs.format, so a Darkmown or plain-text document reads as itself. */
+  format?: string;
+  nav?: HostedNav;
+  /**
+   * Set only when the signed-in reader may edit this document, and only then
+   * does the page name the document's id (in the editor link). A public link
+   * page never carries it otherwise.
+   */
+  editDocId?: string | null;
 }): string {
   const { title, markdown, token, siteUrl } = opts;
-  const content = renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
+  const content = renderDocBody(markdown, opts.format, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
   const safeTitle = esc(title);
   const download = primaryDownloadCta(markieSite(""));
+  const nav = opts.nav ?? { webApp: false, account: null };
+  const items: string[] = [];
+  if (nav.webApp) {
+    if (nav.account) {
+      items.push(navLink("/app", "Library"), navLink("/app/new", "New document"));
+      if (opts.editDocId) items.push(button("primary", `/app/d/${encodeURIComponent(opts.editDocId)}`, "Open in editor"));
+    } else {
+      items.push(navLink("/app", "Sign in"));
+    }
+    items.push(NAV_SEP);
+  } else {
+    items.push(button("primary", `markie://open?token=${encodeURIComponent(token)}&src=${encodeURIComponent(siteUrl)}`, "Open in Markie"));
+  }
+  items.push(button("ghost", download.href, download.label));
+  items.push(`<a class="btn ghost" href="/s/${esc(token)}/raw">Download ${opts.format === "darkmown" ? ".wd" : ".md"}</a>`);
+  if (nav.account) items.push(accountChip(nav.account));
   return `<!doctype html>
 <html lang="en"><head>
   <meta charset="utf-8">
@@ -277,16 +418,10 @@ export function renderPublicPage(opts: {
   <title>${safeTitle} · Markie</title>
   ${HEAD_CSS}
   ${BRAND_HEAD}
-  <style>${PAGE_CSS}</style>
+  <style>${PAGE_CSS}</style>${docStyle(content.css)}
 </head><body>
-  <div class="bar">
-    <span class="brand">${brandLogoSvg(120)}</span>
-    <span class="title">${safeTitle}</span>
-    <a class="btn primary" href="${esc(`markie://open?token=${encodeURIComponent(token)}&src=${encodeURIComponent(siteUrl)}`)}">Open in Markie</a>
-    <a class="btn ghost" href="${esc(download.href)}">${esc(download.label)}</a>
-    <a class="btn ghost" href="/s/${esc(token)}/raw">Download .md</a>
-  </div>
-  <main>${content}</main>
+  ${hostedBar(safeTitle, items)}
+  <main>${content.html}</main>
   <div class="cta">
     These look even better in <a href="${esc(markieSite(siteUrl))}">Markie</a>. It's free,
     it's fast, and your markdown will thank you.
@@ -436,15 +571,29 @@ export function renderSharedDocPage(opts: {
   docLinkFor?: (ref: string) => DocLinkAnswer;
   /** docs.format. A darkmown document is shown as its source (renderDarkmownSource). */
   format?: string;
+  /** The bar's links into the web app and the account chip (HostedNav). */
+  nav?: HostedNav;
 }): string {
   const { title, markdown, docId, siteUrl, sharedBy, canEdit, invitedEmail } = opts;
   const darkmown = opts.format === "darkmown";
-  const content = darkmown
-    ? renderDarkmownSource(markdown)
-    : renderMarkdownHTML(markdown, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
+  const content = renderDocBody(markdown, opts.format, { assetUrlFor: opts.assetUrlFor, docLinkFor: opts.docLinkFor });
   const safeTitle = esc(title);
   const download = primaryDownloadCta(markieSite(siteUrl));
   const openInMarkie = `markie://doc?id=${encodeURIComponent(docId)}&src=${encodeURIComponent(siteUrl)}`;
+  const nav = opts.nav ?? { webApp: false, account: null };
+  const items: string[] = [];
+  if (nav.webApp) {
+    // Only an editor is offered the editor: a viewer's copy there is
+    // read-only, and this page already is the read-only view.
+    items.push(navLink("/app", "Library"), navLink("/app/new", "New document"));
+    if (canEdit) items.push(button("primary", `/app/d/${encodeURIComponent(docId)}`, "Open in editor"));
+    items.push(NAV_SEP);
+  } else {
+    items.push(button("primary", openInMarkie, "Open in Markie"));
+  }
+  items.push(button("ghost", download.href, download.label));
+  items.push(`<a class="btn ghost" href="/d/${esc(docId)}/raw">Download ${darkmown ? ".wd" : ".md"}</a>`);
+  if (nav.account) items.push(accountChip(nav.account));
   return `<!doctype html>
 <html lang="en"><head>
   <meta charset="utf-8">
@@ -455,16 +604,10 @@ export function renderSharedDocPage(opts: {
   <title>${safeTitle} · Markie</title>
   ${HEAD_CSS}
   ${BRAND_HEAD}
-  <style>${PAGE_CSS}</style>
+  <style>${PAGE_CSS}</style>${docStyle(content.css)}
 </head><body>
-  <div class="bar">
-    <span class="brand">${brandLogoSvg(120)}</span>
-    <span class="title">${safeTitle}</span>
-    <a class="btn primary" href="${esc(openInMarkie)}">Open in Markie</a>
-    <a class="btn ghost" href="${esc(download.href)}">${esc(download.label)}</a>
-    <a class="btn ghost" href="/d/${esc(docId)}/raw">Download ${darkmown ? ".wd" : ".md"}</a>
-  </div>
-  <main>${content}</main>
+  ${hostedBar(safeTitle, items)}
+  <main>${content.html}</main>
   <div class="cta">
     ${sharedBy ? `${esc(sharedBy)} shared this with you. ` : ""}${
       canEdit

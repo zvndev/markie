@@ -65,6 +65,13 @@ app.use("*", requestTiming);
 //
 // img-src has to allow https: because shared documents legitimately embed
 // remote images, and a policy that blanks them is a policy someone turns off.
+//
+// style-src and font-src name the one CDN a document page loads its code
+// highlighting and KaTeX stylesheets and fonts from (render.ts HEAD_CSS). The
+// page's own meta policy already allowed it, but a browser applies both
+// policies, so without it here code lost its colours and every equation was
+// drawn twice, once as unstyled MathML. Styles and fonts only; script-src is
+// untouched.
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -72,9 +79,9 @@ const CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'none'",
   "object-src 'none'",
   "script-src 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
   "img-src 'self' data: https:",
-  "font-src 'self' data:",
+  "font-src 'self' data: https://cdn.jsdelivr.net",
   "connect-src 'self'",
 ].join("; ");
 

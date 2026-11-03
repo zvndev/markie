@@ -33,6 +33,13 @@ export interface Deployment {
   downloadSiteUrl: string;
   /** Shown to people adding this server in Markie. */
   name: string;
+  /**
+   * MARKIE_DOCS_ORIGIN: the origin hosted documents (/d/:id, /s/:token) are
+   * linked on and read from. On Markie Cloud that is https://markiedocs.com,
+   * whose rewrites proxy those paths to this server. Null when unset, and
+   * then every link and page stays where it was (docs-host.ts).
+   */
+  docsOrigin: string | null;
 }
 
 type Env = Record<string, string | undefined>;
@@ -82,7 +89,28 @@ export function resolveDeployment(env: Env = process.env, warn: (message: string
     siteUrl,
     downloadSiteUrl: official ? siteUrl : canonical,
     name: name.slice(0, 80),
+    docsOrigin: parseDocsOrigin(env.MARKIE_DOCS_ORIGIN),
   };
+}
+
+function parseDocsOrigin(value: string | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("MARKIE_DOCS_ORIGIN must be an http(s) origin, like https://private.markiedocs.com.");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("MARKIE_DOCS_ORIGIN must be an http(s) origin, like https://private.markiedocs.com.");
+  }
+  return url.origin;
+}
+
+/** Where hosted documents live: MARKIE_DOCS_ORIGIN, or this server's own origin when unset. */
+export function docsOrigin(d: Pick<Deployment, "docsOrigin" | "origin"> = deployment()): string {
+  return d.docsOrigin ?? d.origin;
 }
 
 let cached: Deployment | undefined;

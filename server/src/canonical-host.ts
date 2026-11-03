@@ -16,7 +16,7 @@
 // /download reach this server through markiedocs.com's proxy and must stay.
 const BROWSER_PAGE = /^\/(?:auth|account)(?:\/|$)/;
 
-function hostOf(value: string | null | undefined): string | null {
+export function hostOf(value: string | null | undefined): string | null {
   const first = value?.split(",")[0]?.trim();
   if (!first) return null;
   try {

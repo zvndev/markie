@@ -461,11 +461,11 @@ test("an edit shows on the next load, compiled once per version", async () => {
   const id = `live-edit-${stamp}`;
   await putDoc(owner.token, id, "Edit.wd", "# First\n");
   const { label } = await addressOf(id, owner.token);
-  const before = liveDocs!.compiler.workersStarted();
+  const before = liveDocs!.compiler.childrenStarted();
   const cookie = await openLiveDoc(label, ownerCookie);
   assert.match(await (await ask(liveHost(label), "/", { cookie })).text(), /<h1>First<\/h1>/);
   assert.match(await (await ask(liveHost(label), "/", { cookie })).text(), /<h1>First<\/h1>/);
-  assert.equal(liveDocs!.compiler.workersStarted() - before, 1, "three loads, one compile");
+  assert.equal(liveDocs!.compiler.childrenStarted() - before, 1, "three loads, one compile");
   await putDoc(owner.token, id, "Edit.wd", "# Second\n", 1);
   assert.match(await (await ask(liveHost(label), "/", { cookie })).text(), /<h1>Second<\/h1>/);
 });

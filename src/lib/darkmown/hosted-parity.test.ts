@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// A hosted Live Doc (server/src/live-docs-worker.ts) must be exactly what the
+// A hosted Live Doc (server/src/live-docs-child.ts) must be exactly what the
 // Mac preview shows. The server runs synced copies of the pinned compiler and
 // of this folder's sanitizer (server/scripts/sync-darkmown.mjs), resolving its
 // own node_modules, so the copies and the dependency tree can each drift. This
@@ -26,7 +26,7 @@ vi.mock("./compiler-worker-client", async () => {
 const SERVER_COPY = path.resolve(__dirname, "../../../server/src/generated/darkmown");
 const SAMPLES = path.resolve(__dirname, "../../../docs/document-testing/samples");
 
-// The hosted worker's steps, in order (live-docs-worker.ts compile()).
+// The hosted compile's steps, in order (live-docs-child.ts compile()).
 async function hosted(source: string) {
   validateDarkmownPreviewSource(source);
   const compiled = hostedCompileFromMemory({ "site/pages/document.wd": source }, "site/pages/document.wd", { cwd: "/" });

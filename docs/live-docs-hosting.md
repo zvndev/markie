@@ -111,6 +111,21 @@ Labels appear in proxy logs as the host. Tickets do not need to: they ride in th
 - Submit `markie.live` to the Public Suffix List once it serves, so browsers treat each label as its own site. Approval takes weeks and nothing waits on it.
 - HSTS preload for `markie.live`. The header already sends `includeSubDomains`.
 
+## How a compile is contained
+
+Each compile runs in its own short-lived Node process (`server/src/live-docs-child.ts`), never in the server's process. A worker thread is not enough: when a worker runs out of heap, V8 can abort the whole server. The child gets:
+
+- a 64 MB old generation and a small young generation;
+- an empty environment;
+- Node's permission model: it reads only its own script, `server/src/generated/darkmown/` and the server's `node_modules`, and cannot write files or start processes, workers or addons;
+- no code generation from strings;
+- 8 seconds of wall clock, then SIGKILL;
+- capped stdout and stderr, and a one-line JSON reply that the server validates before use.
+
+On Node 26 the permission model also refuses network connections. Node 22 has no network permission, so the child removes the network globals before the compiler loads.
+
+Results are cached by source hash and compiler version, so each change to a Live Doc pays for one process start. The server image needs nothing extra: the child and everything it imports are under `src/` and the production `node_modules`.
+
 ## Keeping the server's Darkmown in step with the Mac
 
 The server compiles with copies of the Mac app's pinned compiler, runtime, bootstrap, limits and sanitizer, in `server/src/generated/darkmown/`, because its Docker context is `server/` alone. After any change to `src/lib/darkmown/vendor/`, `security.ts`, the preview style, `mcp/darkmown-limits.mjs` or the runtime policy:

@@ -13,7 +13,14 @@ RUN ARCH=$(uname -m) && case "$ARCH" in \
     | tar -xz -C /usr/local/bin
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+# --ignore-scripts: better-sqlite3 13 ships its Node-API binaries, musl
+# included, inside the package and needs no install step. npm ci still runs an
+# implicit `node-gyp rebuild` for any package with a binding.gyp (it ignores
+# the package's "gypfile": false), and this image has no Python for node-gyp,
+# so the install fails without it. No production dependency has an install
+# script today (package-lock.json has no "hasInstallScript"). If one is added,
+# drop this flag and install python3, make and g++ for the build instead.
+RUN npm ci --omit=dev --ignore-scripts
 COPY src ./src
 COPY download-manifest.json ./download-manifest.json
 COPY litestream.yml /etc/litestream.yml

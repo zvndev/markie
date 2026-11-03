@@ -6,6 +6,7 @@ import {
   buildDesktopLaunchSmokeArtifact,
   explicitLaunchApp,
   resolveDesktopLaunchApp,
+  withDeadline,
 } from "../scripts/desktop-launch-smoke.mjs";
 
 const tempDirs: string[] = [];
@@ -193,5 +194,19 @@ describe("launching a built Linux artifact", () => {
   it("refuses an artifact the host cannot run", () => {
     const foreign = process.platform === "linux" ? "darwin" : "linux";
     expect(() => explicitLaunchApp("/opt/Markie/markie", { platform: foreign, arch: "x64" })).toThrow(/cannot be launched/);
+  });
+});
+
+describe("a CDP call that never answers", () => {
+  // A renderer that stops answering must fail the smoke with the call named,
+  // not hang the CI job until the runner kills it with no output.
+  it("rejects at its deadline and names the call", async () => {
+    await expect(withDeadline(new Promise(() => {}), 20, "CDP Page.captureScreenshot")).rejects.toThrow(
+      /CDP Page.captureScreenshot did not answer within 20ms/
+    );
+  });
+
+  it("passes an answer through untouched", async () => {
+    await expect(withDeadline(Promise.resolve(42), 1000, "CDP Runtime.evaluate")).resolves.toBe(42);
   });
 });

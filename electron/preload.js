@@ -112,6 +112,8 @@ if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI",
   // main.js still accepts. Forwarded as-is either way.
   exportPDF: (args) => ipcRenderer.invoke("export-pdf", args),
   exportHTML: (args) => ipcRenderer.invoke("export-html", args),
+  // `{ format, defaultName, data }`: a converted copy main writes through the save sheet.
+  exportDocument: (args) => ipcRenderer.invoke("export-document", args),
   saveFile: (args) => ipcRenderer.invoke("save-file", args),
   saveFileAs: (args) => ipcRenderer.invoke("save-file-as", args),
   renameFile: (args) => ipcRenderer.invoke("rename-file", args),

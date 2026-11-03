@@ -148,6 +148,7 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     setDocumentMenuState: vi.fn(async () => noopResult),
     exportPDF: vi.fn(async () => ({ success: true, path: "/tmp/out.pdf" })),
     exportHTML: vi.fn(async () => ({ success: true, path: "/tmp/out.html" })),
+    exportDocument: vi.fn(async () => ({ success: true, path: "/tmp/out.docx" })),
     saveFile: vi.fn(async () => ({ success: true, path: "/tmp/doc.md" })),
     saveFileAs: vi.fn(async () => ({ success: true, path: "/tmp/doc.md" })),
     renameFile: vi.fn(async () => ({ success: true, path: "/tmp/doc.md" })),

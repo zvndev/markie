@@ -163,6 +163,17 @@ test("renderMarkdownHTML preserves KaTeX math output", () => {
   assert.match(html, /katex/);
 });
 
+test("renderMarkdownHTML leaves prices in a shared transcript as text", () => {
+  const transcript = [
+    "Them: A 150 means you sold you know, $6.\\",
+    ...Array.from({ length: 20 }, (_, i) => `Me: line ${i}, nothing about money.\\`),
+    "Them: You took a $100 worth of lemons.",
+  ].join("\n");
+  const html = renderMarkdownHTML(transcript);
+  assert.doesNotMatch(html, /katex/);
+  assert.match(html, /\$100 worth/);
+});
+
 test("renderPublicPage sets a Content-Security-Policy", () => {
   const page = renderPublicPage({ title: "T", markdown: "# H", token: "tok", siteUrl: "https://x.test" });
   assert.match(page, /Content-Security-Policy/);

@@ -2,6 +2,7 @@ import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { remarkStrictMath } from "@/lib/remark-strict-math";
 import remarkRehype from "remark-rehype";
 import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
@@ -84,6 +85,8 @@ const processor = unified()
   .use(remarkParse)
   .use(remarkGfm)
   .use(remarkMath)
+  // Prices are not equations: "$6 ... $100" stays text (remark-strict-math.ts).
+  .use(remarkStrictMath)
   // allowDangerousHtml only means "keep the HTML nodes for the next plugin".
   // rehype-raw parses them, and rehype-sanitize below is what decides what
   // stays; nothing between the two writes output.

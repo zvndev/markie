@@ -101,7 +101,7 @@ const REQUIRED_WINDOWS_WORKFLOW_SNIPPETS = [
   "npm run electron:pack:win",
   "npm run electron:smoke:win",
   "npm run electron:smoke:win:launch",
-  "actions/upload-artifact@v5",
+  "actions/upload-artifact@v7",
   ".autoloop/runs/windows-launch-smoke-*/launch-smoke.json",
   ".autoloop/runs/windows-launch-smoke-*/screenshot.png",
 ];

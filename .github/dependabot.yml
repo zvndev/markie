@@ -26,6 +26,21 @@ updates:
       root-minor-patch:
         applies-to: version-updates
         update-types: [minor, patch]
+    ignore:
+      # typescript-eslint (8.72.1, and canary 8.72.2-alpha.11) needs the
+      # TypeScript compiler API and caps its peer range at typescript <6.1.0.
+      # TypeScript 7 is the native compiler and its npm package exports no
+      # compiler API (require("typescript") returns only the version), so
+      # `npm run lint` cannot load it. Lift this once a typescript-eslint
+      # release lists typescript 7 in its peerDependencies.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      # Node type definitions must match the Node the code runs on: Node 22
+      # (engines, CI node-version, the server's node:22-alpine image). Newer
+      # majors would type-check calls to APIs Node 22 does not have. Bump the
+      # @types/node major by hand when the runtime moves.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
 
   # Markie Cloud server.
   - package-ecosystem: npm
@@ -46,3 +61,8 @@ updates:
       mobile-minor-patch:
         applies-to: version-updates
         update-types: [minor, patch]
+    ignore:
+      # Same rule as the root: Node types follow the Node 22 runtime the
+      # tooling runs on. Bump the major by hand when the runtime moves.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]

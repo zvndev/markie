@@ -8,7 +8,9 @@ interface FormatRailProps {
   disabled?: boolean;
 }
 
-interface RailButton {
+// The rail's commands are exported so the phone's toolbar (apps/mobile) runs
+// exactly these, never a second copy that could drift.
+export interface RailButton {
   key: string;
   label: ReactNode;
   title: string;
@@ -16,7 +18,7 @@ interface RailButton {
   active?: (s: ActiveStates) => boolean;
 }
 
-type ActiveStates = Record<string, boolean>;
+export type ActiveStates = Record<string, boolean>;
 
 const RailIcon = ({
   children,
@@ -46,7 +48,7 @@ const textMark = (children: ReactNode, className = "") => (
   </span>
 );
 
-const COMMON: RailButton[] = [
+export const COMMON: RailButton[] = [
   { key: "h1", label: textMark("H1", "font-semibold tracking-normal"), title: "Heading 1", run: (e) => e.chain().focus().toggleHeading({ level: 1 }).run(), active: (s) => s.h1 },
   { key: "h2", label: textMark("H2", "font-semibold tracking-normal"), title: "Heading 2", run: (e) => e.chain().focus().toggleHeading({ level: 2 }).run(), active: (s) => s.h2 },
   { key: "h3", label: textMark("H3", "font-semibold tracking-normal"), title: "Heading 3", run: (e) => e.chain().focus().toggleHeading({ level: 3 }).run(), active: (s) => s.h3 },
@@ -63,12 +65,34 @@ const COMMON: RailButton[] = [
   { key: "hr", label: <RailIcon><path d="M5 12h14" /></RailIcon>, title: "Horizontal rule", run: (e) => e.chain().focus().setHorizontalRule().run() },
 ];
 
-const ADVANCED: RailButton[] = [
+export const ADVANCED: RailButton[] = [
   { key: "mathi", label: textMark("Σ", "text-[14px] font-semibold"), title: "Inline math ($…$)", run: (e) => e.chain().focus().insertContent("$E = mc^2$").run() },
   { key: "mathb", label: textMark("∫", "text-[15px] font-semibold"), title: "Math block ($$…$$)", run: (e) => e.chain().focus().insertContent("\n$$\nE = mc^2\n$$\n").run() },
   { key: "footnote", label: textMark("†", "text-[14px] font-semibold"), title: "Footnote", run: (e) => e.chain().focus().insertContent("[^1]").run() },
   { key: "clear", label: <RailIcon><path d="m16 16 5-5" /><path d="m21 16-5-5" /><path d="m3 19 6.5-6.5" /><path d="m13 3 8 8" /><path d="m9.5 12.5 4-4" /><path d="M3 19h8" /></RailIcon>, title: "Clear formatting", run: (e) => e.chain().focus().unsetAllMarks().clearNodes().run() },
 ];
+
+/** Which rail buttons read as pressed for the editor's current selection. */
+export function railActiveStates(e: Editor | null): ActiveStates {
+  return e
+    ? {
+        h1: e.isActive("heading", { level: 1 }),
+        h2: e.isActive("heading", { level: 2 }),
+        h3: e.isActive("heading", { level: 3 }),
+        bold: e.isActive("bold"),
+        italic: e.isActive("italic"),
+        strike: e.isActive("strike"),
+        code: e.isActive("code"),
+        bulletList: e.isActive("bulletList"),
+        orderedList: e.isActive("orderedList"),
+        taskList: e.isActive("taskList"),
+        blockquote: e.isActive("blockquote"),
+        codeBlock: e.isActive("codeBlock"),
+        table: e.isActive("table"),
+        link: e.isActive("link"),
+      }
+    : {};
+}
 
 export function FormatRail({ editor, disabled = false }: FormatRailProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -81,25 +105,7 @@ export function FormatRail({ editor, disabled = false }: FormatRailProps) {
 
   const states = useEditorState({
     editor,
-    selector: ({ editor: e }): ActiveStates =>
-      e
-        ? {
-            h1: e.isActive("heading", { level: 1 }),
-            h2: e.isActive("heading", { level: 2 }),
-            h3: e.isActive("heading", { level: 3 }),
-            bold: e.isActive("bold"),
-            italic: e.isActive("italic"),
-            strike: e.isActive("strike"),
-            code: e.isActive("code"),
-            bulletList: e.isActive("bulletList"),
-            orderedList: e.isActive("orderedList"),
-            taskList: e.isActive("taskList"),
-            blockquote: e.isActive("blockquote"),
-            codeBlock: e.isActive("codeBlock"),
-            table: e.isActive("table"),
-            link: e.isActive("link"),
-          }
-        : {},
+    selector: ({ editor: e }): ActiveStates => railActiveStates(e),
   });
 
   if (!editor) return null;

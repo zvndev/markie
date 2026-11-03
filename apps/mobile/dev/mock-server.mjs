@@ -13,6 +13,16 @@
 //   GET  /api/docs/:id/assets/file?ref=             a picture the document names (Range honored)
 //   GET  /s/:token/raw                              a public share's markdown
 //   GET  /s/:token/assets?ref=                      a public share's picture
+//   GET  /api/docs/:id/access                       {access:{role, canEdit, canManage}}
+//   GET|POST /api/docs/:id/shares, DELETE /api/docs/:id/shares/:idOrEmail
+//   GET|POST|DELETE /api/docs/:id/public-link       the owner's public link
+//   GET|POST /api/docs/:id/threads, POST .../threads/:t/comments, .../threads/:t/status,
+//   DELETE .../threads/:t/comments/:c               comments, kept in memory
+//   POST /api/docs/:id/collab-ticket                always refused: the mock has no live rooms
+//
+// The document platform (/api/document-platform) and live editing need the
+// real server: run it locally (apps/mobile/README.md) to try Word files or
+// multiplayer.
 //
 // Usage: node dev/mock-server.mjs [--port 8790] [--host 127.0.0.1]
 // Every sign-in code is 123456 (or $MOCK_OTP). Nothing is persisted.
@@ -292,6 +302,11 @@ function sendAssetNow(req, res, log, docId, ref) {
 const FORBIDDEN_ID = "someone-elses-doc";
 
 const sessions = new Map(); // token -> user
+const docShares = new Map(); // doc id -> [{user_id, role, created_at, email, name, pending?}]
+const docThreads = new Map(); // doc id -> [thread]
+const sharesFor = (id) => { if (!docShares.has(id)) docShares.set(id, []); return docShares.get(id); };
+const threadsFor = (id) => { if (!docThreads.has(id)) docThreads.set(id, []); return docThreads.get(id); };
+const comment = (threadId, user, body) => ({ id: randomUUID(), thread_id: threadId, author_id: user.id, author_name: user.name, author_email: user.email, body: body.trim(), created_at: new Date().toISOString() });
 const users = new Map(); // email -> user
 
 function send(res, status, body, headers = {}) {
@@ -336,7 +351,7 @@ const CORS = {
   // Development only: the app's browser build at http://localhost:5174 reads this.
   "access-control-allow-origin": "*",
   "access-control-allow-headers": "authorization, content-type",
-  "access-control-allow-methods": "GET, POST, PUT, OPTIONS",
+  "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
   "access-control-expose-headers": "set-auth-token, content-disposition",
 };
 
@@ -448,6 +463,89 @@ const server = createServer(async (req, res) => {
           updated_at: doc.updatedAt, format: doc.format, origin: doc.origin, role: doc.role,
         },
       });
+    }
+
+    const sub = /^\/api\/docs\/([^/]+)\/(access|shares|public-link|threads|collab-ticket)(?:\/([^/]+))?(?:\/(comments|status))?(?:\/([^/]+))?$/.exec(path);
+    if (sub) {
+      const id = decodeURIComponent(sub[1]);
+      const doc = docs.get(id);
+      if (!doc) return reply(404, { error: "not found" });
+      const owner = doc.role === "owner";
+      const list = sharesFor(id);
+      if (sub[2] === "access" && req.method === "GET") return reply(200, { access: { role: doc.role, canRead: true, canEdit: doc.role !== "viewer", canManage: owner } });
+      if (sub[2] === "collab-ticket") return reply(404, { error: "no_ticket" });
+      if (sub[2] === "shares") {
+        if (req.method === "GET") return reply(200, { shares: owner ? list : list.filter((m) => !m.pending) });
+        if (!owner) return reply(403, { error: "forbidden" });
+        if (req.method === "POST") {
+          const body = await readJson(req);
+          const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+          if (!email || !["viewer", "editor"].includes(body?.role)) return reply(400, { error: "bad request" });
+          const known = users.get(email);
+          const existing = list.find((m) => m.email === email);
+          if (existing) existing.role = body.role;
+          else list.push(known ? { user_id: known.id, role: body.role, created_at: new Date().toISOString(), email, name: known.name } : { user_id: null, role: body.role, created_at: new Date().toISOString(), email, name: null, pending: true });
+          return reply(200, { ok: true, status: known ? "member" : "invited", role: body.role });
+        }
+        if (req.method === "DELETE" && sub[3]) {
+          const target = decodeURIComponent(sub[3]);
+          const at = list.findIndex((m) => m.user_id === target || m.email === target);
+          if (at < 0) return reply(404, { error: "not found" });
+          list.splice(at, 1);
+          return reply(200, { ok: true, publicLinkRotated: false });
+        }
+      }
+      if (sub[2] === "public-link") {
+        if (!owner) return reply(403, { error: "forbidden" });
+        const token = [...publicShares.entries()].find(([, docId]) => docId === id)?.[0] ?? null;
+        if (req.method === "GET") return reply(200, { url: token ? `${originOf(req)}/s/${token}` : null });
+        if (req.method === "POST") {
+          const next = token ?? randomBytes(32).toString("base64url");
+          publicShares.set(next, id);
+          return reply(200, { url: `${originOf(req)}/s/${next}` });
+        }
+        if (req.method === "DELETE") {
+          if (token) publicShares.delete(token);
+          return reply(200, { ok: true });
+        }
+      }
+      if (sub[2] === "threads") {
+        const user = userFor(req);
+        const threads = threadsFor(id);
+        if (req.method === "GET" && !sub[3]) return reply(200, { threads });
+        if (req.method === "POST" && !sub[3]) {
+          const body = await readJson(req);
+          if (!body?.anchor || typeof body.body !== "string" || !body.body.trim()) return reply(400, { error: "bad request" });
+          const thread = { id: randomUUID(), doc_id: id, anchor: body.anchor, status: "open", created_by: user.id, created_at: new Date().toISOString(), comments: [] };
+          thread.comments.push(comment(thread.id, user, body.body));
+          threads.push(thread);
+          return reply(200, { id: thread.id });
+        }
+        const thread = threads.find((t) => t.id === decodeURIComponent(sub[3] ?? ""));
+        if (!thread) return reply(404, { error: "not found" });
+        if (req.method === "POST" && sub[4] === "comments") {
+          const body = await readJson(req);
+          if (typeof body?.body !== "string" || !body.body.trim()) return reply(400, { error: "bad request" });
+          const added = comment(thread.id, user, body.body);
+          thread.comments.push(added);
+          return reply(200, { id: added.id });
+        }
+        if (req.method === "POST" && sub[4] === "status") {
+          if (doc.role === "viewer") return reply(403, { error: "forbidden" });
+          const body = await readJson(req);
+          if (body?.status !== "open" && body?.status !== "resolved") return reply(400, { error: "bad request" });
+          thread.status = body.status;
+          return reply(200, { ok: true });
+        }
+        if (req.method === "DELETE" && sub[4] === "comments" && sub[5]) {
+          const at = thread.comments.findIndex((c) => c.id === decodeURIComponent(sub[5]));
+          if (at < 0) return reply(404, { error: "not found" });
+          thread.comments.splice(at, 1);
+          if (thread.comments.length === 0) threads.splice(threads.indexOf(thread), 1);
+          return reply(200, { ok: true });
+        }
+      }
+      return reply(405, { error: "method not allowed" });
     }
 
     // The desktop sync's save route (server/src/docs.ts): baseVersion must be

@@ -13,9 +13,12 @@ import {
   publicDocName,
   formatFromName,
   newDocId,
+  parsePlatformList,
   type CloudDoc,
   type RecentDoc,
 } from "./docs";
+import { DocumentCloudClient } from "@/lib/document-cloud";
+import type { CollabTicketAnswer } from "@/lib/collab";
 import { NetworkError, type HttpMethod, type HttpResponse, type HttpTransport } from "./http";
 import { sha256Hex } from "./sha256";
 
@@ -301,11 +304,313 @@ export function createApiClient(options: ApiClientOptions) {
       return new Blob([response.bytes as BlobPart], { type });
     },
 
+
+    /** The caller's role on a document (server/src/shares.ts /access). Null when the server didn't say. */
+    async access(id: string): Promise<DocAccess | null> {
+      if (!DOC_ID.test(id)) throw new ApiError(404, "That isn't a Markie document.");
+      const { data } = await json("GET", `/api/docs/${encodeURIComponent(id)}/access`);
+      return parseAccess((data as { access?: unknown } | null)?.access);
+    },
+
+    /** Who else is on a document: members, and for its owner the invites not yet taken up. */
+    async shares(id: string): Promise<ShareMember[]> {
+      if (!DOC_ID.test(id)) throw new ApiError(404, "That isn't a Markie document.");
+      const { data } = await json("GET", `/api/docs/${encodeURIComponent(id)}/shares`);
+      const list = (data as { shares?: unknown } | null)?.shares;
+      if (!Array.isArray(list)) throw new ApiError(502, "The server's answer wasn't readable.");
+      return list.slice(0, 500).map(parseShareMember).filter((member): member is ShareMember => member !== null);
+    },
+
+    /**
+     * Shares by email, the desktop's own call: someone with an account becomes
+     * a member now, anyone else gets an invitation. The same call with another
+     * role changes a member's role.
+     */
+    async addShare(id: string, email: string, role: ShareRole): Promise<"member" | "invited"> {
+      if (!DOC_ID.test(id)) throw new ApiError(404, "That isn't a Markie document.");
+      const clean = email.trim().toLowerCase();
+      if (!EMAIL.test(clean) || clean.length > 320) throw new ApiError(400, "Enter an email address.");
+      if (role !== "viewer" && role !== "editor") throw new ApiError(400, "Choose viewer or editor.");
+      const { data } = await json("POST", `/api/docs/${encodeURIComponent(id)}/shares`, { body: { email: clean, role } });
+      return (data as { status?: unknown } | null)?.status === "invited" ? "invited" : "member";
+    },
+
+    /** Takes someone off a document: a member by id, an invitation by email. */
+    async removeShare(id: string, idOrEmail: string): Promise<void> {
+      if (!DOC_ID.test(id)) throw new ApiError(404, "That isn't a Markie document.");
+      if (!idOrEmail || idOrEmail.length > 320) throw new ApiError(400, "That person isn't on this document.");
+      await json("DELETE", `/api/docs/${encodeURIComponent(id)}/shares/${encodeURIComponent(idOrEmail)}`);
+    },
+
+    /**
+     * The document's public link, or null when it has none (owner only, as on
+     * the desktop). A document is private until its owner turns this on, and
+     * only these three calls touch it, each one a tap by the owner.
+     */
+    async publicLink(id: string): Promise<string | null> {
+      if (!DOC_ID.test(id)) throw new ApiError(404, "That isn't a Markie document.");
+      const { data } = await json("GET", `/api/docs/${encodeURIComponent(id)}/public-link`);
+      const raw = (data as { url?: unknown } | null)?.url;
+      // No link is a null url. A url this app can't read is not "private":
+      // saying so would invite the owner to make public a document that is.
+      if (raw === null || raw === undefined) return null;
+      const url = publicUrlOrNull(raw);
+      if (!url) throw new ApiError(502, "The server's public link wasn't readable.");
+      return url;
+    },
+
+    /** Turns the public link on (or returns the one that exists). */
+    async createPublicLink(id: string): Promise<string> {
+      if (!DOC_ID.test(id)) throw new ApiError(404, "That isn't a Markie document.");
+      const { data } = await json("POST", `/api/docs/${encodeURIComponent(id)}/public-link`, { body: {} });
+      const url = publicUrlOrNull((data as { url?: unknown } | null)?.url);
+      if (!url) throw new ApiError(502, "The server didn't return a public link.");
+      return url;
+    },
+
+    /** Turns the public link off. Anyone holding the old link can no longer open it. */
+    async revokePublicLink(id: string): Promise<void> {
+      if (!DOC_ID.test(id)) throw new ApiError(404, "That isn't a Markie document.");
+      await json("DELETE", `/api/docs/${encodeURIComponent(id)}/public-link`);
+    },
+
+    /**
+     * A pass for the live-editing socket (server/src/collab-tickets.ts). The
+     * pass is the socket's only credential: the session token never goes in
+     * its URL. A server too old to issue passes gets no live session from the
+     * phone at all, so the answer is never "legacy".
+     */
+    async collabTicket(id: string): Promise<CollabTicketAnswer> {
+      if (!DOC_ID.test(id)) return { kind: "failed", status: 404 };
+      try {
+        const { data } = await json("POST", `/api/docs/${encodeURIComponent(id)}/collab-ticket`, { body: {} });
+        const raw = (data ?? {}) as { ticket?: unknown; expiresAt?: unknown };
+        if (typeof raw.ticket !== "string" || !/^[A-Za-z0-9_-]{16,256}$/.test(raw.ticket)) return { kind: "failed", status: 502 };
+        return { kind: "ticket", ticket: raw.ticket, expiresAt: typeof raw.expiresAt === "number" ? raw.expiresAt : 0 };
+      } catch (error) {
+        if (error instanceof ApiError) {
+          return { kind: "failed", status: error.status };
+        }
+        return { kind: "failed", status: 0 };
+      }
+    },
+
+    /** Comment threads on a document, each with its comments (server/src/comments.ts). */
+    async threads(id: string): Promise<CommentThread[]> {
+      if (!DOC_ID.test(id)) throw new ApiError(404, "That isn't a Markie document.");
+      const { data } = await json("GET", `/api/docs/${encodeURIComponent(id)}/threads`);
+      const list = (data as { threads?: unknown } | null)?.threads;
+      if (!Array.isArray(list)) throw new ApiError(502, "The server's answer wasn't readable.");
+      return list.slice(0, 1000).map(parseThread).filter((thread): thread is CommentThread => thread !== null);
+    },
+
+    async createThread(id: string, anchor: unknown, body: string): Promise<string> {
+      if (!DOC_ID.test(id)) throw new ApiError(404, "That isn't a Markie document.");
+      const text = commentBody(body);
+      const { data } = await json("POST", `/api/docs/${encodeURIComponent(id)}/threads`, { body: { anchor, body: text } });
+      const threadId = (data as { id?: unknown } | null)?.id;
+      return typeof threadId === "string" ? threadId : "";
+    },
+
+    async reply(id: string, threadId: string, body: string): Promise<void> {
+      if (!DOC_ID.test(id) || !THREAD_ID.test(threadId)) throw new ApiError(404, "That comment isn't on this document.");
+      await json("POST", `/api/docs/${encodeURIComponent(id)}/threads/${encodeURIComponent(threadId)}/comments`, { body: { body: commentBody(body) } });
+    },
+
+    async setThreadStatus(id: string, threadId: string, status: "open" | "resolved"): Promise<void> {
+      if (!DOC_ID.test(id) || !THREAD_ID.test(threadId)) throw new ApiError(404, "That comment isn't on this document.");
+      await json("POST", `/api/docs/${encodeURIComponent(id)}/threads/${encodeURIComponent(threadId)}/status`, { body: { status } });
+    },
+
+    async deleteComment(id: string, threadId: string, commentId: string): Promise<void> {
+      if (!DOC_ID.test(id) || !THREAD_ID.test(threadId) || !THREAD_ID.test(commentId)) throw new ApiError(404, "That comment isn't on this document.");
+      await json("DELETE", `/api/docs/${encodeURIComponent(id)}/threads/${encodeURIComponent(threadId)}/comments/${encodeURIComponent(commentId)}`);
+    },
+
+    /**
+     * The document platform's client (src/lib/document-cloud.ts), the one the
+     * desktop uses for Word, RTF and OpenDocument files, sending through this
+     * app's own transport instead of the web view's fetch.
+     */
+    platform(): DocumentCloudClient {
+      const token = options.getToken?.() ?? "";
+      return new DocumentCloudClient({ baseUrl: origin, token }, platformFetch(transport, origin));
+    },
+
+    /** Every document-platform file this account can open. Empty on a server without the platform. */
+    async platformRecent(): Promise<RecentDoc[]> {
+      let response: HttpResponse;
+      try {
+        response = await send("GET", "/api/document-platform/documents", { timeoutMs: 20_000 });
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 0) throw error;
+        return [];
+      }
+      if (response.status === 401) throw new ApiError(401, "Your session has ended. Sign in again.");
+      if (response.status !== 200) return [];
+      try {
+        return parsePlatformList(parseJson(response.text));
+      } catch {
+        return [];
+      }
+    },
+
     privateLinkFor: (id: string) => privateLinkFor(origin, id),
   };
 }
 
 export type ApiClient = ReturnType<typeof createApiClient>;
+
+/** The caller's standing on a document, from `/api/docs/:id/access`. */
+export interface DocAccess {
+  role: "owner" | "editor" | "viewer";
+  canEdit: boolean;
+  canManage: boolean;
+}
+
+export type ShareRole = "viewer" | "editor";
+
+/** A person on a document. `userId` is null for an invitation not yet taken up. */
+export interface ShareMember {
+  userId: string | null;
+  email: string;
+  name: string | null;
+  role: ShareRole;
+  pending: boolean;
+}
+
+export interface ThreadComment {
+  id: string;
+  authorId: string;
+  authorName: string;
+  authorEmail: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface CommentThread {
+  id: string;
+  /** Yjs relative positions (src/lib/comment-anchors.ts), opaque until a live session reads them. */
+  anchor: unknown;
+  status: "open" | "resolved";
+  createdBy: string;
+  createdAt: string;
+  comments: ThreadComment[];
+}
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Thread and comment ids are server-minted UUIDs.
+const THREAD_ID = /^[A-Za-z0-9_-]{1,128}$/;
+// A comment is a few sentences; a pasted chapter is not one.
+const MAX_COMMENT_CHARS = 10_000;
+
+function commentBody(body: string): string {
+  const text = String(body ?? "").trim();
+  if (!text) throw new ApiError(400, "Write a comment first.");
+  if (text.length > MAX_COMMENT_CHARS) throw new ApiError(413, "That comment is too long.");
+  return text;
+}
+
+function plainString(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  // eslint-disable-next-line no-control-regex
+  const cleaned = value.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim();
+  return cleaned ? cleaned.slice(0, max) : null;
+}
+
+/**
+ * A public link is an http(s) URL whose path ends in /s/<token>. A server
+ * served under a path (https://example.org/markie/s/<token>) is one too.
+ */
+export function publicUrlOrNull(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 2048) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    if (url.username || url.password) return null;
+    return /^(?:\/[A-Za-z0-9._~-]+)*\/s\/[A-Za-z0-9_-]{16,128}$/.test(url.pathname) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseAccess(value: unknown): DocAccess | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as { role?: unknown; canEdit?: unknown; canManage?: unknown };
+  if (raw.role !== "owner" && raw.role !== "editor" && raw.role !== "viewer") return null;
+  return { role: raw.role, canEdit: raw.canEdit === true, canManage: raw.canManage === true };
+}
+
+function parseShareMember(value: unknown): ShareMember | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const email = plainString(raw.email, 320);
+  if (!email || (raw.role !== "viewer" && raw.role !== "editor")) return null;
+  const userId = typeof raw.user_id === "string" && THREAD_ID.test(raw.user_id) ? raw.user_id : null;
+  return { userId, email, name: plainString(raw.name, 256), role: raw.role, pending: raw.pending === true || userId === null };
+}
+
+function parseThread(value: unknown): CommentThread | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== "string" || !THREAD_ID.test(raw.id)) return null;
+  const comments = Array.isArray(raw.comments) ? raw.comments.slice(0, 500).map(parseComment).filter((c): c is ThreadComment => c !== null) : [];
+  return {
+    id: raw.id,
+    anchor: raw.anchor ?? null,
+    status: raw.status === "resolved" ? "resolved" : "open",
+    createdBy: typeof raw.created_by === "string" ? raw.created_by.slice(0, 128) : "",
+    createdAt: typeof raw.created_at === "string" ? raw.created_at.slice(0, 64) : "",
+    comments,
+  };
+}
+
+function parseComment(value: unknown): ThreadComment | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== "string" || !THREAD_ID.test(raw.id) || typeof raw.body !== "string") return null;
+  return {
+    id: raw.id,
+    authorId: typeof raw.author_id === "string" ? raw.author_id.slice(0, 128) : "",
+    authorName: plainString(raw.author_name, 256) ?? "",
+    authorEmail: plainString(raw.author_email, 320) ?? "",
+    body: raw.body.slice(0, MAX_COMMENT_CHARS),
+    createdAt: typeof raw.created_at === "string" ? raw.created_at.slice(0, 64) : "",
+  };
+}
+
+/**
+ * A fetch for DocumentCloudClient that goes through the app's transport, so
+ * on a device it is the native HTTP stack like every other request. It only
+ * ever reaches this server's document platform: the client builds every URL
+ * from the origin it was given, and anything else is refused here too.
+ */
+export function platformFetch(transport: HttpTransport, origin: string): typeof fetch {
+  const base = `${origin}/api/document-platform/`;
+  return (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (!url.startsWith(base)) throw new TypeError("Refused a request outside the document platform.");
+    const method = String(init.method ?? "GET").toUpperCase();
+    if (method !== "GET" && method !== "POST" && method !== "PUT" && method !== "DELETE") throw new TypeError("Unsupported method.");
+    const headers: Record<string, string> = {};
+    new Headers(init.headers).forEach((value, name) => {
+      if (name === "authorization") headers.authorization = value;
+    });
+    let body: unknown;
+    if (typeof init.body === "string") {
+      try { body = JSON.parse(init.body); } catch { throw new TypeError("The request body wasn't JSON."); }
+    }
+    let response: HttpResponse;
+    try {
+      response = await transport({ method, url, headers, body, timeoutMs: 60_000 });
+    } catch {
+      throw new TypeError("Can't reach the server. Check your connection.");
+    }
+    if (response.status < 200 || response.status > 599) throw new TypeError("The server's answer wasn't readable.");
+    return new Response(response.status === 204 ? null : response.text, { status: response.status, headers: { "content-type": response.headers["content-type"] ?? "application/json" } });
+  }) as typeof fetch;
+}
+
 
 /** Whose pictures: a private document read with the session, or a public share. */
 export type AssetSource = { kind: "doc"; id: string } | { kind: "public"; token: string };

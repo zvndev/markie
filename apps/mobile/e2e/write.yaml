@@ -7,6 +7,8 @@ appId: com.zvn.markie.mobile
     visible: "Edit"
     timeout: 8000
 - tapOn: "Edit"
+# Markdown opens in the rich view; Source shows the text itself.
+- tapOn: "Source"
 - tapOn: "Text of Launch brief"
 - inputText: " Edited on the phone"
 - tapOn: "Save"
@@ -15,9 +17,12 @@ appId: com.zvn.markie.mobile
     timeout: 8000
 - tapOn: "Back to Recent"
 - tapOn: "New document"
+# The desktop's chooser: every format it offers.
+- tapOn: "New Markdown document"
 - tapOn: "Untitled"
 - inputText: "Grocery list"
 - tapOn: "Next"
+- tapOn: "Source"
 - tapOn: "Text of Grocery list"
 - inputText: "- Milk"
 - tapOn: "Create"

@@ -1,18 +1,25 @@
 // The home screen's list logic: paging, search, the shared filter, and the
 // labels each row shows. Pure, so it is tested without a device.
 import { updatedAgo } from "@/lib/relative-time";
-import type { RecentDoc } from "./docs";
+import { docTypeGroup, type DocTypeFilter, type RecentDoc } from "./docs";
 
 export const PAGE_SIZE = 50;
 
 export type RecentScope = "all" | "shared";
 
+/** Rows from the document platform, folded into the list: everything it has, since it does not page. */
+export function withPlatform(docs: readonly RecentDoc[], platform: readonly RecentDoc[]): RecentDoc[] {
+  return mergeRecent(docs.filter((doc) => doc.store !== "platform"), platform);
+}
+
 /** Newest first, one row per id, the newer copy winning when pages overlap. */
 export function mergeRecent(existing: readonly RecentDoc[], incoming: readonly RecentDoc[]): RecentDoc[] {
   const byId = new Map<string, RecentDoc>();
+  // The two stores mint their own ids, so a row is known by store and id.
   for (const doc of [...existing, ...incoming]) {
-    const seen = byId.get(doc.id);
-    if (!seen || Date.parse(doc.updatedAt) >= Date.parse(seen.updatedAt)) byId.set(doc.id, doc);
+    const key = `${doc.store}:${doc.id}`;
+    const seen = byId.get(key);
+    if (!seen || Date.parse(doc.updatedAt) >= Date.parse(seen.updatedAt)) byId.set(key, doc);
   }
   return [...byId.values()].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || a.name.localeCompare(b.name));
 }
@@ -28,10 +35,11 @@ function fold(value: string): string {
 }
 
 /** Search matches the name only: the list never holds document bodies. */
-export function filterRecent(docs: readonly RecentDoc[], query: string, scope: RecentScope): RecentDoc[] {
+export function filterRecent(docs: readonly RecentDoc[], query: string, scope: RecentScope, type: DocTypeFilter = "all"): RecentDoc[] {
   const words = fold(query).split(/\s+/).filter(Boolean);
   return docs.filter((doc) => {
     if (scope === "shared" && !doc.shared) return false;
+    if (type !== "all" && docTypeGroup(doc) !== type) return false;
     if (!words.length) return true;
     const name = fold(doc.name);
     return words.every((word) => name.includes(word));

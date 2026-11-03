@@ -4,7 +4,8 @@ A Capacitor 8 app that opens Markie Cloud documents on a phone, including the on
 It follows `docs/mobile/AGENT-LINKS-CONTRACT.md` ("Mobile app" and "Link contract").
 
 - Bundle ID and Android package: `com.zvn.markie.mobile`. Display name: Markie. Apple team: `3VU8SG5TD9`.
-- Screens: Sign in (email code), Recent, Document (markdown, text, Darkmown), Editor, New document, an
+- Screens: Sign in (email code), Recent (search, shared and type filters), Document (markdown, text,
+  Darkmown), Word/RTF/OpenDocument, Editor (rich, source, live), Comments, Share, New document, an
   incoming file, Settings.
 - The session token is stored in the iOS Keychain or, on Android, encrypted with an Android Keystore key
   (`@aparajita/capacitor-secure-storage`, wrapped by `src/lib/secure-store.ts`). It is never written to
@@ -112,14 +113,49 @@ Any other URL another app sends is ignored.
 
 ## Writing
 
-- Edit: owners and editors get a pencil on a document (`GET /api/docs/:id` says the caller's `role`).
-  The editor saves through `PUT /api/docs/:id` with the version it started from, the same route and
-  hash (SHA-256 of the text) the desktop's sync uses. If another device saved first, the server answers
-  409 and the editor offers "Save as a copy" or "Discard mine". Nothing is merged over.
-- New document (+ on Recent): Markdown, plain text, Darkmown, CSV, JSON or YAML, or any name with its
-  own extension. Nothing reaches the server until Create, so backing out leaves no empty document.
-  The desktop lands it under Cloud on its next sync.
+The phone edits with the desktop's own editors, reached through the `@` alias like the renderer:
+
+- Markdown opens in the desktop's rich view (`@/components/rich-view`), with Rich and Source one tap
+  apart. The row above the keyboard runs the desktop format rail's own commands
+  (`COMMON` in `src/components/format-rail.tsx`): headings, bold, italic, lists, tasks, quotes, code,
+  tables, rules and links, plus undo and redo. Source has the plain text and the Markdown shortcuts.
+- Solo: a document nobody else is on saves through `PUT /api/docs/:id` with the version it started
+  from, the same route and hash (SHA-256 of the text) the desktop's sync uses. If another device saved
+  first, the server answers 409 and the editor offers "Save as a copy" or "Discard mine". Nothing is
+  merged over.
+- Live: the desktop's rule decides (`src/lib/live.ts`). Once anyone else is on a Markdown or plain-text
+  document (`GET /api/docs/:id/shares` is not empty) and it is under 1 MB, the editor joins the
+  desktop's room for it over `/collab/<id>`: Markdown through the rich view, text through
+  `@/components/text-collab-editor`. Others' names and carets show, and their edits arrive as they type.
+  The socket's only credential is a five-minute pass from `POST /api/docs/:id/collab-ticket`; the
+  session token never goes in its URL, and the phone never takes the desktop's "legacy" token path.
+  Typing waits until the room has synced and holds the document. The room's text is written back as the
+  stored version a few seconds after a change, under the policy the web app shares
+  (`@/lib/live-snapshot`):
+  - only by the room's one writer
+  - never over a stored copy with front matter or raw HTML, which a live rich room can't keep
+  - never over a version written from outside the room, which shows as a conflict instead
+
+  A session whose pass never comes drops to editing alone. Source is read-only while live, exactly as on
+  the desktop.
+- Comments live on a live Markdown document, as on the desktop: select text, tap the comment button
+  above the keyboard. The comment sheet lists threads with the words they are on (anchored in the room
+  through `@/lib/comment-anchors`), and replies, resolves, reopens and deletes through
+  `/api/docs/:id/threads`. Viewers read and comment; owners and editors resolve.
+- Share (people icon on a document): send the link, invite by email, change a role (sharing again with
+  the new role, as the desktop does), remove someone, through `/api/docs/:id/shares`. The owner also sees
+  General access: a document is private until they tap "Make public", which creates the public link
+  (`POST /api/docs/:id/public-link`); "Make private" turns it off. Nothing else creates one.
+- New document (+ on Recent): the desktop's centered chooser (`@/components/new-document-modal`) with
+  every format it offers. Markdown, text, Darkmown, CSV, JSON, YAML and XML go to the Markdown and text
+  store and reach the server on Create. Word, Rich Text and OpenDocument are made blank by the desktop's
+  writers and saved to the document platform as files of their own format, then open to write in.
+- Word, RTF and OpenDocument files from the document platform (`/api/document-platform`) are listed on
+  Recent, drawn by the desktop's Word editor, and edited and saved as a new version of their own bytes
+  through the desktop's `DocumentCloudClient`, sent over the app's own transport.
+- Version history is not on the phone: the desktop's history panel is local (`electron/history.js`).
 - Drafts live in memory only, like everything else the app reads.
+- The mock server has no live rooms and no document platform. Use a local real server for those.
 
 ## Files from other apps
 

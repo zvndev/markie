@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import type { EditableDocumentFormat } from "@/lib/document-session";
 import { DocumentFormatMark } from "./document-format-mark";
 
@@ -85,9 +85,11 @@ function DataTypeButton({ type, onCreate }: {
   );
 }
 
-export function NewDocumentModal({ onCreate, onClose }: {
+export function NewDocumentModal({ onCreate, onClose, footer }: {
   onCreate: (format: EditableDocumentFormat) => void;
   onClose: () => void;
+  /** Anything a host adds under the formats. The phone puts "Open a file" here. */
+  footer?: ReactNode;
 }) {
   const panel = useRef<HTMLElement>(null);
 
@@ -157,6 +159,7 @@ export function NewDocumentModal({ onCreate, onClose }: {
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {data.map((type) => <DataTypeButton key={type.format} type={type} onCreate={onCreate} />)}
         </div>
+        {footer}
       </section>
     </div>
   );

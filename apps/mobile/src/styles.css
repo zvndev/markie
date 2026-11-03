@@ -2,8 +2,10 @@
    `.markdown-body` document typography, KaTeX and highlight.js. Everything
    below is the phone's chrome, built from those same tokens. */
 @import "../../../src/app/globals.css";
-/* The one desktop component that renders here and uses utility classes. */
-@source "../../../src/components/document-format-mark.tsx";
+/* The desktop components that render here and use utility classes: the format
+   mark, the rich and live text editors, the New document chooser, and the
+   Word editor that draws Word, RTF and OpenDocument pages. */
+@source "../../../src/components";
 
 :root {
   --sat: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
@@ -1657,4 +1659,752 @@ input {
 
 .m-incoming-text span svg {
   flex: none;
+}
+
+/* ── Editor parity: rich editing, live sessions, comments, sharing ──────── */
+
+.m-editor-views {
+  flex: none;
+  margin: 8px var(--m-gutter) 0;
+}
+
+.m-editor-wait {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px var(--m-gutter);
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.m-editor-note,
+.m-live-line {
+  flex: none;
+  margin: 8px var(--m-gutter) 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.m-live-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.m-live-line::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.m-live-line.is-connected::before { background: var(--status-green); }
+.m-live-line.is-connecting::before { background: var(--status-yellow); }
+.m-live-line.is-disconnected::before,
+.m-live-line.is-unavailable::before { background: var(--status-red); }
+
+/* The desktop's rich view, given the phone's width and its own scrolling. */
+.m-rich-host,
+.m-text-live {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.m-rich-host .markie-document-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.m-rich-host .markdown-body.markie-document-canvas {
+  width: 100% !important;
+  padding: 14px var(--m-gutter) 48px;
+  font-size: 17px !important;
+}
+
+.m-rich-host .ProseMirror {
+  min-height: 60vh;
+  outline: none;
+  caret-color: var(--blue);
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.m-rich-host .ProseMirror .tableWrapper {
+  overflow-x: auto;
+}
+
+.m-text-live .cm-editor {
+  height: 100%;
+  font-size: 15px;
+}
+
+/* The row above the keyboard. It is the last child of the editor column,
+   which pads itself by the keyboard's height, so it rides on top of it. */
+.m-keyboard-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px calc(6px + var(--sab));
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-top: 0.5px solid var(--m-separator);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  -webkit-backdrop-filter: saturate(180%) blur(18px);
+  backdrop-filter: saturate(180%) blur(18px);
+}
+
+.m-editor[style*="padding-bottom"]:not([style*="padding-bottom: 0"]) .m-keyboard-bar {
+  padding-bottom: 6px;
+}
+
+.m-keyboard-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.m-tool {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  min-width: 42px;
+  height: 40px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.m-tool svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.m-tool:active:not(:disabled) {
+  background: color-mix(in srgb, var(--blue) 18%, transparent);
+}
+
+.m-tool.is-active {
+  background: color-mix(in srgb, var(--blue) 20%, var(--m-field-bg));
+  color: var(--blue);
+}
+
+.m-tool:disabled {
+  opacity: 0.35;
+}
+
+.m-tool-bold { font-weight: 800; }
+.m-tool-italic { font-family: Georgia, serif; font-style: italic; }
+.m-tool-comment { color: var(--blue); }
+.m-tool-divider {
+  flex: none;
+  width: 1px;
+  height: 22px;
+  margin: 0 4px;
+  background: var(--m-separator);
+}
+
+.m-editor-tool-italic { font-family: Georgia, serif; font-style: italic; }
+.m-editor-tool-code { font-family: var(--font-geist-mono), monospace; font-size: 13px; }
+
+/* Presence in the nav bar. */
+.m-presence {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 2px;
+}
+
+.m-presence-dot {
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.m-presence.is-connected .m-presence-dot { background: var(--status-green); }
+.m-presence.is-connecting .m-presence-dot { background: var(--status-yellow); }
+.m-presence.is-disconnected .m-presence-dot,
+.m-presence.is-unavailable .m-presence-dot { background: var(--status-red); }
+
+.m-avatar {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: rgb(0 0 0 / 0.8);
+  font-size: 10px;
+  font-weight: 700;
+  box-shadow: 0 0 0 2px var(--background);
+}
+
+.m-presence .m-avatar + .m-avatar {
+  margin-left: -6px;
+}
+
+.m-avatar-more {
+  background: var(--m-field-bg);
+  color: var(--foreground);
+}
+
+.m-nav-badged {
+  position: relative;
+}
+
+.m-nav-badge {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 17px;
+}
+
+/* ── Sheets ───────────────────────────────────────────────────────────── */
+
+.m-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  background: rgb(0 0 0 / 0.42);
+  animation: m-fade 180ms ease;
+}
+
+.m-sheet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: calc(100% - var(--sat) - 24px);
+  border-radius: 14px 14px 0 0;
+  background: var(--background);
+  box-shadow: 0 -8px 32px rgb(0 0 0 / 0.28);
+  animation: m-sheet-in 260ms var(--m-ease);
+}
+
+.m-sheet.is-tall {
+  height: calc(100% - var(--sat) - 24px);
+}
+
+:root[data-theme-tone="light"] .m-sheet {
+  background: #f2f2f7;
+}
+
+.m-sheet-grabber {
+  flex: none;
+  width: 36px;
+  height: 5px;
+  margin: 6px auto 0;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--foreground) 22%, transparent);
+}
+
+.m-sheet-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px 6px var(--m-gutter);
+}
+
+.m-sheet-head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.m-sheet-count {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.m-sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 16px calc(24px + var(--sab));
+  -webkit-overflow-scrolling: touch;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+@keyframes m-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes m-sheet-in { from { transform: translateY(40px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+
+/* ── Comments ─────────────────────────────────────────────────────────── */
+
+.m-thread {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+:root[data-theme-tone="light"] .m-thread {
+  background: #fff;
+  box-shadow: 0 0 0 0.5px var(--m-separator);
+}
+
+.m-thread.is-resolved {
+  opacity: 0.75;
+}
+
+.m-thread-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.m-comment-quote {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 0 2px 10px;
+  border: 0;
+  border-left: 3px solid var(--status-yellow);
+  background: none;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: left;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.m-comment-quote.is-gone {
+  border-left-color: var(--m-separator);
+  font-style: italic;
+}
+
+.m-comment-new .m-comment-quote {
+  margin: 8px 0 12px;
+}
+
+.m-chip {
+  flex: none;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--m-field-bg);
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.m-chip.is-selected {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+.m-chip.is-static {
+  background: color-mix(in srgb, var(--status-green) 18%, transparent);
+  color: var(--status-green);
+}
+
+.m-chip:disabled {
+  opacity: 0.5;
+}
+
+.m-chips {
+  display: flex;
+  gap: 6px;
+  margin: 10px calc(-1 * var(--m-gutter)) 0;
+  padding: 0 var(--m-gutter);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.m-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.m-thread-comments {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.m-comment {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.m-comment + .m-comment {
+  border-top: 0.5px solid var(--m-separator);
+}
+
+.m-comment .m-avatar {
+  box-shadow: none;
+}
+
+.m-comment-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-comment-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.m-comment-author {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-comment-meta time {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.m-comment-body {
+  margin: 2px 0 0;
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.m-comment-delete {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+}
+
+.m-composer {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.m-composer textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 16px;
+  resize: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.m-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.m-comments-resolved-toggle {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 12px;
+  border: 0;
+  background: none;
+  color: var(--blue);
+  font-size: 15px;
+}
+
+/* ── Sharing ──────────────────────────────────────────────────────────── */
+
+.m-share-doc {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.m-share .m-group-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  color: var(--blue);
+  text-align: left;
+}
+
+.m-share-invite {
+  display: grid;
+  gap: 10px;
+}
+
+.m-share-invite .m-group-heading,
+.m-share-public .m-group-heading {
+  margin-bottom: 0;
+  padding: 0 4px;
+}
+
+.m-share-invite-row {
+  display: flex;
+  gap: 8px;
+}
+
+.m-share-invite-row input {
+  flex: 1;
+  min-width: 0;
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--foreground);
+  font-size: 16px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.m-select {
+  min-height: 46px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 15px;
+}
+
+.m-share-person-actions .m-select {
+  min-height: 34px;
+  font-size: 14px;
+}
+
+.m-share-notice {
+  margin: 12px 4px 0;
+  color: var(--status-green);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.m-share-people {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.m-share-person,
+.m-share-public-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 12px;
+}
+
+.m-share-person + .m-share-person {
+  border-top: 0.5px solid var(--m-separator);
+}
+
+.m-share-person .m-avatar {
+  width: 34px;
+  height: 34px;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.m-share-person-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.m-share-person-name {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-share-person-email {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-share-person-role {
+  flex: none;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.m-share-person-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.m-share-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+}
+
+.m-share-public {
+  margin-top: 4px;
+}
+
+.m-share-public .m-group {
+  margin-top: 7px;
+}
+
+.m-share-public-icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--m-field-bg);
+  color: var(--muted);
+}
+
+.m-share-public-icon.is-public {
+  background: color-mix(in srgb, var(--status-green) 20%, transparent);
+  color: var(--status-green);
+}
+
+.m-share-public-icon svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.m-share-public-url {
+  margin: 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--m-field-bg);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.m-share-public-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+
+/* ── New document ─────────────────────────────────────────────────────── */
+
+/* The desktop's chooser keeps its own look; the phone gives it the safe areas. */
+.m-chooser > .markie-scrim {
+  z-index: 70;
+  padding-top: calc(16px + var(--sat));
+  padding-bottom: calc(16px + var(--sab));
+}
+
+.m-chooser .markie-overlay-panel {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.m-chooser-open {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--background) 35%, transparent);
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.m-chooser-open span {
+  flex: 1;
+}
+
+.m-new-doc-kind {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 4px 18px;
+}
+
+/* ── Word, RTF and OpenDocument ───────────────────────────────────────── */
+
+.m-office-page {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.m-office .m-doc-meta {
+  flex: none;
+}
+
+.m-link-form {
+  display: grid;
+  gap: 14px;
+  padding-top: 6px;
 }

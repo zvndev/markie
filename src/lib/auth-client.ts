@@ -687,6 +687,22 @@ export function makeSharesClient(request: ApiRequest) {
       return res.ok;
     },
 
+    // A cloud .wd's hosted Live Doc address (server/src/live-docs.ts), for its
+    // owner. null when the server has no Live Docs, the document is not a
+    // Live Doc, or the caller does not own it: the server answers all three
+    // with a 404 and the Library says it has no address.
+    liveDocAddress: async (docId: string): Promise<string | null> => {
+      const res = await request<{ url?: unknown }>(`/api/docs/${encodeURIComponent(docId)}/live-doc`);
+      const url = res.ok && typeof res.data?.url === "string" ? res.data.url : null;
+      if (!url) return null;
+      try {
+        const parsed = new URL(url);
+        return parsed.protocol === "https:" || (parsed.protocol === "http:" && /(^|\.)localhost$/.test(parsed.hostname)) ? parsed.href : null;
+      } catch {
+        return null;
+      }
+    },
+
     // A pass for the live-editing socket, so the session token stays out of
     // its URL and out of the proxy logs that keep URLs. The route refuses
     // with `{ error: "no_ticket" }` (server/src/collab-tickets.ts), so a 404

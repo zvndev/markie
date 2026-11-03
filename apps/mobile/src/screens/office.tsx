@@ -112,7 +112,10 @@ export function OfficeScreen({ api, id, initialName, backLabel, tone, me, startE
 
   const doc = state.status === "ready" ? state : null;
   const role = doc?.snapshot.role ?? null;
-  const canEdit = !!doc && role !== "viewer" && doc.body.kind !== "binary" && !(doc.body.kind === "text" && doc.body.metadata.newline === "mixed");
+  // A Word, RTF or ODT file Markie keeps read-only (an RTF with a table, say)
+  // refuses every change, so it is not offered for editing, as on the web.
+  const canEdit = !!doc && role !== "viewer" && doc.body.kind !== "binary" && !(doc.body.kind === "text" && doc.body.metadata.newline === "mixed")
+    && !((doc.body.kind === "docx" || doc.body.kind === "rich") && !doc.body.document.canEdit);
   const shown = editing && draft ? draft : doc?.body ?? null;
   const dirty = editing && draft !== null;
 
@@ -201,6 +204,7 @@ export function OfficeScreen({ api, id, initialName, backLabel, tone, me, startE
                   key={epoch}
                   document={shown.document as RichDocument}
                   readOnly={!editing || saving}
+                  reading={!editing}
                   onChange={(next: RichDocument) => {
                     if (!editing || saving) return;
                     setDraft(next.format === "docx" ? { kind: "docx", document: next as DocxDocument } : { kind: "rich", document: next });

@@ -32,6 +32,9 @@ vi.mock("@/components/rich-view", async () => {
   } };
 });
 vi.mock("@/components/text-collab-editor", () => ({ TextCollabEditor: () => null }));
+// The Darkmown runtime is loaded as raw text from outside this app's root,
+// which the test runner refuses; none of these tests opens a Darkmown file.
+vi.mock("../src/components/darkmown-view", () => ({ DarkmownView: () => null }));
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -148,5 +151,39 @@ describe("the share sheet for someone who doesn't own the document", () => {
       link: null, onClose: () => {}, onUnauthorized: () => {},
     }));
     expect(page.querySelector("[data-share-owner]")?.textContent).toContain("The document's owner");
+  });
+});
+
+describe("an Office file Markie keeps read-only, on the phone", () => {
+  const rtf = (body: string) => new TextEncoder().encode(String.raw`{\rtf1\ansi Before\par ` + body + String.raw`\pard After\par}`);
+  async function open(bytes: Uint8Array) {
+    const { OfficeScreen } = await import("../src/screens/office");
+    const api = {
+      origin: "https://api.markiedocs.com",
+      platform: () => ({
+        call: async () => ({ document: {} }),
+        decode: async () => ({ snapshot: { id: "doc-9", name: "Table.rtf", role: "owner", version: 1 }, bytes }),
+      }),
+    };
+    const page = await mount(createElement(OfficeScreen, {
+      api: api as never, id: "doc-9", backLabel: "Recent", tone: "light", me: { email: "o@example.com", name: "O" },
+      onBack: () => {}, onUnauthorized: () => {}, onChanged: () => {},
+    }));
+    for (let i = 0; i < 80 && !page.querySelector(".docs-word-body"); i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
+    return page;
+  }
+
+  it("reads its table as a table, offers no Edit and draws no formatting toolbar", async () => {
+    const page = await open(rtf(String.raw`\trowd\cellx2000\cellx4000 Region\cell Revenue\cell\row `));
+    const rows = [...page.querySelectorAll(".docs-word-body tr")].map((tr) => [...tr.querySelectorAll("td")].map((td) => td.textContent?.trim()));
+    expect(rows).toEqual([["Region", "Revenue"]]);
+    expect(page.querySelector('button[aria-label="Edit"]')).toBeNull();
+    expect(page.querySelector('[role="toolbar"]')).toBeNull();
+  });
+
+  it("still offers Edit for one it can change", async () => {
+    const page = await open(rtf(String.raw`Plain words.\par `));
+    expect(page.querySelector(".docs-word-body")?.textContent).toContain("Plain words.");
+    expect(page.querySelector('button[aria-label="Edit"]')).not.toBeNull();
   });
 });

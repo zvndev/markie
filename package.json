@@ -94,6 +94,7 @@
     "electron:release": "node scripts/release.mjs publish mac",
     "share:check": "node scripts/share-link-check.mjs",
     "shared-viewer:check": "node scripts/shared-viewer-check.mjs",
+    "live-file-safety:check": "node scripts/live-file-safety-check.mjs",
     "access:check": "node scripts/doc-access-check.mjs",
     "markie:use": "node scripts/markie-lane.mjs",
     "reveal:check": "node scripts/reveal-check.mjs",

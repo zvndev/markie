@@ -45,9 +45,10 @@ import { ShareDialog } from "@/components/share-dialog";
 import { ShareGate } from "@/components/share-gate";
 import {
   ShareBanner,
-  LiveSourceBanner, LiveUnavailableNote,
+  LiveFileRefusalNote, LiveSourceBanner, LiveUnavailableNote,
   UpdateStrip,
 } from "@/components/share-banner";
+import { richRoomCannotCarry } from "@/lib/live-room-carry";
 import { ConflictDialog } from "@/components/conflict-dialog";
 import { TextCollabEditor } from "@/components/text-collab-editor";
 import { DiskChangeStrip, DiskConflictDialog } from "@/components/disk-change";
@@ -1032,6 +1033,22 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     [content]
   );
 
+  // While a rich session is live, the desktop writes its own file from the
+  // room's serialization. That serialization has no front matter and none of
+  // the constructs the solo editor holds aside, so for a file that has any of
+  // them the room's text must never reach the buffer: autosave wrote it over
+  // the file as soon as this desktop seeded the room, before a key was
+  // pressed. Edits still reach the room and every peer, and the file keeps
+  // its bytes: the same rule the web app and the phone apply to the stored
+  // cloud copy (src/lib/live-room-carry.ts).
+  const liveRichRefused = useMemo(
+    () =>
+      !!collabCfg &&
+      !plainText &&
+      (richRoomCannotCarry(doc.savedContent) || richRoomCannotCarry(content)),
+    [collabCfg, plainText, doc.savedContent, content]
+  );
+
   // The document as it stands *now*. The rich pane serializes on a 250 ms
   // debounce, so exporting or saving straight after a keystroke used to use the
   // previous version of the text; flushing returns the current one and pushes
@@ -1039,11 +1056,14 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   // Nothing pending in the rich pane means the buffer is already current, but
   // "current" has to mean the last write, not the last render: an autosave
   // fires from a timer and can beat React to it.
+  // A refused live room is never read back (see liveRichRefused), so the
+  // buffer stays the file and every write that starts here (save, autosave,
+  // drafts, Save As, export) stays byte-faithful to it.
   const currentMarkdown = useCallback(
-    (): string => plainText
+    (): string => plainText || liveRichRefused
       ? latestContent()
       : flushRichRef.current?.() ?? latestContent(),
-    [latestContent, plainText]
+    [latestContent, plainText, liveRichRefused]
   );
 
   // Paper, PDF, and standalone HTML all render through main's one hidden
@@ -1394,6 +1414,14 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       saveGuard.noteEdit();
     },
     [editDoc, saveGuard]
+  );
+  // The rich pane's edits, unless they come out of a live room that cannot
+  // carry this file (see liveRichRefused).
+  const editRichContent = useCallback(
+    (md: string) => {
+      if (!liveRichRefused) editContent(md);
+    },
+    [liveRichRefused, editContent]
   );
 
   // Resolves to an error message when the copy could not be made, null when it
@@ -2431,6 +2459,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
                   )}
                   {richPreparing && !collabCfg && <RichPreparingNote />}
                   {liveUnavailable && <LiveUnavailableNote />}
+                  {liveRichRefused && <LiveFileRefusalNote />}
                   <div className="flex-1 min-h-0">
                   <ErrorBoundary
                     fallback={(_error, reset) => (
@@ -2450,7 +2479,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
                           : "solo"
                       }
                       value={content}
-                      onChange={editContent}
+                      onChange={editRichContent}
                       onEditorReady={setRichEditor}
                       collab={collabCfg}
                       readOnly={!docEditable || !richArmed}

@@ -1,4 +1,5 @@
 import type { ShareBannerView } from "@/lib/share-role";
+import { LIVE_FILE_REFUSAL_NOTE } from "@/lib/live-room-carry";
 
 interface ShareBannerProps {
   view: ShareBannerView | null;
@@ -144,6 +145,20 @@ export function LiveUnavailableNote() {
       className="markie-banner shrink-0 px-3 py-1 text-[11px] text-muted"
     >
       The live session could not load. You are editing your copy alone.
+    </div>
+  );
+}
+
+// A live rich room cannot carry this file's front matter or raw HTML, so the
+// file is left alone while the session runs (src/lib/live-room-carry.ts).
+export function LiveFileRefusalNote() {
+  return (
+    <div
+      data-markie-live-file-refused
+      role="status"
+      className="markie-banner shrink-0 px-3 py-1 text-[11px] text-muted"
+    >
+      {LIVE_FILE_REFUSAL_NOTE}
     </div>
   );
 }

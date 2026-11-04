@@ -351,3 +351,31 @@ describe("a formula's source field, when its view is redrawn or the pane closes"
     view.unmount();
   });
 });
+
+describe("a formula's source field, with two formulas holding the same source", () => {
+  it("commits into the very formula that was open, wherever it has moved to", async () => {
+    const { render, fireEvent, waitFor } = await import("@testing-library/react");
+    const { EditorContent, useEditor } = await import("@tiptap/react");
+    let handle: import("@tiptap/react").Editor | null = null;
+    function View() {
+      const editor = useEditor({ extensions: richBaseExtensions(), content: "A $x$ b.\n\nC $x$ d.\n", immediatelyRender: true });
+      handle = editor;
+      return <EditorContent editor={editor} />;
+    }
+    const view = render(<View />);
+    await waitFor(() => expect(view.container.querySelectorAll(".markie-math-inline").length).toBe(2));
+    const second = view.container.querySelectorAll(".markie-math-inline")[1] as HTMLElement & { pmViewDesc?: { destroy(): void } };
+    fireEvent.mouseDown(second);
+    fireEvent.input(second.querySelector("input") as HTMLInputElement, { target: { value: "$x^2$" } });
+    // A peer types a long line into the first paragraph, which moves the open
+    // formula (its own paragraph is not redrawn, so its view is never told)
+    // until the other formula sits nearer where it was. Then the open one's
+    // view is thrown away.
+    const note = "A long note somebody typed in front. ";
+    handle!.view.dispatch(handle!.state.tr.insertText(note, 1));
+    second.pmViewDesc!.destroy();
+    const markdown = () => (handle!.storage as unknown as { markdown: { getMarkdown(): string } }).markdown.getMarkdown();
+    await waitFor(() => expect(markdown()).toBe(`${note}A $x$ b.\n\nC $x^2$ d.`));
+    view.unmount();
+  });
+});

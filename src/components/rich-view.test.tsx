@@ -882,7 +882,8 @@ describe("RichView in a live room: the editor data model", () => {
     const prepared = new Y.Doc();
     await olderBuildRoom(prepared);
     const heading = prepared.getXmlFragment("default").get(1) as import("yjs").XmlElement;
-    (heading.get(0) as import("yjs").XmlText).insert(0, "status: draft ");
+    // Same keys, a value changed: "title: Plan" became "title: Old Plan".
+    (heading.get(0) as import("yjs").XmlText).insert("title: ".length, "Old ");
     changeBody?.(prepared.getXmlFragment("default"));
     const state = Y.encodeStateAsUpdate(prepared);
     return (doc: import("yjs").Doc) => Y.applyUpdate(doc, state);
@@ -895,7 +896,7 @@ describe("RichView in a live room: the editor data model", () => {
       // The stored copy's front matter, once; the room's old one gone.
       expect(live.onRoomReady.mock.calls[0][0]).toBe(OLDER_STORED);
       expect(topTypes(live.editor())[0]).toBe("heading");
-      expect(live.editor().getText()).not.toContain("status: draft");
+      expect(live.editor().getText()).not.toContain("Old Plan");
     } finally {
       live.done();
     }
@@ -1067,6 +1068,43 @@ describe("RichView in a live room: second review", () => {
       expect(live.editor().getText()).toContain("Live note");
       expect(JSON.stringify(liveDoc().getXmlFragment("default").toJSON())).toContain("Live note");
       expect(live.onChange).not.toHaveBeenCalled();
+    } finally {
+      live.done();
+    }
+  });
+
+  // Front matter with a blank line in it was seeded as a rule, a paragraph
+  // and an underlined heading. A line typed into the room between them looks
+  // like YAML too; its key is not the stored front matter's, so it stays.
+  const BLANK_LINE_FRONT = "---\ntitle: new\n\nnote: y\n---\nBody.\n";
+
+  it("keeps a `Key: value` line typed inside old front matter: refuses instead", async () => {
+    const live = await open(BLANK_LINE_FRONT, await roomOf([rule, p("title: old"), p("Note: call Bob"), h2("note: x"), p("Body.")]));
+    try {
+      await waitFor(() => expect(live.onCollabStatus).toHaveBeenCalledWith("unavailable"), { timeout: 3000 });
+      expect(JSON.stringify(liveDoc().getXmlFragment("default").toJSON())).toContain("Note: call Bob");
+      expect(live.onChange).not.toHaveBeenCalled();
+    } finally {
+      live.done();
+    }
+  });
+
+  it("keeps a second line with one of the front matter's own keys: refuses instead", async () => {
+    const live = await open(BLANK_LINE_FRONT, await roomOf([rule, p("title: old"), p("note: call Bob"), h2("note: x"), p("Body.")]));
+    try {
+      await waitFor(() => expect(live.onCollabStatus).toHaveBeenCalledWith("unavailable"), { timeout: 3000 });
+      expect(JSON.stringify(liveDoc().getXmlFragment("default").toJSON())).toContain("note: call Bob");
+    } finally {
+      live.done();
+    }
+  });
+
+  it("takes out old front matter with a blank line in it when its keys are the stored ones", async () => {
+    const live = await open(BLANK_LINE_FRONT, await roomOf([rule, p("title: old"), h2("note: x"), p("Body.")]));
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      expect(live.onRoomReady.mock.calls[0][0]).toBe(BLANK_LINE_FRONT);
+      expect(live.editor().getText()).not.toContain("title: old");
     } finally {
       live.done();
     }

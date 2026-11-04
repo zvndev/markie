@@ -110,6 +110,18 @@ const MAX_FRONT_MATTER_NODES = 24;
 // list item's `key: value`. "Live note" is not one.
 const YAML_KEY = /^\s*["']?[\w.-][\w .\-"']*:(\s|$)/;
 
+// The keys of a front matter block, one per line, nested ones included.
+const STORED_KEY = /^[ \t]*(?:-[ \t]+)?["']?([\w.-]+)["']?[ \t]*:(?=\s|$)/gm;
+// The keys in a line an older build folded front matter into: its lines run
+// together with spaces, so a key is a word and a colon after a space.
+const ROOM_KEY = /(?:^|\s)["']?([\w.-]+)["']?:(?=\s|$)/g;
+
+function keyCounts(text: string, pattern: RegExp): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const match of text.matchAll(pattern)) counts.set(match[1], (counts.get(match[1]) ?? 0) + 1);
+  return counts;
+}
+
 /**
  * What to do with a room an older build seeded, for a pane that opened on
  * `frontMatter` + `baselineBody`.
@@ -230,6 +242,29 @@ export function planLegacyRoom(
       const lines = middle.filter((node) => node.isTextblock).map((node) => node.textContent);
       if (underlined) lines.push(last.textContent);
       if (!lines.every((line) => YAML_KEY.test(line))) return false;
+      // Every key in the block must be one of the stored front matter's, no
+      // more often than it has it: an agent rewrites values, and a line
+      // somebody typed into the room there (`Note: call Bob`, or a second
+      // `note:`) is not front matter, so the room is refused rather than
+      // lose it.
+      const wanted = keyCounts(frontMatter, STORED_KEY);
+      const found = new Map<string, number>();
+      const count = (node: PMNode) => {
+        for (const [key, n] of keyCounts(node.textContent, ROOM_KEY)) found.set(key, (found.get(key) ?? 0) + n);
+      };
+      for (const block of nodes) {
+        if (block.isTextblock) {
+          count(block);
+          continue;
+        }
+        block.descendants((node) => {
+          if (!node.isTextblock) return true;
+          count(node);
+          return false;
+        });
+      }
+      if (found.size === 0) return false;
+      for (const [key, count] of found) if (count > (wanted.get(key) ?? 0)) return false;
       const yaml = middle.length ? serializer.serialize(docOf(middle)) : "";
       const block = underlined
         ? `---\n${yaml ? `${yaml}\n\n` : ""}${last.textContent}\n---\n`

@@ -155,16 +155,33 @@ const idleSchemas = new Map<string, number>();
 // document, and 0.9.4's desktop writes its file from a live room with nothing
 // in front, deleting the YAML: so the room needs schema 2 whatever any client
 // stamped. Only the start of the text is read; front matter is at the start.
+//
+// Only a rich (markdown) room: a plain text file's room is its text, byte for
+// byte, in every build, and `---\na: 1\n---\nb: 2` in a .txt is not front
+// matter to anyone. A room is a text room when the document is named as plain
+// text (the extensions src/lib/document-formats.ts reads as "text", the one
+// rule every client uses to choose a text room) or already holds text.
 const FRONT_MATTER_RE = /^---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)(?:\r?\n|$)/;
+const PLAIN_TEXT_NAME = /\.(?:txt|text|log)$/i;
 function storedFrontMatterSchema(docId: string): number {
   try {
+    const live = rooms.get(docId);
+    if (live && roomHoldsText(live.ydoc)) return 0;
     const row = db
-      .prepare("SELECT substr(content, 1, 65536) AS head FROM docs WHERE id = ? AND deleted_at IS NULL")
-      .get(docId) as { head: string | null } | undefined;
-    return row?.head && FRONT_MATTER_RE.test(row.head) ? ROOM_SCHEMA_MATH : 0;
+      .prepare("SELECT name, substr(content, 1, 65536) AS head FROM docs WHERE id = ? AND deleted_at IS NULL")
+      .get(docId) as { name: string | null; head: string | null } | undefined;
+    if (!row?.head || PLAIN_TEXT_NAME.test(row.name ?? "")) return 0;
+    return FRONT_MATTER_RE.test(row.head) ? ROOM_SCHEMA_MATH : 0;
   } catch {
     return 0;
   }
+}
+
+// The text a plain text room holds (TEXT_COLLAB_KEY), read without creating it.
+function roomHoldsText(ydoc: Y.Doc): boolean {
+  const text = ydoc.share.get("content");
+  if (!text) return false;
+  return text instanceof Y.Text ? text.length > 0 : text._length > 0;
 }
 
 function roomSchemaLookup(docId: string): number {

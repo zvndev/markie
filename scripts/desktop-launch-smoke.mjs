@@ -327,6 +327,16 @@ async function writeArtifact(baseDir, artifact, screenshotPng) {
   return persistedArtifact;
 }
 
+// ELECTRON_RUN_AS_NODE, inherited from a parent that is itself Electron (an
+// editor or an agent host), turns the packaged app into plain Node: it rejects
+// every Chromium switch as a "bad option" and exits, which reads as a broken
+// build. The smoke launches the app as a person would, without it.
+export function launchEnv(env) {
+  const rest = { ...env };
+  delete rest.ELECTRON_RUN_AS_NODE;
+  return { ...rest, MARKIE_E2E: "1" };
+}
+
 export async function runDesktopLaunchSmoke({
   baseDir = rootDir,
   platform = process.platform,
@@ -353,7 +363,7 @@ export async function runDesktopLaunchSmoke({
     ],
     {
       cwd: app.appDir,
-      env: { ...process.env, MARKIE_E2E: "1" },
+      env: launchEnv(process.env),
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     }

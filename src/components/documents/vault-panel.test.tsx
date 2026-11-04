@@ -453,7 +453,10 @@ function touchIdBridge() {
 
 async function turnOnTouchId() {
   fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: "Settings" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Turn on Touch ID…" }));
+  // Disabled while a save or unlock is still busy; a click then does nothing.
+  const enroll = await screen.findByRole("button", { name: "Turn on Touch ID…" });
+  await waitFor(() => expect(enroll).toBeEnabled());
+  fireEvent.click(enroll);
   fireEvent.change(await screen.findByLabelText("Confirm with your passphrase"), { target: { value: secret } });
   fireEvent.click(screen.getByRole("button", { name: "Turn on Touch ID" }));
   const off = await screen.findByRole("button", { name: "Turn off Touch ID" });
@@ -563,7 +566,10 @@ describe("Touch ID unlock", () => {
     const storage = new TestStorage();
     await create(storage);
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Turn on Touch ID…" }));
+    // Disabled while a save or unlock is still busy; a click then does nothing.
+    const enroll = await screen.findByRole("button", { name: "Turn on Touch ID…" });
+    await waitFor(() => expect(enroll).toBeEnabled());
+    fireEvent.click(enroll);
     fireEvent.change(await screen.findByLabelText("Confirm with your passphrase"), { target: { value: "not the vault passphrase at all" } });
     fireEvent.click(screen.getByRole("button", { name: "Turn on Touch ID" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Touch ID was not turned on");

@@ -7,6 +7,7 @@ import {
   explicitLaunchApp,
   resolveDesktopLaunchApp,
   withDeadline,
+  launchEnv,
 } from "../scripts/desktop-launch-smoke.mjs";
 
 const tempDirs: string[] = [];
@@ -208,5 +209,13 @@ describe("a CDP call that never answers", () => {
 
   it("passes an answer through untouched", async () => {
     await expect(withDeadline(Promise.resolve(42), 1000, "CDP Runtime.evaluate")).resolves.toBe(42);
+  });
+});
+
+describe("the launch environment", () => {
+  it("drops ELECTRON_RUN_AS_NODE an Electron parent passed down, which would make the app quit as plain Node", () => {
+    const env = launchEnv({ PATH: "/usr/bin", ELECTRON_RUN_AS_NODE: "1" });
+    expect(env).toEqual({ PATH: "/usr/bin", MARKIE_E2E: "1" });
+    expect("ELECTRON_RUN_AS_NODE" in env).toBe(false);
   });
 });

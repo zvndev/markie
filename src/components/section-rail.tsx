@@ -7,31 +7,77 @@
 // rail stops reading as an outline; stacked, every heading gets the same
 // target and the shape of the document reads at a glance.
 //
+// It behaves like the minimap too. At rest the ticks for the part of the
+// document on screen are brighter. Pointing at the rail magnifies the tick
+// under the pointer and, less, its neighbours, like the macOS Dock, and a
+// card beside it previews that section; moving along the rail scrubs: the
+// magnification follows and the card swaps its text in place. The card waits
+// a moment before it first opens, so crossing the rail on the way somewhere
+// else does not flash it, and lingers a moment after the pointer leaves.
+//
+// Scrubbing never re-renders the ticks. The pointer's tick is kept in a ref
+// and only the few ticks within reach of it get a new --boost; the growth
+// itself is a CSS transform (globals.css, [data-markie-section-rail]), so a
+// 500-heading rail does no layout while the pointer moves.
+//
 // The rich view and the source view each supply the headings and how to find
 // and reach them (RichSectionRail below; SourceSectionRail, mounted by the
 // CodeMirror wrapper in src/components/editor.tsx). It ships to every build;
 // it started behind nightlyFeaturesEnabled() and left the gate on 2026-11-03.
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MutableRefObject,
+  type PointerEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
-import { BRAND_COLORS } from "@/lib/brand";
 import {
   activeSectionIndex,
   clipSnippet,
   extractSections,
+  lastSectionInView,
   levelsThatFit,
+  magnification,
+  MAGNIFY_FALLOFF,
+  MAGNIFY_GROWTH,
   railWanted,
   SNIPPET_CHARS,
   tickPitch,
   TICK_LENGTH,
+  TICK_MAX_LENGTH,
   type Section,
   type SectionLevel,
   type SourceSection,
 } from "@/lib/section-outline";
 
-const RAIL_WIDTH = 24;
-const CARD_WIDTH = 280;
-const GAP = 8;
+/**
+ * Where a tick starts, from the rail's left edge, and the width that takes
+ * the pointer. The rich view's rail floats in an empty margin and stands off
+ * its edge as the T3 minimap does; the source view's is a narrow column of its
+ * own beside the line numbers.
+ */
+const GEOMETRY = {
+  overlay: { inset: 14, width: 30 },
+  column: { inset: 8, width: 24 },
+} as const;
+/** The rail's drawn width past the tick inset: room for the longest magnified tick. */
+const DRAWN_PAST_INSET = TICK_MAX_LENGTH + 4;
+const CARD_WIDTH = 320;
+/** Space between the longest tick and the card, as in the T3 minimap. */
+const CARD_GAP = 6;
+const EDGE = 8;
+/** How long the pointer rests on the rail before the card first opens. */
+export const CARD_OPEN_DELAY = 180;
+/** How long the card stays after the pointer leaves the rail. */
+export const CARD_CLOSE_DELAY = 120;
 
 export interface SectionRailProps {
   sections: readonly Section[];
@@ -49,18 +95,32 @@ export interface SectionRailProps {
 }
 
 interface Card {
+  /** Index into the shown ticks. */
   index: number;
+  /** Viewport y of the tick's middle. */
   top: number;
   left: number;
 }
 
+interface Shown {
+  section: Section;
+  index: number;
+}
+
+function reduceMotion(): boolean {
+  return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+}
+
 export function SectionRail({ sections, scroller, measure, onSelect, placement }: SectionRailProps) {
+  const { inset, width } = GEOMETRY[placement];
+  const drawnWidth = inset + DRAWN_PAST_INSET;
   const measureRef = useRef(measure);
   useLayoutEffect(() => {
     measureRef.current = measure;
   });
   const [visible, setVisible] = useState(false);
   const [active, setActive] = useState(-1);
+  const [lastInView, setLastInView] = useState(-1);
   const [railHeight, setRailHeight] = useState(0);
   // The section last chosen from the rail; see activeSectionIndex. For the
   // first second it wins outright, so a smooth scroll on its way there does
@@ -68,8 +128,8 @@ export function SectionRail({ sections, scroller, measure, onSelect, placement }
   const pin = useRef<{ index: number; at: number } | null>(null);
   const refresh = useRef<() => void>(() => {});
 
-  // Scroll, resize and content changes all come down to the same two
-  // questions: is the document long enough, and which section is on screen.
+  // Scroll, resize and content changes all come down to the same questions:
+  // is the document long enough, and which sections are on screen.
   useEffect(() => {
     if (!scroller) {
       setVisible(false);
@@ -81,13 +141,15 @@ export function SectionRail({ sections, scroller, measure, onSelect, placement }
       const { scrollTop, clientHeight, scrollHeight } = scroller;
       setVisible(railWanted(sections.length, scrollHeight, clientHeight));
       setRailHeight(clientHeight);
+      const tops = measureRef.current();
       const pinned = pin.current;
-      let next = activeSectionIndex(measureRef.current(), scrollTop, clientHeight, scrollHeight, pinned?.index ?? null);
+      let next = activeSectionIndex(tops, scrollTop, clientHeight, scrollHeight, pinned?.index ?? null);
       if (pinned) {
         if (performance.now() - pinned.at < 1000) next = pinned.index;
         else if (next !== pinned.index) pin.current = null;
       }
       setActive(next);
+      setLastInView(lastSectionInView(tops, scrollTop, clientHeight));
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(update);
@@ -115,7 +177,7 @@ export function SectionRail({ sections, scroller, measure, onSelect, placement }
 
   // Too many headings for the rail's height: drop H3, then H2. A hidden
   // section's place is held by the visible one above it.
-  const shown = useMemo(() => {
+  const shown = useMemo<Shown[]>(() => {
     const deepest = levelsThatFit(
       sections.map((s) => s.level),
       railHeight
@@ -123,8 +185,15 @@ export function SectionRail({ sections, scroller, measure, onSelect, placement }
     return sections.flatMap((section, index) => (section.level <= deepest ? [{ section, index }] : []));
   }, [sections, railHeight]);
   const pitch = tickPitch(shown.length, railHeight) ?? 4;
+  // The ticks lit at rest: from the section at the reading line to the last
+  // one that has come into view. Before the first heading, from the top.
   let activeShown = -1;
-  for (let i = 0; i < shown.length && shown[i].index <= active; i++) activeShown = i;
+  let inViewEnd = -1;
+  for (let i = 0; i < shown.length; i++) {
+    if (shown[i].index <= active) activeShown = i;
+    if (shown[i].index <= lastInView) inViewEnd = i;
+  }
+  const inViewStart = activeShown >= 0 ? activeShown : inViewEnd >= 0 ? 0 : -1;
 
   const [card, setCard] = useState<Card | null>(null);
   const [focusAt, setFocusAt] = useState<number | null>(null);
@@ -132,36 +201,157 @@ export function SectionRail({ sections, scroller, measure, onSelect, placement }
   const nav = useRef<HTMLElement>(null);
   const cardId = useId();
 
-  const showCard = useCallback((shownIndex: number) => {
-    const button = buttons.current[shownIndex];
-    const railRect = nav.current?.getBoundingClientRect();
-    if (!button || !railRect) return;
-    const rect = button.getBoundingClientRect();
-    const left = Math.min(railRect.right + 4, Math.max(GAP, window.innerWidth - CARD_WIDTH - GAP));
-    setCard({ index: shownIndex, top: rect.top + rect.height / 2, left });
-  }, []);
-  const hideCard = useCallback(() => setCard(null), []);
+  // The tick under the pointer (or keyboard focus), outside React state so
+  // scrubbing does not re-render the rail.
+  const hot = useRef(-1);
+  const cardOpen = useRef(false);
+  const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const clearTimers = () => {
+    clearTimeout(openTimer.current);
+    clearTimeout(closeTimer.current);
+    openTimer.current = closeTimer.current = undefined;
+  };
 
-  // The card sits beside its tick; scrolling the rail or the window moves the
-  // tick, so the card goes.
+  const placeCard = useCallback((index: number): Card | null => {
+    const button = buttons.current[index];
+    const railRect = nav.current?.getBoundingClientRect();
+    if (!button || !railRect) return null;
+    const rect = button.getBoundingClientRect();
+    const left = Math.min(railRect.left + drawnWidth + CARD_GAP, Math.max(EDGE, window.innerWidth - CARD_WIDTH - EDGE));
+    return { index, top: rect.top + rect.height / 2, left };
+  }, [drawnWidth]);
+
+  const showCard = useCallback(
+    (index: number) => {
+      const next = placeCard(index);
+      cardOpen.current = !!next;
+      setCard(next);
+    },
+    [placeCard]
+  );
+
+  const hideCard = useCallback(() => {
+    clearTimeout(openTimer.current);
+    clearTimeout(closeTimer.current);
+    openTimer.current = closeTimer.current = undefined;
+    cardOpen.current = false;
+    setCard(null);
+  }, []);
+
+  /** Grow the ticks around `index` (-1: none) and shrink the ones around the last. */
+  const magnify = useCallback((index: number) => {
+    const before = hot.current;
+    if (before === index) return;
+    hot.current = index;
+    const reach = reduceMotion() ? 0 : MAGNIFY_FALLOFF.length - 1;
+    const touched = new Set<number>();
+    for (const center of [before, index]) {
+      if (center < 0) continue;
+      for (let i = center - reach; i <= center + reach; i++) touched.add(i);
+    }
+    for (const i of touched) {
+      const tick = buttons.current[i]?.firstElementChild as HTMLElement | null | undefined;
+      if (!tick) continue;
+      const distance = index < 0 ? Infinity : Math.abs(i - index);
+      const boost = distance <= reach ? magnification(distance) : 0;
+      if (boost) tick.style.setProperty("--boost", String(boost));
+      else tick.style.removeProperty("--boost");
+      if (distance === 0) tick.setAttribute("data-hot", "");
+      else tick.removeAttribute("data-hot");
+    }
+    if (index >= 0) nav.current?.setAttribute("data-scrubbing", "");
+    else nav.current?.removeAttribute("data-scrubbing");
+  }, []);
+
+  /**
+   * Point at tick `index`. The card opens after CARD_OPEN_DELAY the first
+   * time (at once from the keyboard) and then follows straight away, with no
+   * close and reopen between ticks.
+   */
+  const point = useCallback(
+    (index: number, from: "pointer" | "keyboard") => {
+      magnify(index);
+      clearTimeout(closeTimer.current);
+      closeTimer.current = undefined;
+      if (cardOpen.current || from === "keyboard") {
+        clearTimeout(openTimer.current);
+        openTimer.current = undefined;
+        showCard(index);
+      } else if (!openTimer.current) {
+        openTimer.current = setTimeout(() => {
+          openTimer.current = undefined;
+          if (hot.current >= 0) showCard(hot.current);
+        }, CARD_OPEN_DELAY);
+      }
+    },
+    [magnify, showCard]
+  );
+
+  /** The pointer left: the magnification eases back at once, the card a moment later. */
+  const leave = useCallback(() => {
+    magnify(-1);
+    clearTimeout(openTimer.current);
+    openTimer.current = undefined;
+    if (!cardOpen.current || closeTimer.current) return;
+    closeTimer.current = setTimeout(hideCard, CARD_CLOSE_DELAY);
+  }, [magnify, hideCard]);
+
+  const dismiss = useCallback(() => {
+    magnify(-1);
+    hideCard();
+  }, [magnify, hideCard]);
+
+  useEffect(() => () => clearTimers(), []);
+
+  // The card sits beside its tick; resizing the window moves the tick, so the
+  // card goes.
   useEffect(() => {
     if (!card) return;
-    window.addEventListener("resize", hideCard);
-    return () => window.removeEventListener("resize", hideCard);
-  }, [card, hideCard]);
+    window.addEventListener("resize", dismiss);
+    return () => window.removeEventListener("resize", dismiss);
+  }, [card, dismiss]);
+
+  // The tick the card describes points at it, for a screen reader.
+  useEffect(() => {
+    const button = card ? buttons.current[card.index] : null;
+    button?.setAttribute("aria-describedby", cardId);
+    return () => button?.removeAttribute("aria-describedby");
+  }, [card, cardId]);
 
   useEffect(() => {
-    if (!visible) setCard(null);
-  }, [visible]);
+    if (!visible) {
+      hot.current = -1;
+      hideCard();
+    }
+  }, [visible, hideCard]);
+
+  // New ticks: forget the old magnification; React drew them fresh.
+  useEffect(() => {
+    hot.current = -1;
+    nav.current?.removeAttribute("data-scrubbing");
+    if (cardOpen.current) hideCard();
+  }, [shown, hideCard]);
+
+  const select = useCallback(
+    (shownIndex: number) => {
+      const index = shown[shownIndex]?.index;
+      if (index === undefined) return;
+      pin.current = { index, at: performance.now() };
+      onSelect(index);
+      refresh.current();
+    },
+    [shown, onSelect]
+  );
 
   // One tab stop for the whole rail; arrows move between ticks.
   const tabStop = focusAt ?? (activeShown >= 0 ? activeShown : 0);
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     const from = buttons.current.findIndex((b) => b === document.activeElement);
     if (event.key === "Escape") {
-      if (card) {
+      if (card || hot.current >= 0) {
         event.preventDefault();
-        hideCard();
+        dismiss();
       }
       return;
     }
@@ -182,6 +372,22 @@ export function SectionRail({ sections, scroller, measure, onSelect, placement }
     buttons.current[to]?.focus();
   };
 
+  // Ticks are flush, so the pointer is always over one while it is on the
+  // rail: no gap between ticks for the card to drop out in.
+  const onPointerMove = (event: PointerEvent<HTMLElement>) => {
+    if (event.pointerType === "touch") return;
+    const button = (event.target as Element).closest?.("button[data-tick-index]");
+    if (button) point(Number(button.getAttribute("data-tick-index")), "pointer");
+  };
+
+  const onFocusTick = useCallback(
+    (index: number) => {
+      setFocusAt(index);
+      point(index, "keyboard");
+    },
+    [point]
+  );
+
   if (!visible || shown.length === 0) return null;
 
   const cardSection = card ? shown[card.index]?.section : undefined;
@@ -191,60 +397,34 @@ export function SectionRail({ sections, scroller, measure, onSelect, placement }
       aria-label="Sections"
       data-markie-section-rail
       onKeyDown={onKeyDown}
-      onMouseLeave={hideCard}
+      onPointerMove={onPointerMove}
+      onPointerLeave={leave}
       onBlur={(event) => {
         if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) {
-          hideCard();
+          dismiss();
           setFocusAt(null);
         }
       }}
       className="pointer-events-none absolute inset-y-0 left-0 flex flex-col justify-center"
-      style={{ width: RAIL_WIDTH }}
+      style={{ width: drawnWidth, ["--growth" as string]: MAGNIFY_GROWTH, ["--max" as string]: TICK_MAX_LENGTH }}
     >
-      <div className="pointer-events-auto max-h-full overflow-y-auto py-2 [scrollbar-width:none]" onScroll={hideCard}>
-        {shown.map(({ section, index }, i) => {
-          const isActive = i === activeShown;
-          return (
-            <button
-              key={index}
-              ref={(el) => {
-                buttons.current[i] = el;
-              }}
-              type="button"
-              aria-label={section.text}
-              aria-current={isActive ? "location" : undefined}
-              aria-describedby={card?.index === i ? cardId : undefined}
-              tabIndex={i === tabStop ? 0 : -1}
-              data-level={section.level}
-              data-active={isActive || undefined}
-              onClick={() => {
-                pin.current = { index, at: performance.now() };
-                onSelect(index);
-                refresh.current();
-              }}
-              onMouseEnter={() => showCard(i)}
-              onFocus={() => {
-                setFocusAt(i);
-                showCard(i);
-              }}
-              className="group flex w-full cursor-pointer items-center pl-2 outline-none"
-              style={{ height: pitch }}
-            >
-              <span
-                aria-hidden="true"
-                className={`block h-[2px] rounded-full transition-[background-color,width] duration-100 ${
-                  isActive
-                    ? ""
-                    : "bg-muted/45 group-hover:bg-foreground/80 group-focus-visible:bg-foreground/80"
-                } group-focus-visible:outline group-focus-visible:outline-1 group-focus-visible:outline-offset-2 group-focus-visible:outline-foreground/60`}
-                style={{
-                  width: TICK_LENGTH[section.level as SectionLevel],
-                  backgroundColor: isActive ? BRAND_COLORS.red : undefined,
-                }}
-              />
-            </button>
-          );
-        })}
+      {/* The column scrolls when even the tightest rail does not fit. Only
+          the ticks take the pointer; the drawn width beyond them is for the
+          magnified ticks to grow into. */}
+      <div className="max-h-full overflow-y-auto py-2 [scrollbar-width:none]" onScroll={dismiss}>
+        <Ticks
+          shown={shown}
+          pitch={pitch}
+          activeShown={activeShown}
+          inViewStart={inViewStart}
+          inViewEnd={inViewEnd}
+          tabStop={tabStop}
+          inset={inset}
+          width={width}
+          buttons={buttons}
+          onSelect={select}
+          onFocusTick={onFocusTick}
+        />
       </div>
     </nav>
   );
@@ -258,33 +438,100 @@ export function SectionRail({ sections, scroller, measure, onSelect, placement }
           {rail}
         </div>
       ) : (
-        <div data-markie-section-rail-host className="relative h-full shrink-0" style={{ width: RAIL_WIDTH }}>
+        <div data-markie-section-rail-host className="relative z-10 h-full shrink-0" style={{ width }}>
           {rail}
         </div>
       )}
       {card && cardSection
-        ? createPortal(
-            <div
-              id={cardId}
-              role="tooltip"
-              data-markie-section-card
-              className="pointer-events-none fixed z-[80] rounded-lg border border-border bg-surface px-3 py-2 text-foreground shadow-lg"
-              style={{ top: card.top, left: card.left, width: CARD_WIDTH, maxWidth: "calc(100vw - 16px)", transform: "translateY(-50%)" }}
-            >
-              <div className="truncate text-[12px] font-semibold leading-snug">{cardSection.text}</div>
-              {cardSection.snippet ? (
-                <div className="mt-1 line-clamp-2 text-[11.5px] leading-relaxed text-muted">{cardSection.snippet}</div>
-              ) : null}
-            </div>,
-            document.body
-          )
+        ? createPortal(<SectionCard id={cardId} card={card} section={cardSection} />, document.body)
         : null}
     </>
   );
 }
 
-function reduceMotion(): boolean {
-  return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+interface TicksProps {
+  shown: readonly Shown[];
+  pitch: number;
+  activeShown: number;
+  inViewStart: number;
+  inViewEnd: number;
+  tabStop: number;
+  inset: number;
+  width: number;
+  buttons: MutableRefObject<(HTMLButtonElement | null)[]>;
+  onSelect: (shownIndex: number) => void;
+  onFocusTick: (shownIndex: number) => void;
+}
+
+// Memoised: the card opening, closing and following the pointer re-renders
+// the rail, never the ticks.
+const Ticks = memo(function Ticks({ shown, pitch, activeShown, inViewStart, inViewEnd, tabStop, inset, width, buttons, onSelect, onFocusTick }: TicksProps) {
+  buttons.current.length = shown.length;
+  return (
+    <>
+      {shown.map(({ section, index }, i) => {
+        const inView = i >= inViewStart && i <= inViewEnd;
+        return (
+          <button
+            key={index}
+            ref={(el) => {
+              buttons.current[i] = el;
+            }}
+            type="button"
+            aria-label={section.text}
+            aria-current={i === activeShown ? "location" : undefined}
+            tabIndex={i === tabStop ? 0 : -1}
+            data-level={section.level}
+            data-tick-index={i}
+            onClick={() => onSelect(i)}
+            onFocus={() => onFocusTick(i)}
+            className="pointer-events-auto relative block cursor-pointer outline-none"
+            style={{ width, height: pitch }}
+          >
+            <span
+              aria-hidden="true"
+              data-section-tick=""
+              data-in-view={inView || undefined}
+              style={{ left: inset, width: TICK_MAX_LENGTH, ["--len" as string]: TICK_LENGTH[section.level as SectionLevel] }}
+            />
+          </button>
+        );
+      })}
+    </>
+  );
+});
+
+/** The preview beside the tick: the heading on one line, then the start of its section. */
+function SectionCard({ id, card, section }: { id: string; card: Card; section: Section }) {
+  const ref = useRef<HTMLDivElement>(null);
+  // Centred on its tick, but kept on screen at the top and bottom.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const half = el.offsetHeight / 2;
+    const top = Math.min(Math.max(card.top, EDGE + half), window.innerHeight - EDGE - half);
+    el.style.top = `${top}px`;
+  });
+  return (
+    <div
+      ref={ref}
+      id={id}
+      role="tooltip"
+      data-markie-section-card
+      className="pointer-events-none fixed z-[80] rounded-lg border border-border bg-surface px-3 pt-2.5 pb-3 text-foreground"
+      style={{ top: card.top, left: card.left, width: CARD_WIDTH, maxWidth: `calc(100vw - ${EDGE * 2}px)`, transform: "translateY(-50%)" }}
+    >
+      <div className="flex items-baseline gap-2">
+        <div className="min-w-0 flex-1 truncate text-[13px] font-semibold leading-5">{section.text}</div>
+        <span aria-hidden="true" className="shrink-0 font-mono text-[10px] leading-5 text-muted">
+          H{section.level}
+        </span>
+      </div>
+      <div className="mt-1 line-clamp-3 text-[12.5px] leading-5 text-muted">
+        {section.snippet || "No text before the next heading."}
+      </div>
+    </div>
+  );
 }
 
 /** Scroll so `top` (content coordinates) sits at the top of the view, below the scroller's scroll-padding. */

@@ -244,14 +244,51 @@ export function activeSectionIndex(
   return active;
 }
 
-/** Tick length in px by heading level: H1 longest. */
-export const TICK_LENGTH: Record<SectionLevel, number> = { 1: 16, 2: 11, 3: 7 };
+/**
+ * The last heading that has come into view: the last one above a line a
+ * little short of the bottom of the view, so a heading only just peeking in
+ * does not count. With activeSectionIndex it gives the run of sections on
+ * screen, which the rail lights at rest. -1 when no heading is in view yet.
+ */
+export function lastSectionInView(tops: readonly number[], scrollTop: number, viewportHeight: number, margin = 24): number {
+  const bottom = scrollTop + viewportHeight - Math.min(margin, viewportHeight / 4);
+  let last = -1;
+  for (let i = 0; i < tops.length; i++) {
+    if (tops[i] < bottom) last = i;
+    else break;
+  }
+  return last;
+}
 
 /**
- * Vertical distance between ticks. Compact like the T3 rail, tighter for a
- * long outline. Null when even the tightest spacing does not fit.
+ * Tick length in px by heading level at rest. H2, the usual body of an
+ * outline, is the T3 minimap's 6px dash; H1 stands a little proud of it and
+ * H3 sits a little short.
  */
-export function tickPitch(count: number, availableHeight: number, { max = 8, min = 4 } = {}): number | null {
+export const TICK_LENGTH: Record<SectionLevel, number> = { 1: 10, 2: 6, 3: 4 };
+
+/**
+ * How far the tick under the pointer grows, in px, and how much of that its
+ * neighbours get by distance in ticks: the dock-like falloff measured from
+ * the T3 recording (6px at rest, then 26, 21, 15 and 11px out from the
+ * pointer, back to rest four ticks away).
+ */
+export const MAGNIFY_GROWTH = 20;
+export const MAGNIFY_FALLOFF: readonly number[] = [1, 0.75, 0.45, 0.22];
+
+/** The longest a tick gets: an H1 under the pointer. */
+export const TICK_MAX_LENGTH = TICK_LENGTH[1] + MAGNIFY_GROWTH;
+
+/** The share of MAGNIFY_GROWTH a tick `distance` ticks from the pointer gets. */
+export function magnification(distance: number): number {
+  return MAGNIFY_FALLOFF[Math.abs(distance)] ?? 0;
+}
+
+/**
+ * Vertical distance between ticks: the T3 rail's 10px, tighter for a long
+ * outline. Null when even the tightest spacing does not fit.
+ */
+export function tickPitch(count: number, availableHeight: number, { max = 10, min = 4 } = {}): number | null {
   if (count <= 0) return max;
   const fit = Math.floor((availableHeight * 0.9) / count);
   if (fit >= max) return max;

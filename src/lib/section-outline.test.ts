@@ -3,9 +3,14 @@ import {
   activeSectionIndex,
   clipSnippet,
   extractSections,
+  lastSectionInView,
   levelsThatFit,
+  magnification,
+  MAGNIFY_GROWTH,
   plainInline,
   railWanted,
+  TICK_LENGTH,
+  TICK_MAX_LENGTH,
   tickPitch,
 } from "@/lib/section-outline";
 
@@ -191,8 +196,9 @@ describe("activeSectionIndex", () => {
 });
 
 describe("tickPitch and levelsThatFit", () => {
-  it("keeps ticks 8px apart until the rail runs out of room, then tightens to 4px", () => {
-    expect(tickPitch(10, 800)).toBe(8);
+  it("keeps ticks 10px apart, as the T3 minimap does, until the rail runs out of room, then tightens to 4px", () => {
+    expect(tickPitch(10, 800)).toBe(10);
+    expect(tickPitch(76, 720)).toBe(8);
     expect(tickPitch(100, 600)).toBe(5);
     expect(tickPitch(300, 600)).toBeNull();
   });
@@ -203,5 +209,26 @@ describe("tickPitch and levelsThatFit", () => {
     expect(levelsThatFit(levels, 400)).toBe(2);
     // One H1 and too many H2s: H1 alone is not an outline, so it scrolls with H2.
     expect(levelsThatFit(levels, 50)).toBe(2);
+  });
+});
+
+describe("lastSectionInView", () => {
+  const tops = [0, 800, 1600, 2400];
+  it("is the last heading above a line just short of the bottom of the view", () => {
+    expect(lastSectionInView(tops, 0, 1000)).toBe(1);
+    expect(lastSectionInView(tops, 700, 1000)).toBe(2);
+    // A heading only just peeking in at the bottom does not count yet.
+    expect(lastSectionInView(tops, 610, 1000)).toBe(1);
+    expect(lastSectionInView([1200], 0, 1000)).toBe(-1);
+    expect(lastSectionInView([], 0, 1000)).toBe(-1);
+  });
+});
+
+describe("magnification", () => {
+  it("grows the tick under the pointer most and fades out over three neighbours each side", () => {
+    const lengths = [-4, -3, -2, -1, 0, 1, 2, 3, 4].map((d) => TICK_LENGTH[2] + MAGNIFY_GROWTH * magnification(d));
+    // The T3 recording: 6px at rest, 26px under the pointer, 21, 15, 11 out from it.
+    expect(lengths.map(Math.round)).toEqual([6, 10, 15, 21, 26, 21, 15, 10, 6]);
+    expect(TICK_MAX_LENGTH).toBe(TICK_LENGTH[1] + MAGNIFY_GROWTH);
   });
 });

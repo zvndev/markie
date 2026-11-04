@@ -7,7 +7,6 @@ import { liveSnapshotRefusal } from "@/lib/live-snapshot";
 // web app and the phone write (liveSnapshotRefusal). They must refuse exactly
 // the same texts.
 const REFUSED: Array<[string, string]> = [
-  ["front matter", "---\ntitle: x\n---\n\n# Doc\n"],
   ["a raw HTML block", "# Doc\n\n<div align=\"center\">\n  hi\n</div>\n"],
   ["an HTML comment", "# Doc\n\n<!-- note -->\n"],
   ["a footnote definition", "Text.[^1]\n\n[^1]: The note.\n"],
@@ -18,6 +17,8 @@ const CARRIED: Array<[string, string]> = [
   ["HTML inside a code fence", "```html\n<div>x</div>\n<!-- c -->\n```\n"],
   ["an empty document", ""],
   ["an SVG data: picture", "# Doc\n\n![chart](data:image/svg+xml;base64,PHN2Zy8+)\n"],
+  // Front matter never enters a room; every writer puts its copy's back.
+  ["front matter", "---\ntitle: x\n---\n\n# Doc\n"],
 ];
 
 describe("one live-room rule for desktop, web and phone", () => {

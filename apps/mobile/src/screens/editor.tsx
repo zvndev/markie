@@ -26,7 +26,7 @@ import { applyMarkdownAction, type MarkdownAction } from "../lib/markdown-edits"
 import { displayName } from "../lib/recent";
 import { liveConfig, liveKind, saveLiveSnapshot, shouldGoLive } from "../lib/live";
 import {
-  DIVERGED_NOTE, RoomTexts, SNAPSHOT_REFUSAL_NOTE, assessLiveRoom, liveSnapshotRefusal, liveSnapshotWait, roomMeta, useLiveRoom,
+  DIVERGED_NOTE, RoomTexts, SNAPSHOT_REFUSAL_NOTE, assessLiveRoom, liveDocumentEmpty, liveSnapshotRefusal, liveSnapshotWait, roomMeta, useLiveRoom,
   type LiveBase, type LiveRoom, type LiveSnapshotWait,
 } from "@/lib/live-snapshot";
 import { Screen } from "../components/screen";
@@ -178,7 +178,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   // ready, whether this phone is its writer, and whether the room can carry
   // the stored copy at all (read once, from the copy the session opened on).
   const room = useLiveRoom(isLive ? (kind === "text" ? textSession : (liveSession as unknown as LiveRoom | null)) : null, kind ?? "rich", {
-    documentEmpty: !draft.content.trim(),
+    documentEmpty: liveDocumentEmpty(draft.content, kind ?? "rich"),
     offer: isLive && !readOnly,
   });
   const refusal = useMemo(() => (isLive && kind ? liveSnapshotRefusal(stored.current, kind) : null), [isLive, kind]);

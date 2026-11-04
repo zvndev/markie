@@ -4,7 +4,7 @@
 import { getElectronAPI } from "@/lib/electron";
 import { createAuthState } from "@/lib/auth-state";
 import { CLOUD_ALIASES, CLOUD_ORIGIN, canonicalCloudOrigin, isCloudOrigin } from "@/lib/cloud-origin";
-import type { CollabTicketAnswer } from "@/lib/collab";
+import { COLLAB_SCHEMA_VERSION, type CollabTicketAnswer } from "@/lib/collab";
 
 export interface MarkieUser {
   id: string;
@@ -698,7 +698,9 @@ export function makeSharesClient(request: ApiRequest) {
     collabTicket: async (docId: string): Promise<CollabTicketAnswer> => {
       const res = await request<{ ticket?: unknown; expiresAt?: unknown; error?: unknown }>(
         `/api/docs/${encodeURIComponent(docId)}/collab-ticket`,
-        { method: "POST", body: "{}" }
+        // The newest room this build can represent: the server keeps it out
+        // of rooms that need more (server/src/collab-schema.ts).
+        { method: "POST", body: JSON.stringify({ schema: COLLAB_SCHEMA_VERSION }) }
       );
       const ticket = res.ok && typeof res.data?.ticket === "string" ? res.data.ticket : "";
       if (ticket) {

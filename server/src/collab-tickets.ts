@@ -16,6 +16,7 @@ import { Hono } from "hono";
 import { openDatabase } from "./db.ts";
 import { auth } from "./auth.ts";
 import { accessLevel, canReadLevel } from "./shares.ts";
+import { LEGACY_CLIENT_SCHEMA, clientSchemaFrom, roomSchemaFor } from "./collab-schema.ts";
 
 const db = openDatabase();
 
@@ -30,6 +31,11 @@ db.exec(`
   );
 `);
 db.exec("CREATE INDEX IF NOT EXISTS idx_collab_tickets_user ON collab_tickets(user_id, issued_at)");
+// The room schema the client asked with (collab-schema.ts). Tickets live five
+// minutes, so a table from before the column only needs it added.
+if (!(db.prepare("PRAGMA table_info(collab_tickets)").all() as Array<{ name: string }>).some((c) => c.name === "schema")) {
+  db.exec(`ALTER TABLE collab_tickets ADD COLUMN schema INTEGER NOT NULL DEFAULT ${LEGACY_CLIENT_SCHEMA}`);
+}
 db.exec("CREATE INDEX IF NOT EXISTS idx_collab_tickets_expiry ON collab_tickets(expires_at)");
 
 // Long enough to outlast the client's two-minute refresh with room to spare
@@ -48,6 +54,11 @@ export const COLLAB_TICKETS_PER_MINUTE = 60;
 // generic `{ error: "not found" }`, and the app falls back to the session
 // token for that server only (src/lib/auth-client.ts collabTicket).
 export const NO_TICKET = { error: "no_ticket" } as const;
+
+// The refusal for a room that holds what the asking build cannot represent
+// (collab-schema.ts). Every build reads a 409 as "no live session" and opens
+// the document on its own copy.
+export const ROOM_TOO_NEW = { error: "room_needs_newer_markie" } as const;
 
 /**
  * Whether one sign-in is still good, read from the session table on every
@@ -85,7 +96,8 @@ export function issueCollabTicket(
   docId: string,
   userId: string,
   sessionId: string,
-  now = Date.now()
+  now = Date.now(),
+  schema = LEGACY_CLIENT_SCHEMA
 ): IssuedTicket | null {
   const issue = db.transaction((): IssuedTicket | null => {
     db.prepare("DELETE FROM collab_tickets WHERE expires_at <= ?").run(now);
@@ -96,8 +108,8 @@ export function issueCollabTicket(
     const ticket = randomBytes(32).toString("base64url");
     const expiresAt = now + COLLAB_TICKET_TTL_MS;
     db.prepare(
-      "INSERT INTO collab_tickets (ticket_hash, doc_id, user_id, session_id, issued_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)"
-    ).run(hashTicket(ticket), docId, userId, sessionId, now, expiresAt);
+      "INSERT INTO collab_tickets (ticket_hash, doc_id, user_id, session_id, issued_at, expires_at, schema) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(hashTicket(ticket), docId, userId, sessionId, now, expiresAt, schema);
     return { ticket, expiresAt };
   });
   return issue();
@@ -106,6 +118,8 @@ export function issueCollabTicket(
 export interface TicketHolder {
   user: { id: string; name: string | null; email: string | null };
   sessionId: string;
+  /** The newest room schema the client can represent (collab-schema.ts). */
+  schema: number;
 }
 
 /**
@@ -118,9 +132,9 @@ export interface TicketHolder {
 export function redeemCollabTicket(ticket: string, docId: string, now = Date.now()): TicketHolder | null {
   if (!ticket) return null;
   const row = db
-    .prepare("SELECT doc_id, user_id, session_id, expires_at FROM collab_tickets WHERE ticket_hash = ?")
+    .prepare("SELECT doc_id, user_id, session_id, expires_at, schema FROM collab_tickets WHERE ticket_hash = ?")
     .get(hashTicket(ticket)) as
-    | { doc_id: string; user_id: string; session_id: string; expires_at: number }
+    | { doc_id: string; user_id: string; session_id: string; expires_at: number; schema: number | null }
     | undefined;
   if (!row || row.doc_id !== docId || row.expires_at <= now) return null;
   if (!liveSession(row.user_id, row.session_id)) return null;
@@ -128,7 +142,7 @@ export function redeemCollabTicket(ticket: string, docId: string, now = Date.now
   const user = db.prepare("SELECT id, name, email FROM user WHERE id = ?").get(row.user_id) as
     | TicketHolder["user"]
     | undefined;
-  return user ? { user, sessionId: row.session_id } : null;
+  return user ? { user, sessionId: row.session_id, schema: row.schema ?? LEGACY_CLIENT_SCHEMA } : null;
 }
 
 export const collabTickets = new Hono();
@@ -142,7 +156,11 @@ collabTickets.post("/:id/collab-ticket", async (c) => {
   }
   const docId = c.req.param("id");
   if (!canReadLevel(accessLevel(docId, session.user.id))) return c.json(NO_TICKET, 404);
-  const issued = issueCollabTicket(docId, session.user.id, session.session.id);
+  // A build from before the field sends `{}`; one that sends nothing at all
+  // is read the same way.
+  const schema = clientSchemaFrom(await c.req.json().catch(() => null));
+  if (roomSchemaFor(docId) > schema) return c.json(ROOM_TOO_NEW, 409);
+  const issued = issueCollabTicket(docId, session.user.id, session.session.id, Date.now(), schema);
   if (!issued) {
     c.header("Retry-After", "60");
     return c.json({ error: "rate_limited" }, 429);

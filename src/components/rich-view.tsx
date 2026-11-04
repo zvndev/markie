@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   useEditor,
   useEditorState,
@@ -21,16 +21,25 @@ import { warmBlocks } from "@/lib/rich-warmup";
 import type { Doc as YDoc } from "yjs";
 import type { WebsocketProvider } from "y-websocket";
 import { useCollabRuntime, type CollabRuntime } from "@/lib/collab-loader";
-import { useLiveRoom, type LiveRoom } from "@/lib/live-snapshot";
+import { liveDocumentEmpty, useLiveRoom, type LiveRoom } from "@/lib/live-snapshot";
 import {
-  COLLAB_SCHEMA_VERSION,
+  CLOSE_ROOM_TOO_NEW,
   connectWithTicket,
-  shouldWarnSchema,
-  SCHEMA_MISMATCH_NOTICE,
+  EDITOR_MODEL,
+  liveTiming,
+  MODEL_KEY,
+  RICH_SCHEMA_MATH,
+  RICH_SCHEMA_PLAIN,
+  roomSchemaOf,
+  SCHEMA_KEY,
   SEED_SETTLE_MS,
   type CollabConfig,
   type PeerUser,
 } from "@/lib/collab";
+import { docHasMath, planLegacyRoom } from "@/lib/rich-room-migrate";
+import { createDocument } from "@tiptap/core";
+import type { Node as PMNode } from "@tiptap/pm/model";
+import { commitMathFields } from "@/lib/rich-math";
 import { CommentLayer } from "@/components/comments";
 import { LinkPreviewCard } from "@/components/link-preview-card";
 import { ImageLightbox } from "@/components/image-lightbox";
@@ -145,6 +154,8 @@ interface SerializeCtx {
 // bytes), tables are pretty-aligned, and the constructs TipTap destroys at
 // parse time (front matter, HTML comments, raw HTML blocks, footnote
 // definitions) are put back verbatim from what was held aside on the way in.
+// A live session holds front matter aside too, so the room never holds it
+// and every writer puts its own copy's front matter back.
 //
 // Returns the markdown to write and the placeholder-space body it came from,
 // which becomes the baseline the next serialize diffs against.
@@ -276,11 +287,24 @@ function RichViewInner({
   // `locked` is who may edit, and decides seeding. `held` is only "not yet":
   // the room is not ready, so typing waits while seeding goes ahead.
   const liveRoom = useLiveRoom(holdUntilReady && session ? (session as unknown as LiveRoom) : null, "rich", {
-    documentEmpty: !value.trim(),
+    documentEmpty: liveDocumentEmpty(value, "rich"),
     offer: false,
   });
-  const held = holdUntilReady && !!session && !liveRoom.ready;
-  const editableNow = !locked && !held;
+  // A live room is "checked" once this pane knows it can take part in it:
+  // it seeded the room, or found it current, or brought a room written by an
+  // older build up to date (rich-room-migrate.ts). "refused": the room holds
+  // what this build cannot represent, or an older room it cannot safely
+  // bring up to date, and this pane never writes to it or from it.
+  const [roomChecked, setRoomChecked] = useState(false);
+  const [roomRefused, setRoomRefused] = useState(false);
+  // An older room's update is on its way to the server (checkRoom below):
+  // nothing typed now could be placed in a room about to change under it.
+  const [migrating, setMigrating] = useState(false);
+  const roomRefusedRef = useRef(false);
+  // Set below, once the editor exists; read from the debounced serialize.
+  const stampSchemaRef = useRef<() => void>(() => {});
+  const held = holdUntilReady && !!session && (!liveRoom.ready || !roomChecked);
+  const editableNow = !locked && !held && !roomRefused && !migrating;
 
   // No pass means no live session: the page treats that as the runtime
   // failing to load and goes back to the local copy.
@@ -313,6 +337,15 @@ function RichViewInner({
     if (!session) return;
     const provider = session.provider;
     const onClose = (event: CloseEvent | null) => {
+      if (event?.code === CLOSE_ROOM_TOO_NEW) {
+        // The room moved past this build mid-session (server/src/collab.ts):
+        // back to the local copy, which the page opens on its own.
+        provider.disconnect();
+        roomRefusedRef.current = true;
+        setRoomRefused(true);
+        onCollabStatus?.("unavailable");
+        return;
+      }
       if (event?.code !== 4403) return;
       provider.disconnect();
       // Keystrokes after this point go nowhere: the room is gone and nothing
@@ -328,19 +361,24 @@ function RichViewInner({
   }, [session, onCollabStatus]);
 
   // Layer 1 state: the front matter and the held constructs of the document
-  // currently in the editor (solo mode). Collab rooms hold parsed content
-  // already, so the shims do not apply there.
+  // currently in the editor. Front matter is held aside live too: a room
+  // never holds it (seedNow seeds the body), and what this pane writes gets
+  // the front matter of the copy it opened on, so the stored copy's (or the
+  // desktop file's) front matter wins whatever another client's says. The
+  // other held constructs do not apply live: a room cannot hold their place
+  // (live-room-carry.ts), so a document with any of them is never written
+  // from a room.
   const [initialSplit] = useState(() => {
     const { frontMatter, body } = splitFrontMatter(value);
-    return { frontMatter, held: extractHoldAsides(body) };
+    return { frontMatter, body, held: extractHoldAsides(body) };
   });
-  const frontMatterRef = useRef(session ? "" : initialSplit.frontMatter);
+  const frontMatterRef = useRef(initialSplit.frontMatter);
   const holdsRef = useRef<HoldAside[]>(session ? [] : initialSplit.held.holds);
   // Layer 2 baseline: the source the editor content came from, which block
   // preservation diffs the serializer's output against. Solo: the
-  // placeholder-space body. Live: the whole text this pane opened on, which
-  // is what a room seeded from it holds (seedNow sets the full text).
-  const baselineBodyRef = useRef(session ? value : initialSplit.held.text);
+  // placeholder-space body. Live: the body this pane opened on, which is
+  // what a room seeded from it holds (seedNow sets the body).
+  const baselineBodyRef = useRef(session ? initialSplit.body : initialSplit.held.text);
   // One headless editor for the whole component lifetime, created on the
   // first serialize.
   const normalizerRef = useRef<ReturnType<typeof createBlockNormalizer> | null>(
@@ -358,7 +396,7 @@ function RichViewInner({
   // Read through refs so every serialize path sees the document as it stands.
   const serializeCtx = (): SerializeCtx =>
     session
-      ? { frontMatter: "", holds: [], baseline: baselineBodyRef.current, normalize: getNormalizer().normalize }
+      ? { frontMatter: frontMatterRef.current, holds: [], baseline: baselineBodyRef.current, normalize: getNormalizer().normalize }
       : {
           frontMatter: frontMatterRef.current,
           holds: holdsRef.current,
@@ -463,15 +501,34 @@ function RichViewInner({
       // disk, but the push carried a stale version, so a file another device
       // had moved on came back "conflict" without anyone touching it.
       if (!transaction.docChanged) return;
+      // A refused room is never written from: whatever it holds, this build
+      // may not be able to say it.
+      if (roomRefusedRef.current) return;
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       debounceTimer.current = setTimeout(() => {
         debounceTimer.current = null;
+        if (roomRefusedRef.current) return;
+        stampSchemaRef.current();
         const md = serializeNow(editor);
         lastEmitted.current = md;
         onChange(md);
       }, 250);
     },
   });
+
+  // A formula's source field still open when the pane goes away (the
+  // document closes, the view changes) is committed into the formula first.
+  // A layout cleanup, because it has to run before EditorContent unmounts
+  // and takes the editor view (and every formula's view) down with it, and
+  // before the live session's cleanup destroys the room: live, this puts
+  // the source in the room at once. It is not handed to onChange from here:
+  // by the time a pane unmounts its host may already hold another document,
+  // and the host flushes the pane it is leaving itself (onFlushReady), which
+  // commits open fields too.
+  useLayoutEffect(() => {
+    if (!editor) return;
+    return () => commitMathFields(editor);
+  }, [editor]);
 
   // Search highlights are a plugin, not marks in the document, so nothing about
   // finding text can be serialized into the file. Registered after the fact
@@ -502,10 +559,10 @@ function RichViewInner({
   onRoomReadyRef.current = onRoomReady;
   const roomReportedRef = useRef(false);
   useEffect(() => {
-    if (!holdUntilReady || !session || !editor || !liveRoom.ready || roomReportedRef.current) return;
+    if (!holdUntilReady || !session || !editor || !liveRoom.ready || !roomChecked || roomRefused || roomReportedRef.current) return;
     roomReportedRef.current = true;
     onRoomReadyRef.current?.(serializeNowRef.current(editor));
-  }, [holdUntilReady, session, editor, liveRoom.ready]);
+  }, [holdUntilReady, session, editor, liveRoom.ready, roomChecked, roomRefused]);
 
   // Document links: once the editor has drawn, ask main what each
   // `[x](plan.md)` is for this reader and mark the anchors, so a link to a
@@ -535,7 +592,10 @@ function RichViewInner({
   // Settle the debounce now and hand back what the document currently says.
   // Null means nothing was pending, so the parent's own copy is already current.
   const flush = useCallback((): string | null => {
-    if (!debounceTimer.current) return null;
+    // A formula's source field still open is part of what the user sees as
+    // the document: a save takes it, as leaving the field would.
+    commitMathFields(editorRef.current);
+    if (!debounceTimer.current || roomRefusedRef.current) return null;
     clearTimeout(debounceTimer.current);
     debounceTimer.current = null;
     const ed = editorRef.current;
@@ -591,11 +651,63 @@ function RichViewInner({
   // single seeder per room as well, and drops everyone else's first update, so
   // a racer that still gets here writes only into its own copy.
   const seededRef = useRef(false);
+  const checkedRef = useRef(false);
+
+  // Once refused, for good: the pane stops writing and the page goes back to
+  // the local copy.
+  const refuseRoom = () => {
+    if (roomRefusedRef.current) return;
+    roomRefusedRef.current = true;
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = null;
+    setRoomRefused(true);
+    console.warn("Markie: this live room needs a newer Markie; editing the local copy.");
+    onCollabStatusRef.current?.("unavailable");
+  };
+  // A room's meta map can say anything (any editor writes it), so the test
+  // is the binding's own: whether it could draw the room at all.
+  const refuseIfUnrepresentable = (): boolean => {
+    if (!session || !editor || editor.isDestroyed) return false;
+    if (roomRefusedRef.current) return true;
+    const ystate = session.runtime.ySyncPluginKey.getState(editor.state) as { binding?: { projectionError?: unknown } } | undefined;
+    if (!ystate?.binding?.projectionError) return false;
+    refuseRoom();
+    return true;
+  };
+  const refuseIfUnrepresentableRef = useRef(refuseIfUnrepresentable);
+  refuseIfUnrepresentableRef.current = refuseIfUnrepresentable;
+  const refuseRoomRef = useRef(refuseRoom);
+  refuseRoomRef.current = refuseRoom;
+
+  // The first formula in a room written as schema 1 raises it to 2, which
+  // is what keeps builds without math nodes out (collab.ts). The server
+  // reads the formula from the update itself as well; the stamp is the
+  // room's own record of it.
+  const stampSchema = () => {
+    if (!session || !editor || editor.isDestroyed || locked || roomRefusedRef.current) return;
+    const meta = session.ydoc.getMap("meta");
+    if (roomSchemaOf(meta.get(SCHEMA_KEY)) >= RICH_SCHEMA_MATH) return;
+    if (docHasMath(editor.state.doc)) meta.set(SCHEMA_KEY, RICH_SCHEMA_MATH);
+  };
+  stampSchemaRef.current = stampSchema;
+
+  // A room whose copy here has front matter holds only the body, and 0.9.4's
+  // desktop writes its file from a live room with nothing in front: it would
+  // delete the front matter from its file. Schema 2 keeps it out (collab.ts).
+  const stampFrontMatter = () => {
+    if (!session || locked || roomRefusedRef.current || !frontMatterRef.current) return;
+    const meta = session.ydoc.getMap("meta");
+    if (roomSchemaOf(meta.get(SCHEMA_KEY)) < RICH_SCHEMA_MATH) meta.set(SCHEMA_KEY, RICH_SCHEMA_MATH);
+  };
+  const stampFrontMatterRef = useRef(stampFrontMatter);
+  stampFrontMatterRef.current = stampFrontMatter;
+
   useEffect(() => {
     if (!session || !editor) return;
     const { provider, ydoc } = session;
     let settle: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
+    let stopWaiting: (() => void) | null = null;
 
     // Returns true when the room already has content, so there is nothing left
     // to decide.
@@ -605,26 +717,125 @@ function RichViewInner({
       return true;
     };
 
+    // The room holds a document: can this pane take part, and does the room
+    // need bringing up to date first? Runs once, before anyone can type.
+    const checkRoom = () => {
+      if (checkedRef.current || cancelled) return;
+      checkedRef.current = true;
+      const meta = ydoc.getMap("meta");
+      if (refuseIfUnrepresentableRef.current()) return;
+      const done = () => {
+        stampFrontMatterRef.current();
+        setRoomChecked(true);
+      };
+      // Seeded or brought up to date by this build already, or not this
+      // pane's to change.
+      if (locked || meta.get(MODEL_KEY) !== undefined) {
+        done();
+        return;
+      }
+      let plan: ReturnType<typeof planLegacyRoom>;
+      try {
+        plan = planLegacyRoom(editor, {
+          frontMatter: frontMatterRef.current,
+          baselineBody: baselineBodyRef.current,
+        });
+      } catch (err) {
+        console.error("Markie: couldn't read the live room", err);
+        plan = { kind: "refuse" };
+      }
+      if (plan.kind === "refuse") {
+        refuseRoomRef.current();
+        return;
+      }
+      claimRoom(plan.kind === "migrate" ? plan.tr.doc : editor.state.doc, done);
+    };
+
+    // The room as this build holds it (`target`), claimed for this build in
+    // one update that the server takes from exactly one client: the seed of
+    // an empty room, or an older room brought up to date
+    // (room-migration-update.ts). It is not applied here. The room changes
+    // for this pane when the server sends back this update, or the update of
+    // the client that got there first, so nothing this pane holds can be an
+    // update the server dropped. Typing waits until then. No answer at all
+    // (the socket dropped, the server never took it) and the page goes back
+    // to the local copy, with its note: never a silent loss.
+    const claimRoom = (target: PMNode, done: () => void) => {
+      const meta = ydoc.getMap("meta");
+      const schema = Math.max(
+        roomSchemaOf(meta.get(SCHEMA_KEY)),
+        // Not a build without math nodes once there is a formula, and not
+        // 0.9.4's desktop when this copy has front matter the room leaves out.
+        docHasMath(target) || frontMatterRef.current ? RICH_SCHEMA_MATH : RICH_SCHEMA_PLAIN
+      );
+      const socket = (provider as unknown as { ws?: { readyState: number; send(data: Uint8Array): void } | null }).ws;
+      if (!socket || socket.readyState !== 1) {
+        refuseRoomRef.current();
+        return;
+      }
+      setMigrating(true);
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const landed = () => {
+        if (meta.get(MODEL_KEY) === undefined) return;
+        stopWaiting?.();
+        done();
+      };
+      stopWaiting = () => {
+        meta.unobserve(landed);
+        if (timer) clearTimeout(timer);
+        stopWaiting = null;
+        setMigrating(false);
+      };
+      meta.observe(landed);
+      timer = setTimeout(() => {
+        stopWaiting?.();
+        refuseRoomRef.current();
+      }, liveTiming.claimTimeoutMs);
+      try {
+        const update = session.runtime.migrationUpdate(ydoc, target, { [MODEL_KEY]: EDITOR_MODEL, [SCHEMA_KEY]: schema });
+        socket.send(session.runtime.syncUpdateMessage(update));
+      } catch (err) {
+        console.error("Markie: couldn't write the live room", err);
+        stopWaiting?.();
+        refuseRoomRef.current();
+      }
+    };
+
     const seedNow = () => {
       settle = null;
       if (cancelled || seededRef.current || locked) return;
-      if (roomHasContent()) return;
+      if (roomHasContent()) {
+        checkRoom();
+        return;
+      }
       // Nothing to seed *with*. Marking the room seeded here is how an empty
       // buffer used to lock a real document out of its own room and then save
-      // the blank back over the file.
-      if (!valueRef.current.trim()) return;
+      // the blank back over the file. A document that is only front matter
+      // gives the room nothing either: its front matter never goes in.
+      const body = splitFrontMatter(valueRef.current).body;
+      if (!body.trim()) {
+        setRoomChecked(true);
+        return;
+      }
       seededRef.current = true;
-      // One transaction, one update on the wire. The server's seed lock opens
-      // on the first update it persists, so the schema stamp must travel WITH
-      // the content, not ahead of it: sent separately, a stamp-only update
-      // would release the lock on a room that still holds nothing. Content
-      // first inside the transaction, so even an unmerged write seeds the
-      // document before it seeds the metadata.
-      ydoc.transact(() => {
-        editor.commands.setContent(valueRef.current);
-        // Stamp what wrote this room, so a future build that cannot read this
-        // shape can say so rather than quietly mangling it.
-        ydoc.getMap("meta").set("schemaVersion", COLLAB_SCHEMA_VERSION);
+      checkedRef.current = true;
+      // One update on the wire, content and stamps together: the server's
+      // seed lock opens on the first update it persists, so a stamp sent
+      // ahead of the content would release it on a room still holding
+      // nothing. A racer that lost the seed lock never applied its seed, so
+      // nothing it types afterwards rides on a dropped one.
+      let target: PMNode;
+      try {
+        const markdown = (editor.storage as unknown as { markdown: { parser: { parse(md: string): string } } }).markdown;
+        target = createDocument(markdown.parser.parse(body), editor.schema);
+      } catch (err) {
+        console.error("Markie: couldn't read the document into the live room", err);
+        refuseRoomRef.current();
+        return;
+      }
+      claimRoom(target, () => {
+        stampFrontMatterRef.current();
+        setRoomChecked(true);
       });
     };
 
@@ -637,14 +848,23 @@ function RichViewInner({
     // shows that instead of the blank this pane would otherwise draw.
     const readFileInstead = () => {
       settle = null;
-      if (cancelled || seededRef.current || roomHasContent()) return;
-      if (!valueRef.current.trim()) return;
+      if (cancelled) return;
+      if (seededRef.current || roomHasContent()) {
+        checkRoom();
+        return;
+      }
+      setRoomChecked(true);
+      if (!splitFrontMatter(valueRef.current).body.trim()) return;
       onCollabStatusRef.current?.("empty");
     };
 
     const trySeed = (isSynced: boolean) => {
-      if (!isSynced || cancelled || seededRef.current || settle) return;
-      if (roomHasContent()) return;
+      if (!isSynced || cancelled || settle) return;
+      if (seededRef.current || roomHasContent()) {
+        // The room's content came with the sync: the binding has drawn it.
+        checkRoom();
+        return;
+      }
       settle = setTimeout(locked ? readFileInstead : seedNow, SEED_SETTLE_MS);
     };
 
@@ -652,33 +872,33 @@ function RichViewInner({
     provider.on("sync", trySeed);
     return () => {
       cancelled = true;
+      stopWaiting?.();
       if (settle) clearTimeout(settle);
       provider.off("sync", trySeed);
     };
   }, [session, editor, locked]);
 
-  // A room seeded by a different build of Markie may hold nodes this editor's
-  // schema does not know. That is not fatal and must not block editing, so it
-  // is said out loud once and left at that.
-  const schemaWarnedRef = useRef(false);
+  // A room this build cannot represent is never written to or from. Two
+  // signs, either enough: the room's meta map records a schema newer than
+  // this build's, or the binding could not draw the room at all (a node this
+  // schema does not know). The server keeps such a client out already
+  // (server/src/collab-schema.ts); this is the same rule for a server that
+  // does not. Locking alone would not do: a stale or empty page would still
+  // be serialized and written. The page goes back to the local copy.
   useEffect(() => {
-    if (!session) return;
+    if (!session || !editor) return;
     const meta = session.ydoc.getMap("meta");
     const check = () => {
-      const version = meta.get("schemaVersion");
-      if (!shouldWarnSchema(version, schemaWarnedRef.current)) return;
-      schemaWarnedRef.current = true;
-      console.warn(
-        `Markie: this room was written with collab schema ${String(version)}, ` +
-          `this build speaks ${COLLAB_SCHEMA_VERSION}`
-      );
-      // Never over-write a louder notice: a revoked session has more to say.
-      setCollabError((prev) => prev ?? SCHEMA_MISMATCH_NOTICE);
+      refuseIfUnrepresentableRef.current();
     };
     check();
     meta.observe(check);
-    return () => meta.unobserve(check);
-  }, [session]);
+    editor.on("transaction", check);
+    return () => {
+      meta.unobserve(check);
+      editor.off("transaction", check);
+    };
+  }, [session, editor]);
 
   // Surface presence + connection state to the toolbar
   useEffect(() => {
@@ -713,6 +933,14 @@ function RichViewInner({
   // over the file the user just opened. Anything the markdown round trip cannot
   // preserve (YAML front matter, raw HTML, footnotes, math) was silently
   // rewritten, and the document was marked dirty without a keystroke.
+  // Live, the room is the body; the front matter written in front of it is
+  // the copy's own, so it follows the copy (a desktop file changed on disk,
+  // the page adopting a newer stored version).
+  useEffect(() => {
+    if (!session || value === lastEmitted.current) return;
+    frontMatterRef.current = splitFrontMatter(value).frontMatter;
+  }, [value, session]);
+
   useEffect(() => {
     if (!editor || session) return;
     if (value === lastEmitted.current) return;

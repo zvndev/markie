@@ -13,6 +13,19 @@
 //      back, Alice opens the document: there must be no "someone saved this
 //      outside the live session" conflict, and her tab pushes the room,
 //      Bob's last word included.
+//   3. The editor data model. A document with front matter, a multi-line
+//      display formula and an aligned table. The live pane must not show the
+//      front matter (no rule, no `title:` heading) and must draw the math with
+//      KaTeX. Bob types into the table and edits the formula through its
+//      source field; the stored copy must be the original with exactly those
+//      edits: the front matter once, the formula's lines kept, every column's
+//      alignment kept.
+//   4. Old builds. A ticket request that says nothing about schemas (0.9.4's)
+//      is refused for a room holding a formula, and a socket on the account's
+//      token is shown out with 4403 before it is sent anything.
+//   5. The room of a document with front matter keeps old builds out too
+//      (0.9.4 would write its file without the YAML); a plain document's room
+//      stays open to them.
 //
 // Needs Google Chrome and the web build: `npm run build:web` first.
 // Usage: node scripts/live-fidelity-check.mjs [evidence-dir]
@@ -50,6 +63,23 @@ const EVERYTHING = [
   "| :--- | ---: |",
   "| Tea | 3 |",
   "| Cake | 12 |",
+  "",
+  "Last line.",
+  "",
+].join("\n");
+
+const MODEL_FRONT = "---\ntitle: Model\nmarkie:\n  project: Fidelity\n---\n";
+const MODEL_FORMULA = "$$\n\\int_0^1 x^2\n  \\, dx = \\frac{1}{3}\n$$";
+const MODEL = [
+  MODEL_FRONT + "# Model",
+  "",
+  "Inline $e^{i\\pi}$ here.",
+  "",
+  MODEL_FORMULA,
+  "",
+  "| Item | Price | Note |",
+  "| :--- | :---: | ---: |",
+  "| Tea | 3 | hot |",
   "",
   "Last line.",
   "",
@@ -308,6 +338,138 @@ try {
   check("the room's edit reached the stored copy after the restart, byte for byte", pushed?.content === expected2,
     pushed ? (pushed.content === expected2 ? `version ${pushed.version}` : JSON.stringify(pushed.content)) : "never pushed");
   await alice2.close();
+
+  // ── 3. the editor data model: front matter, a multi-line formula and an aligned table, edited live ──
+  const modelId = `model-${stamp}`;
+  const madeModel = await fetch(`${base}/api/docs/${modelId}`, {
+    method: "PUT",
+    headers: authed(accounts.alice.token),
+    body: JSON.stringify({ name: "Model.md", content: MODEL, hash: createHash("sha256").update(MODEL, "utf8").digest("hex"), baseVersion: 0 }),
+  });
+  if (!madeModel.ok) throw new Error(`create model doc: ${madeModel.status} ${await madeModel.text()}`);
+  const sharedModel = await fetch(`${base}/api/docs/${modelId}/shares`, { method: "POST", headers: authed(accounts.alice.token), body: JSON.stringify({ email: accounts.bob.email, role: "editor" }) });
+  if (!sharedModel.ok) throw new Error(`share model: ${sharedModel.status}`);
+  await writeFile(path.join(evidence, "exports", "model-stored-v1.md"), MODEL);
+  const storedModel = async () => {
+    const res = await fetch(`${base}/api/docs/${modelId}`, { headers: authed(accounts.alice.token) });
+    return res.ok ? (await res.json()).doc : null;
+  };
+  const alice3 = await signedInPage("alice");
+  const bob3 = await signedInPage("bob");
+  for (const [page, name] of [[alice3, "alice"], [bob3, "bob"]]) {
+    await page.navigate(`${base}/app/d/${modelId}`);
+    await poll(`${name} live on the model doc`, () => page.evaluate("!!(window.__markieCollab && window.__markieEditor && window.__markieEditor.isEditable)").catch(() => false), 30_000);
+  }
+  await poll("formulas drawn by KaTeX in Bob's pane", () => bob3.evaluate("document.querySelectorAll('.ProseMirror .markie-math .katex').length >= 2"), 10_000).catch(() => false);
+  await sleep(800);
+  await alice3.shot("5-alice-model-live.png");
+  await bob3.shot("5-bob-model-live.png");
+  const shown = await bob3.evaluate(`JSON.stringify({
+    first: document.querySelector('.ProseMirror')?.firstElementChild?.tagName,
+    rules: document.querySelectorAll('.ProseMirror hr').length,
+    text: document.querySelector('.ProseMirror')?.innerText ?? '',
+    katex: document.querySelectorAll('.ProseMirror .markie-math .katex').length,
+    displayKatex: document.querySelectorAll('.ProseMirror .markie-math-block .katex-display').length,
+    rawDollars: (document.querySelector('.ProseMirror')?.innerText ?? '').includes('$'),
+    aligned: [...document.querySelectorAll('.ProseMirror th')].map((th) => th.style.textAlign),
+  })`).then(JSON.parse);
+  await writeFile(path.join(evidence, "exports", "model-bob-pane.json"), JSON.stringify(shown, null, 2));
+  check("front matter is not shown in the live pane: no rule, no `title:` heading", shown.first === "H1" && shown.rules === 0 && !shown.text.includes("title: Model") && !shown.text.includes("project"), JSON.stringify({ first: shown.first, rules: shown.rules }));
+  check("math is drawn by KaTeX in the live rich pane, not as raw `$…$`", shown.katex >= 2 && shown.displayKatex === 1 && !shown.rawDollars, JSON.stringify({ katex: shown.katex, displayKatex: shown.displayKatex, rawDollars: shown.rawDollars }));
+  check("the table's columns are drawn aligned", JSON.stringify(shown.aligned) === JSON.stringify(["left", "center", "right"]), JSON.stringify(shown.aligned));
+
+  // Bob types into the table, as a keyboard would.
+  await bob3.send("Page.bringToFront");
+  await bob3.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+  await bob3.evaluate(`(() => { const ed = window.__markieEditor; let at = -1; ed.state.doc.descendants((n, p) => { if (at === -1 && n.isText && n.text === 'Tea') at = p + n.nodeSize; }); ed.chain().focus().setTextSelection(at).run(); })()`);
+  await bob3.send("Input.insertText", { text: " (green)" });
+  const cellTyped = await poll("Bob's word in the table", () => bob3.evaluate("window.__markieEditor.getText().includes('Tea (green)')"), 2000).catch(() => false);
+  if (!cellTyped) {
+    say('  (keyboard input did not reach the window; " (green)" inserted as an editor transaction)');
+    await bob3.evaluate(`(() => { const ed = window.__markieEditor; let at = -1; ed.state.doc.descendants((n, p) => { if (at === -1 && n.isText && n.text === 'Tea') at = p + n.nodeSize; }); ed.chain().insertContentAt(at, ' (green)').run(); })()`);
+  }
+
+  // Bob clicks the display formula, which opens its source, and adds to it.
+  await bob3.evaluate("document.querySelector('.ProseMirror .markie-math-block').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))");
+  const opened = await poll("the formula's source field", () => bob3.evaluate("!!document.querySelector('.ProseMirror .markie-math-block textarea.markie-math-field')"), 3000).catch(() => false);
+  check("a click on a display formula opens its source", !!opened);
+  const fieldValue = await bob3.evaluate("document.querySelector('.ProseMirror .markie-math-block textarea')?.value ?? ''");
+  check("the source field holds the formula's lines exactly", fieldValue === MODEL_FORMULA, JSON.stringify(fieldValue));
+  await bob3.evaluate(`(() => { const t = document.querySelector('.ProseMirror .markie-math-block textarea'); t.focus(); const at = t.value.indexOf('\\\\frac{1}{3}') + '\\\\frac{1}{3}'.length; t.setSelectionRange(at, at); })()`);
+  await bob3.send("Input.insertText", { text: " + C" });
+  const fieldTyped = await bob3.evaluate("document.querySelector('.ProseMirror .markie-math-block textarea')?.value.includes('+ C')");
+  if (!fieldTyped) {
+    say('  (keyboard input did not reach the field; " + C" set on the field as typing would)');
+    await bob3.evaluate(`(() => { const t = document.querySelector('.ProseMirror .markie-math-block textarea'); const at = t.value.indexOf('\\\\frac{1}{3}') + '\\\\frac{1}{3}'.length; t.value = t.value.slice(0, at) + ' + C' + t.value.slice(at); t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  }
+  await bob3.shot("6-bob-editing-formula-source.png");
+  // Cmd+Enter keeps the change.
+  await bob3.evaluate("document.querySelector('.ProseMirror .markie-math-block textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true }))");
+  const expectedModel = MODEL
+    .replace("\\frac{1}{3}\n$$", () => "\\frac{1}{3} + C\n$$")
+    .replace("| Item | Price | Note |\n| :--- | :---: | ---: |\n| Tea | 3 | hot |\n", () => "| Item        | Price | Note |\n| :---------- | :---: | ---: |\n| Tea (green) | 3     | hot  |\n");
+  await writeFile(path.join(evidence, "exports", "model-expected.md"), expectedModel);
+  const modelAfter = await poll("the model doc's stored copy has both edits", async () => {
+    const doc = await storedModel();
+    return doc && doc.content.includes("+ C") && doc.content.includes("(green)") ? doc : null;
+  }, 20_000).catch(() => null);
+  await writeFile(path.join(evidence, "exports", "model-roundtrip-live.md"), modelAfter?.content ?? "(never pushed)");
+  check("stored copy after the table and formula edits is the original plus those edits, byte for byte", modelAfter?.content === expectedModel,
+    modelAfter ? (modelAfter.content === expectedModel ? `version ${modelAfter.version}` : JSON.stringify(modelAfter.content)) : "never pushed");
+  check("front matter written back once, unchanged", !!modelAfter && modelAfter.content.startsWith(MODEL_FRONT) && modelAfter.content.indexOf("title: Model") === modelAfter.content.lastIndexOf("title: Model"));
+  check("the multi-line formula keeps its line breaks", !!modelAfter && modelAfter.content.includes("$$\n\\int_0^1 x^2\n  \\, dx = \\frac{1}{3} + C\n$$"));
+  check("the edited table keeps every column's alignment", !!modelAfter && modelAfter.content.includes("| :---------- | :---: | ---: |"));
+  await poll("Alice sees Bob's formula", () => alice3.evaluate("[...document.querySelectorAll('.ProseMirror .markie-math-block')].some((el) => (el.getAttribute('data-source') || '').includes('+ C'))"), 5000).catch(() => false);
+  await sleep(500);
+  await alice3.shot("7-alice-after-model-edits.png");
+  await bob3.shot("7-bob-after-model-edits.png");
+  check("no conflict shown on the model doc", !(await bodyText(alice3)).includes(DIVERGED) && !(await bodyText(bob3)).includes(DIVERGED));
+
+  // ── 4. a build from before math nodes is kept out of these rooms ──
+  // Its ticket request says nothing about schemas, as 0.9.4's does.
+  for (const [label, id] of [["the model doc", modelId], ["the first doc", docId]]) {
+    const res = await fetch(`${base}/api/docs/${id}/collab-ticket`, { method: "POST", headers: authed(accounts.bob.token), body: "{}" });
+    const answer = await res.json().catch(() => null);
+    check(`an old build's ticket request for ${label} (a room with formulas) is refused, so it opens its own copy`, res.status === 409 && answer?.error === "room_needs_newer_markie", `${res.status} ${JSON.stringify(answer)}`);
+  }
+  const newTicket = await fetch(`${base}/api/docs/${modelId}/collab-ticket`, { method: "POST", headers: authed(accounts.bob.token), body: JSON.stringify({ schema: 2 }) });
+  check("this build's ticket request for the same room is answered", newTicket.status === 200);
+  // A build from before tickets, on its token.
+  const legacyClose = await new Promise((resolve) => {
+    const sock = new WebSocket(`ws://localhost:${port}/collab/${modelId}?token=${encodeURIComponent(accounts.bob.token)}`);
+    const timer = setTimeout(() => { sock.terminate(); resolve("still open"); }, 5000);
+    let got = 0;
+    sock.on("message", () => { got += 1; });
+    sock.on("close", (code) => { clearTimeout(timer); resolve({ code, messages: got }); });
+    sock.on("error", () => {});
+  });
+  check("an old build on its token is shown out (4403) without being sent the room", typeof legacyClose === "object" && legacyClose.code === 4403 && legacyClose.messages === 0, JSON.stringify(legacyClose));
+
+  // ── 5. which plain rooms stay open to old builds ──
+  // A document with front matter and no formulas: its room holds only the
+  // body, which 0.9.4's desktop would write over its file without the YAML.
+  // A document with neither: open to every build.
+  const docsFor5 = [
+    ["notes", "Notes.md", "---\ntitle: Notes\n---\n# Notes\n\nNo formulas here.\n"],
+    ["plain", "Plain.md", "# Plain\n\nNo formulas, no front matter.\n"],
+  ];
+  for (const [slug, name, content] of docsFor5) {
+    const id = `${slug}-${stamp}`;
+    const made = await fetch(`${base}/api/docs/${id}`, { method: "PUT", headers: authed(accounts.alice.token), body: JSON.stringify({ name, content, hash: createHash("sha256").update(content, "utf8").digest("hex"), baseVersion: 0 }) });
+    if (!made.ok) throw new Error(`create ${name}: ${made.status}`);
+    // A document is live once it is shared.
+    const sharedDoc = await fetch(`${base}/api/docs/${id}/shares`, { method: "POST", headers: authed(accounts.alice.token), body: JSON.stringify({ email: accounts.bob.email, role: "editor" }) });
+    if (!sharedDoc.ok) throw new Error(`share ${name}: ${sharedDoc.status}`);
+    await alice3.navigate(`${base}/app/d/${id}`);
+    await poll(`alice live on ${name}`, () => alice3.evaluate("!!(window.__markieCollab && window.__markieEditor && window.__markieEditor.isEditable && window.__markieCollab.ydoc.getMap('meta').get('editorModel') === 2)").catch(() => false), 30_000);
+    await sleep(500);
+  }
+  const notesOld = await fetch(`${base}/api/docs/notes-${stamp}/collab-ticket`, { method: "POST", headers: authed(accounts.alice.token), body: "{}" });
+  check("an old build is kept out of the room of a document with front matter, formulas or not", notesOld.status === 409, String(notesOld.status));
+  const plainOld = await fetch(`${base}/api/docs/plain-${stamp}/collab-ticket`, { method: "POST", headers: authed(accounts.alice.token), body: "{}" });
+  check("an old build still joins the room of a plain document", plainOld.status === 200, String(plainOld.status));
+  await alice3.close();
+  await bob3.close();
 } catch (error) {
   failures.push(String(error?.stack || error));
   say(`ERROR ${error?.stack || error}`);

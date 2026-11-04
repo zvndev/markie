@@ -13,6 +13,17 @@ import { auth } from "./auth.ts";
 import { FAULT_ROUTES, reportFault } from "./little-friend.ts";
 import { liveSession, redeemCollabTicket, type TicketHolder } from "./collab-tickets.ts";
 import {
+  LEGACY_CLIENT_SCHEMA,
+  closeCodeFor,
+  hasEditorModel,
+  ROOM_SCHEMA_MATH,
+  recordedSchema,
+  updateClaimsModel,
+  schemaOfRoom,
+  setRoomSchemaLookup,
+  updateAddsMath,
+} from "./collab-schema.ts";
+import {
   accessLevel,
   canEditLevel,
   canReadLevel,
@@ -110,6 +121,7 @@ interface Conn {
   controlled: Set<number>; // awareness client ids this socket controls
   level: ShareAccessLevel; // last level read for this user on this doc
   checkedAt: number; // when that read happened
+  schema: number; // the newest room schema this client can represent (collab-schema.ts)
 }
 
 interface Room {
@@ -127,9 +139,61 @@ interface Room {
   // `seeder` may write, everyone else is answered exactly like a viewer.
   seedPending: boolean;
   seeder: WebSocket | null;
+  // The schema the room's content needs (collab-schema.ts). It only rises.
+  schema: number;
 }
 
 const rooms = new Map<string, Room>();
+
+// The schema of a room nobody is in, read from its update log once and then
+// kept: a ticket is asked for every couple of minutes per open document, and
+// a room's schema only rises while it exists.
+const idleSchemas = new Map<string, number>();
+
+// The stored copy's front matter, read fresh each time (an agent can add or
+// drop it between two tickets). A live room holds only the body of such a
+// document, and 0.9.4's desktop writes its file from a live room with nothing
+// in front, deleting the YAML: so the room needs schema 2 whatever any client
+// stamped. Only the start of the text is read; front matter is at the start.
+const FRONT_MATTER_RE = /^---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)(?:\r?\n|$)/;
+function storedFrontMatterSchema(docId: string): number {
+  try {
+    const row = db
+      .prepare("SELECT substr(content, 1, 65536) AS head FROM docs WHERE id = ? AND deleted_at IS NULL")
+      .get(docId) as { head: string | null } | undefined;
+    return row?.head && FRONT_MATTER_RE.test(row.head) ? ROOM_SCHEMA_MATH : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function roomSchemaLookup(docId: string): number {
+  const fromStoredCopy = storedFrontMatterSchema(docId);
+  const live = rooms.get(docId);
+  if (live) return Math.max(live.schema, fromStoredCopy);
+  const known = idleSchemas.get(docId);
+  if (known !== undefined) return Math.max(known, fromStoredCopy);
+  const ydoc = new Y.Doc();
+  try {
+    loadUpdates(docId, ydoc);
+    const schema = schemaOfRoom(ydoc);
+    idleSchemas.set(docId, schema);
+    return Math.max(schema, fromStoredCopy);
+  } finally {
+    ydoc.destroy();
+  }
+}
+setRoomSchemaLookup(roomSchemaLookup);
+
+// A room moved past some of its sockets: close them before the update that
+// moved it goes out, so none of them ever holds a node it cannot represent.
+function closeSocketsBelow(room: Room, schema: number): void {
+  for (const [ws, conn] of room.conns) {
+    if (conn.schema >= schema || ws.readyState !== ws.OPEN) continue;
+    console.log(`collab: closed a schema ${conn.schema} socket in room ${room.docId}: the room needs schema ${schema}`);
+    ws.close(closeCodeFor(conn.schema), "room needs a newer Markie");
+  }
+}
 
 // A room holds a document when either shared shape has content: the rich
 // XmlFragment Markdown seeds, or the Y.Text a plain-text file seeds under
@@ -182,11 +246,18 @@ function getRoom(docId: string): Room {
     // update may carry only metadata (a schema stamp) and no document.
     seedPending: docHasContent(docId) && !roomHasCollabContent(ydoc),
     seeder: null,
+    schema: schemaOfRoom(ydoc),
   };
   rooms.set(docId, room);
+  idleSchemas.delete(docId);
 
   ydoc.on("update", (update: Uint8Array) => {
     appendUpdate(docId, update);
+    const schema = Math.max(room!.schema, recordedSchema(room!.ydoc), updateAddsMath(update) ? 2 : 0);
+    if (schema > room!.schema) {
+      room!.schema = schema;
+      closeSocketsBelow(room!, schema);
+    }
     // Release the lock only once the room holds document content. An update
     // carrying nothing but metadata must not open it: a racing editor could
     // then seed alongside the real one, and a seeder who disconnected after
@@ -259,6 +330,10 @@ function reelectSeeder(room: Room): void {
 // Test hook: the seed lock lives entirely inside a room object that nothing
 // else can see, and "the seeder left, has the lock moved yet?" is otherwise
 // only observable by writing and hoping.
+export function roomSchemaState(docId: string): number | null {
+  return rooms.get(docId)?.schema ?? null;
+}
+
 export function seedLockState(
   docId: string
 ): { seedPending: boolean; seeder: string | null } | null {
@@ -401,15 +476,47 @@ export function readAccessControlledSyncMessage(
   return messageType;
 }
 
+// Whether a sync message carries an update that sets the room's editor
+// model. Read from a copy of the message, before the real read applies it.
+function claimsModelUpdate(message: Uint8Array): boolean {
+  try {
+    const peek = decoding.createDecoder(message);
+    decoding.readVarUint(peek); // MESSAGE_SYNC
+    const syncType = decoding.readVarUint(peek);
+    if (syncType !== syncProtocol.messageYjsUpdate && syncType !== syncProtocol.messageYjsSyncStep2) return false;
+    return updateClaimsModel(decoding.readVarUint8Array(peek));
+  } catch {
+    return false;
+  }
+}
+
 function handleConnection(
   conn: WebSocket,
   docId: string,
   user: { id: string; name?: string | null; email?: string | null },
-  sessionId: string
+  sessionId: string,
+  clientSchema: number = LEGACY_CLIENT_SCHEMA
 ): void {
   const level = liveSession(user.id, sessionId) ? accessLevel(docId, user.id) : null;
   if (!canReadLevel(level)) { conn.close(CLOSE_ACCESS_REVOKED, "access revoked"); return; }
   const room = getRoom(docId);
+  // A ticket issued before the room moved on, or a socket on the account's
+  // token: it never gets the room's state.
+  // The stored copy may have gained front matter since the room loaded.
+  const fromStoredCopy = storedFrontMatterSchema(docId);
+  if (fromStoredCopy > room.schema) {
+    room.schema = fromStoredCopy;
+    closeSocketsBelow(room, room.schema);
+  }
+  if (room.schema > clientSchema) {
+    conn.close(closeCodeFor(clientSchema), "room needs a newer Markie");
+    if (room.conns.size === 0) {
+      room.awareness.destroy();
+      room.ydoc.destroy();
+      rooms.delete(docId);
+    }
+    return;
+  }
   const state: Conn = {
     userId: user.id,
     sessionId,
@@ -417,6 +524,7 @@ function handleConnection(
     controlled: new Set(),
     level,
     checkedAt: Date.now(),
+    schema: clientSchema,
   };
   room.conns.set(conn, state);
   claimSeeder(room, conn, level);
@@ -451,6 +559,18 @@ function handleConnection(
         // Everyone but the elected seeder is answered like a viewer while the
         // seed is pending: step 1 still gets a reply, updates go nowhere.
         const seedBlocked = room.seedPending && room.seeder !== conn;
+        // A socket the room moved past is being closed; nothing it says
+        // in the meantime goes in.
+        const outgrown = room.schema > state.schema;
+        // A room is seeded or brought up to date exactly once
+        // (collab-schema.ts MODEL_KEY): a second client doing it at the same
+        // moment would add its own copy of every formula next to the first.
+        // Its update is dropped; it sent it without applying it, and takes
+        // the first one's from the room instead.
+        const secondModel = canEdit && hasEditorModel(room.ydoc) && claimsModelUpdate(message);
+        if (secondModel) {
+          console.log(`collab: dropped a second editor-model update in room ${docId}`);
+        }
         const encoder = encoding.createEncoder();
         encoding.writeVarUint(encoder, MESSAGE_SYNC);
         const syncType = readAccessControlledSyncMessage(
@@ -458,7 +578,7 @@ function handleConnection(
           encoder,
           room.ydoc,
           conn,
-          canEdit && !seedBlocked
+          canEdit && !seedBlocked && !outgrown && !secondModel
         );
         if (
           canEdit &&
@@ -532,7 +652,8 @@ async function legacyTokenHolder(token: string): Promise<TicketHolder | null> {
     headers: new Headers({ Authorization: `Bearer ${token}` }),
   });
   if (!session?.user || !session.session?.id) return null;
-  return { user: session.user, sessionId: session.session.id };
+  // Builds from before tickets are builds from before math nodes.
+  return { user: session.user, sessionId: session.session.id, schema: LEGACY_CLIENT_SCHEMA };
 }
 
 // The largest single message a collaborator may send. ws defaults to 100 MiB,
@@ -599,7 +720,7 @@ export function attachCollab(server: Server): void {
       if (ticket === null) console.log("collab: legacy token connection");
       socket.removeListener("error", onSocketError);
       wss.handleUpgrade(req, socket, head, (conn) => {
-        handleConnection(conn, docId, holder.user, holder.sessionId);
+        handleConnection(conn, docId, holder.user, holder.sessionId, holder.schema);
       });
     } catch (err) {
       console.error("collab upgrade error:", err);
@@ -614,5 +735,6 @@ export function attachCollab(server: Server): void {
 // The stored yjs update log for a doc holds its full text in another form.
 // Call closeRoom first so no socket writes another update after the purge.
 export function purgeDocUpdates(docId: string): number {
+  idleSchemas.delete(docId);
   return db.prepare("DELETE FROM doc_updates WHERE doc_id = ?").run(docId).changes;
 }

@@ -10,3 +10,7 @@ export { WebsocketProvider } from "y-websocket";
 export { Collaboration } from "@tiptap/extension-collaboration";
 export { CollaborationCaret } from "@tiptap/extension-collaboration-caret";
 export { anchorToAbsolute, selectionToAnchor } from "@/lib/comment-anchors";
+// The binding's own state: RichView reads whether it could draw the room.
+export { ySyncPluginKey } from "@tiptap/y-tiptap";
+// An older room is brought up to date by one update the server accepts once.
+export { migrationUpdate, syncUpdateMessage } from "@/lib/room-migration-update";

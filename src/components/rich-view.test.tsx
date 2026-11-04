@@ -14,6 +14,11 @@ const loader = vi.hoisted(() => ({
   // socket: `seed` fills the room before the first sync, as a server would.
   room: null as null | { seed?: (doc: import("yjs").Doc) => void },
   // Every fake provider made, newest last, so a test can read its params.
+  // Updates sent straight to the server (an older room's migration).
+  sent: [] as Uint8Array[],
+  // The server drops every seed or migration this client sends (it lost
+  // the race, or the server never answers).
+  dropClaims: false,
   providers: [] as Array<{
     createdWith: Record<string, string>;
     params: Record<string, string>;
@@ -25,8 +30,26 @@ vi.mock("@/lib/collab-loader", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/collab-loader")>();
   const runtime = await import("@/lib/collab-runtime");
   const { Awareness } = await import("y-protocols/awareness");
+  const Y = await import("yjs");
+  const { updateFromSyncMessage } = await import("@/lib/room-migration-update");
   class FakeProvider {
     synced = false;
+    // The socket, as far as an update sent straight to the server goes: the
+    // server applies it and sends it back, unless it claims an editor model
+    // the room already has (server/src/collab-schema.ts), which it drops.
+    ws = {
+      readyState: 1,
+      send: (data: Uint8Array) => {
+        const update = updateFromSyncMessage(data);
+        if (!update) return;
+        loader.sent.push(update);
+        if (loader.dropClaims) return;
+        setTimeout(() => {
+          if (this.#doc.getMap("meta").get("editorModel") !== undefined) return;
+          Y.applyUpdate(this.#doc, update, "server");
+        }, 5);
+      },
+    };
     shouldConnect = false;
     connects = 0;
     params: Record<string, string>;
@@ -581,5 +604,550 @@ describe("RichView in a live room: what it writes back", () => {
       editor.commands.insertContentAt(editor.state.doc.child(0).nodeSize + editor.state.doc.child(1).nodeSize - 1, " Bob");
     });
     expect(out).toBe(EVERYTHING.replace("in a sentence.", "in a sentence. Bob"));
+  });
+});
+
+// ── The editor data model, live: math nodes, table alignment, front matter,
+// and rooms from older builds (src/lib/rich-math.ts, rich-table-align.ts,
+// rich-room-migrate.ts, collab.ts) ─────────────────────────────────────────
+
+const FRONT = "---\ntitle: Plan\nmarkie:\n  project: Markie\n---\n";
+const MODEL_BODY = [
+  "# Plan",
+  "",
+  "Inline $e^{i\\pi} + 1 = 0$ here.",
+  "",
+  "$$",
+  "\\int_0^1 x^2",
+  "  \\, dx = \\frac{1}{3}",
+  "$$",
+  "",
+  "| Item | Price | Note |",
+  "| :--- | :---: | ---: |",
+  "| Tea | 3 | hot |",
+  "",
+  "Last line.",
+  "",
+].join("\n");
+const MODEL = FRONT + MODEL_BODY;
+
+describe("RichView in a live room: the editor data model", () => {
+  const collab = (readonly = false): CollabConfig => ({
+    docId: "doc-model",
+    wsBase: "ws://localhost/collab",
+    token: "t",
+    fetchTicket: async () => ({ kind: "ticket", ticket: "tk", expiresAt: 0 }),
+    user: { name: "Me", color: "#000000" },
+    readonly,
+  });
+  const liveDoc = () => (window as unknown as { __markieCollab?: { ydoc: import("yjs").Doc } | null }).__markieCollab!.ydoc;
+
+  // One client opens `text` live over a room filled by `seed` (or seeds an
+  // empty one), and the test reads what it reports and what the room holds.
+  async function openLive(
+    text: string,
+    seed: ((doc: import("yjs").Doc) => void) | undefined,
+    opts: { readonly?: boolean } = {}
+  ) {
+    const Y = await import("yjs");
+    loader.room = seed ? { seed } : {};
+    const onRoomReady = vi.fn();
+    const onChange = vi.fn();
+    const onCollabStatus = vi.fn();
+    let editor: Editor | null = null;
+    const view = render(
+      <RichView
+        value={text}
+        onChange={onChange}
+        collab={collab(opts.readonly)}
+        holdUntilReady
+        onRoomReady={onRoomReady}
+        onCollabStatus={onCollabStatus}
+        onEditorReady={(e) => { if (e) editor = e; }}
+      />
+    );
+    return {
+      onRoomReady,
+      onChange,
+      onCollabStatus,
+      editor: () => editor as unknown as Editor,
+      state: () => Y.encodeStateAsUpdate(liveDoc()),
+      meta: (key: string) => liveDoc().getMap("meta").get(key),
+      done: () => { view.unmount(); loader.room = null; },
+    };
+  }
+
+  const topTypes = (editor: Editor) => {
+    const types: string[] = [];
+    editor.state.doc.forEach((node) => types.push(node.type.name));
+    return types;
+  };
+
+  it("keeps front matter out of the room, and says the stored copy back byte for byte", async () => {
+    const live = await openLive(MODEL, undefined);
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      expect(live.onRoomReady.mock.calls[0][0]).toBe(MODEL);
+      // No rule and no `title:` heading: the room starts at the body.
+      const types = topTypes(live.editor());
+      expect(types[0]).toBe("heading");
+      expect(types).not.toContain("horizontalRule");
+      expect(live.editor().getText()).not.toContain("title: Plan");
+      expect(live.editor().getText()).not.toContain("project");
+      // A room with a formula in it is schema 2, which keeps older builds out.
+      expect(live.meta("schemaVersion")).toBe(2);
+    } finally {
+      live.done();
+    }
+  });
+
+  it("seeds a plain room without front matter as schema 1, open to every build", async () => {
+    const live = await openLive("# Plain\n\nNo formulas.\n", undefined);
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      expect(live.meta("schemaVersion")).toBe(1);
+      expect(live.meta("editorModel")).toBe(2);
+    } finally {
+      live.done();
+    }
+  });
+
+  // 0.9.4's desktop writes its file from a live room with nothing in front:
+  // in a room holding only the body it would delete the file's front matter.
+  it("seeds the room of a document with front matter as schema 2, so 0.9.4 is kept out", async () => {
+    const live = await openLive(FRONT + "# Plain\n\nNo formulas.\n", undefined);
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      expect(live.meta("schemaVersion")).toBe(2);
+    } finally {
+      live.done();
+    }
+  });
+
+  it("raises a plain room to schema 2 when a client whose copy has front matter opens it", async () => {
+    const plain = "# Plain\n\nNo formulas.\n";
+    const state = await seededState(plain);
+    const Y = await import("yjs");
+    const live = await openLive(FRONT + plain, (doc) => Y.applyUpdate(doc, state));
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      expect(live.meta("schemaVersion")).toBe(2);
+      expect(live.onRoomReady.mock.calls[0][0]).toBe(FRONT + plain);
+    } finally {
+      live.done();
+    }
+  });
+
+  // Alice seeds; Bob joins her room from his own copy of the stored text and
+  // edits it; what Bob's pane writes is the stored copy with his edit only.
+  async function seededState(text: string): Promise<Uint8Array> {
+    const live = await openLive(text, undefined);
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      return live.state();
+    } finally {
+      live.done();
+    }
+  }
+  async function peerWrites(text: string, state: Uint8Array, edit: (editor: Editor) => void): Promise<string> {
+    const Y = await import("yjs");
+    const live = await openLive(text, (doc) => Y.applyUpdate(doc, state));
+    try {
+      await waitFor(() => expect(live.editor()?.isEditable).toBe(true), { timeout: 3000 });
+      const before = live.onChange.mock.calls.length;
+      edit(live.editor());
+      await waitFor(() => expect(live.onChange.mock.calls.length).toBeGreaterThan(before), { timeout: 2000 });
+      return live.onChange.mock.calls.at(-1)![0] as string;
+    } finally {
+      live.done();
+    }
+  }
+  const nodePos = (editor: Editor, type: string, nth = 0) => {
+    const found: number[] = [];
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === type) found.push(pos);
+    });
+    return found[nth];
+  };
+  const setSource = (type: string, change: (source: string) => string) => (editor: Editor) => {
+    const pos = nodePos(editor, type);
+    const node = editor.state.doc.nodeAt(pos)!;
+    editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, source: change(node.attrs.source) }));
+  };
+
+  it("an edit inside a multi-line display formula keeps its lines and every other byte", async () => {
+    const state = await seededState(MODEL);
+    const out = await peerWrites(MODEL, state, setSource("mathBlock", (s) => s.replace("\\frac{1}{3}", () => "\\frac{1}{3} + C")));
+    expect(out).toBe(MODEL.replace("\\frac{1}{3}", () => "\\frac{1}{3} + C"));
+  });
+
+  it("an edit inside inline math keeps the sentence and every other byte", async () => {
+    const state = await seededState(MODEL);
+    const out = await peerWrites(MODEL, state, setSource("mathInline", (s) => s.replace("+ 1", () => "- 1")));
+    expect(out).toBe(MODEL.replace("$e^{i\\pi} + 1 = 0$", () => "$e^{i\\pi} - 1 = 0$"));
+  });
+
+  it("an edit right next to a formula keeps the formula exact", async () => {
+    const state = await seededState(MODEL);
+    const out = await peerWrites(MODEL, state, (editor) => {
+      // Straight after the inline formula, in the same paragraph.
+      const pos = nodePos(editor, "mathInline");
+      editor.commands.insertContentAt(pos + 1, " (Euler)");
+    });
+    expect(out).toBe(MODEL.replace("$e^{i\\pi} + 1 = 0$", () => "$e^{i\\pi} + 1 = 0$ (Euler)"));
+  });
+
+  it("an edit inside an aligned table keeps every column's alignment", async () => {
+    const state = await seededState(MODEL);
+    const out = await peerWrites(MODEL, state, (editor) => {
+      // The end of the "Tea" cell.
+      let at = -1;
+      editor.state.doc.descendants((node, pos) => {
+        if (at === -1 && node.isText && node.text === "Tea") at = pos + node.nodeSize;
+      });
+      editor.commands.insertContentAt(at, " (green)");
+    });
+    // Re-padded for the longer cell, with every column's colons.
+    expect(out).toContain("| Item        | Price | Note |\n| :---------- | :---: | ---: |\n| Tea (green) | 3     | hot  |\n");
+    // Only the table was rewritten; the front matter and the rest are as stored.
+    expect(out.startsWith(FRONT + "# Plan\n\nInline $e^{i\\pi} + 1 = 0$ here.\n\n$$\n\\int_0^1 x^2\n  \\, dx = \\frac{1}{3}\n$$\n\n")).toBe(true);
+    expect(out.endsWith("\n\nLast line.\n")).toBe(true);
+  });
+
+  it("writes each client's own copy's front matter, so the stored copy's wins and nothing doubles", async () => {
+    const state = await seededState(MODEL);
+    const otherFront = "---\ntitle: Someone else's\n---\n";
+    const out = await peerWrites(otherFront + MODEL_BODY, state, (editor) => {
+      editor.commands.insertContentAt(editor.state.doc.content.size - 1, " Bob");
+    });
+    expect(out).toBe(otherFront + MODEL_BODY.replace("Last line.", "Last line. Bob"));
+  });
+
+  // A room seeded by desktop 0.9.4: the front matter parsed as a rule and a
+  // setext heading, math as text with its line breaks folded to spaces.
+  async function olderBuildRoom(doc: import("yjs").Doc) {
+    const { prosemirrorJSONToYXmlFragment } = await import("@tiptap/y-tiptap");
+    const { Editor: Headless } = await import("@tiptap/core");
+    const { richBaseExtensions } = await import("@/lib/rich-extensions");
+    const scratch = new Headless({ extensions: richBaseExtensions({ collab: true }), content: "" });
+    const text = (t: string) => ({ type: "text", text: t });
+    const p = (t: string) => ({ type: "paragraph", attrs: { textAlign: null }, content: [text(t)] });
+    const json = {
+      type: "doc",
+      content: [
+        { type: "horizontalRule" },
+        { type: "heading", attrs: { level: 2, textAlign: null }, content: [text("title: Plan markie: project: Markie")] },
+        { type: "heading", attrs: { level: 1, textAlign: null }, content: [text("Plan")] },
+        p("Inline $e^{i\\pi} + 1 = 0$ here."),
+        p("$$ \\int_0^1 x^2 \\, dx = \\frac{1}{3} $$"),
+        p("Last line."),
+      ],
+    };
+    prosemirrorJSONToYXmlFragment(scratch.schema, json, doc.getXmlFragment("default"));
+    doc.getMap("meta").set("schemaVersion", 1);
+    scratch.destroy();
+  }
+  const OLDER_STORED = FRONT + "# Plan\n\nInline $e^{i\\pi} + 1 = 0$ here.\n\n$$\n\\int_0^1 x^2\n  \\, dx = \\frac{1}{3}\n$$\n\nLast line.\n";
+
+  it("brings a room an older build seeded up to date: front matter out once, formulas with their lines back", async () => {
+    let seed: ((doc: import("yjs").Doc) => void) | undefined;
+    {
+      const Y = await import("yjs");
+      const prepared = new Y.Doc();
+      await olderBuildRoom(prepared);
+      const state = Y.encodeStateAsUpdate(prepared);
+      seed = (doc) => Y.applyUpdate(doc, state);
+    }
+    const live = await openLive(OLDER_STORED, seed);
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      // The stored copy, exactly: the front matter written once, the
+      // display formula on its own lines.
+      expect(live.onRoomReady.mock.calls[0][0]).toBe(OLDER_STORED);
+      const types = topTypes(live.editor());
+      expect(types).not.toContain("horizontalRule");
+      expect(types).toContain("mathBlock");
+      expect(live.editor().getText()).not.toContain("title: Plan");
+      expect(live.meta("schemaVersion")).toBe(2);
+    } finally {
+      live.done();
+    }
+  });
+
+  // The stored copy's front matter changed after the older build seeded
+  // the room (an agent rewrote `markie:`), so the room's front-matter nodes
+  // are not what the stored front matter parses to.
+  async function olderRoomWithOldFrontMatter(changeBody?: (fragment: import("yjs").XmlFragment) => void) {
+    const Y = await import("yjs");
+    const prepared = new Y.Doc();
+    await olderBuildRoom(prepared);
+    const heading = prepared.getXmlFragment("default").get(1) as import("yjs").XmlElement;
+    (heading.get(0) as import("yjs").XmlText).insert(0, "status: draft ");
+    changeBody?.(prepared.getXmlFragment("default"));
+    const state = Y.encodeStateAsUpdate(prepared);
+    return (doc: import("yjs").Doc) => Y.applyUpdate(doc, state);
+  }
+
+  it("takes out stale front matter when the rest of the room is exactly the stored body", async () => {
+    const live = await openLive(OLDER_STORED, await olderRoomWithOldFrontMatter());
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      // The stored copy's front matter, once; the room's old one gone.
+      expect(live.onRoomReady.mock.calls[0][0]).toBe(OLDER_STORED);
+      expect(topTypes(live.editor())[0]).toBe("heading");
+      expect(live.editor().getText()).not.toContain("status: draft");
+    } finally {
+      live.done();
+    }
+  });
+
+  it("refuses, and changes nothing, when stale front matter sits on a room that also moved on", async () => {
+    const seed = await olderRoomWithOldFrontMatter((fragment) => {
+      // Somebody typed in the room after it was seeded.
+      const last = fragment.get(fragment.length - 1) as import("yjs").XmlElement;
+      (last.get(0) as import("yjs").XmlText).insert(0, "Room-only words. ");
+    });
+    const live = await openLive(OLDER_STORED, seed);
+    try {
+      await waitFor(() => expect(live.onCollabStatus).toHaveBeenCalledWith("unavailable"), { timeout: 3000 });
+      await new Promise((r) => setTimeout(r, 400));
+      expect(live.onRoomReady).not.toHaveBeenCalled();
+      expect(live.onChange).not.toHaveBeenCalled();
+      // Nothing in the room was changed: the body's words, the old front
+      // matter and the room-only edit are all still there.
+      expect(live.editor().state.doc.firstChild?.type.name).toBe("horizontalRule");
+      expect(live.editor().getText()).toContain("Room-only words.");
+      expect(live.meta("editorModel")).toBeUndefined();
+    } finally {
+      live.done();
+    }
+  });
+
+  it("keeps escaped dollars as text when it brings an older room up to date, and writes them escaped", async () => {
+    const Y = await import("yjs");
+    const prepared = new Y.Doc();
+    const { prosemirrorJSONToYXmlFragment } = await import("@tiptap/y-tiptap");
+    const { Editor: Headless } = await import("@tiptap/core");
+    const { richBaseExtensions } = await import("@/lib/rich-extensions");
+    const scratch = new Headless({ extensions: richBaseExtensions({ collab: true }), content: "" });
+    // 0.9.4 read `\$x\$` as text "$x$": its escapes are gone in the room.
+    prosemirrorJSONToYXmlFragment(scratch.schema, {
+      type: "doc",
+      content: [
+        { type: "paragraph", attrs: { textAlign: null }, content: [{ type: "text", text: "Pay $x$ now." }] },
+        { type: "paragraph", attrs: { textAlign: null }, content: [{ type: "text", text: "Real $y^2$ math." }] },
+      ],
+    }, prepared.getXmlFragment("default"));
+    scratch.destroy();
+    const stored = "Pay \\$x\\$ now.\n\nReal $y^2$ math.\n";
+    const state = Y.encodeStateAsUpdate(prepared);
+    const live = await openLive(stored, (doc) => Y.applyUpdate(doc, state));
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      expect(live.onRoomReady.mock.calls[0][0]).toBe(stored);
+      const math: string[] = [];
+      live.editor().state.doc.descendants((node) => { if (node.type.name === "mathInline") math.push(node.attrs.source); });
+      expect(math).toEqual(["$y^2$"]);
+      // An edit to the escaped paragraph keeps its escapes.
+      live.editor().commands.insertContentAt(live.editor().state.doc.child(0).nodeSize - 1, " Today.");
+      await waitFor(() => expect(live.onChange).toHaveBeenCalled(), { timeout: 2000 });
+      expect(live.onChange.mock.calls.at(-1)![0]).toBe("Pay \\$x\\$ now. Today.\n\nReal $y^2$ math.\n");
+    } finally {
+      live.done();
+    }
+  });
+
+  // Any editor can write the meta map; a stamp nobody's build knows must not
+  // lock the room for everyone. What this build cannot draw is still refused
+  // (the next test), by the binding itself.
+  it("ignores a schema stamp above any it knows, so one editor cannot lock a room", async () => {
+    const Y = await import("yjs");
+    const prepared = new Y.Doc();
+    const paragraph = new Y.XmlElement("paragraph");
+    paragraph.insert(0, [new Y.XmlText("Ordinary words.")]);
+    prepared.getXmlFragment("default").insert(0, [paragraph]);
+    prepared.getMap("meta").set("schemaVersion", 999);
+    prepared.getMap("meta").set("editorModel", 2);
+    const state = Y.encodeStateAsUpdate(prepared);
+    const live = await openLive("Ordinary words.\n", (doc) => Y.applyUpdate(doc, state));
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      expect(live.onCollabStatus).not.toHaveBeenCalledWith("unavailable");
+      expect(live.editor().isEditable).toBe(true);
+    } finally {
+      live.done();
+    }
+  });
+
+  it("refuses a room holding a node this build does not know, even unstamped", async () => {
+    const Y = await import("yjs");
+    const prepared = new Y.Doc();
+    const unknown = new Y.XmlElement("hologram");
+    prepared.getXmlFragment("default").insert(0, [unknown]);
+    const state = Y.encodeStateAsUpdate(prepared);
+    const live = await openLive("Anything.\n", (doc) => Y.applyUpdate(doc, state));
+    try {
+      await waitFor(() => expect(live.onCollabStatus).toHaveBeenCalledWith("unavailable"), { timeout: 3000 });
+      expect(live.onRoomReady).not.toHaveBeenCalled();
+      expect(live.onChange).not.toHaveBeenCalled();
+      // The room still holds what this build could not draw.
+      expect(liveDoc().getXmlFragment("default").get(0)).toBeInstanceOf(Y.XmlElement);
+    } finally {
+      live.done();
+    }
+  });
+
+  it("raises a plain room to schema 2 when the first formula arrives", async () => {
+    const plain = "# Plain\n\nNo formulas yet.\n";
+    const state = await seededState(plain);
+    const Y = await import("yjs");
+    const live = await openLive(plain, (doc) => Y.applyUpdate(doc, state));
+    try {
+      await waitFor(() => expect(live.editor()?.isEditable).toBe(true), { timeout: 3000 });
+      expect(live.meta("schemaVersion")).toBe(1);
+      live.editor().commands.insertContentAt(live.editor().state.doc.content.size - 1, [
+        { type: "text", text: " See " },
+        { type: "mathInline", attrs: { source: "$x^2$" } },
+      ]);
+      await waitFor(() => expect(live.meta("schemaVersion")).toBe(2), { timeout: 2000 });
+      await waitFor(() => expect(live.onChange).toHaveBeenCalled(), { timeout: 2000 });
+      expect(live.onChange.mock.calls.at(-1)![0]).toBe("# Plain\n\nNo formulas yet. See $x^2$\n");
+    } finally {
+      live.done();
+    }
+  });
+});
+
+describe("RichView in a live room: second review", () => {
+  const collab: CollabConfig = {
+    docId: "doc-review",
+    wsBase: "ws://localhost/collab",
+    token: "t",
+    fetchTicket: async () => ({ kind: "ticket", ticket: "tk", expiresAt: 0 }),
+    user: { name: "Me", color: "#000000" },
+    readonly: false,
+  };
+  const liveDoc = () => (window as unknown as { __markieCollab?: { ydoc: import("yjs").Doc } | null }).__markieCollab!.ydoc;
+
+  async function roomOf(blocks: unknown[]) {
+    const Y = await import("yjs");
+    const { prosemirrorJSONToYXmlFragment } = await import("@tiptap/y-tiptap");
+    const { Editor: Headless } = await import("@tiptap/core");
+    const { richBaseExtensions } = await import("@/lib/rich-extensions");
+    const scratch = new Headless({ extensions: richBaseExtensions({ collab: true }), content: "" });
+    const prepared = new Y.Doc();
+    prosemirrorJSONToYXmlFragment(scratch.schema, { type: "doc", content: blocks }, prepared.getXmlFragment("default"));
+    prepared.getMap("meta").set("schemaVersion", 1);
+    scratch.destroy();
+    const state = Y.encodeStateAsUpdate(prepared);
+    return (doc: import("yjs").Doc) => Y.applyUpdate(doc, state);
+  }
+  const text = (t: string) => ({ type: "text", text: t });
+  const p = (t: string) => ({ type: "paragraph", attrs: { textAlign: null }, content: [text(t)] });
+  const h2 = (t: string) => ({ type: "heading", attrs: { level: 2, textAlign: null }, content: [text(t)] });
+  const rule = { type: "horizontalRule" };
+
+  async function open(value: string, seed?: (doc: import("yjs").Doc) => void) {
+    loader.room = seed ? { seed } : {};
+    const onRoomReady = vi.fn();
+    const onChange = vi.fn();
+    const onCollabStatus = vi.fn();
+    let editor: Editor | null = null;
+    const view = render(
+      <RichView value={value} onChange={onChange} collab={collab} holdUntilReady onRoomReady={onRoomReady}
+        onCollabStatus={onCollabStatus} onEditorReady={(e) => { if (e) editor = e; }} />
+    );
+    return { view, onRoomReady, onChange, onCollabStatus, editor: () => editor as unknown as Editor, done: () => { view.unmount(); loader.room = null; } };
+  }
+
+  it("never drops a live edit sitting between stale front matter and the body: refuses instead", async () => {
+    const live = await open("---\ntitle: new\n---\nBody.\n", await roomOf([rule, h2("title: old"), p("Live note"), p("Body.")]));
+    try {
+      await waitFor(() => expect(live.onCollabStatus).toHaveBeenCalledWith("unavailable"), { timeout: 3000 });
+      expect(live.editor().getText()).toContain("Live note");
+      expect(JSON.stringify(liveDoc().getXmlFragment("default").toJSON())).toContain("Live note");
+      expect(live.onChange).not.toHaveBeenCalled();
+    } finally {
+      live.done();
+    }
+  });
+
+  it("takes nothing out of a room whose leading rule is not front matter, for a copy without front matter", async () => {
+    const live = await open("Body.\n", await roomOf([rule, p("Agenda added live"), p("Body.")]));
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      expect(live.onRoomReady.mock.calls[0][0]).toContain("Agenda added live");
+      expect(live.editor().getText()).toContain("Agenda added live");
+    } finally {
+      live.done();
+    }
+  });
+
+  it("a seed the server drops is never in this pane: the winner's arrives, and typing waits for it", async () => {
+    const Y = await import("yjs");
+    loader.dropClaims = true;
+    // The client that won the seed lock writes the room a moment later.
+    const live = await open("# Mine\n\nMy copy.\n", (doc) => {
+      setTimeout(() => {
+        const winner = new Y.Doc();
+        const paragraph = new Y.XmlElement("paragraph");
+        paragraph.insert(0, [new Y.XmlText("The winner's copy.")]);
+        winner.getXmlFragment("default").insert(0, [paragraph]);
+        winner.getMap("meta").set("editorModel", 2);
+        winner.getMap("meta").set("schemaVersion", 1);
+        Y.applyUpdate(doc, Y.encodeStateAsUpdate(winner), "server");
+      }, 400);
+    });
+    try {
+      await waitFor(() => expect(loader.sent.length).toBeGreaterThan(0), { timeout: 3000 });
+      // Sent, not applied: until the server answers, the room is empty here
+      // and nothing can be typed into it.
+      expect(live.editor().getText()).not.toContain("My copy.");
+      expect(live.editor().isEditable).toBe(false);
+      await waitFor(() => expect(live.editor().getText()).toContain("The winner's copy."), { timeout: 3000 });
+      expect(live.editor().getText()).not.toContain("My copy.");
+      await waitFor(() => expect(live.editor().isEditable).toBe(true), { timeout: 3000 });
+    } finally {
+      loader.dropClaims = false;
+      loader.sent.length = 0;
+      live.done();
+    }
+  });
+
+  it("a seed the server never answers goes back to the local copy, and says so", async () => {
+    const { liveTiming } = await import("@/lib/collab");
+    const before = liveTiming.claimTimeoutMs;
+    liveTiming.claimTimeoutMs = 400;
+    loader.dropClaims = true;
+    const live = await open("# Mine\n\nMy copy.\n");
+    try {
+      await waitFor(() => expect(live.onCollabStatus).toHaveBeenCalledWith("unavailable"), { timeout: 3000 });
+      expect(live.onChange).not.toHaveBeenCalled();
+    } finally {
+      liveTiming.claimTimeoutMs = before;
+      loader.dropClaims = false;
+      loader.sent.length = 0;
+      live.done();
+    }
+  });
+
+  it("puts a formula's open source into the room when the pane closes", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const Y = await import("yjs");
+    const live = await open("A $x$ b.\n");
+    const received = new Y.Doc();
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      await waitFor(() => expect(live.view.container.querySelector(".markie-math-inline")).not.toBeNull());
+      const ydoc = liveDoc();
+      Y.applyUpdate(received, Y.encodeStateAsUpdate(ydoc));
+      ydoc.on("update", (update: Uint8Array) => Y.applyUpdate(received, update));
+      const inline = live.view.container.querySelector(".markie-math-inline") as HTMLElement;
+      fireEvent.mouseDown(inline);
+      fireEvent.input(inline.querySelector("input") as HTMLInputElement, { target: { value: "$kept$" } });
+    } finally {
+      live.done();
+    }
+    expect(JSON.stringify(received.getXmlFragment("default").toJSON())).toContain("$kept$");
   });
 });

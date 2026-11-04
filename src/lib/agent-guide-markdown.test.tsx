@@ -135,9 +135,11 @@ describe("headings, emphasis, lists, tasks, tables", () => {
     expect(rich(md).html).not.toContain("<li>");
   });
 
-  it("drops the alignment colons when Rich rewrites a table", () => {
+  // Rich used to write every column back as `---` (tiptap-markdown's table
+  // serializer); rich-table-align.ts writes the cells' alignment instead.
+  it("keeps the alignment colons when Rich rewrites a table", () => {
     const md = "| Option | Cost |\n| :--- | ---: |\n| Rebuild | 12 days |\n";
-    expect(rich(md).markdown).not.toContain(":---");
+    expect(rich(md).markdown).toContain("| :--- | ---: |");
   });
 });
 

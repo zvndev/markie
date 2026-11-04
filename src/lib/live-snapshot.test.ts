@@ -102,9 +102,11 @@ describe("rule 6: the stored copy must be a state of the room", () => {
   });
 });
 
-describe("rule 3: a rich room cannot carry front matter or held constructs", () => {
+describe("rule 3: a rich room cannot carry held constructs", () => {
   it("refuses a rich push over a stored copy that has them, and never a plain-text one", () => {
-    expect(liveSnapshotRefusal("---\ntitle: x\n---\n\n# Hi\n", "rich")).toBe("held-constructs");
+    // Front matter stays out of the room and the writer puts the stored
+    // copy's back, so it is carried.
+    expect(liveSnapshotRefusal("---\ntitle: x\n---\n\n# Hi\n", "rich")).toBeNull();
     expect(liveSnapshotRefusal("# Hi\n\n<div class=\"callout\">raw</div>\n", "rich")).toBe("held-constructs");
     expect(liveSnapshotRefusal("# Hi\n\n<!-- note -->\n", "rich")).toBe("held-constructs");
     expect(liveSnapshotRefusal("Text[^1].\n\n[^1]: A footnote.\n", "rich")).toBe("held-constructs");
@@ -144,8 +146,11 @@ describe("rule 3: a rich room cannot carry front matter or held constructs", () 
     // ...but the live pane, keeping untouched blocks, writes it back exactly.
     expect(roomWriteBack(EVERYTHING)).toBe(EVERYTHING);
     expect(roomCarries(EVERYTHING)).toBe(true);
+    // Front matter is carried: the room holds the body, the writer the rest.
+    const withFrontMatter = "---\ntitle: x\nmarkie:\n  project: Plan\n---\n\n# Hi\n\n" + EVERYTHING;
+    expect(roomWriteBack(withFrontMatter)).toBe(withFrontMatter);
+    expect(roomCarries(withFrontMatter)).toBe(true);
     // The known losses answer without a parse, and still refuse.
-    expect(roomCarries("---\ntitle: x\n---\n\n# Hi\n")).toBe(false);
     expect(roomCarries("# Hi\n\n<!-- note -->\n")).toBe(false);
     expect(roomCarries("")).toBe(true);
   });

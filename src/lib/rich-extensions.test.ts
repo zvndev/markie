@@ -10,10 +10,15 @@ describe("richBaseExtensions", () => {
       "starterKit",
       // Text is ours, so math is written back as it was written.
       "text",
+      // Math as nodes holding their TeX as written.
+      "mathInline",
+      "mathBlock",
       // Paragraph and heading are ours, so an aligned one reaches the file.
       "paragraph",
       "heading",
       "tableKit",
+      // The table is ours, so its column alignment reaches the file.
+      "table",
       "taskList",
       "taskItem",
       "image",

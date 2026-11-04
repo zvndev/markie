@@ -42,7 +42,7 @@ import { memberAssetUrl, viewHtml } from "./view-content";
 import { WebExportMenu } from "./web-export";
 import type { WebSessionUser } from "./session";
 import {
-  DIVERGED_NOTE, RoomTexts, SNAPSHOT_REFUSAL_NOTE, assessLiveRoom, liveSnapshotRefusal, liveSnapshotWait, roomMeta, useLiveRoom, writeLiveSnapshot,
+  DIVERGED_NOTE, RoomTexts, SNAPSHOT_REFUSAL_NOTE, assessLiveRoom, liveDocumentEmpty, liveSnapshotRefusal, liveSnapshotWait, roomMeta, useLiveRoom, writeLiveSnapshot,
   type LiveBase, type LiveRoom, type LiveRoomState, type SnapshotRefusal,
 } from "@/lib/live-snapshot";
 
@@ -226,7 +226,7 @@ function DocumentEditor({ initial, user, onLibrary, onOpen, onSessionEnded, onRe
   // as the session starts: a rich room cannot carry front matter or raw HTML.
   const liveKindHere = kind === "markdown" ? "rich" : "text";
   const room = useLiveRoom(collab ? liveSession : null, liveKindHere, {
-    documentEmpty: !initial.text.trim(),
+    documentEmpty: liveDocumentEmpty(initial.text, liveKindHere),
     offer: editable && !!collab,
   });
   // savedText is read as the session starts, on purpose.
